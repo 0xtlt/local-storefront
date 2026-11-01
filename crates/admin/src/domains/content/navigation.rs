@@ -23,6 +23,7 @@ use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
 use super::menu_gid;
+use super::metafields::text;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, gid, value};
@@ -51,13 +52,6 @@ pub fn register(registry: &mut Registry) {
 
 /// How deep menu items nest.
 const MAX_DEPTH: usize = 3;
-
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-}
 
 /// The record type a menu item of `kind` names.
 fn resource_type(kind: &str) -> Option<&'static str> {
@@ -220,7 +214,6 @@ fn menu_of(state: &ShopState, handle: &str, except: Option<&str>) -> Option<Stri
         .map(str::to_string)
 }
 
-/// `menuCreate`.
 fn menu_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let state = mutation.state();
     let title = ctx.arg_str("title").unwrap_or_default();
@@ -319,7 +312,6 @@ fn menu_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     Ok(payload(json!({"menu": id}), &[]))
 }
 
-/// `menuDelete`.
 fn menu_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
@@ -439,7 +431,6 @@ fn check_redirect(
     (path, target)
 }
 
-/// `urlRedirectCreate`.
 fn redirect_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -465,7 +456,6 @@ fn redirect_create(
     Ok(payload(json!({"urlRedirect": id}), &[]))
 }
 
-/// `urlRedirectUpdate`.
 fn redirect_update(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -505,7 +495,6 @@ fn redirect_update(
     Ok(payload(json!({"urlRedirect": id}), &[]))
 }
 
-/// `urlRedirectDelete`.
 fn redirect_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,

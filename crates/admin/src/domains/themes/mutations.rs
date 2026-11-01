@@ -46,7 +46,7 @@
 use serde_json::{Value, json};
 
 use super::files::{self, ThemeFile, check_filename};
-use super::{FILES, LOCAL, is_local, local_theme_gid, theme_name, theme_of};
+use super::{is_local, local_theme_gid, theme_name, theme_of};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, done_job, payload};
 use crate::sources::{self, SourceError};
@@ -82,24 +82,12 @@ fn new_theme(state: &mut ShopState, name: &str, role: &str) -> String {
     let id = state.new_gid("OnlineStoreTheme");
     let number = crate::state::parse_gid(&id).map_or(0, |(_, n)| n);
     let now = state.timestamp();
-    state.insert(value::object(json!({
-        "__typename": "OnlineStoreTheme",
-        "id": id,
-        "name": name,
-        "role": role,
-        "prefix": format!("/t/{number}"),
-        "processing": false,
-        "processingFailed": false,
-        "themeStoreId": null,
-        "createdAt": now,
-        "updatedAt": now,
-        LOCAL: false,
-        FILES: {},
-    })));
+    state.insert(value::object(super::record(
+        number, name, role, false, &now,
+    )));
     id
 }
 
-/// `themeCreate`.
 fn theme_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let refuse = |field: &[&str], message: &str, code: &str| {
         Ok(payload(
@@ -195,7 +183,6 @@ fn theme_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     Ok(payload(json!({"theme": id}), &[]))
 }
 
-/// `themeUpdate`.
 fn theme_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     if theme_of(m.state(), &id).is_none() {
@@ -237,7 +224,6 @@ fn theme_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     Ok(payload(json!({"theme": id}), &[]))
 }
 
-/// `themeDelete`.
 fn theme_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let Some(theme) = theme_of(m.state(), &id) else {
@@ -264,7 +250,6 @@ fn theme_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     Ok(payload(json!({"deletedThemeId": id}), &[]))
 }
 
-/// `themeDuplicate`.
 fn theme_duplicate(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let Some(theme) = theme_of(m.state(), &id) else {
@@ -294,7 +279,6 @@ fn theme_duplicate(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     Ok(payload(json!({"newTheme": new}), &[]))
 }
 
-/// `themePublish`.
 fn theme_publish(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let Some(theme) = theme_of(m.state(), &id) else {
@@ -410,7 +394,6 @@ fn check_content(filename: &str, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// `themeFilesUpsert`.
 fn files_upsert(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let inputs: Vec<Value> = ctx
         .arg("files")
@@ -511,7 +494,6 @@ fn files_upsert(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     ))
 }
 
-/// `themeFilesCopy`.
 fn files_copy(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let inputs: Vec<Value> = ctx
         .arg("files")
@@ -592,7 +574,6 @@ fn files_copy(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fie
     ))
 }
 
-/// `themeFilesDelete`.
 fn files_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let filenames: Vec<String> = ctx
         .arg("files")

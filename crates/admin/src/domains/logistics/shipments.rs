@@ -37,8 +37,8 @@ use serde_json::{Map, Value, json};
 
 use super::transfers::{self, COMMITTED, SHIPPABLE, TRANSFER};
 use super::{
-    coded, emit_change, idempotent, int, keys_of, objects, push, record_of, snapshot_location,
-    stock, text,
+    coded, emit_change, idempotent, int, is_url, keys_of, objects, push, record_of,
+    snapshot_location, stock, text,
 };
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
@@ -124,19 +124,10 @@ fn shipment_of(state: &ShopState, id: &str) -> Option<Record> {
     record_of(state, id, "InventoryShipment").cloned()
 }
 
-/// The transfer of a shipment.
 fn transfer_of(state: &ShopState, shipment: &Record) -> Option<String> {
     text(shipment, TRANSFER)
         .filter(|transfer| state.contains(transfer))
         .map(str::to_string)
-}
-
-/// Whether a URL is one a tracking link can be: `http(s)://` and a host.
-fn is_url(text: &str) -> bool {
-    ["http://", "https://"].iter().any(|scheme| {
-        text.strip_prefix(scheme)
-            .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
-    })
 }
 
 /// The checks of a barcode, under `path`.
@@ -260,7 +251,6 @@ fn check_lines(
     picked
 }
 
-/// The parts of a path as `&str`s.
 fn as_path(parts: &[String]) -> Vec<&str> {
     parts.iter().map(String::as_str).collect()
 }
@@ -464,12 +454,10 @@ pub fn remove_shipment(state: &mut ShopState, shipment: &str) {
 
 // --- The mutations ---
 
-/// `inventoryShipmentCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     create_shipment(mutation, ctx, false)
 }
 
-/// `inventoryShipmentCreateInTransit`.
 fn create_in_transit(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -717,7 +705,6 @@ fn remove_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     Ok(payload(json!({"inventoryShipment": id}), &[]))
 }
 
-/// `inventoryShipmentUpdateItemQuantities`.
 fn update_quantities(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -793,7 +780,6 @@ fn update_quantities(
     ))
 }
 
-/// `inventoryShipmentMarkInTransit`.
 fn mark_in_transit(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -821,7 +807,6 @@ fn mark_in_transit(
     Ok(payload(json!({"inventoryShipment": id}), &[]))
 }
 
-/// `inventoryShipmentReceive`.
 fn receive(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryShipment": null});
     let (id, shipment) = match shipment_arg(ctx, mutation.state(), &empty) {
@@ -978,7 +963,6 @@ fn take(receipts: &mut Vec<(String, [i64; 3])>, line: &str, reason: &str, quanti
     }
 }
 
-/// `inventoryShipmentSetTracking`.
 fn set_tracking(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryShipment": null});
     let (id, _) = match shipment_arg(ctx, mutation.state(), &empty) {
@@ -1003,7 +987,6 @@ fn set_tracking(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     Ok(payload(json!({"inventoryShipment": id}), &[]))
 }
 
-/// `inventoryShipmentSetBarcode`.
 fn set_barcode(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryShipment": null});
     let (id, _) = match shipment_arg(ctx, mutation.state(), &empty) {

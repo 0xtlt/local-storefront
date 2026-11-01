@@ -261,7 +261,7 @@ pub fn check_namespace_and_key(
     }
 }
 
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
+pub(super) fn text<'r>(record: &'r Record, field: &str) -> &'r str {
     record
         .get(field)
         .and_then(Value::as_str)
@@ -819,7 +819,6 @@ pub fn set_owned(state: &mut ShopState, owner: &str, checked: &[Checked]) {
     }
 }
 
-/// `metafieldsSet`.
 fn metafields_set(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,

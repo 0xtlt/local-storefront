@@ -19,7 +19,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{profiles, text};
+use super::{is_url, profiles, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -51,14 +51,6 @@ pub fn register(registry: &mut Registry) {
 /// field for: what `carrierServices(sortKey: UPDATED_AT)` sorts by.
 const UPDATED_AT: &str = "lsfUpdatedAt";
 
-/// Whether a text is an `http(s)` URL with a host.
-fn is_url(text: &str) -> bool {
-    ["http://", "https://"].iter().any(|scheme| {
-        text.strip_prefix(scheme)
-            .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
-    })
-}
-
 /// The checks of a carrier service input (`creating`: the fields it must have), with `code`.
 fn check(
     state: &ShopState,
@@ -88,7 +80,6 @@ fn check(
     errors
 }
 
-/// `carrierServiceCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = super::input(ctx, "input");
     let errors = check(
@@ -125,7 +116,6 @@ fn service(state: &ShopState, id: &str) -> Option<String> {
     (state.type_of(id) == Some("DeliveryCarrierService")).then(|| id.to_string())
 }
 
-/// `carrierServiceUpdate`.
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = super::input(ctx, "input");
     let code = "CARRIER_SERVICE_UPDATE_FAILED";

@@ -36,9 +36,11 @@
 
 use serde_json::{Map, Value, json};
 
-use super::metafields::shop_currency;
+use super::metafield_definitions::access_of;
+use super::metafields::{shop_currency, text};
 use super::types::{self, Context};
 use super::{app_id, data_type, metaobject_definition_gid, metaobject_gid};
+use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, value};
@@ -67,13 +69,6 @@ pub fn register(registry: &mut Registry) {
         .mutation("metaobjectBulkDelete", bulk_delete);
 }
 
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-}
-
 /// A type as the Admin API stores it: `$app:author` is `app--<app id>--author`.
 pub fn stored_type(state: &ShopState, kind: &str) -> String {
     match kind.strip_prefix("$app:") {
@@ -94,7 +89,6 @@ pub fn definition_of(state: &ShopState, kind: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The entry of a type with a handle.
 fn entry_of(state: &ShopState, kind: &str, handle: &str) -> Option<String> {
     state
         .keys("Metaobject")
@@ -414,29 +408,6 @@ fn capabilities_of(input: Option<&Value>, before: Option<&Value>) -> Value {
     })
 }
 
-/// The access of a definition: the input's, with Shopify's defaults (the app's types are the
-/// merchant's to read and write, others everyone's; nothing on the storefront unless given).
-fn access_of(input: Option<&Value>, app_owned: bool, before: Option<&Value>) -> Value {
-    let pick = |name: &str, default: &str| {
-        input
-            .and_then(|access| access.get(name))
-            .and_then(Value::as_str)
-            .or_else(|| {
-                before
-                    .and_then(|access| access.get(name))
-                    .and_then(Value::as_str)
-            })
-            .unwrap_or(default)
-            .to_string()
-    };
-    json!({
-        "admin": pick("admin", if app_owned { "MERCHANT_READ_WRITE" } else { "PUBLIC_READ_WRITE" }),
-        "storefront": pick("storefront", "NONE"),
-        "customerAccount": pick("customerAccount", "NONE"),
-    })
-}
-
-/// `metaobjectDefinitionCreate`.
 fn definition_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -731,15 +702,7 @@ fn definition_update(
     }
     state.touch(&id);
     // The entries follow: their fields, their display names, their status.
-    let entries: Vec<String> = state
-        .keys("Metaobject")
-        .filter(|entry| {
-            state
-                .get(entry)
-                .is_some_and(|entry| text(entry, "definition") == id)
-        })
-        .map(str::to_string)
-        .collect();
+    let entries = entries_of(state, &id);
     for entry in entries {
         let changed = refresh_entry(
             state,
@@ -756,6 +719,18 @@ fn definition_update(
     }
     state.emit("metaobject_definitions/update", &id);
     Ok(answer(json!({"metaobjectDefinition": id}), &[]))
+}
+
+fn entries_of(state: &ShopState, definition: &str) -> Vec<String> {
+    state
+        .keys("Metaobject")
+        .filter(|entry| {
+            state
+                .get(entry)
+                .is_some_and(|entry| text(entry, "definition") == definition)
+        })
+        .map(str::to_string)
+        .collect()
 }
 
 /// Brings an entry in line with its definition after an update: the fields removed are gone, the
@@ -831,15 +806,7 @@ fn definition_delete(
         return Ok(answer(json!({"deletedId": null}), &[error]));
     }
     let state = mutation.state_mut();
-    let entries: Vec<String> = state
-        .keys("Metaobject")
-        .filter(|entry| {
-            state
-                .get(entry)
-                .is_some_and(|entry| text(entry, "definition") == id)
-        })
-        .map(str::to_string)
-        .collect();
+    let entries = entries_of(state, &id);
     for entry in entries {
         state.delete(&entry, "metaobjects/delete");
     }
@@ -863,15 +830,11 @@ fn definition_delete(
         .map(str::to_string)
         .collect();
     for definition in referring {
-        let metafields: Vec<String> = state
-            .get(&definition)
-            .and_then(|record| record.get("metafields"))
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_string)
-            .collect();
+        let metafields = gids(
+            state
+                .get(&definition)
+                .and_then(|record| record.get("metafields")),
+        );
         state.delete(&definition, "metafield_definitions/delete");
         for metafield in metafields {
             let owner = state
@@ -1281,7 +1244,6 @@ fn insert_entry(state: &mut ShopState, definition: &str, kind: &str, planned: Pl
     id
 }
 
-/// Writes what an update planned into an entry.
 fn write_entry(state: &mut ShopState, id: &str, planned: Planned) {
     if let Some(record) = state.get_mut(id) {
         record.insert("handle".into(), json!(planned.handle));
@@ -1311,7 +1273,6 @@ fn delete_entry(state: &mut ShopState, id: &str) {
     }
 }
 
-/// `metaobjectCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = ctx
         .arg("metaobject")
@@ -1351,7 +1312,6 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     Ok(answer(json!({"metaobject": id}), &[]))
 }
 
-/// `metaobjectUpdate`.
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = ctx
@@ -1460,7 +1420,6 @@ fn upsert(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     Ok(answer(json!({"metaobject": id}), &[]))
 }
 
-/// `metaobjectDelete`.
 fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     if mutation.state().type_of(&id) != Some("Metaobject") {

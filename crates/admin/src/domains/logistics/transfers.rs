@@ -673,12 +673,10 @@ fn date_input(value: Option<&Value>) -> Option<String> {
 
 // --- The mutations ---
 
-/// `inventoryTransferCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     create_transfer(mutation, ctx, false)
 }
 
-/// `inventoryTransferCreateAsReadyToShip`.
 fn create_ready(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     create_transfer(mutation, ctx, true)
 }
@@ -761,7 +759,6 @@ fn create_transfer(
     Ok(payload(json!({"inventoryTransfer": transfer}), &[]))
 }
 
-/// Sets the metafields of a transfer.
 fn set_metafields(state: &mut ShopState, transfer: &str, metafields: &[Map<String, Value>]) {
     if metafields.is_empty() {
         return;
@@ -847,7 +844,6 @@ fn duplicate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     Ok(payload(json!({"inventoryTransfer": transfer}), &[]))
 }
 
-/// `inventoryTransferEdit`.
 fn edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryTransfer": null});
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
@@ -937,7 +933,6 @@ fn edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
     Ok(payload(json!({"inventoryTransfer": id}), &[]))
 }
 
-/// `inventoryTransferSetItems`.
 fn set_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryTransfer": null, "updatedLineItems": null});
     let input = super::input(ctx, "input");
@@ -1022,7 +1017,6 @@ fn set_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     ))
 }
 
-/// `inventoryTransferRemoveItems`.
 fn remove_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryTransfer": null, "removedQuantities": null});
     let input = super::input(ctx, "input");
@@ -1113,7 +1107,6 @@ fn remove_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     ))
 }
 
-/// `inventoryTransferMarkAsReadyToShip`.
 fn mark_ready(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryTransfer": null});
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
@@ -1151,7 +1144,6 @@ fn mark_ready(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
     Ok(payload(json!({"inventoryTransfer": id}), &[]))
 }
 
-/// `inventoryTransferCancel`.
 fn cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryTransfer": null});
     let id = ctx.arg_str("id").unwrap_or_default().to_string();

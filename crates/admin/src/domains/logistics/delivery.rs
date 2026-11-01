@@ -101,7 +101,6 @@ fn set_packages(state: &mut ShopState, packages: Vec<Value>) {
 
 // --- Delivery promises ---
 
-/// `deliveryPromiseProviderUpsert`.
 fn provider_upsert(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -176,7 +175,6 @@ fn provider(
 /// The record field where a participant keeps its branded promise's handle.
 const HANDLE: &str = "lsfBrandedPromiseHandle";
 
-/// `deliveryPromiseParticipantsUpdate`.
 fn participants_update(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -298,7 +296,6 @@ fn package_index(state: &ShopState, id: &str) -> Result<usize, UserError> {
         .ok_or_else(|| UserError::new(&["id"], "Shipping package not found."))
 }
 
-/// `shippingPackageUpdate`.
 fn package_update(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -365,7 +362,6 @@ fn package_update(
     Ok(payload(json!({}), &[]))
 }
 
-/// `shippingPackageMakeDefault`.
 fn package_make_default(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -385,7 +381,6 @@ fn package_make_default(
     Ok(payload(json!({}), &[]))
 }
 
-/// `shippingPackageDelete`.
 fn package_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,

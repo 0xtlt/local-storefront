@@ -30,7 +30,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::metafields::{self, check_owned_inputs, set_owned};
+use super::metafields::{self, check_owned_inputs, set_owned, text};
 use super::navigation::add_redirect;
 use crate::domains::catalog::{gids, tags_of};
 use crate::graphql::{FieldContext, FieldError};
@@ -56,13 +56,6 @@ pub fn register(registry: &mut Registry) {
 
 /// The longest title Shopify takes.
 const TITLE_LENGTH: usize = 255;
-
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-}
 
 fn input_of(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
     ctx.arg(name)
@@ -212,7 +205,6 @@ fn template_suffix(input: &Map<String, Value>) -> Option<Value> {
         .map(|suffix| json!(suffix.as_str().filter(|suffix| !suffix.is_empty())))
 }
 
-/// Removes the metafields of a record.
 fn remove_metafields(state: &mut ShopState, record: &Record) {
     for metafield in gids(record.get("metafields")) {
         metafields::remove(state, &metafield);
@@ -221,7 +213,6 @@ fn remove_metafields(state: &mut ShopState, record: &Record) {
 
 // ---- pages -------------------------------------------------------------------------------
 
-/// `pageCreate`.
 fn page_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = input_of(ctx, "page");
     let state = mutation.state();
@@ -276,7 +267,6 @@ fn summary(body: &str) -> String {
     value::plain_text(body).chars().take(150).collect()
 }
 
-/// `pageUpdate`.
 fn page_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = input_of(ctx, "page");
@@ -342,7 +332,6 @@ fn page_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     Ok(payload(json!({"page": id}), &[]))
 }
 
-/// `pageDelete`.
 fn page_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let Some(record) = (mutation.state().type_of(&id) == Some("Page"))
@@ -383,7 +372,6 @@ fn insert_blog(state: &mut ShopState, input: &Map<String, Value>, handle: &str) 
     id
 }
 
-/// `blogCreate`.
 fn blog_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = input_of(ctx, "blog");
     let state = mutation.state();
@@ -411,7 +399,6 @@ fn blog_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     Ok(payload(json!({"blog": id}), &[]))
 }
 
-/// `blogUpdate`.
 fn blog_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = input_of(ctx, "blog");
@@ -644,7 +631,6 @@ fn image_of(state: &mut ShopState, input: &Map<String, Value>) -> Option<Value> 
     }))
 }
 
-/// `articleCreate`.
 fn article_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -907,7 +893,6 @@ fn remove_article(state: &mut ShopState, id: &str) {
     refresh_blog(state, &blog);
 }
 
-/// `articleDelete`.
 fn article_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -951,7 +936,6 @@ fn moderate(
     Ok(payload(json!({"comment": id}), &[]))
 }
 
-/// `commentDelete`.
 fn comment_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,

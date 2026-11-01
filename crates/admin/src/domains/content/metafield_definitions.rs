@@ -33,12 +33,14 @@ use serde_json::{Map, Value, json};
 
 use super::metafields::{
     self, check_namespace_and_key, find_definition, other_apps, owner_types_of, stored_namespace,
+    text,
 };
 use super::types;
+use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, value};
+use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -62,13 +64,6 @@ pub fn register(registry: &mut Registry) {
 
 /// The most definitions pinned per owner type.
 const PINNED_LIMIT: usize = 20;
-
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-}
 
 /// `metafieldDefinitions(ownerType:, namespace:, key:, pinnedStatus:, query:, sortKey:)`.
 fn metafield_definitions(
@@ -237,10 +232,10 @@ fn valid_option(value_type: &str, value: &str) -> bool {
     }
 }
 
-/// `access` of a definition: the input's, with Shopify's defaults (an app's reserved namespace
-/// is the merchant's to read and write in the admin, another namespace everyone's; nothing on
-/// the storefront or in customer accounts unless given).
-fn access_of(input: Option<&Value>, app_owned: bool, before: Option<&Value>) -> Value {
+/// `access` of a metafield or metaobject definition: the input's, with Shopify's defaults (an
+/// app's reserved namespace or type is the merchant's to read and write in the admin, another
+/// everyone's; nothing on the storefront or in customer accounts unless given).
+pub(super) fn access_of(input: Option<&Value>, app_owned: bool, before: Option<&Value>) -> Value {
     let pick = |name: &str, default: &str| {
         input
             .and_then(|access| access.get(name))
@@ -352,6 +347,24 @@ fn metafields_of(state: &ShopState, owner_type: &str, namespace: &str, key: &str
         .collect()
 }
 
+/// `access.admin` is the app's to set, on its reserved namespaces only.
+fn check_admin_access(input: &Map<String, Value>, app_owned: bool, errors: &mut Vec<UserError>) {
+    if input
+        .get("access")
+        .and_then(|access| access.get("admin"))
+        .is_some_and(|admin| !admin.is_null())
+        && !app_owned
+    {
+        errors.push(
+            UserError::new(
+                &["definition", "access", "admin"],
+                "Admin access can only be specified for app-owned metafield definitions.",
+            )
+            .code("ADMIN_ACCESS_INPUT_NOT_ALLOWED"),
+        );
+    }
+}
+
 /// The checks of a definition's name and description.
 fn check_name(input: &Map<String, Value>, required: bool, errors: &mut Vec<UserError>) {
     match input.get("name").and_then(Value::as_str) {
@@ -383,7 +396,6 @@ fn check_name(input: &Map<String, Value>, required: bool, errors: &mut Vec<UserE
     }
 }
 
-/// `metafieldDefinitionCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = ctx
         .arg("definition")
@@ -445,20 +457,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         &["definition", "validations"],
         &mut errors,
     );
-    if input
-        .get("access")
-        .and_then(|access| access.get("admin"))
-        .is_some_and(|admin| !admin.is_null())
-        && !app_owned
-    {
-        errors.push(
-            UserError::new(
-                &["definition", "access", "admin"],
-                "Admin access can only be specified for app-owned metafield definitions.",
-            )
-            .code("ADMIN_ACCESS_INPUT_NOT_ALLOWED"),
-        );
-    }
+    check_admin_access(&input, app_owned, &mut errors);
     if !errors.is_empty() {
         return Ok(payload(json!({"createdDefinition": null}), &errors));
     }
@@ -599,20 +598,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
             &mut errors,
         )
     });
-    if input
-        .get("access")
-        .and_then(|access| access.get("admin"))
-        .is_some_and(|admin| !admin.is_null())
-        && !app_owned
-    {
-        errors.push(
-            UserError::new(
-                &["definition", "access", "admin"],
-                "Admin access can only be specified for app-owned metafield definitions.",
-            )
-            .code("ADMIN_ACCESS_INPUT_NOT_ALLOWED"),
-        );
-    }
+    check_admin_access(&input, app_owned, &mut errors);
     let pin = input.get("pin").and_then(Value::as_bool);
     let is_pinned = record
         .get("pinnedPosition")
@@ -682,7 +668,6 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     ))
 }
 
-/// `metafieldDefinitionDelete`.
 fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let state = mutation.state();
     let empty = json!({"deletedDefinitionId": null, "deletedDefinition": null});
@@ -704,14 +689,7 @@ fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     let delete_all = ctx
         .arg_bool("deleteAllAssociatedMetafields")
         .unwrap_or(false);
-    let metafields: Vec<String> = record
-        .get("metafields")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
+    let metafields = gids(record.get("metafields"));
     let refused = if delete_all {
         None
     } else if text(&record, "namespace").starts_with("app--") {
@@ -772,7 +750,6 @@ fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     ))
 }
 
-/// `metafieldDefinitionPin`.
 fn pin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let state = mutation.state();
     let empty = json!({"pinnedDefinition": null});
@@ -812,7 +789,6 @@ fn pin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fie
     Ok(payload(json!({"pinnedDefinition": id}), &[]))
 }
 
-/// `metafieldDefinitionUnpin`.
 fn unpin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let state = mutation.state();
     let empty = json!({"unpinnedDefinition": null});

@@ -1638,7 +1638,6 @@ fn update(
             .find(|function| text(function, "id") == Some(current_function.as_str()))
             .map(|function| super::functions::FunctionRef {
                 id: current_function.clone(),
-                handle: text(function, "handle").unwrap_or_default().to_string(),
                 api_type: text(function, "apiType").unwrap_or_default().to_string(),
                 title: text(function, "title").unwrap_or_default().to_string(),
             })
