@@ -86,6 +86,16 @@ test('shipping methods wait for the address', () => {
   assert.match(text(cards[1]), /Express.*€12\.00/);
 });
 
+test('before a rate is selected, the summary asks for the address and shows the total of the state', () => {
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  const state = structuredClone(checkoutState());
+  state.deliveryGroups = [{ handle: 'group-1', lineIds: [state.lines[0].id], options: [{ handle: 'standard', title: 'Standard', kind: 'SHIPPING', originalCost: eur(4.9), cost: eur(4.9) }], selected: null }];
+  state.cost = { ...state.cost, shipping: eur(0) };
+  const tree = page(state);
+  assert.match(text(findAll(tree, (node) => node.tag === 'div' && /^Shipping/.test(text(node)))[0]), /Enter shipping address/);
+  assert.match(text(byClass(tree, 'lsf-total')[0]), /€73\.00$/);
+});
+
 test('shows the chosen shipping method and the total with it', () => {
   const state = after({ type: 'shippingAddress', address: ADDRESS }, { type: 'deliveryOption', group: 'shipping', handle: 'standard' });
   const tree = page(state);

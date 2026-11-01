@@ -458,6 +458,21 @@ test('a deferred payment is not in the Cost API: shopify has no due-today amount
   assert.equal(line.cost.totalAmount.amount, 49);
 });
 
+test('the shipping is undefined until a rate is selected, and in no total before', () => {
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  const group = { handle: 'group-1', lineIds: [], options: [{ handle: 'standard', title: 'Standard', kind: 'SHIPPING', originalCost: eur(4.9), cost: eur(4.9) }] };
+  const before = structuredClone(checkoutState());
+  before.deliveryGroups = [{ ...group, selected: null }];
+  before.cost = { ...before.cost, shipping: eur(0), total: eur(68), dueNow: eur(68) };
+  const { shopify } = runtime({ state: before });
+  assert.equal(shopify.cost.totalShippingAmount.value, undefined);
+  assert.equal(shopify.cost.totalAmount.value.amount, 68);
+  const chosen = structuredClone(before);
+  chosen.deliveryGroups = [{ ...group, selected: 'standard' }];
+  chosen.cost = { ...chosen.cost, shipping: eur(4.9), total: eur(72.9), dueNow: eur(72.9) };
+  assert.equal(runtime({ state: chosen }).shopify.cost.totalShippingAmount.value.amount, 4.9);
+});
+
 test('the cost of a line adds order discounts up in cents', () => {
   const state = structuredClone(checkoutState());
   const eur = (amount) => ({ amount, currencyCode: 'EUR' });

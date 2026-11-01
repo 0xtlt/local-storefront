@@ -75,7 +75,7 @@ fn a_product_discount_reduces_the_lines_with_enough_items() {
         &Selection::only(["volume-discount"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
 
@@ -131,20 +131,13 @@ fn a_code_discount_runs_once_the_code_is_entered() {
     )];
     let selection = Selection::only(["volume-discount"]);
 
-    let without = compute(
-        &app,
-        &selection,
-        &store,
-        &session,
-        &CheckoutState::default(),
-        &config,
-    );
+    let without = compute(&app, &selection, &store, &session, &addressed(), &config);
     assert!(without.runs.is_empty());
     assert!(without.discounts.is_empty());
 
     let state = CheckoutState {
         discount_codes: vec!["welcome10".to_string(), "NOPE".to_string()],
-        ..CheckoutState::default()
+        ..addressed()
     };
     let with = compute(&app, &selection, &store, &session, &state, &config);
     assert!(with.errors.is_empty(), "{:?}", with.errors);
@@ -186,14 +179,7 @@ fn a_shipping_discount_makes_the_selected_option_free() {
     let selection = Selection::only(["volume-discount"]);
 
     let big = session(&store, &[(TEE, 2)]);
-    let result = compute(
-        &app,
-        &selection,
-        &store,
-        &big,
-        &CheckoutState::default(),
-        &config,
-    );
+    let result = compute(&app, &selection, &store, &big, &addressed(), &config);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     assert_eq!(result.cost.shipping, 0);
     let group = &result.delivery_groups[0];
@@ -218,14 +204,7 @@ fn a_shipping_discount_makes_the_selected_option_free() {
     );
 
     let small = session(&store, &[(TOTE, 1)]);
-    let result = compute(
-        &app,
-        &selection,
-        &store,
-        &small,
-        &CheckoutState::default(),
-        &config,
-    );
+    let result = compute(&app, &selection, &store, &small, &addressed(), &config);
     assert_eq!(result.cost.shipping, 490);
     assert!(result.discounts.is_empty());
 }
@@ -240,7 +219,7 @@ fn a_cart_without_shipping_has_no_delivery_group() {
         &Selection::all(),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config(),
     );
     assert!(result.delivery_groups.is_empty());
@@ -267,14 +246,7 @@ fn delivery_customization_hides_renames_and_moves_options() {
     );
     let selection = Selection::only(["delivery-rules"]);
 
-    let result = compute(
-        &app,
-        &selection,
-        &store,
-        &session,
-        &CheckoutState::default(),
-        &config,
-    );
+    let result = compute(&app, &selection, &store, &session, &addressed(), &config);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     let group = &result.delivery_groups[0];
     let options: Vec<_> = group
@@ -295,7 +267,7 @@ fn delivery_customization_hides_renames_and_moves_options() {
     assert!(run.logs.contains("hiding express"));
 
     // ...and a choice the Function hid falls back to the first option.
-    let mut state = CheckoutState::default();
+    let mut state = addressed();
     state
         .selected_delivery
         .insert(group.handle.clone(), "express".into());
@@ -327,14 +299,7 @@ fn payment_customization_hides_and_renames_methods() {
     let selection = Selection::only(["payment-rules"]);
 
     let small = session(&store, &[(TOTE, 1)]);
-    let result = compute(
-        &app,
-        &selection,
-        &store,
-        &small,
-        &CheckoutState::default(),
-        &config,
-    );
+    let result = compute(&app, &selection, &store, &small, &addressed(), &config);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     let names: Vec<_> = result
         .payment_methods
@@ -345,14 +310,7 @@ fn payment_customization_hides_and_renames_methods() {
     assert_eq!(result.payment_methods[0].handle, "bank");
 
     let big = session(&store, &[(TEE, 4)]);
-    let result = compute(
-        &app,
-        &selection,
-        &store,
-        &big,
-        &CheckoutState::default(),
-        &config,
-    );
+    let result = compute(&app, &selection, &store, &big, &addressed(), &config);
     let names: Vec<_> = result
         .payment_methods
         .iter()
@@ -390,14 +348,7 @@ fn payment_customization_sees_the_cart_after_the_discounts() {
         .insert("payment-rules".to_string(), payment_rules());
     let selection = Selection::only(["volume-discount", "payment-rules"]);
 
-    let without = compute(
-        &app,
-        &selection,
-        &store,
-        &session,
-        &CheckoutState::default(),
-        &config,
-    );
+    let without = compute(&app, &selection, &store, &session, &addressed(), &config);
     assert!(without.errors.is_empty(), "{:?}", without.errors);
     assert_eq!(
         run_for(&without, "payment-rules").input["cart"]["cost"]["subtotalAmount"]["amount"],
@@ -412,14 +363,7 @@ fn payment_customization_sees_the_cart_after_the_discounts() {
         &[Product],
         json!({"minimumQuantity": 1, "percentage": 50}),
     )];
-    let result = compute(
-        &app,
-        &selection,
-        &store,
-        &session,
-        &CheckoutState::default(),
-        &config,
-    );
+    let result = compute(&app, &selection, &store, &session, &addressed(), &config);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     assert_eq!(result.lines[0].total, 6400);
     let run = run_for(&result, "payment-rules");
@@ -439,11 +383,19 @@ fn payment_customization_sees_the_cart_after_the_discounts() {
 fn cost_seen_by_validation(
     discounts: Vec<DiscountConfig>,
 ) -> (lsf_checkout::CheckoutResult, serde_json::Value) {
+    cost_seen_by_validation_in(&addressed(), discounts)
+}
+
+fn cost_seen_by_validation_in(
+    state: &CheckoutState,
+    discounts: Vec<DiscountConfig>,
+) -> (lsf_checkout::CheckoutResult, serde_json::Value) {
     const QUERY: &str = r#"query Input {
         cart {
             lines { quantity cost { subtotalAmount { amount } totalAmount { amount } } }
             buyerIdentity { email }
             cost { subtotalAmount { amount } totalAmount { amount } }
+            deliveryGroups { selectedDeliveryOption { handle } }
         }
         buyerJourney { step }
         validation { metafield(namespace: "$app:config", key: "settings") { value } }
@@ -471,12 +423,44 @@ fn cost_seen_by_validation(
         &Selection::only(["volume-discount", "quantity-limit"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        state,
         &config,
         &build,
     );
     let input = run_for(&result, "quantity-limit").input.clone();
     (result, input)
+}
+
+#[test]
+fn before_an_address_no_rate_is_selected_and_no_total_has_shipping() {
+    let (result, input) = cost_seen_by_validation_in(&CheckoutState::default(), vec![]);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    // The rates are offered, none is selected: the buyer has not said where to ship.
+    let group = &result.delivery_groups[0];
+    assert!(!group.options.is_empty());
+    assert_eq!(group.selected, None);
+    // Four tees at 32.00, and no shipping in any total.
+    assert_eq!(result.cost.shipping, 0);
+    assert_eq!(result.cost.total, 12800);
+    assert_eq!(result.cost.due_now, 12800);
+    assert_eq!(input["cart"]["cost"]["totalAmount"]["amount"], "128.0");
+    assert_eq!(
+        input["cart"]["deliveryGroups"],
+        json!([{"selectedDeliveryOption": null}])
+    );
+
+    // Once the address has a country, the first rate is selected and in the totals.
+    let (result, input) = cost_seen_by_validation(vec![]);
+    assert_eq!(
+        result.delivery_groups[0].selected.as_deref(),
+        Some("standard")
+    );
+    assert_eq!(result.cost.total, 12800 + 490);
+    assert_eq!(input["cart"]["cost"]["totalAmount"]["amount"], "132.9");
+    assert_eq!(
+        input["cart"]["deliveryGroups"],
+        json!([{"selectedDeliveryOption": {"handle": "standard"}}])
+    );
 }
 
 #[test]
@@ -530,20 +514,13 @@ fn validation_errors_block_the_checkout() {
     let selection = Selection::only(["quantity-limit"]);
 
     let fine = session(&store, &[(TEE, 3)]);
-    let result = compute(
-        &app,
-        &selection,
-        &store,
-        &fine,
-        &CheckoutState::default(),
-        &config,
-    );
+    let result = compute(&app, &selection, &store, &fine, &addressed(), &config);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
 
     let too_many = session(&store, &[(TEE, 4)]);
     let state = CheckoutState {
         email: Some("someone@blocked.test".into()),
-        ..CheckoutState::default()
+        ..addressed()
     };
     let result = compute(&app, &selection, &store, &too_many, &state, &config);
     assert_eq!(result.errors.len(), 2, "{:?}", result.errors);
@@ -580,7 +557,7 @@ fn a_cart_transform_updates_a_line() {
         &Selection::only(["bundle-transform"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
     assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -611,7 +588,7 @@ fn expand(operation: serde_json::Value) -> lsf_checkout::CheckoutResult {
         &Selection::only(["bundle-transform"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     )
 }
@@ -824,7 +801,7 @@ fn a_function_cannot_update_a_line_to_a_negative_or_overflowing_price() {
             &Selection::only(["bundle-transform"]),
             &store,
             &session,
-            &CheckoutState::default(),
+            &addressed(),
             &config,
         );
         assert_eq!(result.errors.len(), 1, "{price}: {:?}", result.errors);
@@ -852,7 +829,7 @@ fn a_function_cannot_merge_lines_at_a_negative_percentage() {
         &Selection::only(["bundle-transform"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
     assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
@@ -879,7 +856,7 @@ fn out_of_range_discount(class: DiscountClass, settings: serde_json::Value) {
         &Selection::only(["volume-discount"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
     assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
@@ -929,7 +906,7 @@ fn a_cart_transform_merges_lines_into_a_bundle() {
         &Selection::only(["bundle-transform"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
     assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -1097,7 +1074,7 @@ fn the_functions_after_a_merge_see_the_quantity_of_the_merged_line() {
         &Selection::all(),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
     assert_eq!(result.lines.len(), 1);
@@ -1149,7 +1126,7 @@ fn discounts_apply_to_the_lines_a_cart_transform_made() {
         &Selection::all(),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
     // 32.00 + 10.00, half off: the discount saw the transformed price.
@@ -1178,7 +1155,7 @@ fn a_function_that_fails_is_reported_and_blocks_the_checkout() {
         &Selection::only(["bundle-transform"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
     let run = run_for(&result, "bundle-transform");
@@ -1214,7 +1191,7 @@ fn only_the_selected_extensions_run() {
         &Selection::all(),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
     let mut handles: Vec<_> = everything
@@ -1240,7 +1217,7 @@ fn only_the_selected_extensions_run() {
         &Selection::only(["quantity-limit"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
     assert_eq!(only.runs.len(), 1);
@@ -1267,7 +1244,7 @@ fn a_discount_without_its_function_is_an_error() {
         &Selection::all(),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
     assert!(
@@ -1298,7 +1275,7 @@ fn the_input_builder_gets_the_context_of_each_run() {
         .insert("quantity-limit".into(), settings(json!({"maxQuantity": 1})));
     let state = CheckoutState {
         discount_codes: vec!["code".to_string()],
-        ..CheckoutState::default()
+        ..addressed()
     };
 
     let seen = std::cell::RefCell::new(Vec::new());
@@ -1409,7 +1386,7 @@ fn the_metafield_of_the_variables_must_be_json() {
         &Selection::only(["volume-discount"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
     assert_eq!(result.runs.len(), 1);
@@ -1439,7 +1416,7 @@ fn a_function_without_a_module_is_an_error_not_a_panic() {
         &Selection::only(["quantity-limit"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config(),
     );
     assert_eq!(result.errors.len(), 1);
@@ -1463,14 +1440,7 @@ fn lines_take_the_quantity_price_breaks_of_the_variant() {
     let selection = Selection::only(Vec::<String>::new());
     let priced = |quantity| {
         let session = session(&store, &[(TEE, quantity)]);
-        let result = compute(
-            &app,
-            &selection,
-            &store,
-            &session,
-            &CheckoutState::default(),
-            &config,
-        );
+        let result = compute(&app, &selection, &store, &session, &addressed(), &config);
         (
             result.lines[0].unit_price,
             result.lines[0].subtotal,
@@ -1525,7 +1495,7 @@ fn lines_take_the_price_of_their_selling_plan() {
         &Selection::only(Vec::<String>::new()),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config(),
     );
     assert_eq!(result.lines[0].unit_price, 2700, "32.00 less 5.00");
@@ -1580,7 +1550,7 @@ fn deferred_checkout(
         &Selection::only(["volume-discount"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     )
 }
@@ -1698,7 +1668,7 @@ fn a_cart_without_a_deferred_plan_is_all_due_now() {
         &Selection::only(Vec::<String>::new()),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config(),
     );
     assert_eq!(result.cost.due_later, 0);
@@ -1724,7 +1694,7 @@ fn lines_carry_the_store_data_of_their_merchandise() {
         &Selection::only(Vec::<String>::new()),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config(),
     );
     let (product, variant) = store.variant(TEE).unwrap();
@@ -1794,7 +1764,7 @@ fn a_function_reads_the_cart_metafields_the_extensions_wrote() {
             kind: "single_line_text_field".to_string(),
             value: "Happy birthday".to_string(),
         }],
-        ..CheckoutState::default()
+        ..addressed()
     };
     // The fixture modules do not read cart metafields: the input query is asked for them besides
     // its own, and what the executor builds from it is kept.
@@ -1922,7 +1892,7 @@ fn answer_on(
         &Selection::only([handle]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
         &|_, _, _| Ok(output.clone()),
     )
@@ -2571,7 +2541,7 @@ fn discounts_seen_by_each_step() -> Vec<(lsf_checkout::input::OwnerKind, serde_j
         ]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
         &build,
     );
@@ -2712,7 +2682,7 @@ fn discount_functions_do_not_depend_on_their_order() {
             &Selection::only(["volume-discount"]),
             &store,
             &session,
-            &CheckoutState::default(),
+            &addressed(),
             &config,
             &build,
         );
@@ -2814,7 +2784,7 @@ fn hide_placements(
         &Selection::only(["payment-rules", "quantity-limit"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
         &build,
     );
@@ -3053,7 +3023,7 @@ fn the_discounts_of_two_functions_stack_as_those_of_one() {
             &Selection::only(["volume-discount"]),
             &store,
             &session,
-            &CheckoutState::default(),
+            &addressed(),
             &config,
         );
         let (mut amounts, total) = taken(&result);
@@ -3098,7 +3068,7 @@ fn order_discounts_are_a_share_of_the_subtotal_the_product_discounts_left() {
         &Selection::only(["volume-discount"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
     );
     assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -3224,7 +3194,7 @@ fn answer_discounts(
         &Selection::only(["volume-discount"]),
         &store,
         &session,
-        &CheckoutState::default(),
+        &addressed(),
         &config,
         &|_, _, ctx| {
             let title = ctx

@@ -7,7 +7,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use lsf_checkout::app::{self, App};
-use lsf_checkout::{CheckoutConfig, CheckoutResult, Metafield, PaymentMethodConfig, ShippingRate};
+use lsf_checkout::{
+    Address, CheckoutConfig, CheckoutResult, CheckoutState, Metafield, PaymentMethodConfig,
+    ShippingRate,
+};
 use lsf_core::store::CartLine;
 use lsf_core::store::load::{DataSource, LoadOptions, load};
 use lsf_core::{Session, Store};
@@ -42,6 +45,18 @@ pub fn session(store: &Store, lines: &[(u64, u32)]) -> Session {
         })
         .collect();
     session
+}
+
+/// A checkout with an address in the United States: one with no address selects no shipping
+/// rate.
+pub fn addressed() -> CheckoutState {
+    CheckoutState {
+        shipping_address: Some(Address {
+            country_code: Some("US".to_string()),
+            ..Address::default()
+        }),
+        ..CheckoutState::default()
+    }
 }
 
 pub fn config() -> CheckoutConfig {

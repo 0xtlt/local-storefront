@@ -1285,9 +1285,16 @@ impl<'a> Pipeline<'a> {
         self.select_delivery();
     }
 
-    /// The buyer's choice if it is still offered, otherwise the first option.
+    /// The buyer's choice if it is still offered, otherwise the first option. Before an address
+    /// with a country, nothing is selected, as in Shopify: the shipping is in no total, and the
+    /// Functions read no `selectedDeliveryOption`.
     fn select_delivery(&mut self) {
+        let addressed = self.state.shipping_country().is_some();
         for group in &mut self.groups {
+            if !addressed {
+                group.selected = None;
+                continue;
+            }
             let chosen = self
                 .state
                 .selected_delivery
