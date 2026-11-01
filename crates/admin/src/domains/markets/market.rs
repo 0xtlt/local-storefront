@@ -445,15 +445,8 @@ fn conditions_input(
 ) -> (Map<String, Value>, Vec<Value>) {
     let mut built = Map::new();
     let mut regions = Vec::new();
-    let path = |name: &str| -> Vec<String> {
-        at.iter()
-            .map(|part| part.to_string())
-            .chain([name.to_string()])
-            .collect()
-    };
     if let Some(Value::Object(condition)) = conditions.get("regionsCondition") {
-        let field = path("regionsCondition");
-        let field: Vec<&str> = field.iter().map(String::as_str).collect();
+        let field = [at, &["regionsCondition"]].concat();
         regions = regions_input(state, condition, &field, errors, notes);
         let level = if text(condition, "applicationLevel") == Some("ALL") {
             "ALL"
@@ -476,8 +469,7 @@ fn conditions_input(
         ("channelsCondition", "channels", "channelIds", "Channel"),
     ] {
         if let Some(Value::Object(condition)) = conditions.get(name) {
-            let field = path(name);
-            let field: Vec<&str> = field.iter().map(String::as_str).collect();
+            let field = [at, &[name]].concat();
             let value = records_condition(state, condition, list, ids, type_name, &field, errors);
             built.insert(name.into(), value);
         }
