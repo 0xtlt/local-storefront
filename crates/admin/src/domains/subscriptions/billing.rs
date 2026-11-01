@@ -100,8 +100,11 @@ enum Outcome {
     Failed(String, Vec<String>),
 }
 
-/// The general errors of `SubscriptionBillingAttemptGeneralErrorCode`; the inventory ones are
-/// `INSUFFICIENT_INVENTORY` and `INVENTORY_ALLOCATIONS_NOT_FOUND`; the others are payment errors.
+/// The inventory errors of `SubscriptionBillingAttemptErrorCode`.
+const INVENTORY_ERRORS: [&str; 2] = ["INSUFFICIENT_INVENTORY", "INVENTORY_ALLOCATIONS_NOT_FOUND"];
+
+/// The general errors of `SubscriptionBillingAttemptGeneralErrorCode`; besides them and
+/// [`INVENTORY_ERRORS`], the codes are payment errors.
 const GENERAL_ERRORS: [&str; 10] = [
     "CUSTOMER_INVALID",
     "CUSTOMER_NOT_FOUND",
@@ -244,6 +247,25 @@ fn gateway(state: &ShopState, billed: &Record) -> String {
     }
 }
 
+/// The keys and values of `customAttributes`, as an order draft takes them.
+fn attribute_pairs(attributes: Option<&Value>) -> Vec<(String, String)> {
+    attributes
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|attribute| {
+            Some((
+                attribute.get("key")?.as_str()?.to_string(),
+                attribute
+                    .get("value")?
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            ))
+        })
+        .collect()
+}
+
 /// The order of a billed cycle, made through the orders family: lines, delivery, tax, the sale.
 fn create_order(
     state: &mut ShopState,
@@ -331,22 +353,7 @@ fn create_order(
                     .filter(|weight| !weight.is_null())
                     .cloned(),
                 grams: 0,
-                attributes: line
-                    .get("customAttributes")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|attribute| {
-                        Some((
-                            attribute.get("key")?.as_str()?.to_string(),
-                            attribute
-                                .get("value")?
-                                .as_str()
-                                .unwrap_or_default()
-                                .to_string(),
-                        ))
-                    })
-                    .collect(),
+                attributes: attribute_pairs(line.get("customAttributes")),
             }
         })
         .collect();
@@ -420,22 +427,7 @@ fn create_order(
             })
             .collect(),
         note: text(billed, "note").map(str::to_string),
-        attributes: billed
-            .get("customAttributes")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|attribute| {
-                Some((
-                    attribute.get("key")?.as_str()?.to_string(),
-                    attribute
-                        .get("value")?
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
-                ))
-            })
-            .collect(),
+        attributes: attribute_pairs(billed.get("customAttributes")),
         financial: if paid {
             FinancialStatus::Paid
         } else {
@@ -508,7 +500,7 @@ fn create_order(
 /// The failed state of an attempt and its deprecated fields, for an error code.
 fn failure_fields(code: &str, variants: &[String]) -> Map<String, Value> {
     let message = model::described("SubscriptionBillingAttemptErrorCode", code);
-    let error = if code == "INSUFFICIENT_INVENTORY" || code == "INVENTORY_ALLOCATIONS_NOT_FOUND" {
+    let error = if INVENTORY_ERRORS.contains(&code) {
         json!({
             "__typename": "SubscriptionBillingAttemptInventoryError",
             "code": code,
@@ -540,7 +532,7 @@ fn failure_fields(code: &str, variants: &[String]) -> Map<String, Value> {
 
 /// The kind of error of a code, as `lastBillingAttemptErrorType` says it.
 fn error_type(code: &str) -> &'static str {
-    if code == "INSUFFICIENT_INVENTORY" || code == "INVENTORY_ALLOCATIONS_NOT_FOUND" {
+    if INVENTORY_ERRORS.contains(&code) {
         "INVENTORY_ERROR"
     } else if code.starts_with("CUSTOMER") {
         "CUSTOMER_ERROR"
