@@ -103,8 +103,7 @@ pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> R
         .scenarios
         .iter()
         .filter(|scenario| {
-            scenario.problems.is_empty()
-                && crate::checkout::selection_for(app, &options.extensions, Some(scenario)).is_ok()
+            scenario.problems.is_empty() && options.selection(app, Some(scenario)).is_ok()
         })
         .collect();
     let runs = RunOptions {

@@ -66,7 +66,9 @@ the same data every run.
   the backend makes with `webhookSubscriptionCreate` are delivered to the backend:
   - with Shopify's headers and HMAC;
   - retried after 1, 5 and 15 s;
-  - filtered by `filter` and `include_fields`.
+  - filtered by `filter` and `include_fields`;
+  - refused by the backend (`401`, `403`): the delivery's `reason`, one line of the server and
+    `lsf app webhook trigger` name the secret lsf signed it with, as `client secret:` does.
 
   Payloads follow Shopify's 2026-10 examples, for every topic Shopify publishes an example of
   (224 of the 227); the other three are logged, never sent with a made-up body. The storefront's
@@ -84,11 +86,14 @@ the same data every run.
   `topic`, `state`, `shop` (`test-1` or `test-1.myshopify.com`), `resource` (the GID of a
   record: the order a test placed) and `since` (a delivery's id). `?wait=1` waits for one that
   matches every filter. Every answer has `last`, the newest id, to pass as `since` next time:
-  a test no longer gets another test's webhook. [Control API](docs/control-api.md#webhook-deliveries).
+  a test no longer gets another test's webhook. A wait that could only time out (a shop lsf
+  does not have, a topic no subscription covers) answers `422` at once.
+  [Control API](docs/control-api.md#webhook-deliveries).
 - **The start lines of an app.** With `--app`, the Admin API's URL and token, where the client
   secret came from, where the webhooks go and the app proxy are printed before `ready:`: a tool
   that reads up to `ready:` has the token. Without `--app`, none of them (`GET /__lsf/admin`
-  has the token).
+  has the token). An app without an `extensions` directory is said to be a backend, in one
+  line.
 - **The app proxy.** A storefront request under the prefix of `[app_proxy]` goes to the backend
   with Shopify's parameters and signature. A Liquid answer is rendered in the theme's layout.
 - **Billing.** `appSubscriptionCreate` and `appPurchaseOneTimeCreate` lead to a local approval
@@ -103,6 +108,8 @@ the same data every run.
   in `GET /__lsf/admin/outbox`.
 - **New options:**
   - `--app-url`: where the backend listens.
+  - `--no-functions`: the app's UI extensions and Admin API, and none of its Functions, for a
+    backend's tests.
   - `--client-secret`: else `SHOPIFY_API_SECRET`, else the app's `.env`.
   - `--admin-throttle`.
   - `--admin-versions`: the API versions served.
@@ -138,6 +145,8 @@ the same data every run.
 
 ### Fixed
 
+- **A control API body that is JSON is read as JSON** without `Content-Type: application/json`
+  (`fetch` sends a string as `text/plain`): `PUT /__lsf/session` used to read it as a form.
 - **`lsf routes` no longer lists `/account`**, a page of lsf's that `render --strict` refuses:
   a loop of `render --strict` over `routes` passes on a stock theme. `GET /__lsf/status` lists
   the same routes.

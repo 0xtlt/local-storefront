@@ -15,7 +15,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 use std::io::Read;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -40,6 +40,9 @@ pub struct DeliveryOptions {
     pub workers: usize,
     /// How many deliveries the log keeps; the oldest are forgotten first.
     pub keep: usize,
+    /// What the reason of a delivery the backend refuses (`401`, `403`) adds: the secret lsf
+    /// signed it with, and where that secret came from ([`crate::auth::SecretSource::refusal`]).
+    pub refusal_hint: Option<String>,
 }
 
 impl Default for DeliveryOptions {
@@ -54,6 +57,7 @@ impl Default for DeliveryOptions {
             ],
             workers: 1,
             keep: 1000,
+            refusal_hint: None,
         }
     }
 }
@@ -256,7 +260,12 @@ struct Shared {
     /// Wakes the waiters: a delivery changed.
     changed: Condvar,
     options: DeliveryOptions,
+    /// Prints a line for each delivery the backend refuses ([`Deliveries::print_refusals`]).
+    refusals: OnceLock<RefusalLog>,
 }
+
+/// What prints the line of a delivery the backend refused.
+pub type RefusalLog = Arc<dyn Fn(&str) + Send + Sync>;
 
 impl Shared {
     fn lock(&self) -> MutexGuard<'_, Log> {
@@ -287,6 +296,7 @@ impl Deliveries {
             work: Condvar::new(),
             changed: Condvar::new(),
             options,
+            refusals: OnceLock::new(),
         });
         let agent = agent(&shared.options);
         for index in 0..workers {
@@ -302,6 +312,13 @@ impl Deliveries {
 
     pub fn options(&self) -> &DeliveryOptions {
         &self.shared.options
+    }
+
+    /// Prints with `log`, once per delivery, that the backend refused it (`401`, `403`), at its
+    /// first refusal: `products/create → http://localhost:3000/webhooks answered 401: …`, with
+    /// [`DeliveryOptions::refusal_hint`]. Set once; a second call changes nothing.
+    pub fn print_refusals(&self, log: RefusalLog) {
+        let _ = self.shared.refusals.set(log);
     }
 
     /// Logs a delivery and queues it to be sent at once. Its id.
@@ -548,32 +565,58 @@ fn work(shared: &Shared, agent: &ureq::Agent) {
         };
         let succeeded = attempt.error.is_none();
         let error = attempt.error.clone();
+        // A backend that refuses the signature answers this way: the reason says which secret
+        // lsf signed with, and the server says it at the first refusal.
+        let hint = shared
+            .options
+            .refusal_hint
+            .as_deref()
+            .filter(|_| is_refusal(attempt.status));
+        let first_refusal =
+            hint.is_some() && !delivery.attempts.iter().any(|done| is_refusal(done.status));
         delivery.attempts.push(attempt);
         let tried = delivery.attempts.len();
+        let with_hint = |reason: String| match hint {
+            Some(hint) => format!("{reason}: {hint}"),
+            None => reason,
+        };
         let retry = if succeeded {
             delivery.state = DeliveryState::Delivered;
             delivery.reason = None;
             None
         } else if tried <= retries {
-            delivery.reason = error;
+            delivery.reason = error.map(with_hint);
             Some(shared.options.retry_delays[tried - 1])
         } else {
             delivery.state = DeliveryState::Failed;
             delivery.reason = error.map(|error| {
-                format!(
+                with_hint(format!(
                     "{error} ({tried} attempt{})",
                     if tried == 1 { "" } else { "s" }
-                )
+                ))
             });
             None
         };
+        let refused = first_refusal
+            .then(|| delivery.attempts.last()?.error.clone())
+            .flatten()
+            .map(|error| format!("{} → {url} {}", delivery.topic, with_hint(error)));
         if let Some(delay) = retry {
             log.queue.push(Reverse((Instant::now() + delay, id)));
             shared.work.notify_one();
         }
         drop(log);
         shared.changed.notify_all();
+        if let (Some(line), Some(print)) = (refused, shared.refusals.get()) {
+            print(&line);
+        }
     }
+}
+
+/// Whether the backend refused the delivery itself (`401`, `403`): what a backend whose secret
+/// is not lsf's answers.
+fn is_refusal(status: Option<u16>) -> bool {
+    matches!(status, Some(401 | 403))
 }
 
 /// How much of the answer the log keeps.

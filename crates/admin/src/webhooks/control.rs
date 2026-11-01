@@ -30,6 +30,10 @@ const DEFAULT_WAIT: Duration = Duration::from_secs(10);
 /// The longest wait a request may ask for.
 const LONGEST_WAIT: Duration = Duration::from_secs(120);
 
+/// The shops of the Admin API, by domain (`test-1.myshopify.com`): what a wait on a shop that
+/// does not exist is refused against.
+pub type ShopList<'a> = dyn Fn() -> Vec<String> + 'a;
+
 /// The body of `POST /__lsf/webhooks/trigger`.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -66,11 +70,16 @@ pub enum TriggerError {
 impl Webhooks {
     /// The answer to a request under `/__lsf/webhooks`, `None` for another path. `build` is the
     /// api layer's: the shop and the payload of a trigger, built from the state for the record of
-    /// `request.id` (or one it picks for the topic).
-    pub fn handle(&self, request: &HttpRequest, build: &BuildTrigger) -> Option<HttpResponse> {
+    /// `request.id` (or one it picks for the topic). `shops` are the shops of the Admin API.
+    pub fn handle(
+        &self,
+        request: &HttpRequest,
+        build: &BuildTrigger,
+        shops: &ShopList,
+    ) -> Option<HttpResponse> {
         let path = request.path.trim_end_matches('/');
         Some(match (request.method.as_str(), path) {
-            ("GET", "/__lsf/webhooks") => self.list_response(request),
+            ("GET", "/__lsf/webhooks") => self.list_response(request, shops),
             ("DELETE", "/__lsf/webhooks") => {
                 let cleared = self.deliveries().clear();
                 HttpResponse::json(200, &json!({"ok": true, "deliveries": cleared}))
@@ -83,7 +92,7 @@ impl Webhooks {
         })
     }
 
-    fn list_response(&self, request: &HttpRequest) -> HttpResponse {
+    fn list_response(&self, request: &HttpRequest, shops: &ShopList) -> HttpResponse {
         let state = match request.query_param("state") {
             Some(state) => match DeliveryState::parse(state) {
                 Some(state) => Some(state),
@@ -154,6 +163,11 @@ impl Webhooks {
             Ok(timeout) => timeout,
             Err(response) => return response,
         };
+        if count > 0
+            && let Some(reason) = self.never_matches(&filter, shops)
+        {
+            return HttpResponse::error(422, reason);
+        }
         let waited = self.deliveries().wait(&filter, count, timeout);
         HttpResponse::json(
             if waited.complete { 200 } else { 408 },
@@ -164,6 +178,44 @@ impl Webhooks {
                 "waited": {"for": count, "complete": waited.complete, "timeoutMs": timeout.as_millis() as u64},
             }),
         )
+    }
+
+    /// Why a wait on `filter` could only time out, when it could: the log has nothing that
+    /// matches, and nothing can come, the shop being none of the Admin API's, or no subscription
+    /// of the app covering the topic there (on any shop without `shop=`).
+    fn never_matches(&self, filter: &DeliveryFilter, shops: &ShopList) -> Option<String> {
+        if filter.shop.is_none() && filter.topic.is_none() {
+            return None;
+        }
+        if !self.deliveries().list(filter).is_empty() {
+            return None;
+        }
+        let known = shops();
+        if let Some(shop) = &filter.shop
+            && !known.contains(shop)
+        {
+            return Some(format!(
+                "there is no shop {shop}: the wait could only time out (`GET /__lsf/admin` lists the shops)"
+            ));
+        }
+        let topic = filter.topic.as_deref()?;
+        let shops = match &filter.shop {
+            Some(shop) => vec![shop.clone()],
+            None => known,
+        };
+        let covered = shops.iter().any(|shop| {
+            self.subscriptions(shop)
+                .iter()
+                .any(|subscription| subscription.topic == topic)
+        });
+        (!covered).then(|| {
+            format!(
+                "no subscription to `{topic}` for {}, in shopify.app.toml or through the Admin \
+                 API: nothing of it is sent, so the wait could only time out. Subscribe to it \
+                 (`[[webhooks.subscriptions]]` of shopify.app.toml, or `webhookSubscriptionCreate`)",
+                filter.shop.as_deref().unwrap_or("any shop")
+            )
+        })
     }
 
     fn trigger_response(&self, request: &HttpRequest, build: &BuildTrigger) -> HttpResponse {

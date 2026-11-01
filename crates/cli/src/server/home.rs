@@ -692,8 +692,7 @@ fn uses<'a>(context: &'a Context, scenario: &'a CheckoutScenario) -> Vec<&'a str
 fn own_problems(context: &Context, scenario: &CheckoutScenario) -> Vec<String> {
     let mut problems = scenario.problems.clone();
     if problems.is_empty()
-        && let Err(problem) =
-            crate::checkout::selection_for(context.app, &context.options.extensions, Some(scenario))
+        && let Err(problem) = context.options.selection(context.app, Some(scenario))
     {
         problems.push(format!("{}: {problem}", scenario.file));
     }
@@ -1305,7 +1304,7 @@ fn build(
                 let opens = || {
                     store.scenarios.iter().filter(|scenario| {
                         scenario.problems.is_empty()
-                            && crate::checkout::selection_for(app, &options.extensions, Some(scenario)).is_ok()
+                            && options.selection(app, Some(scenario)).is_ok()
                     })
                 };
                 let scenario = opens()

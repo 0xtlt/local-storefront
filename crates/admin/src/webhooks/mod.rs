@@ -23,7 +23,7 @@ use chrono::{DateTime, Utc};
 use lsf_checkout::app::AppConfig;
 use serde_json::{Value, json};
 
-pub use control::{BuildTrigger, TriggerError, TriggerRequest};
+pub use control::{BuildTrigger, ShopList, TriggerError, TriggerRequest};
 pub use delivery::{
     Deliveries, Delivery, DeliveryFilter, DeliveryOptions, DeliveryState, NewDelivery, Request,
     Waited,

@@ -130,6 +130,41 @@ impl Server {
             .unwrap_or_default()
     }
 
+    /// The status of `POST path` with a JSON `body`.
+    fn post(&self, path: &str, body: &str) -> u16 {
+        let mut stream = TcpStream::connect(&self.address).unwrap();
+        write!(
+            stream,
+            "POST {path} HTTP/1.1\r\nhost: {}\r\ncontent-type: application/json\r\n\
+             content-length: {}\r\nconnection: close\r\n\r\n{body}",
+            self.address,
+            body.len()
+        )
+        .unwrap();
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer).unwrap();
+        answer
+            .split_whitespace()
+            .nth(1)
+            .and_then(|status| status.parse().ok())
+            .unwrap_or(0)
+    }
+
+    /// The next line it prints that starts with `prefix`, within 10 seconds.
+    fn next_line(&self, prefix: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let line = self
+                .lines
+                .recv_timeout(left)
+                .unwrap_or_else(|_| panic!("no line starting with `{prefix}`"));
+            if line.starts_with(prefix) {
+                return line;
+            }
+        }
+    }
+
     /// Everything it printed so far.
     fn said(&self) -> Vec<String> {
         let mut all = self.before_ready.clone();
@@ -324,4 +359,122 @@ fn the_counted_lines_are_singular_for_one() {
         text.contains(&format!("app:    {dir} (2 Functions, 0 UI extensions)")),
         "{text}"
     );
+}
+
+/// An app of the test's own: a `shopify.app.toml` and nothing else, as a backend's.
+fn backend_app(name: &str) -> App {
+    let path = std::env::temp_dir().join(format!("lsf-banner-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(
+        path.join("shopify.app.toml"),
+        "client_id = \"abc\"\nname = \"Backend\"\n",
+    )
+    .unwrap();
+    App(path)
+}
+
+#[test]
+fn an_app_without_extensions_says_it_is_a_backend_in_one_calm_line() {
+    let app = backend_app("backend");
+    let dir = app.0.to_str().unwrap();
+    let server = Server::start(&["app", "dev", "--app", dir], &[]);
+    let text = server.before_ready.join("\n");
+    assert!(
+        server.before_ready.contains(&format!(
+            "app:    {dir} (no extensions: the Admin API, webhooks and the app proxy)"
+        )),
+        "{text}"
+    );
+    // Nothing that reads like an error: no warning of the directory, no scenarios to run.
+    assert!(!text.contains("has no `extensions` directory"), "{text}");
+    assert!(!text.contains("scenarios:"), "{text}");
+}
+
+#[test]
+fn no_functions_serves_the_ui_extensions_alone() {
+    let app = App::new("no-functions");
+    let dir = app.0.to_str().unwrap();
+    let server = Server::start(&["app", "dev", "--app", dir, "--no-functions"], &[]);
+    let text = server.before_ready.join("\n");
+    assert!(
+        server.before_ready.contains(&format!(
+            "app:    {dir} (2 UI extensions, no Function: --no-functions)"
+        )),
+        "{text}"
+    );
+    assert!(!text.contains("scenarios:"), "{text}");
+    drop(server);
+
+    // A Function named with `--extension` would not run: said before anything starts.
+    let output = Command::new(env!("CARGO_BIN_EXE_lsf"))
+        .args(["app", "dev", "--app", dir, "--no-functions"])
+        .args(["--extension", "quantity-limit", "--port", "0"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--extension quantity-limit is a Function, and --no-functions runs none"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn a_webhook_the_backend_refuses_is_said_with_the_secret_lsf_signed_it_with() {
+    // A backend that refuses every webhook, as one with another secret does.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!(
+        "http://localhost:{}/webhooks",
+        listener.local_addr().unwrap().port()
+    );
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                head.push(byte[0]);
+            }
+            let length = String::from_utf8_lossy(&head)
+                .to_ascii_lowercase()
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:")?.trim().parse().ok())
+                .unwrap_or(0);
+            let mut body = vec![0u8; length];
+            let _ = stream.read_exact(&mut body);
+            let _ = write!(
+                stream,
+                "HTTP/1.1 401 Unauthorized\r\ncontent-length: 8\r\nconnection: close\r\n\r\nbad hmac"
+            );
+        }
+    });
+    let app = backend_app("refused");
+    let dir = app.0.to_str().unwrap();
+    let server = Server::start(
+        &[
+            "app",
+            "dev",
+            "--app",
+            dir,
+            "--client-secret",
+            "given-secret",
+        ],
+        &[],
+    );
+    let status = server.post(
+        "/__lsf/webhooks/trigger",
+        &format!(r#"{{"topic": "app/uninstalled", "address": "{url}"}}"#),
+    );
+    assert_eq!(status, 200);
+    // Said at once, `--quiet` or not, with where the secret came from and never its value.
+    assert_eq!(
+        server.next_line("webhooks: app/uninstalled"),
+        format!(
+            "webhooks: app/uninstalled → {url} answered 401: lsf signed it with the client secret \
+             from --client-secret: does the backend verify with the same one?"
+        )
+    );
+    assert!(!server.said().join("\n").contains("given-secret"));
 }

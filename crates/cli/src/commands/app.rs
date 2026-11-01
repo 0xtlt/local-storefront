@@ -166,6 +166,7 @@ fn check(
                 extensions: args.extensions.clone(),
                 variant: crate::checkout::Variant::Standard,
                 standalone: true,
+                no_functions: false,
             }),
         },
     );

@@ -295,6 +295,46 @@ fn a_failed_delivery_exits_with_1() {
 }
 
 #[test]
+fn a_refused_delivery_says_which_secret_lsf_signed_it_with() {
+    let (url, _) = backend(401);
+    let trigger = |secret: &[&str]| {
+        let mut args = vec![
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "app/uninstalled",
+            "--address",
+            &url,
+        ];
+        args.extend(secret);
+        lsf(&std::env::temp_dir(), &args)
+    };
+    // Without the app, its `.env` is not read: lsf's own secret, and how to give the backend's.
+    let output = trigger(&[]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains(
+            "failed: answered 401 (1 attempt): lsf signed it with lsf-local-client-secret, its \
+             own: give lsf the backend's secret (--client-secret, or --app for the \
+             SHOPIFY_API_SECRET of its .env)"
+        ),
+        "{}",
+        text(&output)
+    );
+    let output = trigger(&["--client-secret", "s3cr3t"]);
+    assert!(
+        text(&output).contains(
+            "failed: answered 401 (1 attempt): lsf signed it with the client secret from \
+             --client-secret: does the backend verify with the same one?"
+        ),
+        "{}",
+        text(&output)
+    );
+    assert!(!text(&output).contains("s3cr3t"), "{}", text(&output));
+}
+
+#[test]
 fn what_cannot_be_sent_is_refused_with_why() {
     let dir = std::env::temp_dir();
     let refuse = |args: &[&str], said: &str| {

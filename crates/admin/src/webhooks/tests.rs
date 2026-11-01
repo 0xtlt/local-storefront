@@ -349,6 +349,74 @@ fn a_failing_backend_is_retried_then_the_delivery_fails() {
 }
 
 #[test]
+fn a_refused_delivery_says_which_secret_lsf_signed_with_once() {
+    const HINT: &str = "lsf signed it with the client secret from --client-secret: does the \
+                        backend verify with the same one?";
+    let backend = Backend::start(|_| (401, Duration::ZERO));
+    let refusing = DeliveryOptions {
+        retry_delays: vec![Duration::from_millis(10)],
+        refusal_hint: Some(HINT.to_string()),
+        ..options()
+    };
+    let webhooks = webhooks(
+        vec![subscription(&["products/update"], "/hooks")],
+        &backend.url,
+        refusing.clone(),
+    );
+    let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+    let printed = Arc::clone(&lines);
+    webhooks
+        .deliveries()
+        .print_refusals(Arc::new(move |line: &str| {
+            printed.lock().unwrap().push(line.to_string())
+        }));
+    webhooks.emit(
+        &event("products/update", "gid://shopify/Product/1"),
+        &lookup(),
+    );
+    let delivery = &wait_for(&webhooks, 1)[0];
+    assert_eq!(delivery.state, DeliveryState::Failed);
+    assert_eq!(
+        delivery.reason.as_deref(),
+        Some(format!("answered 401 (2 attempts): {HINT}").as_str())
+    );
+    // The attempts keep what each answer was; the line is printed at the first refusal only.
+    assert_eq!(delivery.attempts[0].error.as_deref(), Some("answered 401"));
+    assert_eq!(
+        *lines.lock().unwrap(),
+        [format!(
+            "products/update → {}/hooks answered 401: {HINT}",
+            backend.url
+        )]
+    );
+
+    // Another failure is not about the secret: no hint, no line.
+    let backend = Backend::start(|_| (503, Duration::ZERO));
+    let webhooks = self::webhooks(
+        vec![subscription(&["products/update"], "/hooks")],
+        &backend.url,
+        DeliveryOptions {
+            retry_delays: Vec::new(),
+            ..refusing
+        },
+    );
+    let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+    let printed = Arc::clone(&lines);
+    webhooks
+        .deliveries()
+        .print_refusals(Arc::new(move |line: &str| {
+            printed.lock().unwrap().push(line.to_string())
+        }));
+    webhooks.emit(
+        &event("products/update", "gid://shopify/Product/1"),
+        &lookup(),
+    );
+    let delivery = &wait_for(&webhooks, 1)[0];
+    assert_eq!(delivery.reason.as_deref(), Some("answered 503 (1 attempt)"));
+    assert!(lines.lock().unwrap().is_empty());
+}
+
+#[test]
 fn a_redirect_is_a_failure_as_on_shopify() {
     let backend = Backend::start(|_| (302, Duration::ZERO));
     let webhooks = webhooks(
@@ -1037,6 +1105,11 @@ fn body(response: &crate::api::HttpResponse) -> Value {
 
 /// What the api layer gives the trigger: a product of the store for `products/*`, or the
 /// trigger's own payload.
+/// The shops of the api layer: the default one and a test's.
+fn shops() -> Vec<String> {
+    vec![SHOP.to_string(), "test-1.myshopify.com".to_string()]
+}
+
 fn build(trigger: &TriggerRequest) -> Result<(String, Value), TriggerError> {
     if let Some(payload) = &trigger.payload {
         let shop = trigger.shop.clone().unwrap_or_else(|| SHOP.to_string());
@@ -1077,7 +1150,7 @@ fn the_control_endpoints_list_wait_trigger_and_forget() {
         &backend.url,
         options(),
     );
-    let handle = |request: HttpRequest| webhooks.handle(&request, &build).unwrap();
+    let handle = |request: HttpRequest| webhooks.handle(&request, &build, &shops).unwrap();
 
     // A trigger, built by the api layer, answered once delivered.
     let triggered = handle(request(
@@ -1164,6 +1237,7 @@ fn the_log_is_filtered_by_shop_since_and_resource_and_a_wait_counts_what_matches
             .handle(
                 &request("GET", "/__lsf/webhooks", query, Value::Null),
                 &build,
+                &shops,
             )
             .unwrap();
         (response.status, body(&response))
@@ -1242,6 +1316,7 @@ fn the_log_is_filtered_by_shop_since_and_resource_and_a_wait_counts_what_matches
         .handle(
             &request("DELETE", "/__lsf/webhooks", &[], Value::Null),
             &build,
+            &shops,
         )
         .unwrap();
     let (_, cleared) = get(&[]);
@@ -1268,7 +1343,7 @@ fn the_control_endpoints_say_what_is_wrong() {
         "http://localhost:1",
         options(),
     );
-    let handle = |request: HttpRequest| webhooks.handle(&request, &build).unwrap();
+    let handle = |request: HttpRequest| webhooks.handle(&request, &build, &shops).unwrap();
     let error = |response: crate::api::HttpResponse| {
         (
             response.status,
@@ -1337,11 +1412,88 @@ fn the_control_endpoints_say_what_is_wrong() {
         Value::Null,
     )));
     assert_eq!(status, 422);
+    // A wait that could only time out is refused at once: a topic no subscription covers, a
+    // shop that does not exist.
+    let wait = |query: &[(&str, &str)]| {
+        error(handle(request(
+            "GET",
+            "/__lsf/webhooks",
+            &[query, &[("wait", "1"), ("timeout", "50")]].concat(),
+            Value::Null,
+        )))
+    };
+    let (status, message) = wait(&[("topic", "inventory_items/create")]);
+    assert_eq!(status, 422);
+    assert_eq!(
+        message,
+        "no subscription to `inventory_items/create` for any shop, in shopify.app.toml or \
+         through the Admin API: nothing of it is sent, so the wait could only time out. \
+         Subscribe to it (`[[webhooks.subscriptions]]` of shopify.app.toml, or \
+         `webhookSubscriptionCreate`)"
+    );
+    let (status, message) = wait(&[("topic", "orders/create"), ("shop", "TEST-1")]);
+    assert_eq!(status, 422);
+    assert!(
+        message.starts_with("no subscription to `orders/create` for test-1.myshopify.com,"),
+        "{message}"
+    );
+    let (status, message) = wait(&[("shop", "nosuchshop"), ("topic", "products/update")]);
+    assert_eq!(
+        (status, message.as_str()),
+        (
+            422,
+            "there is no shop nosuchshop.myshopify.com: the wait could only time out \
+             (`GET /__lsf/admin` lists the shops)"
+        )
+    );
+    // Otherwise, as before: a topic a subscription covers waits, and a listing never refuses.
+    let response = handle(request(
+        "GET",
+        "/__lsf/webhooks",
+        &[
+            ("topic", "products/update"),
+            ("shop", "test-1"),
+            ("wait", "1"),
+            ("timeout", "50"),
+        ],
+        Value::Null,
+    ));
+    assert_eq!(response.status, 408);
+    let response = handle(request(
+        "GET",
+        "/__lsf/webhooks",
+        &[("topic", "inventory_items/create"), ("shop", "nosuchshop")],
+        Value::Null,
+    ));
+    assert_eq!(
+        (response.status, body(&response)["count"].clone()),
+        (200, json!(0))
+    );
+    // A delivery the log has, sent to an address, is waited on even without a subscription.
+    webhooks.trigger(&Trigger {
+        topic: "orders/create",
+        shop: SHOP,
+        payload: &json!({}),
+        address: Some("http://localhost:1/hooks"),
+        at: Utc::now(),
+    });
+    let response = handle(request(
+        "GET",
+        "/__lsf/webhooks",
+        &[("topic", "orders/create"), ("wait", "1")],
+        Value::Null,
+    ));
+    assert_eq!(response.status, 200, "{}", body(&response));
+
     let (status, _) = error(handle(request("PUT", "/__lsf/webhooks", &[], Value::Null)));
     assert_eq!(status, 405);
     assert!(
         webhooks
-            .handle(&request("GET", "/__lsf/other", &[], Value::Null), &build)
+            .handle(
+                &request("GET", "/__lsf/other", &[], Value::Null),
+                &build,
+                &shops,
+            )
             .is_none()
     );
 }

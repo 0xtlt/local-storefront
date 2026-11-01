@@ -60,6 +60,7 @@ impl Admin {
         let app = app_dir.and_then(|dir| lsf_checkout::app::load(dir).ok());
         let (secret, secret_source) =
             lsf_admin::auth::client_secret(settings.client_secret.as_deref(), app_dir);
+        let secret_file = app_dir.map(|dir| dir.join(".env"));
         let api = AdminApi::new(
             store,
             AdminOptions {
@@ -67,7 +68,11 @@ impl Admin {
                 client_secret: secret.clone(),
                 app_url: settings.app_url.clone(),
                 throttle: settings.throttle,
-                delivery: DeliveryOptions::default(),
+                // A webhook the backend refuses says which secret lsf signed it with.
+                delivery: DeliveryOptions {
+                    refusal_hint: Some(secret_source.refusal(&secret, secret_file.as_deref())),
+                    ..DeliveryOptions::default()
+                },
                 token_seed: None,
             },
         )
@@ -82,12 +87,17 @@ impl Admin {
         // A token a reset, a shop deletion or an uninstall revoked: said once per token, even
         // with `--quiet`, since the backend that sends it fails until it forgets it.
         .with_log(Arc::new(|line: &str| eprintln!("admin:  {line}")));
+        // A webhook the backend refuses (`401`, `403`): said once per delivery, `--quiet` or
+        // not, since every webhook fails until the two secrets agree.
+        api.webhooks()
+            .deliveries()
+            .print_refusals(Arc::new(|line: &str| eprintln!("webhooks: {line}")));
         api.sync_store(store.clone());
         Admin {
             api,
             secret,
             secret_source,
-            secret_file: app_dir.map(|dir| dir.join(".env")),
+            secret_file,
         }
     }
 
@@ -120,20 +130,8 @@ impl Admin {
     /// Where the client secret came from: the value only when it is lsf's own, which is no
     /// secret, so that a webhook the backend refuses has a first place to look.
     fn secret_line(&self) -> String {
-        match self.secret_source {
-            SecretSource::Explicit => "from --client-secret".to_string(),
-            SecretSource::Environment => "from SHOPIFY_API_SECRET of the environment".to_string(),
-            SecretSource::DotEnv => format!(
-                "from SHOPIFY_API_SECRET of {}",
-                self.secret_file
-                    .as_deref()
-                    .map_or_else(|| ".env".to_string(), |file| file.display().to_string())
-            ),
-            SecretSource::Default => format!(
-                "{}   (lsf's own: give --client-secret, or SHOPIFY_API_SECRET in the app's .env)",
-                self.secret
-            ),
-        }
+        self.secret_source
+            .describe(&self.secret, self.secret_file.as_deref())
     }
 }
 
