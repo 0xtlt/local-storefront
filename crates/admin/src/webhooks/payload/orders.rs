@@ -6,9 +6,10 @@ use sha2::{Digest, Sha256};
 
 use super::customers::{embedded, order_address};
 use super::{
-    Lookup, attributes, bag_amount, bag_currency, boolean, decimal_text, field, first, grams, id,
-    integer, item_weight, items, lower, merge, money_amount, money_set, numeric, object, price,
-    price_or_zero, records, ref_gid, ref_id, resolve, strings, tags, text, text_or, time, zero_set,
+    Lookup, amount_set, attributes, bag_amount, bag_currency, boolean, decimal_text, field, first,
+    grams, id, integer, item_weight, items, lower, merge, money_amount, money_set, numeric, object,
+    price, price_or_zero, records, ref_gid, ref_id, resolve, strings, tags, text, text_or, time,
+    zero_set,
 };
 
 /// The first of several `MoneyBag` fields that the record has: a `current…Set` and the original
@@ -452,8 +453,7 @@ fn sum_set(amounts: impl Iterator<Item = Option<(i128, Value)>>, currency: &Valu
     }
     let sign = if total < 0 { "-" } else { "" };
     let amount = format!("{sign}{}.{:02}", total.abs() / 100, total.abs() % 100);
-    let money = json!({"amount": amount, "currency_code": code});
-    json!({"shop_money": money.clone(), "presentment_money": money})
+    amount_set(&json!(amount), &code)
 }
 
 /// `taxLines` as REST writes them.

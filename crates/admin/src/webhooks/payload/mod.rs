@@ -832,10 +832,15 @@ fn money_set(bag: &Value) -> Value {
     }
 }
 
+/// A `MoneyBag` of one price in one currency, its shop and presentment moneys the same.
+fn amount_set(amount: &Value, currency: &Value) -> Value {
+    let money = json!({"amount": price_or_zero(amount), "currency_code": currency});
+    json!({"shop_money": money.clone(), "presentment_money": money})
+}
+
 /// A `MoneyBag` of zero in a currency: what REST gives for an amount the record does not have.
 fn zero_set(currency: &Value) -> Value {
-    let money = json!({"amount": "0.00", "currency_code": currency});
-    json!({"shop_money": money.clone(), "presentment_money": money})
+    amount_set(&Value::Null, currency)
 }
 
 /// The currency of a `MoneyBag`, for the zeros of the same order.

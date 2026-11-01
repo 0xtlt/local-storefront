@@ -7,14 +7,16 @@ use serde_json::{Map, Value, json};
 
 use super::customers::{embedded, order_address};
 use super::{
-    Lookup, bag_amount, field, grams, item_weight, millis, numeric, price, price_or_zero, resolve,
-    text, time,
+    Lookup, amount_set, attributes, bag_amount, field, grams, item_weight, millis, numeric, price,
+    price_or_zero, resolve, text, time, zero_set,
 };
 
-/// A price in the cart's currency as a `MoneyBag`, as REST writes `*_set`.
-fn set(amount: &Value, currency: &Value) -> Value {
-    let money = json!({"amount": price_or_zero(amount), "currency_code": currency});
-    json!({"shop_money": money.clone(), "presentment_money": money})
+/// The note of a cart or a checkout, `null` when empty.
+fn note(record: &Map<String, Value>) -> Value {
+    match field(record, "note") {
+        Value::String(note) if !note.is_empty() => json!(note),
+        _ => Value::Null,
+    }
 }
 
 /// `properties`: `null` without any, else `{name: value}`.
@@ -68,24 +70,20 @@ pub(super) fn cart(record: &Map<String, Value>) -> Value {
                 "title": text(line, "title"),
                 "total_discount": "0.00",
                 "vendor": text(line, "vendor"),
-                "discounted_price_set": set(price, &currency),
-                "line_price_set": set(line_price, &currency),
-                "original_line_price_set": set(line_price, &currency),
-                "price_set": set(price, &currency),
-                "total_discount_set": set(&json!("0.00"), &currency),
+                "discounted_price_set": amount_set(price, &currency),
+                "line_price_set": amount_set(line_price, &currency),
+                "original_line_price_set": amount_set(line_price, &currency),
+                "price_set": amount_set(price, &currency),
+                "total_discount_set": zero_set(&currency),
                 "parent_relationship": null,
             })
         })
         .collect();
-    let note = match field(record, "note") {
-        Value::String(note) if !note.is_empty() => json!(note),
-        _ => Value::Null,
-    };
     json!({
         "id": text(record, "token"),
         "token": text(record, "token"),
         "line_items": lines,
-        "note": note,
+        "note": note(record),
         "updated_at": millis(field(record, "updatedAt")),
         "created_at": millis(field(record, "createdAt")),
     })
@@ -101,7 +99,6 @@ fn rate(record: &Map<String, Value>) -> Value {
         .unwrap_or(json!(0.0))
 }
 
-/// The cents of an amount.
 fn cents(amount: &Value) -> i64 {
     crate::domains::catalog::cents_of(Some(amount)).unwrap_or(0)
 }
@@ -237,18 +234,14 @@ pub(super) fn checkout(record: &Map<String, Value>, lookup: &dyn Lookup) -> Valu
     let customer_value = customer
         .as_ref()
         .map_or(Value::Null, |customer| embedded(customer, lookup));
-    let accepts_marketing = customer
-        .as_ref()
-        .and_then(|customer| customer.get("emailMarketingConsent"))
-        .and_then(|consent| consent.get("marketingState"))
-        .and_then(Value::as_str)
-        == Some("SUBSCRIBED");
-    let accepts_sms = customer
-        .as_ref()
-        .and_then(|customer| customer.get("smsMarketingConsent"))
-        .and_then(|consent| consent.get("marketingState"))
-        .and_then(Value::as_str)
-        == Some("SUBSCRIBED");
+    let subscribed = |consent: &str| {
+        customer
+            .as_ref()
+            .and_then(|customer| customer.get(consent))
+            .and_then(|consent| consent.get("marketingState"))
+            .and_then(Value::as_str)
+            == Some("SUBSCRIBED")
+    };
     let discount_codes: Vec<Value> = field(record, "discountCodes")
         .as_array()
         .into_iter()
@@ -269,27 +262,17 @@ pub(super) fn checkout(record: &Map<String, Value>, lookup: &dyn Lookup) -> Valu
         })
         .collect();
     let address = |name: &str| order_address(field(record, name).as_object());
-    let note = match field(record, "note") {
-        Value::String(note) if !note.is_empty() => json!(note),
-        _ => Value::Null,
-    };
-    let note_attributes: Vec<Value> = field(record, "customAttributes")
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|pair| json!({"name": pair.get("key"), "value": pair.get("value")}))
-        .collect();
     let head = json!({
         "token": text(record, "lsfToken"),
         "cart_token": text(record, "lsfCartToken"),
         "email": text(record, "lsfEmail"),
         "gateway": text(record, "lsfGateway"),
-        "buyer_accepts_marketing": accepts_marketing,
+        "buyer_accepts_marketing": subscribed("emailMarketingConsent"),
         "created_at": time(field(record, "createdAt")),
         "updated_at": time(field(record, "updatedAt")),
         "landing_site": null,
-        "note": note,
-        "note_attributes": note_attributes,
+        "note": note(record),
+        "note_attributes": attributes(field(record, "customAttributes")),
         "referring_site": null,
         "shipping_lines": shipping_lines,
         "taxes_included": field(record, "taxesIncluded").as_bool().unwrap_or(false),
@@ -314,7 +297,7 @@ pub(super) fn checkout(record: &Map<String, Value>, lookup: &dyn Lookup) -> Valu
         "tax_lines": tax_lines,
         "source_name": "web",
         "presentment_currency": currency,
-        "buyer_accepts_sms_marketing": accepts_sms,
+        "buyer_accepts_sms_marketing": subscribed("smsMarketingConsent"),
         "sms_marketing_phone": null,
         "total_discounts": price_or_zero(&bag_amount(field(record, "totalDiscountSet"))),
         "total_line_items_price": price_or_zero(&bag_amount(field(record, "totalLineItemsPriceSet"))),
