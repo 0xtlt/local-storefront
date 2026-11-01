@@ -1813,7 +1813,9 @@ not publish the text of its notifications); another channel says what happened i
   its outbox too), forgets the subscriptions the backend made and the tokens OAuth issued; the
   printed token works again, and the storefront is the files' again.
 - **Isolate parallel tests**: `POST /__lsf/admin/shops {"shop": "test-1"}` gives each test a shop
-  of its own, seeded from the same data, and its token.
+  of its own, seeded from the same data, and its token. `DELETE /__lsf/admin/shops/test-1` deletes
+  it when the test is done, with its tokens: each shop is a copy of the seed (about 2 MB for the
+  demo store), which a reset keeps.
 - **Fixed dates**: with `now` in the store data, every record created or changed is dated then,
   and the same run gives the same answers; [`POST /__lsf/admin/clock`](#the-shops-clock) moves
   it on.

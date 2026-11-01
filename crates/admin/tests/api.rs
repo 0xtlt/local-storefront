@@ -478,6 +478,88 @@ fn isolates_the_shops_it_creates() {
 }
 
 #[test]
+fn deletes_the_shops_it_creates() {
+    let api = demo_api();
+    let created = json_of(&send(
+        &api,
+        "POST",
+        "/__lsf/admin/shops",
+        json!({"shop": "test-1"}),
+    ));
+    let token = created["token"].as_str().unwrap().to_string();
+    let (_, subscribed) = graphql(
+        &api,
+        &token,
+        "mutation { webhookSubscriptionCreate(topic: PRODUCTS_UPDATE, webhookSubscription: {uri: \"https://example.com/hooks\"}) { userErrors { message } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        subscribed["data"]["webhookSubscriptionCreate"]["userErrors"],
+        json!([])
+    );
+
+    let deleted = send(&api, "DELETE", "/__lsf/admin/shops/test-1", Value::Null);
+    assert_eq!(deleted.status, 200);
+    assert_eq!(
+        json_of(&deleted),
+        json!({"ok": true, "shop": "test-1.myshopify.com", "revoked": 1, "deletedSubscriptions": 1})
+    );
+    // Its token goes with it, and the server lists the default shop alone.
+    let (status, refused) = graphql(&api, &token, "{ shop { name } }", Value::Null);
+    assert_eq!(status, 401);
+    assert_eq!(refused, json!({"errors": INVALID_TOKEN}));
+    let status = json_of(&send(&api, "GET", "/__lsf/admin", Value::Null));
+    assert_eq!(status["shops"].as_array().unwrap().len(), 1);
+
+    let missing = send(
+        &api,
+        "DELETE",
+        "/__lsf/admin/shops/test-1.myshopify.com",
+        Value::Null,
+    );
+    assert_eq!(missing.status, 404);
+    let default = send(
+        &api,
+        "DELETE",
+        &format!("/__lsf/admin/shops/{}", api.default_shop()),
+        Value::Null,
+    );
+    assert_eq!(default.status, 409);
+    assert!(
+        String::from_utf8_lossy(&default.body).contains("is the default shop"),
+        "{}",
+        String::from_utf8_lossy(&default.body)
+    );
+    assert_eq!(
+        send(&api, "GET", "/__lsf/admin/shops/test-1", Value::Null).status,
+        405
+    );
+    // The default shop still answers.
+    let (status, _) = graphql(&api, &default_token(&api), "{ shop { name } }", Value::Null);
+    assert_eq!(status, 200);
+
+    // Made again under the name, it is a new shop with the app installed.
+    let again = send(
+        &api,
+        "POST",
+        "/__lsf/admin/shops",
+        json!({"shop": "test-1"}),
+    );
+    assert_eq!(again.status, 201);
+    let (status, answer) = graphql(
+        &api,
+        &token,
+        "{ webhookSubscriptionsCount { count } }",
+        Value::Null,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(
+        answer["data"]["webhookSubscriptionsCount"]["count"],
+        json!(0)
+    );
+}
+
+#[test]
 fn uninstalls_and_installs_the_app() {
     let receiver = Receiver::start(SECRET);
     let api = demo_api();
