@@ -212,7 +212,7 @@ pub fn app_around(dir: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// The app of a command: `--app`, or the one the current folder is in.
+/// The app of a command (`lsf app check`): `--app`, or the one the current folder is in.
 pub fn app_of(app: Option<&Path>, command: &str) -> Result<PathBuf, String> {
     match app {
         Some(app) => Ok(app.to_path_buf()),
@@ -221,10 +221,20 @@ pub fn app_of(app: Option<&Path>, command: &str) -> Result<PathBuf, String> {
             .and_then(|dir| app_around(&dir))
             .ok_or_else(|| {
                 format!(
-                    "`{command}` needs the app: run it in the app's folder, or give `--app DIR` \
-                     (or LSF_APP)"
+                    "`{}` needs the app: run it in the app's folder, or give `--app DIR` \
+                     (or LSF_APP)",
+                    as_typed(command)
                 )
             }),
+    }
+}
+
+/// A command of lsf (`lsf app check`) as the user types it: [`lsf_core::util::command`] for
+/// `lsf`, `npx local-storefront app check` when installed with npm.
+pub fn as_typed(command: &str) -> String {
+    match command.strip_prefix("lsf ") {
+        Some(rest) => format!("{} {rest}", lsf_core::util::command()),
+        None => command.to_string(),
     }
 }
 

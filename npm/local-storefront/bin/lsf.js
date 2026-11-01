@@ -26,7 +26,10 @@ try {
   process.exit(1);
 }
 
-const child = spawn(binary, process.argv.slice(2), { stdio: 'inherit' });
+// Installed with npm, the command is `npx local-storefront`, not `lsf`: the hints of the binary
+// (`build it with \`lsf app build …\``) say what to type.
+const env = { ...process.env, LSF_COMMAND: process.env.LSF_COMMAND || 'npx local-storefront' };
+const child = spawn(binary, process.argv.slice(2), { stdio: 'inherit', env });
 
 // A runner that stops this process (Playwright's webServer, a CI step) must stop the server.
 const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];

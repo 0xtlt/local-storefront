@@ -159,8 +159,11 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
         ("GET" | "HEAD", []) if options.standalone => Some(home(state, incoming)),
         _ if options.standalone => Some(Reply::text(
             404,
-            "Not found. This server shows the checkout of an app only: start `lsf serve --app` \
-             to serve a theme with it.",
+            format!(
+                "Not found. This server shows the checkout of an app only: start `{} serve --app` \
+                 to serve a theme with it.",
+                lsf_core::util::command()
+            ),
         )),
         _ => None,
     }?;
@@ -429,7 +432,10 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
             .map(|scenario| scenario.name.as_str())
             .collect();
         let hint = if known.is_empty() {
-            "There are no scenarios: `lsf app init` writes a set in the `checkouts` folder of the store data.".to_string()
+            format!(
+                "There are no scenarios: `{} app init` writes a set in the `checkouts` folder of the store data.",
+                lsf_core::util::command()
+            )
         } else {
             format!("The scenarios are: {}.", known.join(", "))
         };
@@ -915,6 +921,8 @@ pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
                     "handle": extension.handle,
                     "apiVersion": extension.api_version,
                     "script": format!("/__lsf/extensions/{}/{file}", extension.handle),
+                    // What builds it, for the error of a bundle that cannot be loaded.
+                    "build": format!("{} app build {}", lsf_core::util::command(), extension.handle),
                     "targets": targets,
                     "capabilities": extension.capabilities,
                     "settings": setting_values(&extension.settings),

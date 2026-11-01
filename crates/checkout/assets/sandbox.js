@@ -43,7 +43,7 @@
   function loadScript(init) {
     return new Promise((resolve, reject) => {
       if (typeof init.source !== 'string') {
-        const build = init.handle ? '`lsf app build ' + init.handle + '`' : '`lsf app build`';
+        const build = '`' + (init.build || (init.handle ? 'lsf app build ' + init.handle : 'lsf app build')) + '`';
         reject(new Error('Could not load ' + init.script + '. Build it with ' + build + ' (or `--build`) so the extension has a bundle in dist/.'));
         return;
       }

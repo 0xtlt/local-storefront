@@ -51,14 +51,22 @@ fn copy(from: &Path, to: &Path) {
 }
 
 fn lsf(directory: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_lsf"))
-        .args(args)
+    lsf_as(directory, args, None)
+}
+
+/// [`lsf`], run as `LSF_COMMAND` says it is (the npm launcher sets `npx local-storefront`).
+fn lsf_as(directory: &Path, args: &[&str], command: Option<&str>) -> Output {
+    let mut lsf = Command::new(env!("CARGO_BIN_EXE_lsf"));
+    lsf.args(args)
         .current_dir(directory)
         .env_remove("LSF_THEME")
         .env_remove("LSF_DATA")
         .env_remove("LSF_APP")
-        .output()
-        .unwrap()
+        .env_remove("LSF_COMMAND");
+    if let Some(command) = command {
+        lsf.env("LSF_COMMAND", command);
+    }
+    lsf.output().unwrap()
 }
 
 fn text(output: &Output) -> String {
@@ -418,6 +426,38 @@ type = "function"
     );
     let logs = failure["logs"].as_str().unwrap();
     assert!(logs.starts_with("checking\nError: boom b2b\n"), "{logs}");
+}
+
+#[test]
+fn installed_with_npm_the_hints_say_npx_local_storefront() {
+    let app = App::new("npx");
+    assert!(lsf(&app.0, &["init"]).status.success());
+    std::fs::remove_file(app.0.join("extensions/quantity-limit/dist/function.wasm")).unwrap();
+    let npx = Some("npx local-storefront");
+    // No scenario yet: `app init` writes them, and says what to run next.
+    let output = lsf_as(&app.0, &["app", "check"], npx);
+    assert!(
+        text(&output).contains("`npx local-storefront app init` writes a set"),
+        "{}",
+        text(&output)
+    );
+    let output = lsf_as(&app.0, &["app", "init"], npx);
+    assert!(
+        text(&output).contains("next: `npx local-storefront app dev --app "),
+        "{}",
+        text(&output)
+    );
+    let output = lsf_as(&app.0, &["app", "check"], npx);
+    let advice = "build it with `npx local-storefront app build quantity-limit` (or `--build`)";
+    assert!(text(&output).contains(advice), "{}", text(&output));
+    assert!(!text(&output).contains("`lsf "), "{}", text(&output));
+    // A command run outside the app names itself as it was typed.
+    let output = lsf_as(&std::env::temp_dir(), &["app", "check"], npx);
+    assert!(
+        text(&output).contains("`npx local-storefront app check` needs the app"),
+        "{}",
+        text(&output)
+    );
 }
 
 #[test]

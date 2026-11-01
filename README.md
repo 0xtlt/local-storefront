@@ -21,7 +21,8 @@ npx local-storefront serve
 Open <http://127.0.0.1:9292>: your theme runs with a demo store.
 
 > Write `npx local-storefront`, not `npx lsf`: `lsf` is another package on npm. In the
-> `scripts` of `package.json`, `local-storefront serve` is enough.
+> `scripts` of `package.json`, `local-storefront serve` is enough. Installed with npm, the hints
+> the tool prints say `npx local-storefront` too; the binary of a release says `lsf`.
 
 **Coming from `shopify theme dev`?** Add `--live-reload` to reload open pages as you edit; leave
 it off in tests. The store is your JSON files, not a development store: `init` (below) writes

@@ -140,13 +140,15 @@ impl FunctionExtension {
         let path = self.wasm_path.display();
         match self.build() {
             Some(_) => format!(
-                "no Wasm module at {path}: build it with `lsf app build {}` (or `--build`)",
-                self.handle
+                "no Wasm module at {path}: build it with `{lsf} app build {}` (or `--build`)",
+                self.handle,
+                lsf = lsf_core::util::command(),
             ),
             None => format!(
                 "no Wasm module at {path}, and no `[extensions.build] command` in its \
-                 shopify.extension.toml to build it with: add one, then run `lsf app build {}`",
-                self.handle
+                 shopify.extension.toml to build it with: add one, then run `{lsf} app build {}`",
+                self.handle,
+                lsf = lsf_core::util::command(),
             ),
         }
     }
@@ -155,7 +157,11 @@ impl FunctionExtension {
     pub fn build_hint(&self) -> Option<String> {
         self.build().map(|build| match build {
             Build::Command(command) => command.to_string(),
-            Build::JavaScript => format!("lsf app function build {}", self.handle),
+            Build::JavaScript => format!(
+                "{} app function build {}",
+                lsf_core::util::command(),
+                self.handle
+            ),
         })
     }
 
@@ -311,7 +317,7 @@ impl UiExtension {
     /// The command that builds the extension, as the pages and messages say it.
     pub fn build_hint(&self) -> Option<String> {
         self.buildable()
-            .then(|| format!("lsf app build {}", self.handle))
+            .then(|| format!("{} app build {}", lsf_core::util::command(), self.handle))
     }
 }
 
@@ -983,12 +989,13 @@ fn load_ui_extension(
                 .as_ref()
                 .is_some_and(|module| dir.join(module).is_file())
         });
+        let lsf = lsf_core::util::command();
         let build = if has_source {
-            format!("build it with `lsf app build {handle}` (or `--build`)")
+            format!("build it with `{lsf} app build {handle}` (or `--build`)")
         } else {
             format!(
                 "no `module` of its targets is there to build it from: name its sources, then \
-                 run `lsf app build {handle}`"
+                 run `{lsf} app build {handle}`"
             )
         };
         app.warn(

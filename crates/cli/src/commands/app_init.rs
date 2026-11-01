@@ -792,7 +792,8 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
         .count();
     if store_errors > 0 {
         eprintln!(
-            "warning: the store data has {store_errors} error(s): run `lsf validate`. The scenarios are written for what could be read."
+            "warning: the store data has {store_errors} error(s): run `{} validate`. The scenarios are written for what could be read.",
+            lsf_core::util::command()
         );
     }
 
@@ -840,13 +841,14 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
         "{}: wrote {written} scenario(s), kept {kept} existing one(s), for {target}",
         directory.join("checkouts").display()
     );
+    let lsf = lsf_core::util::command();
     match &app_dir {
         Some(app) => eprintln!(
-            "next: `lsf app dev --app {}` lists them on its home page",
+            "next: `{lsf} app dev --app {}` lists them on its home page",
             app.display()
         ),
         None => eprintln!(
-            "next: `lsf app dev --app <dir>` lists them on its home page. Run `lsf app init --app <dir>` to make them for an app"
+            "next: `{lsf} app dev --app <dir>` lists them on its home page. Run `{lsf} app init --app <dir>` to make them for an app"
         ),
     }
     Ok(ExitCode::SUCCESS)

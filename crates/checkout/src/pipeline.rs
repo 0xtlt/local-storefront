@@ -1899,10 +1899,11 @@ fn variables_hint(function: &FunctionExtension, discount: bool) -> String {
     } else {
         format!("`checkout.functions.{}.metafields`", function.handle)
     };
+    let lsf = lsf_core::util::command();
     format!(
         ". The variables are the keys of the JSON metafield `{field}` (`[extensions.input.variables]`): \
          give it in {place}, e.g. `\"{field}\": {{\"type\": \"json\", \"value\": {{…}}}}`. \
-         `lsf app init --app <dir>` writes it with empty values"
+         `{lsf} app init --app <dir>` writes it with empty values"
     )
 }
 

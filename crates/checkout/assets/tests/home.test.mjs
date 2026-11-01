@@ -334,6 +334,11 @@ test('a bundle that does not load is an error that says why, without waiting for
   assert.match(problem.message, /^its bundle does not load: Could not load .*`lsf app build probed` \(or `--build`\)/);
   assert.equal(page.frames[0].attached, false);
   assert.equal(page.listeners.size, 0);
+  // Installed with npm, the server names the command as it is typed.
+  const npm = sandboxedProbe({});
+  npm.row.dataset.build = 'npx local-storefront app build probed';
+  const typed = await probe(npm.document, npm.window, 'sandbox.html', npm.row, 2000);
+  assert.match(typed.errors[0], /Build it with `npx local-storefront app build probed` \(or `--build`\)/);
 });
 
 test('a frame that reported an error and never answers keeps the error', async () => {
