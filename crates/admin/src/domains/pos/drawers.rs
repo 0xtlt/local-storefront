@@ -19,7 +19,10 @@
 
 use serde_json::{Value, json};
 
-use super::{DEVICE_LOCATION, REASON_CODE_TYPES, is_reason_code, money, tell_device, text};
+use super::{
+    DEVICE_LOCATION, REASON_CODE_TYPES, is_reason_code, keys_with, money, record_of, tell_device,
+    text,
+};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{ShopState, value};
@@ -78,12 +81,10 @@ fn drawer_named(
         .and_then(|drawer| text(drawer, "id").map(str::to_string))
 }
 
-/// The checks of a drawer's name.
 fn name_ok(name: &str) -> bool {
     !name.trim().is_empty() && name.chars().count() <= NAME_LENGTH
 }
 
-/// Makes a drawer.
 fn new_drawer(state: &mut ShopState, location: &str, name: &str) -> String {
     let id = state.new_gid("CashDrawer");
     let balance = money(state, 0);
@@ -98,23 +99,32 @@ fn new_drawer(state: &mut ShopState, location: &str, name: &str) -> String {
     id
 }
 
-/// Assigns a device to a drawer: its prior assignment goes. Whether it changed.
-fn assign_device(state: &mut ShopState, device: &str, drawer: &str) -> bool {
-    let current = state
+/// Assigns a device to a drawer (its prior assignment goes) and tells the device, unless it
+/// already was.
+fn assign_device(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>, device: &str, drawer: &str) {
+    let state = mutation.state();
+    if state
         .get(device)
         .and_then(|record| text(record, "cashDrawer"))
-        .map(str::to_string);
-    if current.as_deref() == Some(drawer) {
-        return false;
+        == Some(drawer)
+    {
+        return;
     }
+    let state = mutation.state_mut();
     if let Some(record) = state.get_mut(device) {
         record.insert("cashDrawer".into(), json!(drawer));
     }
     state.emit("point_of_sale_devices/update", device);
-    true
+    tell_device(
+        mutation,
+        ctx,
+        device,
+        "cash_drawer_assigned",
+        drawer,
+        format!("assigned to the cash drawer {drawer}"),
+    );
 }
 
-/// `cashDrawerCreate`.
 fn drawer_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"cashDrawer": null});
     let state = mutation.state();
@@ -139,7 +149,6 @@ fn drawer_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     Ok(payload(json!({"cashDrawer": drawer}), &[]))
 }
 
-/// `cashDrawerFindOrCreate`.
 fn drawer_find_or_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -175,31 +184,16 @@ fn drawer_find_or_create(
         return Ok(payload(empty, &[error]));
     }
     let found = drawer_named(state, &location, &name, None);
-    let state = mutation.state_mut();
-    let drawer = found.unwrap_or_else(|| new_drawer(state, &location, &name));
-    let assigned = assign_device(state, &device, &drawer);
-    if assigned {
-        let note = tell_device(
-            state,
-            &device,
-            "cash_drawer_assigned",
-            &drawer,
-            format!("assigned to the cash drawer {drawer}"),
-        );
-        mutation.note(format!("cashDrawerFindOrCreate: {note}"));
-    }
+    let drawer = found.unwrap_or_else(|| new_drawer(mutation.state_mut(), &location, &name));
+    assign_device(mutation, ctx, &device, &drawer);
     Ok(payload(json!({"cashDrawer": drawer}), &[]))
 }
 
-/// `cashDrawerUpdate`.
 fn drawer_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"cashDrawer": null});
     let state = mutation.state();
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("CashDrawer"))
-    else {
+    let Some(record) = record_of(state, &id, "CashDrawer") else {
         return Ok(payload(empty, &[coded(&["id"], "CASH_DRAWER_NOT_FOUND")]));
     };
     let location = text(record, "location").unwrap_or_default().to_string();
@@ -226,7 +220,6 @@ fn drawer_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     Ok(payload(json!({"cashDrawer": id}), &[]))
 }
 
-/// `pointOfSaleDeviceAssignToCashDrawer`.
 fn assign(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"pointOfSaleDevice": null});
     let state = mutation.state();
@@ -235,19 +228,13 @@ fn assign(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         .arg_str("pointOfSaleDeviceId")
         .unwrap_or_default()
         .to_string();
-    let Some(drawer_record) = state
-        .get(&drawer)
-        .filter(|_| state.type_of(&drawer) == Some("CashDrawer"))
-    else {
+    let Some(drawer_record) = record_of(state, &drawer, "CashDrawer") else {
         return Ok(payload(
             empty,
             &[coded(&["cashDrawerId"], "CASH_DRAWER_NOT_FOUND")],
         ));
     };
-    let Some(device_record) = state
-        .get(&device)
-        .filter(|_| state.type_of(&device) == Some("PointOfSaleDevice"))
-    else {
+    let Some(device_record) = record_of(state, &device, "PointOfSaleDevice") else {
         return Ok(payload(
             empty,
             &[coded(
@@ -262,17 +249,7 @@ fn assign(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
             &[coded(&["cashDrawerId"], "LOCATION_MISMATCH")],
         ));
     }
-    let state = mutation.state_mut();
-    if assign_device(state, &device, &drawer) {
-        let note = tell_device(
-            state,
-            &device,
-            "cash_drawer_assigned",
-            &drawer,
-            format!("assigned to the cash drawer {drawer}"),
-        );
-        mutation.note(format!("pointOfSaleDeviceAssignToCashDrawer: {note}"));
-    }
+    assign_device(mutation, ctx, &device, &drawer);
     Ok(payload(json!({"pointOfSaleDevice": device}), &[]))
 }
 
@@ -285,7 +262,6 @@ fn code_taken(state: &ShopState, code: &str) -> bool {
     })
 }
 
-/// `cashManagementReasonCodeCreate`.
 fn reason_code_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -309,7 +285,6 @@ fn reason_code_create(
     Ok(payload(json!({"reasonCode": id}), &[]))
 }
 
-/// `cashManagementReasonCodeDelete`.
 fn reason_code_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -350,16 +325,8 @@ fn drawer_devices(
     ctx: &FieldContext<'_>,
     object: &Obj,
 ) -> Result<Output<Obj>, FieldError> {
-    let state = r.state();
     let drawer = object.key().unwrap_or_default();
-    let items: Vec<Value> = state
-        .keys("PointOfSaleDevice")
-        .filter(|device| {
-            state
-                .get(device)
-                .and_then(|record| text(record, "cashDrawer"))
-                == Some(drawer)
-        })
+    let items: Vec<Value> = keys_with(r.state(), "PointOfSaleDevice", "cashDrawer", drawer)
         .map(|device| json!(device))
         .collect();
     r.connection(ctx, items)

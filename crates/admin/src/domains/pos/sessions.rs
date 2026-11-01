@@ -31,7 +31,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::{Value, json};
 
-use super::{cents, is_reason_code, money, tell_device, text};
+use super::{cents, is_reason_code, keys_with, money, record_of, tell_device, text};
 use crate::domains::orders::model::currency;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -93,11 +93,17 @@ pub fn register(registry: &mut Registry) {
 /// A date of a record, as a search value.
 fn date_value(record: &Record, name: &str) -> Option<Vec<SearchValue>> {
     Some(
-        text(record, name)
-            .and_then(|date| DateTime::parse_from_rfc3339(date).ok())
-            .map(|date| vec![SearchValue::Date(date.with_timezone(&Utc))])
+        instant(text(record, name))
+            .map(|date| vec![SearchValue::Date(date)])
             .unwrap_or_default(),
     )
+}
+
+/// A `DateTime` as the records and the arguments write it.
+fn instant(date: Option<&str>) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(date?)
+        .ok()
+        .map(|date| date.with_timezone(&Utc))
 }
 
 /// An error of a session mutation, by its code: the code's description is the message.
@@ -123,9 +129,8 @@ fn coded(field: &[&str], code: &str) -> UserError {
 
 /// The time of an argument (`time`), in UTC as the records write dates, else now.
 fn time_arg(mutation: &Mutation<'_>, ctx: &FieldContext<'_>) -> String {
-    ctx.arg_str("time")
-        .and_then(|time| DateTime::parse_from_rfc3339(time).ok())
-        .map(|time| value::date_time(time.with_timezone(&Utc)))
+    instant(ctx.arg_str("time"))
+        .map(value::date_time)
         .unwrap_or_else(|| mutation.timestamp())
 }
 
@@ -156,12 +161,10 @@ fn check_common(
     }
 }
 
-/// A drawer's balance, in cents.
 fn balance_of(state: &ShopState, drawer: &str) -> i64 {
     cents(state.get(drawer).and_then(|record| record.get("balance")))
 }
 
-/// Sets a drawer's balance, in cents.
 fn set_balance(state: &mut ShopState, drawer: &str, balance: i64) {
     let money = money(state, balance);
     if let Some(record) = state.get_mut(drawer) {
@@ -170,7 +173,6 @@ fn set_balance(state: &mut ShopState, drawer: &str, balance: i64) {
     state.emit("cash_drawers/update", drawer);
 }
 
-/// Adds an activity to a session.
 fn record_activity(state: &mut ShopState, session: &str, activity: Value) {
     if let Some(Value::Array(activities)) = state
         .get_mut(session)
@@ -189,7 +191,6 @@ fn add_to(state: &mut ShopState, session: &str, name: &str, amount: i64) {
     }
 }
 
-/// A count activity.
 fn count_activity(
     state: &ShopState,
     ctx: &FieldContext<'_>,
@@ -214,7 +215,6 @@ fn count_activity(
     })
 }
 
-/// `pointOfSaleDevicePaymentSessionOpen`.
 fn open(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"pointOfSaleDevicePaymentSession": null});
     let state = mutation.state();
@@ -222,10 +222,7 @@ fn open(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
         .arg_str("pointOfSaleDeviceId")
         .unwrap_or_default()
         .to_string();
-    let Some(device_record) = state
-        .get(&device)
-        .filter(|_| state.type_of(&device) == Some("PointOfSaleDevice"))
-    else {
+    let Some(device_record) = record_of(state, &device, "PointOfSaleDevice") else {
         let error = coded(&["pointOfSaleDeviceId"], "POINT_OF_SALE_DEVICE_NOT_FOUND");
         return Ok(payload(empty, &[error]));
     };
@@ -297,14 +294,14 @@ fn open(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
         record.insert("activePaymentSession".into(), json!(session));
     }
     state.emit("point_of_sale_device_payment_sessions/create", &session);
-    let note = tell_device(
-        state,
+    tell_device(
+        mutation,
+        ctx,
         &device,
         "payment_session_opened",
         &session,
         format!("payment session {session} opened"),
     );
-    mutation.note(format!("pointOfSaleDevicePaymentSessionOpen: {note}"));
     Ok(payload(
         json!({"pointOfSaleDevicePaymentSession": session}),
         &[],
@@ -322,10 +319,7 @@ fn open_session(
         .unwrap_or_default()
         .to_string();
     let field = ["pointOfSaleDevicePaymentSessionId"];
-    let Some(record) = state
-        .get(&session)
-        .filter(|_| state.type_of(&session) == Some(SESSION))
-    else {
+    let Some(record) = record_of(state, &session, SESSION) else {
         return Err(coded(&field, "PAYMENT_SESSION_NOT_FOUND"));
     };
     if text(record, "status") != Some("OPEN") {
@@ -395,14 +389,14 @@ fn count(
             if let Some(record) = state.get_mut(&device) {
                 record.insert("activePaymentSession".into(), Value::Null);
             }
-            let note = tell_device(
-                state,
+            tell_device(
+                mutation,
+                ctx,
                 &device,
                 "payment_session_closed",
                 &session,
                 format!("payment session {session} closed"),
             );
-            mutation.note(format!("pointOfSaleDevicePaymentSessionClose: {note}"));
         }
     }
     mutation
@@ -454,21 +448,12 @@ fn adjust(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
 
 // --- Reading ---
 
-/// The sessions of a drawer.
 fn sessions_of(state: &ShopState, drawer: &str) -> Vec<String> {
-    state
-        .keys(SESSION)
-        .filter(|session| {
-            state
-                .get(session)
-                .and_then(|record| text(record, "cashDrawer"))
-                == Some(drawer)
-        })
+    keys_with(state, SESSION, "cashDrawer", drawer)
         .map(str::to_string)
         .collect()
 }
 
-/// The activities of sessions.
 fn activities_of(state: &ShopState, sessions: &[String]) -> Vec<Value> {
     sessions
         .iter()
@@ -511,17 +496,11 @@ fn in_range(time: Option<&str>, range: Option<&Value>) -> bool {
     let (Some(time), Some(range)) = (time, range) else {
         return time.is_some();
     };
-    let at = |name: &str| range.get(name).and_then(Value::as_str);
-    let parse = |date: &str| {
-        DateTime::parse_from_rfc3339(date)
-            .ok()
-            .map(|d| d.with_timezone(&Utc))
-    };
-    let Some(time) = parse(time) else {
+    let at = |name: &str| instant(range.get(name).and_then(Value::as_str));
+    let Some(time) = instant(Some(time)) else {
         return false;
     };
-    at("from").and_then(parse).is_none_or(|from| time >= from)
-        && at("to").and_then(parse).is_none_or(|to| time <= to)
+    at("from").is_none_or(|from| time >= from) && at("to").is_none_or(|to| time <= to)
 }
 
 /// The sum of a kind of activity, in cents.
@@ -582,10 +561,6 @@ fn summary(
     start: Option<DateTime<Utc>>,
     end: Option<DateTime<Utc>>,
 ) -> Value {
-    let parse = |date: Option<&str>| {
-        date.and_then(|date| DateTime::parse_from_rfc3339(date).ok())
-            .map(|date| date.with_timezone(&Utc))
-    };
     let within = |date: Option<DateTime<Utc>>| {
         date.is_some_and(|date| start.is_none_or(|s| date >= s) && end.is_none_or(|e| date <= e))
     };
@@ -598,8 +573,8 @@ fn summary(
     for drawer in drawers {
         let sessions = sessions_of(state, drawer);
         for session in sessions.iter().filter_map(|session| state.get(session)) {
-            opened += i64::from(within(parse(text(session, "openingTime"))));
-            closed += i64::from(within(parse(text(session, "closingTime"))));
+            opened += i64::from(within(instant(text(session, "openingTime"))));
+            closed += i64::from(within(instant(text(session, "closingTime"))));
         }
         let activities = activities_of(state, &sessions);
         let balance = balance_of(state, drawer);
@@ -609,7 +584,7 @@ fn summary(
             activities
                 .iter()
                 .filter(|activity| {
-                    let at = parse(activity.get("time").and_then(Value::as_str));
+                    let at = instant(activity.get("time").and_then(Value::as_str));
                     time.is_none_or(|time| at.is_some_and(|at| at > time))
                 })
                 .map(|activity| cents(activity.get("cash")))
@@ -618,7 +593,7 @@ fn summary(
         at_start += balance - moved_after(start);
         at_end += balance - end.map_or(0, |end| moved_after(Some(end)));
         for activity in &activities {
-            if !within(parse(activity.get("time").and_then(Value::as_str))) {
+            if !within(instant(activity.get("time").and_then(Value::as_str))) {
                 continue;
             }
             let amount = cents(activity.get("cash"));
@@ -647,14 +622,7 @@ fn location_summary(
 ) -> Result<Output<Obj>, FieldError> {
     let state = r.state();
     let location = ctx.arg_str("locationId").unwrap_or_default();
-    let drawers: Vec<String> = state
-        .keys("CashDrawer")
-        .filter(|drawer| {
-            state
-                .get(drawer)
-                .and_then(|record| text(record, "location"))
-                == Some(location)
-        })
+    let drawers: Vec<String> = keys_with(state, "CashDrawer", "location", location)
         .map(str::to_string)
         .collect();
     let (start, end) = period(state, ctx);
@@ -746,7 +714,6 @@ fn tracking_of(state: &ShopState, session: &str) -> Option<Value> {
     }))
 }
 
-/// `cashTrackingSession(id:)`.
 fn tracking_session(
     r: &ShopResolver<'_>,
     ctx: &FieldContext<'_>,

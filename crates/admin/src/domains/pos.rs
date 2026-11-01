@@ -34,7 +34,8 @@ mod tests;
 use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
-use crate::resolve::Registry;
+use crate::graphql::FieldContext;
+use crate::resolve::{Mutation, Registry};
 use crate::state::seed::Seed;
 use crate::state::{Record, ShopState, gid, value};
 
@@ -136,36 +137,55 @@ fn cents(money: Option<&Value>) -> i64 {
 }
 
 /// Writes what lsf would have sent a device to the shop's outbox (`what`, about the record
-/// `about`), and says so.
+/// `about`), and says so in the mutation's notes.
 fn tell_device(
-    state: &mut ShopState,
+    mutation: &mut Mutation<'_>,
+    ctx: &FieldContext<'_>,
     device: &str,
     what: &str,
     about: &str,
     message: String,
-) -> String {
+) {
     let note = format!(
-        "lsf sends nothing to POS devices: \"{message}\" for {device} is in the shop's outbox \
-         (GET /__lsf/admin/outbox?channel=pos)"
+        "{}: lsf sends nothing to POS devices: \"{message}\" for {device} is in the shop's \
+         outbox (GET /__lsf/admin/outbox?channel=pos)",
+        ctx.field_name()
     );
     crate::outbox::record(
-        state,
+        mutation.state_mut(),
         crate::outbox::Entry::new(crate::outbox::Channel::Pos, what)
             .to(device)
             .about(about)
             .body(message),
     );
-    note
+    mutation.note(note);
 }
 
-/// Whether a record is of one of the reason code types.
 fn is_reason_code(state: &ShopState, id: &str) -> bool {
     state
         .type_of(id)
         .is_some_and(|type_name| REASON_CODE_TYPES.contains(&type_name))
 }
 
-/// A record's string field.
+/// The record `id` when it is of `type_name`.
+fn record_of<'s>(state: &'s ShopState, id: &str, type_name: &str) -> Option<&'s Record> {
+    state
+        .get(id)
+        .filter(|_| state.type_of(id) == Some(type_name))
+}
+
+/// The keys of the records of `type_name` whose `field` is `value`.
+fn keys_with<'s>(
+    state: &'s ShopState,
+    type_name: &str,
+    field: &'s str,
+    value: &'s str,
+) -> impl Iterator<Item = &'s str> {
+    state
+        .keys(type_name)
+        .filter(move |key| state.get(key).and_then(|record| text(record, field)) == Some(value))
+}
+
 fn text<'r>(record: &'r Record, name: &str) -> Option<&'r str> {
     record.get(name).and_then(Value::as_str)
 }
