@@ -227,6 +227,15 @@ impl Throttle {
             .clear();
     }
 
+    /// Forgets the buckets of a shop, every app's ([`key`]): a shop deleted.
+    pub fn forget_shop(&self, shop: &str) {
+        let prefix = key(shop, "");
+        self.buckets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|bucket, _| !bucket.starts_with(&prefix));
+    }
+
     /// Takes the requested cost of a query from a bucket: the status after, or, when the bucket
     /// does not have it, the status as it is (the query must not run).
     pub fn admit(&self, key: &str, requested: u64) -> Result<ThrottleStatus, ThrottleStatus> {

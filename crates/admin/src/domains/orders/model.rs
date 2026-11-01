@@ -1514,12 +1514,11 @@ pub fn assigned_location_value(state: &ShopState, location: &str) -> Value {
     })
 }
 
-/// The next order number of the shop: one above the highest, 1001 for the first.
+/// The next order number of the shop: one above the highest, 1001 for the first. Read from the
+/// index of the state, not from every order.
 pub fn next_order_number(state: &ShopState) -> u64 {
     state
-        .all("Order")
-        .filter_map(|order| order.get("number").and_then(Value::as_u64))
-        .max()
+        .max_number("Order", "number")
         .unwrap_or(1000)
         .max(1000)
         + 1

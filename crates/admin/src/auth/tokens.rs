@@ -43,6 +43,10 @@ pub const CLIENT_CREDENTIALS_LIFETIME: i64 = 86_399;
 pub const CODE_LIFETIME: i64 = 600;
 /// How long a lost migration can be recovered by sending the same request again: seven days.
 pub const MIGRATION_RECOVERY: i64 = 7 * 86_400;
+/// How long what can no longer be used (an expired token or code, a retired refresh token) is
+/// kept before an issue forgets it ([`Tokens::purge`]): a day, so that the app presenting it
+/// meanwhile is told why it is refused rather than that lsf never issued it.
+pub const PURGE_AFTER: i64 = 86_400;
 
 /// The token lsf installs the app with on `shop`: an offline token that never expires, the
 /// same for a shop and an app every run, so that a test can hard-code it. `shpat_` and 32 hex
@@ -267,7 +271,8 @@ struct RefreshEntry {
     first_used_at: Option<DateTime<Utc>>,
     /// The refresh token this one replaced: using this one retires it.
     predecessor: Option<String>,
-    retired: bool,
+    /// When it was retired: replaced by a newer one the app used, or by a new grant.
+    retired: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug)]
@@ -419,6 +424,7 @@ impl Tokens {
         expires_at: Option<DateTime<Utc>>,
         now: DateTime<Utc>,
     ) {
+        self.purge(now - Duration::seconds(PURGE_AFTER));
         self.access.insert(
             token.to_string(),
             Grant {
@@ -488,12 +494,14 @@ impl Tokens {
             .map(|(token, grant)| (token.as_str(), grant))
     }
 
-    /// Forgets the tokens, codes and refresh tokens that can no longer be used at `now`.
+    /// Forgets the tokens, codes and refresh tokens that can no longer be used at `now`. Each
+    /// issue calls it for [`PURGE_AFTER`] ago, so that a long run does not keep them all.
     pub fn purge(&mut self, now: DateTime<Utc>) {
         self.access.retain(|_, grant| !grant.expired(now));
         self.codes.retain(|_, code| code.expires_at > now);
-        self.refresh
-            .retain(|_, entry| !entry.retired && refresh_usable_until(entry) > now);
+        self.refresh.retain(|_, entry| {
+            entry.retired.is_none_or(|retired| retired > now) && refresh_usable_until(entry) > now
+        });
         self.migrations
             .retain(|_, migration| migration.at + Duration::seconds(MIGRATION_RECOVERY) > now);
     }
@@ -559,7 +567,7 @@ impl Tokens {
         if source != GrantSource::RefreshToken {
             for entry in self.refresh.values_mut() {
                 if entry.shop == shop && entry.client_id == client_id {
-                    entry.retired = true;
+                    entry.retired.get_or_insert(now);
                 }
             }
         }
@@ -586,7 +594,7 @@ impl Tokens {
                 expires_at: refresh_expires_at,
                 first_used_at: None,
                 predecessor,
-                retired: false,
+                retired: None,
             },
         );
         self.issue(
@@ -653,6 +661,7 @@ impl Tokens {
     }
 
     fn issue(&mut self, grant: Grant, refresh: Option<(String, DateTime<Utc>)>) -> Issued {
+        self.purge(grant.issued_at - Duration::seconds(PURGE_AFTER));
         let access_token = self.fresh("shpat_");
         self.access.insert(access_token.clone(), grant.clone());
         let (refresh_token, refresh_token_expires_at) = refresh.unzip();
@@ -678,7 +687,7 @@ impl Tokens {
         if entry.client_id != client_id {
             return Err(RefreshError::OtherClient);
         }
-        if entry.retired {
+        if entry.retired.is_some() {
             return Err(RefreshError::Retired);
         }
         if refresh_usable_until(entry) <= now {
@@ -693,7 +702,7 @@ impl Tokens {
         if let Some(predecessor) = predecessor
             && let Some(previous) = self.refresh.get_mut(&predecessor)
         {
-            previous.retired = true;
+            previous.retired.get_or_insert(now);
         }
         if let Some(entry) = self.refresh.get_mut(refresh_token) {
             entry.first_used_at.get_or_insert(now);
@@ -722,7 +731,7 @@ impl Tokens {
         if let Some(migration) = self.migrations.get(token).cloned()
             && migration.at + Duration::seconds(MIGRATION_RECOVERY) > now
             && let Some(entry) = self.refresh.get(&migration.refresh_token)
-            && !entry.retired
+            && entry.retired.is_none()
             && entry.first_used_at.is_none()
             && entry.shop == shop
             && entry.client_id == client_id
@@ -889,6 +898,77 @@ mod tests {
             tokens.lookup(&credentials.access_token, at(0)),
             Err(TokenError::Unknown)
         );
+    }
+
+    /// An issue forgets what could no longer be used a day ago: until then, a token presented
+    /// is refused for what it is (expired, retired), and what is still valid always stays.
+    #[test]
+    fn issuing_forgets_what_expired_a_day_ago() {
+        let mut tokens = Tokens::with_seed(1);
+        let installed = tokens.install(SHOP, "client", &scopes(), at(0));
+        let online = tokens.issue_online(
+            SHOP,
+            "client",
+            &scopes(),
+            AssociatedUser::local(SHOP, 1),
+            GrantSource::TokenExchange,
+            at(0),
+        );
+        let exchange = |tokens: &mut Tokens, now| {
+            tokens.issue_offline(
+                SHOP,
+                "client",
+                &scopes(),
+                true,
+                GrantSource::TokenExchange,
+                now,
+            )
+        };
+        let first = exchange(&mut tokens, at(0));
+        let r1 = first.refresh_token.clone().unwrap();
+        // The online token expires as a new grant retires r1.
+        let r2 = exchange(&mut tokens, at(ONLINE_LIFETIME))
+            .refresh_token
+            .unwrap();
+        let later = ONLINE_LIFETIME + 3_600;
+        let code = tokens.create_code(Code {
+            shop: SHOP.to_string(),
+            client_id: "client".to_string(),
+            scopes: scopes(),
+            mode: AccessMode::Offline,
+            user: None,
+            redirect_uri: "https://app.example/callback".to_string(),
+            expires_at: at(later - 60),
+        });
+
+        // Within the day after: still refused for what they are.
+        tokens.issue_client_credentials(SHOP, "client", &scopes(), at(later));
+        assert_eq!(
+            tokens.lookup(&online.access_token, at(later)),
+            Err(TokenError::Expired)
+        );
+        assert_eq!(
+            tokens.refresh(&r1, "client", at(later)),
+            Err(RefreshError::Retired)
+        );
+        assert!(tokens.code_shop(&code).is_some());
+
+        // A day after they could no longer be used: forgotten. What is valid stays.
+        let much_later = later + PURGE_AFTER;
+        tokens.issue_client_credentials(SHOP, "client", &scopes(), at(much_later));
+        for token in [&online.access_token, &first.access_token] {
+            assert_eq!(
+                tokens.lookup(token, at(much_later)),
+                Err(TokenError::Unknown)
+            );
+        }
+        assert_eq!(
+            tokens.refresh(&r1, "client", at(much_later)),
+            Err(RefreshError::Unknown)
+        );
+        assert!(tokens.code_shop(&code).is_none());
+        assert!(tokens.lookup(&installed, at(much_later)).is_ok());
+        assert!(tokens.refresh(&r2, "client", at(much_later)).is_ok());
     }
 
     #[test]

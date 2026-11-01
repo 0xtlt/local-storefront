@@ -2662,3 +2662,84 @@ fn an_order_without_a_location_takes_the_stock_where_it_is() {
         "{refused}"
     );
 }
+
+/// `orderCreate`, then a failure: a mutation that created an order before it failed.
+fn creates_an_order_then_fails(
+    mutation: &mut crate::resolve::Mutation<'_>,
+    ctx: &crate::graphql::FieldContext<'_>,
+) -> Result<Value, crate::graphql::FieldError> {
+    let create = Registry::standard().mutation_fn("orderCreate").unwrap();
+    create(mutation, ctx)?;
+    Ok(crate::resolve::payload(
+        json!({"order": null}),
+        &[crate::resolve::UserError::new(&["order"], "No")],
+    ))
+}
+
+/// The next order number is one above the highest order's: a mutation that fails after it
+/// created an order gives its number back, deleting the last order makes its number the next
+/// one again, and a reset (or a shop made from the seed) starts from the seed's.
+#[test]
+fn order_numbers_follow_a_rollback_a_deletion_and_a_reset() {
+    let (store, _) = lsf_core::store::load::load(
+        &lsf_core::store::load::DataSource::Demo,
+        &Default::default(),
+    );
+    let mut shops = crate::state::Shops::new(&store, None);
+    let shop = shops.default_shop_mut().unwrap();
+    let seeded = model::next_order_number(shop);
+    assert!(seeded > 1001);
+    let (variant, _) = first_variant(shop);
+    let order = json!({"order": {"lineItems": [{"variantId": variant, "quantity": 1}]}});
+
+    let mut failing = Registry::new();
+    failing.mutation("orderCreate", creates_an_order_then_fails);
+    let before = shop.picture();
+    let mut resolver = ShopResolver::new(shop, &failing);
+    let answer = graphql::run(
+        crate::schema::admin(),
+        &mut resolver,
+        &Request::new(ORDER_CREATE).with_variables(order.clone()),
+        None,
+    )
+    .to_json();
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"][0]["message"],
+        "No"
+    );
+    assert_eq!(shop.picture(), before);
+    assert!(shop.index_in_step());
+    assert_eq!(model::next_order_number(shop), seeded);
+
+    let created = run(shop, ORDER_CREATE, order.clone());
+    let id = created["data"]["orderCreate"]["order"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(shop.get(&id).unwrap()["number"], json!(seeded));
+    assert_eq!(model::next_order_number(shop), seeded + 1);
+    run(
+        shop,
+        "mutation($id: ID!) { orderClose(input: {id: $id}) { userErrors { message } } }",
+        json!({"id": id}),
+    );
+    let deleted = run(
+        shop,
+        "mutation($id: ID!) { orderDelete(orderId: $id) { deletedId } }",
+        json!({"id": id}),
+    );
+    assert_eq!(deleted["data"]["orderDelete"]["deletedId"], json!(id));
+    assert_eq!(model::next_order_number(shop), seeded);
+
+    run(shop, ORDER_CREATE, order.clone());
+    run(shop, ORDER_CREATE, order);
+    assert_eq!(model::next_order_number(shop), seeded + 2);
+    shops.reset();
+    assert_eq!(
+        model::next_order_number(shops.default_shop().unwrap()),
+        seeded
+    );
+    let other = shops.create("test-1").unwrap();
+    assert_eq!(model::next_order_number(other), seeded);
+    assert!(other.index_in_step());
+}

@@ -600,6 +600,14 @@ storefront, the checkout and the Function inputs already use.
   order).
 - New records get ids from a counter per type that starts above every seeded id
   (`ShopState::new_gid`; the discount nodes share one counter, as they share ids on Shopify).
+- **An index** finds the records of a type by their `handle` (products, collections, metaobjects,
+  pages, blogs, articles, markets, channels) and the orders by their `number`, without reading
+  every record (`state::INDEXED`; `ShopState::with_handle`, `handle_taken`, `max_number`, and
+  `state::free_handle` for the `-1`, `-2` suffixes). Every write keeps it in step, a rollback
+  too; the record `get_mut` handed out last is read as it is until the next write puts it back.
+  The next order number is one above the highest order's (`orders::model::next_order_number`):
+  deleting the last order makes its number the next one again, as it did when every order was
+  read.
   `ShopState::touch` sets `updatedAt` (on the records whose type has it) from the clock of the
   shop: the store data's `now` when it has one, frozen there (a test reads the same dates every
   run), the system clock to the second otherwise. Dates the store data does not give are fixed

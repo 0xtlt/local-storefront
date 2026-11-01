@@ -626,6 +626,48 @@ impl AdminApi {
         Ok((domain, token))
     }
 
+    /// Deletes a shop [`AdminApi::create_shop`] made, and frees what it held: its records, its
+    /// tokens and installation, the subscriptions the backend made on it, its throttle. A
+    /// request waiting on it looks its token up again, which is refused. The default shop is
+    /// the store data's, and stays. Answers its domain, the access tokens revoked and the
+    /// subscriptions deleted.
+    pub fn delete_shop(&self, name: &str) -> Result<(String, usize, usize), (u16, String)> {
+        let domain = oauth::normalize_shop(name);
+        let shop = {
+            let mut shops = self
+                .shops
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            match shops.get_index_of(&domain) {
+                None => return Err((404, format!("there is no shop {domain}"))),
+                // The default shop is the first.
+                Some(0) => {
+                    return Err((
+                        409,
+                        format!(
+                            "{domain} is the default shop, the store data's: it cannot be deleted \
+                             (`DELETE /__lsf/admin` puts it back to the store data)"
+                        ),
+                    ));
+                }
+                Some(_) => shops.shift_remove(&domain),
+            }
+        };
+        // The map of the shops is released before the tokens are locked (see `AdminApi`).
+        let revoked = lock(&self.tokens).revoke_shop(&domain);
+        if let Some(shop) = shop {
+            lock(&shop).auth_generation += 1;
+        }
+        let deleted = {
+            let mut registry = self.webhooks.registry();
+            // A shop made again under the name starts installed, as a new one does.
+            registry.set_installed(&domain, true);
+            registry.clear(&domain)
+        };
+        self.throttle.forget_shop(&domain);
+        Ok((domain, revoked, deleted))
+    }
+
     /// Tells the webhooks the shops the app was installed on again, as `tokens` has them: the
     /// subscriptions of `shopify.app.toml` deliver for them again. Called with the tokens locked,
     /// which come before the registry of the webhooks.
@@ -1007,6 +1049,21 @@ impl AdminApi {
             return response;
         }
         let method = request.method.to_ascii_uppercase();
+        if let Some(name) = path
+            .strip_prefix("/__lsf/admin/shops/")
+            .filter(|name| !name.contains('/'))
+        {
+            if method != "DELETE" {
+                return HttpResponse::not_allowed(&method);
+            }
+            return match self.delete_shop(name) {
+                Ok((domain, revoked, deleted)) => HttpResponse::json(
+                    200,
+                    &json!({"ok": true, "shop": domain, "revoked": revoked, "deletedSubscriptions": deleted}),
+                ),
+                Err((status, error)) => HttpResponse::error(status, error),
+            };
+        }
         match (method.as_str(), path) {
             ("GET", "/__lsf/admin") => HttpResponse::json(200, &self.status()),
             ("DELETE", "/__lsf/admin") => {

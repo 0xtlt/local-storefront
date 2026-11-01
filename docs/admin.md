@@ -319,7 +319,9 @@ curl -s http://127.0.0.1:9292/admin/api/2026-10/graphql.json \
 Every access token is `shpat_` and 32 hex digits, as Shopify's. A token belongs to one shop. A
 request without a valid token is answered `401`
 `{"errors": "[API] Invalid API key or access token (unrecognized login or wrong password)"}`, with
-an `X-Lsf-Reason` header saying why in plain words.
+an `X-Lsf-Reason` header saying why in plain words. A token or a code that expired, and a refresh
+token that was retired, are refused as such for a day; then lsf forgets them, and refuses them as
+tokens it never issued.
 
 **Scopes are enforced.** A field or a mutation the token's scopes do not cover answers
 `ACCESS_DENIED` with Shopify's message ("Access denied for products field. Required access:
@@ -1813,7 +1815,9 @@ not publish the text of its notifications); another channel says what happened i
   its outbox too), forgets the subscriptions the backend made and the tokens OAuth issued; the
   printed token works again, and the storefront is the files' again.
 - **Isolate parallel tests**: `POST /__lsf/admin/shops {"shop": "test-1"}` gives each test a shop
-  of its own, seeded from the same data, and its token.
+  of its own, seeded from the same data, and its token. `DELETE /__lsf/admin/shops/test-1` deletes
+  it when the test is done, with its tokens: each shop is a copy of the seed (about 2 MB for the
+  demo store), which a reset keeps.
 - **Fixed dates**: with `now` in the store data, every record created or changed is dated then,
   and the same run gives the same answers; [`POST /__lsf/admin/clock`](#the-shops-clock) moves
   it on.

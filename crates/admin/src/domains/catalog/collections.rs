@@ -639,7 +639,7 @@ fn collection_update(
     }
     let handle = text(&input, "handle").map(lsf_core::util::handleize);
     if let Some(handle) = &handle
-        && (handle.is_empty() || records::handle_taken(state, "Collection", handle, Some(&id)))
+        && (handle.is_empty() || state.handle_taken("Collection", handle, None, Some(&id)))
     {
         errors.push(UserError::new(&["handle"], "Handle has already been taken"));
     }

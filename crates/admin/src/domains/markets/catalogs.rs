@@ -83,14 +83,14 @@ pub fn register(registry: &mut Registry) {
 /// The catalogs of a `CatalogType` (every one without), in creation order.
 fn of_type(state: &ShopState, wanted: Option<&str>) -> Vec<Value> {
     state
-        .iter()
-        .filter(|(key, _)| {
+        .keys_of(&CATALOG_TYPES)
+        .into_iter()
+        .filter(|key| {
             state.type_of(key).is_some_and(|type_name| {
-                CATALOG_TYPES.contains(&type_name)
-                    && wanted.is_none_or(|wanted| catalog_type(type_name) == wanted)
+                wanted.is_none_or(|wanted| catalog_type(type_name) == wanted)
             })
         })
-        .map(|(key, _)| json!(key))
+        .map(|key| json!(key))
         .collect()
 }
 

@@ -1011,11 +1011,7 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
     let result = placed.result;
     let number = placed
         .number
-        .filter(|number| {
-            !state
-                .all("Order")
-                .any(|order| order.get("number").and_then(Value::as_u64) == Some(*number))
-        })
+        .filter(|number| state.with_number("Order", "number", *number).is_empty())
         .unwrap_or_else(|| model::next_order_number(state));
     let id = placed
         .id

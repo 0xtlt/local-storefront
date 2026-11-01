@@ -83,25 +83,12 @@ pub fn app_id(state: &ShopState) -> u64 {
         .map_or(0, |(_, id)| id)
 }
 
-/// Whether a record of `type_name` other than `except` has `handle`.
-pub fn handle_taken(
-    state: &ShopState,
-    type_name: &str,
-    handle: &str,
-    except: Option<&str>,
-) -> bool {
-    state.keys(type_name).any(|key| {
-        Some(key) != except
-            && state.get(key).and_then(|record| field(record, "handle")) == Some(handle)
-    })
-}
-
 /// The first record of `type_name` that has `handle`.
 pub fn find_by_handle(state: &ShopState, type_name: &str, handle: &str) -> Option<String> {
     state
-        .keys(type_name)
-        .find(|key| state.get(key).and_then(|record| field(record, "handle")) == Some(handle))
-        .map(str::to_string)
+        .with_handle(type_name, handle, None)
+        .first()
+        .map(|key| key.to_string())
 }
 
 /// A free handle for a new record of `type_name`, made from `base` (`fallback` when that makes
@@ -111,13 +98,9 @@ pub fn free_handle(state: &ShopState, type_name: &str, base: &str, fallback: &st
         handle if handle.is_empty() => fallback.to_string(),
         handle => handle,
     };
-    if !handle_taken(state, type_name, &base, None) {
-        return base;
-    }
-    (1..)
-        .map(|n| format!("{base}-{n}"))
-        .find(|handle| !handle_taken(state, type_name, handle, None))
-        .unwrap_or(base)
+    crate::state::free_handle(&base, |handle| {
+        state.handle_taken(type_name, handle, None, None)
+    })
 }
 
 /// The inventory item of a variant.

@@ -89,24 +89,6 @@ fn check_title(
     }
 }
 
-/// Whether a record of `type_name` other than `except` (in `scope`: the blog of an article) has
-/// `handle`.
-fn handle_taken(
-    state: &ShopState,
-    type_name: &str,
-    handle: &str,
-    scope: Option<(&str, &str)>,
-    except: Option<&str>,
-) -> bool {
-    state.keys(type_name).any(|key| {
-        Some(key) != except
-            && state.get(key).is_some_and(|record| {
-                text(record, "handle") == handle
-                    && scope.is_none_or(|(field, value)| text(record, field) == value)
-            })
-    })
-}
-
 /// The handle of a creation or an update: the one given (handleized; refused when taken), else
 /// for a creation one made from the title, free.
 fn handle_for(
@@ -122,7 +104,7 @@ fn handle_for(
         let handle = lsf_core::util::handleize(given);
         if handle.is_empty() {
             errors.push(UserError::new(&[path, "handle"], "Handle can't be blank").code("BLANK"));
-        } else if handle_taken(state, type_name, &handle, scope, except) {
+        } else if state.handle_taken(type_name, &handle, scope, except) {
             errors.push(
                 UserError::new(&[path, "handle"], "Handle has already been taken").code("TAKEN"),
             );
@@ -140,17 +122,9 @@ fn handle_for(
         base if base.is_empty() => type_name.to_ascii_lowercase(),
         base => base,
     };
-    let free = (0..)
-        .map(|n| {
-            if n == 0 {
-                base.clone()
-            } else {
-                format!("{base}-{n}")
-            }
-        })
-        .find(|handle| !handle_taken(state, type_name, handle, scope, None))
-        .unwrap_or(base);
-    Some(free)
+    Some(crate::state::free_handle(&base, |handle| {
+        state.handle_taken(type_name, handle, scope, None)
+    }))
 }
 
 /// When a page or an article is published: `(isPublished, publishedAt)` from `isPublished` and
