@@ -40,6 +40,15 @@ page says how that is checked, what is covered, and where the local server knowi
 - **Real themes.** Shopify's Horizon and Dawn themes render every page type without a Liquid
   error, and their JavaScript (variant pickers, cart drawer, predictive search, filters, section
   rendering, pickup availability) runs against the local endpoints unchanged.
+- **Functions and checkout extensions.** A JavaScript Function is built in the steps of Shopify's
+  CLI (Javy writes the same bytes for the same JavaScript), and its module costs the instructions
+  the CLI's would, within a few hundred: `crates/checkout/src/javascript/tests.rs` compares them
+  with those of Shopify's CLI 5.0.0. A Rust module is linked by Shopify's own trampoline, to the
+  byte. A Function's input is built from its input query, and its
+  output checked, against the schema of its API version. The checkout UI extensions lsf bundles
+  are drawn next to the CLI's bundles of the same sources, acted on and compared
+  (`crates/checkout/assets/tests/built-extensions.test.mjs`). What the local checkout leaves out
+  or decides on its own: [what to test on a real store](checkout.md#what-to-test-on-a-real-store).
 
 `npx local-storefront check` reports what a theme uses that is not implemented: Liquid that does
 not parse, and filters that do not exist here.

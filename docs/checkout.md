@@ -93,6 +93,25 @@ The module costs the instructions the CLI's would, within a few hundred. What ls
 build: `import()`, a `require` of an ES module, and Functions written with
 `@shopify/shopify_function` 1.x (`shopify app build` builds those).
 
+#### Add a JavaScript Function
+
+`shopify app generate extension` needs a Partner account and the network. Without it, copy a
+Function of the playground:
+[`discount-typescript`](https://github.com/0xtlt/local-storefront/tree/main/examples/checkout-playground/extensions/discount-typescript)
+or [`validation-javascript`](https://github.com/0xtlt/local-storefront/tree/main/examples/checkout-playground/extensions/validation-javascript).
+A Function is a folder of `extensions/`:
+
+| File | What it holds |
+|---|---|
+| `shopify.extension.toml` | `type = "function"`, its `handle`, a `[[extensions.targeting]]` with its `target`, `input_query` and `export`, and `[extensions.build]` with `command = ""` and `path = "dist/function.wasm"`. |
+| `package.json` | `"@shopify/shopify_function": "2.0.1"` in `dependencies`: lsf needs it declared, not installed. The `codegen` section, for the types. |
+| `src/index.js` (or `.ts`) | `export * from "./cart_validations_generate_run";` |
+| `src/<target>.graphql`, `src/<target>.js` | The input query, and the function the `export` names, in camel case (`cart-validations-generate-run`: `cartValidationsGenerateRun`). |
+
+Then build it at each save with `npx local-storefront app dev --watch`. A discount Function runs
+only for a discount that names it, and the scenarios written before it leave it out: see
+[scenarios](#scenarios).
+
 ### Rust Functions
 
 `cargo build` writes a module that calls the Function Wasm API of the host by name
@@ -138,7 +157,8 @@ module is not built (the page does not run it). A `.graphql` import is an error.
 What is wrong with the app (a missing build, an unknown Function target, a checkout UI target
 the page has no place for, an `owner_type` that is missing or not one of Shopify's) is printed
 when the server starts (`app: …`), and is in the `diagnostics` of the state and on the home
-page.
+page. A missing build (`no Wasm module`, `not built`): `npx local-storefront app build`, or
+`--build`.
 
 | Option | What it does |
 |---|---|
@@ -148,7 +168,7 @@ page.
 | `--watch` | Develops the app as `shopify app dev` does: builds a Function again when its files change, and reloads the open pages. With `--build`, builds every Function at start. See [watch mode](#watch-mode). |
 | `--variant <standard\|shop>` | The look of the page: Shopify's one-page checkout, or the Shop app's. A URL can ask for the other with `?variant=shop`. |
 
-`checkout` takes the other options of [`serve`](cli.md#serve) (`--port`, `--host`, `--quiet`,
+`app dev` takes the other options of [`serve`](cli.md#serve) (`--port`, `--host`, `--quiet`,
 `--static`, `--customer`, ...).
 
 ### Watch mode
@@ -157,9 +177,22 @@ page.
 npx local-storefront app dev --app ../my-app --watch
 ```
 
-Save a file of a Function and its build runs; when it is over, the open pages reload with the new
-module. It works with `serve --app` too. A JavaScript Function without a build command counts as
-one with a build command: lsf builds it (`lsf app function build`, in a process of its own).
+It works with `serve --app` too. Three things happen:
+
+- **A save builds the Function again**: its build command, or lsf's build of a JavaScript
+  Function. The terminal says `↻ building discount-codes…`, then
+  `✓ discount-codes built in 1.4s`.
+- **A build that fails keeps the last module**, as `shopify app dev` does: the checkout runs it.
+  The terminal, a banner of the checkout page and the home page show the error; the next build
+  that works clears it.
+- **The open pages reload** once the builds a change started are over: the checkout, the
+  thank-you page and the home page. What the buyer entered is kept, it is in the session.
+
+A change to a checkout UI extension's bundle, an extension added or removed,
+`shopify.app.toml`, a scenario or the store data reloads the pages without a build.
+`lsf app function run` has no watch mode: it runs the modules in `dist/`, as they are.
+
+#### Details
 
 - **At the start**, the modules that are there are used, as without `--watch`, when nothing
   changed since the last watch of the app. For each Function that has a build command
@@ -202,28 +235,25 @@ one with a build command: lsf builds it (`lsf app function build`, in a process 
 - **A change to a Function** with a build command runs that command in its folder, as `--build`
   does. A save that writes several files builds once. One build at a time per Function: a change
   during its build makes one more build after it. Up to 3 Functions build at once (the Functions
-  of one Cargo workspace wait for each other on its lock). The terminal says
-  `↻ building discount-codes…`, then `✓ discount-codes built in 1.4s`.
+  of one Cargo workspace wait for each other on its lock). A JavaScript Function without a build
+  command counts as one with a build command: lsf builds it (`lsf app function build`, in a
+  process of its own).
 - **A change to the other files of the app** builds every Function that has a build command:
   `↻ Cargo.toml changed: building 12 Functions`.
-- **Any other change** (a checkout UI extension's bundle, an extension without a build, an
-  extension added or removed, `shopify.app.toml`, a scenario, the store data) reloads the pages.
-- **The pages reload** once every build a change started is over: the checkout, the thank-you
-  page and the home page, once per change however many Functions it builds. What the buyer
-  entered is kept, it is in the session. The home page runs the Functions of the scenarios again.
+- **The pages reload** once per change, however many Functions it builds. The home page runs the
+  Functions of the scenarios again.
 - **The checkout never runs what a build is writing.** It runs a copy of the last module of each
   Function that built, kept out of the app (in the system's temporary folder, removed when the
   server stops). Once a build is over and its module compiles as a run compiles it (and exports
   a function), the copy is replaced in one step. The checkout, the Functions dialog and the runs
   of the home page all read it. `dist/` is only written by the build command.
 - **A build that fails**, or writes a module that does not compile (`the build wrote an invalid
-  module: …`), leaves that copy, as `shopify app dev` does: the checkout runs it. The
-  terminal prints `✗ discount-codes: build failed (exit status: 101)`, the first error (from its
-  `error` line to the end of its source context) and the last lines of the output; the checkout
-  page shows them in a banner and in the overview of the Functions dialog, and the home page
-  lists the build first among its problems. A Function that never built is not built until a
-  build works, and the banner and the home page say `no module of it built yet`. The next build
-  that works clears it.
+  module: …`), leaves the last copy. The terminal prints
+  `✗ discount-codes: build failed (exit status: 101)`, the first error (from its `error` line to
+  the end of its source context) and the last lines of the output; the checkout page shows them
+  in a banner and in the overview of the Functions dialog, and the home page lists the build
+  first among its problems. A Function that never built is not built until a build works, and
+  the banner and the home page say `no module of it built yet`.
 - **A build that hangs** does not hold the server: it is stopped after 10 minutes and fails.
   Ctrl-C stops the builds that run, and so do `SIGTERM` and `SIGHUP` on macOS and Linux. One
   stopped halfway is built again at the next start, unless what it left (its files and the bytes
@@ -233,8 +263,6 @@ one with a build command: lsf builds it (`lsf app function build`, in a process 
 The files are watched through the system's events (FSEvents on macOS, inotify on Linux, folder
 by folder, without the tools' folders): at rest, watching an app of 90 extensions costs about
 0.2 % of a core. Where a file system has no events, they are polled.
-
-`lsf app function run` has no watch mode: it runs the modules in `dist/`, as they are.
 
 ## The look of the page
 
@@ -345,11 +373,11 @@ request out of them fails the target), but it is not sent: the `.run` target rea
 when the connection fails, `502 Bad Gateway (Connection Failed)`. A Function that only fails on
 some answer of its server is found by opening its scenario, which sends the request.
 
-Running them all takes a moment (about 0.7 s for the 82 scenarios of the
+Running them all takes a moment (under a second for the ~90 scenarios of the
 [playground](../examples/checkout-playground)), so the page does not wait for it: it shows
 "Running the Functions…" and asks `GET /__lsf/checkouts/check`, which answers what it found.
 The check has 20 s: it looks at the time before each Function runs (each run is bounded on its
-own by the instruction limit), and once they are spent it stops and says so ("Checked 40 of 82
+own by the instruction limit), and once they are spent it stops and says so ("Checked 40 of 86
 scenarios"). A complete check is kept until the store data or the app (a Function, its Wasm
 module) changes: the page then has it at once, and the next check runs on the next request after
 a change. A partial check, or one whose app changed while it ran (a module rebuilt), is not kept.
@@ -420,10 +448,34 @@ it in the app folder, no theme needed (`npx local-storefront validate`).
 
 A scenario about one kind of Function runs that Function and the checkout UI extensions, and no
 other Function (`extensions`), so that its effect shows alone; `all-extensions` has no such
-list. The settings of your Functions are the store data's: the scenarios leave
-`checkout.functions` alone, and the `discount-*` scenarios list the discount Functions again with
-the settings (and the code) `checkout.discounts` gives them. The scenarios are a place to start:
-edit them.
+list. A Function you add later is not in those lists: add its handle to them, or remove the
+list to run every extension. The settings of your Functions are the store data's: the scenarios
+leave `checkout.functions` alone, and the `discount-*` scenarios list the discount Functions again
+with the settings (and the code) `checkout.discounts` gives them. The scenarios are a place to
+start: edit them.
+
+**A discount Function runs in `discount-automatic` and `discount-code` only.** It runs only for
+a discount that names it ([set up the checkout](#set-up-the-checkout)), and the other scenarios
+(`b2b`, `abroad`, `large-cart`, …) have none: `app check` passes on them without running it
+(it lists a Function only when it ran in no scenario at all). To run it in every scenario, a
+B2B buyer, another country and a large cart included, give it a discount in the `checkout`
+section of the store data (`store.json`, or the file that has the section):
+
+```json
+{
+  "checkout": {
+    "discounts": [
+      {
+        "function": "my-discount",
+        "title": "My discount",
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "percentage": 10 } } }
+      }
+    ]
+  }
+}
+```
+
+The `discount-*` scenarios keep their own `checkout.discounts`.
 
 `app init` creates the data folder with the demo store when it does not exist (and a
 selling plan with a deposit for `pre-order`). When it exists, it uses the products, customers,
@@ -905,28 +957,35 @@ or the loader reports an error and the page says why it does not load the extens
 ## Run a Function without a server
 
 ```bash
-npx local-storefront app function run volume-discount --app ../my-app
+npx local-storefront app function run volume-discount --app ../my-app --scenario discount-automatic
 ```
 
-Builds the input of each Function from the store data, runs them in checkout order, and prints
-each input, output and log with the checkout that results. Without a handle, every Function of
-the app runs.
+Builds the input of each Function from the store data and the [scenario](#scenarios), runs them
+in checkout order, and prints each input, output and log with the checkout that results. Without
+a handle, every Function of the app runs. Without `--scenario` or `--session`, the cart is the
+`session` of the store data, empty in the demo store: nothing runs on it.
 
 ```text
-== volume-discount · cart.lines.discounts.generate.run (cart_lines_discounts_generate_run)
+== scenario discount-automatic: An automatic discount
+
+== volume-discount · cart.lines.discounts.generate.run (cart-lines-discounts-generate-run)
 input:
   { … }
 output:
   { … }
 logs:
-  volume discount: config { minimum quantity 3 }, code None
-instructions: 34977
+  Canvas Tote Bag: 6 units
+  Ceramic Mug: 3 units
+instructions: 337817
 
 == checkout
-  3 × Organic Cotton T-Shirt (White / S)  96.00 USD → 86.40 USD
-  discount 10% off 3+ items: -9.60 USD (Product, volume-discount)
-  delivery * Standard (standard): 4.90 USD
-  subtotal 96.00 USD · discounts -9.60 USD · shipping 4.90 USD · tax 0.00 USD · total 91.30 USD
+  6 × Canvas Tote Bag  144.00 USD → 129.60 USD
+  3 × Ceramic Mug (Oat)  66.00 USD → 59.40 USD
+  2 × Linen Overshirt (S)  136.00 USD
+  discount 10% off 3 or more: -21.00 USD (Product, volume-discount)
+  delivery * Standard (standard): 5.00 USD
+  payment: Credit card, Cash on Delivery, Bank Deposit
+  subtotal 346.00 USD · discounts -21.00 USD · shipping 5.00 USD · tax 0.00 USD · total 330.00 USD
 ```
 
 | Option | What it does |
@@ -940,12 +999,16 @@ instructions: 34977
 | `--build` | Builds each Function first: its build command, or lsf's build of a JavaScript Function. |
 
 It exits with `1` when a Function fails to run (no module, a trap, an output that does not
-parse). Errors that a validation Function reports are part of the checkout, not a failure.
+parse), or when a Function named on the command line did not run: it says why (no discount
+names a discount Function, the cart is empty, the scenario's `extensions` leaves it out…).
+Errors that a validation Function reports are part of the checkout, not a failure.
 
 ## Test it
 
 The checkout is part of the [control API](control-api.md). A test puts a session in a known
-state, then drives the checkout like the page does:
+state, then drives the checkout like the page does, and places the order. The checkout belongs to
+the session: Playwright's `request` keeps its cookie; a client without cookies names its session
+with an `x-lsf-session` header.
 
 ```ts
 await request.put('/__lsf/session', {
@@ -956,9 +1019,21 @@ const path = checkout.headers()['location']; // /checkouts/cn/<token>
 
 const state = await (await request.get(`${path}.json`)).json();
 await request.post(`${path}/update`, {
-  data: { operations: [{ type: 'email', value: 'buyer@example.com' }] },
+  data: {
+    operations: [
+      { type: 'email', value: 'buyer@example.com' },
+      { type: 'shippingAddress', address: { lastName: 'Buyer', address1: '1 Main St', city: 'New York', countryCode: 'US', provinceCode: 'NY', zip: '10001' } },
+      { type: 'paymentMethod', handle: 'card' },
+    ],
+  },
 });
+const { order } = await (await request.post(`${path}/complete`)).json(); // { id, number, name }
 ```
+
+The order is an order of the [Admin API](admin.md#place-an-order), and its `orders/create`
+reaches the backend of the app. A test that only needs an order (for its webhooks) serves the
+Functions it needs and no others, `--extension <handle>` repeated: a Function that fails blocks
+`complete`.
 
 | Request | What it does | Answer |
 |---|---|---|
@@ -970,7 +1045,7 @@ await request.post(`${path}/update`, {
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |
 | `POST /checkouts/cn/<token>/update` | Applies `{"operations": [...]}`, in order. | `200` and the state, or `400` `{"error": "…"}` and nothing applied |
-| `POST /checkouts/cn/<token>/complete` | Places the order. | `200` `{"redirect": "…/thank-you"}`, `422` and the state with `errors`, or `409` and the fresh state when the cart changed meanwhile |
+| `POST /checkouts/cn/<token>/complete` | Places the order. | `200` `{"redirect": "…/thank-you", "order": {"id", "number", "name"}}` (`id` is the `admin_graphql_api_id` of its `orders/create`), `422` and the state with `errors`, or `409` and the fresh state when the cart changed meanwhile |
 | `GET /checkouts/cn/<token>/thank-you` | The page of the order. | HTML |
 | `GET /__lsf/checkout?session=<id>` | The state of a session's checkout, from outside its browser. | JSON |
 
@@ -1029,10 +1104,30 @@ the metafields, the `extensions` to load and `diagnostics`. Money is `{"amount":
 | `metafield` | `change`: `updateMetafield`, `updateCartMetafield`, `removeMetafield` or `removeCartMetafield`, with `namespace`, `key`, `valueType`, `value` | Sets a metafield for the Functions to read. |
 
 `complete` refuses an empty cart, an order with errors from a Function, and one without an
-email, a payment method or, for a cart that ships, an address. It empties the cart: the order is
-what the thank-you page shows. It takes the cart only if the cart is still the one the Functions
+email, a payment method or, for a cart that ships, an address with a last name, a first line and
+a city. It empties the cart: the order is what the thank-you page shows, and the state's `order`
+(`id`, `number`, `processedAt`, `totalReceived`, `totalOutstanding`) once `status` is
+`completed`. It takes the cart only if the cart is still the one the Functions
 ran on: if it changed meanwhile (another tab), nothing is bought and the reply is `409`. Completing
 an order that was placed already leads to the same thank-you page, never to a second order.
+
+### In CI
+
+`dist/` is not committed: build the extensions before checking them. In the app's folder:
+
+```yaml
+- run: npx local-storefront app build      # every Function and UI extension, without Node
+- run: npx local-storefront validate       # the store data, the scenarios and the app
+- run: npx local-storefront app check      # every Function of every scenario runs
+- run: npx local-storefront app function run volume-discount --scenario discount-automatic --format json | jq -e '.cost.discounts.amount > 0'
+```
+
+`app check` fails on a scenario that does not validate, and on a Function that traps or panics,
+runs past 11 million instructions or answers an output out of its schema. It does not check
+what a Function decides: a discount of the wrong amount passes. Assert that with
+`app function run --format json` (`lines`, `discounts`, `deliveryGroups`, `paymentMethods`,
+`errors`, `cost`, and each run in `runs`), or through the checkout in a test, as above. The
+browser tests of a theme in CI: [testing](testing.md#in-ci).
 
 ## What it does not do
 
@@ -1060,7 +1155,29 @@ an order that was placed already leads to the same thank-you page, never to a se
   is made up from its type and handle.
 - Shop Pay and express checkout. Logging in is picking a customer of the data, see
   [log in as a customer](#log-in-as-a-customer).
-- With `checkout` (no theme), the links to the storefront (return to cart, continue shopping)
+- With `app dev` (no theme), the links to the storefront (return to cart, continue shopping)
   lead to pages the server does not have. Use `serve --app` for those.
 - A scenario is one session per browser: opening another replaces it. The scenario cannot set
   what the theme shows outside the cart and the customer (`theme_settings`, a frozen clock).
+
+## What to test on a real store
+
+What lsf leaves out, or decides where Shopify does not document it. Test these on a development
+store before a release:
+
+- **Discount combinations and conditions**: lsf combines every product and order discount
+  ([how discounts stack](#how-discounts-stack)).
+- **Currencies and price lists**: one price list, in the shop's currency; a buyer abroad pays it
+  too ([what it does not do](#what-it-does-not-do), [markets](compatibility.md#known-differences)).
+- **B2B catalogs, pickup points, local pickup, fulfillment constraints and order routing**: not
+  run.
+- **Network access**: the request JWT and Shopify's cache of responses
+  ([network access](#network-access)).
+- **The settings of an extension** (`shopify.settings`): empty here.
+- **lsf's choices**: how several customizations chain and how `linesMerge` counts
+  ([what runs](#what-runs)), which validation step blocks the order
+  ([network access](#network-access)), the split between due today and due later
+  ([deferred payments](#deferred-payments)).
+- **Instruction counts near the 11 million limit**: lsf does not run `wasm-opt`, so a Rust
+  Function costs 0.25 to 0.5% more here ([Rust Functions](#rust-functions)).
+- **Payments**, Shop Pay and express checkout.
