@@ -40,6 +40,7 @@ use super::metafield_definitions::access_of;
 use super::metafields::{shop_currency, text};
 use super::types::{self, Context};
 use super::{app_id, data_type, metaobject_definition_gid, metaobject_gid};
+use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, value};
@@ -835,15 +836,11 @@ fn definition_delete(
         .map(str::to_string)
         .collect();
     for definition in referring {
-        let metafields: Vec<String> = state
-            .get(&definition)
-            .and_then(|record| record.get("metafields"))
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_string)
-            .collect();
+        let metafields = gids(
+            state
+                .get(&definition)
+                .and_then(|record| record.get("metafields")),
+        );
         state.delete(&definition, "metafield_definitions/delete");
         for metafield in metafields {
             let owner = state

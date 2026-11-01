@@ -36,6 +36,7 @@ use super::metafields::{
     text,
 };
 use super::types;
+use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -698,14 +699,7 @@ fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     let delete_all = ctx
         .arg_bool("deleteAllAssociatedMetafields")
         .unwrap_or(false);
-    let metafields: Vec<String> = record
-        .get("metafields")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
+    let metafields = gids(record.get("metafields"));
     let refused = if delete_all {
         None
     } else if text(&record, "namespace").starts_with("app--") {
