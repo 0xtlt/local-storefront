@@ -184,7 +184,7 @@ const STOREFRONT_PARAMS: &[ParamDef] = &[
 ];
 
 /// The email subscription states (`CustomerEmailMarketingState`, as the Help Center lists them).
-pub const EMAIL_STATES: &[&str] = &[
+const EMAIL_STATES: &[&str] = &[
     "NOT_SUBSCRIBED",
     "SUBSCRIBED",
     "PENDING",
@@ -194,7 +194,7 @@ pub const EMAIL_STATES: &[&str] = &[
 ];
 
 /// The SMS subscription states, as the Help Center lists them.
-pub const SMS_STATES: &[&str] = &[
+const SMS_STATES: &[&str] = &[
     "SUBSCRIBED",
     "PENDING",
     "REDACTED",

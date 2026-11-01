@@ -44,7 +44,7 @@ use crate::domains::catalog::{cents_of, tags_of};
 use crate::state::{Record, ShopState, parse_gid};
 
 /// The `app_id` of the orders of the Online Store, which Shopify writes on web orders.
-pub const ONLINE_STORE_APP_ID: u64 = 580111;
+const ONLINE_STORE_APP_ID: u64 = 580111;
 
 /// Where a query is evaluated: the clock and the time zone dates are read in.
 #[derive(Clone, Copy, Debug)]
@@ -103,11 +103,6 @@ impl Context {
                 Some((at, at.checked_add_signed(Duration::seconds(1))?))
             }
         }
-    }
-
-    /// The local day of an instant.
-    fn day_of(&self, at: DateTime<Utc>) -> NaiveDate {
-        at.with_timezone(&self.zone).date_naive()
     }
 }
 
@@ -226,7 +221,7 @@ fn decimal(value: Option<&Json>) -> f64 {
 
 /// The city of an address as the Help Center writes it in `customer_cities`: its words run
 /// together, each with a capital (`New York City` is `NewYorkCity`).
-pub fn city_code(city: &str) -> String {
+fn city_code(city: &str) -> String {
     city.split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
         .map(|word| {
@@ -794,12 +789,6 @@ fn anniversary(clause: &Clause, facts: &Facts, context: &Context) -> bool {
             .iter()
             .any(|at| date_test(Some(*at), test, context)),
     }
-}
-
-/// The local day of an instant in the context's zone: what `segmentValueSuggestions` and the
-/// statistics show of dates.
-pub fn local_day(context: &Context, at: DateTime<Utc>) -> NaiveDate {
-    context.day_of(at)
 }
 
 #[cfg(test)]

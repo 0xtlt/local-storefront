@@ -110,11 +110,26 @@ fn segment_of<'s>(state: &'s ShopState, id: &str) -> Option<&'s Record> {
         .filter(|_| state.type_of(id) == Some("Segment"))
 }
 
-fn name_taken(state: &ShopState, name: &str, except: Option<&str>) -> bool {
-    state.all("Segment").any(|segment| {
-        segment.get("name").and_then(Value::as_str) == Some(name)
-            && segment.get("id").and_then(Value::as_str) != except
-    })
+/// The errors of a segment's name: blank, or another segment's (`except` is the one renamed).
+fn check_name(state: &ShopState, name: &str, except: Option<&str>, errors: &mut Vec<UserError>) {
+    let taken = || {
+        state.all("Segment").any(|segment| {
+            segment.get("name").and_then(Value::as_str) == Some(name)
+                && segment.get("id").and_then(Value::as_str) != except
+        })
+    };
+    if name.is_empty() {
+        errors.push(UserError::new(&["name"], "Name can't be blank"));
+    } else if taken() {
+        errors.push(UserError::new(&["name"], "Name has already been taken"));
+    }
+}
+
+/// The segment query of the `query` argument, or its error in `errors`.
+fn query_arg(text: &str, errors: &mut Vec<UserError>) -> Option<Query> {
+    parsed(text, &["query"])
+        .map_err(|error| errors.push(error))
+        .ok()
 }
 
 /// Computes the members of a segment again and keeps them, without webhooks.
@@ -128,18 +143,8 @@ fn segment_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
     let name = ctx.arg_str("name").unwrap_or_default().trim().to_string();
     let text = ctx.arg_str("query").unwrap_or_default().to_string();
     let mut errors = Vec::new();
-    if name.is_empty() {
-        errors.push(UserError::new(&["name"], "Name can't be blank"));
-    } else if name_taken(m.state(), &name, None) {
-        errors.push(UserError::new(&["name"], "Name has already been taken"));
-    }
-    let query = match parsed(&text, &["query"]) {
-        Ok(query) => Some(query),
-        Err(error) => {
-            errors.push(error);
-            None
-        }
-    };
+    check_name(m.state(), &name, None, &mut errors);
+    let query = query_arg(&text, &mut errors);
     let (Some(query), true) = (query, errors.is_empty()) else {
         return Ok(payload(json!({"segment": null}), &errors));
     };
@@ -171,25 +176,12 @@ fn segment_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
     let name = ctx.arg_str("name").map(|name| name.trim().to_string());
     let text = ctx.arg_str("query").map(str::to_string);
     let mut errors = Vec::new();
-    match &name {
-        Some(name) if name.is_empty() => {
-            errors.push(UserError::new(&["name"], "Name can't be blank"));
-        }
-        Some(name) if name_taken(m.state(), name, Some(&id)) => {
-            errors.push(UserError::new(&["name"], "Name has already been taken"));
-        }
-        _ => {}
+    if let Some(name) = &name {
+        check_name(m.state(), name, Some(&id), &mut errors);
     }
-    let query = match &text {
-        Some(text) => match parsed(text, &["query"]) {
-            Ok(query) => Some(query),
-            Err(error) => {
-                errors.push(error);
-                None
-            }
-        },
-        None => None,
-    };
+    let query = text
+        .as_deref()
+        .and_then(|text| query_arg(text, &mut errors));
     if !errors.is_empty() {
         return Ok(payload(json!({"segment": null}), &errors));
     }
@@ -471,14 +463,7 @@ fn customer_segment_members(
             // lsf's words: Shopify does not publish this error.
             return Err(FieldError::new("The segment members query does not exist."));
         };
-        record
-            .get("lsfMembers")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_string)
-            .collect()
+        crate::domains::catalog::gids(record.get("lsfMembers"))
     } else {
         let text = match (ctx.arg_str("segmentId"), ctx.arg_str("query")) {
             (Some(segment), _) => match segment_of(state, segment) {
@@ -640,14 +625,15 @@ fn segment_filter_suggestions(
     r.connection(ctx, items)
 }
 
-/// An enum value humanized, as the guide's example shows them (`NOT_SUBSCRIBED` is "Not
-/// subscribed").
-fn humanized(value: &str) -> String {
-    let lower = value.replace('_', " ").to_lowercase();
-    let mut chars = lower.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(chars).collect()
-    })
+/// The records of a type as `(the number of their GID, their field)`.
+fn numbered(state: &ShopState, type_name: &str, field: &str) -> Vec<(String, String)> {
+    state
+        .all(type_name)
+        .filter_map(|record| {
+            let (_, id) = parse_gid(record.get("id")?.as_str()?)?;
+            Some((id.to_string(), record.get(field)?.as_str()?.to_string()))
+        })
+        .collect()
 }
 
 /// The values a filter (or a parameter of a function) takes in the shop: `(query name,
@@ -697,42 +683,18 @@ fn values_of(state: &ShopState, filter: &str, parameter: Option<&str>) -> Vec<(S
             }
         }
         ("companies", _) => {
-            for company in state.all("Company") {
-                if let (Some((_, id)), Some(name)) = (
-                    company
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .and_then(parse_gid),
-                    company.get("name").and_then(Value::as_str),
-                ) {
-                    push(id.to_string(), name.to_string());
-                }
+            for (id, name) in numbered(state, "Company", "name") {
+                push(id, name);
             }
         }
         ("products_purchased" | "storefront_event.product_viewed", Some("id")) => {
-            for product in state.all("Product") {
-                if let (Some((_, id)), Some(title)) = (
-                    product
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .and_then(parse_gid),
-                    product.get("title").and_then(Value::as_str),
-                ) {
-                    push(id.to_string(), title.to_string());
-                }
+            for (id, title) in numbered(state, "Product", "title") {
+                push(id, title);
             }
         }
         ("storefront_event.collection_viewed", Some("id")) => {
-            for collection in state.all("Collection") {
-                if let (Some((_, id)), Some(title)) = (
-                    collection
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .and_then(parse_gid),
-                    collection.get("title").and_then(Value::as_str),
-                ) {
-                    push(id.to_string(), title.to_string());
-                }
+            for (id, title) in numbered(state, "Collection", "title") {
+                push(id, title);
             }
         }
         ("products_purchased" | "storefront_event.product_viewed", Some("tag")) => {
@@ -743,35 +705,24 @@ fn values_of(state: &ShopState, filter: &str, parameter: Option<&str>) -> Vec<(S
             }
         }
         (_, Some("activity_id")) => {
-            for activity in state.all("MarketingActivity") {
-                if let (Some((_, id)), Some(title)) = (
-                    activity
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .and_then(parse_gid),
-                    activity.get("title").and_then(Value::as_str),
-                ) {
-                    push(id.to_string(), title.to_string());
-                }
+            for (id, title) in numbered(state, "MarketingActivity", "title") {
+                push(id, title);
             }
         }
         (_, Some("location_id")) => {
-            for location in state.all("Location") {
-                if let (Some((_, id)), Some(name)) = (
-                    location
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .and_then(parse_gid),
-                    location.get("name").and_then(Value::as_str),
-                ) {
-                    push(id.to_string(), name.to_string());
-                }
+            for (id, name) in numbered(state, "Location", "name") {
+                push(id, name);
             }
         }
         (name, None) => {
             if let Some(filters::Kind::Enum(values)) = filters::find(name).map(|f| f.kind) {
+                // Humanized, as the guide's example shows them (`NOT_SUBSCRIBED` is "Not
+                // subscribed").
                 for value in values {
-                    push(value.to_string(), humanized(value));
+                    push(
+                        value.to_string(),
+                        crate::state::value::humanize(&value.to_lowercase()),
+                    );
                 }
             }
         }
