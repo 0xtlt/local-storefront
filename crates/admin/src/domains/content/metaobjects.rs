@@ -702,15 +702,7 @@ fn definition_update(
     }
     state.touch(&id);
     // The entries follow: their fields, their display names, their status.
-    let entries: Vec<String> = state
-        .keys("Metaobject")
-        .filter(|entry| {
-            state
-                .get(entry)
-                .is_some_and(|entry| text(entry, "definition") == id)
-        })
-        .map(str::to_string)
-        .collect();
+    let entries = entries_of(state, &id);
     for entry in entries {
         let changed = refresh_entry(
             state,
@@ -727,6 +719,18 @@ fn definition_update(
     }
     state.emit("metaobject_definitions/update", &id);
     Ok(answer(json!({"metaobjectDefinition": id}), &[]))
+}
+
+fn entries_of(state: &ShopState, definition: &str) -> Vec<String> {
+    state
+        .keys("Metaobject")
+        .filter(|entry| {
+            state
+                .get(entry)
+                .is_some_and(|entry| text(entry, "definition") == definition)
+        })
+        .map(str::to_string)
+        .collect()
 }
 
 /// Brings an entry in line with its definition after an update: the fields removed are gone, the
@@ -802,15 +806,7 @@ fn definition_delete(
         return Ok(answer(json!({"deletedId": null}), &[error]));
     }
     let state = mutation.state_mut();
-    let entries: Vec<String> = state
-        .keys("Metaobject")
-        .filter(|entry| {
-            state
-                .get(entry)
-                .is_some_and(|entry| text(entry, "definition") == id)
-        })
-        .map(str::to_string)
-        .collect();
+    let entries = entries_of(state, &id);
     for entry in entries {
         state.delete(&entry, "metaobjects/delete");
     }
