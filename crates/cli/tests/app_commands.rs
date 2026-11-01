@@ -102,12 +102,17 @@ fn checkout_check_runs_every_scenario_and_fails_on_one_that_fails() {
     let output = lsf(&app.0, &["app", "check"]);
     assert_eq!(output.status.code(), Some(1), "{}", text(&output));
     assert!(text(&output).contains("invalid  typo"), "{}", text(&output));
+    // Counted in the singular.
+    assert!(
+        text(&output).contains("1 error, 0 warnings in the store data"),
+        "{}",
+        text(&output)
+    );
 }
 
-#[test]
-fn checkout_init_gives_the_functions_the_settings_their_input_query_reads() {
-    let app = App::new("settings");
-    // `quantity-limit` reads its settings as the variables of its input query.
+/// Makes `quantity-limit` read its settings as the variables of its input query: without them
+/// in the store data, it fails.
+fn needs_settings(app: &App) {
     let query = std::fs::read_to_string(app.0.join("extensions/quantity-limit/src/run.graphql"))
         .unwrap()
         .replacen("query Input {", "query Input($tags: [String!]!) {", 1)
@@ -126,6 +131,12 @@ fn checkout_init_gives_the_functions_the_settings_their_input_query_reads() {
         "extensions/quantity-limit/shopify.extension.toml",
         &format!("{toml}\n  [extensions.input.variables]\n  namespace = \"$app:config\"\n  key = \"settings\"\n"),
     );
+}
+
+#[test]
+fn checkout_init_gives_the_functions_the_settings_their_input_query_reads() {
+    let app = App::new("settings");
+    needs_settings(&app);
     assert!(lsf(&app.0, &["init"]).status.success());
     app.write(
         "shopify-local/checkouts/tees.json",
@@ -331,6 +342,22 @@ fn app_check_names_the_functions_no_scenario_ran() {
         "{}",
         text(&output)
     );
+    // The summary says so too, rather than that every Function ran.
+    assert!(
+        text(&output).contains(": no Function failed, 1 Function ran in no scenario\n"),
+        "{}",
+        text(&output)
+    );
+    assert!(
+        text(&output).contains("checked 1 of 1 scenario in "),
+        "{}",
+        text(&output)
+    );
+    assert!(
+        !text(&output).contains("every Function ran"),
+        "{}",
+        text(&output)
+    );
     let output = lsf(&app.0, &[&only[..], &["--format", "json"]].concat());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|_| panic!("JSON: {}", text(&output)));
@@ -353,6 +380,92 @@ fn app_check_names_the_functions_no_scenario_ran() {
     let output = lsf(&app.0, &only);
     assert!(
         !text(&output).contains("ran in no scenario"),
+        "{}",
+        text(&output)
+    );
+    assert!(
+        text(&output).contains("checked 2 of 2 scenarios in "),
+        "{}",
+        text(&output)
+    );
+    assert!(
+        text(&output).contains(": every Function ran\n"),
+        "{}",
+        text(&output)
+    );
+}
+
+/// The words of a JSON description: its keys, and the placeholders of its values.
+fn words(text: &str) -> std::collections::BTreeSet<String> {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The keys of a JSON value, nested ones included.
+fn keys(json: &serde_json::Value, into: &mut std::collections::BTreeSet<String>) {
+    match json {
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                into.insert(key.clone());
+                keys(value, into);
+            }
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|item| keys(item, into)),
+        _ => {}
+    }
+}
+
+#[test]
+fn app_check_help_describes_the_json_it_prints() {
+    let app = App::new("check-help");
+    needs_settings(&app);
+    assert!(lsf(&app.0, &["init"]).status.success());
+    // A Function that fails, and a scenario that does not validate: every list has an entry.
+    app.write(
+        "shopify-local/checkouts/tees.json",
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
+    );
+    app.write(
+        "shopify-local/checkouts/typo.json",
+        r#"{"session": {"cart": {"items": [{"variant": "NOPE", "quantity": 1}]}}}"#,
+    );
+    let output = lsf(&app.0, &["app", "check", "--format", "json"]);
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("JSON: {}", text(&output)));
+    assert!(!json["failures"].as_array().unwrap().is_empty(), "{json}");
+    assert!(!json["invalid"].as_array().unwrap().is_empty(), "{json}");
+    let mut printed = std::collections::BTreeSet::new();
+    keys(&json, &mut printed);
+    // `error`, said when there is no scenario, is a key of the failures too.
+    printed.insert("error".to_string());
+    // The handles of `ranInNoScenario` are said `[handle]`.
+    printed.insert("handle".to_string());
+
+    let help = text(&lsf(&app.0, &["app", "check", "--help"]));
+    let line = help
+        .lines()
+        .find(|line| line.trim_start().starts_with("- json:"))
+        .unwrap_or_else(|| panic!("{help}"));
+    let described = &line[line.find('{').unwrap()..=line.rfind('}').unwrap()];
+    assert_eq!(words(described), printed, "{line}");
+    assert!(line.contains("`error` when there is no scenario"), "{line}");
+
+    // Counted in the singular: the scenario that validates is the one that runs.
+    let output = lsf(&app.0, &["app", "check"]);
+    assert!(
+        text(&output).contains("checked 1 of 1 scenario in "),
+        "{}",
+        text(&output)
+    );
+    assert!(
+        text(&output).contains(": 1 failure, 1 invalid scenario, 1 Function ran in no scenario\n"),
+        "{}",
+        text(&output)
+    );
+    assert!(
+        text(&output).contains("1 error, 0 warnings in the store data"),
         "{}",
         text(&output)
     );
@@ -431,7 +544,10 @@ fn check_says_the_pages_of_classic_customer_accounts_are_not_rendered() {
     let output = lsf(&theme, &["check", "--format", "json"]);
     std::fs::remove_dir_all(&theme).ok();
     assert!(
-        text(&text_output).contains("templates/customers: warning: the 1 page(s)"),
+        text(&text_output).contains(
+            "templates/customers: warning: the 1 page of templates/customers/ is for classic \
+             customer accounts, which lsf does not have: it is never rendered."
+        ),
         "{}",
         text(&text_output)
     );

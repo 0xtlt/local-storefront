@@ -74,11 +74,12 @@ the same data every run.
   order becomes an abandoned checkout the backend reads. `lsf app webhook trigger` sends one on
   demand, compliance topics included, as `shopify app webhook trigger` does (`--format json`
   for a tool). After an uninstall, nothing is delivered for the shop but `app/uninstalled`.
-- **Webhooks stay on this machine.** lsf sends one to this machine, to `--app-url`, or to the
-  `--address` you give, nowhere else: a subscription that points at your production backend
-  or a stale tunnel is logged `not_sent`, with why, and `lsf app webhook trigger` sends nothing
-  and exits with `2`. Give `--app-url http://localhost:<port>`: the start lines say when it is
-  missing.
+- **Webhooks stay on this machine.** lsf sends one to this machine (`localhost`,
+  `*.localhost`, `127.0.0.0/8`, `::1`), to `--app-url`, or to the `--address` you give, nowhere
+  else: a subscription that points at your production backend or a stale tunnel is logged
+  `not_sent`, with why, and `lsf app webhook trigger` sends nothing and exits with `2`. Give
+  `--app-url http://localhost:<port>`: the start lines say when it is missing. A name under
+  `localhost` (`app.localhost`) goes to the loopback whatever your system's resolver says.
 - **The webhook log, for tests.** `GET /__lsf/webhooks` lists the deliveries, filtered by
   `topic`, `state`, `shop` (`test-1` or `test-1.myshopify.com`), `resource` (the GID of a
   record: the order a test placed) and `since` (a delivery's id). `?wait=1` waits for one that
@@ -112,7 +113,9 @@ the same data every run.
     downloaded; `PUT /__lsf/admin/sources?url=` stubs one from a test.
 - **`lsf app check --build`** builds the extensions first, for a clone where `dist/` is not
   committed. `app check` also warns about a Function that ran in no scenario, so that nothing
-  checks it (`ranInNoScenario` in JSON); the exit code does not change. A missing build says
+  checks it (`ranInNoScenario` in JSON), and its summary counts it (`no Function failed, 1
+  Function ran in no scenario`); the exit code does not change. `app check --help` describes
+  the JSON it prints. A missing build says
   to run `lsf app build <handle>`.
 - **The docs ship in the npm package.** `node_modules/local-storefront/` has the `llms.txt`,
   `docs/` and `CHANGELOG.md` of the version you installed, for a tool or an agent to read

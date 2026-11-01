@@ -7,6 +7,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use crate::commands::{app_init, function, serve, webhook};
+use crate::output::count;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -45,7 +46,7 @@ enum Subcommand {
 enum Format {
     /// One line per problem.
     Text,
-    /// `{ok, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, problems}], ranInNoScenario: [handle]}`.
+    /// `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, file, problems}], ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `ranInNoScenario` is filled only when every scenario ran.
     Json,
 }
 
@@ -247,24 +248,33 @@ fn check(
                     failure.scenarios.join(", ")
                 );
             }
+            let mut said = if empty {
+                NO_SCENARIO.to_string()
+            } else if !complete {
+                "out of time for the others (raise --budget)".to_string()
+            } else if !ok {
+                format!(
+                    "{}, {}",
+                    count(report.failures.len(), "failure", "failures"),
+                    count(invalid.len(), "invalid scenario", "invalid scenarios")
+                )
+            } else if ran_nowhere.is_empty() {
+                "every Function ran".to_string()
+            } else {
+                // Not "every Function ran": some did not, as the warnings above say.
+                "no Function failed".to_string()
+            };
+            if !ran_nowhere.is_empty() {
+                said.push_str(&format!(
+                    ", {} ran in no scenario",
+                    count(ran_nowhere.len(), "Function", "Functions")
+                ));
+            }
             println!(
-                "checked {} of {} scenarios in {:.1} s: {}",
+                "checked {} of {} in {:.1} s: {said}",
                 report.checked,
-                report.total,
+                count(report.total, "scenario", "scenarios"),
                 report.elapsed.as_secs_f64(),
-                if ok {
-                    "every Function ran".to_string()
-                } else if empty {
-                    NO_SCENARIO.to_string()
-                } else if !complete {
-                    "out of time for the others (raise --budget)".to_string()
-                } else {
-                    format!(
-                        "{} failure(s), {} invalid scenario(s)",
-                        report.failures.len(),
-                        invalid.len()
-                    )
-                }
             );
         }
     }

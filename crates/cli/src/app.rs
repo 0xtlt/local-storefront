@@ -221,10 +221,16 @@ pub fn classic_accounts_note(theme: &Theme) -> Option<String> {
         .filter(|name| name.ends_with(".json") || name.ends_with(".liquid"))
         .count();
     (pages > 0).then(|| {
+        let (is, they) = if pages == 1 {
+            ("is", "it is")
+        } else {
+            ("are", "they are")
+        };
         format!(
-            "the {pages} page(s) of templates/customers/ are for classic customer accounts, which \
-             lsf does not have: they are never rendered. Every account link leads to `/account`, \
-             which stands for Shopify's new customer accounts."
+            "the {} of templates/customers/ {is} for classic customer accounts, which lsf does \
+             not have: {they} never rendered. Every account link leads to `/account`, which \
+             stands for Shopify's new customer accounts.",
+            crate::output::count(pages, "page", "pages")
         )
     })
 }

@@ -14,6 +14,7 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 use std::io::Read;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -441,16 +442,61 @@ fn push(
 }
 
 /// The HTTP client of the workers: no redirect is followed (Shopify takes a `3xx` for a failure),
-/// a status out of `2xx` is an answer, not an error.
+/// a status out of `2xx` is an answer, not an error, and a name under `localhost` connects to
+/// the loopback ([`LocalhostNames`]).
 fn agent(options: &DeliveryOptions) -> ureq::Agent {
-    ureq::Agent::config_builder()
+    let config = ureq::Agent::config_builder()
         .timeout_global(Some(options.timeout))
         .timeout_connect(Some(options.connect_timeout))
         .http_status_as_error(false)
         .max_redirects(0)
         .user_agent(USER_AGENT)
-        .build()
-        .into()
+        .build();
+    ureq::Agent::with_parts(
+        config,
+        ureq::unversioned::transport::DefaultConnector::default(),
+        LocalhostNames::default(),
+    )
+}
+
+/// Resolves a name under `localhost` (`app.localhost`) to the loopback, `127.0.0.1` then `::1`,
+/// whatever the system resolver says of it: RFC 6761 reserves those names for the loopback, and
+/// lsf counts them as this machine ([`super::subscriptions::is_loopback_host`]), but a system
+/// resolver need not know them. The request keeps its `Host`. Any other name, `localhost`
+/// itself included, is the system resolver's.
+#[derive(Debug, Default)]
+struct LocalhostNames(ureq::unversioned::resolver::DefaultResolver);
+
+impl ureq::unversioned::resolver::Resolver for LocalhostNames {
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        config: &ureq::config::Config,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        let under_localhost = uri.host().is_some_and(|host| {
+            !host.eq_ignore_ascii_case("localhost") && super::subscriptions::is_localhost_name(host)
+        });
+        if !under_localhost {
+            return self.0.resolve(uri, config, timeout);
+        }
+        let port = uri.port_u16().unwrap_or(match uri.scheme_str() {
+            Some(scheme) if scheme.eq_ignore_ascii_case("https") => 443,
+            _ => 80,
+        });
+        let loopback = [
+            SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
+            SocketAddr::from((Ipv6Addr::LOCALHOST, port)),
+        ];
+        let mut addresses = self.empty();
+        for address in config.ip_family().keep_wanted(loopback.into_iter()) {
+            addresses.push(address);
+        }
+        if addresses.is_empty() {
+            return Err(ureq::Error::HostNotFound);
+        }
+        Ok(addresses)
+    }
 }
 
 /// A worker: sends the deliveries that are due, until the log is dropped.
@@ -627,6 +673,47 @@ fn describe(error: &ureq::Error, url: &str, options: &DeliveryOptions) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_under_localhost_resolves_to_the_loopback() {
+        use ureq::unversioned::resolver::Resolver;
+        use ureq::unversioned::transport::NextTimeout;
+
+        let resolve = |url: &str| {
+            let timeout = NextTimeout {
+                after: Duration::from_secs(1).into(),
+                reason: ureq::Timeout::Resolve,
+                per_read: None,
+                per_write: None,
+            };
+            LocalhostNames::default()
+                .resolve(
+                    &url.parse().unwrap(),
+                    &ureq::config::Config::default(),
+                    timeout,
+                )
+                .map(|addresses| {
+                    addresses
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+        };
+        // Never asked of the system resolver, which need not know the name.
+        assert_eq!(
+            resolve("http://no-such-app.localhost:3051/webhooks").unwrap(),
+            ["127.0.0.1:3051", "[::1]:3051"]
+        );
+        assert_eq!(
+            resolve("HTTPS://Shop.App.LOCALHOST/x").unwrap(),
+            ["127.0.0.1:443", "[::1]:443"]
+        );
+        // Any other name is the system resolver's.
+        assert_eq!(
+            resolve("http://127.0.0.1:3051/x").unwrap(),
+            ["127.0.0.1:3051"]
+        );
+    }
 
     #[test]
     fn a_timeout_says_which_one_fired() {
