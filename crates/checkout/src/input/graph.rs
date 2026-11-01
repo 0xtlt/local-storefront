@@ -1042,17 +1042,7 @@ impl<'c> FunctionInput<'c> {
 
     /// The country of the market: the one the session selected, the shop's otherwise.
     fn country(&self) -> String {
-        let store = self.ctx.store;
-        self.ctx
-            .session
-            .country
-            .clone()
-            .filter(|code| !code.is_empty())
-            .or_else(|| {
-                Some(store.shop.address.country_code.clone()).filter(|code| !code.is_empty())
-            })
-            .unwrap_or_else(|| "US".to_string())
-            .to_ascii_uppercase()
+        super::buyer_country(self.ctx.store, self.ctx.session)
     }
 
     /// The language of the buyer, else the primary one of the store. `LanguageCode` is the
@@ -1081,15 +1071,8 @@ impl<'c> FunctionInput<'c> {
         let store = self.ctx.store;
         let declared = store.market_of(code);
         match name {
-            "id" => leaf(format!(
-                "gid://shopify/Market/{}",
-                lsf_core::util::stable_id("market", declared.map_or(code, |m| m.handle.as_str()))
-            )),
-            "handle" => leaf(match (declared, store.country(code)) {
-                (Some(market), _) => market.handle.clone(),
-                (None, Some(country)) => lsf_core::util::handleize(&country.name),
-                (None, None) => code.to_ascii_lowercase(),
-            }),
+            "id" => leaf(super::market_of(store, code).0),
+            "handle" => leaf(super::market_of(store, code).1),
             "regions" => Some(Resolved::List(match declared {
                 Some(market) => market
                     .countries

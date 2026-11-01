@@ -857,7 +857,7 @@ control API (`PUT /__lsf/session`).
 | `$schema` | string | Lets editors validate and autocomplete the file, e.g. `"../schema/session.schema.json"`. |
 | `customer` | string | Who is logged in: the email of a customer, `"default"` for the first customer of the data, or `"none"`. Nobody is logged in when omitted. |
 | `cart` | [Cart](#cart) | The content of the cart. Empty when omitted. |
-| `country` | string | ISO code of the selected country. Defaults to the first country. |
+| `country` | string | ISO code of the selected country. When omitted, the storefront shows the first country. The checkout, until an address is entered, is in the shop's country (`shop.address.country_code`), the one of its primary market: its Functions, its UI extensions and its address form read it. A shop in a country the store does not sell to uses the first country. |
 | `company_location` | string | For a B2B customer: the name of the company location they buy for. Defaults to the first one they have access to. |
 
 ## Cart

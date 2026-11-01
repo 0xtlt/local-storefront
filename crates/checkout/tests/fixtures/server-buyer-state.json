@@ -29,8 +29,8 @@
         "isoCode": "USD"
       },
       "market": {
-        "id": "gid://shopify/Market/1",
-        "handle": "primary"
+        "id": "gid://shopify/Market/4654684647651",
+        "handle": "united-states"
       }
     }
   },
@@ -75,8 +75,8 @@
         "isoCode": "USD"
       },
       "market": {
-        "id": "gid://shopify/Market/1",
-        "handle": "primary"
+        "id": "gid://shopify/Market/4654684647651",
+        "handle": "united-states"
       }
     }
   }

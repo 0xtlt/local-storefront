@@ -548,7 +548,7 @@ test('the Localization API reads the language, country, currency and market of t
   // The visitor selected Canada; the customer ships to their default address, in the US.
   assert.equal(localization.country.value.isoCode, 'US', 'the country of the address the customer ships to');
   assert.equal(localization.currency.value.isoCode, 'EUR', 'the currency of the checkout');
-  assert.deepEqual(plain(localization.market.value), { id: 'gid://shopify/Market/1', handle: 'primary' });
+  assert.deepEqual(plain(localization.market.value), { id: 'gid://shopify/Market/4654684647651', handle: 'united-states' }, 'the market of that country, as the Functions read it');
   // Numbers follow the language of the buyer.
   assert.equal(i18n.formatNumber(1234.5), '1\u202f234,5');
 });

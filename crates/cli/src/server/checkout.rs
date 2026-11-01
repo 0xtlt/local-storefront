@@ -335,13 +335,8 @@ fn start(state: &ServerState, incoming: &Incoming) -> Reply {
             .and_then(|address| address.country_code.as_ref())
             .is_none()
         {
-            let country = entry.session.country.clone().or_else(|| {
-                Some(store.shop.address.country_code.clone()).filter(|code| !code.is_empty())
-            });
-            if let Some(code) = country {
-                address.get_or_insert_with(Default::default).country_code =
-                    Some(code.to_ascii_uppercase());
-            }
+            address.get_or_insert_with(Default::default).country_code =
+                Some(lsf_checkout::input::buyer_country(&store, &entry.session));
         }
     });
     let root = request_root(state, &id, incoming);
@@ -870,31 +865,30 @@ fn language_json(language: &Language) -> Json {
 }
 
 /// What the Localization API reads: the language of the buyer (not the primary one of the
-/// store), the country of the shipping address or else the one the visitor selected, the
-/// currency and the market.
+/// store), the country of the shipping address or else the one the Functions read (the one the
+/// visitor selected, else the shop's), the currency and the market of that country, as the
+/// Functions read it.
 pub(super) fn localization_json(
     store: &Store,
     language: &Language,
     session: &Session,
     checkout: &CheckoutState,
 ) -> Json {
-    let country = checkout
-        .shipping_address
-        .as_ref()
-        .and_then(|address| address.country_code.clone())
-        .or_else(|| session.country.clone())
-        .map(|code| code.to_ascii_uppercase());
+    let code = checkout
+        .shipping_country()
+        .map(str::to_ascii_uppercase)
+        .unwrap_or_else(|| lsf_checkout::input::buyer_country(store, session));
+    let (market_id, market_handle) = lsf_checkout::input::market_of(store, &code);
     json!({
         "language": language_json(language),
         // Where the storefront of this language lives: `/fr`, nothing for the primary one.
         "rootUrl": root_of(language),
-        "country": country.map(|code| json!({
+        "country": {
             "isoCode": code,
             "name": store.country(&code).map_or(code.as_str(), |country| country.name.as_str()),
-        })),
+        },
         "currency": {"isoCode": store.shop.currency},
-        // The same market as `localization.market` of the theme.
-        "market": {"id": "gid://shopify/Market/1", "handle": "primary"},
+        "market": {"id": market_id, "handle": market_handle},
     })
 }
 

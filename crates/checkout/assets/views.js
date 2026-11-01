@@ -13,7 +13,7 @@
 
 import { accountMenu, addressLabel, fullName, initials, otherContactEmail, savedAddressId } from './account.js';
 import { countriesOf, countryName, price, priceOrFree, storefrontLink } from './format.js';
-import { missingFields, placeErrors } from './operations.js';
+import { addressField, missingFields, placeErrors } from './operations.js';
 import { h } from './vdom.js';
 
 // Single-color outline icons that follow the text color (the tokens set it): 1.4px strokes,
@@ -94,7 +94,7 @@ function countryOptions(state, current) {
 
 /** What the buyer sees in a field: what they typed, else what the checkout holds. */
 function addressValue({ state, ui }, name) {
-  return ui.draft?.address?.[name] ?? state.shippingAddress?.[name] ?? '';
+  return addressField(state, ui.draft, name);
 }
 
 /** The messages for each field: the checkout's own errors, the extensions' and, once the

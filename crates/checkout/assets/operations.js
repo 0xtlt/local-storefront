@@ -187,6 +187,14 @@ export function placeErrors(errors) {
   return placed;
 }
 
+/** A field of the address the buyer sees: what they typed, else what the checkout holds. The
+ * country starts on the one the buyer is localized to, as on Shopify. */
+export function addressField(state, draft, name) {
+  const value = draft?.address?.[name] ?? state.shippingAddress?.[name];
+  if (name === 'countryCode' && value == null) return state.localization?.country?.isoCode ?? '';
+  return value ?? '';
+}
+
 /** The fields the buyer has to fill before paying, by the order of the page. */
 export function missingFields(state, draft = {}) {
   const missing = [];
@@ -194,11 +202,11 @@ export function missingFields(state, draft = {}) {
   if (!present(email)) missing.push('email');
   const needsShipping = state.lines?.some((line) => line.requiresShipping) ?? true;
   if (needsShipping) {
-    const address = { ...(state.shippingAddress ?? {}), ...(draft.address ?? {}) };
     for (const field of ['lastName', 'address1', 'city', 'countryCode']) {
-      if (!present(address[field])) missing.push(field);
+      if (!present(addressField(state, draft, field))) missing.push(field);
     }
-    if (state.deliveryGroups?.some((group) => !group.selected)) missing.push('delivery');
+    // The rates show once the checkout has a country to ship to.
+    if (state.shippingAddress?.countryCode && state.deliveryGroups?.some((group) => !group.selected)) missing.push('delivery');
   }
   if (state.paymentMethods?.length && !state.selectedPayment) missing.push('payment');
   return missing;

@@ -1081,13 +1081,26 @@ logged-in customer has, `customer` (`id`, `email`, `phone`, `firstName`, `lastNa
 and the `location` they buy for, each with `id`, `name` and `externalId`). `localization` is what
 `shopify.localization` reads: `language` and `rootUrl` as above, the `country` (the one of the
 shipping address, otherwise the one the visitor selected on the storefront), the `currency` and
-the `market`. The store has no avatar, no consent to SMS marketing and no store credit for a
-customer, nor a time zone for a buyer (`timezone` is the one of the browser).
+the `market` of that country. The store has no avatar, no consent to SMS marketing and no store
+credit for a customer, nor a time zone for a buyer (`timezone` is the one of the browser).
+
+A buyer with no address and no selected country is in the shop's country
+(`shop.address.country_code`), the one of its primary market, as on Shopify. The Functions read
+it as `localization.country`, the extensions as `shopify.localization.country`, and the
+address form starts on it. Both read the same `market`. A shop in a country the store does not
+sell to uses the first country of the store.
 
 The state has the lines, discounts, discount codes, delivery groups, payment methods, errors and
 cost that the Functions produced, `runs` (a run of a `.fetch` target has its `exchange`, the
 request and the response), the buyer, the address, the note, the attributes and
 the metafields, the `extensions` to load and `diagnostics`. Money is `{"amount": 19.99}`.
+
+No shipping rate is selected until the address has a country, as on Shopify. Until then, the
+page shows "Enter shipping address", and no total has the shipping: `cost.shipping` is 0,
+`cost.total` and `cost.dueNow` leave it out, and so does `shopify.cost.totalAmount`.
+`shopify.cost.totalShippingAmount` is undefined. The Functions read `selectedDeliveryOption:
+null` and a `cart.cost.totalAmount` without shipping. The rates are still offered, so a delivery
+customization runs on them.
 
 ### Operations
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fieldForTarget, missingFields, op, operationsForChange, placeErrors } from '../operations.js';
+import { addressField, fieldForTarget, missingFields, op, operationsForChange, placeErrors } from '../operations.js';
 
 const ops = (method, change, state) => operationsForChange(method, change, state);
 
@@ -80,6 +80,17 @@ test('places errors by field, the rest as general', () => {
     { message: 'Nothing to say where' },
   ]);
   assert.deepEqual(placed, { fields: { email: ['Enter an email'] }, general: ['Too many', 'Nothing to say where'] });
+});
+
+test('the country of the address starts on the one the buyer is localized to', () => {
+  const state = { lines: [{ requiresShipping: true }], shippingAddress: null, deliveryGroups: [{ selected: null }], buyer: {}, localization: { country: { isoCode: 'CA' } } };
+  assert.equal(addressField(state, {}, 'countryCode'), 'CA');
+  assert.equal(addressField(state, { address: { countryCode: 'FR' } }, 'countryCode'), 'FR', 'what the buyer picked');
+  assert.equal(addressField(state, { address: { countryCode: '' } }, 'countryCode'), '', 'a country the buyer cleared');
+  assert.equal(addressField({ ...state, shippingAddress: { countryCode: 'US' } }, {}, 'countryCode'), 'US');
+  assert.equal(addressField(state, {}, 'city'), '');
+  // Not missing then, nor the shipping method, which waits for the address.
+  assert.deepEqual(missingFields(state), ['email', 'lastName', 'address1', 'city']);
 });
 
 test('lists what is missing before paying', () => {

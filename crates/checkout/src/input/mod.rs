@@ -123,6 +123,38 @@ pub fn delivery_group_handle(id: &str) -> Option<&str> {
 
 const DELIVERY_GROUP_PREFIX: &str = "gid://shopify/CartDeliveryGroup/";
 
+/// The country the buyer is localized to, as the Functions read it (`localization.country`):
+/// the one the session selected, else the store's default ([`Store::default_country`]: the
+/// shop's, the country of its primary market). In capitals.
+///
+/// [`Store::default_country`]: lsf_core::Store::default_country
+pub fn buyer_country(store: &lsf_core::Store, session: &lsf_core::Session) -> String {
+    session
+        .country
+        .as_deref()
+        .map(str::trim)
+        .filter(|code| !code.is_empty())
+        .unwrap_or(&store.default_country().iso_code)
+        .to_ascii_uppercase()
+}
+
+/// The market that sells to a country, as `{id, handle}`: the one the data groups it in, else
+/// one of its own, named after the country. The Functions and the checkout UI extensions read
+/// the same.
+pub fn market_of(store: &lsf_core::Store, code: &str) -> (String, String) {
+    let declared = store.market_of(code);
+    let id = format!(
+        "gid://shopify/Market/{}",
+        lsf_core::util::stable_id("market", declared.map_or(code, |m| m.handle.as_str()))
+    );
+    let handle = match (declared, store.country(code)) {
+        (Some(market), _) => market.handle.clone(),
+        (None, Some(country)) => lsf_core::util::handleize(&country.name),
+        (None, None) => code.to_ascii_lowercase(),
+    };
+    (id, handle)
+}
+
 /// Runs `query` (the Function's input query) against the checkout, with `variables` from
 /// `[extensions.input.variables]` (the JSON value of that owner metafield, or none): its
 /// top-level keys are the values of the query's variables.
