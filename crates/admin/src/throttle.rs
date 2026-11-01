@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -178,8 +178,8 @@ struct Bucket {
 
 /// The buckets of every shop and app.
 pub struct Throttle {
-    plan: Mutex<Plan>,
-    enabled: std::sync::atomic::AtomicBool,
+    plan: Plan,
+    enabled: AtomicBool,
     clock: Box<dyn Clock>,
     buckets: Mutex<HashMap<String, Bucket>>,
 }
@@ -198,21 +198,15 @@ impl Throttle {
 
     pub fn with_clock(plan: Plan, clock: impl Clock + 'static) -> Throttle {
         Throttle {
-            plan: Mutex::new(plan),
-            enabled: std::sync::atomic::AtomicBool::new(true),
+            plan,
+            enabled: AtomicBool::new(true),
             clock: Box::new(clock),
             buckets: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn plan(&self) -> Plan {
-        *self.plan.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// Changes the plan: every bucket starts full again.
-    pub fn set_plan(&self, plan: Plan) {
-        *self.plan.lock().unwrap_or_else(|e| e.into_inner()) = plan;
-        self.reset();
+        self.plan
     }
 
     /// Turns throttling off (`--admin-throttle off`) or on. Off, every bucket is always full:
