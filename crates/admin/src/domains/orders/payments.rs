@@ -1315,7 +1315,7 @@ fn reminder_send(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
 // --- Tender transactions ---
 
 /// The field of an `OrderTransaction` that names its tender transaction.
-pub const TENDER: &str = "lsfTender";
+const TENDER: &str = "lsfTender";
 
 /// Records the tender transaction of an order transaction that moved money: a successful sale
 /// or capture (a positive amount), refund or change (a negative one). Returns its GID; `None`

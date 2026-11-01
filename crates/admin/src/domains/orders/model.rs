@@ -338,7 +338,7 @@ pub fn order_of(state: &ShopState, record: &str) -> Option<String> {
 
 /// The fulfillments of a line item that shipped: `(fulfillment line item GID, quantity)`, over
 /// the order's successful fulfillments.
-pub fn fulfilled_lines(state: &ShopState, order: &str, line: &str) -> Vec<(String, i64)> {
+fn fulfilled_lines(state: &ShopState, order: &str, line: &str) -> Vec<(String, i64)> {
     let Some(record) = state.get(order) else {
         return Vec::new();
     };
@@ -355,7 +355,7 @@ pub fn fulfilled_lines(state: &ShopState, order: &str, line: &str) -> Vec<(Strin
 }
 
 /// How many units of a line item shipped.
-pub fn fulfilled_quantity(state: &ShopState, order: &str, line: &str) -> i64 {
+fn fulfilled_quantity(state: &ShopState, order: &str, line: &str) -> i64 {
     fulfilled_lines(state, order, line)
         .iter()
         .map(|(_, quantity)| quantity)
@@ -528,7 +528,7 @@ pub fn refund_discrepancy(state: &ShopState, order: &Record) -> i64 {
 /// What the transactions of an order moved: `(received, refunded, capturable, voided)`.
 /// Received is what sales and captures took; capturable what authorizations hold that was
 /// neither captured nor voided.
-pub fn money_moved(state: &ShopState, order: &Record) -> (i64, i64, i64, bool) {
+fn money_moved(state: &ShopState, order: &Record) -> (i64, i64, i64, bool) {
     let transactions: Vec<&Record> = gids(order.get("transactions"))
         .iter()
         .filter_map(|transaction| state.get(transaction))

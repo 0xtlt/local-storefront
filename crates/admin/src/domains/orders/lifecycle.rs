@@ -66,12 +66,12 @@ pub fn register(registry: &mut Registry) {
 }
 
 /// The order a GID names, when it is one of the shop.
-pub fn find_order(state: &ShopState, id: &str) -> Option<String> {
+fn find_order(state: &ShopState, id: &str) -> Option<String> {
     (state.type_of(id) == Some("Order")).then(|| id.to_string())
 }
 
 /// lsf's wording of an unknown order: shopify.dev shows none.
-pub fn no_order(field: &[&str]) -> UserError {
+fn no_order(field: &[&str]) -> UserError {
     UserError::new(field, "Order does not exist").code("NOT_FOUND")
 }
 
@@ -772,7 +772,7 @@ fn order_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
 /// Removes an order and the records that are its alone (line items, fulfillment orders,
 /// fulfillments, transactions, refunds, returns), then refreshes its customer. Emits
 /// `orders/delete`.
-pub fn delete_order(state: &mut ShopState, order: &str) {
+fn delete_order(state: &mut ShopState, order: &str) {
     let Some(record) = state.get(order).cloned() else {
         return;
     };

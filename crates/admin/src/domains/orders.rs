@@ -217,7 +217,7 @@ pub fn order_gid(order: &Order) -> String {
 }
 
 /// A line item: from the order's id and the line's position, which lsf-core gives no id.
-pub fn line_item_gid(order_id: u64, position: usize) -> String {
+fn line_item_gid(order_id: u64, position: usize) -> String {
     gid(
         "LineItem",
         stable_id("line_item", &format!("{order_id}/{position}")),

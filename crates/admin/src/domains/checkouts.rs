@@ -57,11 +57,11 @@ use crate::state::{Record, ShopState, gid};
 
 /// How long a checkout stays incomplete before it is abandoned (Help Center: "more than ten
 /// minutes").
-pub const ABANDONMENT_DELAY_MINUTES: i64 = 10;
+const ABANDONMENT_DELAY_MINUTES: i64 = 10;
 
 /// How long the admin keeps an abandoned checkout ("older than three months are automatically
 /// deleted").
-pub const RETENTION_DAYS: i64 = 90;
+const RETENTION_DAYS: i64 = 90;
 
 /// A line of a cart, as the server reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
