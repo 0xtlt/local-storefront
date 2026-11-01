@@ -16,14 +16,14 @@ use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::value;
 
 /// The longest policy body lsf keeps, in bytes.
-pub const MAX_BODY_BYTES: usize = 512 * 1024;
+const MAX_BODY_BYTES: usize = 512 * 1024;
 
 pub fn register(registry: &mut Registry) {
     registry.mutation("shopPolicyUpdate", shop_policy_update);
 }
 
 /// The handle and the title Shopify gives a policy of a `ShopPolicyType`.
-pub fn policy_name(kind: &str) -> Option<(&'static str, &'static str)> {
+fn policy_name(kind: &str) -> Option<(&'static str, &'static str)> {
     Some(match kind {
         "CONTACT_INFORMATION" => ("contact-information", "Contact information"),
         "LEGAL_NOTICE" => ("legal-notice", "Legal notice"),
@@ -38,21 +38,13 @@ pub fn policy_name(kind: &str) -> Option<(&'static str, &'static str)> {
 }
 
 fn shop_policy_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = ctx
-        .arg("shopPolicy")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let kind = input
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let body = input
-        .get("body")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
+    let input = |name: &str| {
+        ctx.arg("shopPolicy")
+            .and_then(|input| input.get(name))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    };
+    let (kind, body) = (input("type"), input("body"));
     if body.len() > MAX_BODY_BYTES {
         let error = UserError::new(
             &["shopPolicy", "body"],
@@ -61,7 +53,7 @@ fn shop_policy_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         .code("TOO_BIG");
         return Ok(payload(json!({"shopPolicy": null}), &[error]));
     }
-    let Some((handle, title)) = policy_name(&kind) else {
+    let Some((handle, title)) = policy_name(kind) else {
         let error = UserError::new(&["shopPolicy", "type"], "Type is invalid");
         return Ok(payload(json!({"shopPolicy": null}), &[error]));
     };
@@ -73,7 +65,7 @@ fn shop_policy_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
                 .get(key)
                 .and_then(|policy| policy.get("type"))
                 .and_then(Value::as_str)
-                == Some(kind.as_str())
+                == Some(kind)
         })
         .map(str::to_string);
     let shop = state.shop_gid().map(str::to_string);
