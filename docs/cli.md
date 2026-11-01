@@ -348,7 +348,7 @@ The HTML goes to stdout. On stderr: each Liquid error and each warning, then a s
 
 ```text
 Liquid error (layout/theme line 34): divided by 0
-status 200 · template product · 1 Liquid error(s) · 0 warning(s)
+status 200 · template product · 1 Liquid error · 0 warnings
 ```
 
 With `--strict`, a path with nothing at it adds `error: nothing at /x: the page is the theme's
@@ -582,7 +582,7 @@ It keeps the files that exist, so it is safe to run again, and refreshes `schema
 on stderr, and exits with `0`:
 
 ```text
-./shopify-local: wrote 16 file(s), kept 0 existing one(s), refreshed schema/
+./shopify-local: wrote 16 files, kept 0 existing ones, refreshed schema/
 ```
 
 | Option | What it does |

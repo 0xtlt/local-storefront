@@ -20,7 +20,7 @@ a script can test.
 |---|---|
 | `validate`, `check` (`--fix` too), `app check`, `app function run` | `--format json`: one JSON document on stdout. |
 | `app webhook trigger` | `--format json` (`--json` is the same). |
-| `render <path>` | The HTML on stdout. On stderr, each Liquid error, then `status 200 · template product · 0 Liquid error(s) · 0 warning(s)`. |
+| `render <path>` | The HTML on stdout. On stderr, each Liquid error, then `status 200 · template product · 0 Liquid errors · 0 warnings`. |
 | `routes` | One path per line. |
 | `fmt --check` | One file to format per line; the summary on stderr. |
 | `profile <path>` | Text. `--json` is a speedscope profile for a flame graph, not a report. |
@@ -38,8 +38,8 @@ npx local-storefront init
 ```
 
 `init` writes `shopify-local/` with a demo store, and prints on stderr
-`./shopify-local: wrote 16 file(s), kept 0 existing one(s), refreshed schema/`. It keeps the
-files that exist, so it is safe to run again (`wrote 0 file(s), kept 16 existing one(s)`).
+`./shopify-local: wrote 16 files, kept 0 existing ones, refreshed schema/`. It keeps the
+files that exist, so it is safe to run again (`wrote 0 files, kept 16 existing ones`).
 `--force` overwrites them. Exit `0`.
 
 To use your own products instead of the demo's, delete `shopify-local/products/*.json`,
@@ -214,7 +214,7 @@ On stderr, each error, then a summary:
 
 ```text
 Liquid error (layout/theme line 34): divided by 0
-status 200 · template product · 1 Liquid error(s) · 0 warning(s)
+status 200 · template product · 1 Liquid error · 0 warnings
 ```
 
 With `--strict`, exit `1` when the page has Liquid errors, or when nothing is at the path

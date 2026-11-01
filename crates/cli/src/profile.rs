@@ -144,8 +144,12 @@ pub fn text(path: &str, measured: &Measured, unit: Unit, all: bool) -> String {
     if !measured.rendered.errors.is_empty() {
         let _ = writeln!(
             out,
-            "The page has {} Liquid error(s).",
-            measured.rendered.errors.len()
+            "The page has {}.",
+            crate::output::count(
+                measured.rendered.errors.len(),
+                "Liquid error",
+                "Liquid errors"
+            )
         );
     }
     out.push('\n');

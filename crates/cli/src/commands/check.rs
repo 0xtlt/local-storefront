@@ -9,6 +9,8 @@ use lsf_core::theme::liquid_settings::{holds_settings, string_literal, string_sp
 use lsf_liquid::strict2::{self, BROKEN_TODAY, Finding, IssueKind};
 use serde::Serialize;
 
+use crate::output::count;
+
 #[derive(Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum Format {
     /// For a person: a line per problem, with indented details.
@@ -760,13 +762,15 @@ pub fn run(
                 .map_err(|error| error.to_string())?
         );
     } else {
+        let checked = format!(
+            "{} checked, {}",
+            count(files, "file", "files"),
+            count(tally.problems, "problem", "problems")
+        );
         if tally.fixed > 0 {
-            eprintln!(
-                "{files} file(s) checked, {} problem(s), {} fixed",
-                tally.problems, tally.fixed
-            );
+            eprintln!("{checked}, {} fixed", tally.fixed);
         } else {
-            eprintln!("{files} file(s) checked, {} problem(s)", tally.problems);
+            eprintln!("{checked}");
         }
         if tally.fixable > 0 {
             eprintln!(
@@ -776,8 +780,13 @@ pub fn run(
         }
         if tally.changes > 0 {
             eprintln!(
-                "{} of the fixes change the output, where the code now does what it says: review the diff",
-                tally.changes
+                "{} of the fixes {} the output, where the code now does what it says: review the diff",
+                tally.changes,
+                if tally.changes == 1 {
+                    "changes"
+                } else {
+                    "change"
+                }
             );
         }
     }

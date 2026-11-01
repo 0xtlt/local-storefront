@@ -1363,7 +1363,7 @@ mod tests {
             "error[missing_selling_plan]: the selling plan group \"Empty group\" has no selling plan",
             "there is no product with the handle \"merino-crew-sock\"",
             "did you mean \"merino-crew-socks\"?",
-            "the selling plan gives 1 option value(s) but the group has 2 option(s): Frequency, Size",
+            "the selling plan gives 1 option value but the group has 2 options: Frequency, Size",
             "error[invalid_value]: \"10.5\" is not a percentage",
             "error[invalid_value]: 150 is not a percentage",
             "another selling plan of this group is already named \"one\"",

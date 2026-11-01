@@ -60,7 +60,8 @@ fn an_app_without_a_theme_has_its_store_data_and_scenarios_validated() {
     let output = validate(&app.0, &[]);
     assert!(output.status.success(), "{}", text(&output));
     assert!(
-        text(&output).contains("valid (") && text(&output).contains("1 checkout scenarios)"),
+        text(&output).contains("valid (0 products, ")
+            && text(&output).contains("1 checkout scenario)"),
         "{}",
         text(&output)
     );

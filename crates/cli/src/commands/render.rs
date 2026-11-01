@@ -7,7 +7,7 @@ use lsf_core::theme::Revalidate;
 use lsf_core::{Request, Session, Store};
 
 use crate::app::App;
-use crate::output::print_diagnostics;
+use crate::output::{count, print_diagnostics};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -103,11 +103,11 @@ pub fn run(
         eprintln!("warning: {warning}");
     }
     eprintln!(
-        "status {} · template {} · {} Liquid error(s) · {} warning(s)",
+        "status {} · template {} · {} · {}",
         rendered.status,
         rendered.template,
-        rendered.errors.len(),
-        rendered.warnings.len()
+        count(rendered.errors.len(), "Liquid error", "Liquid errors"),
+        count(rendered.warnings.len(), "warning", "warnings")
     );
     // Strict, a path that leads to nothing fails as Liquid errors do: a snapshot of a product
     // the data no longer has must not pass.

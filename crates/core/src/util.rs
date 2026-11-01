@@ -15,6 +15,11 @@ pub fn command_of(variable: Option<&str>) -> String {
         .to_string()
 }
 
+/// `1 Function`, `2 Functions`: a number and what it counts, in the singular or the plural.
+pub fn count(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
 /// Turns a string into a Shopify handle: lowercase ASCII letters and digits separated by
 /// single hyphens. Accented Latin letters are transliterated (`Crème brûlée` → `creme-brulee`).
 pub fn handleize(input: &str) -> String {
@@ -155,6 +160,13 @@ mod tests {
             command_of(Some("npx local-storefront")),
             "npx local-storefront"
         );
+    }
+
+    #[test]
+    fn a_count_is_singular_for_one_only() {
+        assert_eq!(count(0, "Function", "Functions"), "0 Functions");
+        assert_eq!(count(1, "Function", "Functions"), "1 Function");
+        assert_eq!(count(2, "UI extension", "UI extensions"), "2 UI extensions");
     }
 
     #[test]

@@ -40,6 +40,7 @@ use lsf_checkout::app::{self, App, Selection};
 use serde_json::{Value as Json, json};
 
 use crate::checkout::encoded_handle;
+use crate::output::count;
 
 use lock::{Lock, Locks};
 
@@ -2092,10 +2093,6 @@ fn seconds(duration: Duration) -> String {
     } else {
         format!("{:.1}s", duration.as_secs_f64())
     }
-}
-
-fn count(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 #[cfg(test)]

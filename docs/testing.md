@@ -398,7 +398,7 @@ writes (cart changes, forms) are estimates. `slow` is not measured.
   test.beforeEach(async ({ page }) => {
     page.on('response', (response) => {
       const errors = response.headers()['x-lsf-liquid-errors'];
-      if (errors) throw new Error(`${response.url()} rendered with ${errors} Liquid error(s)`);
+      if (errors) throw new Error(`${response.url()} rendered with Liquid errors: ${errors}`);
     });
   });
   ```

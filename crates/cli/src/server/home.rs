@@ -22,6 +22,7 @@ use super::home_check::Report;
 use super::reply::{Reply, cache};
 use super::{Incoming, ServerState};
 use crate::checkout::{CheckoutOptions, display_money, encoded_handle};
+use crate::output::count;
 use crate::watch::Failure;
 
 /// Where the files of the checkout page are served from.
@@ -428,10 +429,6 @@ fn names(settings: &CheckoutSettings, store: &Store) -> (String, String) {
         .collect::<Vec<_>>()
         .join(", ");
     (rates, methods)
-}
-
-fn count(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 /// What a scenario is: a few `(label, text)` lines (the cart, the buyer, the country and
@@ -1691,7 +1688,8 @@ fn check_line(home: &Json, check_now: &str) -> String {
             let seconds = check["elapsedMs"].as_u64().unwrap_or(0) as f64 / 1000.0;
             let mut text = if checked < total {
                 format!(
-                    "Checked {checked} of {total} scenarios ({seconds:.1} s): out of time for the others"
+                    "Checked {checked} of {} ({seconds:.1} s): out of time for the others",
+                    count(total, "scenario", "scenarios")
                 )
             } else {
                 format!(
@@ -2650,7 +2648,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
              <button type=\"button\" data-filter-chip=\"problems\" aria-pressed=\"false\" disabled>With problems</button>\
              <button type=\"button\" data-filter-chip=\"functions\" aria-pressed=\"false\" disabled>Functions</button>\
              <button type=\"button\" data-filter-chip=\"ui\" aria-pressed=\"false\" disabled>UI</button></div>\
-             <p class=\"lsf-h-shown\"><span class=\"lsf-h-shown-size\" aria-hidden=\"true\">{total} of {total} scenarios shown</span>\
+             <p class=\"lsf-h-shown\"><span class=\"lsf-h-shown-size\" aria-hidden=\"true\">{total} of {all} shown</span>\
              <span data-filter-count aria-live=\"polite\">{}</span></p></div></div>",
             count(scenarios.len(), "scenario", "scenarios"),
             match troubled {
@@ -2661,6 +2659,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
             esc(&shorten(folder, dir)),
             count(scenarios.len(), "scenario", "scenarios"),
             total = scenarios.len(),
+            all = count(scenarios.len(), "scenario", "scenarios"),
         ));
         if grouped {
             for (name, list) in &groups {

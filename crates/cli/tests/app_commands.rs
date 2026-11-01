@@ -628,6 +628,55 @@ fn render_strict_fails_on_a_page_that_is_not_there() {
         &["--theme", theme, "render", "/", "--strict"],
     );
     assert_eq!(output.status.code(), Some(0), "{}", text(&output));
+    assert!(
+        text(&output).contains(" · 0 Liquid errors · "),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn init_and_app_init_count_in_the_singular_for_one() {
+    let app = App::new("counted");
+    let output = lsf(&app.0, &["init"]);
+    assert!(
+        text(&output).contains(" files, kept 0 existing ones, refreshed schema/"),
+        "{}",
+        text(&output)
+    );
+    // One file to write again.
+    std::fs::remove_file(app.0.join("shopify-local/README.md")).unwrap();
+    let output = lsf(&app.0, &["init"]);
+    assert!(
+        text(&output).contains(": wrote 1 file, kept "),
+        "{}",
+        text(&output)
+    );
+
+    let output = lsf(&app.0, &["app", "init"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains(" scenarios, kept 0 existing ones, for "),
+        "{}",
+        text(&output)
+    );
+    assert!(!text(&output).contains("(s)"), "{}", text(&output));
+    // One scenario to write again.
+    let scenario = std::fs::read_dir(app.0.join("shopify-local/checkouts"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .unwrap();
+    std::fs::remove_file(scenario).unwrap();
+    let output = lsf(&app.0, &["app", "init"]);
+    assert!(
+        text(&output).contains(": wrote 1 scenario, kept "),
+        "{}",
+        text(&output)
+    );
 }
 
 #[test]
