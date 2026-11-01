@@ -374,7 +374,7 @@ fn checkout_of(state: &ShopState, cart_token: &str, generation: u64) -> Option<S
 }
 
 /// A customer of the shop by email, ignoring case: the customer a guest's checkout is linked to.
-fn customer_by_email(state: &ShopState, email: &str) -> Option<String> {
+pub(super) fn customer_by_email(state: &ShopState, email: &str) -> Option<String> {
     let email = email.trim();
     if email.is_empty() {
         return None;
@@ -391,10 +391,11 @@ fn customer_by_email(state: &ShopState, email: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn mailing_address(address: &lsf_checkout::Address, id: &str) -> Value {
+/// A `MailingAddress` of an address of the checkout, its id lsf-core's of `key`.
+pub(super) fn mailing_address(address: &lsf_checkout::Address, key: &str) -> Value {
     let address = address.clone().normalized();
     let core = lsf_core::store::Address {
-        id: stable_id("address", &format!("{id}/checkout")),
+        id: stable_id("address", key),
         first_name: address.first_name.unwrap_or_default(),
         last_name: address.last_name.unwrap_or_default(),
         company: address.company.unwrap_or_default(),
@@ -464,7 +465,7 @@ fn checkout_fields(state: &ShopState, id: &str, checkout: &Checkout<'_>) -> Reco
     let address = checkout
         .shipping_address
         .filter(|address| address.country_code.is_some() || address.address1.is_some())
-        .map(|address| mailing_address(address, id));
+        .map(|address| mailing_address(address, &format!("{id}/checkout")));
     let shipping: Vec<Value> = result
         .delivery_groups
         .iter()

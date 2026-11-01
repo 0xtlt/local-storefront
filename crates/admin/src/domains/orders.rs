@@ -476,32 +476,13 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
     let fully_fulfilled = draft.fulfillment == FulfillmentState::Fulfilled;
 
     // The fulfillment order: every order has one, at the location that fulfills it.
-    let location = draft.location.as_ref().and_then(|location| {
-        state
-            .get(location)
-            .map(|record| (location.clone(), record.clone()))
+    let location = draft
+        .location
+        .as_deref()
+        .filter(|location| state.contains(location));
+    let assigned = location.map_or(json!({"name": "", "countryCode": "US"}), |location| {
+        model::assigned_location_value(state, location)
     });
-    let assigned =
-        location
-            .as_ref()
-            .map_or(json!({"name": "", "countryCode": "US"}), |(id, record)| {
-                let address = record.get("address").cloned().unwrap_or(Value::Null);
-                json!({
-                    "name": record.get("name"),
-                    "location": id,
-                    "address1": address.get("address1"),
-                    "address2": address.get("address2"),
-                    "city": address.get("city"),
-                    "province": address.get("provinceCode"),
-                    "zip": address.get("zip"),
-                    "phone": address.get("phone"),
-                    "countryCode": address
-                        .get("countryCode")
-                        .and_then(Value::as_str)
-                        .filter(|code| !code.is_empty())
-                        .unwrap_or("US"),
-                })
-            });
     let fulfillment_order = derived("FulfillmentOrder", "fulfillment_order", &order, "1");
     let fulfillment = derived("Fulfillment", "fulfillment", &order, "1");
     let has_fulfillment = fulfilled.iter().any(|quantity| *quantity > 0);
@@ -560,20 +541,13 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         }
     }
     let destination = draft.shipping_address.as_ref().map(|address| {
-        json!({
-            "id": derived("FulfillmentOrderDestination", "fulfillment_order_destination", &order, "1"),
-            "firstName": address.get("firstName"),
-            "lastName": address.get("lastName"),
-            "company": address.get("company"),
-            "address1": address.get("address1"),
-            "address2": address.get("address2"),
-            "city": address.get("city"),
-            "province": address.get("province"),
-            "zip": address.get("zip"),
-            "countryCode": address.get("countryCodeV2"),
-            "phone": address.get("phone"),
-            "email": draft.email,
-        })
+        let id = derived(
+            "FulfillmentOrderDestination",
+            "fulfillment_order_destination",
+            &order,
+            "1",
+        );
+        lifecycle::destination(address, json!(id), json!(draft.email))
     });
     let status = if draft.cancelled {
         "CANCELLED"
@@ -622,7 +596,7 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
             "order": order,
             "status": "SUCCESS",
             "displayStatus": "FULFILLED",
-            "location": location.as_ref().map(|(id, _)| id),
+            "location": location,
             "fulfillmentLineItems": fulfillment_lines.iter().map(|(_, id)| id).collect::<Vec<_>>(),
             "fulfillmentOrders": [fulfillment_order],
             "totalQuantity": fulfilled.iter().sum::<u32>(),
@@ -1054,18 +1028,7 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
         Some(id) => Some(gid("Customer", id)).filter(|customer| state.contains(customer)),
         None => placed
             .email
-            .map(str::trim)
-            .filter(|email| !email.is_empty())
-            .and_then(|email| {
-                state.keys("Customer").find(|key| {
-                    state
-                        .get(key)
-                        .and_then(|record| record.get("email"))
-                        .and_then(Value::as_str)
-                        .is_some_and(|known| known.eq_ignore_ascii_case(email))
-                })
-            })
-            .map(str::to_string),
+            .and_then(|email| super::checkouts::customer_by_email(state, email)),
     };
     let customer_record = customer.as_ref().and_then(|customer| state.get(customer));
     let accepts_marketing = customer_record
@@ -1157,30 +1120,9 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
         .iter()
         .map(|line| line.subtotal - line.total)
         .sum();
-    let address = placed.shipping_address.map(|address| {
-        let address = address.clone().normalized();
-        let core = lsf_core::store::Address {
-            id: stable_id("address", &format!("{id}/shipping")),
-            first_name: address.first_name.unwrap_or_default(),
-            last_name: address.last_name.unwrap_or_default(),
-            company: address.company.unwrap_or_default(),
-            address1: address.address1.unwrap_or_default(),
-            address2: address.address2.unwrap_or_default(),
-            city: address.city.unwrap_or_default(),
-            province: String::new(),
-            province_code: address.province_code.unwrap_or_default(),
-            country: address
-                .country_code
-                .as_deref()
-                .and_then(lsf_core::store::reference::country_name)
-                .unwrap_or_default()
-                .to_string(),
-            country_code: address.country_code.unwrap_or_default(),
-            zip: address.zip.unwrap_or_default(),
-            phone: address.phone.unwrap_or_default(),
-        };
-        value::mailing_address(&core, "Address")
-    });
+    let address = placed
+        .shipping_address
+        .map(|address| super::checkouts::mailing_address(address, &format!("{id}/shipping")));
     let location = state.keys("Location").next().map(str::to_string);
     let draft = OrderDraft {
         id: id.clone(),

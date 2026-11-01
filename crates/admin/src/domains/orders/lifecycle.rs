@@ -136,7 +136,7 @@ fn order_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         let billing = record.get("billingAddress").cloned();
         record.insert(
             "billingAddressMatchesShippingAddress".into(),
-            json!(billing.is_some_and(|billing| same_place(&billing, address))),
+            json!(billing.is_some_and(|billing| super::same_address(&billing, address))),
         );
         let email = record.get("email").cloned();
         for fulfillment_order in gids(record.get("fulfillmentOrders")) {
@@ -163,23 +163,6 @@ fn address_gid(order: &str, kind: &str) -> String {
         "gid://shopify/MailingAddress/{}?model_name=Address",
         stable_id("address", &format!("{order}/{kind}"))
     )
-}
-
-/// Whether two `MailingAddress`es are the same place (ids aside).
-fn same_place(a: &Value, b: &Value) -> bool {
-    [
-        "firstName",
-        "lastName",
-        "company",
-        "address1",
-        "address2",
-        "city",
-        "provinceCode",
-        "countryCodeV2",
-        "zip",
-    ]
-    .iter()
-    .all(|key| a.get(key) == b.get(key))
 }
 
 /// A `FulfillmentOrderDestination` of a shipping address.
