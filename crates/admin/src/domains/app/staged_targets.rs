@@ -39,7 +39,6 @@ fn errors_of(answer: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// `stagedUploadTargetGenerate`.
 fn target_generate(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = ctx.arg("input").cloned().unwrap_or(Value::Null);
     let answer = staged_uploads(m, ctx, json!([input]))?;
@@ -68,7 +67,6 @@ fn target_generate(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     ))
 }
 
-/// `stagedUploadTargetsGenerate`.
 fn targets_generate(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = ctx.arg("input").cloned().unwrap_or_else(|| json!([]));
     let answer = staged_uploads(m, ctx, input)?;
