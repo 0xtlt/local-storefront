@@ -635,12 +635,6 @@ impl ServerState {
     }
 }
 
-fn percent_decode(input: &str) -> String {
-    percent_encoding::percent_decode_str(input)
-        .decode_utf8_lossy()
-        .into_owned()
-}
-
 async fn handle(
     State(state): State<Arc<ServerState>>,
     request: HttpRequest<Body>,
@@ -662,7 +656,7 @@ async fn handle(
     };
     let incoming = Incoming {
         method: parts.method.as_str().to_string(),
-        path: percent_decode(parts.uri.path()),
+        path: lsf_core::urls::percent_decode(parts.uri.path()),
         query: params::query_pairs(parts.uri.query().unwrap_or_default()),
         host: headers
             .get("host")

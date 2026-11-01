@@ -106,6 +106,32 @@ pub fn with_sorted_params(base: &str, params: &[(&str, String)]) -> String {
     format!("{path}?{}", query.join("&"))
 }
 
+/// Decodes the `%XX` escapes of a URL or a path (a `%` not followed by two hex digits stays as
+/// it is), the bytes read as UTF-8, an invalid sequence replaced by `\u{FFFD}`.
+pub fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let hex = |at: usize| {
+        bytes
+            .get(at)
+            .and_then(|byte| char::from(*byte).to_digit(16))
+    };
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match (bytes[index], hex(index + 1), hex(index + 2)) {
+            (b'%', Some(high), Some(low)) => {
+                out.push((high * 16 + low) as u8);
+                index += 3;
+            }
+            (byte, _, _) => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Inserts a size suffix before the extension, as the legacy `img_url` filter does:
 /// `shirt.jpg` + `large` → `shirt_large.jpg`.
 pub fn with_size_suffix(url: &str, suffix: &str) -> String {
@@ -127,6 +153,14 @@ pub fn with_size_suffix(url: &str, suffix: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_the_percent_escapes() {
+        assert_eq!(percent_decode("caf%C3%A9%20au%2flait"), "café au/lait");
+        // An escape needs two hex digits; a broken sequence is replaced.
+        assert_eq!(percent_decode("100%25 %zz %+1 %4"), "100% %zz %+1 %4");
+        assert_eq!(percent_decode("%FF."), "\u{FFFD}.");
+    }
 
     #[test]
     fn sorts_image_parameters() {
