@@ -8,7 +8,7 @@ use std::path::Path;
 use serde_json::{Value as Json, json};
 
 use super::super::ServerState;
-use super::{admin_query, admin_request, admin_server, get, text};
+use super::{admin_query, admin_request, admin_server, body_json, get, text};
 
 fn mutate(state: &ServerState, query: &str, variables: Json) -> Json {
     let reply = admin_request(
@@ -18,7 +18,7 @@ fn mutate(state: &ServerState, query: &str, variables: Json) -> Json {
         &json!({ "query": query, "variables": variables }).to_string(),
     );
     assert_eq!(reply.status, 200, "{}", text(&reply));
-    let answer: Json = serde_json::from_slice(&reply.body).unwrap();
+    let answer = body_json(&reply);
     assert!(answer.get("errors").is_none(), "{answer}");
     answer
 }

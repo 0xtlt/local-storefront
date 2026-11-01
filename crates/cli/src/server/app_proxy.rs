@@ -570,7 +570,6 @@ fn header_text(reason: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::io::{BufRead, BufReader, Read, Write};
     use std::path::PathBuf;
     use std::sync::mpsc;
 
@@ -581,110 +580,13 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::server::admin::AdminSettings;
+    use crate::server::tests::{Seen, backend, http};
     use crate::server::{ServeOptions, ServerState};
 
     const SECRET: &str = "hush";
 
     /// `[app_proxy]` on the origin of `application_url`, as `shopify app dev` leaves it.
     const PROXY: &str = "url = \"https://example.trycloudflare.com/proxy\"\nsubpath = \"reviews\"\nprefix = \"apps\"";
-
-    /// A request as the backend received it.
-    struct Seen {
-        method: String,
-        /// The path and the query, as sent.
-        target: String,
-        headers: HashMap<String, String>,
-        body: Vec<u8>,
-    }
-
-    impl Seen {
-        fn path(&self) -> &str {
-            self.target.split('?').next().unwrap_or_default()
-        }
-
-        /// The query, decoded as `URLSearchParams` decodes it, in order.
-        fn query(&self) -> Vec<(String, String)> {
-            let query = self.target.split_once('?').map_or("", |(_, query)| query);
-            form_urlencoded::parse(query.as_bytes())
-                .into_owned()
-                .collect()
-        }
-
-        fn param(&self, name: &str) -> Option<String> {
-            self.query()
-                .into_iter()
-                .find(|(key, _)| key == name)
-                .map(|(_, value)| value)
-        }
-    }
-
-    /// A backend on a port of its own: each request is answered with the raw HTTP `answer`
-    /// writes for it, then sent to the channel.
-    fn backend(
-        answer: impl Fn(&Seen) -> String + Send + 'static,
-    ) -> (String, mpsc::Receiver<Seen>) {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let (sender, received) = mpsc::channel();
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut line = String::new();
-                if reader.read_line(&mut line).is_err() {
-                    continue;
-                }
-                let mut parts = line.split(' ');
-                let method = parts.next().unwrap_or_default().to_string();
-                let target = parts.next().unwrap_or_default().to_string();
-                let mut headers = HashMap::new();
-                loop {
-                    line.clear();
-                    if reader.read_line(&mut line).is_err() {
-                        break;
-                    }
-                    match line.trim_end().split_once(':') {
-                        Some((name, value)) => {
-                            headers
-                                .insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
-                        }
-                        None => break,
-                    }
-                }
-                let length = headers
-                    .get("content-length")
-                    .and_then(|length| length.parse().ok())
-                    .unwrap_or(0);
-                let mut body = vec![0; length];
-                let _ = reader.read_exact(&mut body);
-                let seen = Seen {
-                    method,
-                    target,
-                    headers,
-                    body,
-                };
-                let _ = stream.write_all(answer(&seen).as_bytes());
-                if sender.send(seen).is_err() {
-                    break;
-                }
-            }
-        });
-        (url, received)
-    }
-
-    /// A raw HTTP answer.
-    fn http(status: &str, headers: &[(&str, &str)], body: &str) -> String {
-        let mut answer = format!(
-            "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n",
-            body.len()
-        );
-        for (name, value) in headers {
-            answer.push_str(&format!("{name}: {value}\r\n"));
-        }
-        answer.push_str("\r\n");
-        answer.push_str(body);
-        answer
-    }
 
     /// A Liquid answer, as `liquid()` of the app templates sends it.
     fn liquid(body: &str) -> String {

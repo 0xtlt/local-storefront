@@ -17,12 +17,21 @@ mod store_sync;
 mod themes;
 
 fn server() -> ServerState {
+    let (state, diagnostics) = fixture_server(None);
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    state
+}
+
+/// The fixture theme's server, serving the Admin API with `admin`.
+fn fixture_server(
+    admin: Option<super::admin::AdminSettings>,
+) -> (ServerState, lsf_core::diagnostics::Diagnostics) {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
-    let (state, diagnostics) = ServerState::new(
+    ServerState::new(
         app,
         ServeOptions {
-            admin: None,
+            admin,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -33,9 +42,7 @@ fn server() -> ServerState {
             customer: None,
             checkout: None,
         },
-    );
-    assert!(diagnostics.is_empty(), "{diagnostics}");
-    state
+    )
 }
 
 /// A request from the session named `session`.
@@ -8266,24 +8273,7 @@ fn the_home_page_says_what_never_runs() {
 
 /// The fixture theme's server, serving the Admin API.
 fn admin_server() -> ServerState {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
-    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
-    let (state, _) = ServerState::new(
-        app,
-        ServeOptions {
-            admin: Some(Default::default()),
-            live_reload: false,
-            watch: false,
-            quiet: true,
-            compress: true,
-            minify: true,
-            throttle: Default::default(),
-            timings: false,
-            customer: None,
-            checkout: None,
-        },
-    );
-    state
+    fixture_server(Some(Default::default())).0
 }
 
 #[test]
@@ -8366,6 +8356,35 @@ fn admin_query(state: &ServerState, query: &str) -> Json {
     body_json(&reply)
 }
 
+/// `productUpdate` of the title of the product with `handle`.
+fn retitle(state: &ServerState, handle: &str, title: &str) {
+    let found = admin_query(
+        state,
+        &format!(r#"{{ productByHandle(handle: "{handle}") {{ id }} }}"#),
+    );
+    let id = found["data"]["productByHandle"]["id"].as_str().unwrap();
+    let updated = admin_query(
+        state,
+        &format!(
+            r#"mutation {{ productUpdate(product: {{id: "{id}", title: "{title}"}}) {{ userErrors {{ message }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        updated["data"]["productUpdate"]["userErrors"],
+        json!([]),
+        "{updated}"
+    );
+}
+
+/// The `<h1>` of a product page, as `session` sees it.
+fn title_on_page(state: &ServerState, handle: &str, session: &str) -> String {
+    let page = text(&get(state, &format!("/products/{handle}"), session));
+    page.split_once("<h1>")
+        .and_then(|(_, rest)| rest.split_once("</h1>"))
+        .map(|(title, _)| title.to_string())
+        .unwrap_or_else(|| panic!("no title in {page}"))
+}
+
 #[test]
 fn the_admin_api_is_served_before_the_storefront() {
     let state = admin_server();
@@ -8429,25 +8448,62 @@ fn reloading_the_store_data_seeds_the_shops_again() {
 }
 
 /// What a test backend received: the path, the headers (lowercase names), the body.
-type Received = std::sync::mpsc::Receiver<(String, HashMap<String, String>, Vec<u8>)>;
+/// A request as the backend received it.
+pub(super) struct Seen {
+    pub(super) method: String,
+    /// The path and the query, as sent.
+    pub(super) target: String,
+    pub(super) headers: HashMap<String, String>,
+    pub(super) body: Vec<u8>,
+}
 
-/// A backend that answers `200` to every request and hands over what it received.
-fn webhook_receiver() -> (String, Received) {
-    use std::io::{BufRead, BufReader, Read, Write};
+impl Seen {
+    pub(super) fn path(&self) -> &str {
+        self.target.split('?').next().unwrap_or_default()
+    }
+
+    /// The query, decoded as `URLSearchParams` decodes it, in order.
+    pub(super) fn query(&self) -> Vec<(String, String)> {
+        let query = self.target.split_once('?').map_or("", |(_, query)| query);
+        form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect()
+    }
+
+    pub(super) fn param(&self, name: &str) -> Option<String> {
+        self.query()
+            .into_iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value)
+    }
+}
+
+/// A backend on a port of its own: each request is answered with the raw HTTP `answer`
+/// writes for it, then sent to the channel.
+pub(super) fn backend(
+    answer: impl Fn(&Seen) -> String + Send + 'static,
+) -> (String, std::sync::mpsc::Receiver<Seen>) {
+    use std::io::{BufRead, Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let (sender, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
             let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            let path = line.split(' ').nth(1).unwrap_or_default().to_string();
+            if reader.read_line(&mut line).is_err() {
+                continue;
+            }
+            let mut parts = line.split(' ');
+            let method = parts.next().unwrap_or_default().to_string();
+            let target = parts.next().unwrap_or_default().to_string();
             let mut headers = HashMap::new();
             loop {
                 line.clear();
-                reader.read_line(&mut line).unwrap();
+                if reader.read_line(&mut line).is_err() {
+                    break;
+                }
                 match line.trim_end().split_once(':') {
                     Some((name, value)) => {
                         headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
@@ -8460,15 +8516,39 @@ fn webhook_receiver() -> (String, Received) {
                 .and_then(|length| length.parse().ok())
                 .unwrap_or(0);
             let mut body = vec![0; length];
-            reader.read_exact(&mut body).unwrap();
-            let _ = stream
-                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
-            if sender.send((path, headers, body)).is_err() {
+            let _ = reader.read_exact(&mut body);
+            let seen = Seen {
+                method,
+                target,
+                headers,
+                body,
+            };
+            let _ = stream.write_all(answer(&seen).as_bytes());
+            if sender.send(seen).is_err() {
                 break;
             }
         }
     });
     (url, received)
+}
+
+/// A raw HTTP answer.
+pub(super) fn http(status: &str, headers: &[(&str, &str)], body: &str) -> String {
+    let mut answer = format!(
+        "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n",
+        body.len()
+    );
+    for (name, value) in headers {
+        answer.push_str(&format!("{name}: {value}\r\n"));
+    }
+    answer.push_str("\r\n");
+    answer.push_str(body);
+    answer
+}
+
+/// A backend that answers `200` to every request and hands over what it received.
+fn webhook_receiver() -> (String, std::sync::mpsc::Receiver<Seen>) {
+    backend(|_| http("200 OK", &[], ""))
 }
 
 #[test]
@@ -8517,7 +8597,12 @@ fn an_order_placed_at_the_checkout_is_an_order_of_the_admin_api() {
     let reply = post(&state, &format!("{path}/complete"), json!({}), "co-admin");
     assert_eq!(reply.status, 200, "{}", text(&reply));
 
-    let (webhook_path, headers, body) = received
+    let Seen {
+        target: webhook_path,
+        headers,
+        body,
+        ..
+    } = received
         .recv_timeout(Duration::from_secs(10))
         .expect("orders/create was delivered");
     assert_eq!(webhook_path, "/webhooks/orders");
@@ -8653,7 +8738,7 @@ fn the_cart_and_the_checkout_fire_their_webhooks_and_abandon() {
         );
     }
     let next = || {
-        let (_, headers, body) = received
+        let Seen { headers, body, .. } = received
             .recv_timeout(Duration::from_secs(10))
             .expect("a webhook was delivered");
         let payload: Json = serde_json::from_slice(&body).unwrap();
