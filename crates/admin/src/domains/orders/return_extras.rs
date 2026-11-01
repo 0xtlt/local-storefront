@@ -40,6 +40,7 @@ use serde_json::{Value, json};
 use super::LineDraft;
 use super::model::{self, array, field_cents, int, text};
 use super::refunds::{self, RefundLine, RefundSpec};
+use super::returns::error;
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::outbox::{self, Entry};
@@ -61,10 +62,6 @@ pub fn register(registry: &mut Registry) {
         .query("returnCalculate", calculate)
         .field("Return", "suggestedFinancialOutcome", suggested_outcome)
         .field("Return", "suggestedRefund", suggested_refund);
-}
-
-fn error(field: &[&str], message: &str, code: &str) -> UserError {
-    UserError::new(field, message).code(code)
 }
 
 /// The field of a reverse fulfillment order that names its return.

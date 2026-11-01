@@ -103,7 +103,7 @@ pub fn returnable_quantity(state: &ShopState, fulfillment_line: &str) -> i64 {
 pub const UPDATE_REMOVALS: &str = "lsfUpdateRemovals";
 
 /// A return error with its code.
-fn error(field: &[&str], message: &str, code: &str) -> UserError {
+pub(super) fn error(field: &[&str], message: &str, code: &str) -> UserError {
     UserError::new(field, message).code(code)
 }
 
