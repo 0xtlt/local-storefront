@@ -28,7 +28,7 @@
 //! (REST-style, the same validations). The others are lsf's wording: shopify.dev does not show
 //! them.
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::model::{self, NewTransaction, array, field_cents, int, text};
 use crate::domains::catalog::gids;
@@ -598,31 +598,9 @@ fn suggested_refund(
     } else {
         model::cents(ctx.arg("shippingAmount")).min(remaining_shipping)
     };
-    let payments = model::refundable_payments(state, order_record);
-    let maximum: i64 = payments.iter().map(|(_, left)| left).sum();
+    let (suggested, maximum) =
+        suggested_transactions(state, order_record, subtotal + tax + shipping);
     let amount = (subtotal + tax + shipping).min(maximum);
-    let mut left = amount;
-    let mut suggested = Vec::new();
-    for (payment, refundable) in &payments {
-        if left <= 0 {
-            break;
-        }
-        let take = left.min(*refundable);
-        left -= take;
-        let gateway = state
-            .get(payment)
-            .and_then(|record| text(record, "gateway"));
-        suggested.push(json!({
-            "kind": "SUGGESTED_REFUND",
-            "amountSet": bag(take),
-            "maximumRefundableSet": bag(*refundable),
-            "gateway": gateway,
-            "formattedGateway": state.get(payment).and_then(|record| record.get("formattedGateway")),
-            "parentTransaction": payment,
-            "accountNumber": null,
-            "paymentDetails": null,
-        }));
-    }
     let cart = field_cents(order_record, "cartDiscountAmountSet");
     let value = json!({
         "amountSet": bag(amount),
@@ -642,11 +620,42 @@ fn suggested_refund(
         "suggestedRefundMethods": [],
         "suggestedTransactions": suggested,
     });
-    let Value::Object(map) = value else {
-        return Ok(Output::Null);
-    };
     Ok(Output::Object(Obj::built(
         "SuggestedRefund",
-        map as Map<String, Value>,
+        value::object(value),
     )))
+}
+
+/// The suggested transactions of a refund of `amount`, over the order's payments in order, and
+/// the most they can refund.
+pub(super) fn suggested_transactions(
+    state: &ShopState,
+    order: &Record,
+    amount: i64,
+) -> (Vec<Value>, i64) {
+    let currency = model::currency(state);
+    let bag = |cents: i64| value::money_bag(cents, &currency);
+    let payments = model::refundable_payments(state, order);
+    let maximum: i64 = payments.iter().map(|(_, left)| left).sum();
+    let mut left = amount.min(maximum);
+    let mut suggested = Vec::new();
+    for (payment, refundable) in &payments {
+        if left <= 0 {
+            break;
+        }
+        let take = left.min(*refundable);
+        left -= take;
+        let record = state.get(payment);
+        suggested.push(json!({
+            "kind": "SUGGESTED_REFUND",
+            "amountSet": bag(take),
+            "maximumRefundableSet": bag(*refundable),
+            "gateway": record.and_then(|record| record.get("gateway")),
+            "formattedGateway": record.and_then(|record| record.get("formattedGateway")),
+            "parentTransaction": payment,
+            "accountNumber": null,
+            "paymentDetails": null,
+        }));
+    }
+    (suggested, maximum)
 }
