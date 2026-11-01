@@ -597,7 +597,7 @@ pub fn session_token_endpoint(
 ) -> HttpResponse {
     let params = match parameters(request) {
         Ok(params) => params,
-        Err(reason) => return HttpResponse::json(400, &json!({"error": reason})),
+        Err(reason) => return HttpResponse::error(400, reason),
     };
     let param = |name: &str| {
         params
@@ -611,15 +611,15 @@ pub fn session_token_endpoint(
         .map(normalize_shop)
         .unwrap_or_else(|| shop_of(request, cx.shops));
     if !cx.shops.exists(&shop) {
-        return HttpResponse::json(404, &json!({"error": format!("lsf has no shop {shop}")}));
+        return HttpResponse::error(404, format!("lsf has no shop {shop}"));
     }
     let user = match param("user").map(str::parse::<u64>) {
         None => DEFAULT_USER,
         Some(Ok(user)) if cx.shops.user(&shop, user).is_some() => user,
         Some(_) => {
-            return HttpResponse::json(
+            return HttpResponse::error(
                 404,
-                &json!({"error": format!("{shop} has no user {}", param("user").unwrap_or_default())}),
+                format!("{shop} has no user {}", param("user").unwrap_or_default()),
             );
         }
     };
@@ -677,20 +677,20 @@ pub fn launch_url(
 pub fn launch(request: &HttpRequest, cx: &Context, tokens: &mut Tokens) -> HttpResponse {
     let shop = shop_of(request, cx.shops);
     if !cx.shops.exists(&shop) {
-        return HttpResponse::json(404, &json!({"error": format!("lsf has no shop {shop}")}));
+        return HttpResponse::error(404, format!("lsf has no shop {shop}"));
     }
     let path = request.query_param("path").unwrap_or("/");
     if !path.starts_with('/') || path.starts_with("//") {
-        return HttpResponse::json(
+        return HttpResponse::error(
             400,
-            &json!({"error": "path is a path of the app, starting with one /: /app/settings"}),
+            "path is a path of the app, starting with one /: /app/settings",
         );
     }
     let user = match request.query_param("user").map(str::parse::<u64>) {
         None => DEFAULT_USER,
         Some(Ok(user)) if cx.shops.user(&shop, user).is_some() => user,
         Some(_) => {
-            return HttpResponse::json(404, &json!({"error": format!("{shop} has no such user")}));
+            return HttpResponse::error(404, format!("{shop} has no such user"));
         }
     };
     let locale = request
@@ -698,9 +698,9 @@ pub fn launch(request: &HttpRequest, cx: &Context, tokens: &mut Tokens) -> HttpR
         .map_or_else(|| cx.shops.locale(&shop), str::to_string);
     match launch_url(cx, tokens, &shop, path, user, &locale) {
         Some(url) => HttpResponse::redirect(&url),
-        None => HttpResponse::json(
+        None => HttpResponse::error(
             400,
-            &json!({"error": "the app has no URL: give --app-url, or application_url in shopify.app.toml"}),
+            "the app has no URL: give --app-url, or application_url in shopify.app.toml",
         ),
     }
 }
@@ -854,14 +854,7 @@ fn page(status: u16, title: &str, hint: &str) -> HttpResponse {
             format!("<p>lsf: {}</p>", escape(hint))
         },
     );
-    HttpResponse {
-        status,
-        headers: vec![(
-            "content-type".to_string(),
-            "text/html; charset=utf-8".to_string(),
-        )],
-        body: body.into_bytes(),
-    }
+    HttpResponse::html(status, body)
 }
 
 #[cfg(test)]

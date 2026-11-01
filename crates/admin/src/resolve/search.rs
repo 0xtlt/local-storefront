@@ -32,7 +32,7 @@ use serde_json::{Value, json};
 use super::{ShopResolver, camel_case};
 use crate::graphql::FieldContext;
 use crate::search::{self, Node, Query, SearchValue, Searchable, Term};
-use crate::state::{Record, parse_gid};
+use crate::state::Record;
 
 /// The string filters that are tokenized text, not a keyword matched whole.
 const TEXT_FILTERS: &[&str] = &[
@@ -280,12 +280,7 @@ fn generic(
         let key = item
             .as_str()
             .or_else(|| record.get("id").and_then(Value::as_str));
-        return Some(
-            key.and_then(parse_gid)
-                .map(|(_, id)| SearchValue::Id(id))
-                .into_iter()
-                .collect(),
-        );
+        return Some(key.and_then(SearchValue::id).into_iter().collect());
     }
     if let Some(rest) = field.strip_prefix("metafields.") {
         let (namespace, key) = rest.split_once('.')?;
@@ -333,8 +328,7 @@ fn generic(
         return Some(
             strings(record.get(source))
                 .iter()
-                .filter_map(|gid| parse_gid(gid))
-                .map(|(_, id)| SearchValue::Id(id))
+                .filter_map(|gid| SearchValue::id(gid))
                 .collect(),
         );
     }
@@ -355,8 +349,7 @@ fn generic(
     Some(match kind {
         "time" | "date" => strings(value)
             .iter()
-            .filter_map(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
-            .map(|date| SearchValue::Date(date.with_timezone(&chrono::Utc)))
+            .filter_map(|text| SearchValue::date(text))
             .collect(),
         "boolean" => value
             .and_then(Value::as_bool)

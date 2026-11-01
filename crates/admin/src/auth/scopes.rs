@@ -34,7 +34,7 @@
 //!
 //! Fields without a text need no scope: `shop`, `app`, `currentAppInstallation`, `node`,
 //! `webhookSubscriptions`, `webhookSubscriptionCreate`, … (`node` and `nodes` answer records
-//! whose own type may require one: see [`type_access`]).
+//! whose own type may require one: see [`AccessTable::type_access`]).
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::OnceLock;
@@ -569,16 +569,6 @@ pub fn required_access(root: Root, field: &str) -> Option<RequiredAccess> {
     for_version(ApiVersion::default_version()).required_access(root, field)
 }
 
-/// [`AccessTable::field_access`] of the default version.
-pub fn field_access(type_name: &str, field: &str, root: Root) -> Option<RequiredAccess> {
-    for_version(ApiVersion::default_version()).field_access(type_name, field, root)
-}
-
-/// [`AccessTable::type_access`] of the default version.
-pub fn type_access(type_name: &str, root: Root) -> Option<RequiredAccess> {
-    for_version(ApiVersion::default_version()).type_access(type_name, root)
-}
-
 /// `access`, unless it names no scope to check.
 fn checked(access: RequiredAccess) -> Option<RequiredAccess> {
     (!access.alternatives.is_empty()).then_some(access)
@@ -853,15 +843,18 @@ mod tests {
 
     #[test]
     fn checks_nested_fields_and_types() {
-        let product_tags = field_access("Shop", "productTags", Root::Query).unwrap();
+        let table = for_version(ApiVersion::default_version());
+        let product_tags = table
+            .field_access("Shop", "productTags", Root::Query)
+            .unwrap();
         assert_eq!(product_tags.alternatives, vec![scopes(&["read_products"])]);
         // `shop { shopPolicies }` answers `ShopPolicy` records.
-        let policy = type_access("ShopPolicy", Root::Query).unwrap();
+        let policy = table.type_access("ShopPolicy", Root::Query).unwrap();
         assert_eq!(policy.alternatives, vec![scopes(&["read_legal_policies"])]);
-        let customer = type_access("Customer", Root::Query).unwrap();
+        let customer = table.type_access("Customer", Root::Query).unwrap();
         assert!(customer.allows(&["write_customers"]));
         assert!(!customer.allows(&["read_orders"]));
-        assert_eq!(type_access("Shop", Root::Query), None);
+        assert_eq!(table.type_access("Shop", Root::Query), None);
     }
 
     #[test]

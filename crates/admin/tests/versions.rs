@@ -10,6 +10,7 @@ use lsf_admin::api::{AdminApi, AdminOptions, HttpRequest, HttpResponse, Throttle
 use lsf_admin::version::{ApiVersion, Served};
 use lsf_admin::webhooks::DeliveryOptions;
 use serde_json::{Value, json};
+use support::json_of;
 
 const OLD: &str = "2026-10";
 const NEW: &str = "2027-01";
@@ -50,10 +51,6 @@ fn post(api: &AdminApi, version: &str, query: &str, variables: Value) -> HttpRes
         body: body.into_bytes(),
     })
     .expect("the Admin API is routed")
-}
-
-fn json_of(response: &HttpResponse) -> Value {
-    serde_json::from_slice(&response.body).unwrap()
 }
 
 fn header<'a>(response: &'a HttpResponse, name: &str) -> Option<&'a str> {

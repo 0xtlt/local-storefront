@@ -822,18 +822,18 @@ impl<'s> Sync<'s> {
     /// types, and references by the key the data names them by (a handle, a path of `files/`,
     /// `type/handle`, an email), which Liquid and the Functions read.
     fn value(&self, view: &View<'s>, kind: &str, value: &Value) -> Option<Value> {
-        let text = match value {
-            Value::String(text) => text.clone(),
+        let raw = match value {
+            Value::String(raw) => raw.clone(),
             Value::Null => return None,
             other => other.to_string(),
         };
-        let mut json = content::json_value(kind, &text);
+        let mut json = content::json_value(kind, &raw);
         if kind.strip_prefix("list.").unwrap_or(kind) == "money" {
             // The data writes an amount in the shop's currency without it.
             let currency = self
                 .state
                 .shop()
-                .and_then(|shop| text_of(shop, "currencyCode"));
+                .and_then(|shop| text(shop, "currencyCode"));
             let strip = |money: &mut Value| {
                 if let Value::Object(money) = money
                     && money.get("currency_code").and_then(Value::as_str) == currency
@@ -2401,11 +2401,6 @@ impl<'s> Sync<'s> {
 /// The type of a record: its `__typename`, else the type its GID names.
 fn type_of<'r>(key: &'r str, record: &'r Record) -> Option<&'r str> {
     text(record, "__typename").or_else(|| gid_type(key))
-}
-
-/// [`text`], for where a variable is named `text`.
-fn text_of<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
-    text(record, field)
 }
 
 /// A string field of a record, when it is a non-empty string.

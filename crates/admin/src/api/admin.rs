@@ -1019,10 +1019,7 @@ impl AdminApi {
                     Err(response) => return response,
                 };
                 let Some(name) = body.shop else {
-                    return HttpResponse::json(
-                        422,
-                        &json!({"error": "the body is {\"shop\": \"test-1\"}"}),
-                    );
+                    return HttpResponse::error(422, "the body is {\"shop\": \"test-1\"}");
                 };
                 match self.create_shop(&name) {
                     Ok((domain, token)) => HttpResponse::json(
@@ -1033,7 +1030,7 @@ impl AdminApi {
                             "graphql": self.graphql_path(),
                         }),
                     ),
-                    Err((status, error)) => HttpResponse::json(status, &json!({ "error": error })),
+                    Err((status, error)) => HttpResponse::error(status, error),
                 }
             }
             ("POST", "/__lsf/admin/uninstall") => self.uninstall(request),
@@ -1044,14 +1041,8 @@ impl AdminApi {
                 | "/__lsf/admin/shops"
                 | "/__lsf/admin/uninstall"
                 | "/__lsf/admin/install",
-            ) => HttpResponse::json(
-                405,
-                &json!({"error": format!("{method} is not allowed here")}),
-            ),
-            _ => HttpResponse::json(
-                404,
-                &json!({"error": format!("no control endpoint at {path}")}),
-            ),
+            ) => HttpResponse::not_allowed(&method),
+            _ => HttpResponse::error(404, format!("no control endpoint at {path}")),
         }
     }
 
@@ -1179,10 +1170,7 @@ impl AdminApi {
             .as_deref()
             .map_or_else(|| self.default_shop(), oauth::normalize_shop);
         if self.shop(&domain).is_none() {
-            return HttpResponse::json(
-                404,
-                &json!({"error": format!("there is no shop {domain}")}),
-            );
+            return HttpResponse::error(404, format!("there is no shop {domain}"));
         }
         let installed = lock(&self.tokens)
             .installed_scopes(&domain, &self.auth.client_id)
@@ -1279,10 +1267,7 @@ impl AdminApi {
             .as_deref()
             .map_or_else(|| self.default_shop(), oauth::normalize_shop);
         if self.shop(&domain).is_none() {
-            return HttpResponse::json(
-                404,
-                &json!({"error": format!("there is no shop {domain}")}),
-            );
+            return HttpResponse::error(404, format!("there is no shop {domain}"));
         }
         let scopes = match body.scopes {
             None => self.scopes.clone(),
@@ -1293,17 +1278,14 @@ impl AdminApi {
                 .map(str::to_string)
                 .collect(),
             Some(_) => {
-                return HttpResponse::json(
+                return HttpResponse::error(
                     422,
-                    &json!({"error": "`scopes` is a list of scopes, or a comma-separated string"}),
+                    "`scopes` is a list of scopes, or a comma-separated string",
                 );
             }
         };
         if let Some(bad) = scopes.iter().find(|scope| !scopes::is_scope_name(scope)) {
-            return HttpResponse::json(
-                422,
-                &json!({"error": format!("`{bad}` is not an access scope")}),
-            );
+            return HttpResponse::error(422, format!("`{bad}` is not an access scope"));
         }
         let (token, before) = {
             let mut tokens = lock(&self.tokens);
@@ -1432,9 +1414,9 @@ fn body_of<T: Default + for<'de> Deserialize<'de>>(
         return Ok(T::default());
     }
     serde_json::from_slice(&request.body).map_err(|error| {
-        HttpResponse::json(
+        HttpResponse::error(
             422,
-            &json!({"error": format!("the body is not what this endpoint takes: {error}")}),
+            format!("the body is not what this endpoint takes: {error}"),
         )
     })
 }

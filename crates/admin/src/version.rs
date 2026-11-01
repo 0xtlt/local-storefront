@@ -46,9 +46,6 @@ pub const OLDEST_ACCESSIBLE: &str = "2026-01";
 /// The versions a server serves by default: [`DEFAULT`].
 pub const SERVED: &[&str] = &[DEFAULT];
 
-/// The name of version 2026-10, for code that means that version, whatever the default is.
-pub const ADMIN_2026_10: &str = "2026-10";
-
 /// How Shopify labels a version (shopify.dev, "API versioning": "Shopify supports three version
 /// types"; and "Unsupported" in its release schedule).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -467,18 +464,8 @@ pub fn is_version_name(version: &str) -> bool {
         && bytes[5..].iter().all(u8::is_ascii_digit)
 }
 
-/// The body of the 404 for a version a server serving [`SERVED`] does not serve
-/// ([`Served::refusal`]).
-pub fn unsupported_version(version: &str) -> Value {
-    Served::default().refusal(version)
-}
-
-/// The body of the 404 for the REST Admin API, which lsf does not serve.
-pub fn rest_not_served(resource: &str) -> Value {
-    rest_not_served_by(&Served::default(), resource)
-}
-
-/// The same, naming the GraphQL endpoint of the server's [`Served::primary`] version.
+/// The body of the 404 for the REST Admin API, which lsf does not serve, naming the GraphQL
+/// endpoint of the server's [`Served::primary`] version.
 pub fn rest_not_served_by(served: &Served, resource: &str) -> Value {
     json!({
         "errors": format!(
@@ -586,7 +573,7 @@ mod tests {
     #[test]
     fn says_which_versions_it_serves() {
         assert_eq!(
-            unsupported_version("2026-07"),
+            Served::default().refusal("2026-07"),
             json!({"errors": "lsf serves the Admin API for API version 2026-10 only, not 2026-07"})
         );
         assert_eq!(
@@ -599,7 +586,7 @@ mod tests {
         assert!(is_version_name("unstable"));
         assert!(!is_version_name("v1"));
         assert!(
-            rest_not_served("products.json")["errors"]
+            rest_not_served_by(&Served::default(), "products.json")["errors"]
                 .as_str()
                 .unwrap()
                 .contains("/admin/api/2026-10/graphql.json")

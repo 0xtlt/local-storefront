@@ -3,10 +3,6 @@
 
 mod support;
 
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpListener;
-use std::sync::mpsc;
 use std::time::Duration;
 
 use lsf_admin::api::{
@@ -16,6 +12,8 @@ use lsf_admin::auth::signing::verify_webhook_hmac;
 use lsf_admin::throttle::Plan;
 use lsf_admin::webhooks::DeliveryOptions;
 use serde_json::{Value, json};
+use support::json_of;
+use support::receiver::Receiver;
 
 const SECRET: &str = "test-secret";
 const GRAPHQL: &str = "/admin/api/2026-10/graphql.json";
@@ -70,11 +68,6 @@ fn send(api: &AdminApi, method: &str, path: &str, body: Value) -> HttpResponse {
     .unwrap_or_else(|| panic!("{path} is not routed"))
 }
 
-fn json_of(response: &HttpResponse) -> Value {
-    serde_json::from_slice(&response.body)
-        .unwrap_or_else(|_| panic!("not JSON: {}", String::from_utf8_lossy(&response.body)))
-}
-
 fn header<'a>(response: &'a HttpResponse, name: &str) -> Option<&'a str> {
     response
         .headers
@@ -102,59 +95,6 @@ fn graphql(api: &AdminApi, token: &str, query: &str, variables: Value) -> (u16, 
 
 fn default_token(api: &AdminApi) -> String {
     api.token(&api.default_shop())
-}
-
-/// A webhook receiver: an HTTP listener that answers `200` and hands over each request.
-struct Receiver {
-    url: String,
-    requests: mpsc::Receiver<(HashMap<String, String>, Vec<u8>)>,
-}
-
-impl Receiver {
-    fn start() -> Receiver {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let (sender, requests) = mpsc::channel();
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut headers = HashMap::new();
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                loop {
-                    line.clear();
-                    reader.read_line(&mut line).unwrap();
-                    let trimmed = line.trim_end();
-                    if trimmed.is_empty() {
-                        break;
-                    }
-                    if let Some((name, value)) = trimmed.split_once(':') {
-                        headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
-                    }
-                }
-                let length: usize = headers
-                    .get("content-length")
-                    .and_then(|length| length.parse().ok())
-                    .unwrap_or(0);
-                let mut body = vec![0; length];
-                reader.read_exact(&mut body).unwrap();
-                let _ = stream.write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                );
-                if sender.send((headers, body)).is_err() {
-                    break;
-                }
-            }
-        });
-        Receiver { url, requests }
-    }
-
-    fn next(&self) -> (HashMap<String, String>, Vec<u8>) {
-        self.requests
-            .recv_timeout(Duration::from_secs(10))
-            .expect("a webhook was delivered")
-    }
 }
 
 #[test]
@@ -365,7 +305,7 @@ fn throttles_and_refuses_queries_over_the_cost_limit() {
 
 #[test]
 fn delivers_the_webhook_of_a_created_product() {
-    let receiver = Receiver::start();
+    let receiver = Receiver::start(SECRET);
     let api = demo_api();
     let token = default_token(&api);
     let (_, subscribed) = graphql(
@@ -402,7 +342,7 @@ fn delivers_the_webhook_of_a_created_product() {
         .as_str()
         .unwrap()
         .to_string();
-    let (headers, body) = receiver.next();
+    let (headers, body) = receiver.next_raw();
     assert_eq!(headers["x-shopify-topic"], "products/create");
     assert_eq!(headers["x-shopify-shop-domain"], api.default_shop());
     assert_eq!(headers["x-shopify-api-version"], "2026-10");
@@ -539,7 +479,7 @@ fn isolates_the_shops_it_creates() {
 
 #[test]
 fn uninstalls_and_installs_the_app() {
-    let receiver = Receiver::start();
+    let receiver = Receiver::start(SECRET);
     let api = demo_api();
     let token = default_token(&api);
     graphql(
@@ -551,7 +491,7 @@ fn uninstalls_and_installs_the_app() {
     let uninstalled = send(&api, "POST", "/__lsf/admin/uninstall", Value::Null);
     assert_eq!(uninstalled.status, 200);
     assert_eq!(json_of(&uninstalled)["revoked"], json!(1));
-    let (headers, body) = receiver.next();
+    let (headers, body) = receiver.next_raw();
     assert_eq!(headers["x-shopify-topic"], "app/uninstalled");
     let payload: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["myshopify_domain"], json!(api.default_shop()));
@@ -654,7 +594,7 @@ fn says_the_rest_api_and_other_versions_are_not_served() {
 
 #[test]
 fn reports_its_status_and_triggers_webhooks_from_the_shop() {
-    let receiver = Receiver::start();
+    let receiver = Receiver::start(SECRET);
     let api = demo_api();
     let status = json_of(&send(&api, "GET", "/__lsf/admin", Value::Null));
     assert_eq!(status["defaultShop"], json!(api.default_shop()));
@@ -679,7 +619,7 @@ fn reports_its_status_and_triggers_webhooks_from_the_shop() {
         "{}",
         String::from_utf8_lossy(&triggered.body)
     );
-    let (headers, body) = receiver.next();
+    let (headers, body) = receiver.next_raw();
     assert_eq!(headers["x-shopify-topic"], "products/update");
     let payload: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["title"], json!("Wool Beanie"));
@@ -709,7 +649,7 @@ fn reports_its_status_and_triggers_webhooks_from_the_shop() {
             "{}",
             String::from_utf8_lossy(&triggered.body)
         );
-        let (headers, body) = receiver.next();
+        let (headers, body) = receiver.next_raw();
         assert_eq!(headers["x-shopify-shop-domain"], domain);
         assert_eq!(
             serde_json::from_slice::<Value>(&body).unwrap(),
@@ -720,7 +660,7 @@ fn reports_its_status_and_triggers_webhooks_from_the_shop() {
 
 #[test]
 fn delivers_the_webhooks_of_metafields_and_metaobjects() {
-    let receiver = Receiver::start();
+    let receiver = Receiver::start(SECRET);
     let api = demo_api();
     let token = default_token(&api);
     for topic in [
@@ -799,7 +739,7 @@ fn delivers_the_webhooks_of_metafields_and_metaobjects() {
 
     let mut deliveries = Vec::new();
     for _ in 0..3 {
-        let (headers, body) = receiver.next();
+        let (headers, body) = receiver.next_raw();
         assert!(verify_webhook_hmac(
             SECRET,
             &body,

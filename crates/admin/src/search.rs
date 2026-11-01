@@ -428,6 +428,20 @@ pub enum SearchValue {
     Id(u64),
 }
 
+impl SearchValue {
+    /// The [`SearchValue::Date`] of a `DateTime` as a record holds it (RFC 3339).
+    pub fn date(text: &str) -> Option<SearchValue> {
+        DateTime::parse_from_rfc3339(text)
+            .ok()
+            .map(|date| SearchValue::Date(date.with_timezone(&Utc)))
+    }
+
+    /// The [`SearchValue::Id`] of a GID.
+    pub fn id(gid: &str) -> Option<SearchValue> {
+        crate::state::parse_gid(gid).map(|(_, id)| SearchValue::Id(id))
+    }
+}
+
 /// A record a search runs on: the domains implement it for each type of record, from the
 /// filters each connection documents (`title`, `tag`, `status`, `vendor`, `sku`, `email`, …).
 pub trait Searchable {

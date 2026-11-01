@@ -16,7 +16,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{AdminApi, HttpRequest, HttpResponse};
+use super::{AdminApi, HttpRequest, HttpResponse, escape_html};
 use crate::domains::subscriptions::{billing, payment_methods};
 use crate::state::ShopState;
 
@@ -27,42 +27,13 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
     let method = request.method.to_ascii_uppercase();
     Some(match (area, method.as_str()) {
         ("card-sessions", "POST") if rest.is_empty() => card_session(request),
-        ("card-sessions", _) if rest.is_empty() => not_allowed(&method),
+        ("card-sessions", _) if rest.is_empty() => HttpResponse::not_allowed(&method),
         ("subscriptions", "GET") if rest.is_empty() => log(api, request),
-        ("subscriptions", _) if rest.is_empty() => not_allowed(&method),
+        ("subscriptions", _) if rest.is_empty() => HttpResponse::not_allowed(&method),
         ("billing-attempts", _) => challenge(api, request, rest),
         ("payment-methods", _) => update_page(api, request, rest),
         _ => return None,
     })
-}
-
-fn not_allowed(method: &str) -> HttpResponse {
-    HttpResponse::json(
-        405,
-        &json!({"error": format!("{method} is not allowed here")}),
-    )
-}
-
-fn not_found(message: impl Into<String>) -> HttpResponse {
-    HttpResponse::json(404, &json!({"error": message.into()}))
-}
-
-fn html(status: u16, body: String) -> HttpResponse {
-    HttpResponse {
-        status,
-        headers: vec![(
-            "content-type".to_string(),
-            "text/html; charset=utf-8".to_string(),
-        )],
-        body: body.into_bytes(),
-    }
-}
-
-fn esc(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 /// The fields of a form body (`application/x-www-form-urlencoded`).
@@ -98,14 +69,14 @@ fn card_of(request: &HttpRequest) -> Option<Map<String, Value>> {
 /// `POST /__lsf/admin/card-sessions`.
 fn card_session(request: &HttpRequest) -> HttpResponse {
     let Some(card) = card_of(request) else {
-        return HttpResponse::json(
+        return HttpResponse::error(
             422,
-            &json!({"error": "the body is {\"credit_card\": {\"number\", \"first_name\", \"last_name\", \"month\", \"year\", \"verification_value\"}}"}),
+            "the body is {\"credit_card\": {\"number\", \"first_name\", \"last_name\", \"month\", \"year\", \"verification_value\"}}",
         );
     };
     match payment_methods::vault_session(&card) {
         Ok(id) => HttpResponse::json(201, &json!({"id": id})),
-        Err(error) => HttpResponse::json(422, &json!({"error": error})),
+        Err(error) => HttpResponse::error(422, error),
     }
 }
 
@@ -121,7 +92,7 @@ fn log(api: &AdminApi, request: &HttpRequest) -> HttpResponse {
     });
     match found {
         Some(log) => HttpResponse::json(200, &log),
-        None => not_found(format!("there is no shop {shop}")),
+        None => HttpResponse::error(404, format!("there is no shop {shop}")),
     }
 }
 
@@ -133,9 +104,10 @@ fn challenge(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse 
         parts.first().and_then(|n| n.parse::<u64>().ok()),
         parts.get(1),
     ) else {
-        return not_found(format!(
-            "no control endpoint at /__lsf/admin/billing-attempts/{rest}"
-        ));
+        return HttpResponse::error(
+            404,
+            format!("no control endpoint at /__lsf/admin/billing-attempts/{rest}"),
+        );
     };
     let shop = shop_of(api, request);
     let action = parts.get(2).copied().unwrap_or("");
@@ -144,15 +116,16 @@ fn challenge(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse 
         ("POST", "complete" | "fail") => api.change_shop(&shop, |state| {
             billing::complete_challenge(state, number, action == "complete")
         }),
-        (_, "" | "complete" | "fail") => return not_allowed(&method),
+        (_, "" | "complete" | "fail") => return HttpResponse::not_allowed(&method),
         _ => {
-            return not_found(format!(
-                "no control endpoint at /__lsf/admin/billing-attempts/{rest}"
-            ));
+            return HttpResponse::error(
+                404,
+                format!("no control endpoint at /__lsf/admin/billing-attempts/{rest}"),
+            );
         }
     };
     let Some(outcome) = outcome else {
-        return not_found(format!("there is no shop {shop}"));
+        return HttpResponse::error(404, format!("there is no shop {shop}"));
     };
     match outcome {
         Ok(attempt) => {
@@ -173,14 +146,14 @@ fn challenge(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse 
             {
                 return HttpResponse::json(200, &summary);
             }
-            html(200, challenge_page(&shop, number, &state))
+            HttpResponse::html(200, challenge_page(&shop, number, &state))
         }
         Err(billing::ChallengeError::NotFound) => {
-            not_found(format!("{shop} has no billing attempt {number}"))
+            HttpResponse::error(404, format!("{shop} has no billing attempt {number}"))
         }
-        Err(billing::ChallengeError::NotChallenged) => HttpResponse::json(
+        Err(billing::ChallengeError::NotChallenged) => HttpResponse::error(
             409,
-            &json!({"error": format!("billing attempt {number} is not waiting for a challenge")}),
+            format!("billing attempt {number} is not waiting for a challenge"),
         ),
     }
 }
@@ -190,7 +163,7 @@ fn challenge_page(shop: &str, number: u64, state: &str) -> String {
     let waiting = state == "SubscriptionBillingAttemptActionRequiredState";
     let mut body = format!(
         "<!doctype html><meta charset=utf-8><title>Confirm your payment</title><body style=\"font-family:system-ui;max-width:520px;margin:40px auto\"><h1>Confirm your payment</h1><p>{} · billing attempt {number} · local 3D Secure page of lsf</p>",
-        esc(shop)
+        escape_html(shop)
     );
     if waiting {
         for (action, label) in [
@@ -199,11 +172,11 @@ fn challenge_page(shop: &str, number: u64, state: &str) -> String {
         ] {
             body.push_str(&format!(
                 "<form method=post action=\"/__lsf/admin/billing-attempts/{number}/challenge/{action}?shop={}\"><button>{label}</button></form>",
-                esc(shop)
+                escape_html(shop)
             ));
         }
     } else {
-        body.push_str(&format!("<p>The attempt is {}.</p>", esc(state)));
+        body.push_str(&format!("<p>The attempt is {}.</p>", escape_html(state)));
     }
     body
 }
@@ -215,48 +188,46 @@ fn update_page(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpRespons
         .strip_suffix("/update")
         .filter(|token| !token.contains('/'))
     else {
-        return not_found(format!(
-            "no control endpoint at /__lsf/admin/payment-methods/{rest}"
-        ));
+        return HttpResponse::error(
+            404,
+            format!("no control endpoint at /__lsf/admin/payment-methods/{rest}"),
+        );
     };
     let shop = shop_of(api, request);
     match method.as_str() {
-        "GET" => html(
+        "GET" => HttpResponse::html(
             200,
             format!(
                 "<!doctype html><meta charset=utf-8><title>Update your payment method</title><body style=\"font-family:system-ui;max-width:520px;margin:40px auto\"><h1>Update your payment method</h1><p>{} · local page of lsf</p><form method=post><p><input name=number placeholder=\"Card number\"></p><p><input name=month placeholder=MM> <input name=year placeholder=YYYY></p><p><input name=first_name placeholder=\"First name\"> <input name=last_name placeholder=\"Last name\"></p><button>Save card</button></form>",
-                esc(&shop)
+                escape_html(&shop)
             ),
         ),
         "POST" => {
             let Some(card) = card_of(request) else {
-                return HttpResponse::json(
-                    422,
-                    &json!({"error": "the body is {\"credit_card\": {…}}"}),
-                );
+                return HttpResponse::error(422, "the body is {\"credit_card\": {…}}");
             };
             let session = match payment_methods::vault_session(&card) {
                 Ok(session) => session,
-                Err(error) => return HttpResponse::json(422, &json!({"error": error})),
+                Err(error) => return HttpResponse::error(422, error),
             };
             let updated = api.change_shop(&shop, |state| {
                 payment_methods::update_from_session(state, token, &session)
             });
             match updated {
-                Some(Ok(id)) if from_form(request) => html(
+                Some(Ok(id)) if from_form(request) => HttpResponse::html(
                     200,
                     format!(
                         "<!doctype html><meta charset=utf-8><p>Your payment method {} is updated.</p>",
-                        esc(&id)
+                        escape_html(&id)
                     ),
                 ),
                 Some(Ok(id)) => {
                     HttpResponse::json(200, &json!({"ok": true, "customerPaymentMethod": id}))
                 }
-                Some(Err(error)) => not_found(error),
-                None => not_found(format!("there is no shop {shop}")),
+                Some(Err(error)) => HttpResponse::error(404, error),
+                None => HttpResponse::error(404, format!("there is no shop {shop}")),
             }
         }
-        _ => not_allowed(&method),
+        _ => HttpResponse::not_allowed(&method),
     }
 }

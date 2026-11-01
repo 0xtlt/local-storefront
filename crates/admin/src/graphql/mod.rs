@@ -253,6 +253,11 @@ impl<'a> FieldContext<'a> {
         self.arg(name)?.as_bool()
     }
 
+    /// An input object argument (`input:`).
+    pub fn arg_object(&self, name: &str) -> Option<&'a Map<String, Value>> {
+        self.arg(name)?.as_object()
+    }
+
     /// The path of the field in the response: `["products", "edges", 0, "node", "title"]`.
     pub fn path(&self) -> &'a [Value] {
         self.path
@@ -649,21 +654,6 @@ impl<'s, 'q> Prepared<'s, 'q> {
             fragments,
             variables: &self.variables,
         }
-    }
-
-    /// Whether the operation is a query or a mutation.
-    pub fn kind(&self) -> OperationKind {
-        self.operation().kind
-    }
-
-    /// The name of the operation, if it has one.
-    pub fn operation_name(&self) -> Option<&'q str> {
-        self.operation().name
-    }
-
-    /// The values of the variables, coerced.
-    pub fn variables(&self) -> &Map<String, Value> {
-        &self.variables
     }
 
     /// The requested cost of the operation (see [`cost`]).

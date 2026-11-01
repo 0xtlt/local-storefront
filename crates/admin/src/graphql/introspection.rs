@@ -181,8 +181,7 @@ impl<'s> Resolver for Introspection<'s> {
 
     fn field(&mut self, ctx: &FieldContext<'_>, object: &Meta<'s>) -> Answer<'s> {
         let name = ctx.field_name();
-        let include_deprecated =
-            ctx.arg("includeDeprecated").and_then(Value::as_bool) == Some(true);
+        let include_deprecated = ctx.arg_bool("includeDeprecated") == Some(true);
         match *object {
             Meta::Schema => self.schema_field(name),
             Meta::Named(def) => self.type_field(def, name, include_deprecated),
