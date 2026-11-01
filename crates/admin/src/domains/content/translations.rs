@@ -30,7 +30,7 @@
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use super::metafields::is_translatable;
+use super::metafields::{is_translatable, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, value};
@@ -91,13 +91,6 @@ const TRANSLATED_TYPES: &[&str] = &[
     "ProductOptionValue",
     "Menu",
 ];
-
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-}
 
 /// The digest of a translatable value: its SHA-256, in hex.
 pub fn digest(value: &str) -> String {

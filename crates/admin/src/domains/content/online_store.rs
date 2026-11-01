@@ -30,7 +30,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::metafields::{self, check_owned_inputs, set_owned};
+use super::metafields::{self, check_owned_inputs, set_owned, text};
 use super::navigation::add_redirect;
 use crate::domains::catalog::{gids, tags_of};
 use crate::graphql::{FieldContext, FieldError};
@@ -56,13 +56,6 @@ pub fn register(registry: &mut Registry) {
 
 /// The longest title Shopify takes.
 const TITLE_LENGTH: usize = 255;
-
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-}
 
 fn input_of(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
     ctx.arg(name)

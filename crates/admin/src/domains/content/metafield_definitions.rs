@@ -33,12 +33,13 @@ use serde_json::{Map, Value, json};
 
 use super::metafields::{
     self, check_namespace_and_key, find_definition, other_apps, owner_types_of, stored_namespace,
+    text,
 };
 use super::types;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, value};
+use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -62,13 +63,6 @@ pub fn register(registry: &mut Registry) {
 
 /// The most definitions pinned per owner type.
 const PINNED_LIMIT: usize = 20;
-
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-}
 
 /// `metafieldDefinitions(ownerType:, namespace:, key:, pinnedStatus:, query:, sortKey:)`.
 fn metafield_definitions(

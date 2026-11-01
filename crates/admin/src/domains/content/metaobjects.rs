@@ -36,7 +36,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::metafields::shop_currency;
+use super::metafields::{shop_currency, text};
 use super::types::{self, Context};
 use super::{app_id, data_type, metaobject_definition_gid, metaobject_gid};
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -65,13 +65,6 @@ pub fn register(registry: &mut Registry) {
         .mutation("metaobjectUpsert", upsert)
         .mutation("metaobjectDelete", delete)
         .mutation("metaobjectBulkDelete", bulk_delete);
-}
-
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
 }
 
 /// A type as the Admin API stores it: `$app:author` is `app--<app id>--author`.

@@ -23,6 +23,7 @@ use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
 use super::menu_gid;
+use super::metafields::text;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, gid, value};
@@ -51,13 +52,6 @@ pub fn register(registry: &mut Registry) {
 
 /// How deep menu items nest.
 const MAX_DEPTH: usize = 3;
-
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-}
 
 /// The record type a menu item of `kind` names.
 fn resource_type(kind: &str) -> Option<&'static str> {
