@@ -17,8 +17,8 @@
 //! see" in `docs/admin.md`.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use lsf_admin::api::Synced;
@@ -27,7 +27,7 @@ use lsf_core::diagnostics::Diagnostics;
 use lsf_core::store::load::{OVERLAY_FILE, Overlay};
 use serde_json::Value as Json;
 
-use super::{Incoming, Loaded, ServerState};
+use super::{Incoming, Loaded, ServerState, lock};
 
 /// What the Admin API changed, as the store of a [`Loaded`] has it.
 #[derive(Clone, Debug, Default)]
@@ -48,12 +48,6 @@ pub struct SessionData {
     pub data: Arc<Json>,
     /// The generation of the Admin API's changes the session's store was built with.
     pub generation: u64,
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl ServerState {
