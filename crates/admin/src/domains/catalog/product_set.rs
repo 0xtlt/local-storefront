@@ -34,7 +34,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{self, coded, default_location, field, input, is, item_of, objects, text};
+use super::records::{self, coded, input, is, item_of, objects, text};
 use super::variants::{self, Choice, ProductOption, Reader};
 use super::{gids, media, product_changed, products};
 use crate::graphql::{FieldContext, FieldError};
@@ -384,39 +384,15 @@ fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
                     let stock = new_stock(state, planned.input);
                     let variant =
                         variants::insert_variant(state, &product, &choices, planned.input, &stock);
-                    if let Some(item) = item_of(state, &variant) {
-                        events.push(("inventory_items/create", item.clone()));
-                        for level in state
-                            .get(&item)
-                            .map(|record| gids(record.get("inventoryLevels")))
-                            .unwrap_or_default()
-                        {
-                            events.push(("inventory_levels/connect", level));
-                        }
-                    }
+                    events.extend(products::new_inventory_events(state, &variant));
                     variant
                 }
             };
             if let Some(file) = planned.input.get("file").and_then(Value::as_object)
                 && let Some(source) = text(file, "originalSource")
+                && let Some(medium) = media::by_source(state, &product, source)
             {
-                let medium = state
-                    .get(&product)
-                    .map(|record| gids(record.get("media")))
-                    .unwrap_or_default()
-                    .into_iter()
-                    .find(|medium| {
-                        state.get(medium).is_some_and(|record| {
-                            record
-                                .get("originalSource")
-                                .and_then(|original| original.get("url"))
-                                .and_then(Value::as_str)
-                                == Some(source)
-                        })
-                    });
-                if let Some(medium) = medium {
-                    media::attach_to_variant(state, &variant, &[medium]);
-                }
+                media::attach_to_variant(state, &variant, &[medium]);
             }
             keep.push(variant.clone());
             ordered.push((planned.position, variant));
@@ -520,14 +496,8 @@ fn target(
         };
     }
     if let Some(handle) = identifier.and_then(|identifier| text(identifier, "handle")) {
-        let found = state.keys("Product").find(|product| {
-            state
-                .get(product)
-                .and_then(|record| field(record, "handle"))
-                == Some(handle)
-        });
-        return Ok(match found {
-            Some(product) => Target::Existing(product.to_string()),
+        return Ok(match records::find_by_handle(state, "Product", handle) {
+            Some(product) => Target::Existing(product),
             None => Target::New {
                 handle: Some(lsf_core::util::handleize(handle)),
                 custom_id: None,
@@ -551,45 +521,8 @@ fn target(
 
 /// A new product without options or variants yet: `productSet` gives them.
 fn new_product(state: &mut ShopState, title: &str, handle: &str) -> String {
-    let now = state.timestamp();
-    let vendor = state
-        .shop()
-        .and_then(|shop| field(shop, "name"))
-        .unwrap_or_default()
-        .to_string();
-    let origin = records::origin(state);
-    let product = state.new_gid("Product");
-    state.insert(value::object(json!({
-        "__typename": "Product",
-        "id": product,
-        "title": title,
-        "handle": handle,
-        "descriptionHtml": "",
-        "bodyHtml": "",
-        "description": "",
-        "vendor": vendor,
-        "productType": "",
-        "tags": [],
-        "status": "ACTIVE",
-        "createdAt": now,
-        "updatedAt": now,
-        "publishedAt": null,
-        "templateSuffix": null,
-        "giftCardTemplateSuffix": null,
-        "isGiftCard": false,
-        "requiresSellingPlan": false,
-        "hasVariantsThatRequiresComponents": false,
-        "options": [],
-        "variants": [],
-        "media": [],
-        "images": [],
-        "seo": {"title": null, "description": null},
-        "onlineStoreUrl": null,
-        "onlineStorePreviewUrl": format!("{origin}/products/{handle}"),
-        "collections": [],
-        "sellingPlanGroups": [],
-        "metafields": [],
-    })));
+    let (product, record) = products::new_record(state, title, handle);
+    state.insert(record);
     product
 }
 
@@ -761,6 +694,10 @@ fn plan_variants<'i>(
             index.to_string(),
         ];
         let id = text(input, "id").map(str::to_string);
+        let position = input
+            .get("position")
+            .and_then(Value::as_i64)
+            .map_or(index + 1, |p| p.max(1) as usize);
         if let Some(id) = &id
             && !own.contains(id)
         {
@@ -789,10 +726,7 @@ fn plan_variants<'i>(
                 id,
                 choices: Vec::new(),
                 input,
-                position: input
-                    .get("position")
-                    .and_then(Value::as_i64)
-                    .map_or(index + 1, |p| p.max(1) as usize),
+                position,
             });
             continue;
         }
@@ -824,10 +758,7 @@ fn plan_variants<'i>(
                     id,
                     choices,
                     input,
-                    position: input
-                        .get("position")
-                        .and_then(Value::as_i64)
-                        .map_or(index + 1, |p| p.max(1) as usize),
+                    position,
                 });
             }
             Err(found) => errors.extend(found),
@@ -849,19 +780,7 @@ fn apply_options(
     for (index, option) in planned.iter().enumerate() {
         let id = match &option.id {
             Some(id) => id.clone(),
-            None => {
-                let id = state.new_gid("ProductOption");
-                state.insert(value::object(json!({
-                    "__typename": "ProductOption",
-                    "id": id,
-                    "name": option.name,
-                    "position": index + 1,
-                    "values": [],
-                    "optionValues": [],
-                    "createdAt": now,
-                })));
-                id
-            }
+            None => variants::add_option(state, &option.name, index + 1, &now),
         };
         let mut value_ids = Vec::new();
         for (value, name) in &option.values {
@@ -913,16 +832,7 @@ fn apply_options(
     }
     if ids.is_empty() {
         // Without options, the option "Title" of the default variant.
-        let id = state.new_gid("ProductOption");
-        state.insert(value::object(json!({
-            "__typename": "ProductOption",
-            "id": id,
-            "name": "Title",
-            "position": 1,
-            "values": [],
-            "optionValues": [],
-            "createdAt": now,
-        })));
+        let id = variants::add_option(state, "Title", 1, &now);
         variants::add_value(state, &id, "Default Title");
         ids.push(id);
     }
@@ -944,9 +854,7 @@ fn reset_to_default(state: &mut ShopState, product: &str) {
         value: title.values.first().map(|(id, _)| id.clone()),
     }];
     let choices = variants::ensure_values(state, &choices);
-    let stock = default_location(state)
-        .map(|location| vec![(location, 0)])
-        .unwrap_or_default();
+    let stock = variants::default_stock(state);
     let variant = variants::insert_variant(state, product, &choices, &Map::new(), &stock);
     products::emit_new_inventory(state, &variant);
 }
@@ -956,9 +864,7 @@ fn reset_to_default(state: &mut ShopState, product: &str) {
 fn new_stock(state: &ShopState, input: &Map<String, Value>) -> variants::Stock {
     let quantities = objects(input, "inventoryQuantities");
     if quantities.is_empty() {
-        return default_location(state)
-            .map(|location| vec![(location, 0)])
-            .unwrap_or_default();
+        return variants::default_stock(state);
     }
     let mut stock: variants::Stock = Vec::new();
     for quantity in quantities {

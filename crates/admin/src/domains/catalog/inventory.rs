@@ -438,17 +438,30 @@ fn check_change_from(
 fn products_of(state: &ShopState, items: &[String]) -> Vec<String> {
     let mut products: Vec<String> = Vec::new();
     for item in items {
-        if let Some(product) = state
-            .get(item)
-            .and_then(|record| field(record, "variant"))
-            .and_then(|variant| state.get(variant))
-            .and_then(|record| field(record, "product"))
+        if let Some(product) = records::product_of_item(state, item)
             && !products.iter().any(|known| known == product)
         {
             products.push(product.to_string());
         }
     }
     super::with_parents(state, products)
+}
+
+/// Runs `change` on the inventory of `items`, then refreshes their products (and the bundles
+/// they are components of) and emits the events of the variants whose stock crossed zero.
+fn changing_stock<T>(
+    state: &mut ShopState,
+    items: &[String],
+    change: impl FnOnce(&mut ShopState) -> T,
+) -> T {
+    let products = products_of(state, items);
+    let before = records::stock_of(state, &products);
+    let changed = change(state);
+    records::after_inventory_change(state, &products, &before);
+    for product in &products {
+        product_changed(state, product);
+    }
+    changed
 }
 
 /// Applies changes to levels: their quantities (and `on_hand` or `available` with them), the
@@ -458,36 +471,36 @@ fn apply(state: &mut ShopState, changes: &[(String, Change)]) -> Vec<Change> {
         .iter()
         .map(|(_, change)| change.item.clone())
         .collect();
-    let products = products_of(state, &items);
-    let before = records::stock_of(state, &products);
-    let mut listed: Vec<Change> = Vec::new();
-    let mut levels: Vec<String> = Vec::new();
-    for (level, change) in changes {
-        for (name, delta) in records::change_quantity(state, level, &change.name, change.delta) {
-            let ledger = (name == change.name)
-                .then(|| change.ledger.clone())
-                .flatten();
-            match listed.iter_mut().find(|known| {
-                known.item == change.item && known.location == change.location && known.name == name
-            }) {
-                Some(known) => known.delta += delta,
-                None => listed.push(Change {
-                    item: change.item.clone(),
-                    location: change.location.clone(),
-                    name,
-                    delta,
-                    ledger,
-                }),
+    let (listed, levels) = changing_stock(state, &items, |state| {
+        let mut listed: Vec<Change> = Vec::new();
+        let mut levels: Vec<String> = Vec::new();
+        for (level, change) in changes {
+            for (name, delta) in records::change_quantity(state, level, &change.name, change.delta)
+            {
+                let ledger = (name == change.name)
+                    .then(|| change.ledger.clone())
+                    .flatten();
+                match listed.iter_mut().find(|known| {
+                    known.item == change.item
+                        && known.location == change.location
+                        && known.name == name
+                }) {
+                    Some(known) => known.delta += delta,
+                    None => listed.push(Change {
+                        item: change.item.clone(),
+                        location: change.location.clone(),
+                        name,
+                        delta,
+                        ledger,
+                    }),
+                }
+            }
+            if !levels.contains(level) {
+                levels.push(level.clone());
             }
         }
-        if !levels.contains(level) {
-            levels.push(level.clone());
-        }
-    }
-    records::after_inventory_change(state, &products, &before);
-    for product in &products {
-        product_changed(state, product);
-    }
+        (listed, levels)
+    });
     for level in &levels {
         state.emit("inventory_levels/update", level);
     }
@@ -879,21 +892,18 @@ fn move_quantities_once(
         .iter()
         .map(|(_, change)| change.item.clone())
         .collect();
-    let products = products_of(state, &items);
-    let before = records::stock_of(state, &products);
-    let mut listed = Vec::new();
-    let mut levels: Vec<String> = Vec::new();
-    for (level, change) in changes {
-        set_raw(state, &level, &change.name, change.delta);
-        if !levels.contains(&level) {
-            levels.push(level);
+    let (listed, levels) = changing_stock(state, &items, |state| {
+        let mut listed = Vec::new();
+        let mut levels: Vec<String> = Vec::new();
+        for (level, change) in changes {
+            set_raw(state, &level, &change.name, change.delta);
+            if !levels.contains(&level) {
+                levels.push(level);
+            }
+            listed.push(change);
         }
-        listed.push(change);
-    }
-    records::after_inventory_change(state, &products, &before);
-    for product in &products {
-        product_changed(state, product);
-    }
+        (listed, levels)
+    });
     for level in &levels {
         state.emit("inventory_levels/update", level);
     }
@@ -972,13 +982,9 @@ fn activate_once(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         mutation.note("inventoryActivate: lsf sets `on_hand` to `available` (the other quantities of a new level are 0)");
     }
     let state = mutation.state_mut();
-    let products = products_of(state, std::slice::from_ref(&item));
-    let before = records::stock_of(state, &products);
-    let level = new_level(state, &item, &location, available);
-    records::after_inventory_change(state, &products, &before);
-    for product in &products {
-        product_changed(state, product);
-    }
+    let level = changing_stock(state, std::slice::from_ref(&item), |state| {
+        new_level(state, &item, &location, available)
+    });
     state.emit("inventory_levels/connect", &level);
     Ok(payload(json!({"inventoryLevel": level}), &[]))
 }
@@ -1027,18 +1033,16 @@ fn cannot_deactivate(state: &ShopState, level: &str) -> Option<(&'static str, &'
 /// Removes a level: emits `inventory_levels/disconnect` (with the level as it was) and
 /// refreshes its product.
 fn disconnect(state: &mut ShopState, level: &str) {
-    let item = state
+    let items: Vec<String> = state
         .get(level)
         .and_then(|record| field(record, "item"))
-        .map(str::to_string);
-    let products = products_of(state, &item.iter().cloned().collect::<Vec<_>>());
-    let before = records::stock_of(state, &products);
-    state.emit("inventory_levels/disconnect", level);
-    remove_level(state, level);
-    records::after_inventory_change(state, &products, &before);
-    for product in &products {
-        product_changed(state, product);
-    }
+        .map(str::to_string)
+        .into_iter()
+        .collect();
+    changing_stock(state, &items, |state| {
+        state.emit("inventory_levels/disconnect", level);
+        remove_level(state, level);
+    });
 }
 
 /// `inventoryDeactivate`.
@@ -1199,12 +1203,7 @@ fn item_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             record.insert("sku".into(), sku.clone());
         }
     }
-    let products = products_of(state, std::slice::from_ref(&item));
-    let before = records::stock_of(state, &products);
-    records::after_inventory_change(state, &products, &before);
-    for product in &products {
-        product_changed(state, product);
-    }
+    changing_stock(state, std::slice::from_ref(&item), |_| {});
     state.touch(&item);
     state.emit("inventory_items/update", &item);
     Ok(payload(json!({"inventoryItem": item}), &[]))

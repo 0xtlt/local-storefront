@@ -35,7 +35,8 @@
 use serde_json::{Value, json};
 
 use super::gids;
-use super::records::{field, input, is, text};
+use super::gift_cards::normalize_time;
+use super::records::{self, field, input, is, text};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, gid, parse_gid, value};
@@ -265,23 +266,13 @@ fn product_full_sync(
         let error = UserError::new(&["id"], INVALID).code("INVALID");
         return Ok(payload(json!({"id": null}), &[error]));
     };
-    let since = ctx.arg_str("updatedAtSince").map(normalized);
-    let before = ctx.arg_str("beforeUpdatedAt").map(normalized);
+    // In UTC with `Z`, as the records write them, to compare with them.
+    let since = ctx.arg_str("updatedAtSince").map(normalize_time);
+    let before = ctx.arg_str("beforeUpdatedAt").map(normalize_time);
     let state = mutation.state_mut();
     let sync = state.new_gid("ProductFullSync");
     full_sync(state, &feed, &sync, since.as_deref(), before.as_deref());
     Ok(payload(json!({"id": sync}), &[]))
-}
-
-/// A `DateTime` in UTC with `Z`, as the records write them, to compare with them.
-fn normalized(date: &str) -> String {
-    chrono::DateTime::parse_from_rfc3339(date)
-        .map(|date| {
-            date.with_timezone(&chrono::Utc)
-                .format("%Y-%m-%dT%H:%M:%SZ")
-                .to_string()
-        })
-        .unwrap_or_else(|_| date.to_string())
 }
 
 // --- What follows a mutation ---
@@ -395,10 +386,7 @@ pub fn after_mutation(state: &mut ShopState, start: usize) {
         let product = state
             .get(key)
             .and_then(|level| field(level, "item"))
-            .and_then(|item| state.get(item))
-            .and_then(|item| field(item, "variant"))
-            .and_then(|variant| state.get(variant))
-            .and_then(|variant| field(variant, "product"))
+            .and_then(|item| records::product_of_item(state, item))
             .map(str::to_string);
         let Some(product) = product else {
             continue;

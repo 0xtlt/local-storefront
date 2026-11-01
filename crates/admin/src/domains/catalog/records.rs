@@ -83,12 +83,55 @@ pub fn app_id(state: &ShopState) -> u64 {
         .map_or(0, |(_, id)| id)
 }
 
+/// Whether a record of `type_name` other than `except` has `handle`.
+pub fn handle_taken(
+    state: &ShopState,
+    type_name: &str,
+    handle: &str,
+    except: Option<&str>,
+) -> bool {
+    state.keys(type_name).any(|key| {
+        Some(key) != except
+            && state.get(key).and_then(|record| field(record, "handle")) == Some(handle)
+    })
+}
+
+/// The first record of `type_name` that has `handle`.
+pub fn find_by_handle(state: &ShopState, type_name: &str, handle: &str) -> Option<String> {
+    state
+        .keys(type_name)
+        .find(|key| state.get(key).and_then(|record| field(record, "handle")) == Some(handle))
+        .map(str::to_string)
+}
+
+/// A free handle for a new record of `type_name`, made from `base` (`fallback` when that makes
+/// none): itself, else with `-1`, `-2`, … appended.
+pub fn free_handle(state: &ShopState, type_name: &str, base: &str, fallback: &str) -> String {
+    let base = match lsf_core::util::handleize(base) {
+        handle if handle.is_empty() => fallback.to_string(),
+        handle => handle,
+    };
+    if !handle_taken(state, type_name, &base, None) {
+        return base;
+    }
+    (1..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|handle| !handle_taken(state, type_name, handle, None))
+        .unwrap_or(base)
+}
+
 /// The inventory item of a variant.
 pub fn item_of(state: &ShopState, variant: &str) -> Option<String> {
     state
         .get(variant)
         .and_then(|record| field(record, "inventoryItem"))
         .map(str::to_string)
+}
+
+/// The product of an inventory item (of its variant).
+pub fn product_of_item<'s>(state: &'s ShopState, item: &str) -> Option<&'s str> {
+    let variant = field(state.get(item)?, "variant")?;
+    field(state.get(variant)?, "product")
 }
 
 /// Whether a location is active.
@@ -128,7 +171,7 @@ fn new_level_gid(state: &mut ShopState, item: &str) -> String {
 }
 
 /// The eight quantities of a new level: `available` and `on_hand` hold `available`.
-fn new_quantities(level: &str, available: i64, now: &str) -> Vec<Value> {
+pub fn new_quantities(level: &str, available: i64, now: &str) -> Vec<Value> {
     QUANTITY_NAMES
         .iter()
         .map(|name| {
@@ -385,16 +428,20 @@ pub fn available_for_sale(state: &ShopState, variant: &str) -> bool {
     if let Some((_, sellable)) = super::bundles::bundle_inventory(state, variant) {
         return sellable;
     }
-    let tracked = field(record, "inventoryItem")
-        .and_then(|item| state.get(item))
-        .and_then(|item| item.get("tracked"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let quantity = record
         .get("inventoryQuantity")
         .and_then(Value::as_i64)
         .unwrap_or(0);
-    !tracked || quantity > 0 || field(record, "inventoryPolicy") == Some("CONTINUE")
+    !tracked(state, variant) || quantity > 0 || field(record, "inventoryPolicy") == Some("CONTINUE")
+}
+
+/// Whether a variant's inventory item is tracked.
+pub fn tracked(state: &ShopState, variant: &str) -> bool {
+    item_of(state, variant)
+        .and_then(|item| state.get(&item))
+        .and_then(|item| item.get("tracked"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// The stock of the variants of products, to compare after a change: `(variant, tracked, in
@@ -420,12 +467,7 @@ fn in_stock(state: &ShopState, variant: &str) -> bool {
     if let Some((quantity, _)) = super::bundles::bundle_inventory(state, variant) {
         return quantity.is_none_or(|quantity| quantity > 0);
     }
-    let tracked = field(record, "inventoryItem")
-        .and_then(|item| state.get(item))
-        .and_then(|item| item.get("tracked"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    !tracked
+    !tracked(state, variant)
         || record
             .get("inventoryQuantity")
             .and_then(Value::as_i64)
@@ -564,47 +606,72 @@ pub fn link_collection(
     product: &str,
     member: bool,
 ) -> bool {
-    let listed = state
-        .get(collection)
-        .is_some_and(|record| gids(record.get("products")).iter().any(|p| p == product));
-    if listed == member {
-        // The product's own list follows, whatever it said.
-        sync_product_collections(state, product, collection, member);
+    let changed = set_listed(state, collection, "products", product, member);
+    // The product's own list follows, whatever the collection's said.
+    set_listed(state, product, "collections", collection, member);
+    changed
+}
+
+/// Whether a collection lists a product in its `products`.
+pub fn in_collection(state: &ShopState, collection: &str, product: &str) -> bool {
+    lists(state, collection, "products", product)
+}
+
+/// Whether an array field of `owner` lists `key`.
+pub fn lists(state: &ShopState, owner: &str, field: &str, key: &str) -> bool {
+    state
+        .get(owner)
+        .is_some_and(|record| gids(record.get(field)).iter().any(|known| known == key))
+}
+
+/// Appends `key` to (or removes it from) an array field of `owner`. Whether it was not already
+/// as asked.
+pub fn set_listed(
+    state: &mut ShopState,
+    owner: &str,
+    field: &str,
+    key: &str,
+    member: bool,
+) -> bool {
+    if lists(state, owner, field, key) == member {
         return false;
     }
-    if let Some(Value::Array(products)) = state
-        .get_mut(collection)
-        .and_then(|record| record.get_mut("products"))
+    if let Some(Value::Array(items)) = state
+        .get_mut(owner)
+        .and_then(|record| record.get_mut(field))
     {
         if member {
-            products.push(json!(product));
+            items.push(json!(key));
         } else {
-            products.retain(|known| known.as_str() != Some(product));
+            items.retain(|known| known.as_str() != Some(key));
         }
     }
-    sync_product_collections(state, product, collection, member);
     true
 }
 
-fn sync_product_collections(state: &mut ShopState, product: &str, collection: &str, member: bool) {
-    let listed = state.get(product).is_some_and(|record| {
-        gids(record.get("collections"))
-            .iter()
-            .any(|c| c == collection)
-    });
-    if listed == member {
-        return;
-    }
-    if let Some(Value::Array(collections)) = state
-        .get_mut(product)
-        .and_then(|record| record.get_mut("collections"))
-    {
-        if member {
-            collections.push(json!(collection));
-        } else {
-            collections.retain(|known| known.as_str() != Some(collection));
-        }
-    }
+/// Applies a `MoveInput` to a list of GIDs: the item `id` leaves its place and takes
+/// `newPosition` (from 0), the last place when that is past the end.
+pub fn apply_move(list: &mut Vec<String>, change: &Map<String, Value>) {
+    let id = text(change, "id").unwrap_or_default().to_string();
+    let position = change
+        .get("newPosition")
+        .and_then(|position| {
+            position
+                .as_u64()
+                .or_else(|| position.as_str().and_then(|text| text.parse().ok()))
+        })
+        .unwrap_or(0);
+    list.retain(|known| *known != id);
+    let at = usize::try_from(position)
+        .unwrap_or(usize::MAX)
+        .min(list.len());
+    list.insert(at, id);
+}
+
+/// A user error at a path of strings.
+pub fn error_at(path: &[String], message: impl Into<String>) -> UserError {
+    let path: Vec<&str> = path.iter().map(String::as_str).collect();
+    UserError::new(&path, message)
 }
 
 /// The message and code of a user error that Shopify documents only by its code: the

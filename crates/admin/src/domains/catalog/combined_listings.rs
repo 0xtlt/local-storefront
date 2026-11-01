@@ -238,16 +238,7 @@ fn option_named(state: &mut ShopState, parent: &str, name: &str) -> String {
         .get(parent)
         .map_or(0, |record| gids(record.get("options")).len())
         + 1;
-    let option = state.new_gid("ProductOption");
-    state.insert(value::object(json!({
-        "__typename": "ProductOption",
-        "id": option,
-        "name": name,
-        "position": position,
-        "values": [],
-        "optionValues": [],
-        "createdAt": now,
-    })));
+    let option = variants::add_option(state, name, position, &now);
     if let Some(Value::Array(options)) = state
         .get_mut(parent)
         .and_then(|record| record.get_mut("options"))
@@ -323,24 +314,20 @@ fn tidy(state: &mut ShopState, parent: &str, order: &[&Map<String, Value>]) {
         })
         .filter_map(|option| option.get("optionValue")?.as_str().map(str::to_string))
         .collect();
+    // The place of an option in `optionsAndValues`, by name.
+    let place = |name: &str| {
+        order.iter().position(|input| {
+            text(input, "name").is_some_and(|known| known.eq_ignore_ascii_case(name))
+        })
+    };
     let mut options = variants::options_of(state, parent);
     if !order.is_empty() {
-        options.sort_by_key(|option| {
-            order
-                .iter()
-                .position(|input| {
-                    text(input, "name").is_some_and(|name| name.eq_ignore_ascii_case(&option.name))
-                })
-                .unwrap_or(usize::MAX)
-        });
+        options.sort_by_key(|option| place(&option.name).unwrap_or(usize::MAX));
     }
     let mut kept = Vec::new();
     for option in &options {
-        let wanted: Vec<String> = order
-            .iter()
-            .find(|input| {
-                text(input, "name").is_some_and(|name| name.eq_ignore_ascii_case(&option.name))
-            })
+        let input = place(&option.name).map(|index| order[index]);
+        let wanted: Vec<String> = input
             .and_then(|input| input.get("values"))
             .and_then(Value::as_array)
             .into_iter()
@@ -368,11 +355,7 @@ fn tidy(state: &mut ShopState, parent: &str, order: &[&Map<String, Value>]) {
             state.remove(&option.id);
             continue;
         }
-        let linked = order
-            .iter()
-            .find(|input| {
-                text(input, "name").is_some_and(|name| name.eq_ignore_ascii_case(&option.name))
-            })
+        let linked = input
             .and_then(|input| input.get("linkedMetafield"))
             .filter(|linked| !linked.is_null())
             .map(|linked| json!({"namespace": linked.get("namespace"), "key": linked.get("key")}));

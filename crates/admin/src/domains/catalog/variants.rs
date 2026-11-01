@@ -124,16 +124,8 @@ pub fn choices(
     reader: Reader,
 ) -> Result<Vec<Choice>, Vec<UserError>> {
     let mut errors = Vec::new();
-    let error = |suffix: &[&str], message: &str, code: &str| UserError {
-        field: Some(
-            path.iter()
-                .cloned()
-                .chain(suffix.iter().map(|part| part.to_string()))
-                .collect(),
-        ),
-        message: message.to_string(),
-        code: Some(code.to_string()),
-    };
+    let error =
+        |suffix: &[&str], message: &str, code: &str| input_error(path, suffix, message, code);
     let mut chosen: Vec<Option<Choice>> = vec![None; options.len()];
     for (index, input) in values.iter().enumerate() {
         let position = index.to_string();
@@ -239,6 +231,25 @@ pub fn choices(
     }
 }
 
+/// A user error at `suffix` under the `path` of a variant input.
+fn input_error(
+    path: &[String],
+    suffix: &[&str],
+    message: impl Into<String>,
+    code: &str,
+) -> UserError {
+    UserError {
+        field: Some(
+            path.iter()
+                .cloned()
+                .chain(suffix.iter().map(|part| part.to_string()))
+                .collect(),
+        ),
+        message: message.into(),
+        code: Some(code.to_string()),
+    }
+}
+
 /// The title of the variant of these choices: the values, `/`-separated.
 pub fn title_of(choices: &[Choice]) -> String {
     choices
@@ -271,28 +282,27 @@ pub fn combination_of(state: &ShopState, variant: &str) -> Vec<String> {
 
 /// Checks the plain fields of a variant input (prices, barcodes): errors under `path`.
 pub fn check_fields(input: &Map<String, Value>, path: &[String], errors: &mut Vec<UserError>) {
-    let at = |name: &str| -> Option<Vec<String>> {
-        Some(path.iter().cloned().chain([name.to_string()]).collect())
-    };
     for name in ["price", "compareAtPrice"] {
         let Some(given) = input.get(name).filter(|value| !value.is_null()) else {
             continue;
         };
         match money_cents(given) {
-            None => errors.push(UserError {
-                field: at(name),
-                message: format!("{} is invalid", value::humanize(name)),
-                code: Some("INVALID_INPUT".into()),
-            }),
+            None => errors.push(input_error(
+                path,
+                &[name],
+                format!("{} is invalid", value::humanize(name)),
+                "INVALID_INPUT",
+            )),
             // Rails' numericality validation, as Shopify words it for a variant's price.
-            Some(cents) if cents < 0 => errors.push(UserError {
-                field: at(name),
-                message: format!(
+            Some(cents) if cents < 0 => errors.push(input_error(
+                path,
+                &[name],
+                format!(
                     "{} must be greater than or equal to 0",
                     value::humanize(name)
                 ),
-                code: Some("GREATER_THAN_OR_EQUAL_TO".into()),
-            }),
+                "GREATER_THAN_OR_EQUAL_TO",
+            )),
             Some(_) => {}
         }
     }
@@ -360,6 +370,29 @@ pub fn add_value(state: &mut ShopState, option: &str, name: &str) -> String {
 /// How a new variant is stocked: `(location, available)`.
 pub type Stock = Vec<(String, i64)>;
 
+/// How a new variant is stocked by default: at the first active location, with 0.
+pub fn default_stock(state: &ShopState) -> Stock {
+    default_location(state)
+        .map(|location| vec![(location, 0)])
+        .unwrap_or_default()
+}
+
+/// Adds an option without values, at `position` (from 1), which its product does not list yet.
+/// Returns its GID.
+pub fn add_option(state: &mut ShopState, name: &str, position: usize, now: &str) -> String {
+    let option = state.new_gid("ProductOption");
+    state.insert(value::object(json!({
+        "__typename": "ProductOption",
+        "id": option,
+        "name": name,
+        "position": position,
+        "values": [],
+        "optionValues": [],
+        "createdAt": now,
+    })));
+    option
+}
+
 /// Creates a variant of a product, with its inventory item and levels, at the end of its
 /// variants: the choices (whose values must exist, see [`ensure_values`]), the fields of the
 /// input, the stock. Returns the variant's GID; the product is not refreshed.
@@ -376,17 +409,7 @@ pub fn insert_variant(
         .and_then(|record| field(record, "title"))
         .unwrap_or_default()
         .to_string();
-    let option_names: Vec<(String, String)> = choices
-        .iter()
-        .map(|choice| {
-            let name = state
-                .get(&choice.option)
-                .and_then(|record| field(record, "name"))
-                .unwrap_or_default()
-                .to_string();
-            (name, choice.name.clone())
-        })
-        .collect();
+    let selected = selected_options(state, choices);
     let title = title_of(choices);
     let variant = state.new_gid("ProductVariant");
     let item = new_inventory_item(
@@ -394,13 +417,6 @@ pub fn insert_variant(
         &variant,
         input.get("inventoryItem").and_then(Value::as_object),
     );
-    let selected: Vec<Value> = option_names
-        .iter()
-        .zip(choices)
-        .map(|((name, value), choice)| {
-            json!({"name": name, "value": value, "optionValue": choice.value})
-        })
-        .collect();
     let position = state
         .get(product)
         .map_or(0, |record| gids(record.get("variants")).len())
@@ -440,13 +456,6 @@ pub fn insert_variant(
         variants.push(json!(variant));
     }
     apply_fields(state, &variant, input);
-    let sku = state
-        .get(&item)
-        .and_then(|record| record.get("sku").cloned())
-        .unwrap_or(Value::Null);
-    if let Some(record) = state.get_mut(&variant) {
-        record.insert("sku".into(), sku);
-    }
     for (location, available) in stock {
         new_level(state, &item, location, *available);
     }
@@ -561,23 +570,23 @@ fn measured_type(unit: Option<&str>) -> &'static str {
     }
 }
 
-/// Changes the option values a variant selects.
-pub fn set_choices(state: &mut ShopState, variant: &str, choices: &[Choice]) {
-    let names: Vec<String> = choices
+/// The `selectedOptions` of a variant of these choices.
+fn selected_options(state: &ShopState, choices: &[Choice]) -> Vec<Value> {
+    choices
         .iter()
         .map(|choice| {
-            state
+            let name = state
                 .get(&choice.option)
                 .and_then(|record| field(record, "name"))
-                .unwrap_or_default()
-                .to_string()
+                .unwrap_or_default();
+            json!({"name": name, "value": choice.name, "optionValue": choice.value})
         })
-        .collect();
-    let selected: Vec<Value> = names
-        .iter()
-        .zip(choices)
-        .map(|(name, choice)| json!({"name": name, "value": choice.name, "optionValue": choice.value}))
-        .collect();
+        .collect()
+}
+
+/// Changes the option values a variant selects.
+pub fn set_choices(state: &mut ShopState, variant: &str, choices: &[Choice]) {
+    let selected = selected_options(state, choices);
     if let Some(record) = state.get_mut(variant) {
         record.insert("selectedOptions".into(), json!(selected));
         record.insert("title".into(), json!(title_of(choices)));
@@ -639,28 +648,18 @@ fn bulk_stock(
 ) -> Stock {
     let quantities = objects(input, "inventoryQuantities");
     if quantities.is_empty() {
-        return default_location(state)
-            .map(|location| vec![(location, 0)])
-            .unwrap_or_default();
+        return default_stock(state);
     }
     let mut stock = Vec::new();
     for (index, quantity) in quantities.iter().enumerate() {
         let location = text(quantity, "locationId").unwrap_or_default();
         if !is(state, location, "Location") || !is_active_location(state, location) {
-            errors.push(UserError {
-                field: Some(
-                    path.iter()
-                        .cloned()
-                        .chain([
-                            "inventoryQuantities".to_string(),
-                            index.to_string(),
-                            "locationId".to_string(),
-                        ])
-                        .collect(),
-                ),
-                message: "Quantity could not be set. The location was not found.".into(),
-                code: Some("TRACKED_VARIANT_LOCATION_NOT_FOUND".into()),
-            });
+            errors.push(input_error(
+                path,
+                &["inventoryQuantities", &index.to_string(), "locationId"],
+                "Quantity could not be set. The location was not found.",
+                "TRACKED_VARIANT_LOCATION_NOT_FOUND",
+            ));
             continue;
         }
         let available = quantity
@@ -673,13 +672,13 @@ fn bulk_stock(
 }
 
 /// The product of `productId`.
-fn product_arg(state: &ShopState, ctx: &FieldContext<'_>) -> Option<String> {
+pub fn product_arg(state: &ShopState, ctx: &FieldContext<'_>) -> Option<String> {
     ctx.arg_str("productId")
         .filter(|id| is(state, id, "Product"))
         .map(str::to_string)
 }
 
-fn no_product() -> UserError {
+pub fn no_product() -> UserError {
     coded(
         &["productId"],
         "Product does not exist",
@@ -726,11 +725,12 @@ fn bulk_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     for (index, input) in inputs.iter().enumerate() {
         let path = path_of(index);
         if input.contains_key("id") {
-            errors.push(UserError {
-                field: Some(path.iter().cloned().chain(["id".to_string()]).collect()),
-                message: "On create, this key cannot be used.".into(),
-                code: Some("NO_KEY_ON_CREATE".into()),
-            });
+            errors.push(input_error(
+                &path,
+                &["id"],
+                "On create, this key cannot be used.",
+                "NO_KEY_ON_CREATE",
+            ));
         }
         check_fields(input, &path, &mut errors);
         check_variant_metafields(
@@ -747,11 +747,12 @@ fn bulk_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             Ok(choices) => {
                 let key = combination(&choices);
                 if taken.contains(&key) {
-                    errors.push(UserError {
-                        field: Some(path.clone()),
-                        message: format!("The variant '{}' already exists.", title_of(&choices)),
-                        code: Some("VARIANT_ALREADY_EXISTS".into()),
-                    });
+                    errors.push(input_error(
+                        &path,
+                        &[],
+                        format!("The variant '{}' already exists.", title_of(&choices)),
+                        "VARIANT_ALREADY_EXISTS",
+                    ));
                 } else {
                     taken.push(key);
                 }
@@ -788,16 +789,7 @@ fn bulk_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     for (choices, input, stock) in &planned {
         let choices = ensure_values(state, choices);
         let variant = insert_variant(state, &product, &choices, input, stock);
-        if let Some(item) = item_of(state, &variant) {
-            events.push(("inventory_items/create", item.clone()));
-            for level in state
-                .get(&item)
-                .map(|record| gids(record.get("inventoryLevels")))
-                .unwrap_or_default()
-            {
-                events.push(("inventory_levels/connect", level));
-            }
-        }
+        events.extend(super::products::new_inventory_events(state, &variant));
         created.push(variant);
     }
     if let Some(variant) = &removed {
@@ -863,38 +855,35 @@ fn bulk_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         let path = path_of(index);
         let mut own_errors = Vec::new();
         let id = text(input, "id").unwrap_or_default().to_string();
-        if id.is_empty() {
-            own_errors.push(UserError {
-                field: Some(path.iter().cloned().chain(["id".to_string()]).collect()),
-                message: "Product variant is missing ID attribute.".into(),
-                code: Some("PRODUCT_VARIANT_ID_MISSING".into()),
-            });
+        let id_error = if id.is_empty() {
+            Some((
+                "Product variant is missing ID attribute.",
+                "PRODUCT_VARIANT_ID_MISSING",
+            ))
         } else if !is(state, &id, "ProductVariant") {
-            own_errors.push(UserError {
-                field: Some(path.iter().cloned().chain(["id".to_string()]).collect()),
-                message: "Product variant does not exist".into(),
-                code: Some("PRODUCT_VARIANT_DOES_NOT_EXIST".into()),
-            });
+            Some((
+                "Product variant does not exist",
+                "PRODUCT_VARIANT_DOES_NOT_EXIST",
+            ))
         } else if !own.contains(&id) {
-            own_errors.push(UserError {
-                field: Some(path.iter().cloned().chain(["id".to_string()]).collect()),
-                message: "Input must be for this product.".into(),
-                code: Some("MUST_BE_FOR_THIS_PRODUCT".into()),
-            });
+            Some((
+                "Input must be for this product.",
+                "MUST_BE_FOR_THIS_PRODUCT",
+            ))
+        } else {
+            None
+        };
+        if let Some((message, code)) = id_error {
+            own_errors.push(input_error(&path, &["id"], message, code));
         }
         if input.contains_key("inventoryQuantities") {
-            own_errors.push(UserError {
-                field: Some(
-                    path.iter()
-                        .cloned()
-                        .chain(["inventoryQuantities".to_string()])
-                        .collect(),
-                ),
-                message: "Inventory quantities can only be provided during create. To update \
-                          inventory for existing variants, use inventoryAdjustQuantities."
-                    .into(),
-                code: Some("NO_INVENTORY_QUANTITIES_ON_VARIANTS_UPDATE".into()),
-            });
+            own_errors.push(input_error(
+                &path,
+                &["inventoryQuantities"],
+                "Inventory quantities can only be provided during create. To update \
+                 inventory for existing variants, use inventoryAdjustQuantities.",
+                "NO_INVENTORY_QUANTITIES_ON_VARIANTS_UPDATE",
+            ));
         }
         check_fields(input, &path, &mut own_errors);
         check_variant_metafields(
@@ -908,15 +897,7 @@ fn bulk_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         let mut adjustments = Vec::new();
         for (position, adjustment) in objects(input, "quantityAdjustments").iter().enumerate() {
             let location = text(adjustment, "locationId").unwrap_or_default();
-            let at: Vec<String> = path
-                .iter()
-                .cloned()
-                .chain([
-                    "quantityAdjustments".to_string(),
-                    position.to_string(),
-                    "locationId".to_string(),
-                ])
-                .collect();
+            let at = ["quantityAdjustments", &position.to_string(), "locationId"];
             let level =
                 item_of(state, &id).and_then(|item| records::level_at(state, &item, location));
             match level {
@@ -928,11 +909,12 @@ fn bulk_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
                         && let Some(expected) = expected.as_i64()
                         && expected != current
                     {
-                        own_errors.push(UserError {
-                            field: Some(at.clone()),
-                            message: "The changeFromQuantity argument no longer matches the persisted quantity.".into(),
-                            code: Some("INVALID_INPUT".into()),
-                        });
+                        own_errors.push(input_error(
+                            &path,
+                            &at,
+                            "The changeFromQuantity argument no longer matches the persisted quantity.",
+                            "INVALID_INPUT",
+                        ));
                     }
                     let delta = adjustment
                         .get("adjustment")
@@ -940,11 +922,12 @@ fn bulk_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
                         .unwrap_or(0);
                     adjustments.push((level, delta));
                 }
-                None => own_errors.push(UserError {
-                    field: Some(at),
-                    message: "Quantity could not be set. The location was not found.".into(),
-                    code: Some("INVALID_INPUT".into()),
-                }),
+                None => own_errors.push(input_error(
+                    &path,
+                    &at,
+                    "Quantity could not be set. The location was not found.",
+                    "INVALID_INPUT",
+                )),
             }
         }
         let values = objects(input, "optionValues");
@@ -957,14 +940,12 @@ fn bulk_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
                         .iter()
                         .any(|(other, combination)| *other != id && *combination == key)
                     {
-                        own_errors.push(UserError {
-                            field: Some(path.clone()),
-                            message: format!(
-                                "The variant '{}' already exists.",
-                                title_of(&choices)
-                            ),
-                            code: Some("VARIANT_ALREADY_EXISTS".into()),
-                        });
+                        own_errors.push(input_error(
+                            &path,
+                            &[],
+                            format!("The variant '{}' already exists.", title_of(&choices)),
+                            "VARIANT_ALREADY_EXISTS",
+                        ));
                     } else if let Some(entry) =
                         combinations.iter_mut().find(|(other, _)| *other == id)
                     {

@@ -27,8 +27,8 @@
 
 use serde_json::{Map, Value, json};
 
+use super::gids;
 use super::records::{self, coded, currency, field, input, is, objects, text};
-use super::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{ShopState, value};
@@ -138,11 +138,6 @@ fn group_variants_count(
     Ok(r.count(ctx, variants_of(r, ctx, object).len()))
 }
 
-/// A user error of the group's input.
-fn error(path: &[&str], message: &str, code: &str) -> UserError {
-    coded(path, message, code)
-}
-
 /// A pricing policy's value: a percentage, or an amount in the shop's currency.
 fn adjustment_value(kind: &str, value: &Map<String, Value>, currency: &str) -> Value {
     if kind == "PERCENTAGE" {
@@ -153,11 +148,7 @@ fn adjustment_value(kind: &str, value: &Map<String, Value>, currency: &str) -> V
     }
     let cents = value
         .get("fixedValue")
-        .and_then(|amount| match amount {
-            Value::String(_) => cents_of(Some(amount)),
-            Value::Number(number) => cents_of(Some(&json!(number.to_string()))),
-            _ => None,
-        })
+        .and_then(super::variants::money_cents)
         .unwrap_or(0);
     let mut money = value::money_v2(cents, currency);
     money["__typename"] = json!("MoneyV2");
@@ -550,7 +541,7 @@ fn check_resources(
 ) {
     for (index, product) in products.iter().enumerate() {
         if !is(state, product, "Product") {
-            errors.push(error(
+            errors.push(coded(
                 &["resources", "productIds", &index.to_string()],
                 "Product does not exist.",
                 "PRODUCT_DOES_NOT_EXIST",
@@ -559,7 +550,7 @@ fn check_resources(
     }
     for (index, variant) in variants.iter().enumerate() {
         if !is(state, variant, "ProductVariant") {
-            errors.push(error(
+            errors.push(coded(
                 &["resources", "productVariantIds", &index.to_string()],
                 "Product variant does not exist.",
                 "PRODUCT_VARIANT_DOES_NOT_EXIST",
@@ -646,7 +637,7 @@ fn check_group(
     if (creating || input.contains_key("name"))
         && text(input, "name").is_none_or(|name| name.trim().is_empty())
     {
-        errors.push(error(&["input", "name"], "Name can't be blank", "BLANK"));
+        errors.push(coded(&["input", "name"], "Name can't be blank", "BLANK"));
     }
     let options = match input.get("options").and_then(Value::as_array) {
         Some(options) => options.len(),
@@ -657,14 +648,14 @@ fn check_group(
             .map_or(0, Vec::len),
     };
     if creating && options == 0 {
-        errors.push(error(
+        errors.push(coded(
             &["input", "options"],
             "Options can't be blank",
             "BLANK",
         ));
     }
     if options > 3 {
-        errors.push(error(
+        errors.push(coded(
             &["input", "options"],
             "Options is too long (maximum is 3)",
             "TOO_LONG",
@@ -693,12 +684,12 @@ fn check_group(
             index.to_string(),
         ];
         match text(plan, "id") {
-            None => errors.push(error(
+            None => errors.push(coded(
                 &["input", "sellingPlansToUpdate", &index.to_string(), "id"],
                 "Selling plan ID must be specified to update.",
                 "PLAN_ID_MUST_BE_SPECIFIED_TO_UPDATE",
             )),
-            Some(id) if !existing.iter().any(|known| known == id) => errors.push(error(
+            Some(id) if !existing.iter().any(|known| known == id) => errors.push(coded(
                 &["input", "sellingPlansToUpdate", &index.to_string(), "id"],
                 "Selling plan does not exist.",
                 "PLAN_DOES_NOT_EXIST",
@@ -711,7 +702,7 @@ fn check_group(
     }
     for (index, id) in to_delete.iter().enumerate() {
         if !existing.contains(id) {
-            errors.push(error(
+            errors.push(coded(
                 &["input", "sellingPlansToDelete", &index.to_string()],
                 "Selling plan does not exist.",
                 "PLAN_DOES_NOT_EXIST",
@@ -724,13 +715,13 @@ fn check_group(
         .count()
         + to_create.len();
     if remaining == 0 {
-        errors.push(error(
+        errors.push(coded(
             &["input", "sellingPlansToCreate"],
             "Must include at least one selling plan.",
             "SELLING_PLAN_COUNT_LOWER_BOUND",
         ));
     } else if remaining > PLAN_LIMIT {
-        errors.push(error(
+        errors.push(coded(
             &["input", "sellingPlansToCreate"],
             "Exceeded the selling plan limit (31).",
             "SELLING_PLAN_COUNT_UPPER_BOUND",
@@ -755,7 +746,7 @@ fn check_group(
     for plan in to_update.iter().chain(&to_create) {
         if let Some(name) = text(plan, "name").map(str::to_lowercase) {
             if names.contains(&name) {
-                errors.push(error(
+                errors.push(coded(
                     &["input"],
                     "Cannot have multiple selling plans with the same name.",
                     "SELLING_PLAN_DUPLICATE_NAME",
@@ -812,7 +803,7 @@ fn group_arg(state: &ShopState, ctx: &FieldContext<'_>) -> Result<String, UserEr
     if is(state, id, "SellingPlanGroup") {
         Ok(id.to_string())
     } else {
-        Err(error(
+        Err(coded(
             &["id"],
             "Selling plan group does not exist.",
             "GROUP_DOES_NOT_EXIST",
@@ -960,7 +951,7 @@ fn change_resources(
         .iter()
         .enumerate()
         .filter(|(_, id)| !is(state, id, type_name))
-        .map(|(index, _)| error(&[argument, &index.to_string()], message, code))
+        .map(|(index, _)| coded(&[argument, &index.to_string()], message, code))
         .collect();
     if !errors.is_empty() {
         return Ok(payload(empty, &errors));
@@ -1051,7 +1042,7 @@ fn join_groups(
     if !is(state, &id, type_name) {
         return Ok(payload(
             json!({answer: null}),
-            &[error(&["id"], message, code)],
+            &[coded(&["id"], message, code)],
         ));
     }
     let groups = gids(ctx.arg("sellingPlanGroupIds"));
@@ -1060,7 +1051,7 @@ fn join_groups(
         .enumerate()
         .filter(|(_, group)| !is(state, group, "SellingPlanGroup"))
         .map(|(index, _)| {
-            error(
+            coded(
                 &["sellingPlanGroupIds", &index.to_string()],
                 "Selling plan group does not exist.",
                 "GROUP_DOES_NOT_EXIST",

@@ -131,7 +131,7 @@ fn number_matches(value: Option<f64>, relation: &str, condition: f64) -> bool {
 }
 
 /// A weight in another unit.
-fn weight_in(value: f64, from: &str, to: &str) -> f64 {
+pub(super) fn weight_in(value: f64, from: &str, to: &str) -> f64 {
     let grams = |unit: &str| match unit {
         "KILOGRAMS" => 1000.0,
         "POUNDS" => 453.592_37,
@@ -214,18 +214,7 @@ fn rule_matches(state: &ShopState, product: &Record, rule: &Value) -> bool {
         }),
         "VARIANT_WEIGHT" => {
             let shop_unit = records::weight_unit(state);
-            any_variant(&|variant| {
-                let weight = field(variant, "inventoryItem")
-                    .and_then(|item| state.get(item))
-                    .and_then(|item| item.get("measurement"))
-                    .and_then(|measurement| measurement.get("weight"))?;
-                let amount = weight.get("value").and_then(Value::as_f64)?;
-                let unit = weight
-                    .get("unit")
-                    .and_then(Value::as_str)
-                    .unwrap_or("KILOGRAMS");
-                Some(weight_in(amount, unit, &shop_unit))
-            })
+            any_variant(&|variant| sources::weight_of(state, variant, Some(&shop_unit)))
         }
         // "With `is_set` relation, the rule matches products with at least one variant with
         // `compare_at_price` set. With `is_not_set` relation, the rule matches matches products
@@ -385,29 +374,6 @@ fn sort_smart(state: &mut ShopState, collection: &str) {
     }
 }
 
-/// Whether a collection other than `except` has `handle`.
-fn handle_taken(state: &ShopState, handle: &str, except: Option<&str>) -> bool {
-    state.keys("Collection").any(|key| {
-        Some(key) != except
-            && state.get(key).and_then(|record| field(record, "handle")) == Some(handle)
-    })
-}
-
-/// A free handle from `base`: itself, else with `-1`, `-2`, … appended.
-fn free_handle(state: &ShopState, base: &str, except: Option<&str>) -> String {
-    let base = match lsf_core::util::handleize(base) {
-        handle if handle.is_empty() => "collection".to_string(),
-        handle => handle,
-    };
-    if !handle_taken(state, &base, except) {
-        return base;
-    }
-    (1..)
-        .map(|n| format!("{base}-{n}"))
-        .find(|handle| !handle_taken(state, handle, except))
-        .unwrap_or(base)
-}
-
 /// The rule set of a `CollectionRuleSetInput`, checked: errors under `["ruleSet", …]`.
 fn rule_set_of(input: &Map<String, Value>, errors: &mut Vec<UserError>) -> Option<Value> {
     let rule_set = input.get("ruleSet")?.as_object()?;
@@ -467,10 +433,10 @@ fn note_rules(mutation: &mut Mutation<'_>, name: &str, rule_set: Option<&Value>)
 }
 
 /// The input of a collection mutation: `collection`, else the deprecated `input`.
-fn collection_input(ctx: &FieldContext<'_>) -> (Map<String, Value>, bool) {
+fn collection_input(ctx: &FieldContext<'_>) -> Map<String, Value> {
     match ctx.arg("collection").and_then(Value::as_object) {
-        Some(collection) => (collection.clone(), true),
-        None => (input(ctx, "input"), false),
+        Some(collection) => collection.clone(),
+        None => input(ctx, "input"),
     }
 }
 
@@ -557,7 +523,7 @@ fn collection_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let (input, _) = collection_input(ctx);
+    let input = collection_input(ctx);
     note_ignored(mutation, "collectionCreate", &input);
     let mut errors = Vec::new();
     check_title(text(&input, "title"), true, &mut errors);
@@ -603,7 +569,12 @@ fn collection_create(
     let state = mutation.state_mut();
     let now = state.timestamp();
     let title = text(&input, "title").unwrap_or_default().trim().to_string();
-    let handle = free_handle(state, text(&input, "handle").unwrap_or(&title), None);
+    let handle = records::free_handle(
+        state,
+        "Collection",
+        text(&input, "handle").unwrap_or(&title),
+        "collection",
+    );
     let id = state.new_gid("Collection");
     state.insert(value::object(json!({
         "__typename": "Collection",
@@ -646,7 +617,7 @@ fn collection_update(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let (input, _) = collection_input(ctx);
+    let input = collection_input(ctx);
     note_ignored(mutation, "collectionUpdate", &input);
     let state = mutation.state();
     let id = text(&input, "id").unwrap_or_default().to_string();
@@ -668,7 +639,7 @@ fn collection_update(
     }
     let handle = text(&input, "handle").map(lsf_core::util::handleize);
     if let Some(handle) = &handle
-        && (handle.is_empty() || handle_taken(state, handle, Some(&id)))
+        && (handle.is_empty() || records::handle_taken(state, "Collection", handle, Some(&id)))
     {
         errors.push(UserError::new(&["handle"], "Handle has already been taken"));
     }
@@ -761,18 +732,7 @@ pub fn delete_collection(state: &mut ShopState, collection: &str) {
     crate::domains::markets::removing(state, collection);
     let publications: Vec<String> = state.keys("Publication").map(str::to_string).collect();
     for publication in publications {
-        let lists = state.get(&publication).is_some_and(|record| {
-            gids(record.get("collections"))
-                .iter()
-                .any(|c| c == collection)
-        });
-        if lists
-            && let Some(Value::Array(collections)) = state
-                .get_mut(&publication)
-                .and_then(|record| record.get_mut("collections"))
-        {
-            collections.retain(|known| known.as_str() != Some(collection));
-        }
+        records::set_listed(state, &publication, "collections", collection, false);
     }
     for metafield in gids(record.get("metafields")) {
         state.remove(&metafield);
@@ -945,20 +905,7 @@ fn reorder_products(
         return Ok(payload(json!({"job": null}), &errors));
     }
     for change in &moves {
-        let product = text(change, "id").unwrap_or_default().to_string();
-        let position = change
-            .get("newPosition")
-            .and_then(|position| {
-                position
-                    .as_u64()
-                    .or_else(|| position.as_str().and_then(|text| text.parse().ok()))
-            })
-            .unwrap_or(0);
-        products.retain(|known| *known != product);
-        let at = usize::try_from(position)
-            .unwrap_or(usize::MAX)
-            .min(products.len());
-        products.insert(at, product);
+        records::apply_move(&mut products, change);
     }
     let state = mutation.state_mut();
     if let Some(record) = state.get_mut(&id) {

@@ -38,7 +38,7 @@ use super::inventory::with_idempotency;
 use super::records::{self, coded, field, input, is, is_active_location, objects, text};
 use super::{gids, product_changed};
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError};
+use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -60,6 +60,19 @@ fn errors_payload(fields: Value, key: &str, errors: &[UserError]) -> Value {
         Value::Array(errors.iter().map(UserError::to_json).collect()),
     );
     Value::Object(payload)
+}
+
+/// Whether an active location other than `except` fulfills online orders.
+fn another_fulfills_online(state: &ShopState, except: &str) -> bool {
+    state.keys("Location").any(|other| {
+        other != except
+            && is_active_location(state, other)
+            && state
+                .get(other)
+                .and_then(|record| record.get("fulfillsOnlineOrders"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+    })
 }
 
 /// Whether an active location other than `except` is named `name`.
@@ -164,11 +177,7 @@ fn location_add(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         Some("LocationAddUserErrorCode"),
     ));
     if !errors.is_empty() {
-        return Ok(errors_payload(
-            json!({"location": null}),
-            "userErrors",
-            &errors,
-        ));
+        return Ok(payload(json!({"location": null}), &errors));
     }
     let state = mutation.state_mut();
     let now = state.timestamp();
@@ -201,7 +210,7 @@ fn location_add(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     })));
     records::set_metafields(state, &id, "LOCATION", &metafields);
     state.emit("locations/create", &id);
-    Ok(errors_payload(json!({"location": id}), "userErrors", &[]))
+    Ok(payload(json!({"location": id}), &[]))
 }
 
 /// `locationEdit`.
@@ -215,24 +224,12 @@ fn location_edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
             "The record with the ID used as the input value couldn't be found.",
             "NOT_FOUND",
         );
-        return Ok(errors_payload(
-            json!({"location": null}),
-            "userErrors",
-            &[error],
-        ));
+        return Ok(payload(json!({"location": null}), &[error]));
     }
     let mut errors = Vec::new();
     check_name(state, text(&input, "name"), Some(&id), false, &mut errors);
     if input.get("fulfillsOnlineOrders").and_then(Value::as_bool) == Some(false)
-        && !state.keys("Location").any(|other| {
-            other != id
-                && is_active_location(state, other)
-                && state
-                    .get(other)
-                    .and_then(|record| record.get("fulfillsOnlineOrders"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-        })
+        && !another_fulfills_online(state, &id)
     {
         errors.push(coded(
             &["input", "fulfillsOnlineOrders"],
@@ -250,11 +247,7 @@ fn location_edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         Some("LocationEditUserErrorCode"),
     ));
     if !errors.is_empty() {
-        return Ok(errors_payload(
-            json!({"location": null}),
-            "userErrors",
-            &errors,
-        ));
+        return Ok(payload(json!({"location": null}), &errors));
     }
     let state = mutation.state_mut();
     if let Some(record) = state.get_mut(&id) {
@@ -272,7 +265,7 @@ fn location_edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     records::set_metafields(state, &id, "LOCATION", &metafields);
     state.touch(&id);
     state.emit("locations/update", &id);
-    Ok(errors_payload(json!({"location": id}), "userErrors", &[]))
+    Ok(payload(json!({"location": id}), &[]))
 }
 
 /// `locationActivate`.
@@ -421,15 +414,7 @@ fn deactivate_once(
         .and_then(|record| record.get("fulfillsOnlineOrders"))
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        && !state.keys("Location").any(|other| {
-            other != id
-                && is_active_location(state, other)
-                && state
-                    .get(other)
-                    .and_then(|record| record.get("fulfillsOnlineOrders"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-        });
+        && !another_fulfills_online(state, &id);
     if only_online && others_active {
         errors.push(coded(
             &["locationId"],
@@ -485,10 +470,7 @@ fn products_of_levels(state: &ShopState, levels: &[String]) -> Vec<String> {
         if let Some(product) = state
             .get(level)
             .and_then(|level| field(level, "item"))
-            .and_then(|item| state.get(item))
-            .and_then(|item| field(item, "variant"))
-            .and_then(|variant| state.get(variant))
-            .and_then(|variant| field(variant, "product"))
+            .and_then(|item| records::product_of_item(state, item))
             && !products.iter().any(|known| known == product)
         {
             products.push(product.to_string());
@@ -636,11 +618,7 @@ fn local_pickup_enable(
         _ => Ok(()),
     });
     if let Err(error) = checked {
-        return Ok(errors_payload(
-            json!({"localPickupSettings": null}),
-            "userErrors",
-            &[error],
-        ));
+        return Ok(payload(json!({"localPickupSettings": null}), &[error]));
     }
     let value = json!({
         "pickupTime": settings.get("pickupTime"),
@@ -652,11 +630,7 @@ fn local_pickup_enable(
     }
     state.touch(&id);
     state.emit("locations/update", &id);
-    Ok(errors_payload(
-        json!({"localPickupSettings": value}),
-        "userErrors",
-        &[],
-    ))
+    Ok(payload(json!({"localPickupSettings": value}), &[]))
 }
 
 /// `locationLocalPickupDisable`.
@@ -666,11 +640,7 @@ fn local_pickup_disable(
 ) -> Result<Value, FieldError> {
     let id = ctx.arg_str("locationId").unwrap_or_default().to_string();
     if let Err(error) = pickup_location(mutation.state(), &id, &["locationId"]) {
-        return Ok(errors_payload(
-            json!({"locationId": null}),
-            "userErrors",
-            &[error],
-        ));
+        return Ok(payload(json!({"locationId": null}), &[error]));
     }
     let state = mutation.state_mut();
     if let Some(record) = state.get_mut(&id) {
@@ -678,5 +648,5 @@ fn local_pickup_disable(
     }
     state.touch(&id);
     state.emit("locations/update", &id);
-    Ok(errors_payload(json!({"locationId": id}), "userErrors", &[]))
+    Ok(payload(json!({"locationId": id}), &[]))
 }

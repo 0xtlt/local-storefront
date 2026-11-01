@@ -111,12 +111,7 @@ pub fn create_media(state: &mut ShopState, product: &str, input: &Map<String, Va
     } else {
         state.new_gid(type_name)
     };
-    let file_name = source
-        .split(['?', '#'])
-        .next()
-        .and_then(|path| path.rsplit('/').next())
-        .unwrap_or_default()
-        .to_string();
+    let file_name = super::file_name(&source).to_string();
     let mime = super::mime_type(&file_name);
     let image = json!({
         "id": gid(
@@ -142,6 +137,9 @@ pub fn create_media(state: &mut ShopState, product: &str, input: &Map<String, Va
         "mediaErrors": [],
         "mediaWarnings": [],
     }));
+    // The size of a video or a model lsf did not download is unknown: left out, reported as
+    // defaulted.
+    let file_source = json!({"url": source, "mimeType": mime, "format": mime.rsplit('/').next()});
     let fields = match type_name {
         "MediaImage" => json!({
             "image": image,
@@ -151,14 +149,13 @@ pub fn create_media(state: &mut ShopState, product: &str, input: &Map<String, Va
         "Video" => json!({
             "filename": file_name,
             "duration": null,
-            // The size of a video lsf did not download is unknown: left out, reported as defaulted.
-            "sources": [{"url": source, "mimeType": mime, "format": mime.rsplit('/').next()}],
-            "originalSource": {"url": source, "mimeType": mime, "format": mime.rsplit('/').next()},
+            "sources": [file_source],
+            "originalSource": file_source,
         }),
         "Model3d" => json!({
             "filename": file_name,
-            "sources": [{"url": source, "mimeType": mime, "format": mime.rsplit('/').next()}],
-            "originalSource": {"url": source, "mimeType": mime, "format": mime.rsplit('/').next()},
+            "sources": [file_source],
+            "originalSource": file_source,
         }),
         _ => {
             let (host, embed, origin) = external_video(&source);
@@ -535,23 +532,8 @@ fn product_reorder_media(
     if !errors.is_empty() {
         return Ok(media_payload(json!({"job": null}), &errors));
     }
-    // Each move in turn: the medium leaves its place and takes `newPosition` (from 0), the last
-    // place when it is past the end.
     for change in &moves {
-        let id = text(change, "id").unwrap_or_default().to_string();
-        let position = change
-            .get("newPosition")
-            .and_then(|position| {
-                position
-                    .as_u64()
-                    .or_else(|| position.as_str().and_then(|text| text.parse().ok()))
-            })
-            .unwrap_or(0);
-        media.retain(|known| *known != id);
-        let at = usize::try_from(position)
-            .unwrap_or(usize::MAX)
-            .min(media.len());
-        media.insert(at, id);
+        super::records::apply_move(&mut media, change);
     }
     let state = mutation.state_mut();
     if let Some(record) = state.get_mut(&product) {
@@ -738,20 +720,28 @@ pub fn media_of_variant_input(
         found.push(id.to_string());
     }
     for source in gids(input.get("mediaSrc")) {
-        if let Some(medium) = media.iter().find(|medium| {
-            state.get(medium).is_some_and(|record| {
-                record
-                    .get("originalSource")
-                    .and_then(|source| source.get("url"))
-                    .and_then(Value::as_str)
-                    == Some(source.as_str())
-            })
-        }) && !found.contains(medium)
+        if let Some(medium) = by_source(state, product, &source)
+            && !found.contains(&medium)
         {
-            found.push(medium.clone());
+            found.push(medium);
         }
     }
     found
+}
+
+/// The first medium of a product whose `originalSource` is `source`.
+pub fn by_source(state: &ShopState, product: &str, source: &str) -> Option<String> {
+    gids(state.get(product)?.get("media"))
+        .into_iter()
+        .find(|medium| {
+            state.get(medium).is_some_and(|record| {
+                record
+                    .get("originalSource")
+                    .and_then(|original| original.get("url"))
+                    .and_then(Value::as_str)
+                    == Some(source)
+            })
+        })
 }
 
 /// The `media` argument of a mutation, as `CreateMediaInput`s.

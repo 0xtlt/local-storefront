@@ -43,13 +43,6 @@ fn active_operations(
     )))
 }
 
-/// Whether a collection has a handle.
-fn handle_taken(state: &ShopState, handle: &str) -> bool {
-    state
-        .all("Collection")
-        .any(|record| field(record, "handle") == Some(handle))
-}
-
 /// The metafield inputs that copy an owner's metafields, but those whose definition keeps its
 /// values unique.
 fn metafield_copies(state: &ShopState, owner: &str) -> Vec<Map<String, Value>> {
@@ -109,7 +102,7 @@ fn collection_duplicate(
             "The collection title or URL handle is too long.",
             "TOO_LONG",
         ))
-    } else if handle.is_empty() || handle_taken(state, &handle) {
+    } else if handle.is_empty() || records::handle_taken(state, "Collection", &handle, None) {
         Some((
             "The URL handle generated from the new title is already in use. Please choose a different title.",
             "TAKEN",

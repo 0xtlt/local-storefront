@@ -26,8 +26,8 @@
 
 use serde_json::{Value, json};
 
-use super::records::{field, is, origin, text};
-use super::{gids, product_changed};
+use super::product_changed;
+use super::records::{self, field, is, origin, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, parse_gid, value};
@@ -90,11 +90,7 @@ fn list_of(type_name: &str) -> &'static str {
 /// Whether a publication lists a product or a collection.
 fn lists(state: &ShopState, publication: &str, publishable: &str) -> bool {
     let list = list_of(state.type_of(publishable).unwrap_or_default());
-    state.get(publication).is_some_and(|record| {
-        gids(record.get(list))
-            .iter()
-            .any(|known| known == publishable)
-    })
+    records::lists(state, publication, list, publishable)
 }
 
 /// A `ResourcePublication` of a publishable on a publication, inline.
@@ -362,20 +358,15 @@ fn set_published(
     date: Option<&str>,
     published: bool,
 ) -> bool {
-    if lists(state, publication, publishable) == published {
-        return false;
-    }
     let type_name = state.type_of(publishable).unwrap_or_default().to_string();
-    let list = list_of(&type_name);
-    if let Some(Value::Array(items)) = state
-        .get_mut(publication)
-        .and_then(|record| record.get_mut(list))
-    {
-        if published {
-            items.push(json!(publishable));
-        } else {
-            items.retain(|known| known.as_str() != Some(publishable));
-        }
+    if !records::set_listed(
+        state,
+        publication,
+        list_of(&type_name),
+        publishable,
+        published,
+    ) {
+        return false;
     }
     let online_store = publication == super::online_store_publication_gid();
     if type_name == "Product" && online_store {
