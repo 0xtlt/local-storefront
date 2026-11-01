@@ -1346,13 +1346,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
             int(&item_record, "quantity"),
         );
     }
-    if state
-        .get(&order)
-        .and_then(|record| text(record, "displayFinancialStatus"))
-        == Some("PAID")
-    {
-        state.emit("orders/paid", &order);
-    }
+    model::emit_if_paid(state, &order);
     let now = state.timestamp();
     if let Some(draft) = state.get_mut(&id) {
         draft.insert("status".into(), json!("COMPLETED"));

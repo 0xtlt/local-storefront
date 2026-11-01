@@ -556,13 +556,7 @@ fn order_capture(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     );
     model::settle_financial_status(state, &order);
     state.touch(&order);
-    if state
-        .get(&order)
-        .and_then(|record| text(record, "displayFinancialStatus"))
-        == Some("PAID")
-    {
-        state.emit("orders/paid", &order);
-    }
+    model::emit_if_paid(state, &order);
     state.emit("orders/updated", &order);
     Ok(payload(json!({"transaction": transaction}), &[]))
 }
@@ -1554,13 +1548,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         }
     }
     model::refresh_order(state, &order);
-    if state
-        .get(&order)
-        .and_then(|record| text(record, "displayFinancialStatus"))
-        == Some("PAID")
-    {
-        state.emit("orders/paid", &order);
-    }
+    model::emit_if_paid(state, &order);
     Ok(payload(json!({"order": order}), &[]))
 }
 

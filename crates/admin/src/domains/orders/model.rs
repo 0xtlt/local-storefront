@@ -324,6 +324,17 @@ pub fn push_key(state: &mut ShopState, record: &str, field: &str, key: &str) {
     }
 }
 
+/// Emits `orders/paid` for an order whose financial status is `PAID`.
+pub fn emit_if_paid(state: &mut ShopState, order: &str) {
+    if state
+        .get(order)
+        .and_then(|record| text(record, "displayFinancialStatus"))
+        == Some("PAID")
+    {
+        state.emit("orders/paid", order);
+    }
+}
+
 /// Whether an order is cancelled.
 pub fn is_cancelled(order: &Record) -> bool {
     order.get("cancelledAt").is_some_and(|at| !at.is_null())
