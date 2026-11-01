@@ -30,6 +30,7 @@
 //! - Messages: the descriptions of `SubscriptionDraftErrorCode`; those of a draft or a line that
 //!   is not one ("Draft does not exist") are lsf's.
 
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 
 use super::contracts::{commit_new, commit_update, contract_arg};
@@ -157,7 +158,7 @@ fn insert_draft(
 fn open_draft(state: &ShopState, ctx: &FieldContext<'_>) -> Result<(String, Record), UserError> {
     let id = ctx.arg_str("draftId").unwrap_or_default().to_string();
     let Some(draft) = state.get(&id).filter(|_| state.type_of(&id) == Some(DRAFT)) else {
-        return Err(UserError::new(&["draftId"], "Draft does not exist").code("INVALID"));
+        return Err(model::invalid_error(&["draftId"], "Draft does not exist"));
     };
     if draft.get("lsfCommitted").and_then(Value::as_bool) == Some(true) {
         return Err(draft_error(&["draftId"], "COMMITTED"));
@@ -178,43 +179,13 @@ fn contract_create(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let input = object(ctx.arg("input"));
-    let state = mutation.state();
     let mut errors = Vec::new();
-    let customer = text(&input, "customerId").unwrap_or_default().to_string();
-    if state.type_of(&customer) != Some("Customer") {
-        errors.push(draft_error(
-            &["input", "customerId"],
-            "CUSTOMER_DOES_NOT_EXIST",
-        ));
-    }
-    let currency = text(&input, "currencyCode").unwrap_or_default().to_string();
-    if !model::currency_enabled(state, &currency) {
-        errors.push(draft_error(
-            &["input", "currencyCode"],
-            "CURRENCY_NOT_ENABLED",
-        ));
-    }
-    if text(&input, "nextBillingDate")
-        .and_then(model::date_time)
-        .is_none()
-    {
-        errors.push(draft_error(
-            &["input", "nextBillingDate"],
-            "INVALID_BILLING_DATE",
-        ));
-    }
-    if !errors.is_empty() {
+    let Some((customer, currency, next)) = new_contract(mutation.state(), &input, &mut errors)
+    else {
         return Ok(payload(json!({"draft": null}), &errors));
-    }
+    };
     let mut record = base_record(&customer, &currency);
-    record.insert(
-        "nextBillingDate".into(),
-        json!(
-            text(&input, "nextBillingDate")
-                .and_then(model::date_time)
-                .map(value::date_time)
-        ),
-    );
+    record.insert("nextBillingDate".into(), json!(value::date_time(next)));
     let contract = object(input.get("contract"));
     let state = mutation.state_mut();
     model::apply_draft_input(
@@ -232,8 +203,41 @@ fn contract_create(
     Ok(payload(json!({"draft": id}), &[]))
 }
 
+/// The customer, currency and next billing date of the input of a new contract, checked.
+fn new_contract(
+    state: &ShopState,
+    input: &Map<String, Value>,
+    errors: &mut Vec<UserError>,
+) -> Option<(String, String, DateTime<Utc>)> {
+    let customer = text(input, "customerId").unwrap_or_default().to_string();
+    if state.type_of(&customer) != Some("Customer") {
+        errors.push(draft_error(
+            &["input", "customerId"],
+            "CUSTOMER_DOES_NOT_EXIST",
+        ));
+    }
+    let currency = text(input, "currencyCode").unwrap_or_default().to_string();
+    if !model::currency_enabled(state, &currency) {
+        errors.push(draft_error(
+            &["input", "currencyCode"],
+            "CURRENCY_NOT_ENABLED",
+        ));
+    }
+    let next = text(input, "nextBillingDate").and_then(model::date_time);
+    if next.is_none() {
+        errors.push(draft_error(
+            &["input", "nextBillingDate"],
+            "INVALID_BILLING_DATE",
+        ));
+    }
+    match next {
+        Some(next) if errors.is_empty() => Some((customer, currency, next)),
+        _ => None,
+    }
+}
+
 /// The fields of a new contract-like record of a customer.
-fn base_record(customer: &str, currency: &str) -> Record {
+pub fn base_record(customer: &str, currency: &str) -> Record {
     value::object(json!({
         "status": "ACTIVE",
         "customer": customer,
@@ -247,7 +251,6 @@ fn base_record(customer: &str, currency: &str) -> Record {
         "discounts": [],
         "customAttributes": [],
         "note": null,
-        "nextBillingDate": null,
     }))
 }
 
@@ -261,7 +264,10 @@ fn contract_update(
     let Some(contract) = contract_arg(state, &id) else {
         return Ok(payload(
             json!({"draft": null}),
-            &[UserError::new(&["contractId"], "Contract does not exist").code("INVALID")],
+            &[model::invalid_error(
+                &["contractId"],
+                "Contract does not exist",
+            )],
         ));
     };
     if cycles::has_future_contract_edits(state, &contract) {
@@ -363,7 +369,7 @@ fn line_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     else {
         return Ok(payload(
             empty,
-            &[UserError::new(&["lineId"], "Line does not exist").code("INVALID")],
+            &[model::invalid_error(&["lineId"], "Line does not exist")],
         ));
     };
     if let Err(errors) = model::update_line(mutation.state(), line, &input, &currency, &["input"]) {
@@ -404,7 +410,7 @@ fn line_remove(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         let error = if was {
             draft_error(&["lineId"], "ALREADY_REMOVED")
         } else {
-            UserError::new(&["lineId"], "Line does not exist").code("INVALID")
+            model::invalid_error(&["lineId"], "Line does not exist")
         };
         return Ok(payload(empty, &[error]));
     };
@@ -463,13 +469,10 @@ fn entitled_lines(
     for (index, line) in gids(lines.get("add")).into_iter().enumerate() {
         if !known.contains(&line) {
             let index = index.to_string();
-            errors.push(
-                UserError::new(
-                    &["input", "entitledLines", "lines", "add", &index],
-                    "Line does not exist",
-                )
-                .code("INVALID"),
-            );
+            errors.push(model::invalid_error(
+                &["input", "entitledLines", "lines", "add", &index],
+                "Line does not exist",
+            ));
         } else if !listed.contains(&line) {
             listed.push(line);
             if !entitled.contains_key("all") {
@@ -582,7 +585,7 @@ fn discount_position(draft: &Record, ctx: &FieldContext<'_>) -> Result<(String, 
         .iter()
         .position(|discount| discount.get("id").and_then(Value::as_str) == Some(id.as_str()))
         .map(|position| (id, position))
-        .ok_or_else(|| UserError::new(&["discountId"], "Discount does not exist").code("INVALID"))
+        .ok_or_else(|| model::invalid_error(&["discountId"], "Discount does not exist"))
 }
 
 /// `subscriptionDraftDiscountUpdate` and `subscriptionDraftFreeShippingDiscountUpdate`: a patch
@@ -614,7 +617,10 @@ fn update_discount(
     {
         return Ok(payload(
             empty,
-            &[UserError::new(&["discountId"], "Discount is not of this kind").code("INVALID")],
+            &[model::invalid_error(
+                &["discountId"],
+                "Discount is not of this kind",
+            )],
         ));
     }
     let mut errors = Vec::new();
@@ -901,34 +907,13 @@ fn customer_check(state: &ShopState, record: &Record) -> Option<UserError> {
 /// (each with its discounts) and its codes.
 fn atomic_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = object(ctx.arg("input"));
-    let state = mutation.state();
     let mut errors = Vec::new();
-    let customer = text(&input, "customerId").unwrap_or_default().to_string();
-    if state.type_of(&customer) != Some("Customer") {
-        errors.push(draft_error(
-            &["input", "customerId"],
-            "CUSTOMER_DOES_NOT_EXIST",
-        ));
-    }
-    let currency = text(&input, "currencyCode").unwrap_or_default().to_string();
-    if !model::currency_enabled(state, &currency) {
-        errors.push(draft_error(
-            &["input", "currencyCode"],
-            "CURRENCY_NOT_ENABLED",
-        ));
-    }
-    let next = text(&input, "nextBillingDate").and_then(model::date_time);
-    if next.is_none() {
-        errors.push(draft_error(
-            &["input", "nextBillingDate"],
-            "INVALID_BILLING_DATE",
-        ));
-    }
-    if !errors.is_empty() {
+    let Some((customer, currency, next)) = new_contract(mutation.state(), &input, &mut errors)
+    else {
         return Ok(payload(json!({"contract": null}), &errors));
-    }
+    };
     let mut record = base_record(&customer, &currency);
-    record.insert("nextBillingDate".into(), json!(next.map(value::date_time)));
+    record.insert("nextBillingDate".into(), json!(value::date_time(next)));
     let contract_input = object(input.get("contract"));
     let state = mutation.state_mut();
     model::apply_draft_input(
@@ -980,11 +965,6 @@ fn atomic_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     record.insert("lines".into(), Value::Array(all_lines));
     record.insert("discounts".into(), Value::Array(all_discounts));
     model::check_committable(&record, &["input"], &mut errors);
-    if record.get("billingPolicy").is_some_and(Value::is_null)
-        || record.get("deliveryPolicy").is_some_and(Value::is_null)
-    {
-        // `check_committable` said it, at the input's fields.
-    }
     if !errors.is_empty() {
         return Ok(payload(json!({"contract": null}), &errors));
     }
@@ -1017,11 +997,10 @@ fn cycle_contract_edit(
     let Some(contract) = contract_arg(state, &id) else {
         return Ok(payload(
             json!({"draft": null}),
-            &[UserError::new(
+            &[model::invalid_error(
                 &["billingCycleInput", "contractId"],
                 "Contract does not exist",
-            )
-            .code("INVALID")],
+            )],
         ));
     };
     let cycle = match cycles::select(state, &contract, &object(input.get("selector"))) {
@@ -1039,11 +1018,10 @@ fn cycle_contract_edit(
     if cycles::is_billed(state, &contract, cycle.index) {
         return Ok(payload(
             json!({"draft": null}),
-            &[UserError::new(
+            &[model::invalid_error(
                 &["billingCycleInput", "selector"],
                 "Billing cycle has already been billed",
-            )
-            .code("INVALID")],
+            )],
         ));
     }
     let mut record = cycle_contract(&contract, cycle.index);
@@ -1115,13 +1093,10 @@ fn cycle_draft_concatenate(
         let at = ["concatenatedBillingCycleContracts", index.as_str()];
         let contract_id = text(input, "contractId").unwrap_or_default().to_string();
         let Some(contract) = contract_arg(state, &contract_id) else {
-            errors.push(
-                UserError::new(
-                    &model::path(&at, &["contractId"]),
-                    "Contract does not exist",
-                )
-                .code("INVALID"),
-            );
+            errors.push(model::invalid_error(
+                &model::path(&at, &["contractId"]),
+                "Contract does not exist",
+            ));
             continue;
         };
         let already = contract_id == anchor_contract
@@ -1144,13 +1119,10 @@ fn cycle_draft_concatenate(
         }
         if text(&contract, "currencyCode") != text(&draft, "currencyCode") {
             // lsf's wording: one order bills the group, in one currency.
-            errors.push(
-                UserError::new(
-                    &model::path(&at, &["contractId"]),
-                    "Currency must be the draft's",
-                )
-                .code("INVALID"),
-            );
+            errors.push(model::invalid_error(
+                &model::path(&at, &["contractId"]),
+                "Currency must be the draft's",
+            ));
             continue;
         }
         let cycle = match cycles::select(state, &contract, &object(input.get("selector"))) {
@@ -1238,9 +1210,7 @@ pub fn commit_cycle_edit(
     concatenated: &[Value],
 ) -> Value {
     let edited = edited_contract(state, record, contract, index);
-    let was_edited = state
-        .get(contract)
-        .is_some_and(|record| cycles::edits(record, index).is_some());
+    let topic = cycles::edit_topic(state, contract, index);
     if let Some(record) = state.get_mut(contract) {
         cycles::set_edit(record, index, "contract", Some(edited.clone()));
         cycles::set_edit(
@@ -1250,11 +1220,6 @@ pub fn commit_cycle_edit(
             (!concatenated.is_empty()).then(|| Value::Array(concatenated.to_vec())),
         );
     }
-    let topic = if was_edited {
-        "subscription_billing_cycle_edits/update"
-    } else {
-        "subscription_billing_cycle_edits/create"
-    };
     cycles::emit_cycle(state, topic, contract, index);
     for member in concatenated {
         let member_contract = member
@@ -1262,9 +1227,7 @@ pub fn commit_cycle_edit(
             .and_then(Value::as_str)
             .unwrap_or_default();
         let member_index = member.get("index").and_then(Value::as_i64).unwrap_or(0);
-        let was = state
-            .get(member_contract)
-            .is_some_and(|record| cycles::edits(record, member_index).is_some());
+        let topic = cycles::edit_topic(state, member_contract, member_index);
         if let Some(record) = state.get_mut(member_contract) {
             cycles::set_edit(
                 record,
@@ -1273,11 +1236,6 @@ pub fn commit_cycle_edit(
                 Some(json!({"contract": contract, "index": index})),
             );
         }
-        let topic = if was {
-            "subscription_billing_cycle_edits/update"
-        } else {
-            "subscription_billing_cycle_edits/create"
-        };
         cycles::emit_cycle(state, topic, member_contract, member_index);
     }
     edited
@@ -1316,10 +1274,10 @@ fn cycle_draft_commit(
     }
     match contract_arg(state, &contract) {
         Some(record) if cycles::is_billed(state, &record, index) => {
-            errors.push(
-                UserError::new(&["draftId"], "Billing cycle has already been billed")
-                    .code("INVALID"),
-            );
+            errors.push(model::invalid_error(
+                &["draftId"],
+                "Billing cycle has already been billed",
+            ));
         }
         Some(_) => {}
         None => errors.push(draft_error(&["draftId"], "INVALID")),
@@ -1372,26 +1330,27 @@ fn changed_items(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let id_of = |item: &Value| item.get("id").and_then(Value::as_str).map(str::to_string);
-    let find = |items: &[Value], id: &Option<String>| {
-        items.iter().find(|item| id_of(item) == *id).cloned()
-    };
+    /// The item of `items` with the id of `item`.
+    fn find<'i>(items: &'i [Value], item: &Value) -> Option<&'i Value> {
+        let id = item.get("id").and_then(Value::as_str);
+        items
+            .iter()
+            .find(|known| known.get("id").and_then(Value::as_str) == id)
+    }
     let items: Vec<Value> = match change {
         Change::Added => now
             .iter()
-            .filter(|item| find(&before, &id_of(item)).is_none())
+            .filter(|item| find(&before, item).is_none())
             .cloned()
             .collect(),
         Change::Removed => before
             .iter()
-            .filter(|item| find(&now, &id_of(item)).is_none())
+            .filter(|item| find(&now, item).is_none())
             .cloned()
             .collect(),
         Change::Updated => now
             .iter()
-            .filter(|item| {
-                find(&before, &id_of(item)).is_some_and(|old| strip(&old) != strip(item))
-            })
+            .filter(|item| find(&before, item).is_some_and(|old| strip(old) != strip(item)))
             .cloned()
             .collect(),
     };

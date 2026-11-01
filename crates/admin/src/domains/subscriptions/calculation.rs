@@ -39,7 +39,7 @@ use serde_json::{Map, Value, json};
 
 use super::contracts::{commit_new, commit_update, contract_arg, is_terminated};
 use super::cycles;
-use super::drafts::{applied_code, commit_cycle_edit, rate_options};
+use super::drafts::{applied_code, base_record, commit_cycle_edit, cycle_contract, rate_options};
 use super::model::{
     self, CALCULATION, Pointer, lines, manual_discount, object, objects, refresh, text,
 };
@@ -56,8 +56,8 @@ pub fn register(registry: &mut Registry) {
             cycle_edit_calculate,
         )
         .mutation("subscriptionContractCalculationCommit", commit)
-        .query("subscriptionContractCalculation", |r, _ctx, _object| {
-            let id = _ctx.arg_str("id").unwrap_or_default();
+        .query("subscriptionContractCalculation", |r, ctx, _object| {
+            let id = ctx.arg_str("id").unwrap_or_default();
             Ok(Output::object_or_null(
                 r.reference(id, "SubscriptionContractCalculation"),
             ))
@@ -109,13 +109,10 @@ fn calculated_line(
     })?;
     let quantity = line.get("quantity").and_then(Value::as_i64).unwrap_or(0);
     if quantity < 1 {
-        errors.push(
-            UserError::new(
-                &model::path(path, &[kind, "quantity"]),
-                "Quantity must be greater than 0",
-            )
-            .code("INVALID"),
-        );
+        errors.push(model::invalid_error(
+            &model::path(path, &[kind, "quantity"]),
+            "Quantity must be greater than 0",
+        ));
         return None;
     }
     let id = match text(line, "id") {
@@ -127,10 +124,10 @@ fn calculated_line(
             id.to_string()
         }
         Some(_) => {
-            errors.push(
-                UserError::new(&model::path(path, &[kind, "id"]), "Line does not exist")
-                    .code("INVALID"),
-            );
+            errors.push(model::invalid_error(
+                &model::path(path, &[kind, "id"]),
+                "Line does not exist",
+            ));
             return None;
         }
         None => model::uuid_gid(state, "SubscriptionLine"),
@@ -166,10 +163,10 @@ fn calculated_line(
         None => fields.get("lsfPrice").and_then(Value::as_i64).unwrap_or(0),
     };
     if !value::money_in_bounds(price.saturating_mul(quantity)) {
-        errors.push(
-            UserError::new(&model::path(path, &[kind]), value::money_too_large("Price"))
-                .code("INVALID"),
-        );
+        errors.push(model::invalid_error(
+            &model::path(path, &[kind]),
+            value::money_too_large("Price"),
+        ));
         return None;
     }
     let made = model::line_record(state, id.clone(), fields, quantity, price, line, currency);
@@ -536,6 +533,40 @@ fn invalid(errors: Vec<UserError>) -> Vec<UserError> {
         .collect()
 }
 
+/// The payload of a calculate mutation: the calculation of `input` (the argument `argument`)
+/// over `base`, kept and answered pending, or the user errors.
+fn calculated(
+    state: &mut ShopState,
+    target: Target,
+    base: Record,
+    input: &Map<String, Value>,
+    argument: &str,
+    policies: bool,
+) -> Value {
+    let with_customizations = input
+        .get("withMerchandiseCustomizations")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    match calculate(state, base, input, &[argument], policies) {
+        Ok((record, diagnostics, warnings, options)) => {
+            let pending = keep(
+                state,
+                target,
+                record,
+                diagnostics,
+                warnings,
+                options,
+                with_customizations,
+            );
+            payload(json!({"subscriptionContractCalculation": pending}), &[])
+        }
+        Err(errors) => payload(
+            json!({"subscriptionContractCalculation": null}),
+            &invalid(errors),
+        ),
+    }
+}
+
 /// `subscriptionContractCreateCalculate`.
 fn create_calculate(
     mutation: &mut Mutation<'_>,
@@ -547,51 +578,22 @@ fn create_calculate(
     if mutation.state().type_of(&customer) != Some("Customer") {
         return Ok(payload(
             empty,
-            &[UserError::new(
+            &[model::invalid_error(
                 &["contractCreateInput", "customerId"],
                 model::described("SubscriptionDraftErrorCode", "CUSTOMER_DOES_NOT_EXIST"),
-            )
-            .code("INVALID")],
+            )],
         ));
     }
-    let currency = text(&input, "currencyCode").unwrap_or("USD").to_string();
-    let base = value::object(json!({
-        "status": "ACTIVE",
-        "customer": customer,
-        "customerPaymentMethod": null,
-        "currencyCode": currency,
-        "billingPolicy": null,
-        "deliveryPolicy": null,
-        "deliveryMethod": null,
-        "deliveryPrice": model::money(0, &currency),
-        "lines": [],
-        "discounts": [],
-        "customAttributes": [],
-        "note": null,
-    }));
-    let with_customizations = input
-        .get("withMerchandiseCustomizations")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let state = mutation.state_mut();
-    match calculate(state, base, &input, &["contractCreateInput"], true) {
-        Ok((record, diagnostics, warnings, options)) => {
-            let pending = keep(
-                state,
-                Target::Create,
-                record,
-                diagnostics,
-                warnings,
-                options,
-                with_customizations,
-            );
-            Ok(payload(
-                json!({"subscriptionContractCalculation": pending}),
-                &[],
-            ))
-        }
-        Err(errors) => Ok(payload(empty, &invalid(errors))),
-    }
+    let currency = text(&input, "currencyCode").unwrap_or("USD");
+    let base = base_record(&customer, currency);
+    Ok(calculated(
+        mutation.state_mut(),
+        Target::Create,
+        base,
+        &input,
+        "contractCreateInput",
+        true,
+    ))
 }
 
 /// `subscriptionContractUpdateCalculate`.
@@ -613,7 +615,10 @@ fn update_calculate(
     let Some(contract) = contract_arg(state, &id) else {
         return Ok(payload(
             empty,
-            &[UserError::new(&["contractId"], "Contract does not exist").code("INVALID")],
+            &[model::invalid_error(
+                &["contractId"],
+                "Contract does not exist",
+            )],
         ));
     };
     if is_terminated(&contract) {
@@ -622,29 +627,14 @@ fn update_calculate(
     if cycles::has_future_contract_edits(state, &contract) {
         return Ok(payload(empty, &[error("CONTRACT_HAS_FUTURE_EDITS")]));
     }
-    let with_customizations = input
-        .get("withMerchandiseCustomizations")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let state = mutation.state_mut();
-    match calculate(state, contract, &input, &["contractUpdateInput"], true) {
-        Ok((record, diagnostics, warnings, options)) => {
-            let pending = keep(
-                state,
-                Target::Update(id),
-                record,
-                diagnostics,
-                warnings,
-                options,
-                with_customizations,
-            );
-            Ok(payload(
-                json!({"subscriptionContractCalculation": pending}),
-                &[],
-            ))
-        }
-        Err(errors) => Ok(payload(empty, &invalid(errors))),
-    }
+    Ok(calculated(
+        mutation.state_mut(),
+        Target::Update(id),
+        contract,
+        &input,
+        "contractUpdateInput",
+        true,
+    ))
 }
 
 /// `subscriptionBillingCycleContractEditCalculate`: the contract of one cycle.
@@ -659,20 +649,22 @@ fn cycle_edit_calculate(
     let Some(contract) = contract_arg(state, &id) else {
         return Ok(payload(
             empty,
-            &[UserError::new(&["contractId"], "Contract does not exist").code("INVALID")],
+            &[model::invalid_error(
+                &["contractId"],
+                "Contract does not exist",
+            )],
         ));
     };
     if is_terminated(&contract) {
         return Ok(payload(
             empty,
-            &[UserError::new(
+            &[model::invalid_error(
                 &["contractId"],
                 model::described(
                     "SubscriptionContractUpdateCalculateUserErrorCode",
                     "CONTRACT_TERMINATED",
                 ),
-            )
-            .code("INVALID")],
+            )],
         ));
     }
     let cycle = match cycles::select(state, &contract, &object(ctx.arg("billingCycleSelector"))) {
@@ -680,26 +672,23 @@ fn cycle_edit_calculate(
         Err(miss) => {
             return Ok(payload(
                 empty,
-                &[UserError::new(
+                &[model::invalid_error(
                     &["billingCycleSelector"],
                     model::described("SubscriptionDraftErrorCode", miss.draft_code()),
-                )
-                .code("INVALID")],
+                )],
             ));
         }
     };
     if cycles::is_billed(state, &contract, cycle.index) {
         return Ok(payload(
             empty,
-            &[UserError::new(
+            &[model::invalid_error(
                 &["billingCycleSelector"],
                 "Billing cycle has already been billed",
-            )
-            .code("INVALID")],
+            )],
         ));
     }
-    let base = super::drafts::cycle_contract(&contract, cycle.index);
-    let mut base = base;
+    let mut base = cycle_contract(&contract, cycle.index);
     for field in [
         "customer",
         "currencyCode",
@@ -711,29 +700,14 @@ fn cycle_edit_calculate(
             contract.get(field).cloned().unwrap_or(Value::Null),
         );
     }
-    let with_customizations = input
-        .get("withMerchandiseCustomizations")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let state = mutation.state_mut();
-    match calculate(state, base, &input, &["billingCycleEditInput"], false) {
-        Ok((record, diagnostics, warnings, options)) => {
-            let pending = keep(
-                state,
-                Target::Cycle(id, cycle.index),
-                record,
-                diagnostics,
-                warnings,
-                options,
-                with_customizations,
-            );
-            Ok(payload(
-                json!({"subscriptionContractCalculation": pending}),
-                &[],
-            ))
-        }
-        Err(errors) => Ok(payload(empty, &invalid(errors))),
-    }
+    Ok(calculated(
+        mutation.state_mut(),
+        Target::Cycle(id, cycle.index),
+        base,
+        &input,
+        "billingCycleEditInput",
+        false,
+    ))
 }
 
 /// A `SubscriptionContractCalculationCommitUserError`.
@@ -766,10 +740,10 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         // lsf's wording: a calculation commits once.
         return Ok(payload(
             empty,
-            &[
-                UserError::new(&["id"], "The calculation has already been committed")
-                    .code("INVALID"),
-            ],
+            &[model::invalid_error(
+                &["id"],
+                "The calculation has already been committed",
+            )],
         ));
     }
     if calculation.get("lsfDiscovery").and_then(Value::as_bool) == Some(true) {
