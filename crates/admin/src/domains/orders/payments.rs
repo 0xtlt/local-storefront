@@ -1208,6 +1208,24 @@ fn mandate_payment(
     Ok(answer)
 }
 
+/// The schedule `paymentScheduleId` names and its order, while it is not paid; else what is
+/// wrong with it.
+fn unpaid_schedule(state: &ShopState, id: &str) -> Result<(Record, Record), &'static str> {
+    let schedule = state
+        .get(id)
+        .filter(|_| state.type_of(id) == Some("PaymentSchedule"))
+        .ok_or("Payment schedule does not exist")?;
+    let order = text(schedule, "paymentTerms")
+        .and_then(|terms| state.get(terms))
+        .and_then(|terms| text(terms, "order"))
+        .and_then(|order| state.get(order))
+        .ok_or("Payment schedule is not of an order")?;
+    if !schedule.get("completedAt").is_none_or(Value::is_null) {
+        return Err("Payment schedule is already paid");
+    }
+    Ok((schedule.clone(), order.clone()))
+}
+
 /// `paymentScheduleCapture`: the balance of a due schedule, through the order's first vaulted
 /// payment method.
 fn schedule_capture(
@@ -1226,24 +1244,10 @@ fn schedule_capture(
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(schedule) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("PaymentSchedule"))
-        .cloned()
-    else {
-        return failed("Payment schedule does not exist");
+    let (schedule, order) = match unpaid_schedule(state, &id) {
+        Ok(found) => found,
+        Err(message) => return failed(message),
     };
-    let Some(order) = text(&schedule, "paymentTerms")
-        .and_then(|terms| state.get(terms))
-        .and_then(|terms| text(terms, "order"))
-        .and_then(|order| state.get(order))
-        .cloned()
-    else {
-        return failed("Payment schedule is not of an order");
-    };
-    if !schedule.get("completedAt").is_none_or(Value::is_null) {
-        return failed("Payment schedule is already paid");
-    }
     if !is_due(&schedule, state.now()) {
         return failed("Payment schedule is not due yet");
     }
@@ -1275,24 +1279,10 @@ fn reminder_send(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(schedule) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("PaymentSchedule"))
-        .cloned()
-    else {
-        return failed("Payment schedule does not exist");
+    let (schedule, order) = match unpaid_schedule(state, &id) {
+        Ok(found) => found,
+        Err(message) => return failed(message),
     };
-    let Some(order) = text(&schedule, "paymentTerms")
-        .and_then(|terms| state.get(terms))
-        .and_then(|terms| text(terms, "order"))
-        .and_then(|order| state.get(order))
-        .cloned()
-    else {
-        return failed("Payment schedule is not of an order");
-    };
-    if !schedule.get("completedAt").is_none_or(Value::is_null) {
-        return failed("Payment schedule is already paid");
-    }
     let Some(email) = text(&order, "email").map(str::to_string) else {
         return failed("The order has no email address to send the reminder to");
     };
