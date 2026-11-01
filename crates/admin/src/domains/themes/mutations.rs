@@ -46,7 +46,7 @@
 use serde_json::{Value, json};
 
 use super::files::{self, ThemeFile, check_filename};
-use super::{FILES, LOCAL, is_local, local_theme_gid, theme_name, theme_of};
+use super::{is_local, local_theme_gid, theme_name, theme_of};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, done_job, payload};
 use crate::sources::{self, SourceError};
@@ -82,20 +82,9 @@ fn new_theme(state: &mut ShopState, name: &str, role: &str) -> String {
     let id = state.new_gid("OnlineStoreTheme");
     let number = crate::state::parse_gid(&id).map_or(0, |(_, n)| n);
     let now = state.timestamp();
-    state.insert(value::object(json!({
-        "__typename": "OnlineStoreTheme",
-        "id": id,
-        "name": name,
-        "role": role,
-        "prefix": format!("/t/{number}"),
-        "processing": false,
-        "processingFailed": false,
-        "themeStoreId": null,
-        "createdAt": now,
-        "updatedAt": now,
-        LOCAL: false,
-        FILES: {},
-    })));
+    state.insert(value::object(super::record(
+        number, name, role, false, &now,
+    )));
     id
 }
 

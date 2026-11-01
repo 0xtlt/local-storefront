@@ -79,20 +79,25 @@ pub fn theme_name(settings_schema: &str) -> Option<String> {
 /// directory ([`attach`]).
 pub fn seed(seed: &mut Seed) {
     let created = Seed::epoch_string();
-    seed.insert(json!({
+    seed.insert(record(LOCAL_THEME_ID, DEFAULT_NAME, "MAIN", true, &created));
+}
+
+/// A theme record without files: the seed's local theme, or one the mutations make.
+fn record(number: u64, name: &str, role: &str, local: bool, created: &str) -> Value {
+    json!({
         "__typename": "OnlineStoreTheme",
-        "id": local_theme_gid(),
-        "name": DEFAULT_NAME,
-        "role": "MAIN",
-        "prefix": format!("/t/{LOCAL_THEME_ID}"),
+        "id": gid("OnlineStoreTheme", number),
+        "name": name,
+        "role": role,
+        "prefix": format!("/t/{number}"),
         "processing": false,
         "processingFailed": false,
         "themeStoreId": null,
         "createdAt": created,
         "updatedAt": created,
-        LOCAL: true,
+        LOCAL: local,
         FILES: {},
-    }));
+    })
 }
 
 /// Gives the local theme its directory: its name, and its files from now on. Not a change of
