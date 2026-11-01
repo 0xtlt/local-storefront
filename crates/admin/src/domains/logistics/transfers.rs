@@ -759,7 +759,6 @@ fn create_transfer(
     Ok(payload(json!({"inventoryTransfer": transfer}), &[]))
 }
 
-/// Sets the metafields of a transfer.
 fn set_metafields(state: &mut ShopState, transfer: &str, metafields: &[Map<String, Value>]) {
     if metafields.is_empty() {
         return;

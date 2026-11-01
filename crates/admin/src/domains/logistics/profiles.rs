@@ -290,7 +290,6 @@ fn profile_key(object: &Obj) -> Option<&str> {
     object.key()
 }
 
-/// The default profile of the shop.
 fn default_profile(state: &ShopState) -> Option<String> {
     state
         .all("DeliveryProfile")
@@ -454,7 +453,6 @@ fn zones_of(group: &Map<String, Value>) -> Vec<Map<String, Value>> {
     objects(group.get("locationGroupZones"))
 }
 
-/// Every method definition of a profile.
 fn method_definitions(state: &ShopState, profile: &str) -> Vec<String> {
     groups(state, profile)
         .iter()

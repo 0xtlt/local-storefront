@@ -124,7 +124,6 @@ fn shipment_of(state: &ShopState, id: &str) -> Option<Record> {
     record_of(state, id, "InventoryShipment").cloned()
 }
 
-/// The transfer of a shipment.
 fn transfer_of(state: &ShopState, shipment: &Record) -> Option<String> {
     text(shipment, TRANSFER)
         .filter(|transfer| state.contains(transfer))
@@ -252,7 +251,6 @@ fn check_lines(
     picked
 }
 
-/// The parts of a path as `&str`s.
 fn as_path(parts: &[String]) -> Vec<&str> {
     parts.iter().map(String::as_str).collect()
 }
