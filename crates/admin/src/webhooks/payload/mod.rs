@@ -667,6 +667,14 @@ fn lower(value: &Value) -> Value {
     }
 }
 
+/// An enum value in lowercase, or `fallback` when there is none.
+fn lower_or(value: &Value, fallback: &str) -> Value {
+    match lower(value) {
+        Value::Null => Value::String(fallback.to_string()),
+        lowered => lowered,
+    }
+}
+
 /// The numeric id of a GID, `Null` when it is not one.
 fn numeric(gid: &Value) -> Value {
     gid.as_str()

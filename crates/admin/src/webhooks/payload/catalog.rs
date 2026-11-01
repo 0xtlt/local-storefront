@@ -4,8 +4,9 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    Lookup, boolean, field, first, id, integer, item_weight, items, lower, millis, object, price,
-    records, ref_gid, ref_id, resolve, strings, tags, text, text_or, time, weight_unit,
+    Lookup, boolean, field, first, id, integer, item_weight, items, lower, lower_or, millis,
+    object, price, records, ref_gid, ref_id, resolve, strings, tags, text, text_or, time,
+    weight_unit,
 };
 
 /// `products/create`, `products/update`: a `Product`.
@@ -45,10 +46,7 @@ pub(super) fn product(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value
         "title": text(record, "title"),
         "updated_at": time(field(record, "updatedAt")),
         "vendor": text(record, "vendor"),
-        "status": match lower(field(record, "status")) {
-            Value::Null => json!("active"),
-            status => status,
-        },
+        "status": lower_or(field(record, "status"), "active"),
         "published_scope": "web",
         "tags": tags(field(record, "tags")),
         "variants": variants
@@ -130,10 +128,7 @@ fn selected_option(variant: &Map<String, Value>, position: usize) -> Value {
 
 /// A variant's `inventory_policy`: `deny` unless it says otherwise.
 pub(super) fn inventory_policy(variant: &Map<String, Value>) -> Value {
-    match lower(field(variant, "inventoryPolicy")) {
-        Value::Null => json!("deny"),
-        policy => policy,
-    }
+    lower_or(field(variant, "inventoryPolicy"), "deny")
 }
 
 /// An option of a product payload.

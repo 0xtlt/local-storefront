@@ -4,8 +4,8 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    Lookup, PREVIOUS, boolean, field, first, id, lower, millis, object, records, ref_gid, resolve,
-    strings, tags, text, time,
+    Lookup, PREVIOUS, boolean, field, first, id, lower, lower_or, millis, object, records, ref_gid,
+    resolve, strings, tags, text, time,
 };
 
 /// `customers/create`, `/update`, `/enable`, `/disable`: a `Customer`.
@@ -90,10 +90,7 @@ pub(super) fn deleted(record: &Map<String, Value>) -> Value {
 
 /// `DISABLED` is `disabled`.
 fn state(record: &Map<String, Value>) -> Value {
-    match lower(field(record, "state")) {
-        Value::Null => json!("disabled"),
-        state => state,
-    }
+    lower_or(field(record, "state"), "disabled")
 }
 
 /// `email`, deprecated in favour of `defaultEmailAddress.emailAddress`.

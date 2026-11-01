@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 
 use super::{
     Lookup, field, first, id, items, lower, money_amount, numeric, price_or_zero, records, ref_gid,
-    ref_id, resolve, text, time,
+    ref_id, resolve, text, text_or, time,
 };
 
 /// The dates of payment terms and schedules, which their GraphQL types do not have: lsf keeps
@@ -86,10 +86,7 @@ pub(super) fn tender_transaction(tender: &Map<String, Value>) -> Value {
         "processed_at": time(field(tender, "processedAt")),
         "remote_reference": text(tender, "remoteReference"),
         "payment_details": details,
-        "payment_method": match text(tender, "paymentMethod") {
-            Value::Null => json!("unknown"),
-            method => method,
-        },
+        "payment_method": text_or(tender, "paymentMethod", "unknown"),
     })
 }
 

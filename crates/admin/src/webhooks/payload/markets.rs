@@ -5,8 +5,8 @@ use serde_json::{Map, Value, json};
 
 use super::catalog::{images, inventory_policy, option_values};
 use super::{
-    Lookup, boolean, field, first, grams, id, integer, item_weight, lower, numeric, object, price,
-    records, ref_id, resolve, tags, text, text_or, time, weight_unit,
+    Lookup, boolean, field, first, grams, id, integer, item_weight, lower, lower_or, numeric,
+    object, price, records, ref_id, resolve, tags, text, text_or, time, weight_unit,
 };
 
 /// `markets/create`, `markets/update`: a `Market`'s id, name, type and status.
@@ -15,10 +15,7 @@ pub(super) fn market(record: &Map<String, Value>) -> Value {
         "id": id(record),
         "name": text(record, "name"),
         "type": lower(field(record, "type")),
-        "status": match lower(field(record, "status")) {
-            Value::Null => json!("active"),
-            status => status,
-        },
+        "status": lower_or(field(record, "status"), "active"),
     })
 }
 

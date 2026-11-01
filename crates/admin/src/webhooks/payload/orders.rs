@@ -7,9 +7,9 @@ use sha2::{Digest, Sha256};
 use super::customers::{embedded, order_address};
 use super::{
     Lookup, amount_set, attributes, bag_amount, bag_currency, boolean, decimal_text, field, first,
-    grams, id, integer, item_weight, items, lower, merge, money_amount, money_set, numeric, object,
-    price, price_or_zero, records, ref_gid, ref_id, resolve, strings, tags, text, text_or, time,
-    zero_set,
+    grams, id, integer, item_weight, items, lower, lower_or, merge, money_amount, money_set,
+    numeric, object, price, price_or_zero, records, ref_gid, ref_id, resolve, strings, tags, text,
+    text_or, time, zero_set,
 };
 
 /// `orders/create`, `/updated`, `/paid`, `/cancelled`, `/fulfilled`, `/partially_fulfilled`: an
@@ -101,10 +101,7 @@ pub(super) fn order(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
             "duties_included": boolean(record, "dutiesIncluded", false),
             "email": text(record, "email"),
             "estimated_taxes": boolean(record, "estimatedTaxes", false),
-            "financial_status": match lower(field(record, "displayFinancialStatus")) {
-                Value::Null => json!("pending"),
-                status => status,
-            },
+            "financial_status": lower_or(field(record, "displayFinancialStatus"), "pending"),
             "fulfillment_status": order_fulfillment_status(field(record, "displayFulfillmentStatus")),
             "landing_site": Value::Null,
             "landing_site_ref": Value::Null,
@@ -690,10 +687,7 @@ pub(super) fn draft_order(record: &Map<String, Value>, lookup: &dyn Lookup) -> V
         "name": text(record, "name"),
         "allow_discount_codes_in_checkout?": boolean(record, "allowDiscountCodesInCheckout", false),
         "b2b?": b2b,
-        "status": match lower(field(record, "status")) {
-            Value::Null => json!("open"),
-            status => status,
-        },
+        "status": lower_or(field(record, "status"), "open"),
         "line_items": records(field(record, "lineItems"), lookup)
             .iter()
             .map(draft_line_item)
@@ -913,10 +907,7 @@ pub(super) fn fulfillment(
     json!({
         "id": id(record),
         "order_id": order_id,
-        "status": match lower(field(record, "status")) {
-            Value::Null => json!("success"),
-            status => status,
-        },
+        "status": lower_or(field(record, "status"), "success"),
         "created_at": time(field(record, "createdAt")),
         "service": match field(record, "service") {
             Value::Object(service) => first(service, &["handle", "serviceName"]).clone(),
@@ -973,10 +964,7 @@ pub(super) fn refund(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value 
                 "quantity": integer(line, "quantity", json!(1)),
                 "line_item_id": item.as_ref().map_or(ref_id(field(line, "lineItem")), id),
                 "location_id": ref_id(field(line, "location")),
-                "restock_type": match lower(field(line, "restockType")) {
-                    Value::Null => json!("no_restock"),
-                    kind => kind,
-                },
+                "restock_type": lower_or(field(line, "restockType"), "no_restock"),
                 "subtotal": number(subtotal),
                 "total_tax": number(total_tax),
                 "subtotal_set": money_set(subtotal),
