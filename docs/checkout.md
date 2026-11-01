@@ -1048,7 +1048,7 @@ Functions it needs and no others, `--extension <handle>` repeated: a Function th
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |
 | `POST /checkouts/cn/<token>/update` | Applies `{"operations": [...]}`, in order. | `200` and the state, or `400` `{"error": "…"}` and nothing applied |
-| `POST /checkouts/cn/<token>/complete` | Places the order. | `200` `{"redirect": "…/thank-you", "order": {"id", "number", "name"}}`, the order as the Admin API recorded it (`id` is the `admin_graphql_api_id` of its `orders/create`; the thank-you page shows the session's number, which can differ), `422` and the state with `errors`, or `409` and the fresh state when the cart changed meanwhile |
+| `POST /checkouts/cn/<token>/complete` | Places the order. | `200` `{"redirect": "…/thank-you", "order": {"id", "number", "name"}}`, the order as the Admin API recorded it: `number` is an integer (`1004`), `name` the string (`"#1004"`), `id` the `admin_graphql_api_id` of its `orders/create`. The state's `order.number` is a string, the session's, which can differ (below). Or `422` and the state with `errors`, or `409` and the fresh state when the cart changed meanwhile |
 | `GET /checkouts/cn/<token>/thank-you` | The page of the order. | HTML |
 | `GET /__lsf/checkout?session=<id>` | The state of a session's checkout, from outside its browser. | JSON |
 
@@ -1110,10 +1110,12 @@ the metafields, the `extensions` to load and `diagnostics`. Money is `{"amount":
 email, a payment method or, for a cart that ships, an address with a last name, a first line and
 a city. It empties the cart: the order is what the thank-you page shows, and the state's `order`
 (`id`, `number`, `processedAt`, `totalReceived`, `totalOutstanding`) once `status` is `completed`.
-That `number` is the session's (`#1004` every run); the `order` of `complete` has the Admin API's,
-`#1005` when the shop has a `#1004` already. It takes the cart only if the cart is still the one
-the Functions ran on: if it changed meanwhile (another tab), nothing is bought and the reply is
-`409`. Completing an order that was placed already leads to the same thank-you page, never to a
+That `number` is a string, the session's (`"#1004"` every run). The `order` of `complete` is the
+Admin API's, and there `number` is an integer (`1004`) and `name` the string (`"#1004"`); they
+are `1005` and `"#1005"` when the shop has a `#1004` already. To match the two, use `id`, which
+both have; never compare the two `number`s. The state's `number` is a string since 0.2.0, and
+stays one. `complete` takes the cart only if the cart is still the one the Functions ran on: if
+it changed meanwhile (another tab), nothing is bought and the reply is `409`. Completing an order that was placed already leads to the same thank-you page, never to a
 second order.
 
 ### In CI
