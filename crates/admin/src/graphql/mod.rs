@@ -656,21 +656,6 @@ impl<'s, 'q> Prepared<'s, 'q> {
         }
     }
 
-    /// Whether the operation is a query or a mutation.
-    pub fn kind(&self) -> OperationKind {
-        self.operation().kind
-    }
-
-    /// The name of the operation, if it has one.
-    pub fn operation_name(&self) -> Option<&'q str> {
-        self.operation().name
-    }
-
-    /// The values of the variables, coerced.
-    pub fn variables(&self) -> &Map<String, Value> {
-        &self.variables
-    }
-
     /// The requested cost of the operation (see [`cost`]).
     pub fn requested_cost(&self) -> u64 {
         cost::requested(&self.context(), self.operation())

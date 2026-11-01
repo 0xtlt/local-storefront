@@ -401,14 +401,6 @@ impl Schema {
         of == object || self.possible_types(of).iter().any(|name| name == object)
     }
 
-    /// The object types that implement an interface.
-    pub fn implementations(&self, interface: &str) -> &[String] {
-        match self.types.get(interface) {
-            Some(def) if def.kind == Kind::Interface => &def.possible_types,
-            _ => &[],
-        }
-    }
-
     /// The values of an enum, `None` when the type is not an enum.
     pub fn enum_values(&self, name: &str) -> Option<impl Iterator<Item = &EnumValue>> {
         let def = self.types.get(name).filter(|def| def.kind == Kind::Enum)?;
@@ -490,7 +482,7 @@ mod tests {
         assert_eq!(node.kind, Kind::Interface);
         assert!(
             schema
-                .implementations("Node")
+                .possible_types("Node")
                 .iter()
                 .any(|name| name == "Product")
         );

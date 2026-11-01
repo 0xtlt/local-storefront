@@ -110,11 +110,6 @@ impl<'a> Seed<'a> {
         value::money_v2(cents, &self.currency)
     }
 
-    /// A `MoneyBag` in the shop currency.
-    pub fn money_bag(&self, cents: i64) -> Value {
-        value::money_bag(cents, &self.currency)
-    }
-
     /// A URL on the shop's primary domain: `/products/hat` → `https://shop.example/products/hat`.
     pub fn url(&self, path: &str) -> String {
         format!("{}{path}", self.origin)

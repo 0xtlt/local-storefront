@@ -372,15 +372,6 @@ impl Fetched {
     pub fn get(&self, url: &str) -> Option<&Outcome> {
         self.by_url.get(url)
     }
-
-    /// The URLs fetched.
-    pub fn len(&self) -> usize {
-        self.by_url.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.by_url.is_empty()
-    }
 }
 
 /// The bytes at `url` for the mutation `m`: a staged upload of the shop, else what the request
