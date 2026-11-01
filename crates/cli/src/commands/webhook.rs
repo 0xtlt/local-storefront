@@ -86,9 +86,22 @@ pub struct TriggerArgs {
     #[arg(long, env = "LSF_APP_URL", value_name = "URL", value_parser = super::app_url)]
     app_url: Option<String>,
 
-    /// Print the deliveries as JSON: their request, their attempts, their state.
-    #[arg(long, short = 'j')]
+    /// How to print the deliveries: `text`, or `json` (`{ok, deliveries}`: their request, their
+    /// attempts, their state), as the other commands take it.
+    #[arg(long, value_enum, default_value = "text")]
+    format: Format,
+
+    /// `--format json`, by its old name.
+    #[arg(long, short = 'j', hide = true)]
     json: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Format {
+    /// What was sent and what the backend answered, for a person.
+    Text,
+    /// `{ok, deliveries: [{id, topic, shop, url, request, attempts, state, reason, …}]}`.
+    Json,
 }
 
 pub fn run(
@@ -224,7 +237,7 @@ fn trigger(
     let delivered = deliveries
         .iter()
         .all(|delivery| delivery.state == DeliveryState::Delivered);
-    if args.json {
+    if args.json || args.format == Format::Json {
         let json = serde_json::json!({
             "ok": delivered,
             "deliveries": deliveries,

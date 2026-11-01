@@ -231,6 +231,47 @@ api_version = "2026-10"
 }
 
 #[test]
+fn format_json_prints_the_deliveries_and_json_is_its_old_name() {
+    let (url, _) = backend(200);
+    let address = format!("{url}/webhooks");
+    let trigger = |format: &[&str]| {
+        let output = lsf(
+            &std::env::temp_dir(),
+            &[
+                &[
+                    "app",
+                    "webhook",
+                    "trigger",
+                    "--topic",
+                    "app/uninstalled",
+                    "--address",
+                    &address,
+                ][..],
+                format,
+            ]
+            .concat(),
+        );
+        assert!(output.status.success(), "{format:?}: {}", text(&output));
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|_| panic!("{format:?}: {}", text(&output)));
+        assert_eq!(json["ok"], true, "{json}");
+        assert_eq!(json["deliveries"][0]["state"], "delivered", "{json}");
+        assert_eq!(json["deliveries"][0]["topic"], "app/uninstalled", "{json}");
+    };
+    trigger(&["--format", "json"]);
+    trigger(&["--json"]);
+    trigger(&["-j"]);
+    // Hidden: `--help` names `--format` only.
+    let help = lsf(
+        &std::env::temp_dir(),
+        &["app", "webhook", "trigger", "--help"],
+    );
+    let help = text(&help);
+    assert!(help.contains("--format <FORMAT>"), "{help}");
+    assert!(!help.contains("--json"), "{help}");
+}
+
+#[test]
 fn a_failed_delivery_exits_with_1() {
     let (url, _) = backend(500);
     let output = lsf(
