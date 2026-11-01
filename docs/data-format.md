@@ -859,6 +859,12 @@ find them, whatever the id, since the store data does not know it.
 
 `path` is always a JSON pointer into `file`, so the value to fix can be located mechanically.
 
+A product or a customer with a value that cannot be read (a `wrong_type`, an `invalid_value`,
+an `invalid_format`, a `missing_field`) is left out, so each reference to it is an error too:
+an `unknown_product`, `unknown_variant`, `unknown_customer` or `unknown_reference` in another
+file. Fix the errors in `products/` and `customers.json` first, and run `validate` again before
+you edit a reference.
+
 ## Field reference
 
 Every field of every type is listed in [data-reference.md](data-reference.md), which is

@@ -136,6 +136,8 @@ Where the intent is not clear, the fix keeps exactly what renders today:
   `image_alt_2` if the file already has an `image_alt`.
 - **A file is written only if it has not changed** since `npx local-storefront check` read it.
 
+## Fix by hand
+
 Some markup has no fix, and the report says why after `no automatic fix:`. Fix it by hand:
 
 | The report says | Write instead |
@@ -152,7 +154,8 @@ Some markup has no fix, and the report says why after `no automatic fix:`. Fix i
 
 `npx local-storefront check` exits with `1` while a problem is left, so the build fails before
 Shopify refuses the upload. It reads the files and renders none: an error at render time (a
-division by zero) needs `render --strict`. A complete workflow: [testing](testing.md#in-ci).
+division by zero) needs `render --strict`. A complete workflow:
+[agents](agents.md#run-the-checks-in-ci); with browser tests: [testing](testing.md#in-ci).
 
 ## How it is checked
 
