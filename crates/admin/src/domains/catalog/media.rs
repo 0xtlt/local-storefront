@@ -25,10 +25,10 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{coded, field, is, text};
+use super::records::{field, is, text};
 use super::{gids, refresh_product};
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, coded, payload};
 use crate::state::{ShopState, gid, value};
 
 pub fn register(registry: &mut Registry) {
@@ -399,13 +399,13 @@ fn product_update_media(
         if !is_media(state, id) {
             errors.push(coded(
                 &["media", &index.to_string(), "id"],
-                &format!("Media id {id} does not exist"),
+                format!("Media id {id} does not exist"),
                 "MEDIA_DOES_NOT_EXIST",
             ));
         } else if !own.iter().any(|known| known == id) {
             errors.push(coded(
                 &["media", &index.to_string(), "id"],
-                &format!("Media id {id} does not exist on the given product"),
+                format!("Media id {id} does not exist on the given product"),
                 "MEDIA_DOES_NOT_EXIST_ON_PRODUCT",
             ));
         }
@@ -483,7 +483,7 @@ fn product_delete_media(
             // shopify.dev's example: `field` `["mediaIds"]`.
             errors.push(coded(
                 &["mediaIds"],
-                &format!("Media id {id} does not exist"),
+                format!("Media id {id} does not exist"),
                 "MEDIA_DOES_NOT_EXIST",
             ));
         }

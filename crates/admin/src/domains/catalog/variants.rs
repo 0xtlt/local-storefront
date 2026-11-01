@@ -33,18 +33,18 @@
 //!   (the product payload lists the variants).
 //!
 //! Where shopify.dev documents an error only by its code, the message is the code's description
-//! in the 2026-10 schema (see [`super::records::coded`]).
+//! in the 2026-10 schema (see [`crate::resolve::coded`]).
 
 use serde_json::{Map, Value, json};
 
 use super::media;
 use super::records::{
-    self, apply_inventory_item, arg_objects, coded, currency, default_location, field, is,
+    self, apply_inventory_item, arg_objects, currency, default_location, field, is,
     is_active_location, item_of, new_inventory_item, new_level, objects, text,
 };
 use super::{cents_of, gids, product_changed};
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, coded, payload};
 use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -238,16 +238,12 @@ fn input_error(
     message: impl Into<String>,
     code: &str,
 ) -> UserError {
-    UserError {
-        field: Some(
-            path.iter()
-                .cloned()
-                .chain(suffix.iter().map(|part| part.to_string()))
-                .collect(),
-        ),
-        message: message.into(),
-        code: Some(code.to_string()),
-    }
+    let field: Vec<&str> = path
+        .iter()
+        .map(String::as_str)
+        .chain(suffix.iter().copied())
+        .collect();
+    coded(&field, message, code)
 }
 
 /// The title of the variant of these choices: the values, `/`-separated.

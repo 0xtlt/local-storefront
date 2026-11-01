@@ -52,7 +52,7 @@ use crate::state::{Record, ShopState, gid_type, parse_gid};
 use crate::version::{ApiVersion, adapt};
 use crate::webhooks::Webhooks;
 
-pub use mutation::{Mutation, UserError, done_job, not_simulated, payload};
+pub use mutation::{Mutation, UserError, coded, done_job, not_simulated, payload, payload_at};
 pub use registry::{FieldFn, MutationFn, Registry, SearchFn, SortFn, TextFn};
 
 /// An object of a response: what the executor hands back to the resolver for the fields below

@@ -45,10 +45,10 @@ use chrono::{DateTime, Utc};
 use lsf_core::util::handleize;
 use serde_json::{Map, Value, json};
 
-use super::{coded, is, number, objects, regions_of, shop_locales, strings, text};
+use super::{is, number, objects, regions_of, shop_locales, strings, text};
 use crate::domains::catalog::{self, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, payload};
 use crate::state::{Record, ShopState, value};
 
 /// The record field of a channel's publication that names the channel.

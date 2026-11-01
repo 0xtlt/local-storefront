@@ -26,9 +26,9 @@
 use serde_json::{Map, Value, json};
 
 use super::cents_of;
-use super::records::{coded, currency, field, is, text};
+use super::records::{currency, field, is, text};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, coded, payload};
 use crate::state::{Record, ShopState, gid, value};
 
 pub fn register(registry: &mut Registry) {

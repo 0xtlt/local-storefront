@@ -34,11 +34,11 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{self, coded, is, item_of, objects, text};
+use super::records::{self, is, item_of, objects, text};
 use super::variants::{self, Choice, ProductOption, Reader};
 use super::{gids, media, product_changed, products};
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, coded, payload};
 use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {

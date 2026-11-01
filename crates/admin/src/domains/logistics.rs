@@ -67,7 +67,7 @@ pub fn seed(seed: &mut Seed) {
 /// code in the code enum of the payload's error type (`InventoryTransferCreateUserErrorCode`
 /// for `inventoryTransferCreate`): shopify.dev documents these errors by their codes only, and
 /// Shopify words the messages it does publish as these descriptions (see
-/// `catalog::records::coded`). A description of several sentences gives its first. The schema
+/// `resolve::coded`). A description of several sentences gives its first. The schema
 /// is the request's, so the message is that of the version asked.
 pub fn coded(ctx: &FieldContext<'_>, field: &[&str], code: &str) -> UserError {
     let schema = ctx.schema();

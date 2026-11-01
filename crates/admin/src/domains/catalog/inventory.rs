@@ -40,18 +40,18 @@
 //!   crosses zero.
 //!
 //! Where shopify.dev documents an error only by its code, the message is the code's description
-//! in the 2026-10 schema (see [`super::records::coded`]).
+//! in the 2026-10 schema (see [`crate::resolve::coded`]).
 
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{Map, Value, json};
 
 use super::records::{
-    self, ON_HAND_PARTS, arg_objects, coded, field, is, is_active_location, level_at, new_level,
-    objects, quantity, remove_level, text,
+    self, ON_HAND_PARTS, arg_objects, field, is, is_active_location, level_at, new_level, objects,
+    quantity, remove_level, text,
 };
 use super::{gids, product_changed};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, payload};
 use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {

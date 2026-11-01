@@ -28,9 +28,9 @@
 use serde_json::{Map, Value, json};
 
 use super::gids;
-use super::records::{self, coded, currency, field, is, objects, text};
+use super::records::{self, currency, field, is, objects, text};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, payload};
 use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {

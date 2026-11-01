@@ -27,13 +27,13 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{arg_objects, coded, field, is, objects, text};
+use super::records::{arg_objects, field, is, objects, text};
 use super::variants::{
     self, Choice, ProductOption, add_value, no_product, options_of, product_arg, remove_variant,
 };
 use super::{gids, product_changed};
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, payload};
+use crate::resolve::{Mutation, Registry, coded, payload};
 use crate::state::ShopState;
 
 pub fn register(registry: &mut Registry) {
@@ -226,7 +226,7 @@ fn options_create(
         } else if names.contains(&name.to_lowercase()) {
             errors.push(coded(
                 &["options", &at],
-                &format!("Option '{name}' already exists."),
+                format!("Option '{name}' already exists."),
                 "OPTION_ALREADY_EXISTS",
             ));
         }
@@ -395,7 +395,7 @@ fn option_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         {
             errors.push(coded(
                 &["option", "name"],
-                &format!("Option '{name}' already exists."),
+                format!("Option '{name}' already exists."),
                 "OPTION_ALREADY_EXISTS",
             ));
         }
@@ -745,7 +745,7 @@ fn options_reorder(
                     // shopify.dev's example.
                     errors.push(coded(
                         &["options"],
-                        &format!("Missing option value '{name}'."),
+                        format!("Missing option value '{name}'."),
                         "MISSING_OPTION_VALUE",
                     ));
                 }

@@ -40,10 +40,10 @@ use std::collections::HashSet;
 
 use serde_json::{Map, Value, json};
 
-use super::{Pointer, coded, is, market_currency, number, objects, shop_currency, strings, text};
+use super::{Pointer, is, market_currency, number, objects, shop_currency, strings, text};
 use crate::domains::catalog::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, payload};
 use crate::search::SearchValue;
 use crate::state::{Record, ShopState, value};
 

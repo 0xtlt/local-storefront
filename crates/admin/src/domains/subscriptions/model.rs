@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 use crate::domains::catalog::gids;
 use crate::domains::orders::TAX_RATE_SETTING;
 use crate::domains::orders::model::{cents, parse_cents, share};
-use crate::resolve::UserError;
+use crate::resolve::{UserError, coded};
 use crate::state::{Record, ShopState, value};
 
 pub const CONTRACT: &str = "SubscriptionContract";
@@ -50,32 +50,36 @@ pub fn described(enum_name: &str, code: &str) -> String {
 /// A user error of the draft API (`SubscriptionDraftUserError`), worded as its code's
 /// description.
 pub fn draft_error(field: &[&str], code: &str) -> UserError {
-    UserError::new(field, described("SubscriptionDraftErrorCode", code)).code(code)
+    coded(field, described("SubscriptionDraftErrorCode", code), code)
 }
 
 /// A user error coded `INVALID`, with its message: lsf's wording, for what Shopify documents no
 /// message of (a record that does not exist, a value out of range).
 pub fn invalid_error(field: &[&str], message: impl Into<String>) -> UserError {
-    UserError::new(field, message).code("INVALID")
+    coded(field, message, "INVALID")
 }
 
 /// A `SubscriptionContractStatusUpdateUserError`.
 pub fn status_error(field: &[&str], code: &str) -> UserError {
-    UserError::new(
+    coded(
         field,
         described("SubscriptionContractStatusUpdateErrorCode", code),
+        code,
     )
-    .code(code)
 }
 
 /// A `BillingAttemptUserError`.
 pub fn attempt_error(field: &[&str], code: &str) -> UserError {
-    UserError::new(field, described("BillingAttemptUserErrorCode", code)).code(code)
+    coded(field, described("BillingAttemptUserErrorCode", code), code)
 }
 
 /// A `SubscriptionBillingCycleUserError`.
 pub fn cycle_error(field: &[&str], code: &str) -> UserError {
-    UserError::new(field, described("SubscriptionBillingCycleErrorCode", code)).code(code)
+    coded(
+        field,
+        described("SubscriptionBillingCycleErrorCode", code),
+        code,
+    )
 }
 
 /// The path of a nested input field: `prefix`, then `rest`.

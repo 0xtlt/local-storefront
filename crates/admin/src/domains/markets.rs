@@ -48,7 +48,7 @@ use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
 use crate::domains::catalog;
-use crate::resolve::{Registry, UserError};
+use crate::resolve::{Registry, UserError, coded};
 use crate::state::seed::Seed;
 use crate::state::{Record, ShopState, gid, parse_gid};
 
@@ -466,11 +466,6 @@ pub fn catalog_key(state: &ShopState, id: &str) -> Option<String> {
 fn market_not_found(field: &str) -> UserError {
     // lsf's wording: shopify.dev publishes the code only.
     coded(&[field], "Market does not exist", "MARKET_NOT_FOUND")
-}
-
-/// A user error with a code.
-fn coded(field: &[&str], message: impl Into<String>, code: &str) -> UserError {
-    UserError::new(field, message).code(code)
 }
 
 /// The numeric id of a GID, for sorting a list as Shopify answers it (by id).

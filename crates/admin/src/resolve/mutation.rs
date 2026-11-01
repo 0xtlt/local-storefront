@@ -216,14 +216,30 @@ pub fn done_job(state: &mut ShopState, kind: &str) -> String {
     id
 }
 
+/// A user error at `field` with its code: `UserError::new(field, message).code(code)`.
+///
+/// Where shopify.dev documents an error by its code only, the domains word its message as the
+/// description the 2026-10 schema gives the code, which is how Shopify words the messages it
+/// does publish (`IDEMPOTENCY_KEY_PARAMETER_MISMATCH`: "The same idempotency key cannot be used
+/// with different operation parameters.", in the schema and in shopify.dev's "Implementing
+/// idempotency").
+pub fn coded(field: &[&str], message: impl Into<String>, code: &str) -> UserError {
+    UserError::new(field, message).code(code)
+}
+
 /// A payload: `fields` (an object), with `userErrors` set to `errors`.
 pub fn payload(fields: Value, errors: &[UserError]) -> Value {
+    payload_at(fields, "userErrors", errors)
+}
+
+/// A payload whose errors are in `key` rather than `userErrors` (`locationDeactivateUserErrors`).
+pub fn payload_at(fields: Value, key: &str, errors: &[UserError]) -> Value {
     let mut payload = match fields {
         Value::Object(map) => map,
         _ => Map::new(),
     };
     payload.insert(
-        "userErrors".into(),
+        key.into(),
         Value::Array(errors.iter().map(UserError::to_json).collect()),
     );
     Value::Object(payload)

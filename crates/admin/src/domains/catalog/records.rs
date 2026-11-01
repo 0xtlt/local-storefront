@@ -665,12 +665,3 @@ pub fn error_at(path: &[String], message: impl Into<String>) -> UserError {
     let path: Vec<&str> = path.iter().map(String::as_str).collect();
     UserError::new(&path, message)
 }
-
-/// The message and code of a user error that Shopify documents only by its code: the
-/// description the 2026-10 schema gives the code, which is how Shopify words the messages it
-/// does publish (`IDEMPOTENCY_KEY_PARAMETER_MISMATCH`: "The same idempotency key cannot be used
-/// with different operation parameters.", in the schema and in shopify.dev's "Implementing
-/// idempotency").
-pub fn coded(field: &[&str], message: &str, code: &str) -> UserError {
-    UserError::new(field, message).code(code)
-}
