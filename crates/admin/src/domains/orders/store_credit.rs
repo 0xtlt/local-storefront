@@ -89,7 +89,7 @@ const NOT_ENOUGH: &str =
     "The store credit account does not have sufficient funds to satisfy the request";
 
 /// Why an account cannot be found or made.
-pub enum AccountError {
+enum AccountError {
     /// The id names an account the shop does not have.
     AccountNotFound,
     /// The id names an owner the shop does not have.
@@ -102,7 +102,7 @@ pub enum AccountError {
 
 /// The account an id names (an account, or an owner and the currency), made for an owner that
 /// has none when `create`.
-pub fn account_of(
+fn account_of(
     state: &mut ShopState,
     id: &str,
     currency: &str,

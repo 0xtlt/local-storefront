@@ -31,9 +31,9 @@
 
 use serde_json::{Map, Value, json};
 
+use super::LineDraft;
 use super::model::{self, field_cents, int, text};
 use super::refunds::{self, RefundLine, RefundSpec};
-use super::{LineDraft, TAX_RATE_SETTING};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
@@ -51,10 +51,6 @@ pub fn register(registry: &mut Registry) {
         .mutation("orderEditAddLineItemDiscount", add_line_item_discount)
         .mutation("orderEditRemoveDiscount", remove_discount)
         .mutation("orderEditCommit", commit);
-}
-
-fn number(id: &str) -> u64 {
-    parse_gid(id).map_or(0, |(_, number)| number)
 }
 
 /// `orderEditBegin`.
@@ -92,7 +88,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         let ordered = int(item, "quantity").max(1);
         let unit = field_cents(item, "discountedTotalSet") / ordered;
         lines.push(json!({
-            "id": gid("CalculatedLineItem", number(&line)),
+            "id": gid("CalculatedLineItem", model::number(&line)),
             "title": item.get("title"),
             "variantTitle": item.get("variantTitle"),
             "sku": item.get("sku"),
@@ -118,7 +114,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     }
     let state = mutation.state_mut();
     let calculated = state.new_gid("CalculatedOrder");
-    let session = gid("OrderEditSession", number(&calculated));
+    let session = gid("OrderEditSession", model::number(&calculated));
     state.insert(value::object(json!({
         "__typename": "OrderEditSession",
         "id": session,
@@ -189,7 +185,7 @@ pub(super) fn staged(
     let line = line.and_then(|line| calculated_line(state, calculated, line));
     let mut fields = json!({
         "calculatedOrder": calculated,
-        "orderEditSession": gid("OrderEditSession", number(calculated)),
+        "orderEditSession": gid("OrderEditSession", model::number(calculated)),
         "calculatedLineItem": line,
     });
     if let (Value::Object(fields), Value::Object(extra)) = (&mut fields, extra) {
@@ -234,11 +230,8 @@ pub(super) fn change_line(
 
 /// The tax rate of an order's edits, in basis points: the store data's, else what the order's
 /// tax is of its subtotal.
-fn tax_rate_bps(state: &ShopState, order: &Record) -> i64 {
-    let setting = state
-        .setting(TAX_RATE_SETTING)
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
+pub(super) fn tax_rate_bps(state: &ShopState, order: &Record) -> i64 {
+    let setting = super::tax_rate_setting(state);
     if setting > 0 {
         return setting;
     }

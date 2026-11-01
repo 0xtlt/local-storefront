@@ -287,6 +287,11 @@ pub fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
     record.get(field).and_then(Value::as_str)
 }
 
+/// The number of a GID (`gid://shopify/Order/7` is 7), 0 when it is not one.
+pub fn number(gid: &str) -> u64 {
+    crate::state::parse_gid(gid).map_or(0, |(_, number)| number)
+}
+
 /// An integer field of a record, 0 when it has none.
 pub fn int(record: &Record, field: &str) -> i64 {
     match record.get(field) {
@@ -319,6 +324,17 @@ pub fn push_key(state: &mut ShopState, record: &str, field: &str, key: &str) {
     }
 }
 
+/// Emits `orders/paid` for an order whose financial status is `PAID`.
+pub fn emit_if_paid(state: &mut ShopState, order: &str) {
+    if state
+        .get(order)
+        .and_then(|record| text(record, "displayFinancialStatus"))
+        == Some("PAID")
+    {
+        state.emit("orders/paid", order);
+    }
+}
+
 /// Whether an order is cancelled.
 pub fn is_cancelled(order: &Record) -> bool {
     order.get("cancelledAt").is_some_and(|at| !at.is_null())
@@ -333,7 +349,7 @@ pub fn order_of(state: &ShopState, record: &str) -> Option<String> {
 
 /// The fulfillments of a line item that shipped: `(fulfillment line item GID, quantity)`, over
 /// the order's successful fulfillments.
-pub fn fulfilled_lines(state: &ShopState, order: &str, line: &str) -> Vec<(String, i64)> {
+fn fulfilled_lines(state: &ShopState, order: &str, line: &str) -> Vec<(String, i64)> {
     let Some(record) = state.get(order) else {
         return Vec::new();
     };
@@ -350,7 +366,7 @@ pub fn fulfilled_lines(state: &ShopState, order: &str, line: &str) -> Vec<(Strin
 }
 
 /// How many units of a line item shipped.
-pub fn fulfilled_quantity(state: &ShopState, order: &str, line: &str) -> i64 {
+fn fulfilled_quantity(state: &ShopState, order: &str, line: &str) -> i64 {
     fulfilled_lines(state, order, line)
         .iter()
         .map(|(_, quantity)| quantity)
@@ -370,10 +386,7 @@ pub fn fulfillment_order_lines(
     gids(record.get("fulfillmentOrders"))
         .iter()
         .flat_map(|fulfillment_order| {
-            let lines = state
-                .get(fulfillment_order)
-                .map(|record| gids(record.get("lineItems")))
-                .unwrap_or_default();
+            let lines = super::line_items(state, fulfillment_order);
             lines
                 .into_iter()
                 .filter(|id| {
@@ -523,7 +536,7 @@ pub fn refund_discrepancy(state: &ShopState, order: &Record) -> i64 {
 /// What the transactions of an order moved: `(received, refunded, capturable, voided)`.
 /// Received is what sales and captures took; capturable what authorizations hold that was
 /// neither captured nor voided.
-pub fn money_moved(state: &ShopState, order: &Record) -> (i64, i64, i64, bool) {
+fn money_moved(state: &ShopState, order: &Record) -> (i64, i64, i64, bool) {
     let transactions: Vec<&Record> = gids(order.get("transactions"))
         .iter()
         .filter_map(|transaction| state.get(transaction))

@@ -47,6 +47,7 @@ use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
 use crate::domains::catalog::cents_of;
+use crate::domains::orders::model;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -56,11 +57,11 @@ use crate::state::{Record, ShopState, gid};
 
 /// How long a checkout stays incomplete before it is abandoned (Help Center: "more than ten
 /// minutes").
-pub const ABANDONMENT_DELAY_MINUTES: i64 = 10;
+const ABANDONMENT_DELAY_MINUTES: i64 = 10;
 
 /// How long the admin keeps an abandoned checkout ("older than three months are automatically
 /// deleted").
-pub const RETENTION_DAYS: i64 = 90;
+const RETENTION_DAYS: i64 = 90;
 
 /// A line of a cart, as the server reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -350,7 +351,7 @@ pub fn record_cart(state: &mut ShopState, cart: &Cart<'_>) {
         "note": cart.note,
         "attributes": cart.attributes.iter().map(|(key, value)| json!({"key": key, "value": value})).collect::<Vec<_>>(),
         "lineItems": cart_lines(state, cart.lines),
-        "currencyCode": crate::domains::orders::model::currency(state),
+        "currencyCode": model::currency(state),
         "createdAt": created,
         "updatedAt": now,
     }));
@@ -373,7 +374,7 @@ fn checkout_of(state: &ShopState, cart_token: &str, generation: u64) -> Option<S
 }
 
 /// A customer of the shop by email, ignoring case: the customer a guest's checkout is linked to.
-fn customer_by_email(state: &ShopState, email: &str) -> Option<String> {
+pub(super) fn customer_by_email(state: &ShopState, email: &str) -> Option<String> {
     let email = email.trim();
     if email.is_empty() {
         return None;
@@ -390,10 +391,11 @@ fn customer_by_email(state: &ShopState, email: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn mailing_address(address: &lsf_checkout::Address, id: &str) -> Value {
+/// A `MailingAddress` of an address of the checkout, its id lsf-core's of `key`.
+pub(super) fn mailing_address(address: &lsf_checkout::Address, key: &str) -> Value {
     let address = address.clone().normalized();
     let core = lsf_core::store::Address {
-        id: stable_id("address", &format!("{id}/checkout")),
+        id: stable_id("address", key),
         first_name: address.first_name.unwrap_or_default(),
         last_name: address.last_name.unwrap_or_default(),
         company: address.company.unwrap_or_default(),
@@ -419,7 +421,7 @@ fn mailing_address(address: &lsf_checkout::Address, id: &str) -> Value {
 fn checkout_fields(state: &ShopState, id: &str, checkout: &Checkout<'_>) -> Record {
     let result = checkout.result;
     let currency = if result.cost.currency_code.is_empty() {
-        crate::domains::orders::model::currency(state)
+        model::currency(state)
     } else {
         result.cost.currency_code.to_ascii_uppercase()
     };
@@ -463,7 +465,7 @@ fn checkout_fields(state: &ShopState, id: &str, checkout: &Checkout<'_>) -> Reco
     let address = checkout
         .shipping_address
         .filter(|address| address.country_code.is_some() || address.address1.is_some())
-        .map(|address| mailing_address(address, id));
+        .map(|address| mailing_address(address, &format!("{id}/checkout")));
     let shipping: Vec<Value> = result
         .delivery_groups
         .iter()
@@ -480,10 +482,7 @@ fn checkout_fields(state: &ShopState, id: &str, checkout: &Checkout<'_>) -> Reco
             }))
         })
         .collect();
-    let rate = state
-        .setting("taxRateBps")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
+    let rate = super::orders::tax_rate_setting(state);
     let mut fields = value::object(json!({
         "updatedAt": state.timestamp(),
         "lineItems": lines,
@@ -572,7 +571,7 @@ pub fn record_checkout(state: &mut ShopState, checkout: &Checkout<'_>) -> Option
         }
         None => {
             let id = state.new_gid("AbandonedCheckout");
-            let number = crate::state::parse_gid(&id).map_or(0, |(_, n)| n);
+            let number = model::number(&id);
             let domain = state
                 .shop()
                 .and_then(|shop| shop.get("primaryDomain"))
@@ -582,10 +581,7 @@ pub fn record_checkout(state: &mut ShopState, checkout: &Checkout<'_>) -> Option
                 .and_then(Value::as_str)
                 .unwrap_or(state.domain())
                 .to_string();
-            let shop_number = state
-                .shop_gid()
-                .and_then(crate::state::parse_gid)
-                .map_or(0, |(_, n)| n);
+            let shop_number = state.shop_gid().map_or(0, model::number);
             let key = value::uuid(&format!("abandoned-checkout-key/{id}")).replace('-', "");
             let mut record = value::object(json!({
                 "__typename": "AbandonedCheckout",

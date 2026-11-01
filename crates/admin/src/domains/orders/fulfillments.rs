@@ -49,7 +49,7 @@ use super::model::{self, array, field_cents, int, text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{ShopState, parse_gid, value};
+use crate::state::{ShopState, value};
 use crate::webhooks::payload::FULFILLMENT_ORDER_EVENT;
 
 pub fn register(registry: &mut Registry) {
@@ -68,11 +68,6 @@ pub fn register(registry: &mut Registry) {
 
 /// The most holds an app may have on a fulfillment order.
 const HOLD_LIMIT: usize = 10;
-
-/// The numeric id of a GID.
-fn number(id: &str) -> u64 {
-    parse_gid(id).map_or(0, |(_, number)| number)
-}
 
 /// The tracking of a `FulfillmentTrackingInput`: `(company, number, url)` items.
 fn tracking_of(input: &Value) -> Vec<Value> {
@@ -163,7 +158,7 @@ fn fulfillment_create(
         let Some(record) = fulfillment_order(state, id) else {
             return failed(vec![UserError::new(
                 &["fulfillment"],
-                format!("Fulfillment order {} does not exist.", number(id)),
+                format!("Fulfillment order {} does not exist.", model::number(id)),
             )]);
         };
         let status = text(&record, "status").unwrap_or("OPEN");
@@ -172,7 +167,7 @@ fn fulfillment_create(
                 &["fulfillment"],
                 format!(
                     "Fulfillment order {} has an unfulfillable status= {}.",
-                    number(id),
+                    model::number(id),
                     status.to_ascii_lowercase()
                 ),
             )]);
@@ -218,8 +213,8 @@ fn fulfillment_create(
                             &["fulfillment"],
                             format!(
                                 "Fulfillment order line item {} does not belong to fulfillment order {}.",
-                                number(line),
-                                number(id)
+                                model::number(line),
+                                model::number(id)
                             ),
                         )]);
                     }
@@ -695,8 +690,8 @@ fn line_items_of(
 }
 
 /// The units of a fulfillment order that are not in `picked`: what a partial hold or move
-/// leaves.
-fn the_rest(
+/// leaves, everything that remains when nothing is picked.
+pub(super) fn the_rest(
     state: &ShopState,
     record: &serde_json::Map<String, Value>,
     picked: &[(String, i64)],
@@ -845,10 +840,7 @@ fn hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
         );
     }
     if let Some(remaining) = &remaining {
-        let split: Vec<Value> = state
-            .get(remaining)
-            .map(|record| gids(record.get("lineItems")))
-            .unwrap_or_default()
+        let split: Vec<Value> = super::line_items(state, remaining)
             .iter()
             .map(|line| {
                 let quantity = state.get(line).map_or(0, |item| int(item, "totalQuantity"));
@@ -903,7 +895,7 @@ fn release_hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             &["holdIds"],
             format!(
                 "Fulfillment hold {} does not exist on this fulfillment order.",
-                number(unknown)
+                model::number(unknown)
             ),
         )]);
     }

@@ -64,7 +64,7 @@ pub fn register(registry: &mut Registry) {
 const AT_REQUEST: &str = "lsfQuantityAtRequest";
 
 /// The note a declined request was declined with.
-pub const DECLINE_NOTE: &str = "lsfDeclineNote";
+const DECLINE_NOTE: &str = "lsfDeclineNote";
 
 /// `requestedOrderEditCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {

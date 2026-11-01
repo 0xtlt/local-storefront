@@ -34,13 +34,12 @@
 use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
-use super::TAX_RATE_SETTING;
 use super::model::{self, NewTransaction, array, field_cents, int, text};
 use super::{FinancialStatus, FulfillmentState, LineDraft, OrderDraft, ShippingDraft};
 use crate::domains::catalog::{gids, tags_of};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{Record, ShopState, parse_gid, value};
+use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -304,10 +303,7 @@ fn totals(
     let shipping_price = shipping.map_or(0, |line| {
         field_cents(line.as_object().unwrap_or(&Map::new()), "originalPriceSet")
     });
-    let rate = state
-        .setting(TAX_RATE_SETTING)
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
+    let rate = super::tax_rate_setting(state);
     let included = state
         .shop()
         .and_then(|shop| shop.get("taxesIncluded"))
@@ -759,11 +755,7 @@ fn write_draft(
     let currency = model::currency(state);
     let mut line_ids = Vec::new();
     if replace_lines {
-        for old in state
-            .get(id)
-            .map(|record| gids(record.get("lineItems")))
-            .unwrap_or_default()
-        {
+        for old in super::line_items(state, id) {
             state.remove(&old);
         }
         for line in &draft.lines {
@@ -851,10 +843,7 @@ fn new_draft(state: &mut ShopState) -> String {
     let currency = model::currency(state);
     let shop = state.shop().cloned().unwrap_or_default();
     let origin = text(&shop, "url").unwrap_or_default().to_string();
-    let shop_number = state
-        .shop_gid()
-        .and_then(parse_gid)
-        .map_or(0, |(_, number)| number);
+    let shop_number = state.shop_gid().map_or(0, model::number);
     let key = format!("{}/{id}", state.domain());
     let token = format!(
         "{:016x}{:016x}",
@@ -1110,6 +1099,26 @@ fn calculate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     Ok(payload(json!({"calculatedDraftOrder": calculated}), &[]))
 }
 
+/// `(key, value)` of each attribute of a record's `customAttributes`.
+fn attribute_pairs(record: &Record) -> Vec<(String, String)> {
+    record
+        .get("customAttributes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|attribute| {
+            Some((
+                attribute.get("key")?.as_str()?.to_string(),
+                attribute
+                    .get("value")?
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            ))
+        })
+        .collect()
+}
+
 /// `draftOrderComplete`.
 fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
@@ -1184,22 +1193,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
                 .filter(|weight| !weight.is_null())
                 .cloned(),
             grams: 0,
-            attributes: line
-                .get("customAttributes")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|attribute| {
-                    Some((
-                        attribute.get("key")?.as_str()?.to_string(),
-                        attribute
-                            .get("value")?
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_string(),
-                    ))
-                })
-                .collect(),
+            attributes: attribute_pairs(line),
         })
         .collect();
     let line_subtotal = field_cents(&record, "lineItemsSubtotalPrice");
@@ -1260,22 +1254,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         order_discount: line_subtotal - subtotal,
         discount_codes: Vec::new(),
         note: text(&record, "note2").map(str::to_string),
-        attributes: record
-            .get("customAttributes")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|attribute| {
-                Some((
-                    attribute.get("key")?.as_str()?.to_string(),
-                    attribute
-                        .get("value")?
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
-                ))
-            })
-            .collect(),
+        attributes: attribute_pairs(&record),
         financial: FinancialStatus::Pending,
         fulfillment: FulfillmentState::Unfulfilled,
         cancelled: false,
@@ -1353,13 +1332,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
             int(&item_record, "quantity"),
         );
     }
-    if state
-        .get(&order)
-        .and_then(|record| text(record, "displayFinancialStatus"))
-        == Some("PAID")
-    {
-        state.emit("orders/paid", &order);
-    }
+    model::emit_if_paid(state, &order);
     let now = state.timestamp();
     if let Some(draft) = state.get_mut(&id) {
         draft.insert("status".into(), json!("COMPLETED"));

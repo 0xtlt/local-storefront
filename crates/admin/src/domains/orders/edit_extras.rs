@@ -145,6 +145,23 @@ fn add_shipping_line(
     ))
 }
 
+/// The calculated order of `id`, its shipping lines, and the position among them of
+/// `shippingLineId`.
+fn shipping_line_of(
+    state: &ShopState,
+    ctx: &FieldContext<'_>,
+) -> Result<(String, Vec<Value>, usize), UserError> {
+    let calculated = calculated_order(state, ctx.arg_str("id").unwrap_or_default())
+        .map_err(|error| error.code("INVALID"))?;
+    let id = ctx.arg_str("shippingLineId").unwrap_or_default();
+    let lines = shipping_lines(state, &calculated);
+    let position = lines
+        .iter()
+        .position(|line| line.get("id").and_then(Value::as_str) == Some(id))
+        .ok_or_else(|| invalid(&["shippingLineId"], "Shipping line does not exist"))?;
+    Ok((calculated, lines, position))
+}
+
 /// `orderEditUpdateShippingLine`: a shipping line added in the edit.
 fn update_shipping_line(
     mutation: &mut Mutation<'_>,
@@ -157,17 +174,9 @@ fn update_shipping_line(
         ))
     };
     let state = mutation.state();
-    let calculated = match calculated_order(state, ctx.arg_str("id").unwrap_or_default()) {
-        Ok(calculated) => calculated,
-        Err(error) => return failed(error.code("INVALID")),
-    };
-    let id = ctx.arg_str("shippingLineId").unwrap_or_default();
-    let mut lines = shipping_lines(state, &calculated);
-    let Some(position) = lines
-        .iter()
-        .position(|line| line.get("id").and_then(Value::as_str) == Some(id))
-    else {
-        return failed(invalid(&["shippingLineId"], "Shipping line does not exist"));
+    let (calculated, mut lines, position) = match shipping_line_of(state, ctx) {
+        Ok(found) => found,
+        Err(error) => return failed(error),
     };
     if lines[position].get("stagedStatus").and_then(Value::as_str) != Some("ADDED") {
         return failed(invalid(
@@ -205,17 +214,9 @@ fn remove_shipping_line(
         ))
     };
     let state = mutation.state();
-    let calculated = match calculated_order(state, ctx.arg_str("id").unwrap_or_default()) {
-        Ok(calculated) => calculated,
-        Err(error) => return failed(error.code("INVALID")),
-    };
-    let id = ctx.arg_str("shippingLineId").unwrap_or_default();
-    let mut lines = shipping_lines(state, &calculated);
-    let Some(position) = lines
-        .iter()
-        .position(|line| line.get("id").and_then(Value::as_str) == Some(id))
-    else {
-        return failed(invalid(&["shippingLineId"], "Shipping line does not exist"));
+    let (calculated, mut lines, position) = match shipping_line_of(state, ctx) {
+        Ok(found) => found,
+        Err(error) => return failed(error),
     };
     match lines[position].get("stagedStatus").and_then(Value::as_str) {
         Some("ADDED") => {

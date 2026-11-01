@@ -37,9 +37,10 @@
 
 use serde_json::{Value, json};
 
+use super::LineDraft;
 use super::model::{self, array, field_cents, int, text};
 use super::refunds::{self, RefundLine, RefundSpec};
-use super::{LineDraft, TAX_RATE_SETTING};
+use super::returns::error;
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::outbox::{self, Entry};
@@ -61,10 +62,6 @@ pub fn register(registry: &mut Registry) {
         .query("returnCalculate", calculate)
         .field("Return", "suggestedFinancialOutcome", suggested_outcome)
         .field("Return", "suggestedRefund", suggested_refund);
-}
-
-fn error(field: &[&str], message: &str, code: &str) -> UserError {
-    UserError::new(field, message).code(code)
 }
 
 /// The field of a reverse fulfillment order that names its return.
@@ -227,27 +224,15 @@ pub fn shipping_fee(state: &mut ShopState, input: &Value) -> Option<Value> {
     }))
 }
 
-/// The order's tax rate for exchanged items, in basis points: the store data's, else what the
-/// order's tax is of its subtotal. None when the order's prices include their taxes.
+/// The order's tax rate for exchanged items, in basis points: its edits' rate, none when the
+/// order's prices include their taxes or it is tax exempt.
 fn tax_rate(state: &ShopState, order: &Record) -> i64 {
     if order.get("taxesIncluded").and_then(Value::as_bool) == Some(true)
         || order.get("taxExempt").and_then(Value::as_bool) == Some(true)
     {
         return 0;
     }
-    let setting = state
-        .setting(TAX_RATE_SETTING)
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-    if setting > 0 {
-        return setting;
-    }
-    let subtotal = field_cents(order, "subtotalPriceSet");
-    if subtotal <= 0 {
-        0
-    } else {
-        model::share(field_cents(order, "totalTaxSet"), 10_000, subtotal)
-    }
+    super::edits::tax_rate_bps(state, order)
 }
 
 /// Processes units of a return's exchange line items: each becomes a line item of the order,
@@ -1161,38 +1146,14 @@ fn return_refund(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         };
         lines.push((line.to_string(), line_item, quantity));
     }
-    let payments = model::refundable_payments(state, &order_record);
-    let mut moves = Vec::new();
-    for (index, transaction) in array(&input, "orderTransactions").iter().enumerate() {
-        let index = index.to_string();
-        let parent = transaction
-            .get("parentId")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let amount = model::cents(transaction.get("transactionAmount"));
-        let path = ["returnRefundInput", "orderTransactions", index.as_str()];
-        let Some((_, left)) = payments.iter().find(|(known, _)| known == parent) else {
-            errors.push(error(
-                &[&path[..], &["parentId"]].concat(),
-                "Parent transaction does not exist.",
-                "NOT_FOUND",
-            ));
-            continue;
-        };
-        if amount <= 0 || amount > *left {
-            errors.push(error(
-                &[&path[..], &["transactionAmount"]].concat(),
-                "Transaction amount is invalid.",
-                "INVALID",
-            ));
-            continue;
-        }
-        let gateway = state
-            .get(parent)
-            .and_then(|record| text(record, "gateway"))
-            .map(str::to_string);
-        moves.push((amount, gateway, Some(parent.to_string())));
-    }
+    let moves = super::returns::refund_moves(
+        state,
+        &order_record,
+        &array(&input, "orderTransactions"),
+        false,
+        &["returnRefundInput", "orderTransactions"],
+        &mut errors,
+    );
     if lines.is_empty() && errors.is_empty() {
         errors.push(error(
             &["returnRefundInput", "returnRefundLineItems"],
@@ -1344,35 +1305,6 @@ fn refund_shipping(order: &Record, input: Option<&Value>) -> (i64, i64) {
     (asked.clamp(0, remaining), remaining)
 }
 
-/// The suggested transactions of a refund of `amount`: over the order's payments, in order.
-fn suggested_transactions(state: &ShopState, order: &Record, amount: i64) -> (Vec<Value>, i64) {
-    let currency = model::currency(state);
-    let bag = |cents: i64| value::money_bag(cents, &currency);
-    let payments = model::refundable_payments(state, order);
-    let maximum: i64 = payments.iter().map(|(_, left)| left).sum();
-    let mut left = amount.min(maximum);
-    let mut suggested = Vec::new();
-    for (payment, refundable) in &payments {
-        if left <= 0 {
-            break;
-        }
-        let take = left.min(*refundable);
-        left -= take;
-        let record = state.get(payment);
-        suggested.push(json!({
-            "kind": "SUGGESTED_REFUND",
-            "amountSet": bag(take),
-            "maximumRefundableSet": bag(*refundable),
-            "gateway": record.and_then(|record| record.get("gateway")),
-            "formattedGateway": record.and_then(|record| record.get("formattedGateway")),
-            "parentTransaction": payment,
-            "accountNumber": null,
-            "paymentDetails": null,
-        }));
-    }
-    (suggested, maximum)
-}
-
 /// The return line items and exchange line items an outcome is asked for (`[{id, quantity}]`),
 /// of the return.
 fn asked(ctx: &FieldContext<'_>, argument: &str, own: &[String]) -> Vec<(String, i64)> {
@@ -1479,7 +1411,7 @@ fn suggested_outcome(
     let (outcome, order) = return_outcome(state, &record, &lines, &exchanges);
     let (shipping, remaining_shipping) = refund_shipping(&order, ctx.arg("refundShipping"));
     let balance = outcome.balance(shipping);
-    let (transactions, maximum) = suggested_transactions(state, &order, balance.max(0));
+    let (transactions, maximum) = refunds::suggested_transactions(state, &order, balance.max(0));
     let store_credit = ctx.arg_str("refundMethodAllocation") == Some("STORE_CREDIT");
     let transfer = if balance < 0 {
         json!({"__typename": "InvoiceReturnOutcome", "amount": bag(-balance)})
@@ -1534,7 +1466,7 @@ fn suggested_refund(
     let (outcome, order) = return_outcome(state, &record, &lines, &[]);
     let (shipping, remaining_shipping) = refund_shipping(&order, ctx.arg("refundShipping"));
     let balance = outcome.balance(shipping).max(0);
-    let (transactions, maximum) = suggested_transactions(state, &order, balance);
+    let (transactions, maximum) = refunds::suggested_transactions(state, &order, balance);
     Ok(Output::Object(Obj::built(
         "SuggestedReturnRefund",
         value::object(json!({

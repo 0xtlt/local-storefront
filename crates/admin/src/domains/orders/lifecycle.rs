@@ -47,7 +47,7 @@ use super::{FinancialStatus, FulfillmentState, LineDraft, OrderDraft, ShippingDr
 use crate::domains::catalog::{gids, tags_of};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{ShopState, gid, value};
+use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -66,12 +66,12 @@ pub fn register(registry: &mut Registry) {
 }
 
 /// The order a GID names, when it is one of the shop.
-pub fn find_order(state: &ShopState, id: &str) -> Option<String> {
+fn find_order(state: &ShopState, id: &str) -> Option<String> {
     (state.type_of(id) == Some("Order")).then(|| id.to_string())
 }
 
 /// lsf's wording of an unknown order: shopify.dev shows none.
-pub fn no_order(field: &[&str]) -> UserError {
+fn no_order(field: &[&str]) -> UserError {
     UserError::new(field, "Order does not exist").code("NOT_FOUND")
 }
 
@@ -136,7 +136,7 @@ fn order_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         let billing = record.get("billingAddress").cloned();
         record.insert(
             "billingAddressMatchesShippingAddress".into(),
-            json!(billing.is_some_and(|billing| same_place(&billing, address))),
+            json!(billing.is_some_and(|billing| super::same_address(&billing, address))),
         );
         let email = record.get("email").cloned();
         for fulfillment_order in gids(record.get("fulfillmentOrders")) {
@@ -163,23 +163,6 @@ fn address_gid(order: &str, kind: &str) -> String {
         "gid://shopify/MailingAddress/{}?model_name=Address",
         stable_id("address", &format!("{order}/{kind}"))
     )
-}
-
-/// Whether two `MailingAddress`es are the same place (ids aside).
-fn same_place(a: &Value, b: &Value) -> bool {
-    [
-        "firstName",
-        "lastName",
-        "company",
-        "address1",
-        "address2",
-        "city",
-        "provinceCode",
-        "countryCodeV2",
-        "zip",
-    ]
-    .iter()
-    .all(|key| a.get(key) == b.get(key))
 }
 
 /// A `FulfillmentOrderDestination` of a shipping address.
@@ -407,13 +390,7 @@ fn order_cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     state.touch(&order);
     state.emit("orders/cancelled", &order);
     state.emit("orders/updated", &order);
-    let number = state
-        .new_gid("OrderCancelJobResult")
-        .rsplit('/')
-        .next()
-        .and_then(|number| number.parse::<u64>().ok())
-        .unwrap_or(1);
-    let result = gid("OrderCancelJobResult", number);
+    let result = state.new_gid("OrderCancelJobResult");
     state.insert(value::object(json!({
         "__typename": "OrderCancelJobResult",
         "id": result,
@@ -573,13 +550,7 @@ fn order_capture(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     );
     model::settle_financial_status(state, &order);
     state.touch(&order);
-    if state
-        .get(&order)
-        .and_then(|record| text(record, "displayFinancialStatus"))
-        == Some("PAID")
-    {
-        state.emit("orders/paid", &order);
-    }
+    model::emit_if_paid(state, &order);
     state.emit("orders/updated", &order);
     Ok(payload(json!({"transaction": transaction}), &[]))
 }
@@ -789,7 +760,7 @@ fn order_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
 /// Removes an order and the records that are its alone (line items, fulfillment orders,
 /// fulfillments, transactions, refunds, returns), then refreshes its customer. Emits
 /// `orders/delete`.
-pub fn delete_order(state: &mut ShopState, order: &str) {
+fn delete_order(state: &mut ShopState, order: &str) {
     let Some(record) = state.get(order).cloned() else {
         return;
     };
@@ -1556,10 +1527,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     }
     // The stock the order claims.
     if behaviour != "BYPASS" {
-        let lines = state
-            .get(&order)
-            .map(|record| gids(record.get("lineItems")))
-            .unwrap_or_default();
+        let lines = super::line_items(state, &order);
         for line in lines {
             let Some(item_record) = state.get(&line).cloned() else {
                 continue;
@@ -1571,13 +1539,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         }
     }
     model::refresh_order(state, &order);
-    if state
-        .get(&order)
-        .and_then(|record| text(record, "displayFinancialStatus"))
-        == Some("PAID")
-    {
-        state.emit("orders/paid", &order);
-    }
+    model::emit_if_paid(state, &order);
     Ok(payload(json!({"order": order}), &[]))
 }
 

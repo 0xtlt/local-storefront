@@ -88,7 +88,7 @@ fn delivery_options(
             if search.as_ref().is_some_and(|search| !name.to_ascii_lowercase().contains(search)) {
                 return None;
             }
-            let handle = format!("pickup-{}", crate::state::parse_gid(key).map_or(0, |(_, n)| n));
+            let handle = format!("pickup-{}", model::number(key));
             Some(json!({
                 "code": handle,
                 "handle": handle,

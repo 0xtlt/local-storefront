@@ -27,7 +27,7 @@
 
 use serde_json::{Value, json};
 
-use super::fulfillments::split_off;
+use super::fulfillments::{split_off, the_rest};
 use super::model::{self, int, text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
@@ -592,15 +592,7 @@ fn accept_cancellation(
     let message = ctx.arg_str("message").map(str::to_string);
     let state = mutation.state_mut();
     let record = state.get(&id).cloned().unwrap_or_default();
-    let rest: Vec<(String, i64)> = gids(record.get("lineItems"))
-        .into_iter()
-        .filter_map(|line| {
-            let remaining = state
-                .get(&line)
-                .map_or(0, |item| int(item, "remainingQuantity"));
-            (remaining > 0).then_some((line, remaining))
-        })
-        .collect();
+    let rest = the_rest(state, &record, &[]);
     let order = text(&record, "order").unwrap_or_default().to_string();
     if !rest.is_empty() {
         let replacement = split_off(state, &id, &rest, None, true);
