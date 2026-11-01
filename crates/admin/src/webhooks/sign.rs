@@ -9,22 +9,12 @@ use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use base64::Engine;
 use chrono::{DateTime, Utc};
 
-use crate::auth::signing::{constant_time_eq, hmac_sha256, webhook_hmac};
+use crate::auth::signing::webhook_hmac;
 
 /// The `User-Agent` of Shopify's webhook deliveries.
 pub const USER_AGENT: &str = "Shopify-Captain-Hook";
-
-/// Whether `header` is the signature of `body` with `secret`: what a backend checks. The header
-/// is decoded, so that any base64 of the digest is taken.
-pub fn verify(secret: &str, body: &[u8], header: &str) -> bool {
-    let Ok(given) = base64::engine::general_purpose::STANDARD.decode(header.trim()) else {
-        return false;
-    };
-    constant_time_eq(&hmac_sha256(secret.as_bytes(), body), &given)
-}
 
 /// What the headers of a delivery say.
 #[derive(Clone, Debug)]
@@ -109,6 +99,7 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
+    use crate::auth::signing::verify_webhook_hmac;
 
     #[test]
     fn the_signature_is_the_base64_hmac_sha256_of_the_body() {
@@ -122,17 +113,17 @@ mod tests {
             webhook_hmac("lsf-local-client-secret", b"{}"),
             "2DlNECN0cNPkVdkdyVuKNhnEDE+ErFPfpA64hhUdIzs="
         );
-        assert!(verify(
+        assert!(verify_webhook_hmac(
             "hush",
             body,
             "PChQV/s9qVvLuYZx4s3CvtPkNn5M2k1OrvTkc0qHHSM="
         ));
-        assert!(!verify(
+        assert!(!verify_webhook_hmac(
             "other",
             body,
             "PChQV/s9qVvLuYZx4s3CvtPkNn5M2k1OrvTkc0qHHSM="
         ));
-        assert!(!verify("hush", body, "not base64!"));
+        assert!(!verify_webhook_hmac("hush", body, "not base64!"));
     }
 
     #[test]

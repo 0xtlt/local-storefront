@@ -154,7 +154,9 @@ fn a_webhook_is_sent_to_an_address_signed_with_the_client_secret() {
     assert_eq!(header(headers, "x-shopify-api-version"), Some("2026-10"));
     // The signature is the HMAC of the body with the secret given.
     let signature = header(headers, "x-shopify-hmac-sha256").unwrap();
-    assert!(lsf_admin::webhooks::sign::verify("hush", body, signature));
+    assert!(lsf_admin::auth::signing::verify_webhook_hmac(
+        "hush", body, signature
+    ));
     let payload: serde_json::Value = serde_json::from_slice(body).unwrap();
     assert!(
         payload["name"].as_str().unwrap().starts_with('#'),
@@ -221,7 +223,7 @@ api_version = "2026-10"
     );
     // The secret of the app's `.env`.
     let signature = header(headers, "x-shopify-hmac-sha256").unwrap();
-    assert!(lsf_admin::webhooks::sign::verify(
+    assert!(lsf_admin::auth::signing::verify_webhook_hmac(
         "from-dotenv",
         body,
         signature
