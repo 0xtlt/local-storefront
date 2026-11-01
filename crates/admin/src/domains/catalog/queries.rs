@@ -17,7 +17,7 @@
 
 use serde_json::{Value, json};
 
-use super::records::{default_location, field};
+use super::records::{self, default_location, field};
 use super::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
@@ -532,12 +532,11 @@ fn in_collection(
 ) -> Result<Output<Obj>, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default();
     let product = object.key().unwrap_or_default();
-    let listed = r.state().get(id).is_some_and(|collection| {
-        gids(collection.get("products"))
-            .iter()
-            .any(|known| known == product)
-    });
-    Ok(Output::value(listed))
+    Ok(Output::value(records::in_collection(
+        r.state(),
+        id,
+        product,
+    )))
 }
 
 /// The level of an item at a location, active only unless `includeInactive`.

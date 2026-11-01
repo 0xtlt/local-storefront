@@ -48,7 +48,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{field, input, is, objects, text};
+use super::records::{error_at, field, in_collection, input, is, objects, text};
 use super::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -200,13 +200,6 @@ pub fn member(state: &ShopState, collection: &Record, product: &Record) -> bool 
         .iter()
         .filter_map(|source| state.get(source))
         .any(|source| source_member(state, source, product))
-}
-
-/// Whether a product is in a collection's products.
-fn in_collection(state: &ShopState, collection: &str, product: &str) -> bool {
-    state
-        .get(collection)
-        .is_some_and(|record| gids(record.get("products")).iter().any(|p| p == product))
 }
 
 /// Whether a product is a member of a source.
@@ -407,7 +400,7 @@ fn condition_holds(state: &ShopState, condition: &Value, product: &Record) -> bo
 }
 
 /// A variant's weight, in `unit` (its own unit when none is given).
-fn weight_of(state: &ShopState, variant: &Record, unit: Option<&str>) -> Option<f64> {
+pub fn weight_of(state: &ShopState, variant: &Record, unit: Option<&str>) -> Option<f64> {
     let weight = field(variant, "inventoryItem")
         .and_then(|item| state.get(item))
         .and_then(|item| item.get("measurement"))
@@ -417,13 +410,11 @@ fn weight_of(state: &ShopState, variant: &Record, unit: Option<&str>) -> Option<
         .get("unit")
         .and_then(Value::as_str)
         .unwrap_or("KILOGRAMS");
-    let grams = |unit: &str| match unit {
-        "KILOGRAMS" => 1000.0,
-        "POUNDS" => 453.592_37,
-        "OUNCES" => 28.349_523_125,
-        _ => 1.0,
-    };
-    Some(amount * grams(from) / grams(unit.unwrap_or(from)))
+    Some(super::collections::weight_in(
+        amount,
+        from,
+        unit.unwrap_or(from),
+    ))
 }
 
 /// Whether a metafield condition holds: the product's metafield of the definition (or one of its
@@ -533,9 +524,8 @@ fn check_conditions(
             collections += values.len();
             for (position, collection) in values.iter().enumerate() {
                 if !is(state, collection, "Collection") {
-                    let mut field = at.clone();
-                    field.extend(["values".to_string(), position.to_string()]);
-                    errors.push(user_error(&field, "Collection does not exist"));
+                    let field = below(&below(&at, "values"), &position.to_string());
+                    errors.push(error_at(&field, "Collection does not exist"));
                 }
             }
         } else {
@@ -544,22 +534,21 @@ fn check_conditions(
         if let Some(definition) = text(fields, "definitionId")
             && !is(state, definition, "MetafieldDefinition")
         {
-            let mut field = at.clone();
-            field.push("definitionId".to_string());
             // lsf's wording.
-            errors.push(user_error(&field, "Metafield definition does not exist"));
+            errors.push(error_at(
+                &below(&at, "definitionId"),
+                "Metafield definition does not exist",
+            ));
         }
         if suffix == "VariantCompareAtPrice" {
             let relation = text(fields, "relation").unwrap_or_default();
             let set = matches!(relation, "IS_SET" | "IS_NOT_SET");
             let given = fields.get("value").is_some_and(|value| !value.is_null());
             if set == given {
-                let mut field = at.clone();
-                field.push("value".to_string());
                 // The schema's rule ("Required for numeric relations and must be absent for
                 // IS_SET or IS_NOT_SET"), in lsf's words.
-                errors.push(user_error(
-                    &field,
+                errors.push(error_at(
+                    &below(&at, "value"),
                     if set {
                         "Value must be absent for IS_SET or IS_NOT_SET"
                     } else {
@@ -573,33 +562,24 @@ fn check_conditions(
             .and_then(Value::as_array)
             .is_some_and(|values| values.is_empty())
         {
-            let mut field = at.clone();
-            field.push("values".to_string());
-            errors.push(user_error(&field, "Values can't be blank"));
+            errors.push(error_at(&below(&at, "values"), "Values can't be blank"));
         }
     }
-    let field: Vec<String> = path.to_vec();
     if collections > MAX_EXCLUDED_COLLECTIONS {
         // lsf's wording of the guide's limit.
-        errors.push(user_error(
-            &field,
-            &format!("A source can exclude at most {MAX_EXCLUDED_COLLECTIONS} collections"),
+        errors.push(error_at(
+            path,
+            format!("A source can exclude at most {MAX_EXCLUDED_COLLECTIONS} collections"),
         ));
     }
     if collections > 0 && others > 0 {
         // The guide's rule, in lsf's words.
-        errors.push(user_error(
-            &field,
+        errors.push(error_at(
+            path,
             "Collection exclusions can't be combined with other exclusion conditions",
         ));
     }
     count
-}
-
-/// A user error at a path of strings.
-fn user_error(path: &[String], message: &str) -> UserError {
-    let path: Vec<&str> = path.iter().map(String::as_str).collect();
-    UserError::new(&path, message)
 }
 
 /// The path of an input field below `path`.
@@ -621,22 +601,19 @@ fn check_selections(
         let at = below(path, &index.to_string());
         let product = text(item, "productId").unwrap_or_default();
         if !is(state, product, "Product") {
-            errors.push(user_error(
-                &below(&at, "productId"),
-                "Product does not exist",
-            ));
+            errors.push(error_at(&below(&at, "productId"), "Product does not exist"));
             continue;
         }
         let ids = gids(item.get("variantIds"));
         if variants && ids.is_empty() {
             // The guide's rule.
-            errors.push(user_error(
+            errors.push(error_at(
                 &below(&at, "variantIds"),
                 "Manually targeting a whole product isn't allowed on a variant-scoped source.",
             ));
         } else if !variants && !ids.is_empty() {
             // lsf's wording: "Pass `variantIds` only when you're authoring a variant-scoped source."
-            errors.push(user_error(
+            errors.push(error_at(
                 &below(&at, "variantIds"),
                 "Variants can only be selected on a source that targets variants",
             ));
@@ -644,7 +621,7 @@ fn check_selections(
         let own = gids(state.get(product).and_then(|record| record.get("variants")));
         for (position, variant) in ids.iter().enumerate() {
             if !own.contains(variant) {
-                errors.push(user_error(
+                errors.push(error_at(
                     &below(&below(&at, "variantIds"), &position.to_string()),
                     "Variant does not exist on the product",
                 ));
@@ -661,7 +638,7 @@ fn check_conditions_source(
     errors: &mut Vec<UserError>,
 ) {
     if text(source, "title").is_none_or(|title| title.trim().is_empty()) {
-        errors.push(user_error(&below(path, "title"), "Title can't be blank"));
+        errors.push(error_at(&below(path, "title"), "Title can't be blank"));
     }
     let variants = text(source, "targetType") == Some("VARIANTS");
     let inclusion = source.get("inclusion").and_then(Value::as_object);
@@ -691,23 +668,23 @@ fn check_conditions_source(
         );
         let picked = objects(exclusion, "selections");
         if picked.len() > MAX_EXCLUSIONS {
-            errors.push(user_error(
+            errors.push(error_at(
                 &below(&at, "selections"),
-                &format!("A source can exclude at most {MAX_EXCLUSIONS} products"),
+                format!("A source can exclude at most {MAX_EXCLUSIONS} products"),
             ));
         }
         check_selections(state, &picked, &below(&at, "selections"), false, errors);
     }
     if count > MAX_CONDITIONS {
         // lsf's wording of the guide's limit.
-        errors.push(user_error(
+        errors.push(error_at(
             path,
-            &format!("A source can have at most {MAX_CONDITIONS} conditions"),
+            format!("A source can have at most {MAX_CONDITIONS} conditions"),
         ));
     }
     if count == 0 && selections == 0 {
         // lsf's wording: a source with nothing to include has no member.
-        errors.push(user_error(
+        errors.push(error_at(
             &below(path, "inclusion"),
             "A source needs at least one condition or selection",
         ));
@@ -800,10 +777,7 @@ fn part_of(
     let conditions: Vec<Value> = objects(part, "conditions")
         .iter()
         .filter_map(|item| condition_input(item, exclusion))
-        .map(|(_, suffix, fields)| (suffix, fields.clone()))
-        .collect::<Vec<_>>()
-        .into_iter()
-        .map(|(suffix, fields)| new_condition(state, suffix, &fields, exclusion))
+        .map(|(_, suffix, fields)| new_condition(state, suffix, fields, exclusion))
         .collect();
     let default = if exclusion { "ANY" } else { "ALL" };
     json!({
@@ -895,8 +869,7 @@ fn update_part(
     }
     for item in objects(update, "conditionsToCreate") {
         if let Some((_, suffix, fields)) = condition_input(item, exclusion) {
-            let fields = fields.clone();
-            conditions.push(new_condition(state, suffix, &fields, exclusion));
+            conditions.push(new_condition(state, suffix, fields, exclusion));
         }
     }
     part["conditions"] = json!(conditions);
@@ -941,7 +914,7 @@ fn check_conditions_update(
     errors: &mut Vec<UserError>,
 ) {
     if text(update, "title").is_some_and(|title| title.trim().is_empty()) {
-        errors.push(user_error(&below(path, "title"), "Title can't be blank"));
+        errors.push(error_at(&below(path, "title"), "Title can't be blank"));
     }
     let variants = field(source, "targetType") == Some("VARIANTS");
     for (name, exclusion) in [("inclusion", false), ("exclusion", true)] {
@@ -950,19 +923,17 @@ fn check_conditions_update(
         };
         let at = below(path, name);
         let known = condition_ids(source.get(name));
-        for key in ["conditionsToDelete"] {
-            for (index, id) in gids(part.get(key)).iter().enumerate() {
-                if !known.contains(id) {
-                    errors.push(user_error(
-                        &below(&below(&at, key), &index.to_string()),
-                        "Condition does not exist",
-                    ));
-                }
+        for (index, id) in gids(part.get("conditionsToDelete")).iter().enumerate() {
+            if !known.contains(id) {
+                errors.push(error_at(
+                    &below(&below(&at, "conditionsToDelete"), &index.to_string()),
+                    "Condition does not exist",
+                ));
             }
         }
         for (index, item) in objects(part, "conditionsToUpdate").iter().enumerate() {
             if !text(item, "id").is_some_and(|id| known.iter().any(|known| known == id)) {
-                errors.push(user_error(
+                errors.push(error_at(
                     &below(
                         &below(&below(&at, "conditionsToUpdate"), &index.to_string()),
                         "id",
@@ -1040,18 +1011,21 @@ pub fn check_targets(
         } else if let Some(shared) = item.get("shareableSource").and_then(Value::as_object) {
             let id = text(shared, "sourceId").unwrap_or_default();
             let shareable = state.get(id).is_some_and(|source| {
-                field_is(source, "__typename", CONDITIONS)
-                    && source.get("shareable").and_then(Value::as_bool) == Some(true)
+                field_is(source, "__typename", CONDITIONS) && is_shareable(source)
             });
             if !shareable {
                 // lsf's wording.
-                errors.push(user_error(
+                errors.push(error_at(
                     &below(&below(&path, "shareableSource"), "sourceId"),
                     "Shareable source does not exist",
                 ));
             }
         }
     }
+}
+
+fn is_shareable(source: &Record) -> bool {
+    source.get("shareable").and_then(Value::as_bool) == Some(true)
 }
 
 fn field_is(record: &Record, name: &str, value: &str) -> bool {
@@ -1068,28 +1042,28 @@ fn check_sub_collections(
     errors: &mut Vec<UserError>,
 ) {
     if text(sub, "title").is_some_and(|title| title.trim().is_empty()) {
-        errors.push(user_error(&below(path, "title"), "Title can't be blank"));
+        errors.push(error_at(&below(path, "title"), "Title can't be blank"));
     }
     let ids = gids(sub.get("collectionIds"));
     if ids.len() > MAX_SUB_COLLECTIONS {
-        errors.push(user_error(
+        errors.push(error_at(
             &below(path, "collectionIds"),
-            &format!("A source can include at most {MAX_SUB_COLLECTIONS} collections"),
+            format!("A source can include at most {MAX_SUB_COLLECTIONS} collections"),
         ));
     }
     for (index, id) in ids.iter().enumerate() {
         let at = below(&below(path, "collectionIds"), &index.to_string());
         match ineligibility(state, id, collection) {
             // The descriptions of `SubCollectionIneligibleReason`.
-            Some("SELF_REFERENCE") => errors.push(user_error(
+            Some("SELF_REFERENCE") => errors.push(error_at(
                 &at,
                 "The referenced collection is one of the source's owning collections (a source cannot reference itself).",
             )),
-            Some("CHAIN_REFERENCE") => errors.push(user_error(
+            Some("CHAIN_REFERENCE") => errors.push(error_at(
                 &at,
                 "The referenced collection itself owns a sub-collection source (chains of depth > 1 are not supported).",
             )),
-            Some(_) => errors.push(user_error(
+            Some(_) => errors.push(error_at(
                 &at,
                 "The referenced collection id does not parse as a positive integer or does not exist in the shop.",
             )),
@@ -1198,13 +1172,13 @@ pub fn check_update(
         let Some(source) = state.get(id).filter(|source| {
             current.iter().any(|known| known == id) && field_is(source, "__typename", wanted)
         }) else {
-            errors.push(user_error(&below(&at, "id"), "Source does not exist"));
+            errors.push(error_at(&below(&at, "id"), "Source does not exist"));
             continue;
         };
-        if source.get("shareable").and_then(Value::as_bool) == Some(true) {
+        if is_shareable(source) {
             // lsf's wording: a shareable source is its app's, changed with
             // `collectionConditionsSourceUpdate`.
-            errors.push(user_error(
+            errors.push(error_at(
                 &below(&at, "id"),
                 "A shareable source is updated with collectionConditionsSourceUpdate",
             ));
@@ -1288,9 +1262,17 @@ fn materialize(state: &mut ShopState, collection: &str, source: Value) -> String
     let id = state.new_gid(CONDITIONS);
     record.insert("id".into(), json!(id));
     record.insert(OWNER.into(), json!(collection));
+    renumber_conditions(state, &mut record, "inclusion");
+    state.insert(record);
+    id
+}
+
+/// Gives the conditions of a part of a source record (`inclusion`, `exclusion`) new ids of their
+/// types.
+fn renumber_conditions(state: &mut ShopState, record: &mut Record, part: &str) {
     if let Some(Value::Array(conditions)) = record
-        .get_mut("inclusion")
-        .and_then(|inclusion| inclusion.get_mut("conditions"))
+        .get_mut(part)
+        .and_then(|part| part.get_mut("conditions"))
     {
         for condition in conditions.iter_mut() {
             let type_name = condition
@@ -1301,8 +1283,6 @@ fn materialize(state: &mut ShopState, collection: &str, source: Value) -> String
             condition["id"] = json!(state.new_gid(&type_name));
         }
     }
-    state.insert(record);
-    id
 }
 
 /// Takes a source out of a collection: a collection's own source is deleted with it, a
@@ -1366,7 +1346,7 @@ fn app_of(state: &ShopState) -> Option<String> {
 fn shareable(state: &ShopState, id: &str) -> bool {
     state.get(id).is_some_and(|source| {
         field_is(source, "__typename", CONDITIONS)
-            && source.get("shareable").and_then(Value::as_bool) == Some(true)
+            && is_shareable(source)
             && source
                 .get("app")
                 .and_then(Value::as_str)
@@ -1459,6 +1439,16 @@ fn source_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
 
 // --- Queries ---
 
+/// The shareable sources of an app.
+fn shared_sources(state: &ShopState, app: &str) -> Vec<String> {
+    state
+        .all(CONDITIONS)
+        .filter(|source| is_shareable(source) && field(source, "app") == Some(app))
+        .filter_map(|source| field(source, "id"))
+        .map(str::to_string)
+        .collect()
+}
+
 /// `collectionConditionsSources(appId:)`: the shareable sources of an app.
 fn sources_of_app(
     r: &ShopResolver<'_>,
@@ -1467,15 +1457,9 @@ fn sources_of_app(
 ) -> Result<Output<Obj>, FieldError> {
     let app = ctx.arg_str("appId").unwrap_or_default();
     let state = r.state();
-    let items: Vec<Value> = state
-        .keys(CONDITIONS)
-        .filter(|source| {
-            state.get(source).is_some_and(|record| {
-                record.get("shareable").and_then(Value::as_bool) == Some(true)
-                    && field(record, "app") == Some(app)
-            })
-        })
-        .map(|source| json!(source))
+    let items: Vec<Value> = shared_sources(state, app)
+        .into_iter()
+        .map(Value::String)
         .collect();
     r.connection(ctx, items)
 }
@@ -1489,7 +1473,7 @@ fn sources_by_app(
     let state = r.state();
     let mut apps: Vec<String> = Vec::new();
     for source in state.all(CONDITIONS) {
-        if source.get("shareable").and_then(Value::as_bool) == Some(true)
+        if is_shareable(source)
             && let Some(app) = field(source, "app")
             && !apps.iter().any(|known| known == app)
         {
@@ -1499,16 +1483,7 @@ fn sources_by_app(
     let items: Vec<Value> = apps
         .iter()
         .map(|app| {
-            let sources: Vec<String> = state
-                .keys(CONDITIONS)
-                .filter(|source| {
-                    state.get(source).is_some_and(|record| {
-                        record.get("shareable").and_then(Value::as_bool) == Some(true)
-                            && field(record, "app") == Some(app.as_str())
-                    })
-                })
-                .map(str::to_string)
-                .collect();
+            let sources = shared_sources(state, app);
             json!({"__typename": "CollectionConditionsSourcesByApp", "id": app, "app": app, "sources": sources})
         })
         .collect();
@@ -1707,7 +1682,7 @@ pub fn copy_sources(state: &mut ShopState, from: &str, to: &str) -> Vec<String> 
         let Some(mut record) = state.get(&source).cloned() else {
             continue;
         };
-        if record.get("shareable").and_then(Value::as_bool) == Some(true) {
+        if is_shareable(&record) {
             copies.push(source);
             continue;
         }
@@ -1718,19 +1693,7 @@ pub fn copy_sources(state: &mut ShopState, from: &str, to: &str) -> Vec<String> 
         record.insert("id".into(), json!(id));
         record.insert(OWNER.into(), json!(to));
         for part in ["inclusion", "exclusion"] {
-            if let Some(Value::Array(conditions)) = record
-                .get_mut(part)
-                .and_then(|part| part.get_mut("conditions"))
-            {
-                for condition in conditions.iter_mut() {
-                    let condition_type = condition
-                        .get("__typename")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string();
-                    condition["id"] = json!(state.new_gid(&condition_type));
-                }
-            }
+            renumber_conditions(state, &mut record, part);
         }
         state.insert(record);
         copies.push(id);
