@@ -2,13 +2,16 @@
 // ones GitHub shows and some tests read, so nothing here asks them to change: the title of a page
 // is its first heading, the sidebar is the index of `docs/README.md`, the anchors are GitHub's,
 // and a link out of `docs/` leads to the file on GitHub.
-import { readFileSync } from 'node:fs'
+import { copyFileSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { slug } from 'github-slugger'
 import { defineConfig, type DefaultTheme } from 'vitepress'
 
 const repository = 'https://github.com/0xtlt/local-storefront'
 const docs = fileURLToPath(new URL('../../../docs/', import.meta.url))
+// `llms.txt`, the index an AI agent reads first, is at the root of the repository: the site
+// serves it at `/llms.txt` too.
+const llms = fileURLToPath(new URL('../../../llms.txt', import.meta.url))
 const site = fileURLToPath(new URL('../', import.meta.url))
 
 /** The sidebar: each `## Section` of `docs/README.md`, with the pages its table links to. */
@@ -69,10 +72,22 @@ export default defineConfig({
       text: 'Edit this page on GitHub',
     },
   },
+  buildEnd(site) {
+    copyFileSync(llms, `${site.outDir}/llms.txt`)
+  },
   vite: {
     // `docs/` is outside this folder: the dev server may read it,
     server: { fs: { allow: ['../..'] } },
     plugins: [
+      {
+        name: 'lsf-llms-txt',
+        configureServer(server) {
+          server.middlewares.use('/llms.txt', (_request, response) => {
+            response.setHeader('content-type', 'text/plain; charset=utf-8')
+            response.end(readFileSync(llms))
+          })
+        },
+      },
       {
         // and what its pages import (`vue`, …) is in this folder's `node_modules`, not above them.
         name: 'lsf-docs-imports',
