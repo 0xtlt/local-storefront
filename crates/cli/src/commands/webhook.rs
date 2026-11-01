@@ -12,7 +12,7 @@ use lsf_admin::api::samples::ShopSamples;
 use lsf_admin::state::ShopState;
 use lsf_admin::version::{ApiVersion, Served};
 use lsf_admin::webhooks::samples::Samples;
-use lsf_admin::webhooks::subscriptions::{is_local_http, off_machine};
+use lsf_admin::webhooks::subscriptions::{is_local_http, off_machine_with};
 use lsf_admin::webhooks::{
     API_VERSION, Delivery, DeliveryFilter, DeliveryOptions, DeliveryState, Trigger, Webhooks,
     topics,
@@ -136,6 +136,10 @@ fn sample_records(
     Ok(ShopSamples(ShopState::seeded(&store, app)))
 }
 
+/// What to do about a subscription that leads off this machine: the command starts no server.
+const OFF_MACHINE_ADVICE: &str =
+    "give --app-url http://localhost:<port> (your backend) or --address <url>";
+
 fn trigger(
     theme: &Path,
     data: Option<&Path>,
@@ -208,7 +212,7 @@ fn trigger(
     if args.address.is_none()
         && let Some(url) = webhooks.refused_urls(&shop, topic).first()
     {
-        return Err(off_machine(url));
+        return Err(off_machine_with(url, OFF_MACHINE_ADVICE));
     }
     let ids = webhooks.trigger(&Trigger {
         topic,

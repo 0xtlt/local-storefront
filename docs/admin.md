@@ -421,7 +421,8 @@ npx local-storefront app webhook trigger --topic app/uninstalled --app ../my-app
 
 The topic must be one `shopify.app.toml` subscribes to (or give `--address <url>`). Without
 `--app-url`, a subscription that leads off this machine is not sent: the command sends nothing,
-prints `error: lsf sends webhooks to this machine or to --app-url only: …` and exits `2`.
+prints `error: lsf sends webhooks to this machine or to --app-url only: <url> is neither; give
+--app-url http://localhost:<port> (your backend) or --address <url>` and exits `2`.
 `--format json` prints each delivery as `GET /__lsf/webhooks` lists it. See the
 [control API](control-api.md) and the [CLI](cli.md#app-webhook-trigger).
 

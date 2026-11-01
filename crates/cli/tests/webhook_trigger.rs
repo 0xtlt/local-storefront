@@ -372,7 +372,9 @@ api_version = "2026-10"
   uri = "https://hooks.example.net/orders"
 "#,
     );
-    let advice = "start lsf with --app-url http://localhost:<port> (your backend)";
+    // `trigger` starts no server: it says what to give it.
+    let advice = "is neither; give --app-url http://localhost:<port> (your backend) or \
+                  --address <url>";
     // A relative `uri`, and no `--app-url`: it would join `application_url`.
     let output = lsf(
         &app.0,
@@ -388,6 +390,7 @@ api_version = "2026-10"
         text(&output)
     );
     assert!(text(&output).contains(advice), "{}", text(&output));
+    assert!(!text(&output).contains("start lsf"), "{}", text(&output));
     // An absolute `uri` on another host, `--app-url` or not.
     let output = lsf(
         &app.0,

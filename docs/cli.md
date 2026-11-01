@@ -267,9 +267,10 @@ a `shopify app dev` that is not running. As Shopify's, a triggered webhook is no
 
 Webhooks stay on this machine. One goes to another host only when that host is the scheme,
 host and port of `--app-url`, or the `--address` given: otherwise the command sends nothing,
-prints `error: lsf sends webhooks to this machine or to --app-url only: <url> is neither; …`
-and exits with `2`. A server logs the same delivery `not_sent`. So `application_url`, often your production
-backend or a dead tunnel, never gets one by accident.
+prints `error: lsf sends webhooks to this machine or to --app-url only: <url> is neither; give
+--app-url http://localhost:<port> (your backend) or --address <url>` and exits with `2`. A
+server logs the same delivery `not_sent`, and says to start lsf with `--app-url`. So
+`application_url`, often your production backend or a dead tunnel, never gets one by accident.
 
 The secret is the app's. Without the app (no `--app`, and run outside its folder), its `.env`
 is not read: give `--client-secret` or set `SHOPIFY_API_SECRET`. Without either, lsf signs with

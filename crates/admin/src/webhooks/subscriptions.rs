@@ -227,13 +227,19 @@ impl AppUrls {
     }
 }
 
-/// Why a webhook to `url` is not sent: it is neither on this machine nor on `--app-url`
-/// ([`AppUrls::may_send_to`]).
+/// Why the server does not send a webhook to `url`: it is neither on this machine nor on
+/// `--app-url` ([`AppUrls::may_send_to`]).
 pub fn off_machine(url: &str) -> String {
-    format!(
-        "lsf sends webhooks to this machine or to --app-url only: {url} is neither; start lsf \
-         with --app-url http://localhost:<port> (your backend)"
+    off_machine_with(
+        url,
+        "start lsf with --app-url http://localhost:<port> (your backend)",
     )
+}
+
+/// [`off_machine`], with what to do about it: `lsf app webhook trigger` starts no server, and
+/// takes an `--address` too.
+pub fn off_machine_with(url: &str, advice: &str) -> String {
+    format!("lsf sends webhooks to this machine or to --app-url only: {url} is neither; {advice}")
 }
 
 /// Where a request to a URL connects: its scheme, host and port, read as the HTTP client of the
