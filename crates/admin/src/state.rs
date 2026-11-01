@@ -8,7 +8,7 @@
 pub mod seed;
 pub mod value;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::{DateTime, SubsecRound, Utc};
 use indexmap::{IndexMap, IndexSet};
@@ -39,6 +39,18 @@ pub fn gid_type(gid: &str) -> Option<&str> {
     let rest = gid.strip_prefix("gid://shopify/")?;
     let (type_name, _) = rest.split_once('/')?;
     (!type_name.is_empty()).then_some(type_name)
+}
+
+/// A free handle made from `base`: itself, else with `-1`, `-2`, … appended, the first one
+/// `taken` says is not ([`ShopState::handle_taken`]).
+pub fn free_handle(base: &str, taken: impl Fn(&str) -> bool) -> String {
+    if !taken(base) {
+        return base.to_string();
+    }
+    (1..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|handle| !taken(handle))
+        .unwrap_or_else(|| base.to_string())
 }
 
 /// Something that changed in a shop, which webhooks report.
@@ -90,6 +102,132 @@ impl Clock {
 struct Entry {
     type_name: String,
     record: Record,
+}
+
+/// The fields the state indexes, by type: what finds a record by its handle, and the highest
+/// order number, without reading every record of the type ([`ShopState::with_text`],
+/// [`ShopState::max_number`]). Another field is read record by record.
+const INDEXED: &[(&str, &str)] = &[
+    ("Product", "handle"),
+    ("Collection", "handle"),
+    ("Metaobject", "handle"),
+    ("Page", "handle"),
+    ("Blog", "handle"),
+    ("Article", "handle"),
+    ("Market", "handle"),
+    ("Channel", "handle"),
+    ("Order", "number"),
+];
+
+/// The records of the fields of [`INDEXED`] by their value, one [`FieldIndex`] per field, in
+/// step with every write: added, replaced, removed, undone. The record [`ShopState::get_mut`]
+/// handed out last is out of it until the next write puts it back as it is then (see the
+/// `lent` field).
+#[derive(Clone, Debug, PartialEq)]
+struct Index {
+    fields: Vec<FieldIndex>,
+}
+
+/// The keys of the records whose field is a string, or a non-negative integer, by that value,
+/// in no order.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct FieldIndex {
+    texts: HashMap<String, Vec<String>>,
+    numbers: BTreeMap<u64, Vec<String>>,
+}
+
+/// What a lookup of the index looks for.
+#[derive(Clone, Copy)]
+enum Probe<'v> {
+    Text(&'v str),
+    Number(u64),
+}
+
+impl Probe<'_> {
+    fn matches(self, value: Option<&Value>) -> bool {
+        match self {
+            Probe::Text(text) => value.and_then(Value::as_str) == Some(text),
+            Probe::Number(number) => value.and_then(Value::as_u64) == Some(number),
+        }
+    }
+}
+
+impl Index {
+    fn new() -> Index {
+        Index {
+            fields: vec![FieldIndex::default(); INDEXED.len()],
+        }
+    }
+
+    /// The index of `field` of the records of `type_name`, when it is one of [`INDEXED`].
+    fn field(&self, type_name: &str, field: &str) -> Option<&FieldIndex> {
+        INDEXED
+            .iter()
+            .position(|indexed| *indexed == (type_name, field))
+            .map(|position| &self.fields[position])
+    }
+
+    fn add(&mut self, key: &str, entry: &Entry) {
+        self.change(key, entry, true);
+    }
+
+    fn remove(&mut self, key: &str, entry: &Entry) {
+        self.change(key, entry, false);
+    }
+
+    fn change(&mut self, key: &str, entry: &Entry, add: bool) {
+        for (position, (type_name, field)) in INDEXED.iter().enumerate() {
+            if entry.type_name == *type_name {
+                let index = &mut self.fields[position];
+                match entry.record.get(*field) {
+                    Some(Value::String(text)) if add => {
+                        index
+                            .texts
+                            .entry(text.clone())
+                            .or_default()
+                            .push(key.to_string());
+                    }
+                    Some(Value::String(text)) => {
+                        if let Some(keys) = index.texts.get_mut(text.as_str())
+                            && without(keys, key)
+                        {
+                            index.texts.remove(text.as_str());
+                        }
+                    }
+                    Some(Value::Number(number)) => {
+                        let Some(number) = number.as_u64() else {
+                            continue;
+                        };
+                        if add {
+                            index
+                                .numbers
+                                .entry(number)
+                                .or_default()
+                                .push(key.to_string());
+                        } else if let Some(keys) = index.numbers.get_mut(&number)
+                            && without(keys, key)
+                        {
+                            index.numbers.remove(&number);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// Takes `key` out of `keys`: whether none is left.
+fn without(keys: &mut Vec<String>, key: &str) -> bool {
+    if let Some(position) = keys.iter().position(|other| other == key) {
+        keys.swap_remove(position);
+    }
+    keys.is_empty()
+}
+
+/// Whether a type has a field in [`INDEXED`].
+fn is_indexed(type_name: &str) -> bool {
+    INDEXED.iter().any(|(indexed, _)| *indexed == type_name)
 }
 
 /// What changed in a record since the seed: see [`ShopState::changes`].
@@ -155,6 +293,12 @@ pub struct ShopState {
     /// What undoes the writes made since the open savepoints, while there are some
     /// ([`ShopState::savepoint`]).
     journal: Option<Journal>,
+    /// The records by the fields of [`INDEXED`].
+    index: Index,
+    /// The key of the record of an indexed type [`ShopState::get_mut`] handed out last: it may
+    /// have changed since, so it is out of the index, and a lookup reads it as it is. The next
+    /// write puts it back ([`ShopState::settle`]).
+    lent: Option<String>,
 }
 
 /// The undo log of a shop: each write made since the oldest open savepoint, with what it
@@ -272,6 +416,8 @@ impl ShopState {
             memos: HashMap::new(),
             settings: Map::new(),
             journal: None,
+            index: Index::new(),
+            lent: None,
         }
     }
 
@@ -358,9 +504,117 @@ impl ShopState {
     /// The record of a GID, to change. With tracking on, the record counts as changed from now
     /// on (it is kept as it was, and compared with when the changes are read).
     pub fn get_mut(&mut self, gid: &str) -> Option<&mut Record> {
+        if self.lent.as_deref() != Some(gid) {
+            self.settle();
+            if let Some(entry) = self.records.get(gid)
+                && is_indexed(&entry.type_name)
+            {
+                self.index.remove(gid, entry);
+                self.lent = Some(gid.to_string());
+            }
+        }
         self.note(gid);
         self.save_entry(gid);
         self.records.get_mut(gid).map(|entry| &mut entry.record)
+    }
+
+    /// Puts the record [`ShopState::get_mut`] handed out last back in the index, as it is now:
+    /// before any other write, which keeps the index in step.
+    fn settle(&mut self) {
+        if let Some(key) = self.lent.take()
+            && let Some(entry) = self.records.get(&key)
+        {
+            self.index.add(&key, entry);
+        }
+    }
+
+    /// The keys of the records of `type_name` whose `field` is the string `value`, in creation
+    /// order: through the index for a field of [`INDEXED`] (a handle), else record by record.
+    pub fn with_text<'s>(&'s self, type_name: &str, field: &str, value: &str) -> Vec<&'s str> {
+        self.with(type_name, field, Probe::Text(value))
+    }
+
+    /// The keys of the records of `type_name` whose `field` is the integer `value`, in creation
+    /// order (see [`ShopState::with_text`]).
+    pub fn with_number<'s>(&'s self, type_name: &str, field: &str, value: u64) -> Vec<&'s str> {
+        self.with(type_name, field, Probe::Number(value))
+    }
+
+    fn with<'s>(&'s self, type_name: &str, field: &str, probe: Probe<'_>) -> Vec<&'s str> {
+        let matches = |key: &str| probe.matches(self.get(key).and_then(|record| record.get(field)));
+        let Some(index) = self.index.field(type_name, field) else {
+            return self.keys(type_name).filter(|key| matches(key)).collect();
+        };
+        let found = match probe {
+            Probe::Text(text) => index.texts.get(text),
+            Probe::Number(number) => index.numbers.get(&number),
+        };
+        let mut keys: Vec<&str> = found.into_iter().flatten().map(String::as_str).collect();
+        keys.extend(self.lent_of(type_name).filter(|key| matches(key)));
+        if keys.len() > 1
+            && let Some(order) = self.by_type.get(type_name)
+        {
+            keys.sort_by_key(|key| order.get_index_of(*key));
+        }
+        keys
+    }
+
+    /// The records of `type_name` whose `handle` is `handle`, in creation order. With `scope`
+    /// (`("blog", <GID>)` for an article, `("type", <type>)` for a metaobject), those whose
+    /// field of that name is that value too (a record without it has `""`).
+    pub fn with_handle<'s>(
+        &'s self,
+        type_name: &str,
+        handle: &str,
+        scope: Option<(&str, &str)>,
+    ) -> Vec<&'s str> {
+        let mut keys = self.with_text(type_name, "handle", handle);
+        if let Some((field, value)) = scope {
+            keys.retain(|key| {
+                self.get(key)
+                    .and_then(|record| record.get(field))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    == value
+            });
+        }
+        keys
+    }
+
+    /// Whether a record of `type_name` other than `except` has `handle` (in `scope`: see
+    /// [`ShopState::with_handle`]).
+    pub fn handle_taken(
+        &self,
+        type_name: &str,
+        handle: &str,
+        scope: Option<(&str, &str)>,
+        except: Option<&str>,
+    ) -> bool {
+        self.with_handle(type_name, handle, scope)
+            .into_iter()
+            .any(|key| Some(key) != except)
+    }
+
+    /// The largest non-negative integer `field` of the records of `type_name` holds (`number`
+    /// of the orders): through the index for a field of [`INDEXED`], else record by record.
+    pub fn max_number(&self, type_name: &str, field: &str) -> Option<u64> {
+        let number = |key: &str| {
+            self.get(key)
+                .and_then(|record| record.get(field))
+                .and_then(Value::as_u64)
+        };
+        let Some(index) = self.index.field(type_name, field) else {
+            return self.keys(type_name).filter_map(number).max();
+        };
+        let lent = self.lent_of(type_name).and_then(number);
+        index.numbers.keys().next_back().copied().max(lent)
+    }
+
+    /// The record out of the index ([`ShopState::get_mut`]), when it is of `type_name`.
+    fn lent_of(&self, type_name: &str) -> Option<&str> {
+        self.lent
+            .as_deref()
+            .filter(|key| self.type_of(key) == Some(type_name))
     }
 
     pub fn contains(&self, gid: &str) -> bool {
@@ -393,6 +647,7 @@ impl ShopState {
     /// (`ShopifyFunction`, whose id is a UUID; `ShopLocale`, kept under its locale).
     pub fn insert_as(&mut self, key: impl Into<String>, record: Record) -> String {
         let key = key.into();
+        self.settle();
         self.note(&key);
         let type_name = record_type(&record).to_string();
         if let Some((gid_type, id)) = parse_gid(&key) {
@@ -429,18 +684,24 @@ impl ShopState {
             .entry(type_name.clone())
             .or_default()
             .insert(key.clone());
-        self.records
-            .insert(key.clone(), Entry { type_name, record });
+        if let Some(before) = self.records.get(&key) {
+            self.index.remove(&key, before);
+        }
+        let entry = Entry { type_name, record };
+        self.index.add(&key, &entry);
+        self.records.insert(key.clone(), entry);
         key
     }
 
     /// Removes a record. What refers to it is left as it is: a reference to a record that is
     /// gone resolves to `null`.
     pub fn remove(&mut self, gid: &str) -> Option<Record> {
+        self.settle();
         if self.records.contains_key(gid) {
             self.note(gid);
         }
         let (index, key, entry) = self.records.shift_remove_full(gid)?;
+        self.index.remove(&key, &entry);
         let position = self
             .by_type
             .get_mut(&entry.type_name)
@@ -482,10 +743,23 @@ impl ShopState {
     /// The records of any of `types`, in creation order across them: the members of an interface
     /// or a union (`files`: `MediaImage`, `Video`, `GenericFile`, …).
     pub fn all_of<'s>(&'s self, types: &'s [&str]) -> impl Iterator<Item = &'s Record> + 's {
-        self.records
-            .values()
-            .filter(|entry| types.contains(&entry.type_name.as_str()))
-            .map(|entry| &entry.record)
+        self.keys_of(types)
+            .into_iter()
+            .filter_map(|key| self.get(key))
+    }
+
+    /// The keys of the records of any of `types`, in creation order across them (see
+    /// [`ShopState::all_of`]): those of each type, put in the order of every record.
+    pub fn keys_of<'s>(&'s self, types: &[&str]) -> Vec<&'s str> {
+        let mut keys: Vec<(usize, &str)> = types
+            .iter()
+            .enumerate()
+            .filter(|(position, type_name)| !types[..*position].contains(type_name))
+            .flat_map(|(_, type_name)| self.keys(type_name))
+            .filter_map(|key| Some((self.records.get_index_of(key)?, key)))
+            .collect();
+        keys.sort_unstable_by_key(|(position, _)| *position);
+        keys.into_iter().map(|(_, key)| key).collect()
     }
 
     /// The number of records of a type.
@@ -699,6 +973,7 @@ impl ShopState {
             Some(&savepoint.steps),
             "the innermost savepoint"
         );
+        self.settle();
         while journal.steps.len() > savepoint.steps {
             let Some(step) = journal.steps.pop() else {
                 break;
@@ -782,14 +1057,17 @@ impl ShopState {
         match step {
             Undo::Changed { key, before } => {
                 if let Some(entry) = self.records.get_mut(&key) {
+                    self.index.remove(&key, entry);
+                    self.index.add(&key, &before);
                     *entry = before;
                 }
             }
             Undo::Added { key } => {
-                if let Some(entry) = self.records.shift_remove(&key)
-                    && let Some(keys) = self.by_type.get_mut(&entry.type_name)
-                {
-                    keys.shift_remove(&key);
+                if let Some(entry) = self.records.shift_remove(&key) {
+                    self.index.remove(&key, &entry);
+                    if let Some(keys) = self.by_type.get_mut(&entry.type_name) {
+                        keys.shift_remove(&key);
+                    }
                 }
             }
             Undo::Retyped {
@@ -801,6 +1079,8 @@ impl ShopState {
                     if let Some(keys) = self.by_type.get_mut(&entry.type_name) {
                         keys.shift_remove(&key);
                     }
+                    self.index.remove(&key, entry);
+                    self.index.add(&key, &before);
                     let keys = self.by_type.entry(before.type_name.clone()).or_default();
                     keys.shift_insert(position.min(keys.len()), key);
                     *entry = before;
@@ -812,6 +1092,7 @@ impl ShopState {
                 index,
                 position,
             } => {
+                self.index.add(&key, &entry);
                 if let Some(position) = position {
                     let keys = self.by_type.entry(entry.type_name.clone()).or_default();
                     keys.shift_insert(position.min(keys.len()), key.clone());
@@ -946,7 +1227,7 @@ impl ShopState {
         format!(
             "domain {:?}\nrecords {:?}\nby type {by_type:?}\ncounters {:?}\nclock {:?}\n\
              events {:?}\nemitted {}\noriginals {:?}\nblobs {:?}\nrevision {}\nmemos {:?}\n\
-             settings {:?}",
+             settings {:?}\nindex {:?}",
             self.domain,
             self.records.iter().collect::<Vec<_>>(),
             sorted(self.counters.iter()),
@@ -960,7 +1241,45 @@ impl ShopState {
             self.revision,
             sorted(self.memos.iter()),
             self.settings,
+            self.index_lines(),
         )
+    }
+
+    /// The index as lines that compare (`(type, field) value [keys]`, sorted), the record out of
+    /// it put back.
+    #[cfg(test)]
+    fn index_lines(&self) -> Vec<String> {
+        let mut index = self.index.clone();
+        if let Some(key) = &self.lent
+            && let Some(entry) = self.records.get(key)
+        {
+            index.add(key, entry);
+        }
+        let mut lines = Vec::new();
+        for (field, values) in INDEXED.iter().zip(&index.fields) {
+            let texts = values
+                .texts
+                .iter()
+                .map(|(text, keys)| (format!("{text:?}"), keys));
+            let numbers = values.numbers.iter().map(|(n, keys)| (n.to_string(), keys));
+            for (value, keys) in texts.chain(numbers) {
+                let mut keys = keys.clone();
+                keys.sort();
+                lines.push(format!("{field:?} {value} {keys:?}"));
+            }
+        }
+        lines.sort();
+        lines
+    }
+
+    /// Whether the index holds what reading every record finds.
+    #[cfg(test)]
+    pub(crate) fn index_in_step(&self) -> bool {
+        let mut fresh = ShopState::new(self.domain.clone(), self.clock);
+        for (key, entry) in &self.records {
+            fresh.index.add(key, entry);
+        }
+        fresh.index_lines() == self.index_lines()
     }
 
     /// Moves the shop to another domain: what a shop created from the seed of another one needs.
@@ -984,10 +1303,13 @@ impl ShopState {
                     .map(|rest| format!("{new_origin}{rest}"))
             }
         };
-        for entry in self.records.values_mut() {
+        self.settle();
+        for (key, entry) in self.records.iter_mut() {
+            self.index.remove(key, entry);
             for value in entry.record.values_mut() {
                 rewrite_strings(value, &rewrite);
             }
+            self.index.add(key, entry);
         }
         // Moving is not a change the store sync projects: what was tracked stays as it was.
         let originals = self.originals.take();
@@ -1509,8 +1831,129 @@ mod tests {
         // A shop made from the seed is moved to its domain without a change.
         let other = shops.create("test-1").unwrap();
         assert!(other.changes().is_empty());
+        assert!(other.index_in_step());
         shops.reset();
         assert!(!shops.default_shop().unwrap().touched());
+        assert!(shops.default_shop().unwrap().index_in_step());
+    }
+
+    /// The index finds what reading every record finds, through every kind of write: a record
+    /// added, replaced, changed in place (found by its new value before any other write),
+    /// retyped, removed, and all of it undone.
+    #[test]
+    fn the_index_follows_every_write() {
+        let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        let product = |id: u64, handle: &str| {
+            record(json!({"__typename": "Product", "id": gid("Product", id), "handle": handle}))
+        };
+        let order = |id: u64, number: u64| {
+            record(json!({"__typename": "Order", "id": gid("Order", id), "number": number}))
+        };
+        let (one, two, three) = (gid("Product", 1), gid("Product", 2), gid("Product", 3));
+        state.insert(product(1, "hat"));
+        state.insert(product(2, "hat"));
+        state.insert(product(3, "scarf"));
+        // Two records with one handle: in creation order.
+        assert_eq!(state.with_handle("Product", "hat", None), [&one, &two]);
+        state.get_mut(&one).unwrap()["handle"] = json!("cap");
+        assert_eq!(state.with_handle("Product", "hat", None), [&two]);
+        assert_eq!(state.with_handle("Product", "cap", None), [&one]);
+        assert!(state.handle_taken("Product", "cap", None, None));
+        assert!(!state.handle_taken("Product", "cap", None, Some(&one)));
+        let free = |state: &ShopState, base: &str| {
+            free_handle(base, |handle| {
+                state.handle_taken("Product", handle, None, None)
+            })
+        };
+        assert_eq!(free(&state, "hat"), "hat-1");
+        state.insert(product(4, "hat-1"));
+        assert_eq!(free(&state, "hat"), "hat-2");
+        assert_eq!(free(&state, "boots"), "boots");
+
+        state.insert(order(1, 1001));
+        state.insert(order(2, 1003));
+        assert_eq!(state.max_number("Order", "number"), Some(1003));
+        state.get_mut(&gid("Order", 1)).unwrap()["number"] = json!(1007);
+        assert_eq!(state.max_number("Order", "number"), Some(1007));
+        assert_eq!(
+            state.with_number("Order", "number", 1007),
+            [gid("Order", 1)]
+        );
+        // The highest gone, the next highest is.
+        state.remove(&gid("Order", 1));
+        assert_eq!(state.max_number("Order", "number"), Some(1003));
+        assert!(state.index_in_step());
+
+        let before = state.picture();
+        let savepoint = state.savepoint();
+        state.insert(order(3, 1010));
+        state.get_mut(&gid("Order", 2)).unwrap()["number"] = json!(1020);
+        state.get_mut(&three).unwrap()["handle"] = json!("hat");
+        state.remove(&two);
+        state.insert(record(
+            json!({"__typename": "Collection", "id": one, "handle": "hat"}),
+        ));
+        state.insert(product(4, "gloves"));
+        // Changed in place last: out of the index when the rollback starts.
+        state.get_mut(&three).unwrap()["handle"] = json!("mittens");
+        assert_eq!(state.max_number("Order", "number"), Some(1020));
+        assert_eq!(state.with_handle("Collection", "hat", None), [&one]);
+        assert!(state.index_in_step());
+        state.rollback(savepoint);
+        assert_eq!(state.picture(), before);
+        assert!(state.index_in_step());
+        assert_eq!(state.max_number("Order", "number"), Some(1003));
+        assert_eq!(state.with_handle("Product", "hat", None), [&two]);
+        assert!(state.with_handle("Collection", "hat", None).is_empty());
+
+        // A scope, and a field the index does not keep, read record by record alike.
+        let article = |id: u64, blog: &str| {
+            record(
+                json!({"__typename": "Article", "id": gid("Article", id), "handle": "news", "blog": blog}),
+            )
+        };
+        state.insert(article(1, "gid://shopify/Blog/1"));
+        state.insert(article(2, "gid://shopify/Blog/2"));
+        assert_eq!(
+            state.with_handle("Article", "news", Some(("blog", "gid://shopify/Blog/2"))),
+            [gid("Article", 2)]
+        );
+        assert!(!state.handle_taken(
+            "Article",
+            "news",
+            Some(("blog", "gid://shopify/Blog/3")),
+            None
+        ));
+        state.insert(record(
+            json!({"__typename": "Menu", "id": gid("Menu", 1), "handle": "main"}),
+        ));
+        assert_eq!(state.with_handle("Menu", "main", None), [gid("Menu", 1)]);
+        assert_eq!(state.max_number("Menu", "number"), None);
+        assert!(state.index_in_step());
+    }
+
+    #[test]
+    fn lists_the_records_of_several_types_in_creation_order() {
+        let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        for (type_name, id) in [("A", 1), ("B", 2), ("A", 3), ("C", 4), ("B", 5)] {
+            state.insert(record(
+                json!({"__typename": type_name, "id": gid(type_name, id)}),
+            ));
+        }
+        // Retyped in place: it keeps its place among every record.
+        state.insert(record(
+            json!({"__typename": "B", "id": "gid://shopify/A/1"}),
+        ));
+        assert_eq!(
+            state.keys_of(&["B", "A", "B"]),
+            [
+                "gid://shopify/A/1",
+                "gid://shopify/B/2",
+                "gid://shopify/A/3",
+                "gid://shopify/B/5"
+            ]
+        );
+        assert_eq!(state.all_of(&["C"]).count(), 1);
     }
 
     #[test]
