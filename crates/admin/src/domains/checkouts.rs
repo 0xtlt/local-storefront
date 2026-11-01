@@ -46,8 +46,6 @@ use chrono::{DateTime, Duration, Utc};
 use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
-use crate::domains::catalog::cents_of;
-use crate::domains::orders::model;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -279,7 +277,7 @@ fn cart_lines(state: &ShopState, lines: &[CartLine]) -> Vec<Value> {
                 .and_then(|variant| variant.get("product"))
                 .and_then(Value::as_str)
                 .and_then(|product| state.get(product));
-            let price = cents_of(variant.and_then(|variant| variant.get("price"))).unwrap_or(0);
+            let price = value::exact_cents(variant.and_then(|variant| variant.get("price"))).unwrap_or(0);
             let title = product
                 .and_then(|product| product.get("title"))
                 .and_then(Value::as_str)
@@ -344,7 +342,7 @@ pub fn record_cart(state: &mut ShopState, cart: &Cart<'_>) {
         "note": cart.note,
         "attributes": cart.attributes.iter().map(|(key, value)| json!({"key": key, "value": value})).collect::<Vec<_>>(),
         "lineItems": cart_lines(state, cart.lines),
-        "currencyCode": model::currency(state),
+        "currencyCode": state.currency(),
         "createdAt": created,
         "updatedAt": now,
     }));
@@ -414,7 +412,7 @@ pub(super) fn mailing_address(address: &lsf_checkout::Address, key: &str) -> Val
 fn checkout_fields(state: &ShopState, id: &str, checkout: &Checkout<'_>) -> Record {
     let result = checkout.result;
     let currency = if result.cost.currency_code.is_empty() {
-        model::currency(state)
+        state.currency()
     } else {
         result.cost.currency_code.to_ascii_uppercase()
     };
@@ -1001,7 +999,7 @@ mod tests {
         let variant = shop.keys("ProductVariant").next().unwrap().to_string();
         let record = shop.get(&variant).unwrap();
         let product = record["product"].as_str().unwrap();
-        let price = crate::domains::catalog::cents_of(record.get("price")).unwrap();
+        let price = crate::state::value::exact_cents(record.get("price")).unwrap();
         lsf_checkout::CheckoutResult {
             lines: vec![lsf_checkout::ResultLine {
                 id: "gid://shopify/CartLine/1".into(),

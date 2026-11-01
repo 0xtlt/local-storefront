@@ -422,7 +422,7 @@ fn read_input(
         }
     }
     let state = mutation.state();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let now = state.timestamp();
     let lines: Option<Vec<Map<String, Value>>> = input
         .get("lineItems")
@@ -748,7 +748,7 @@ fn write_draft(
     draft: &Draft,
     replace_lines: bool,
 ) -> Option<Value> {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let mut line_ids = Vec::new();
     if replace_lines {
         for old in super::line_items(state, id) {
@@ -836,7 +836,7 @@ fn next_draft_number(state: &ShopState) -> u64 {
 fn new_draft(state: &mut ShopState) -> String {
     let id = state.new_gid("DraftOrder");
     let now = state.timestamp();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let shop = state.shop().cloned().unwrap_or_default();
     let origin = text(&shop, "url").unwrap_or_default().to_string();
     let shop_number = state.shop_gid().map_or(0, gid_number);
@@ -1050,7 +1050,7 @@ fn calculate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
         return Ok(payload(json!({"calculatedDraftOrder": null}), &errors));
     }
     let state = mutation.state();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let tax_exempt = draft.fields.get("taxExempt").and_then(Value::as_bool) == Some(true);
     let mut calculated = draft.fields.clone();
     let applied = calculated.remove("lsfAppliedDiscount");

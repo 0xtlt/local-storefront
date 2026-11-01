@@ -40,7 +40,7 @@ use chrono_tz::Tz;
 use serde_json::Value as Json;
 
 use super::language::{Clause, DateValue, Expr, Op, Param, ParamTest, Query, Test, Unit, Value};
-use crate::domains::catalog::{cents_of, tags_of};
+use crate::domains::catalog::tags_of;
 use crate::state::{Record, ShopState, parse_gid, value};
 
 /// The `app_id` of the orders of the Online Store, which Shopify writes on web orders.
@@ -203,7 +203,7 @@ impl Facts {
 }
 
 fn decimal(value: Option<&Json>) -> f64 {
-    cents_of(value).map_or(0.0, |cents| cents as f64 / 100.0)
+    value::exact_cents(value).map_or(0.0, |cents| cents as f64 / 100.0)
 }
 
 /// The city of an address as the Help Center writes it in `customer_cities`: its words run

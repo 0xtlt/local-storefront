@@ -2543,3 +2543,17 @@ fn the_fields_of_the_family_are_answered_from_the_records() {
     }
     assert!(defaulted.is_empty(), "{defaulted:#?}");
 }
+
+#[test]
+fn reads_decimal_inputs_in_cents() {
+    // A `Decimal` input: a string rounded half away from zero at the cent, a number as a float.
+    use super::model::decimal_cents;
+    assert_eq!(decimal_cents(Some(&json!("9.99"))), Some(999));
+    assert_eq!(decimal_cents(Some(&json!(" 0.125 "))), Some(13));
+    assert_eq!(decimal_cents(Some(&json!("-0.125"))), Some(-13));
+    assert_eq!(decimal_cents(Some(&json!(9.99))), Some(999));
+    assert_eq!(decimal_cents(Some(&json!(-0.125))), Some(-13));
+    assert_eq!(decimal_cents(Some(&json!("x"))), None);
+    assert_eq!(decimal_cents(Some(&json!({"amount": "1"}))), None);
+    assert_eq!(decimal_cents(None), None);
+}

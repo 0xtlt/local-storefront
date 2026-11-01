@@ -69,7 +69,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     if model::is_cancelled(&order) {
         return failed(UserError::new(&["id"], "The order cannot be edited."));
     }
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let mut lines = Vec::new();
     for line in gids(order.get("lineItems")) {
@@ -245,7 +245,7 @@ pub(super) fn refresh_calculated(state: &mut ShopState, calculated: &str) {
     let Some(record) = state.get(calculated).cloned() else {
         return;
     };
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let order_id = text(&record, "originalOrder")
         .unwrap_or_default()
@@ -528,7 +528,7 @@ fn add_variant(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         .and_then(|item| state.get(item))
         .cloned()
         .unwrap_or_default();
-    let currency = model::currency(state);
+    let currency = state.currency();
     if let Err(error) = bounded_line(field_cents(&variant_record, "price"), quantity) {
         return failed(error);
     }
@@ -585,7 +585,7 @@ fn add_custom_item(
     if let Err(error) = bounded_line(price, quantity) {
         return failed(error);
     }
-    let currency = model::currency(mutation.state());
+    let currency = mutation.state().currency();
     let line = added_line(
         &currency,
         json!(title),
@@ -706,7 +706,7 @@ fn add_line_item_discount(
         ));
     }
     let discount = model::input_of(ctx.arg("discount"));
-    let currency = model::currency(state);
+    let currency = state.currency();
     let (amount, value) = match discount_of(&line, &discount, &currency) {
         Ok(discount) => discount,
         Err(error) => return failed(error),
@@ -930,7 +930,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         .collect();
 
     let state = mutation.state_mut();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let now = state.timestamp();
     let captured = matches!(
         text(&order_record, "displayFinancialStatus"),

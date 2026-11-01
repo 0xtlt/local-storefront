@@ -158,9 +158,9 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                     "the body names the order: {\"order\": \"gid://shopify/Order/1\"}",
                 ));
             };
-            let amount = body.get("amount").and_then(|amount| {
-                orders::model::parse_cents(&amount.to_string().replace('"', ""))
-            });
+            let amount = body
+                .get("amount")
+                .and_then(|amount| value::parse_cents(&amount.to_string().replace('"', "")));
             let kind = body
                 .get("type")
                 .and_then(Value::as_str)

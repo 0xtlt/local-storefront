@@ -982,7 +982,7 @@ fn creates_updates_and_deletes_price_lists_and_their_fixed_prices() {
     let mut shop = demo();
     shop.take_events();
     let (product, variant) = first_variant(&shop);
-    let base = crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
+    let base = crate::state::value::exact_cents(shop.get(&variant).unwrap().get("price")).unwrap();
     let create = format!(
         "mutation($input: PriceListCreateInput!) {{ priceListCreate(input: $input) {{ priceList {{ {PRICE_LIST_FIELDS} }} userErrors {{ field message code }} }} }}"
     );
@@ -1434,7 +1434,7 @@ fn updates_quantity_pricing_and_prices_a_company_location() {
     assert_eq!(answer["data"]["node"]["priceList"]["id"], json!(list));
     // The product's contextual pricing, and another variant's: 20% off the variant's price.
     let other = shop.keys("ProductVariant").nth(1).unwrap().to_string();
-    let base = crate::domains::catalog::cents_of(shop.get(&other).unwrap().get("price")).unwrap();
+    let base = crate::state::value::exact_cents(shop.get(&other).unwrap().get("price")).unwrap();
     let answer = run(
         &mut shop,
         "query($id: ID!, $location: ID!) { productVariant(id: $id) { contextualPricing(context: {companyLocationId: $location}) { price { amount } quantityRule { isDefault originType } } } }",
@@ -1507,7 +1507,7 @@ fn prices_a_country_from_its_market_catalog() {
     );
     ok(&answer, "catalogCreate");
     let variant = shop.keys("ProductVariant").next().unwrap().to_string();
-    let base = crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
+    let base = crate::state::value::exact_cents(shop.get(&variant).unwrap().get("price")).unwrap();
     let query = "query($id: ID!, $country: CountryCode!) { productVariant(id: $id) { contextualPricing(context: {country: $country}) { price { amount currencyCode } } } }";
     let answer = run(&mut shop, query, json!({"id": variant, "country": "FR"}));
     assert_eq!(

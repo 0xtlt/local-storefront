@@ -120,7 +120,7 @@ pub fn refundable_shipping(order: &Record) -> i64 {
 /// `order_transactions/create` for each transaction and `refunds/create`; the caller settles the
 /// order's status and emits `orders/updated`. Returns the GID of the refund.
 pub fn create_refund(state: &mut ShopState, order: &str, spec: &RefundSpec) -> String {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let now = state.timestamp();
     let Some(order_record) = state.get(order).cloned() else {
@@ -548,7 +548,7 @@ fn suggested_refund(
     };
     let state = r.state();
     let order = text(order_record, "id").unwrap_or_default().to_string();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let full = ctx.arg_bool("suggestFullRefund") == Some(true);
     let items: Vec<Value> = if full {
@@ -627,7 +627,7 @@ pub(super) fn suggested_transactions(
     order: &Record,
     amount: i64,
 ) -> (Vec<Value>, i64) {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let payments = model::refundable_payments(state, order);
     let maximum: i64 = payments.iter().map(|(_, left)| left).sum();

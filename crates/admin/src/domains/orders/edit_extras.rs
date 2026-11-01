@@ -80,7 +80,7 @@ fn read_shipping(
     let price = match input.get("price").filter(|price| !price.is_null()) {
         Some(price) => {
             if let Some(currency) = price.get("currencyCode").and_then(Value::as_str)
-                && currency != model::currency(state)
+                && currency != state.currency()
             {
                 return Err(invalid(
                     &["shippingLine", "price", "currencyCode"],
@@ -122,7 +122,7 @@ fn add_shipping_line(
         Ok(shipping) => shipping,
         Err(error) => return failed(error),
     };
-    let currency = model::currency(state);
+    let currency = state.currency();
     let mut lines = shipping_lines(state, &calculated);
     let id = format!(
         "gid://shopify/CalculatedShippingLine/{}",
@@ -189,7 +189,7 @@ fn update_shipping_line(
         Ok(shipping) => shipping,
         Err(error) => return failed(error),
     };
-    let currency = model::currency(state);
+    let currency = state.currency();
     if let Some(title) = title {
         lines[position]["title"] = json!(title);
     }
@@ -278,7 +278,7 @@ fn update_discount(
         ));
     };
     let discount = model::input_of(ctx.arg("discount"));
-    let currency = model::currency(state);
+    let currency = state.currency();
     let (amount, value) = match discount_of(&line, &discount, &currency) {
         Ok(discount) => discount,
         Err(error) => return failed(error.code("INVALID")),
@@ -358,7 +358,7 @@ pub(super) fn commit_shipping(state: &mut ShopState, order: &str, calculated: &R
     {
         return;
     }
-    let currency = model::currency(state);
+    let currency = state.currency();
     let now = state.timestamp();
     let Some(record) = state.get(order).cloned() else {
         return;

@@ -47,6 +47,7 @@ pub use records::{
 };
 
 use crate::state::seed::Seed;
+pub use crate::state::value::exact_cents as cents_of;
 use crate::state::value::{self, date, date_time, money, optional, text};
 use crate::state::{Record, ShopState, gid};
 
@@ -1079,12 +1080,7 @@ pub fn refresh_product(state: &mut ShopState, product: &str) {
     let variants = gids(record.get("variants"));
     let media = gids(record.get("media"));
     let options = gids(record.get("options"));
-    let currency = state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string();
+    let currency = state.currency();
 
     let mut prices = Vec::new();
     let mut compare_at = Vec::new();
@@ -1285,12 +1281,6 @@ pub fn gids(value: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
-/// The cents of a `Money` or `Decimal` string.
-pub fn cents_of(value: Option<&Value>) -> Option<i64> {
-    let text = value?.as_str()?;
-    lsf_core::store::model::Money::Decimal(text.to_string()).cents()
-}
-
 /// What follows a mutation for the catalog, which the resolver runs after each one that
 /// emitted events (after `markets::after_mutation`, whose listing events it reads): the
 /// incremental syncs and the statuses of the product feeds ([`feeds::after_mutation`]).
@@ -1354,6 +1344,18 @@ fn level_quantities(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_money_inputs_as_written() {
+        // A `Money` input: a string or a number, two decimals at most, no rounding.
+        assert_eq!(variants::money_cents(&json!("19.99")), Some(1999));
+        assert_eq!(variants::money_cents(&json!(19.5)), Some(1950));
+        assert_eq!(variants::money_cents(&json!(-2)), Some(-200));
+        assert_eq!(variants::money_cents(&json!("-0.05")), Some(-5));
+        assert_eq!(variants::money_cents(&json!(0.125)), None);
+        assert_eq!(variants::money_cents(&json!("0.125")), None);
+        assert_eq!(variants::money_cents(&json!(null)), None);
+    }
 
     #[test]
     fn spreads_stock_over_locations() {

@@ -205,7 +205,7 @@ fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         && let Some(product) = &product
     {
         let state = mutation.state_mut();
-        let currency = crate::domains::orders::model::currency(state);
+        let currency = state.currency();
         if let Some(record) = state.get_mut(product) {
             record.insert(
                 "lsfGiftCardSettings".into(),

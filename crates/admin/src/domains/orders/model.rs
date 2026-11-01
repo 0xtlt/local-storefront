@@ -28,20 +28,11 @@ use serde_json::{Map, Value, json};
 use crate::domains::catalog::{self, gids};
 use crate::domains::customers;
 pub use crate::state::value::str_field as text;
+pub use crate::state::value::{cents, parse_cents};
 use crate::state::{Record, ShopState, value};
 
 /// The financial statuses whose money was taken (`captured` in the seed).
 const CAPTURED: [&str; 4] = ["PAID", "PARTIALLY_PAID", "PARTIALLY_REFUNDED", "REFUNDED"];
-
-/// The currency of the shop: every amount of an order is in it.
-pub fn currency(state: &ShopState) -> String {
-    state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string()
-}
 
 /// The key of an order presented in another currency than the shop's ([`Presentment`]).
 pub const PRESENTMENT: &str = "lsfPresentment";
@@ -200,58 +191,6 @@ pub fn apply_presentment(state: &mut ShopState, order: &str) {
         if changed && let Some(target) = state.get_mut(&key) {
             *target = record;
         }
-    }
-}
-
-/// A decimal amount (`"19.99"`, `"20"`, `"0.125"`) in cents, rounded half away from zero.
-/// `None` when it is not a number.
-pub fn parse_cents(text: &str) -> Option<i64> {
-    let text = text.trim();
-    let (negative, digits) = match text.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, text),
-    };
-    let (units, fraction) = digits.split_once('.').unwrap_or((digits, ""));
-    if (units.is_empty() && fraction.is_empty())
-        || !units
-            .bytes()
-            .chain(fraction.bytes())
-            .all(|b| b.is_ascii_digit())
-    {
-        return None;
-    }
-    let units: i64 = if units.is_empty() {
-        0
-    } else {
-        units.parse().ok()?
-    };
-    let digit = |index: usize| {
-        fraction
-            .as_bytes()
-            .get(index)
-            .map_or(0, |byte| i64::from(byte - b'0'))
-    };
-    // `None` past what 64 bits of cents hold, rather than an overflow.
-    let cents = units
-        .checked_mul(100)?
-        .checked_add(digit(0) * 10 + digit(1) + i64::from(digit(2) >= 5))?;
-    Some(if negative { -cents } else { cents })
-}
-
-/// The cents of an amount as the records and the inputs write it: a `MoneyBag` (its shop
-/// money), a `MoneyV2` or `MoneyInput` (its `amount`), a `Money` or `Decimal` string, a number.
-/// 0 when there is none.
-pub fn cents(value: Option<&Value>) -> i64 {
-    match value {
-        Some(Value::Object(map)) => match map.get("shopMoney") {
-            Some(shop) => cents(Some(shop)),
-            None => cents(map.get("amount")),
-        },
-        Some(Value::String(text)) => parse_cents(text).unwrap_or(0),
-        Some(Value::Number(number)) => number
-            .as_f64()
-            .map_or(0, |amount| (amount * 100.0).round() as i64),
-        _ => 0,
     }
 }
 
@@ -599,7 +538,7 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
     let Some(record) = state.get(order).cloned() else {
         return;
     };
-    let currency = currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let refunded = refunded(state, &record);
     let financial = text(&record, "displayFinancialStatus").unwrap_or("PENDING");
@@ -865,7 +804,7 @@ pub fn add_transaction_with_status(
     transaction: &NewTransaction,
     status: &str,
 ) -> String {
-    let currency = currency(state);
+    let currency = state.currency();
     let now = state.timestamp();
     let id = state.new_gid("OrderTransaction");
     let gateway = transaction.gateway.unwrap_or("manual");
@@ -1619,24 +1558,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_amounts() {
-        assert_eq!(parse_cents("19.99"), Some(1999));
-        assert_eq!(parse_cents("20"), Some(2000));
-        assert_eq!(parse_cents("0.125"), Some(13));
-        assert_eq!(parse_cents("-5.5"), Some(-550));
-        assert_eq!(parse_cents(".5"), Some(50));
-        assert_eq!(parse_cents("x"), None);
-        assert_eq!(parse_cents(""), None);
-        // Past what 64 bits of cents hold: `None`, not an overflow.
-        assert_eq!(parse_cents("92233720368547758.07"), Some(i64::MAX));
-        assert_eq!(parse_cents("92233720368547758.09"), None);
-        assert_eq!(parse_cents("92233720368547758.075"), None);
-        assert_eq!(cents(Some(&json!({"shopMoney": {"amount": "12.5"}}))), 1250);
-        assert_eq!(
-            cents(Some(&json!({"amount": "3", "currencyCode": "EUR"}))),
-            300
-        );
-        assert_eq!(cents(None), 0);
+    fn formats_gateways() {
         assert_eq!(formatted_gateway("manual"), "Manual");
         assert_eq!(formatted_gateway("shopify_payments"), "Shopify Payments");
     }

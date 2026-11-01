@@ -33,7 +33,7 @@ use serde_json::{Map, Value, json};
 use super::{
     BACKUP_REGION, Pointer, coded, input, is_active, market_currency, market_not_found,
     market_of_country, objects, price_inclusions, records_input, region, region_gid, regions_of,
-    shop_currency, strings, text, web_presences,
+    strings, text, web_presences,
 };
 use crate::domains::content::market_gid;
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -178,10 +178,9 @@ fn resolved_values(
         .is_some_and(|strategy| strategy.starts_with("INCLUDES_TAXES"));
     let duties = strategy("/priceInclusions/inclusiveDutiesPricingStrategy").as_deref()
         == Some("INCLUDE_DUTIES_IN_PRICE");
-    let currency = market.as_deref().map_or_else(
-        || shop_currency(state),
-        |market| market_currency(state, market),
-    );
+    let currency = market
+        .as_deref()
+        .map_or_else(|| state.currency(), |market| market_currency(state, market));
     let value = value::object(json!({
         "market": market,
         "currencyCode": currency,
@@ -540,7 +539,7 @@ fn currency_settings(
     existing: Option<&Value>,
     regions: &[Value],
 ) -> Value {
-    let shop = shop_currency(state);
+    let shop = state.currency();
     let local: Vec<String> = regions
         .iter()
         .filter_map(|region| region.pointer("/currency/currencyCode")?.as_str())

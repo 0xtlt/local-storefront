@@ -304,7 +304,7 @@ fn create_location(
         "externalId": null,
         "company": company,
         "locale": primary_locale(state),
-        "currency": crate::domains::orders::model::currency(state),
+        "currency": state.currency(),
         "phone": null,
         "note": null,
         "buyerExperienceConfiguration": null,
@@ -319,7 +319,7 @@ fn create_location(
         "taxExemptions": exemptions,
         "ordersCount": {"count": 0, "precision": "EXACT"},
         "orderCount": 0,
-        "totalSpent": value::money_v2(0, &crate::domains::orders::model::currency(state)),
+        "totalSpent": value::money_v2(0, &state.currency()),
         "roleAssignments": [],
         "createdAt": now,
         "updatedAt": now,
@@ -408,7 +408,7 @@ fn company_create(
         "mainContact": null,
         "contactRoles": roles,
         "defaultRole": contact_role_gid_of(number, CONTACT_ROLES[1].0),
-        "totalSpent": value::money_v2(0, &crate::domains::orders::model::currency(state)),
+        "totalSpent": value::money_v2(0, &state.currency()),
         "metafields": [],
     }));
     apply_company(&mut record, &company_input);

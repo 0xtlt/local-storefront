@@ -199,7 +199,7 @@ fn badge(status: &str) -> &'static str {
 fn money(input: Option<&Value>) -> Value {
     match input.and_then(Value::as_object) {
         Some(money) => json!({
-            "amount": crate::state::value::decimal(crate::domains::catalog::cents_of(money.get("amount")).unwrap_or(0)),
+            "amount": crate::state::value::decimal(crate::state::value::exact_cents(money.get("amount")).unwrap_or(0)),
             "currencyCode": money.get("currencyCode"),
         }),
         None => Value::Null,
@@ -959,7 +959,7 @@ fn engagement_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
             .filter(|value| !value.is_null())
             .map(|value| {
                 json!(crate::state::value::decimal(
-                    crate::domains::catalog::cents_of(Some(value)).unwrap_or(0)
+                    crate::state::value::exact_cents(Some(value)).unwrap_or(0)
                 ))
             })
             .unwrap_or(Value::Null)
@@ -1009,7 +1009,7 @@ fn engagement_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
                     .filter_map(|engagement| {
                         let spend = engagement.get("adSpend").filter(|s| !s.is_null())?;
                         currency = spend.get("currencyCode").cloned();
-                        crate::domains::catalog::cents_of(spend.get("amount"))
+                        crate::state::value::exact_cents(spend.get("amount"))
                     })
                     .sum();
                 if let Some(currency) = currency {

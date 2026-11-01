@@ -419,7 +419,7 @@ fn target_errors(
 /// A decimal input as Shopify writes `Decimal`s.
 fn decimal(value: &Value) -> Value {
     json!(crate::state::value::decimal(
-        crate::domains::catalog::cents_of(Some(value)).unwrap_or(0)
+        crate::state::value::exact_cents(Some(value)).unwrap_or(0)
     ))
 }
 
@@ -430,7 +430,7 @@ fn target_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         return Ok(payload(json!({"analyticsTarget": null}), &errors));
     }
     let now = m.timestamp();
-    let currency = crate::domains::orders::model::currency(m.state());
+    let currency = m.state().currency();
     let query = target_query(&input);
     let state = m.state_mut();
     let id = state.new_gid("AnalyticsTarget");

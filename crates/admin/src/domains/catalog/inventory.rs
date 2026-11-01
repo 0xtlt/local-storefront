@@ -1182,7 +1182,7 @@ fn item_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         mutation.note("inventoryItemUpdate: lsf does not simulate shipping packages: `shippingPackageId` was ignored");
     }
     let state = mutation.state_mut();
-    let currency = records::currency(state);
+    let currency = state.currency();
     if let Some(record) = state.get_mut(&item) {
         records::apply_inventory_item(record, &input, &currency);
     }

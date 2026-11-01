@@ -261,7 +261,7 @@ fn fulfillment_create(
 
     let state = mutation.state_mut();
     let now = state.timestamp();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let id = state.new_gid("Fulfillment");
     let count = state
         .get(&order)

@@ -37,7 +37,6 @@ use serde_json::{Map, Value, json};
 
 use super::{int, keys_of, objects, push, text};
 use crate::domains::catalog::{self, gids};
-use crate::domains::orders::model;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::seed::Seed;
@@ -612,7 +611,7 @@ fn money_of(input: Option<&Value>, currency: &str) -> Option<Value> {
         Value::String(text) => text.clone(),
         other => other.to_string(),
     };
-    let cents = model::parse_cents(&amount)?;
+    let cents = value::parse_cents(&amount)?;
     let currency = input
         .get("currencyCode")
         .and_then(Value::as_str)
@@ -1357,7 +1356,7 @@ fn bump(state: &mut ShopState, profile: &str, entries: Vec<Map<String, Value>>) 
 
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = super::input(ctx, "profile");
-    let currency = model::currency(mutation.state());
+    let currency = mutation.state().currency();
     if text(&input, "name").is_none_or(|name| name.trim().is_empty()) {
         return Ok(payload(
             json!({"profile": null}),
@@ -1400,7 +1399,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         ));
     }
     let input = super::input(ctx, "profile");
-    let currency = model::currency(mutation.state());
+    let currency = mutation.state().currency();
     let state = mutation.state_mut();
     let mut build = Build {
         errors: Vec::new(),
@@ -1490,7 +1489,7 @@ pub fn checkout_rates<'r>(
         }
         let provider = get(text(method, "rateProvider")?)?;
         (text(provider, "__typename") == Some("DeliveryRateDefinition"))
-            .then(|| crate::domains::catalog::cents_of(provider.get("price")?.get("amount")))
+            .then(|| value::exact_cents(provider.get("price")?.get("amount")))
             .flatten()
     };
     let input = |handle: &str, method: &Record, cents: i64| CheckoutShippingRateInput {

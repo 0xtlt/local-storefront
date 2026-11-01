@@ -399,12 +399,7 @@ fn fulfilled_quantities(draft: &OrderDraft) -> Vec<u32> {
 /// fulfillment and transactions as its state implies, its returns. Updates the customer's
 /// derived fields. Returns the GID of the order.
 pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
-    let currency = state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string();
+    let currency = state.currency();
     let taxes_included = state
         .shop()
         .and_then(|shop| shop.get("taxesIncluded"))

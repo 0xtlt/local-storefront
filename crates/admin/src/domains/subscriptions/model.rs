@@ -14,9 +14,10 @@ use serde_json::{Map, Value, json};
 
 use crate::domains::catalog::gids;
 use crate::domains::orders::TAX_RATE_SETTING;
-use crate::domains::orders::model::{cents, parse_cents, share};
+use crate::domains::orders::model::share;
 use crate::resolve::UserError;
 pub use crate::state::value::str_field as text;
+use crate::state::value::{cents, parse_cents};
 use crate::state::{Record, ShopState, gid_number, value};
 
 pub const CONTRACT: &str = "SubscriptionContract";

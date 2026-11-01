@@ -781,7 +781,7 @@ fn code_as_manual(discount: &Record, id: &str, code: &str, currency: &str) -> Va
     } else {
         json!({
             "__typename": "SubscriptionDiscountFixedAmountValue",
-            "amount": model::money(crate::domains::orders::model::cents(gets.get("amount")), currency),
+            "amount": model::money(crate::state::value::cents(gets.get("amount")), currency),
             "appliesOnEachItem": gets.get("appliesOnEachItem").and_then(Value::as_bool).unwrap_or(false),
         })
     };

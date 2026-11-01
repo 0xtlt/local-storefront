@@ -1234,7 +1234,7 @@ impl<'s> Sync<'s> {
                 .map(str::to_string)
                 .collect(),
             price: Some(Money::Cents(
-                catalog::cents_of(record.get("price")).unwrap_or(0),
+                crate::state::value::exact_cents(record.get("price")).unwrap_or(0),
             )),
             compare_at_price: catalog::cents_of(record.get("compareAtPrice")).map(Money::Cents),
             sku: string(record, "sku"),

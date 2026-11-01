@@ -47,7 +47,7 @@ pub fn register(registry: &mut Registry) {
 /// The checkout's delivery rates of a kind (`SHIPPING`, `LOCAL`, `PICK_UP`), as
 /// `DraftOrderShippingRate`s (and `ShippingRate`s, which read the same fields).
 pub(super) fn shipping_rates(state: &ShopState, kind: &str) -> Vec<Value> {
-    let currency = model::currency(state);
+    let currency = state.currency();
     state
         .setting(super::DELIVERY_RATES_SETTING)
         .and_then(Value::as_array)

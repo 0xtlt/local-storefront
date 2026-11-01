@@ -337,6 +337,16 @@ impl ShopState {
         self.shop_gid().and_then(|gid| self.get(gid))
     }
 
+    /// The currency of the shop (`Shop.currencyCode`, `USD` without one): every amount of an
+    /// order is in it.
+    pub fn currency(&self) -> String {
+        self.shop()
+            .and_then(|shop| shop.get("currencyCode"))
+            .and_then(Value::as_str)
+            .unwrap_or("USD")
+            .to_string()
+    }
+
     pub fn clock(&self) -> Clock {
         self.clock
     }

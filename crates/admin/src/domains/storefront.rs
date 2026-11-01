@@ -283,7 +283,7 @@ fn check_settings(
             .code("INVALID_SETTINGS"),
         );
     }
-    let currency = super::orders::model::currency(state);
+    let currency = state.currency();
     for (key, field) in fields {
         let Some(given) = settings.get(key) else {
             continue;

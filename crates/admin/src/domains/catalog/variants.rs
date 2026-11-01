@@ -39,8 +39,8 @@ use serde_json::{Map, Value, json};
 
 use super::media;
 use super::records::{
-    self, apply_inventory_item, arg_objects, coded, currency, default_location, field,
-    is_active_location, item_of, new_inventory_item, new_level, objects, text,
+    self, apply_inventory_item, arg_objects, coded, default_location, field, is_active_location,
+    item_of, new_inventory_item, new_level, objects, text,
 };
 use super::{cents_of, gids, product_changed};
 use crate::graphql::{FieldContext, FieldError};
@@ -469,7 +469,7 @@ pub fn insert_variant(
 /// Sets the plain fields of a variant input on a variant (and its inventory item): those given,
 /// and only those. Whether the inventory item changed.
 pub fn apply_fields(state: &mut ShopState, variant: &str, input: &Map<String, Value>) -> bool {
-    let currency = currency(state);
+    let currency = state.currency();
     let item = item_of(state, variant);
     let mut item_changed = false;
     if let Some(item) = &item {

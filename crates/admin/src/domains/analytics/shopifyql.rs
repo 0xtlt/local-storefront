@@ -44,7 +44,6 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, U
 use chrono_tz::Tz;
 use serde_json::{Map, Value, json};
 
-use crate::domains::catalog::cents_of;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Obj, ShopResolver};
 use crate::state::{Record, ShopState, value};
@@ -914,7 +913,7 @@ struct Sale {
 }
 
 fn money(value: Option<&Value>) -> f64 {
-    cents_of(
+    value::exact_cents(
         value
             .and_then(|set| set.get("shopMoney").or(Some(set)))
             .and_then(|money| money.get("amount")),

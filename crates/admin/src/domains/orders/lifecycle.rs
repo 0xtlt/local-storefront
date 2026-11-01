@@ -710,7 +710,7 @@ fn order_invoice_send(
             .and_then(|bag| bag.pointer("/shopMoney/amount"))
             .and_then(Value::as_str)
             .unwrap_or("0.0"),
-        model::currency(mutation.state())
+        mutation.state().currency()
     );
     if let Some(message) = email.get("customMessage").and_then(Value::as_str) {
         body.push('\n');
@@ -822,7 +822,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     let state = mutation.state();
     let mut errors: Vec<UserError> = Vec::new();
     let failed = |errors: &[UserError]| Ok(payload(json!({"order": null}), errors));
-    let shop_currency = model::currency(state);
+    let shop_currency = state.currency();
     if let Some(currency) = input.get("currency").and_then(Value::as_str)
         && currency != shop_currency
     {
@@ -1561,7 +1561,7 @@ fn record_discount_code(
     applied: &CodeApplied,
     lines: &[super::LineDraft],
 ) {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let (code, allocation_method, target_type, value) = match applied {
         CodeApplied::Percentage { code, percentage } => (
             code,

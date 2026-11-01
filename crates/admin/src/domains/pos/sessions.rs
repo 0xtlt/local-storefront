@@ -32,7 +32,6 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::{Value, json};
 
 use super::{cents, is_reason_code, keys_with, money, tell_device, text};
-use crate::domains::orders::model::currency;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::search::SearchValue;
@@ -150,7 +149,7 @@ fn check_common(
         .arg(amount)
         .and_then(|money| money.get("currencyCode"))
         .and_then(Value::as_str)
-        && given != currency(state)
+        && given != state.currency()
     {
         errors.push(coded(&[amount], "CURRENCY_MISMATCH"));
     }
@@ -253,7 +252,7 @@ fn open(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
         "__typename": SESSION,
         "id": session,
         "status": "OPEN",
-        "currency": currency(state),
+        "currency": state.currency(),
         "cashDrawer": drawer,
         "location": location,
         "pointOfSaleDevice": device,
@@ -636,7 +635,7 @@ fn shop_summary(
     _object: &Obj,
 ) -> Result<Output<Obj>, FieldError> {
     let state = r.state();
-    let drawers: Vec<String> = if ctx.arg_str("currencyCode") == Some(currency(state).as_str()) {
+    let drawers: Vec<String> = if ctx.arg_str("currencyCode") == Some(state.currency().as_str()) {
         state.keys("CashDrawer").map(str::to_string).collect()
     } else {
         Vec::new()

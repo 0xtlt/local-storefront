@@ -67,7 +67,7 @@ pub fn register(registry: &mut Registry) {
         )
         .field("ShopifyPaymentsAccount", "balance", |r, ctx, _object| {
             let state = r.state();
-            let currency = model::currency(state);
+            let currency = state.currency();
             let pending: i64 = unpaid(state).iter().map(|(_, net)| net).sum();
             r.convert(ctx, &json!([value::money_v2(pending, &currency)]), false)
         })
@@ -248,7 +248,7 @@ fn shop_facts(state: &ShopState) -> (String, String, String) {
     (
         text(&shop, "name").unwrap_or("Shop").to_string(),
         country,
-        model::currency(state),
+        state.currency(),
     )
 }
 
@@ -369,7 +369,7 @@ struct Balance<'a> {
 }
 
 fn insert_balance(state: &mut ShopState, balance: Balance) -> String {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let id = state.new_gid("ShopifyPaymentsBalanceTransaction");
     state.insert(value::object(json!({
         "__typename": "ShopifyPaymentsBalanceTransaction",
@@ -449,7 +449,7 @@ pub fn tick(state: &mut ShopState) {
 /// A payout of balance transactions, at `issued`: the `ShopifyPaymentsPayout`, its `TRANSFER`
 /// balance transaction, each transaction's `associatedPayout`. Returns its GID.
 fn pay_out(state: &mut ShopState, ids: &[String], issued: DateTime<Utc>) -> String {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let money = |cents: i64| value::money_v2(cents, &currency);
     let (mut net, mut charges, mut charges_fee, mut refunds, mut adjustments, mut adjustments_fee) =
         (0, 0, 0, 0, 0, 0);
@@ -587,7 +587,7 @@ pub fn open_dispute(state: &mut ShopState, dispute: &NewDispute) -> Result<Strin
     if !matches!(dispute.kind, "CHARGEBACK" | "INQUIRY") {
         return Err("`type` is CHARGEBACK or INQUIRY".to_string());
     }
-    let currency = model::currency(state);
+    let currency = state.currency();
     let amount = dispute
         .amount
         .unwrap_or_else(|| field_cents(&order, "netPaymentSet"));
@@ -935,7 +935,7 @@ fn alternate_currency_payout(
     let state = mutation.state();
     let pending = unpaid(state);
     let total: i64 = pending.iter().map(|(_, net)| net).sum();
-    if currency != model::currency(state) || total <= 0 {
+    if currency != state.currency() || total <= 0 {
         return failed(
             &["currency"],
             "Failed to create payout, there is no eligible balance in this currency.",

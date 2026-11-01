@@ -129,12 +129,12 @@ pub fn register(registry: &mut Registry) {
 
 /// A `MoneyV2` of the shop's currency.
 fn money(state: &ShopState, cents: i64) -> Value {
-    value::money_v2(cents, &crate::domains::orders::model::currency(state))
+    value::money_v2(cents, &state.currency())
 }
 
 /// The cents of a `MoneyV2` (or a `MoneyInput`).
 fn cents(money: Option<&Value>) -> i64 {
-    crate::domains::catalog::cents_of(money.and_then(|money| money.get("amount"))).unwrap_or(0)
+    value::exact_cents(money.and_then(|money| money.get("amount"))).unwrap_or(0)
 }
 
 /// Writes what lsf would have sent a device to the shop's outbox (`what`, about the record

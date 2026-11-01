@@ -28,7 +28,7 @@
 use serde_json::{Map, Value, json};
 
 use super::gids;
-use super::records::{self, coded, currency, field, input, objects, text};
+use super::records::{self, coded, field, input, objects, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{ShopState, value};
@@ -335,7 +335,7 @@ fn plan_record(
     plan: &Map<String, Value>,
     now: &str,
 ) {
-    let currency = currency(state);
+    let currency = state.currency();
     for name in ["name", "description", "category"] {
         if let Some(given) = plan.get(name) {
             record.insert(name.into(), given.clone());

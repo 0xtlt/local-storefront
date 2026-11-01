@@ -278,11 +278,9 @@ fn create_order(
     // amounts in the shop's currency at lsf's rate (a market's manual rate, else 1.0).
     let currency = text(billed, "currencyCode").unwrap_or_default().to_string();
     let presentment =
-        (!currency.is_empty() && currency != orders_model::currency(state)).then(|| {
-            orders_model::Presentment {
-                rate_bps: crate::domains::markets::rate_bps(state, &currency).unwrap_or(10_000),
-                currency: currency.clone(),
-            }
+        (!currency.is_empty() && currency != state.currency()).then(|| orders_model::Presentment {
+            rate_bps: crate::domains::markets::rate_bps(state, &currency).unwrap_or(10_000),
+            currency: currency.clone(),
         });
     let shop_cents = |cents: i64| {
         presentment

@@ -26,7 +26,7 @@
 use serde_json::{Map, Value, json};
 
 use super::cents_of;
-use super::records::{coded, currency, field, input, text};
+use super::records::{coded, field, input, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, gid, value};
@@ -177,7 +177,7 @@ fn gift_card_create(
     let empty = json!({"giftCard": null, "giftCardCode": null});
     let input = input(ctx, "input");
     let state = mutation.state();
-    let shop_currency = currency(state);
+    let shop_currency = state.currency();
     let mut errors = Vec::new();
     let amount = money_input(input.get("initialAmount")).or_else(|| {
         input

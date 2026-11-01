@@ -300,11 +300,6 @@ pub fn is_active(record: &Record) -> bool {
     record.get("status").and_then(Value::as_str) != Some("DRAFT")
 }
 
-/// The shop's currency ([`super::orders::model::currency`]).
-pub fn shop_currency(state: &ShopState) -> String {
-    super::orders::model::currency(state)
-}
-
 /// The market a buyer in a country is in: the first active market of the region whose
 /// regions have the country (a company location or a location market does not match a
 /// country alone).
@@ -328,7 +323,7 @@ pub fn market_currency(state: &ShopState, market: &str) -> String {
     state
         .get(market)
         .and_then(|record| record.pointer_str("/currencySettings/baseCurrency/currencyCode"))
-        .map_or_else(|| shop_currency(state), str::to_string)
+        .map_or_else(|| state.currency(), str::to_string)
 }
 
 /// A `CurrencySetting` of a currency, as the seed writes them.
@@ -360,7 +355,7 @@ pub fn region(state: &ShopState, code: &str) -> Value {
         return known.clone();
     }
     let currency =
-        reference::country_currency(&code).map_or_else(|| shop_currency(state), str::to_string);
+        reference::country_currency(&code).map_or_else(|| state.currency(), str::to_string);
     json!({
         "__typename": "MarketRegionCountry",
         "id": region_gid(&code),

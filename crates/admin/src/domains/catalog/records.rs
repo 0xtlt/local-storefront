@@ -47,11 +47,6 @@ pub fn arg_strings(ctx: &FieldContext<'_>, name: &str) -> Vec<String> {
     gids(ctx.arg(name))
 }
 
-/// The currency of the shop ([`crate::domains::orders::model::currency`]).
-pub fn currency(state: &ShopState) -> String {
-    crate::domains::orders::model::currency(state)
-}
-
 /// The origin of the shop's URLs: `https://my-shop.myshopify.com`.
 pub fn origin(state: &ShopState) -> String {
     state
@@ -334,7 +329,7 @@ pub fn new_inventory_item(
         "updatedAt": now,
     }));
     if let Some(input) = input {
-        apply_inventory_item(&mut record, input, &currency(state));
+        apply_inventory_item(&mut record, input, &state.currency());
     }
     state.insert(record);
     item

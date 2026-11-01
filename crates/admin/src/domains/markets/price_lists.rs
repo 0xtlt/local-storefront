@@ -40,8 +40,8 @@ use std::collections::HashSet;
 
 use serde_json::{Map, Value, json};
 
-use super::{Pointer, coded, input, market_currency, objects, shop_currency, strings, text};
-use crate::domains::catalog::{cents_of, gids};
+use super::{Pointer, coded, input, market_currency, objects, strings, text};
+use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::search::SearchValue;
@@ -122,7 +122,7 @@ fn scale(cents: i64, bps: i64) -> i64 {
 /// used). What every conversion of lsf uses: prices of price lists, contextual prices, the
 /// orders a subscription bills in its currency.
 pub fn rate_bps(state: &ShopState, currency: &str) -> Option<i64> {
-    if currency == shop_currency(state) {
+    if currency == state.currency() {
         return Some(10_000);
     }
     state.all("Market").find_map(|market| {
@@ -142,8 +142,8 @@ pub fn rate_bps(state: &ShopState, currency: &str) -> Option<i64> {
 /// A variant's price and compare-at price in the shop's currency, in cents.
 fn variant_cents(state: &ShopState, variant: &str) -> (i64, Option<i64>) {
     let record = state.get(variant);
-    let price = cents_of(record.and_then(|record| record.get("price"))).unwrap_or(0);
-    let compare = cents_of(record.and_then(|record| record.get("compareAtPrice")));
+    let price = value::exact_cents(record.and_then(|record| record.get("price"))).unwrap_or(0);
+    let compare = value::exact_cents(record.and_then(|record| record.get("compareAtPrice")));
     (price, compare)
 }
 
@@ -155,8 +155,8 @@ fn fixed_of(list: &Record, variant: &str) -> Option<(i64, Option<i64>)> {
         .find(|price| price.get("variant").and_then(Value::as_str) == Some(variant))
         .map(|price| {
             (
-                cents_of(price.pointer("/price/amount")).unwrap_or(0),
-                cents_of(price.pointer("/compareAtPrice/amount")),
+                value::exact_cents(price.pointer("/price/amount")).unwrap_or(0),
+                value::exact_cents(price.pointer("/compareAtPrice/amount")),
             )
         })
 }
@@ -254,7 +254,7 @@ fn prices(
     if rate_bps(state, currency).is_none() {
         r.note(format!(
             "PriceList.prices: lsf has no exchange rate from {} to {currency}: relative prices are converted at 1.0",
-            shop_currency(state)
+            state.currency()
         ));
     }
     r.connection(ctx, items)
@@ -432,10 +432,9 @@ pub fn contextual_price(
             converted,
         };
     }
-    let currency = market.as_deref().map_or_else(
-        || shop_currency(state),
-        |market| market_currency(state, market),
-    );
+    let currency = market
+        .as_deref()
+        .map_or_else(|| state.currency(), |market| market_currency(state, market));
     let rate = rate_bps(state, &currency);
     let (price, compare) = variant_cents(state, variant);
     let convert = |cents: i64| scale(cents, rate.unwrap_or(10_000));
@@ -485,7 +484,7 @@ fn note_rate(r: &ShopResolver<'_>, converted: bool) {
     if !converted {
         r.note(format!(
             "contextualPricing: lsf has no exchange rates: a price in another currency than {} is converted at 1.0 (or at the market's baseCurrencyManualRate)",
-            shop_currency(r.state())
+            r.state().currency()
         ));
     }
 }
@@ -533,8 +532,8 @@ fn product_contextual_pricing(
         {
             fixed_rules += 1;
         }
-        let cents =
-            cents_of(pricing.get("price").and_then(|price| price.get("amount"))).unwrap_or(0);
+        let cents = value::exact_cents(pricing.get("price").and_then(|price| price.get("amount")))
+            .unwrap_or(0);
         priced.push((cents, pricing));
     }
     note_rate(r, converted);
@@ -549,7 +548,7 @@ fn product_contextual_pricing(
     let currency = min
         .as_ref()
         .and_then(|pricing| pricing.pointer_str("/price/currencyCode"))
-        .map_or_else(|| shop_currency(state), str::to_string);
+        .map_or_else(|| state.currency(), str::to_string);
     let price_of = |pricing: &Option<Record>| {
         pricing
             .as_ref()
@@ -597,7 +596,7 @@ fn refresh(state: &mut ShopState, list: &str) {
 
 /// A `MoneyInput` in cents, and its currency.
 fn money(input: &Map<String, Value>) -> Option<(i64, String)> {
-    let cents = cents_of(input.get("amount"))?;
+    let cents = value::exact_cents(input.get("amount"))?;
     let currency = input.get("currencyCode")?.as_str()?.to_string();
     Some((cents, currency))
 }

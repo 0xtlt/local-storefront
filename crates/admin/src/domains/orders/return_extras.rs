@@ -200,7 +200,7 @@ pub fn insert_exchanges(state: &mut ShopState, exchanges: &[Exchange], open: boo
 /// inline, with an id of the fee's.
 pub fn restocking_fee(state: &mut ShopState, input: &Value, subtotal: i64) -> Option<Value> {
     let percentage = input.get("percentage")?.as_f64()?;
-    let currency = model::currency(state);
+    let currency = state.currency();
     let id = state.new_gid("RestockingFee");
     Some(json!({
         "id": id,
@@ -212,7 +212,7 @@ pub fn restocking_fee(state: &mut ShopState, input: &Value, subtotal: i64) -> Op
 /// A return shipping fee of a `ReturnShippingFeeInput` (`{amount}`): `ReturnShippingFee` inline.
 pub fn shipping_fee(state: &mut ShopState, input: &Value) -> Option<Value> {
     let amount = model::cents(input.get("amount"));
-    let currency = model::currency(state);
+    let currency = state.currency();
     let id = state.new_gid("ReturnShippingFee");
     Some(json!({
         "id": id,
@@ -236,7 +236,7 @@ fn tax_rate(state: &ShopState, order: &Record) -> i64 {
 /// at its price after its discount, on an open fulfillment order, its units committed; the
 /// order's tax takes theirs.
 pub fn process_exchanges(state: &mut ShopState, order: &str, items: &[(String, i64)]) {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let now = state.timestamp();
     let Some(order_record) = state.get(order).cloned() else {
         return;
@@ -1378,7 +1378,7 @@ fn suggested_outcome(
         return Ok(Output::Null);
     };
     let state = r.state();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let lines = asked(ctx, "returnLineItems", &gids(record.get("returnLineItems")));
     let exchanges = asked(
@@ -1434,7 +1434,7 @@ fn suggested_refund(
         return Ok(Output::Null);
     };
     let state = r.state();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let lines = asked(
         ctx,
@@ -1479,7 +1479,7 @@ fn calculate(
     let Some(order) = state.get_of(&order_id, "Order").cloned() else {
         return Ok(Output::Null);
     };
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let mut outcome = Outcome::default();
     let mut lines = Vec::new();

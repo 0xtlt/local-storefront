@@ -1225,12 +1225,7 @@ fn apply_input(
     now: &str,
     creating: bool,
 ) {
-    let currency = state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string();
+    let currency = state.currency();
     if let Some(title) = input.get("title").and_then(Value::as_str) {
         discount.insert("title".into(), json!(title.trim()));
     }

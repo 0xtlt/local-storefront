@@ -300,7 +300,7 @@ fn calculate(
     let Some(order) = state.get_of(&order_id, "Order") else {
         return Ok(Output::Null);
     };
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let lines = gids(order.get("lineItems"));
     let (mut subtotal, mut before, mut tax) = (0, 0, 0);

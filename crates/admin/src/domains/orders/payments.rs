@@ -103,15 +103,11 @@ pub fn register(registry: &mut Registry) {
             let cents = r
                 .map_of(object)
                 .map_or(0, |order| model::refund_discrepancy(state, order));
-            r.convert(
-                ctx,
-                &value::money_bag(cents, &model::currency(state)),
-                false,
-            )
+            r.convert(ctx, &value::money_bag(cents, &state.currency()), false)
         })
         // Cash rounding is for cash paid at a point of sale: none on a local shop.
         .field("Order", "totalCashRoundingAdjustment", |r, ctx, _object| {
-            let zero = value::money_bag(0, &model::currency(r.state()));
+            let zero = value::money_bag(0, &r.state().currency());
             r.convert(ctx, &json!({"paymentSet": zero, "refundSet": zero}), false)
         })
         .field("OrderTransaction", "paymentId", |r, _ctx, object| {
@@ -138,7 +134,7 @@ pub fn register(registry: &mut Registry) {
                     .into_iter()
                     .find(|(payment, _)| payment == id)
                     .map_or(0, |(_, left)| left);
-                r.convert(ctx, &value::money_v2(left, &model::currency(state)), false)
+                r.convert(ctx, &value::money_v2(left, &state.currency()), false)
             },
         )
         .field("OrderTransaction", "totalUnsettledSet", |r, ctx, object| {
@@ -154,7 +150,7 @@ pub fn register(registry: &mut Registry) {
             } else {
                 0
             };
-            r.convert(ctx, &value::money_bag(held, &model::currency(state)), false)
+            r.convert(ctx, &value::money_bag(held, &state.currency()), false)
         })
         .field(
             "OrderTransaction",
@@ -419,7 +415,7 @@ pub fn create_terms(
     let issued_at = spec.issued_at.or_else(|| {
         (reference == "order" && matches!(spec.kind.as_str(), "NET" | "RECEIPT")).then_some(now)
     });
-    let currency = model::currency(state);
+    let currency = state.currency();
     state.insert(value::object(json!({
         "__typename": "PaymentSchedule",
         "id": schedule,
@@ -546,7 +542,7 @@ pub fn refresh_terms(state: &mut ShopState, terms: &str) {
     let Some(record) = state.get(terms).cloned() else {
         return;
     };
-    let currency = model::currency(state);
+    let currency = state.currency();
     let order = text(&record, "order").and_then(|order| state.get(order));
     let draft = text(&record, "draftOrder").and_then(|draft| state.get(draft));
     let (total, balance, to_pay, fulfilled, is_order) = match (order, draft) {
@@ -766,7 +762,7 @@ fn payment_amount(
     outstanding: i64,
     field: &str,
 ) -> Result<i64, (Vec<String>, String, &'static str)> {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let Some((amount, given_currency)) = given else {
         return Ok(outstanding);
     };
@@ -1254,7 +1250,7 @@ fn reminder_send(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .and_then(Value::as_str)
         .unwrap_or("0.0")
         .to_string();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let due = text(&schedule, "dueAt")
         .and_then(value::parse_date_time)
         .map(|due| day_of(state, due));
@@ -1292,7 +1288,7 @@ pub fn record_tender(state: &mut ShopState, transaction: &str) -> Option<String>
         _ => return None,
     };
     let amount = field_cents(&record, "amountSet") * sign;
-    let currency = model::currency(state);
+    let currency = state.currency();
     let tender = state.new_gid("TenderTransaction");
     let reference = record
         .get("paymentId")
