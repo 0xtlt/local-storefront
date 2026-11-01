@@ -45,7 +45,7 @@ enum Subcommand {
 enum Format {
     /// One line per problem.
     Text,
-    /// `{ok, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, problems}]}`.
+    /// `{ok, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, problems}], ranInNoScenario: [handle]}`.
     Json,
 }
 
@@ -68,6 +68,11 @@ pub struct CheckArgs {
     /// fail.
     #[arg(long, default_value_t = 300)]
     budget: u64,
+
+    /// Build the extensions first, as `lsf app build` does: for a clone whose `dist/` is not
+    /// committed.
+    #[arg(long)]
+    build: bool,
 }
 
 #[derive(clap::Args)]
@@ -103,6 +108,21 @@ pub fn run(
     }
 }
 
+/// Whether a Function is a discount: one runs only for a discount of the checkout that names it.
+fn is_discount(function: &lsf_checkout::app::FunctionExtension) -> bool {
+    use lsf_checkout::app::TargetKind;
+    function.targets.iter().any(|target| {
+        matches!(
+            target.kind,
+            TargetKind::LinesDiscounts
+                | TargetKind::ProductDiscount
+                | TargetKind::OrderDiscount
+                | TargetKind::DeliveryDiscounts
+                | TargetKind::ShippingDiscount
+        )
+    })
+}
+
 /// What `app check` says of store data without a scenario.
 const NO_SCENARIO: &str =
     "no scenario to check: `lsf app init` writes a set for the app in `shopify-local/checkouts/`";
@@ -118,11 +138,11 @@ fn check(
     use crate::server::{ServeOptions, ServerState};
 
     let app_dir = crate::checkout::app_of(args.app.as_deref(), "lsf app check")?;
-    let (shopify_app, _) = crate::checkout::open(
+    let (shopify_app, selection) = crate::checkout::open(
         &crate::checkout::AppArgs {
             app: Some(app_dir.clone()),
             extensions: args.extensions.clone(),
-            build: false,
+            build: args.build,
         },
         &app_dir,
     )?;
@@ -167,6 +187,16 @@ fn check(
     // No scenario, nothing checked: a check that cannot fail is not one.
     let empty = report.total == 0;
     let ok = report.failures.is_empty() && invalid.is_empty() && complete && !empty;
+    // The Functions no scenario ran: nothing checks them. A warning, not a failure: a Function
+    // may be meant for a case the scenarios leave aside. Only known once every scenario ran.
+    let ran_nowhere: Vec<&lsf_checkout::app::FunctionExtension> = if complete && !empty {
+        selection
+            .functions(&shopify_app)
+            .filter(|function| !report.ran.contains(&function.handle))
+            .collect()
+    } else {
+        Vec::new()
+    };
     match args.format {
         Format::Json => {
             let mut json = report.to_json();
@@ -178,6 +208,12 @@ fn check(
                 .iter()
                 .map(|scenario| serde_json::json!({"scenario": scenario.name, "file": scenario.file, "problems": scenario.problems}))
                 .collect::<Vec<_>>());
+            json["ranInNoScenario"] = serde_json::json!(
+                ran_nowhere
+                    .iter()
+                    .map(|function| &function.handle)
+                    .collect::<Vec<_>>()
+            );
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?
@@ -189,6 +225,18 @@ fn check(
                 for problem in &scenario.problems {
                     println!("         {problem}");
                 }
+            }
+            for function in &ran_nowhere {
+                println!(
+                    "warning  {}: ran in no scenario, so nothing checks it{}",
+                    function.handle,
+                    if is_discount(function) {
+                        " (a discount Function runs only for a discount that names it: add one \
+                         to `checkout.discounts` of the store data or of a scenario)"
+                    } else {
+                        ""
+                    }
+                );
             }
             for failure in &report.failures {
                 println!(

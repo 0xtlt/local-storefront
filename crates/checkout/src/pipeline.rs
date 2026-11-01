@@ -461,6 +461,15 @@ impl<'a> Pipeline<'a> {
         };
 
         let mut execution = runner::run(&function.wasm_path, &target.export, &input);
+        // The runner knows the path; the Function knows how lsf builds it.
+        if !function.built()
+            && execution
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("no Wasm module"))
+        {
+            execution.error = Some(function.missing_build());
+        }
         if execution.error.is_none()
             && let Some(output) = &execution.output
             && let Err(problems) = version

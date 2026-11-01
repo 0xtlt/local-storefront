@@ -148,6 +148,7 @@ pub fn run(
         result,
         scenario,
         discounted,
+        named,
     } = compute(theme, data, previews, &args)?;
     let failed = result.runs.iter().any(|run| run.error.is_some());
     // A Function asked for by name that did not run is a failure, with why.
@@ -157,10 +158,15 @@ pub fn run(
         .filter_map(|handle| shopify_app.function(handle))
         .filter(|function| !result.runs.iter().any(|run| run.handle == function.handle))
         .map(|function| {
-            (
-                function.handle.clone(),
-                why_not_run(&shopify_app, function, &discounted, result.lines.is_empty()),
-            )
+            let reason = match &named {
+                Some((file, handles)) if !handles.contains(&function.handle) => format!(
+                    "the scenario's `extensions` leaves it out: add \"{}\" to the `extensions` \
+                     of {file}, or remove the list to run every extension",
+                    function.handle
+                ),
+                _ => why_not_run(&shopify_app, function, &discounted, result.lines.is_empty()),
+            };
+            (function.handle.clone(), reason)
         })
         .collect();
 
@@ -214,6 +220,9 @@ struct Ran {
     scenario: Option<(String, String)>,
     /// The discount Functions a discount of the checkout runs.
     discounted: Vec<String>,
+    /// The file of the scenario (`checkouts/b2b.json`) and its `extensions`, when it names
+    /// them: the Functions it leaves out do not run.
+    named: Option<(String, Vec<String>)>,
 }
 
 /// Why a Function asked for by name did not run: what the app says is wrong with it, a
@@ -406,6 +415,10 @@ fn compute(
         &state,
         &config,
     );
+    let named = scenario.and_then(|scenario| {
+        let handles = scenario.extensions.clone()?;
+        Some((scenario.file.clone(), handles))
+    });
     let scenario = scenario.map(|scenario| (scenario.name.clone(), scenario.title.clone()));
     let discounted = config
         .discounts
@@ -417,6 +430,7 @@ fn compute(
         result,
         scenario,
         discounted,
+        named,
     })
 }
 

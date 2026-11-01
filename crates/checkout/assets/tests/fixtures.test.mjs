@@ -227,7 +227,7 @@ test('reports a bundle that is missing, and a target it did not register', async
   const missing = sandboxWindow({ scripts: SANDBOX, bundles: {} });
   missing.receive(init({ handle: 'gift-message', target: 'purchase.checkout.block.render' }));
   for (let i = 0; i < 3; i++) await settle();
-  assert.match(missing.posts('error')[0].message, /shopify app build/);
+  assert.match(missing.posts('error')[0].message, /Build it with `lsf app build gift-message` \(or `--build`\)/);
 
   const wrong = await boot('order-notice', 'purchase.checkout.block.render', { apiVersion: '2027-01' });
   assert.match(wrong.posts('error')[0].message, /did not register purchase\.checkout\.block\.render.*registered: purchase\.checkout\.reductions\.render-after, purchase\.checkout\.shipping-option-list\.render-after/);

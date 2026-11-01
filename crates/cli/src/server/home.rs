@@ -2302,13 +2302,16 @@ fn function_html(function: &Json, dir: &str) -> String {
         .collect();
     let mut body = format!("<ul class=\"lsf-h-tlist\">{rows}</ul>");
     if function["built"] != true {
+        let handle = text_of(&function["handle"]);
         body.push_str(&match function["buildCommand"].as_str() {
-            Some(command) => format!(
-                "<p class=\"lsf-muted\">Build it with {} (or <code>shopify app build</code>), or start with <code>--build</code>.</p>",
-                code(command)
+            Some(_) => format!(
+                "<p class=\"lsf-muted\">Build it with {}, or start with <code>--build</code>.</p>",
+                code(&format!("lsf app build {handle}"))
             ),
-            None => "<p class=\"lsf-muted\">Build it with <code>shopify app build</code>.</p>"
-                .to_string(),
+            None => format!(
+                "<p class=\"lsf-muted\">It has no <code>[extensions.build] command</code> for lsf to build it with: add one, then run {}.</p>",
+                code(&format!("lsf app build {handle}"))
+            ),
         });
     }
     extension_row(function, dir, "data-function", &meta, &targets, &body)
@@ -2765,6 +2768,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_function_that_is_not_built_says_how_lsf_builds_it() {
+        let function = |build: Json| {
+            function_html(
+                &json!({
+                    "handle": "volume-discount",
+                    "name": "Volume discount",
+                    "apiVersion": "2026-10",
+                    "built": false,
+                    "buildCommand": build,
+                    "selected": true,
+                    "targets": [],
+                }),
+                "/app",
+            )
+        };
+        let buildable = function(json!("cargo build --release"));
+        assert!(
+            buildable.contains(
+                "Build it with <code>lsf app build volume-discount</code>, or start with <code>--build</code>."
+            ),
+            "{buildable}"
+        );
+        let bare = function(Json::Null);
+        assert!(
+            bare.contains(
+                "It has no <code>[extensions.build] command</code> for lsf to build it with"
+            ),
+            "{bare}"
+        );
+        for html in [buildable, bare] {
+            assert!(!html.contains("shopify app build"), "{html}");
+        }
+    }
+
+    #[test]
     fn only_targets_the_checkout_does_not_know_are_unknown() {
         assert!(is_listed_target(
             "cart.pickup-point-delivery-option-generator.fetch"
@@ -2856,10 +2894,10 @@ mod tests {
         );
         assert_eq!(
             message_html(
-                "no Wasm module at /Users/someone/app/extensions/x/dist/function.wasm: build the Function (`shopify app build`)",
+                "no Wasm module at /Users/someone/app/extensions/x/dist/function.wasm: build it with `lsf app build x` (or `--build`)",
                 dir
             ),
-            "no Wasm module at extensions/x/dist/function.wasm: build the Function (<code>shopify app build</code>)"
+            "no Wasm module at extensions/x/dist/function.wasm: build it with <code>lsf app build x</code> (or <code>--build</code>)"
         );
         // Escaped before the code is drawn: nothing the message says becomes HTML.
         assert_eq!(
