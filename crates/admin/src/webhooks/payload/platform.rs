@@ -21,7 +21,7 @@ use serde_json::{Map, Value, json};
 use super::{boolean, field, id, lower, text, time};
 
 /// The `Theme` of `themes/*`.
-pub fn theme(record: &Map<String, Value>) -> Value {
+pub(super) fn theme(record: &Map<String, Value>) -> Value {
     let number = id(record);
     json!({
         "id": number,
@@ -40,7 +40,7 @@ pub fn theme(record: &Map<String, Value>) -> Value {
 }
 
 /// `rollouts/create`, `rollouts/update`.
-pub fn rollout(record: &Map<String, Value>) -> Value {
+pub(super) fn rollout(record: &Map<String, Value>) -> Value {
     let schedule = field(record, "schedule");
     json!({
         "admin_graphql_api_id": text(record, "id"),
@@ -67,7 +67,7 @@ pub fn rollout(record: &Map<String, Value>) -> Value {
 }
 
 /// `rollouts/delete`.
-pub fn rollout_deleted(record: &Map<String, Value>) -> Value {
+pub(super) fn rollout_deleted(record: &Map<String, Value>) -> Value {
     json!({
         "admin_graphql_api_id": text(record, "id"),
         "deleted_at": time(field(record, super::DELETED_AT)),
@@ -76,10 +76,10 @@ pub fn rollout_deleted(record: &Map<String, Value>) -> Value {
 
 /// The field of a rollout that says which change a `rollouts/resource_change_*` event is about:
 /// `{treatment, change, resource, occurredAt}`.
-pub const ROLLOUT_CHANGE: &str = "lsfChange";
+const ROLLOUT_CHANGE: &str = "lsfChange";
 
 /// `rollouts/resource_change_added`, `…_removed`, `…_updated`.
-pub fn rollout_change(record: &Map<String, Value>) -> Value {
+pub(super) fn rollout_change(record: &Map<String, Value>) -> Value {
     let change = match field(record, ROLLOUT_CHANGE) {
         Value::Object(change) => Value::Object(change.clone()),
         _ => {
@@ -112,7 +112,7 @@ pub fn rollout_change(record: &Map<String, Value>) -> Value {
 }
 
 /// `finance_app_staff_member/*`: the staff member, as the REST `User` writes it.
-pub fn finance_staff_member(record: &Map<String, Value>) -> Value {
+pub(super) fn finance_staff_member(record: &Map<String, Value>) -> Value {
     json!({
         "id": id(record),
         "first_name": text(record, "firstName"),
@@ -127,7 +127,7 @@ pub fn finance_staff_member(record: &Map<String, Value>) -> Value {
 }
 
 /// `finance_kyc_information/update`: the `FinanceKycInformation`, in snake_case.
-pub fn finance_kyc_information(record: &Map<String, Value>) -> Value {
+pub(super) fn finance_kyc_information(record: &Map<String, Value>) -> Value {
     let address = field(record, "businessAddress");
     let owner = field(record, "shopOwner");
     let industry = field(record, "industry");

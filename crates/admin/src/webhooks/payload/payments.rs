@@ -6,8 +6,8 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    Lookup, field, first, id, items, lower, money_amount, numeric, records, ref_gid, ref_id,
-    resolve, text, time,
+    Lookup, field, first, id, items, lower, money_amount, numeric, price_or_zero, records, ref_gid,
+    ref_id, resolve, text, time,
 };
 
 /// The dates of payment terms and schedules, which their GraphQL types do not have: lsf keeps
@@ -25,8 +25,8 @@ pub(super) fn payment_schedule(schedule: &Map<String, Value>) -> Value {
     let amount = field(schedule, "amount");
     let currency = amount.get("currencyCode").cloned().unwrap_or(Value::Null);
     json!({
-        "amount": or_zero(money_amount(amount)),
-        "balance_due": or_zero(money_amount(field(schedule, "balanceDue"))),
+        "amount": price_or_zero(&money_amount(amount)),
+        "balance_due": price_or_zero(&money_amount(field(schedule, "balanceDue"))),
         "completed_at": time(field(schedule, "completedAt")),
         "created_at": created(schedule),
         "currency": currency,
@@ -35,18 +35,11 @@ pub(super) fn payment_schedule(schedule: &Map<String, Value>) -> Value {
         "issued_at": time(field(schedule, "issuedAt")),
         "payment_terms_id": ref_id(field(schedule, "paymentTerms")),
         "presentment_currency": currency,
-        "total_balance": or_zero(money_amount(field(schedule, "totalBalance"))),
-        "total_price": or_zero(money_amount(amount)),
+        "total_balance": price_or_zero(&money_amount(field(schedule, "totalBalance"))),
+        "total_price": price_or_zero(&money_amount(amount)),
         "updated_at": updated(schedule),
         "admin_graphql_api_id": text(schedule, "id"),
     })
-}
-
-fn or_zero(price: Value) -> Value {
-    match price {
-        Value::Null => json!("0.00"),
-        price => price,
-    }
 }
 
 /// `payment_terms/create` and `…/update`: `PaymentTerms` with their schedules. REST names the

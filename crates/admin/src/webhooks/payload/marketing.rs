@@ -9,7 +9,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{Lookup, field, id, lower, millis, numeric, text, time};
+use super::{Lookup, field, id, lower, millis, numeric, price_or_zero, text, text_or, time};
 
 /// `segments/create` and `segments/update`.
 pub(super) fn segment(record: &Map<String, Value>) -> Value {
@@ -89,7 +89,7 @@ pub(super) fn purchasing_summary(record: &Map<String, Value>) -> Value {
         "customerId": text(record, "customerId"),
         "numberOfOrders": orders,
         "amountSpent": {
-            "amount": super::price_or_zero(spent.get("amount").unwrap_or(&Value::Null)),
+            "amount": price_or_zero(spent.get("amount").unwrap_or(&Value::Null)),
             "currencyCode": spent.get("currencyCode").cloned().unwrap_or(Value::Null),
         },
         "lastOrderId": text(record, "lastOrderId"),
@@ -173,10 +173,7 @@ pub(super) fn admin_api_activity(record: &Map<String, Value>) -> Value {
                         "app_name": get("appName"),
                         "api_version_requested": get("versionRequested"),
                         "api_version_served": get("versionServed"),
-                        "ecosystem_category": match field(record, "ecosystemCategory") {
-                            Value::String(category) => json!(category),
-                            _ => json!("public"),
-                        },
+                        "ecosystem_category": text_or(record, "ecosystemCategory", "public"),
                     },
                     "on_behalf_of": match field(record, "userEmail") {
                         Value::String(email) => json!({"user_email": email}),

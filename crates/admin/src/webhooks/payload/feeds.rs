@@ -36,26 +36,33 @@ fn product_feed(sync: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
     })
 }
 
-/// The product of a sync: the record of its GID, else the snapshot's copy.
-fn product_of(sync: &Map<String, Value>, lookup: &dyn Lookup) -> Option<Map<String, Value>> {
+/// The product of a sync, as the feed writes it: the record of its GID, else the snapshot's copy.
+fn sync_product(sync: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
     resolve(field(sync, "product"), lookup)
         .or_else(|| field(sync, "productRecord").as_object().cloned())
+        .map_or(Value::Null, |product| {
+            product_payload(&product, sync, lookup)
+        })
+}
+
+/// The metadata of a full sync and of its finish.
+fn full_metadata(metadata: &Map<String, Value>) -> Value {
+    json!({
+        "action": text(metadata, "action"),
+        "type": "FULL",
+        "resource": "PRODUCT",
+        "fullSyncId": text(metadata, "fullSyncId"),
+        "truncatedFields": [],
+        "occurred_at": millis(field(metadata, "occurredAt")),
+    })
 }
 
 /// `product_feeds/full_sync`: one product of a full sync.
 pub(super) fn full_sync(sync: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
-    let metadata = object(field(sync, "metadata"));
     json!({
-        "metadata": {
-            "action": text(&metadata, "action"),
-            "type": "FULL",
-            "resource": "PRODUCT",
-            "fullSyncId": text(&metadata, "fullSyncId"),
-            "truncatedFields": [],
-            "occurred_at": millis(field(&metadata, "occurredAt")),
-        },
+        "metadata": full_metadata(&object(field(sync, "metadata"))),
         "productFeed": product_feed(sync, lookup),
-        "product": product_of(sync, lookup).map_or(Value::Null, |product| product_payload(&product, sync, lookup)),
+        "product": sync_product(sync, lookup),
         "products": null,
     })
 }
@@ -72,7 +79,7 @@ pub(super) fn incremental_sync(sync: &Map<String, Value>, lookup: &dyn Lookup) -
             "occured_at": time(field(&metadata, "occurredAt")),
         },
         "productFeed": product_feed(sync, lookup),
-        "product": product_of(sync, lookup).map_or(Value::Null, |product| product_payload(&product, sync, lookup)),
+        "product": sync_product(sync, lookup),
         "products": null,
     })
 }
@@ -81,14 +88,7 @@ pub(super) fn incremental_sync(sync: &Map<String, Value>, lookup: &dyn Lookup) -
 pub(super) fn full_sync_finish(sync: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
     let metadata = object(field(sync, "metadata"));
     json!({
-        "metadata": {
-            "action": text(&metadata, "action"),
-            "type": "FULL",
-            "resource": "PRODUCT",
-            "fullSyncId": text(&metadata, "fullSyncId"),
-            "truncatedFields": [],
-            "occurred_at": millis(field(&metadata, "occurredAt")),
-        },
+        "metadata": full_metadata(&metadata),
         "productFeed": product_feed(sync, lookup),
         "fullSync": {
             "createdAt": ruby_time(field(&metadata, "createdAt")),

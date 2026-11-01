@@ -49,10 +49,7 @@ fn context_items(record: &Map<String, Value>) -> Value {
 
 /// `{"id": <location GID>}` of a transfer's snapshot of a location, `Null` without one.
 fn location(snapshot: &Value) -> Value {
-    match snapshot.get("location").map(ref_gid) {
-        Some(Value::Null) | None => Value::Null,
-        Some(gid) => json!({"id": gid}),
-    }
+    reference(snapshot.get("location").unwrap_or(&Value::Null))
 }
 
 /// `inventory_transfers/…`: an `InventoryTransfer`.
