@@ -171,7 +171,7 @@ pub fn entries(state: &ShopState, channel: Option<Channel>) -> Vec<Value> {
         None => entries,
         Some(channel) => entries
             .into_iter()
-            .filter(|entry| entry.get("channel").and_then(Value::as_str) == Some(channel.as_str()))
+            .filter(|entry| is_of(entry, channel))
             .collect(),
     }
 }
@@ -184,7 +184,7 @@ pub fn clear(state: &mut ShopState, channel: Option<Channel>) -> usize {
         None => Vec::new(),
         Some(channel) => entries
             .into_iter()
-            .filter(|entry| entry.get("channel").and_then(Value::as_str) != Some(channel.as_str()))
+            .filter(|entry| !is_of(entry, channel))
             .collect(),
     };
     let cleared = before - kept.len();
@@ -192,6 +192,10 @@ pub fn clear(state: &mut ShopState, channel: Option<Channel>) -> usize {
         store(state, last, kept);
     }
     cleared
+}
+
+fn is_of(entry: &Value, channel: Channel) -> bool {
+    entry.get("channel").and_then(Value::as_str) == Some(channel.as_str())
 }
 
 /// The last id given and the entries, from the memo.
