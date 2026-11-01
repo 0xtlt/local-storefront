@@ -160,7 +160,6 @@ fn app_and_installation(state: &ShopState) -> (Option<String>, Option<String>) {
     )
 }
 
-/// `appUninstall`.
 fn app_uninstall(m: &mut Mutation<'_>, _ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let (app, installation) = app_and_installation(m.state());
     let (Some(app), Some(installation)) = (app, installation) else {
@@ -222,7 +221,6 @@ fn access_scope(handle: &str) -> Value {
     json!({"handle": handle, "description": super::queries::scope_description(handle)})
 }
 
-/// `appRevokeAccessScopes`.
 fn app_revoke_access_scopes(
     m: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -367,15 +365,9 @@ fn delegate_key(token: &str) -> String {
     format!("delegate-access-token/{}", stable_id("delegate", token))
 }
 
-/// `delegateAccessTokenCreate`.
 fn delegate_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = ctx
-        .arg("input")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let asked: Vec<String> = input
-        .get("delegateAccessScope")
+    let input = |name: &str| ctx.arg("input").and_then(|input| input.get(name));
+    let asked: Vec<String> = input("delegateAccessScope")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
@@ -383,7 +375,7 @@ fn delegate_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         .map(|scope| scope.trim().to_string())
         .filter(|scope| !scope.is_empty())
         .collect();
-    let expires_in = input.get("expiresIn").and_then(Value::as_i64);
+    let expires_in = input("expiresIn").and_then(Value::as_i64);
     let parent = m.grant().cloned();
     let now = m.now();
     let refuse = |field: &[&str], message: &str, code: &str| {
@@ -494,7 +486,6 @@ fn delegate_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     ))
 }
 
-/// `delegateAccessTokenDestroy`.
 fn delegate_destroy(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let token = ctx
         .arg_str("accessToken")

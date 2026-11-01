@@ -84,7 +84,6 @@ fn record_of(state: &ShopState, id: &str, type_name: &str) -> Option<Record> {
         .flatten()
 }
 
-/// `checkoutAndAccountsConfigurationUpdate(id:, configuration:)`.
 fn configuration_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let error = |field: &[&str], message: &str, code: &str| {
@@ -99,13 +98,9 @@ fn configuration_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
             "userErrors": [error(&["id"], "Configuration not found", "NOT_FOUND")],
         }));
     };
-    let input = ctx
-        .arg("configuration")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = |name: &str| ctx.arg("configuration").and_then(|input| input.get(name));
     let now = m.timestamp();
-    if let Some(branding) = input.get("branding") {
+    if let Some(branding) = input("branding") {
         let before = record.get("branding").cloned().unwrap_or(Value::Null);
         let merged = if branding.is_null() {
             Value::Null
@@ -120,8 +115,7 @@ fn configuration_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .cloned()
         .unwrap_or_default();
     let mut created = Vec::new();
-    for (index, given) in input
-        .get("overrides")
+    for (index, given) in input("overrides")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
@@ -169,7 +163,6 @@ fn configuration_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     Ok(json!({"configuration": id, "userErrors": []}))
 }
 
-/// `checkoutBrandingUpsert(checkoutProfileId:, checkoutBrandingInput:)`.
 fn branding_upsert(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx
         .arg_str("checkoutProfileId")
@@ -211,9 +204,10 @@ fn checkout_branding(
     _object: &Obj,
 ) -> Result<Output<Obj>, FieldError> {
     let id = ctx.arg_str("checkoutProfileId").unwrap_or_default();
-    let Some(profile) = (r.state().type_of(id) == Some("CheckoutProfile"))
-        .then(|| r.state().get(id))
-        .flatten()
+    let state = r.state();
+    let Some(profile) = state
+        .get(id)
+        .filter(|_| state.type_of(id) == Some("CheckoutProfile"))
     else {
         return Ok(Output::Null);
     };
