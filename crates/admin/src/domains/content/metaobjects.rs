@@ -36,6 +36,7 @@
 
 use serde_json::{Map, Value, json};
 
+use super::metafield_definitions::access_of;
 use super::metafields::{shop_currency, text};
 use super::types::{self, Context};
 use super::{app_id, data_type, metaobject_definition_gid, metaobject_gid};
@@ -404,28 +405,6 @@ fn capabilities_of(input: Option<&Value>, before: Option<&Value>) -> Value {
         "translatable": {"enabled": enabled("translatable")},
         "renderable": {"enabled": enabled("renderable"), "data": data("renderable")},
         "onlineStore": {"enabled": enabled("onlineStore"), "data": online_data},
-    })
-}
-
-/// The access of a definition: the input's, with Shopify's defaults (the app's types are the
-/// merchant's to read and write, others everyone's; nothing on the storefront unless given).
-fn access_of(input: Option<&Value>, app_owned: bool, before: Option<&Value>) -> Value {
-    let pick = |name: &str, default: &str| {
-        input
-            .and_then(|access| access.get(name))
-            .and_then(Value::as_str)
-            .or_else(|| {
-                before
-                    .and_then(|access| access.get(name))
-                    .and_then(Value::as_str)
-            })
-            .unwrap_or(default)
-            .to_string()
-    };
-    json!({
-        "admin": pick("admin", if app_owned { "MERCHANT_READ_WRITE" } else { "PUBLIC_READ_WRITE" }),
-        "storefront": pick("storefront", "NONE"),
-        "customerAccount": pick("customerAccount", "NONE"),
     })
 }
 

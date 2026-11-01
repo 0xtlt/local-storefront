@@ -231,10 +231,10 @@ fn valid_option(value_type: &str, value: &str) -> bool {
     }
 }
 
-/// `access` of a definition: the input's, with Shopify's defaults (an app's reserved namespace
-/// is the merchant's to read and write in the admin, another namespace everyone's; nothing on
-/// the storefront or in customer accounts unless given).
-fn access_of(input: Option<&Value>, app_owned: bool, before: Option<&Value>) -> Value {
+/// `access` of a metafield or metaobject definition: the input's, with Shopify's defaults (an
+/// app's reserved namespace or type is the merchant's to read and write in the admin, another
+/// everyone's; nothing on the storefront or in customer accounts unless given).
+pub(super) fn access_of(input: Option<&Value>, app_owned: bool, before: Option<&Value>) -> Value {
     let pick = |name: &str, default: &str| {
         input
             .and_then(|access| access.get(name))
