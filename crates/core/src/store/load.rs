@@ -14,6 +14,7 @@
 //!   schema/           JSON Schemas written by `lsf init` for editor support (ignored here)
 //! ```
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -557,10 +558,12 @@ impl Removals {
     }
 }
 
-fn effective_handle(handle: &Option<String>, title: &str) -> String {
-    handle
-        .clone()
-        .unwrap_or_else(|| crate::util::handleize(title))
+/// The handle an entity gives, else the one its title makes.
+fn effective_handle<'a>(handle: &'a Option<String>, title: &str) -> Cow<'a, str> {
+    match handle {
+        Some(handle) => Cow::Borrowed(handle),
+        None => Cow::Owned(crate::util::handleize(title)),
+    }
 }
 
 /// Merges `patch` into `base`, key by key; anything that is not an object replaces the base.
@@ -581,64 +584,82 @@ fn apply_removals(merged: &mut MergedInput, removed: &Removals) {
     if removed.is_empty() {
         return;
     }
-    let listed = |keys: &[String], key: &str| keys.iter().any(|candidate| candidate == key);
-    let listed_any_case = |keys: &[String], key: &str| {
-        keys.iter()
-            .any(|candidate| candidate.to_lowercase() == key.to_lowercase())
-    };
+    // The keys removed, in sets: each entity is looked up once.
+    fn listed(keys: &[String]) -> HashSet<&str> {
+        keys.iter().map(String::as_str).collect()
+    }
+    fn listed_any_case(keys: &[String]) -> HashSet<String> {
+        keys.iter().map(|key| key.to_lowercase()).collect()
+    }
     let date =
         |index: usize| Some(undated(index).to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
 
     for (index, product) in merged.products.iter_mut().enumerate() {
         product.value.created_at = product.value.created_at.take().or_else(|| date(index));
     }
+    let products = listed(&removed.products);
     merged.products.retain(|product| {
         let handle = effective_handle(&product.value.handle, &product.value.title);
-        !listed(&removed.products, &handle)
+        !products.contains(handle.as_ref())
     });
     for (index, collection) in merged.collections.iter_mut().enumerate() {
         let value = &mut collection.value;
         value.published_at = value.published_at.take().or_else(|| date(index));
     }
+    let collections = listed(&removed.collections);
     merged.collections.retain(|collection| {
         let handle = effective_handle(&collection.value.handle, &collection.value.title);
-        !listed(&removed.collections, &handle)
+        !collections.contains(handle.as_ref())
     });
     for (index, page) in merged.pages.iter_mut().enumerate() {
         page.value.published_at = page.value.published_at.take().or_else(|| date(index));
     }
+    let pages = listed(&removed.pages);
     merged.pages.retain(|page| {
         let handle = effective_handle(&page.value.handle, &page.value.title);
-        !listed(&removed.pages, &handle)
+        !pages.contains(handle.as_ref())
     });
+    let blogs = listed(&removed.blogs);
     merged.blogs.retain(|blog| {
         let handle = effective_handle(&blog.value.handle, &blog.value.title);
-        !listed(&removed.blogs, &handle)
+        !blogs.contains(handle.as_ref())
     });
+    let menus = listed(&removed.menus);
     merged
         .menus
-        .retain(|handle, _| !listed(&removed.menus, handle));
+        .retain(|handle, _| !menus.contains(handle.as_str()));
+    let customers = listed_any_case(&removed.customers);
     merged
         .customers
-        .retain(|customer| !listed_any_case(&removed.customers, &customer.value.email));
+        .retain(|customer| !customers.contains(&customer.value.email.to_lowercase()));
     for (index, company) in merged.companies.iter_mut().enumerate() {
         company.value.created_at = company.value.created_at.take().or_else(|| date(index));
     }
+    let companies = listed_any_case(&removed.companies);
     merged
         .companies
-        .retain(|company| !listed_any_case(&removed.companies, &company.value.name));
+        .retain(|company| !companies.contains(&company.value.name.to_lowercase()));
+    let gift_cards = listed_any_case(&removed.gift_cards);
     merged
         .gift_cards
-        .retain(|card| !listed_any_case(&removed.gift_cards, &card.value.code));
+        .retain(|card| !gift_cards.contains(&card.value.code.to_lowercase()));
+    let locations = listed_any_case(&removed.locations);
     merged
         .locations
-        .retain(|location| !listed_any_case(&removed.locations, &location.value.name));
+        .retain(|location| !locations.contains(&location.value.name.to_lowercase()));
+    let selling_plan_groups = listed_any_case(&removed.selling_plan_groups);
     merged
         .selling_plan_groups
-        .retain(|group| !listed_any_case(&removed.selling_plan_groups, &group.value.name));
+        .retain(|group| !selling_plan_groups.contains(&group.value.name.to_lowercase()));
+    let metaobjects: Vec<(&str, HashSet<&str>)> = removed
+        .metaobjects
+        .iter()
+        .map(|(kind, handles)| (kind.as_str(), listed(handles)))
+        .collect();
     merged.metaobjects.retain(|(kind, entry)| {
-        !removed.metaobjects.iter().any(|(removed_kind, handles)| {
-            super::same_metaobject_type(removed_kind, kind) && listed(handles, &entry.value.handle)
+        !metaobjects.iter().any(|(removed_kind, handles)| {
+            super::same_metaobject_type(removed_kind, kind)
+                && handles.contains(entry.value.handle.as_str())
         })
     });
     if let Some(shop) = &mut merged.shop {
@@ -667,7 +688,9 @@ fn apply_overlay(
     let Some(overlay) = checked(FileKind::Store, name, overlay, "", diagnostics) else {
         return;
     };
-    let input = match serde_json::from_value::<model::StoreInput>(overlay.clone()) {
+    // `shop` is merged from the JSON, field by field: only what it gives changes.
+    let shop_patch = overlay.get("shop").cloned();
+    let input = match serde_json::from_value::<model::StoreInput>(overlay) {
         Ok(input) => input,
         Err(error) => {
             diagnostics.error("invalid_value", name, "", error.to_string());
@@ -675,13 +698,13 @@ fn apply_overlay(
         }
     };
     let origin = |pointer: String| Origin::new(name, pointer);
-    if let Some(patch) = overlay.get("shop") {
+    if let Some(patch) = shop_patch {
         let mut shop = merged
             .shop
             .as_ref()
             .and_then(|shop| serde_json::to_value(&shop.value).ok())
             .unwrap_or(Json::Object(serde_json::Map::new()));
-        merge_json(&mut shop, patch);
+        merge_json(&mut shop, &patch);
         if let Ok(value) = serde_json::from_value::<model::ShopInput>(shop) {
             merged.shop = Some(Sourced {
                 value,
@@ -689,86 +712,24 @@ fn apply_overlay(
             });
         }
     }
-    // An entity replaces the one with its id when it gives one (an entity whose key changed
-    // stays where it was), the one with its key otherwise, unless this overlay wrote that one:
-    // two entities of one key in an overlay (two companies of one name, which Shopify allows)
-    // are both kept, for the build to say that the store data cannot have both.
-    macro_rules! upsert {
-        ($field:ident, $key:expr) => {
-            let mut written = HashSet::new();
-            for (index, value) in input.$field.into_iter().enumerate() {
-                let key = $key(&value);
-                let sourced = Sourced {
-                    value,
-                    origin: origin(format!("/{}/{index}", stringify!($field))),
-                };
-                let position = merged.$field.iter().enumerate().position(|(at, existing)| {
-                    !written.contains(&at) && $key(&existing.value) == key
-                });
-                put(&mut merged.$field, position, sourced, &mut written);
-            }
-        };
-        // An entity of a `$kind` with ids: the id of one already there is the one it gives, else
-        // the one the build derives from its key.
-        ($field:ident, $kind:literal, $key:expr) => {
-            let mut written = HashSet::new();
-            for (index, value) in input.$field.into_iter().enumerate() {
-                let key = $key(&value);
-                let given = value.id;
-                let sourced = Sourced {
-                    value,
-                    origin: origin(format!("/{}/{index}", stringify!($field))),
-                };
-                let position = given
-                    .and_then(|id| {
-                        merged.$field.iter().position(|existing| {
-                            existing.value.id.unwrap_or_else(|| {
-                                crate::util::stable_id($kind, &$key(&existing.value))
-                            }) == id
-                        })
-                    })
-                    .or_else(|| {
-                        merged.$field.iter().enumerate().position(|(at, existing)| {
-                            !written.contains(&at) && $key(&existing.value) == key
-                        })
-                    });
-                put(&mut merged.$field, position, sourced, &mut written);
-            }
-        };
-    }
-    upsert!(products, "product", |product: &model::ProductInput| {
-        effective_handle(&product.handle, &product.title)
-    });
-    upsert!(
-        collections,
-        "collection",
-        |collection: &model::CollectionInput| {
-            effective_handle(&collection.handle, &collection.title)
-        }
+    upsert(&mut merged.products, input.products, name, "products");
+    upsert(
+        &mut merged.collections,
+        input.collections,
+        name,
+        "collections",
     );
-    upsert!(pages, "page", |page: &model::PageInput| effective_handle(
-        &page.handle,
-        &page.title
-    ));
-    upsert!(blogs, "blog", |blog: &model::BlogInput| effective_handle(
-        &blog.handle,
-        &blog.title
-    ));
-    upsert!(customers, "customer", |customer: &model::CustomerInput| {
-        customer.email.to_lowercase()
-    });
-    upsert!(companies, "company", |company: &model::CompanyInput| {
-        company.name.to_lowercase()
-    });
-    upsert!(gift_cards, |card: &model::GiftCardInput| card
-        .code
-        .to_uppercase());
-    upsert!(locations, "location", |location: &model::LocationInput| {
-        location.name.to_lowercase()
-    });
-    upsert!(
-        selling_plan_groups,
-        |group: &model::SellingPlanGroupInput| { group.name.to_lowercase() }
+    upsert(&mut merged.pages, input.pages, name, "pages");
+    upsert(&mut merged.blogs, input.blogs, name, "blogs");
+    upsert(&mut merged.customers, input.customers, name, "customers");
+    upsert(&mut merged.companies, input.companies, name, "companies");
+    upsert(&mut merged.gift_cards, input.gift_cards, name, "gift_cards");
+    upsert(&mut merged.locations, input.locations, name, "locations");
+    upsert(
+        &mut merged.selling_plan_groups,
+        input.selling_plan_groups,
+        name,
+        "selling_plan_groups",
     );
     for (name, value) in input.swatches {
         let origin = origin(format!("/swatches/{name}"));
@@ -779,11 +740,10 @@ fn apply_overlay(
         merged.menus.insert(handle, Sourced { value, origin });
     }
     for (kind, entries) in input.metaobjects {
+        let replaced: HashSet<&str> = entries.iter().map(|entry| entry.handle.as_str()).collect();
         merged.metaobjects.retain(|(existing, entry)| {
             !super::same_metaobject_type(existing, &kind)
-                || !entries
-                    .iter()
-                    .any(|replacement| replacement.handle == entry.value.handle)
+                || !replaced.contains(entry.value.handle.as_str())
         });
         for (index, value) in entries.into_iter().enumerate() {
             let origin = origin(format!("/metaobjects/{kind}/{index}"));
@@ -837,17 +797,194 @@ fn apply_overlay(
     merged.theme_settings.extend(input.theme_settings);
 }
 
-/// Puts `item` at `position`, in place of the entity there, or after the others, and notes where
-/// it went.
-fn put<T>(list: &mut Vec<T>, position: Option<usize>, item: T, written: &mut HashSet<usize>) {
-    match position {
-        Some(position) => {
-            list[position] = item;
-            written.insert(position);
+/// An entity of a list that an overlay upserts into ([`upsert`]).
+trait Upserted {
+    /// The kind of the ids the build derives from the keys ([`crate::util::stable_id`]), for an
+    /// entity with ids. One without (a gift card, a selling plan group) replaces by its key only.
+    const KIND: Option<&'static str>;
+    /// The key it replaces an entity of: a handle, an email in lowercase, …
+    fn key(&self) -> Cow<'_, str>;
+    /// The id it gives.
+    fn id(&self) -> Option<u64> {
+        None
+    }
+}
+
+/// Implements [`Upserted`] for an input with ids of `$kind`, or for one without ids.
+macro_rules! upserted {
+    ($type:ty, $kind:literal, |$entity:ident| $key:expr) => {
+        impl Upserted for $type {
+            const KIND: Option<&'static str> = Some($kind);
+            fn key(&self) -> Cow<'_, str> {
+                let $entity = self;
+                $key
+            }
+            fn id(&self) -> Option<u64> {
+                self.id
+            }
         }
-        None => {
-            written.insert(list.len());
-            list.push(item);
+    };
+    ($type:ty, |$entity:ident| $key:expr) => {
+        impl Upserted for $type {
+            const KIND: Option<&'static str> = None;
+            fn key(&self) -> Cow<'_, str> {
+                let $entity = self;
+                $key
+            }
+        }
+    };
+}
+
+upserted!(model::ProductInput, "product", |product| effective_handle(
+    &product.handle,
+    &product.title
+));
+upserted!(model::CollectionInput, "collection", |collection| {
+    effective_handle(&collection.handle, &collection.title)
+});
+upserted!(model::PageInput, "page", |page| effective_handle(
+    &page.handle,
+    &page.title
+));
+upserted!(model::BlogInput, "blog", |blog| effective_handle(
+    &blog.handle,
+    &blog.title
+));
+upserted!(model::CustomerInput, "customer", |customer| Cow::Owned(
+    customer.email.to_lowercase()
+));
+upserted!(model::CompanyInput, "company", |company| Cow::Owned(
+    company.name.to_lowercase()
+));
+upserted!(model::GiftCardInput, |card| Cow::Owned(
+    card.code.to_uppercase()
+));
+upserted!(model::LocationInput, "location", |location| Cow::Owned(
+    location.name.to_lowercase()
+));
+upserted!(model::SellingPlanGroupInput, |group| Cow::Owned(
+    group.name.to_lowercase()
+));
+
+/// Upserts the entities of an overlay's `field` into `list`, one after the other. An entity
+/// replaces the one with its id when it gives one (an entity whose key changed stays where it
+/// was), the first with its key that this overlay did not write otherwise, else goes after the
+/// others: two entities of one key in an overlay (two companies of one name, which Shopify
+/// allows) are both kept, for the build to say that the store data cannot have both.
+fn upsert<T: Upserted>(list: &mut Vec<Sourced<T>>, incoming: Vec<T>, name: &str, field: &str) {
+    let places = places(list, &incoming);
+    for ((index, value), place) in incoming.into_iter().enumerate().zip(places) {
+        let sourced = Sourced {
+            value,
+            origin: Origin::new(name, format!("/{field}/{index}")),
+        };
+        match place {
+            Some(at) => list[at] = sourced,
+            None => list.push(sourced),
+        }
+    }
+}
+
+/// Where each of `incoming` goes in `list` as [`upsert`] says: in place of the entity at the
+/// position, or after the others (`None`). The keys and the ids of `list` are read once into
+/// maps, so that the cost grows with the length of `list` plus that of `incoming`.
+fn places<T: Upserted>(list: &[Sourced<T>], incoming: &[T]) -> Vec<Option<usize>> {
+    if incoming.is_empty() {
+        return Vec::new();
+    }
+    let keys: Vec<Cow<'_, str>> = list.iter().map(|existing| existing.value.key()).collect();
+    // The positions of each key, in order, with how many of the first ones this overlay wrote:
+    // an entity is only replaced by its key while the overlay did not write over it.
+    let mut by_key: HashMap<&str, (usize, Vec<usize>)> = HashMap::with_capacity(keys.len());
+    for (at, key) in keys.iter().enumerate() {
+        by_key.entry(key).or_default().1.push(at);
+    }
+    let mut ids = T::KIND
+        .filter(|_| incoming.iter().any(|value| value.id().is_some()))
+        .map(|kind| Ids::new(list, &keys, kind));
+    let mut written = vec![false; list.len()];
+    let mut len = list.len();
+    incoming
+        .iter()
+        .map(|value| {
+            let key = value.key();
+            let by_id = value
+                .id()
+                .and_then(|id| ids.as_ref().and_then(|ids| ids.first(id)));
+            let place = by_id.or_else(|| {
+                let (skipped, positions) = by_key.get_mut(key.as_ref())?;
+                while positions.get(*skipped).is_some_and(|&at| written[at]) {
+                    *skipped += 1;
+                }
+                positions.get(*skipped).copied()
+            });
+            let at = place.unwrap_or(len);
+            if let Some(written) = written.get_mut(at) {
+                *written = true;
+            }
+            if place.is_none() {
+                len += 1;
+            }
+            if let (Some(ids), Some(kind)) = (&mut ids, T::KIND) {
+                ids.set(
+                    at,
+                    value
+                        .id()
+                        .unwrap_or_else(|| crate::util::stable_id(kind, &key)),
+                );
+            }
+            place
+        })
+        .collect()
+}
+
+/// The id of each entity of a list while an overlay writes it ([`places`]): the one it gives,
+/// else the one the build derives from its key. With the positions of each id, in order.
+struct Ids {
+    of: Vec<u64>,
+    at: HashMap<u64, Vec<usize>>,
+}
+
+impl Ids {
+    fn new<T: Upserted>(list: &[Sourced<T>], keys: &[Cow<'_, str>], kind: &str) -> Ids {
+        let mut ids = Ids {
+            of: Vec::with_capacity(list.len()),
+            at: HashMap::with_capacity(list.len()),
+        };
+        for (existing, key) in list.iter().zip(keys) {
+            let id = existing
+                .value
+                .id()
+                .unwrap_or_else(|| crate::util::stable_id(kind, key));
+            ids.at.entry(id).or_default().push(ids.of.len());
+            ids.of.push(id);
+        }
+        ids
+    }
+
+    /// The first position of an entity with `id`.
+    fn first(&self, id: u64) -> Option<usize> {
+        self.at.get(&id)?.first().copied()
+    }
+
+    /// The entity at `at` (or after the others) has `id` now.
+    fn set(&mut self, at: usize, id: u64) {
+        if let Some(old) = self.of.get_mut(at) {
+            if *old == id {
+                return;
+            }
+            if let Some(positions) = self.at.get_mut(old)
+                && let Ok(index) = positions.binary_search(&at)
+            {
+                positions.remove(index);
+            }
+            *old = id;
+        } else {
+            self.of.push(id);
+        }
+        let positions = self.at.entry(id).or_default();
+        if let Err(index) = positions.binary_search(&at) {
+            positions.insert(index, at);
         }
     }
 }
@@ -2156,6 +2293,249 @@ mod tests {
             load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
         assert!(diagnostics.has_errors());
         assert_eq!(diagnostics.items[0].file, OVERLAY_FILE);
+    }
+
+    /// The upsert of one field as an overlay applied it before its maps: each entity looks for
+    /// its place along the whole list. With how many entities replaced one by its id among
+    /// those before the overlay, by its id among those it wrote, by its key, and were added.
+    fn upsert_one_by_one<T>(
+        list: &mut Vec<Sourced<T>>,
+        incoming: Vec<T>,
+        field: &str,
+        kind: Option<&str>,
+        key: fn(&T) -> String,
+        id: fn(&T) -> Option<u64>,
+    ) -> [usize; 4] {
+        let mut written = HashSet::new();
+        let mut counts = [0; 4];
+        for (index, value) in incoming.into_iter().enumerate() {
+            let wanted = key(&value);
+            let by_id = kind.and_then(|kind| {
+                let given = id(&value)?;
+                list.iter().position(|existing| {
+                    id(&existing.value)
+                        .unwrap_or_else(|| crate::util::stable_id(kind, &key(&existing.value)))
+                        == given
+                })
+            });
+            let position = by_id.or_else(|| {
+                list.iter().enumerate().position(|(at, existing)| {
+                    !written.contains(&at) && key(&existing.value) == wanted
+                })
+            });
+            counts[match (by_id, position) {
+                (Some(at), _) if written.contains(&at) => 1,
+                (Some(_), _) => 0,
+                (None, Some(_)) => 2,
+                (None, None) => 3,
+            }] += 1;
+            let sourced = Sourced {
+                value,
+                origin: Origin::new("(admin api)", format!("/{field}/{index}")),
+            };
+            match position {
+                Some(at) => {
+                    list[at] = sourced;
+                    written.insert(at);
+                }
+                None => {
+                    written.insert(list.len());
+                    list.push(sourced);
+                }
+            }
+        }
+        counts
+    }
+
+    #[test]
+    fn an_overlay_of_thousands_of_entities_lands_where_one_by_one_it_did() {
+        // xorshift: the same data on every run.
+        struct Random(u64);
+        impl Random {
+            fn below(&mut self, bound: u64) -> u64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                self.0 % bound
+            }
+        }
+        let random = &mut Random(0x2545_f491_4f6c_dd1d);
+        // Products of one pool of handles, given or made from the title ("Item 7" makes
+        // `item-7`), some with ids (some of one id), some without: their id is then the one
+        // their handle derives.
+        fn product(random: &mut Random, pool: u64) -> (Json, Option<u64>, u64) {
+            let n = random.below(pool);
+            let mut json = serde_json::json!({"title": format!("Item {n}"), "price": 100});
+            if random.below(10) < 7 {
+                json["handle"] = serde_json::json!(format!("item-{n}"));
+            }
+            let id = (random.below(10) < 4).then(|| 1_000 + random.below(1_500));
+            if let Some(id) = id {
+                json["id"] = serde_json::json!(id);
+            }
+            let derived = || crate::util::stable_id("product", &format!("item-{n}"));
+            (json, id, id.unwrap_or_else(derived))
+        }
+        let base: Vec<(Json, Option<u64>, u64)> =
+            (0..2_000).map(|_| product(random, 1_500)).collect();
+        let mut written: Vec<u64> = Vec::new();
+        let mut products = Vec::new();
+        for _ in 0..2_000 {
+            let (mut json, id, effective) = product(random, 1_800);
+            // The id of an entity of the files, of one this overlay wrote, of none, or its own.
+            let target = match random.below(10) {
+                0..=2 => Some(base[random.below(base.len() as u64) as usize].2),
+                3 if !written.is_empty() => {
+                    Some(written[random.below(written.len() as u64) as usize])
+                }
+                4 => Some(5_000_000 + random.below(1_000)),
+                _ => id,
+            };
+            if let Some(target) = target {
+                json["id"] = serde_json::json!(target);
+            }
+            written.push(target.unwrap_or(effective));
+            products.push(json);
+        }
+        fn email(n: u64, upper: bool) -> String {
+            format!("{}{n}@example.com", if upper { "Person" } else { "person" })
+        }
+        // Emails in either case; ids given, derived from another's email, or none.
+        fn customer(random: &mut Random, pool: u64) -> Json {
+            let n = random.below(pool);
+            let mut json = serde_json::json!({"email": email(n, random.below(2) == 0)});
+            match random.below(10) {
+                0..=3 => json["id"] = serde_json::json!(10_000 + random.below(700)),
+                4..=6 => {
+                    let other = email(random.below(700), false);
+                    json["id"] = serde_json::json!(crate::util::stable_id("customer", &other));
+                }
+                _ => {}
+            }
+            json
+        }
+        let base_customers: Vec<Json> = (0..1_000).map(|_| customer(random, 700)).collect();
+        let customers: Vec<Json> = (0..1_000).map(|_| customer(random, 900)).collect();
+        fn card(random: &mut Random, pool: u64) -> Json {
+            let n = random.below(pool);
+            let prefix = if random.below(2) == 0 { "card" } else { "CARD" };
+            serde_json::json!({"code": format!("{prefix}{n}"), "initial_value": 1000})
+        }
+        let base_cards: Vec<Json> = (0..500).map(|_| card(random, 400)).collect();
+        let cards: Vec<Json> = (0..500).map(|_| card(random, 500)).collect();
+        let removed = Removals {
+            products: (0..100)
+                .map(|_| format!("item-{}", random.below(1_800)))
+                .collect(),
+            customers: (0..50)
+                .map(|_| email(random.below(900), random.below(2) == 0))
+                .collect(),
+            gift_cards: (0..30)
+                .map(|_| format!("Card{}", random.below(500)))
+                .collect(),
+            ..Removals::default()
+        };
+
+        fn sourced<T: DeserializeOwned>(field: &str, entries: &[Json]) -> Vec<Sourced<T>> {
+            entries
+                .iter()
+                .enumerate()
+                .map(|(index, json)| Sourced {
+                    value: serde_json::from_value(json.clone()).expect("valid"),
+                    origin: Origin::new("store.json", format!("/{field}/{index}")),
+                })
+                .collect()
+        }
+        let files = MergedInput {
+            products: sourced(
+                "products",
+                &base
+                    .iter()
+                    .map(|(json, ..)| json.clone())
+                    .collect::<Vec<_>>(),
+            ),
+            customers: sourced("customers", &base_customers),
+            gift_cards: sourced("gift_cards", &base_cards),
+            ..MergedInput::default()
+        };
+        let overlay = serde_json::json!({
+            "products": products, "customers": customers, "gift_cards": cards
+        });
+
+        let mut merged = files.clone();
+        let mut diagnostics = Diagnostics::new();
+        apply_removals(&mut merged, &removed);
+        apply_overlay(&mut merged, "(admin api)", &overlay, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+
+        // The same, one by one, with the keys as they were made.
+        let mut expected = files;
+        for (index, product) in expected.products.iter_mut().enumerate() {
+            let date = undated(index).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            product.value.created_at = product.value.created_at.take().or(Some(date));
+        }
+        let handle = |product: &model::ProductInput| {
+            product
+                .handle
+                .clone()
+                .unwrap_or_else(|| crate::util::handleize(&product.title))
+        };
+        expected
+            .products
+            .retain(|product| !removed.products.contains(&handle(&product.value)));
+        let any_case = |keys: &[String], key: &str| {
+            keys.iter()
+                .any(|candidate| candidate.to_lowercase() == key.to_lowercase())
+        };
+        expected
+            .customers
+            .retain(|customer| !any_case(&removed.customers, &customer.value.email));
+        expected
+            .gift_cards
+            .retain(|card| !any_case(&removed.gift_cards, &card.value.code));
+        let input: model::StoreInput = serde_json::from_value(overlay).expect("valid");
+        let counts = upsert_one_by_one(
+            &mut expected.products,
+            input.products,
+            "products",
+            Some("product"),
+            handle,
+            |product| product.id,
+        );
+        // Each way an entity finds its place is taken, many times.
+        assert!(counts.iter().all(|count| *count > 50), "{counts:?}");
+        let counts = upsert_one_by_one(
+            &mut expected.customers,
+            input.customers,
+            "customers",
+            Some("customer"),
+            |customer| customer.email.to_lowercase(),
+            |customer| customer.id,
+        );
+        assert!(counts.iter().all(|count| *count > 10), "{counts:?}");
+        let counts = upsert_one_by_one(
+            &mut expected.gift_cards,
+            input.gift_cards,
+            "gift_cards",
+            None,
+            |card| card.code.to_uppercase(),
+            |_| None,
+        );
+        assert!(counts[2] > 50 && counts[3] > 50, "{counts:?}");
+
+        fn rows<T: Serialize>(list: &[Sourced<T>]) -> Vec<String> {
+            list.iter()
+                .map(|entry| {
+                    let value = serde_json::to_string(&entry.value).expect("json");
+                    format!("{} {} {value}", entry.origin.file, entry.origin.pointer)
+                })
+                .collect()
+        }
+        assert_eq!(rows(&merged.products), rows(&expected.products));
+        assert_eq!(rows(&merged.customers), rows(&expected.customers));
+        assert_eq!(rows(&merged.gift_cards), rows(&expected.gift_cards));
+        // The removals and the overlay changed the lists.
+        assert!(merged.products.len() > 2_000 && merged.customers.len() > 1_000);
     }
 
     #[test]
