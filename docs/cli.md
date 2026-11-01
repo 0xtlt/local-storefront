@@ -55,6 +55,7 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--app <dir>` | `LSF_APP` | A Shopify app. `/checkout` then runs its Functions and shows its checkout UI extensions, and `/account` shows its customer account UI extensions. See [checkout](checkout.md). |
 | `--extension <handle>` | | With `--app`: uses only this extension of the app. Repeat it for several. Without it, every extension is used. |
 | `--build` | | With `--app`: runs the build command of each Function first. |
+| `--no-functions` | | With `--app`: serves the app's UI extensions and its Admin API, but runs none of its Functions. For a backend's tests, whose orders a Function that fails would block: a discount of the data whose Function is not run is left out. A Function named with `--extension` is refused; not with `--watch`. |
 | `--watch` | | With `--app`: builds a Function again when its files change, and reloads the open pages (it implies `--live-reload`). At start, builds only the Functions that have no module or changed since the last watch; with `--build`, all of them. See [watch mode](checkout.md#watch-mode). |
 | `--variant <standard\|shop>` | | With `--app`: the look of the checkout page, `standard` by default. |
 | `--app-url <url>` | `LSF_APP_URL` | Where the backend of the app listens (`http://localhost:3000`). The webhooks of `shopify.app.toml` go there (a relative `uri` is joined to it; an absolute one on the origin of `application_url` is moved to it), and so do the OAuth redirects and the launch of the embedded app. Without it, `application_url`. See [Admin API](admin.md). |
@@ -70,9 +71,10 @@ folder, then, once it takes requests, a line that starts with
 `--quiet`, each request gets a line (`200 GET / 39.1ms`), with the reason of a 404 above it.
 
 With `--app`, the lines of the app come before `ready:`: how many checkout scenarios the data
-has, the [Admin API](admin.md) of the store and its token, the client secret it signs with and
-where that secret comes from, the webhooks of the app, and its proxy. After `ready:`, with a
-theme, the address of the home page of the checkout, then `watch:` with `--watch`:
+has (when the app serves a Function), the [Admin API](admin.md) of the store and its token, the
+client secret it signs with and where that secret comes from, the webhooks of the app, and its
+proxy. After `ready:`, with a theme, the address of the home page of the checkout, then `watch:`
+with `--watch`:
 
 ```text
 scenarios: 10
@@ -84,10 +86,18 @@ ready:  http://127.0.0.1:9292/   (status and control API: http://127.0.0.1:9292/
 home:   http://127.0.0.1:9292/__lsf/checkouts   (extensions and checkout scenarios of the app)
 ```
 
-Without `--app`, it prints none of these. The token is the same every run for a shop and an
-app; a tool reads it from `GET /__lsf/admin` (`shops[0].token`). When the data changes on disk
-(or `POST /__lsf/reload`), the shops of the Admin API are seeded again, and the server says when
-that drops what the Admin API had changed.
+Without `--app`, it prints none of these. An app without an `extensions` directory is a
+backend, and its line says so: `app:    ../my-app (no extensions: the Admin API, webhooks and
+the app proxy)`. The token is the same every run for a shop and an app; a tool reads it from
+`GET /__lsf/admin` (`shops[0].token`). When the data changes on disk (or `POST /__lsf/reload`),
+the shops of the Admin API are seeded again, and the server says when that drops what the Admin
+API had changed.
+
+While it runs, a webhook the backend refuses (`401`, `403`) gets one line, at its first refusal,
+`--quiet` or not, naming the secret lsf signed it with as `client secret:` does:
+`webhooks: products/create → http://localhost:3000/webhooks answered 401: lsf signed it with the
+client secret from SHOPIFY_API_SECRET of ../my-app/.env: does the backend verify with the same
+one?`.
 
 It runs until it is stopped (Ctrl-C, `SIGTERM`, `SIGHUP`): then it finishes the requests it is
 answering, for 3 seconds at most, abandons the rest, and exits with `0`. It exits with `2`
@@ -183,11 +193,17 @@ fails    my-discount · cart.lines.discounts.generate.run: the Function trapped:
 ```
 
 A Function that ran in no scenario, such as a discount Function no scenario's discount names, is
-a warning: nothing checked it, and the exit code stays the same.
+a warning: nothing checked it, and the exit code stays the same. The last line, the summary,
+counts it too, rather than saying that every Function ran:
 
 ```text
 warning  volume-discount: ran in no scenario, so nothing checks it (a discount Function runs only for a discount that names it: …)
+checked 8 of 8 scenarios in 0.4 s: no Function failed, 1 Function ran in no scenario
 ```
+
+When every Function ran somewhere and none failed, the summary ends with `every Function ran`.
+When something failed, it counts the failures and the invalid scenarios:
+`1 failure, 0 invalid scenarios`.
 
 Exiting with `0` means no Function failed where it ran, not that it decided right: assert that
 with `app function run --format json`. CI: [checkout](checkout.md#in-ci).
@@ -258,7 +274,9 @@ app, else the demo store): the first product for `products/update`, the first or
 signs it with the client secret (`X-Shopify-Hmac-Sha256`), and posts it with Shopify's headers,
 `X-Shopify-Shop-Domain` the shop of the data. It prints the request it sent and the answer of the
 backend. To send the webhook of a given record, use `POST /__lsf/webhooks/trigger` with its
-`id` while a server runs.
+`id` while a server runs. In the demo store, the first order, `#1001`, is fulfilled already: to
+test a fulfillment handler, [place an order](admin.md#place-an-order), or trigger
+`{"topic": "orders/create", "id": "gid://shopify/Order/7888001690128"}` (`#1002`).
 
 ```bash
 npx local-storefront app webhook trigger --topic products/update --app ../my-app --app-url http://localhost:3000
@@ -273,18 +291,22 @@ a `shopify app dev` that is not running. As Shopify's, a triggered webhook is no
 
 Webhooks stay on this machine. One goes to another host only when that host is the scheme,
 host and port of `--app-url`, or the `--address` given: otherwise the command sends nothing,
-prints `error: lsf sends webhooks to this machine or to --app-url only: <url> is neither; …`
-and exits with `2`. A server logs the same delivery `not_sent`. So `application_url`, often your production
-backend or a dead tunnel, never gets one by accident.
+prints `error: lsf sends webhooks to this machine or to --app-url only: <url> is neither; give
+--app-url http://localhost:<port> (your backend) or --address <url>` and exits with `2`. A
+server logs the same delivery `not_sent`, and says to start lsf with `--app-url`. So
+`application_url`, often your production backend or a dead tunnel, never gets one by accident.
 
 The secret is the app's. Without the app (no `--app`, and run outside its folder), its `.env`
 is not read: give `--client-secret` or set `SHOPIFY_API_SECRET`. Without either, lsf signs with
-its own secret, and the backend answers `401`.
+its own secret, and the backend answers `401`. A `401` or `403` says which secret lsf signed
+with: `failed: answered 401 (1 attempt): lsf signed it with lsf-local-client-secret, its own:
+give lsf the backend's secret (--client-secret, or --app for the SHOPIFY_API_SECRET of its
+.env)`.
 
 | Option | Environment variable | What it does |
 |---|---|---|
 | `--topic <topic>` | | The topic, as Shopify writes it (`orders/create`) or as the GraphQL enum does (`ORDERS_CREATE`). Every topic of the API version (`--api-version`) and the compliance topics (`customers/data_request`, `customers/redact`, `shop/redact`). A topic close to an existing one is suggested. |
-| `--address <url>` | | Where to send it: `https://…`, or `http://localhost:<port>/<path>` (any address of this machine). |
+| `--address <url>` | | Where to send it: `https://…`, or `http://localhost:<port>/<path>` (any address of this machine: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`). |
 | `--api-version <version>` | | The version the payload is built in: `2026-10` (the default) or another lsf knows (`2027-01`). A topic the version does not have is refused. |
 | `--delivery-method <method>` | | `http`, `google-pub-sub` or `event-bridge`; without it, what the address says. lsf delivers over HTTP only: the other two are refused. |
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret of the signature. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else lsf's local secret, `lsf-local-client-secret`. |

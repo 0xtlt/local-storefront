@@ -89,13 +89,14 @@ test('a logged-in customer sees their cart', async ({ page }) => {
   expect(response.ok()).toBeTruthy();
 
   await page.goto('/cart');
-  await expect(
-    page.getByRole('main').getByRole('link', { name: 'Organic Cotton T-Shirt', exact: true }),
-  ).toBeVisible();
+  const lines = page.getByRole('main').getByRole('table');
+  await expect(lines.getByRole('link', { name: 'Organic Cotton T-Shirt', exact: true })).toBeVisible();
 });
 ```
 
-Look in `main`: the menu of the header often names the same products.
+Look in the cart's table, where Dawn and Horizon put the lines of the cart. The menu of the
+header, and the products listed under the cart (Horizon's "You may also like"), often name the
+same products.
 
 Variants are referenced by SKU, by id, or by a product handle (its first variant). When the body
 is wrong the answer is `422` with the same diagnostics as
@@ -503,10 +504,12 @@ jobs:
       - run: npx local-storefront check # every Liquid file parses, and Shopify's strict parser accepts it
       - name: Render every page, and fail on a Liquid error
         run: |
+          npx local-storefront routes > /dev/null # stops the step when `routes` cannot run
           for route in $(npx local-storefront routes); do
-            npx local-storefront render "$route" --strict > /dev/null || exit 1
+            npx local-storefront render "$route" --strict > /dev/null ||
+              { echo "::error::render failed: $route"; exit 1; }
           done
-      - run: npx local-storefront fmt --check # once the theme is formatted
+      # - run: npx local-storefront fmt --check # uncomment once `fmt` has run in its own commit
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
 ```
@@ -514,9 +517,11 @@ jobs:
 - `check` reads the files and renders none. A Liquid error at render time (a division by zero)
   shows only when the page renders: with `render --strict`, or in a test.
 - `routes` lists every page of the store data, and `render` answers each one, so the loop
-  renders the whole store. `/account`, a page of lsf's, is not listed. Name the variable
-  `route`, not `path`: in zsh, `path` is `PATH`, and the loop would lose `npx`.
+  renders the whole store. `/account`, a page of lsf's, is not listed. A `for` over `$(…)`
+  ignores the exit code of `routes`: the first line of the step stops it when `routes` fails (a
+  wrong `--theme`). Name the variable `route`, not `path`: in zsh, `path` is `PATH`, and the
+  loop would lose `npx`.
 - `fmt --check` fails on a theme no one has formatted: Shopify's Horizon has 28 files to
-  format. Run `npx local-storefront fmt` first, in a commit of its own, then add the step.
+  format. Run `npx local-storefront fmt` first, in a commit of its own, then uncomment the step.
 - The steps before Playwright take a few seconds, and fail before the browser tests start.
 - For an app: [its checkout in CI](checkout.md#in-ci), and [its backend](admin.md#test-your-backend).

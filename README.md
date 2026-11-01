@@ -68,12 +68,14 @@ Each test gets its own cart and customer, so tests run in parallel. One request 
 session in the state a test needs:
 
 ```ts
-await page.request.put('/__lsf/session', {
+// The demo store's customer and SKU (npx local-storefront init): put your own.
+const response = await page.request.put('/__lsf/session', {
   data: {
     customer: 'jane.doe@example.com',
     cart: { items: [{ variant: 'TEE-BLK-M', quantity: 2 }] },
   },
 });
+expect(response.ok()).toBeTruthy(); // 422 when the data has no such customer or SKU
 await page.goto('/cart');
 ```
 
@@ -106,8 +108,9 @@ Serves a local GraphQL Admin API (version 2026-10, and the 2027-01 release candi
 the app reach its backend, signed as Shopify signs them. The backend runs offline, against the
 same data every run, and what it changes shows on the storefront and in the checkout at once.
 `npx local-storefront app webhook trigger --topic app/uninstalled --app ../my-app --app-url http://localhost:3000`
-sends one webhook on demand. Webhooks go to this machine, to `--app-url` or to the `--address`
-you give, and nowhere else. Guide: [Admin API](docs/admin.md).
+sends one webhook on demand, of a topic the app's `shopify.app.toml` subscribes to (the React
+Router template's subscribes to `app/uninstalled`). Webhooks go to this machine, to `--app-url`
+or to the `--address` you give, and nowhere else. Guide: [Admin API](docs/admin.md).
 
 ### Get ready for Shopify's strict Liquid parser
 

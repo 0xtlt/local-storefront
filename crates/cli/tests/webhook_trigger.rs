@@ -295,6 +295,46 @@ fn a_failed_delivery_exits_with_1() {
 }
 
 #[test]
+fn a_refused_delivery_says_which_secret_lsf_signed_it_with() {
+    let (url, _) = backend(401);
+    let trigger = |secret: &[&str]| {
+        let mut args = vec![
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "app/uninstalled",
+            "--address",
+            &url,
+        ];
+        args.extend(secret);
+        lsf(&std::env::temp_dir(), &args)
+    };
+    // Without the app, its `.env` is not read: lsf's own secret, and how to give the backend's.
+    let output = trigger(&[]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains(
+            "failed: answered 401 (1 attempt): lsf signed it with lsf-local-client-secret, its \
+             own: give lsf the backend's secret (--client-secret, or --app for the \
+             SHOPIFY_API_SECRET of its .env)"
+        ),
+        "{}",
+        text(&output)
+    );
+    let output = trigger(&["--client-secret", "s3cr3t"]);
+    assert!(
+        text(&output).contains(
+            "failed: answered 401 (1 attempt): lsf signed it with the client secret from \
+             --client-secret: does the backend verify with the same one?"
+        ),
+        "{}",
+        text(&output)
+    );
+    assert!(!text(&output).contains("s3cr3t"), "{}", text(&output));
+}
+
+#[test]
 fn what_cannot_be_sent_is_refused_with_why() {
     let dir = std::env::temp_dir();
     let refuse = |args: &[&str], said: &str| {
@@ -372,7 +412,9 @@ api_version = "2026-10"
   uri = "https://hooks.example.net/orders"
 "#,
     );
-    let advice = "start lsf with --app-url http://localhost:<port> (your backend)";
+    // `trigger` starts no server: it says what to give it.
+    let advice = "is neither; give --app-url http://localhost:<port> (your backend) or \
+                  --address <url>";
     // A relative `uri`, and no `--app-url`: it would join `application_url`.
     let output = lsf(
         &app.0,
@@ -388,6 +430,7 @@ api_version = "2026-10"
         text(&output)
     );
     assert!(text(&output).contains(advice), "{}", text(&output));
+    assert!(!text(&output).contains("start lsf"), "{}", text(&output));
     // An absolute `uri` on another host, `--app-url` or not.
     let output = lsf(
         &app.0,
@@ -424,4 +467,63 @@ api_version = "2026-10"
     let received = received.lock().unwrap();
     assert_eq!(received.len(), 1);
     assert_eq!(received[0].0, "/webhooks/products");
+}
+
+/// A name under `localhost` is this machine (RFC 6761): sent without `--app-url`, to the
+/// loopback whatever the system resolver says, with its `Host`.
+#[test]
+fn a_name_under_localhost_is_this_machine() {
+    let (url, received) = backend(200);
+    let port = url.rsplit(':').next().unwrap();
+    let app = App::new(
+        "localhost-name",
+        &format!(
+            r#"
+client_id = "abc"
+application_url = "http://app.localhost:{port}"
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["products/update"]
+  uri = "/webhooks/products"
+"#
+        ),
+    );
+    let output = lsf(
+        &app.0,
+        &["app", "webhook", "trigger", "--topic", "products/update"],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let address = format!("http://hooks.localhost:{port}/direct");
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "products/update",
+            "--address",
+            &address,
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let received = received.lock().unwrap();
+    let seen: Vec<(&str, Option<&str>)> = received
+        .iter()
+        .map(|(path, headers, _)| (path.as_str(), header(headers, "host")))
+        .collect();
+    let (app_host, hooks_host) = (
+        format!("app.localhost:{port}"),
+        format!("hooks.localhost:{port}"),
+    );
+    assert_eq!(
+        seen,
+        [
+            ("/webhooks/products", Some(app_host.as_str())),
+            ("/direct", Some(hooks_host.as_str())),
+        ]
+    );
 }

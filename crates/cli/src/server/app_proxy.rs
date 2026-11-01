@@ -625,6 +625,7 @@ mod tests {
                     extensions: Vec::new(),
                     variant: crate::checkout::Variant::Standard,
                     standalone,
+                    no_functions: false,
                 }),
             },
         )

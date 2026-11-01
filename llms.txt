@@ -4,7 +4,7 @@
 
 Commands are non-interactive. Exit codes: 0 nothing to report, 1 something to fix, 2 the command could not run. Results go to stdout, messages to stderr. `--format json` prints one JSON document for `validate`, `check`, `app check`, `app function run` and `app webhook trigger`; `routes` prints one path per line, `render` the HTML; the other commands print text.
 
-The links below are relative to this file. Read the docs of the version you run (`npx local-storefront --version`): installed from npm, they are in `node_modules/local-storefront/` (`llms.txt`, `docs/`); 0.2.0 and earlier ship none, so read them at the tag, `https://raw.githubusercontent.com/0xtlt/local-storefront/v0.2.0/docs/agents.md`.
+The links below are relative to this file. Read the docs of the version you run (`npx local-storefront --version`): installed from npm, they are in `node_modules/local-storefront/` (`llms.txt`, `docs/`); 0.2.0 and earlier ship none, so read them at the tag, `https://raw.githubusercontent.com/0xtlt/local-storefront/v0.2.0/docs/agents.md`. An `lsf` built from a checkout of the repository, not installed from npm, has the docs of that checkout, in its `docs/`, whatever `--version` says.
 
 ## Start here
 
@@ -25,6 +25,7 @@ The links below are relative to this file. Read the docs of the version you run 
 ## Reference
 
 - [Control API](docs/control-api.md): `/__lsf` endpoints, sessions, response headers
+- [Admin API reference](docs/admin-reference.md): what the local Admin API simulates, family by family: billing, bulk operations, discounts, staged uploads
 - [Field reference](docs/data-reference.md): every field of the store data
 - [Compatibility](docs/compatibility.md): what matches Shopify, and the known differences
 

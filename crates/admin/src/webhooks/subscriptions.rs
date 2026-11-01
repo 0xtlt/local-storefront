@@ -227,13 +227,19 @@ impl AppUrls {
     }
 }
 
-/// Why a webhook to `url` is not sent: it is neither on this machine nor on `--app-url`
-/// ([`AppUrls::may_send_to`]).
+/// Why the server does not send a webhook to `url`: it is neither on this machine nor on
+/// `--app-url` ([`AppUrls::may_send_to`]).
 pub fn off_machine(url: &str) -> String {
-    format!(
-        "lsf sends webhooks to this machine or to --app-url only: {url} is neither; start lsf \
-         with --app-url http://localhost:<port> (your backend)"
+    off_machine_with(
+        url,
+        "start lsf with --app-url http://localhost:<port> (your backend)",
     )
+}
+
+/// [`off_machine`], with what to do about it: `lsf app webhook trigger` starts no server, and
+/// takes an `--address` too.
+pub fn off_machine_with(url: &str, advice: &str) -> String {
+    format!("lsf sends webhooks to this machine or to --app-url only: {url} is neither; {advice}")
 }
 
 /// Where a request to a URL connects: its scheme, host and port, read as the HTTP client of the
@@ -268,14 +274,29 @@ impl Endpoint {
         })
     }
 
-    /// `localhost`, `127.0.0.0/8` or `::1`.
     fn is_loopback(&self) -> bool {
-        self.host == "localhost"
-            || self
-                .host
-                .parse::<IpAddr>()
-                .is_ok_and(|address| address.is_loopback())
+        is_loopback_host(&self.host)
     }
+}
+
+/// Whether a host is this machine: `localhost` and the names under it (`app.localhost`, which
+/// RFC 6761 reserves for the loopback, and which the deliveries connect to the loopback whatever
+/// the system resolver says: [`super::delivery`]), `127.0.0.0/8` or `::1`. Not `0.0.0.0`, nor
+/// `::ffff:127.0.0.1`. `host` is without the brackets of an IPv6 address.
+pub fn is_loopback_host(host: &str) -> bool {
+    is_localhost_name(host)
+        || host
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+/// `localhost`, or a name under it (`app.localhost`): RFC 6761, section 6.3.
+pub fn is_localhost_name(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    host == "localhost"
+        || host
+            .strip_suffix(".localhost")
+            .is_some_and(|label| !label.is_empty())
 }
 
 /// Where a subscription delivers.
@@ -401,11 +422,7 @@ pub fn is_local_http(url: &str) -> bool {
         Some(ipv6) => ipv6.split(']').next().unwrap_or(""),
         None => host.rsplit_once(':').map_or(host, |(host, _)| host),
     };
-    host.eq_ignore_ascii_case("localhost")
-        || host.to_ascii_lowercase().ends_with(".localhost")
-        || host
-            .parse::<IpAddr>()
-            .is_ok_and(|address| address.is_loopback())
+    is_loopback_host(host)
 }
 
 /// What `webhookSubscriptionCreate` and `webhookSubscriptionUpdate` take,
@@ -766,8 +783,15 @@ mod tests {
             "http://127.0.0.1:3000/x",
             "http://127.1.2.3/x",
             "http://[::1]:3000/x",
+            // RFC 6761 reserves the names under `localhost` for the loopback.
+            "http://app.localhost/x",
+            "HTTP://Shop.App.LOCALHOST:3000/x",
         ] {
             assert!(local.may_send_to(url), "{url} is this machine");
+            assert!(
+                url.starts_with("https:") || is_local_http(url),
+                "{url} is plain HTTP a subscription may have"
+            );
         }
         for url in [
             // `application_url` is not where the user pointed lsf.
@@ -775,13 +799,18 @@ mod tests {
             "https://hooks.example.com/x",
             // What the client connects to is the host after the user info.
             "http://localhost@hooks.example.com/x",
+            "http://app.localhost@hooks.example.com/x",
             "http://localhost.example.com/x",
-            "http://app.localhost/x",
+            "http://applocalhost/x",
             "http://0.0.0.0:3000/x",
             "http://[::ffff:127.0.0.1]/x",
             "not a url",
         ] {
             assert!(!local.may_send_to(url), "{url} is not this machine");
+            assert!(
+                !is_local_http(url),
+                "{url} is no plain HTTP to this machine"
+            );
         }
         // The origin of `--app-url`, wherever it is: scheme, host and port.
         let pointed = urls(

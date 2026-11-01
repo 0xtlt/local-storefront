@@ -788,7 +788,12 @@ impl AdminApi {
         if trimmed == "/__lsf/webhooks" || trimmed.starts_with("/__lsf/webhooks/") {
             return self
                 .webhooks
-                .handle(request, &|trigger| self.build_trigger(trigger));
+                .handle(request, &|trigger| self.build_trigger(trigger), &|| {
+                    self.all_shops()
+                        .into_iter()
+                        .map(|(domain, _)| domain)
+                        .collect()
+                });
         }
         None
     }

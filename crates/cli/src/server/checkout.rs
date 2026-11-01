@@ -23,8 +23,7 @@ use super::checkout_account::{self, Identity};
 use super::reply::{Reply, cache, content_type};
 use super::{Incoming, SESSION_COOKIE, ServerState, SessionEntry, cart_token_of, home};
 use crate::checkout::{
-    CheckoutOptions, Variant, apply_scenario, config_for, scenario_named, selection_for,
-    translations,
+    CheckoutOptions, Variant, apply_scenario, config_for, scenario_named, translations,
 };
 
 /// Where the files of the page are served from.
@@ -453,7 +452,7 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
         Ok(app) => app,
         Err(problem) => return notice(500, "The app cannot be read", &[problem], &[]),
     };
-    if let Err(problem) = selection_for(&app, &options.extensions, Some(scenario)) {
+    if let Err(problem) = options.selection(&app, Some(scenario)) {
         return notice(
             422,
             &format!("The scenario {name} has errors"),
@@ -548,7 +547,7 @@ pub(super) fn run_scenario(
         .as_deref()
         .and_then(|iso| store.language(iso))
         .unwrap_or_else(|| store.primary_language());
-    let selection = selection_for(app, &options(state).extensions, Some(scenario))?;
+    let selection = options(state).selection(app, Some(scenario))?;
     Ok(price_with(
         app,
         &selection,
@@ -637,7 +636,7 @@ fn price(
     let app = state.load_app(&options.app_dir)?;
     // The scenario the checkout opened from sets it up, as long as it exists and is valid.
     let scenario = scenario_named(store, checkout.scenario.as_deref());
-    let selection = selection_for(&app, &options.extensions, scenario)?;
+    let selection = options.selection(&app, scenario)?;
     let result = price_with(
         &app,
         &selection,

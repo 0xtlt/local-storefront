@@ -66,7 +66,9 @@ the same data every run.
   the backend makes with `webhookSubscriptionCreate` are delivered to the backend:
   - with Shopify's headers and HMAC;
   - retried after 1, 5 and 15 s;
-  - filtered by `filter` and `include_fields`.
+  - filtered by `filter` and `include_fields`;
+  - refused by the backend (`401`, `403`): the delivery's `reason`, one line of the server and
+    `lsf app webhook trigger` name the secret lsf signed it with, as `client secret:` does.
 
   Payloads follow Shopify's 2026-10 examples, for every topic Shopify publishes an example of
   (224 of the 227); the other three are logged, never sent with a made-up body. The storefront's
@@ -74,20 +76,24 @@ the same data every run.
   order becomes an abandoned checkout the backend reads. `lsf app webhook trigger` sends one on
   demand, compliance topics included, as `shopify app webhook trigger` does (`--format json`
   for a tool). After an uninstall, nothing is delivered for the shop but `app/uninstalled`.
-- **Webhooks stay on this machine.** lsf sends one to this machine, to `--app-url`, or to the
-  `--address` you give, nowhere else: a subscription that points at your production backend
-  or a stale tunnel is logged `not_sent`, with why, and `lsf app webhook trigger` sends nothing
-  and exits with `2`. Give `--app-url http://localhost:<port>`: the start lines say when it is
-  missing.
+- **Webhooks stay on this machine.** lsf sends one to this machine (`localhost`,
+  `*.localhost`, `127.0.0.0/8`, `::1`), to `--app-url`, or to the `--address` you give, nowhere
+  else: a subscription that points at your production backend or a stale tunnel is logged
+  `not_sent`, with why, and `lsf app webhook trigger` sends nothing and exits with `2`. Give
+  `--app-url http://localhost:<port>`: the start lines say when it is missing. A name under
+  `localhost` (`app.localhost`) goes to the loopback whatever your system's resolver says.
 - **The webhook log, for tests.** `GET /__lsf/webhooks` lists the deliveries, filtered by
   `topic`, `state`, `shop` (`test-1` or `test-1.myshopify.com`), `resource` (the GID of a
   record: the order a test placed) and `since` (a delivery's id). `?wait=1` waits for one that
   matches every filter. Every answer has `last`, the newest id, to pass as `since` next time:
-  a test no longer gets another test's webhook. [Control API](docs/control-api.md#webhook-deliveries).
+  a test no longer gets another test's webhook. A wait that could only time out (a shop lsf
+  does not have, a topic no subscription covers) answers `422` at once.
+  [Control API](docs/control-api.md#webhook-deliveries).
 - **The start lines of an app.** With `--app`, the Admin API's URL and token, where the client
   secret came from, where the webhooks go and the app proxy are printed before `ready:`: a tool
   that reads up to `ready:` has the token. Without `--app`, none of them (`GET /__lsf/admin`
-  has the token).
+  has the token). An app without an `extensions` directory is said to be a backend, in one
+  line.
 - **The app proxy.** A storefront request under the prefix of `[app_proxy]` goes to the backend
   with Shopify's parameters and signature. A Liquid answer is rendered in the theme's layout.
 - **Billing.** `appSubscriptionCreate` and `appPurchaseOneTimeCreate` lead to a local approval
@@ -102,6 +108,8 @@ the same data every run.
   in `GET /__lsf/admin/outbox`.
 - **New options:**
   - `--app-url`: where the backend listens.
+  - `--no-functions`: the app's UI extensions and Admin API, and none of its Functions, for a
+    backend's tests.
   - `--client-secret`: else `SHOPIFY_API_SECRET`, else the app's `.env`.
   - `--admin-throttle`.
   - `--admin-versions`: the API versions served.
@@ -112,7 +120,9 @@ the same data every run.
     downloaded; `PUT /__lsf/admin/sources?url=` stubs one from a test.
 - **`lsf app check --build`** builds the extensions first, for a clone where `dist/` is not
   committed. `app check` also warns about a Function that ran in no scenario, so that nothing
-  checks it (`ranInNoScenario` in JSON); the exit code does not change. A missing build says
+  checks it (`ranInNoScenario` in JSON), and its summary counts it (`no Function failed, 1
+  Function ran in no scenario`); the exit code does not change. `app check --help` describes
+  the JSON it prints. A missing build says
   to run `lsf app build <handle>`.
 - **The docs ship in the npm package.** `node_modules/local-storefront/` has the `llms.txt`,
   `docs/` and `CHANGELOG.md` of the version you installed, for a tool or an agent to read
@@ -135,6 +145,8 @@ the same data every run.
 
 ### Fixed
 
+- **A control API body that is JSON is read as JSON** without `Content-Type: application/json`
+  (`fetch` sends a string as `text/plain`): `PUT /__lsf/session` used to read it as a form.
 - **`lsf routes` no longer lists `/account`**, a page of lsf's that `render --strict` refuses:
   a loop of `render --strict` over `routes` passes on a stock theme. `GET /__lsf/status` lists
   the same routes.

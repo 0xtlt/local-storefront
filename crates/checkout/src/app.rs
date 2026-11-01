@@ -43,6 +43,27 @@ impl App {
             .find(|extension| extension.handle == handle)
     }
 
+    /// Leaves out the Functions, and what is said of them: `--no-functions`, which serves the
+    /// UI extensions alone.
+    pub fn without_functions(&mut self) {
+        let functions: Vec<String> = self
+            .functions
+            .drain(..)
+            .map(|function| function.handle)
+            .collect();
+        self.diagnostics.retain(|diagnostic| {
+            diagnostic
+                .extension
+                .as_ref()
+                .is_none_or(|handle| !functions.contains(handle))
+        });
+    }
+
+    /// Whether the app has an `extensions` directory: one without is a backend alone.
+    pub fn has_extensions_directory(&self) -> bool {
+        self.root.join("extensions").is_dir()
+    }
+
     /// The handles of the Functions and checkout UI extensions, in the order they were found.
     pub fn handles(&self) -> Vec<&str> {
         self.functions
@@ -366,6 +387,9 @@ impl fmt::Display for Diagnostic {
     }
 }
 
+/// What [`load`] warns of an app without an `extensions` directory.
+pub const NO_EXTENSIONS: &str = "the app has no `extensions` directory";
+
 /// The extensions the checkout uses. Every extension unless the user named some.
 #[derive(Clone, Debug, Default)]
 pub struct Selection {
@@ -489,7 +513,7 @@ pub fn load(dir: &Path) -> Result<App, String> {
                 }
             }
         }
-        Err(_) => app.warn(None, "the app has no `extensions` directory".to_string()),
+        Err(_) => app.warn(None, NO_EXTENSIONS.to_string()),
     }
     files.sort();
     for file in files {

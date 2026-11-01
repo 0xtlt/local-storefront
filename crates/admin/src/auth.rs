@@ -32,6 +32,45 @@ pub enum SecretSource {
     Default,
 }
 
+impl SecretSource {
+    /// Where `secret` came from, as the start line `client secret:` says it: `from
+    /// SHOPIFY_API_SECRET of ./my-app/.env`, `dotenv` the `.env` of the app. lsf's own is said by
+    /// its value, which is no secret, so that a webhook the backend refuses has a first place to
+    /// look.
+    pub fn describe(self, secret: &str, dotenv: Option<&Path>) -> String {
+        match self {
+            SecretSource::Explicit => "from --client-secret".to_string(),
+            SecretSource::Environment => "from SHOPIFY_API_SECRET of the environment".to_string(),
+            SecretSource::DotEnv => format!(
+                "from SHOPIFY_API_SECRET of {}",
+                dotenv.map_or_else(|| ".env".to_string(), |file| file.display().to_string())
+            ),
+            SecretSource::Default => format!(
+                "{secret}   (lsf's own: give --client-secret, or SHOPIFY_API_SECRET in the app's .env)"
+            ),
+        }
+    }
+
+    /// What a webhook the backend refuses (`401`, `403`) says of its signature: the secret lsf
+    /// signed it with, by where it came from ([`SecretSource::describe`]). `dotenv` is the `.env`
+    /// of the app, `None` without one.
+    pub fn refusal(self, secret: &str, dotenv: Option<&Path>) -> String {
+        match self {
+            SecretSource::Default => format!(
+                "lsf signed it with {secret}, its own: give lsf the backend's secret ({})",
+                match dotenv {
+                    Some(_) => "--client-secret, or SHOPIFY_API_SECRET in the app's .env",
+                    None => "--client-secret, or --app for the SHOPIFY_API_SECRET of its .env",
+                }
+            ),
+            other => format!(
+                "lsf signed it with the client secret {}: does the backend verify with the same one?",
+                other.describe(secret, dotenv)
+            ),
+        }
+    }
+}
+
 /// The client secret of the app: the one given explicitly, else `SHOPIFY_API_SECRET` of the
 /// environment, else that of the `.env` at the root of the app, else
 /// [`DEFAULT_CLIENT_SECRET`].
@@ -115,5 +154,32 @@ mod tests {
             ("given".to_string(), SecretSource::Explicit)
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_refused_webhook_names_the_secret_by_where_it_came_from() {
+        let dotenv = Path::new("./my-app/.env");
+        assert_eq!(
+            SecretSource::DotEnv.refusal("s3cr3t", Some(dotenv)),
+            "lsf signed it with the client secret from SHOPIFY_API_SECRET of ./my-app/.env: \
+             does the backend verify with the same one?"
+        );
+        assert_eq!(
+            SecretSource::Explicit.refusal("s3cr3t", None),
+            "lsf signed it with the client secret from --client-secret: does the backend verify \
+             with the same one?"
+        );
+        // lsf's own is no secret: its value, and where to give the backend's.
+        assert_eq!(
+            SecretSource::Default.refusal(DEFAULT_CLIENT_SECRET, Some(dotenv)),
+            "lsf signed it with lsf-local-client-secret, its own: give lsf the backend's secret \
+             (--client-secret, or SHOPIFY_API_SECRET in the app's .env)"
+        );
+        // Without an app, no `.env` is read.
+        assert!(
+            SecretSource::Default
+                .refusal(DEFAULT_CLIENT_SECRET, None)
+                .ends_with("(--client-secret, or --app for the SHOPIFY_API_SECRET of its .env)")
+        );
     }
 }

@@ -8,7 +8,7 @@ after a change, one section with another. To see what a page would cost Shopify,
 > **Find the slow snippet**
 >
 > 1. `npx local-storefront profile <path>`: read "Slowest on their own", the files that take
->    the most time.
+>    the most time. Skip `render`, the page as a whole.
 > 2. `npx local-storefront profile <path> --lines`: the line, inside that file
 >    (`snippets/product-media:40`).
 > 3. `npx local-storefront profile <path> --points --lines`: what that line would cost Shopify,
@@ -40,6 +40,7 @@ Times are in ms, for all the calls of a row. "own" leaves out what is under the 
 Slowest on their own:
 
      own  calls
+   0.201      1  render
    0.191     12  snippets/list-filter
    0.115     15  snippets/product-media
 ```
@@ -51,6 +52,8 @@ Each row is under the row that rendered it: a section, its file, its blocks, the
 - `calls` is how many times it was rendered. Both times are for all the calls.
 - `section <id>` and `block <key>` are a section and a block as the template places them:
   reading their settings, then their file, which is the row under them.
+- `render` is the page as a whole. Its own time is the work outside the theme's files, such as
+  setting up the objects of the page: no file accounts for it. Skip it and read the files.
 
 The page is rendered 3 times first, so that reading the files does not count. The profile is
 the one of the render in the middle, by how long they took.

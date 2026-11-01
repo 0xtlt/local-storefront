@@ -310,10 +310,19 @@ impl ServerState {
     }
 
     /// Reads the app of the checkout. With `--watch`, the Functions it builds run the copy of
-    /// their last module that built, never what a build is writing.
+    /// their last module that built, never what a build is writing; with `--no-functions`, it
+    /// has none.
     pub(crate) fn load_app(&self, dir: &Path) -> Result<lsf_checkout::app::App, String> {
         let mut app = lsf_checkout::app::load(dir)?;
         self.builds.apply(&mut app);
+        if self
+            .options
+            .checkout
+            .as_ref()
+            .is_some_and(|options| options.no_functions)
+        {
+            app.without_functions();
+        }
         Ok(app)
     }
 
@@ -654,15 +663,16 @@ async fn handle(
         Ok(body) => body,
         Err(refused) => return refused.into_response(limit),
     };
+    let path = lsf_core::urls::percent_decode(parts.uri.path());
     let incoming = Incoming {
         method: parts.method.as_str().to_string(),
-        path: lsf_core::urls::percent_decode(parts.uri.path()),
         query: params::query_pairs(parts.uri.query().unwrap_or_default()),
         host: headers
             .get("host")
             .cloned()
             .unwrap_or_else(|| "localhost".to_string()),
-        params: params::parse_body(&content_type, body.clone()).await,
+        params: params::parse_body(&path, &content_type, body.clone()).await,
+        path,
         body,
         headers,
     };

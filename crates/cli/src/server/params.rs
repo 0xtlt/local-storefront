@@ -91,13 +91,22 @@ pub fn query_pairs(query: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Parses a request body according to its content type.
-pub async fn parse_body(content_type: &str, body: bytes::Bytes) -> Json {
+/// Parses a request body according to its content type. A body of the control API (`/__lsf`)
+/// that is JSON is read as JSON whatever its content type says: `fetch` sends a string body as
+/// `text/plain`, and the Admin API's control endpoints read their bodies as JSON already.
+pub async fn parse_body(path: &str, content_type: &str, body: bytes::Bytes) -> Json {
     if body.is_empty() {
         return Json::Object(Map::new());
     }
     if content_type.starts_with("application/json") {
         return serde_json::from_slice(&body).unwrap_or(Json::Object(Map::new()));
+    }
+    let control = path == "/__lsf" || path.starts_with("/__lsf/");
+    if control
+        && matches!(body.trim_ascii_start().first(), Some(b'{' | b'['))
+        && let Ok(json) = serde_json::from_slice(&body)
+    {
+        return json;
     }
     if content_type.starts_with("multipart/form-data") {
         let Ok(boundary) = multer::parse_boundary(content_type) else {
@@ -168,6 +177,33 @@ mod tests {
         assert_eq!(params["updates"], serde_json::json!(["1", "2"]));
         assert_eq!(params["items"][1]["id"], "2");
         assert_eq!(integer(&params, "id"), Some(42));
+    }
+
+    #[tokio::test]
+    async fn a_control_body_that_is_json_is_read_as_json_whatever_its_content_type() {
+        let body = || bytes::Bytes::from_static(br#"{"cart":{"items":[{"variant":"TEE-BLK-S"}]}}"#);
+        for content_type in [
+            "",
+            "text/plain;charset=UTF-8",
+            "application/x-www-form-urlencoded",
+        ] {
+            let params = parse_body("/__lsf/session", content_type, body()).await;
+            assert_eq!(
+                params["cart"]["items"][0]["variant"], "TEE-BLK-S",
+                "{content_type}: {params}"
+            );
+        }
+        // A form of the control API's pages stays a form, and the storefront's endpoints read
+        // what their content type says, as Shopify's do.
+        let form = parse_body(
+            "/__lsf/admin/charges/1/approve",
+            "application/x-www-form-urlencoded",
+            bytes::Bytes::from_static(b"shop=test-1"),
+        )
+        .await;
+        assert_eq!(form["shop"], "test-1");
+        let storefront = parse_body("/cart/add.js", "text/plain", body()).await;
+        assert!(storefront.get("cart").is_none(), "{storefront}");
     }
 
     #[test]

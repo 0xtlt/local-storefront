@@ -88,6 +88,11 @@ pub struct Args {
     #[command(flatten)]
     app: AppArgs,
 
+    /// With `--app`: serve its UI extensions and its Admin API, but run none of its Functions.
+    /// For the tests of a backend, whose orders a Function that fails would block.
+    #[arg(long, conflicts_with = "watch")]
+    no_functions: bool,
+
     /// The look of the checkout of the app: `standard` (Shopify's one-page checkout) or `shop`
     /// (the Shop app and Shop Pay). A checkout URL can ask for the other with `?variant=`.
     #[arg(long, value_enum, default_value_t = Variant::Standard)]
@@ -197,12 +202,22 @@ pub fn run(
     let app_dir = args.app.app.clone().or(found);
     let checkout = match &app_dir {
         Some(dir) => {
-            // The watcher builds the Functions itself, without stopping at one that fails.
+            // The watcher builds the Functions itself, without stopping at one that fails. With
+            // `--no-functions`, the UI extensions alone are built, below.
             let opening = AppArgs {
-                build: args.app.build && !args.watch,
+                build: args.app.build && !args.watch && !args.no_functions,
                 ..args.app.clone()
             };
-            let (app, selection) = checkout::open(&opening, dir)?;
+            let (mut app, mut selection) = checkout::open(&opening, dir)?;
+            if args.no_functions {
+                selection = without_functions(&mut app, selection, &args.app.extensions)?;
+                if args.app.build {
+                    checkout::build_ui_extensions(&app, &selection)?;
+                }
+            }
+            // An app without extensions is a backend: the `app:` line says so.
+            app.diagnostics
+                .retain(|diagnostic| diagnostic.message != lsf_checkout::app::NO_EXTENSIONS);
             checkout::print_app_diagnostics(&app, &selection);
             Some((
                 CheckoutOptions {
@@ -210,10 +225,12 @@ pub fn run(
                     extensions: args.app.extensions.clone(),
                     variant: args.variant,
                     standalone,
+                    no_functions: args.no_functions,
                 },
                 (
                     selection.functions(&app).count(),
                     selection.ui_extensions(&app).count(),
+                    app.has_extensions_directory(),
                 ),
             ))
         }
@@ -334,10 +351,13 @@ pub fn run(
         if !standalone {
             eprintln!("theme:  {}", theme.display());
         }
-        if let (Some(dir), Some((functions, ui_extensions))) = (&app_dir, extensions) {
+        if let (Some(dir), Some((functions, ui_extensions, has_directory))) =
+            (&app_dir, extensions)
+        {
             eprintln!(
-                "app:    {} ({functions} Functions, {ui_extensions} UI extensions)",
-                dir.display()
+                "app:    {} ({})",
+                dir.display(),
+                app_summary(functions, ui_extensions, has_directory, args.no_functions)
             );
         }
         eprintln!("data:   {source}");
@@ -347,7 +367,9 @@ pub fn run(
         if !throttle.is_empty() {
             eprintln!("throttle: {throttle}");
         }
-        if let Some(dir) = &app_dir {
+        // The scenarios are carts for the Functions to run on: nothing to say without one.
+        let functions = extensions.is_some_and(|(functions, _, _)| functions > 0);
+        if let Some(dir) = app_dir.as_ref().filter(|_| functions) {
             let scenarios = &state.loaded().store.scenarios;
             let broken = scenarios.iter().filter(|s| !s.problems.is_empty()).count();
             if scenarios.is_empty() {
@@ -409,9 +431,66 @@ pub fn run(
     Ok(ExitCode::SUCCESS)
 }
 
+/// `--no-functions`: the UI extensions `selection` has, and no Function; `app` leaves them out
+/// too. A Function named with `--extension` is an error: it would not run.
+fn without_functions(
+    app: &mut lsf_checkout::app::App,
+    selection: lsf_checkout::app::Selection,
+    named: &[String],
+) -> Result<lsf_checkout::app::Selection, String> {
+    if let Some(function) = named.iter().find(|handle| app.function(handle).is_some()) {
+        return Err(format!(
+            "--extension {function} is a Function, and --no-functions runs none"
+        ));
+    }
+    let ui_extensions: Vec<String> = selection
+        .ui_extensions(app)
+        .map(|extension| extension.handle.clone())
+        .collect();
+    app.without_functions();
+    Ok(selection.narrowed_to(&ui_extensions))
+}
+
+/// What the `app:` line says of the extensions served: an app without an `extensions` directory
+/// is a backend, served without them.
+fn app_summary(
+    functions: usize,
+    ui_extensions: usize,
+    has_directory: bool,
+    no_functions: bool,
+) -> String {
+    if !has_directory {
+        return "no extensions: the Admin API, webhooks and the app proxy".to_string();
+    }
+    let ui_extensions = crate::output::count(ui_extensions, "UI extension", "UI extensions");
+    if no_functions {
+        return format!("{ui_extensions}, no Function: --no-functions");
+    }
+    format!(
+        "{}, {ui_extensions}",
+        crate::output::count(functions, "Function", "Functions")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_app_line_says_what_is_served() {
+        assert_eq!(
+            app_summary(2, 1, true, false),
+            "2 Functions, 1 UI extension"
+        );
+        assert_eq!(
+            app_summary(0, 0, false, false),
+            "no extensions: the Admin API, webhooks and the app proxy"
+        );
+        assert_eq!(
+            app_summary(0, 2, true, true),
+            "2 UI extensions, no Function: --no-functions"
+        );
+    }
 
     #[tokio::test]
     async fn a_taken_port_is_skipped_only_when_others_may_be_tried() {

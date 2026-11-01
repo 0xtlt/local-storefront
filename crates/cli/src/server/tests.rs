@@ -3075,6 +3075,7 @@ fn checkout_server_with(
                     extensions: extensions.iter().map(|handle| handle.to_string()).collect(),
                     variant: crate::checkout::Variant::Standard,
                     standalone,
+                    no_functions: false,
                 }),
             },
         )
@@ -4966,6 +4967,26 @@ fn what_the_functions_read_of_the_session_cannot_change_while_completing() {
     });
 }
 
+/// `order.number` has two shapes, and both stay: the state's, a string since 0.2.0, which tests
+/// read; and the Admin API's in the answer of `complete`, an integer beside `name`.
+#[test]
+fn the_order_number_is_a_string_in_the_state_and_an_integer_in_complete() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-number");
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-number");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let completed = body_json(&reply)["order"].clone();
+    assert_eq!(completed["number"], json!(1004), "{completed}");
+    assert_eq!(completed["name"], json!("#1004"), "{completed}");
+
+    let control = body_json(&get(&state, "/__lsf/checkout?session=co-number", "other"));
+    assert_eq!(control["status"], "completed");
+    assert_eq!(control["order"]["number"], json!("#1004"), "{control}");
+    assert_eq!(control["order"]["id"], completed["id"]);
+    // The state's `number` is the `name` of `complete`.
+    assert_eq!(control["order"]["number"], completed["name"]);
+}
+
 #[test]
 fn an_update_after_the_completion_is_refused() {
     let state = checkout_server(&[], false);
@@ -5109,6 +5130,45 @@ fn concurrent_completions_place_one_order() {
     assert!(replies.iter().all(|status| *status == 200), "{replies:?}");
     assert_eq!(state.placed_orders(), 1);
     assert_eq!(cart_count(&state, "co-threads"), 0);
+}
+
+#[test]
+fn with_no_functions_none_runs_and_a_discount_of_the_data_is_left_out() {
+    // `--no-functions`: the UI extensions are served, no Function runs.
+    let mut state = checkout_server(&[], false);
+    if let Some(options) = state.options.checkout.as_mut() {
+        options.no_functions = true;
+    }
+    let path = start_checkout(
+        &state,
+        "co-no-fn",
+        json!([{"variant": "TEE-BLK-M", "quantity": 3}]),
+        json!({"checkout": {"discounts": [{
+            "function": "volume-discount",
+            "title": "Volume",
+            "classes": ["PRODUCT"],
+            "metafields": {"$app:config.settings": {
+                "type": "json", "value": {"minimumQuantity": 3, "percentage": 10}
+            }}
+        }]}}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-no-fn"));
+    assert_eq!(json["runs"], json!([]), "{json}");
+    assert_eq!(json["errors"], json!([]), "{json}");
+    let line = &json["lines"][0];
+    assert_eq!(line["total"], line["subtotal"], "{line}");
+    let extensions: Vec<&str> = json["extensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|extension| extension["handle"].as_str().unwrap())
+        .collect();
+    assert!(extensions.contains(&"gift-message"), "{extensions:?}");
+
+    // The order is placed, with nothing to block it.
+    operations(&state, &path, "co-no-fn", buyer_details());
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-no-fn");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
 }
 
 #[test]
