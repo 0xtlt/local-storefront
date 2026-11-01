@@ -47,7 +47,7 @@ use super::{FinancialStatus, FulfillmentState, LineDraft, OrderDraft, ShippingDr
 use crate::domains::catalog::{gids, tags_of};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{ShopState, gid, value};
+use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -390,13 +390,7 @@ fn order_cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     state.touch(&order);
     state.emit("orders/cancelled", &order);
     state.emit("orders/updated", &order);
-    let number = state
-        .new_gid("OrderCancelJobResult")
-        .rsplit('/')
-        .next()
-        .and_then(|number| number.parse::<u64>().ok())
-        .unwrap_or(1);
-    let result = gid("OrderCancelJobResult", number);
+    let result = state.new_gid("OrderCancelJobResult");
     state.insert(value::object(json!({
         "__typename": "OrderCancelJobResult",
         "id": result,
