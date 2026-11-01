@@ -27,12 +27,14 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{arg_objects, coded, default_location, field, is, objects, text};
-use super::variants::{self, Choice, ProductOption, add_value, options_of, remove_variant};
+use super::records::{arg_objects, coded, field, is, objects, text};
+use super::variants::{
+    self, Choice, ProductOption, add_value, no_product, options_of, product_arg, remove_variant,
+};
 use super::{gids, product_changed};
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{ShopState, value};
+use crate::resolve::{Mutation, Registry, payload};
+use crate::state::ShopState;
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -44,20 +46,6 @@ pub fn register(registry: &mut Registry) {
 
 /// The most options a product has.
 const OPTION_LIMIT: usize = 3;
-
-fn product_arg(state: &ShopState, ctx: &FieldContext<'_>) -> Option<String> {
-    ctx.arg_str("productId")
-        .filter(|id| is(state, id, "Product"))
-        .map(str::to_string)
-}
-
-fn no_product() -> UserError {
-    coded(
-        &["productId"],
-        "Product does not exist",
-        "PRODUCT_DOES_NOT_EXIST",
-    )
-}
 
 /// The variants of a product, with what they select: `(variant, [(option GID, value GID)])`.
 fn selections(state: &ShopState, product: &str) -> Vec<(String, Vec<(String, String)>)> {
@@ -97,6 +85,23 @@ fn selections(state: &ShopState, product: &str) -> Vec<(String, Vec<(String, Str
         .collect()
 }
 
+/// The choices of a selection `[(option GID, value GID)]`, in the order of the options, with
+/// the values' current names.
+fn choices_of(options: &[ProductOption], selected: &[(String, String)]) -> Vec<Choice> {
+    options
+        .iter()
+        .filter_map(|option| {
+            let (_, value) = selected.iter().find(|(known, _)| *known == option.id)?;
+            let name = option.values.iter().find(|(id, _)| id == value)?.1.clone();
+            Some(Choice {
+                option: option.id.clone(),
+                name,
+                value: Some(value.clone()),
+            })
+        })
+        .collect()
+}
+
 /// Writes what each variant selects, in the order of the product's options (and the value's
 /// current name).
 fn write_selections(
@@ -106,23 +111,7 @@ fn write_selections(
 ) {
     let options = options_of(state, product);
     for (variant, selected) in selections {
-        let choices: Vec<Choice> = options
-            .iter()
-            .filter_map(|option| {
-                let (_, value) = selected.iter().find(|(known, _)| *known == option.id)?;
-                let name = option
-                    .values
-                    .iter()
-                    .find(|(id, _)| id == value)
-                    .map(|(_, name)| name.clone())?;
-                Some(Choice {
-                    option: option.id.clone(),
-                    name,
-                    value: Some(value.clone()),
-                })
-            })
-            .collect();
-        variants::set_choices(state, variant, &choices);
+        variants::set_choices(state, variant, &choices_of(&options, selected));
     }
 }
 
@@ -155,16 +144,7 @@ fn set_options(state: &mut ShopState, product: &str, options: &[String]) {
 /// A new option with its values. Returns its GID and the GIDs of its values.
 fn new_option(state: &mut ShopState, name: &str, values: &[String]) -> (String, Vec<String>) {
     let now = state.timestamp();
-    let option = state.new_gid("ProductOption");
-    state.insert(value::object(json!({
-        "__typename": "ProductOption",
-        "id": option,
-        "name": name,
-        "position": 1,
-        "values": [],
-        "optionValues": [],
-        "createdAt": now,
-    })));
+    let option = variants::add_option(state, name, 1, &now);
     let ids = values
         .iter()
         .map(|value| add_value(state, &option, value))
@@ -186,22 +166,8 @@ fn variant_like(
             input.insert(name.into(), value.clone());
         }
     }
-    let options = options_of(state, product);
-    let choices: Vec<Choice> = options
-        .iter()
-        .filter_map(|option| {
-            let (_, value) = selected.iter().find(|(known, _)| *known == option.id)?;
-            let name = option.values.iter().find(|(id, _)| id == value)?.1.clone();
-            Some(Choice {
-                option: option.id.clone(),
-                name,
-                value: Some(value.clone()),
-            })
-        })
-        .collect();
-    let stock = default_location(state)
-        .map(|location| vec![(location, 0)])
-        .unwrap_or_default();
+    let choices = choices_of(&options_of(state, product), selected);
+    let stock = variants::default_stock(state);
     variants::insert_variant(state, product, &choices, &input, &stock)
 }
 
@@ -800,7 +766,7 @@ fn options_reorder(
         return Ok(payload(json!({"product": null}), &errors));
     }
 
-    let selections = selections(state, &product);
+    let mut selections = selections(state, &product);
     let state = mutation.state_mut();
     for (option, values) in &order {
         if let Some(record) = state.get_mut(option) {
@@ -824,9 +790,8 @@ fn options_reorder(
             })
             .collect()
     };
-    let mut sorted = selections.clone();
-    sorted.sort_by_key(|(_, selected)| rank(selected));
-    let variants: Vec<&String> = sorted.iter().map(|(variant, _)| variant).collect();
+    selections.sort_by_key(|(_, selected)| rank(selected));
+    let variants: Vec<&String> = selections.iter().map(|(variant, _)| variant).collect();
     if let Some(record) = state.get_mut(&product) {
         record.insert("variants".into(), json!(variants));
     }
