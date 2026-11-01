@@ -99,7 +99,6 @@ fn new_theme(state: &mut ShopState, name: &str, role: &str) -> String {
     id
 }
 
-/// `themeCreate`.
 fn theme_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let refuse = |field: &[&str], message: &str, code: &str| {
         Ok(payload(
@@ -195,7 +194,6 @@ fn theme_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     Ok(payload(json!({"theme": id}), &[]))
 }
 
-/// `themeUpdate`.
 fn theme_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     if theme_of(m.state(), &id).is_none() {
@@ -237,7 +235,6 @@ fn theme_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     Ok(payload(json!({"theme": id}), &[]))
 }
 
-/// `themeDelete`.
 fn theme_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let Some(theme) = theme_of(m.state(), &id) else {
@@ -264,7 +261,6 @@ fn theme_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     Ok(payload(json!({"deletedThemeId": id}), &[]))
 }
 
-/// `themeDuplicate`.
 fn theme_duplicate(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let Some(theme) = theme_of(m.state(), &id) else {
@@ -294,7 +290,6 @@ fn theme_duplicate(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     Ok(payload(json!({"newTheme": new}), &[]))
 }
 
-/// `themePublish`.
 fn theme_publish(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let Some(theme) = theme_of(m.state(), &id) else {
@@ -410,7 +405,6 @@ fn check_content(filename: &str, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// `themeFilesUpsert`.
 fn files_upsert(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let inputs: Vec<Value> = ctx
         .arg("files")
@@ -511,7 +505,6 @@ fn files_upsert(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     ))
 }
 
-/// `themeFilesCopy`.
 fn files_copy(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let inputs: Vec<Value> = ctx
         .arg("files")
@@ -592,7 +585,6 @@ fn files_copy(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fie
     ))
 }
 
-/// `themeFilesDelete`.
 fn files_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let filenames: Vec<String> = ctx
         .arg("files")
