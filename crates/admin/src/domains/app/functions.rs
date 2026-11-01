@@ -72,7 +72,6 @@ pub fn register(registry: &mut Registry) {
 pub struct FunctionRef {
     /// Its id, the key of its `ShopifyFunction` record.
     pub id: String,
-    pub handle: String,
     pub api_type: String,
     pub title: String,
 }
@@ -138,7 +137,6 @@ pub fn function_of(
     }
     Ok(FunctionRef {
         id: text("id"),
-        handle: text("handle"),
         api_type,
         title: text("title"),
     })
