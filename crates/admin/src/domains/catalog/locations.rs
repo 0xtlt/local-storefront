@@ -463,7 +463,8 @@ fn deactivate_once(
     Ok(errors_payload(json!({"location": id}), key, &[]))
 }
 
-/// The products of the items of levels.
+/// The products of the items of levels, and the bundles they are components of, as the
+/// inventory mutations refresh them.
 fn products_of_levels(state: &ShopState, levels: &[String]) -> Vec<String> {
     let mut products: Vec<String> = Vec::new();
     for level in levels {
@@ -476,7 +477,7 @@ fn products_of_levels(state: &ShopState, levels: &[String]) -> Vec<String> {
             products.push(product.to_string());
         }
     }
-    products
+    super::with_parents(state, products)
 }
 
 /// Adds the quantities of a level to the item's level at `destination` (made when the item is
