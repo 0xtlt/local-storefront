@@ -455,10 +455,10 @@ start: edit them.
 
 **A discount Function runs in `discount-automatic` and `discount-code` only.** It runs only for
 a discount that names it ([set up the checkout](#set-up-the-checkout)), and the other scenarios
-(`b2b`, `abroad`, `large-cart`, …) have none: `app check` passes on them without running it (it
-lists a Function only when it ran in no scenario at all). To run it in every scenario, a B2B buyer, another
-country and a large cart included, give it a discount in the `checkout` section of the store
-data (`store.json`, or the file that has the section):
+(`b2b`, `abroad`, `large-cart`, …) have none: `app check` passes on them without running it
+(it lists a Function only when it ran in no scenario at all). To run it in every scenario, a
+B2B buyer, another country and a large cart included, give it a discount in the `checkout`
+section of the store data (`store.json`, or the file that has the section):
 
 ```json
 {
@@ -1168,8 +1168,8 @@ store before a release:
   ([how discounts stack](#how-discounts-stack)).
 - **Currencies and price lists**: one price list, in the shop's currency; a buyer abroad pays it
   too ([what it does not do](#what-it-does-not-do), [markets](compatibility.md#known-differences)).
-- **B2B catalogs, payment terms, pickup points, local pickup, fulfillment constraints and order
-  routing**: not run.
+- **B2B catalogs, pickup points, local pickup, fulfillment constraints and order routing**: not
+  run.
 - **Network access**: the request JWT and Shopify's cache of responses
   ([network access](#network-access)).
 - **The settings of an extension** (`shopify.settings`): empty here.

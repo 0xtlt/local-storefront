@@ -1260,8 +1260,9 @@ many checkouts were deleted (`erased`, `deletedCheckouts`). `GET /__lsf/admin/cl
 
 ## The outbox
 
-lsf sends nothing outside the machine. What Shopify would have sent, or bought, is recorded in
-the shop's outbox instead, for a test to read:
+lsf sends no email, buys no label and pushes nothing to a device: what Shopify would have sent,
+or bought, is recorded in the shop's outbox instead, for a test to read. (Webhooks go to the
+backend lsf is pointed at: [where they go](admin.md#webhooks).)
 
 | Channel | What lands there (`what`) |
 |---|---|

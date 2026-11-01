@@ -26,7 +26,9 @@ app: [Admin API](admin.md).
 
 ### Apps: checkout and Admin API
 
-The checkout needs `--app`; the Admin API runs on every server, with the app of `--app` when there is one ([Admin API](admin.md)). What a backend's tests use first:
+The checkout needs `--app`; the Admin API runs on every server, with the app of `--app` when
+there is one ([Admin API](admin.md)). First what a backend's tests use, then the rest. How a test
+uses them: [test your backend](admin.md#test-your-backend).
 
 | Request | What it does | Answer |
 |---|---|---|
@@ -52,7 +54,7 @@ The checkout needs `--app`; the Admin API runs on every server, with the app of 
 | `GET /__lsf/admin/outbox?shop=&channel=`, `DELETE …` | The [outbox](admin-reference.md#the-outbox): what Shopify would have sent to the outside world, which lsf records instead (emails, shipping labels, Flow triggers, POS messages, data erasures), oldest first, the last 1000; of one channel (`email`, `carrier`, `flow`, `pos`, `data_erasure`) or all. `DELETE` forgets them; a reset empties it. | `{ "shop", "count", "outbox": [{ "id", "at", "channel", "to", "what", "about", "subject"?, "body"?, "data"? }] }`; `DELETE`: `{ "ok": true, "shop", "outbox": 3 }`; `422` for another channel |
 | `GET /__lsf/admin/emails?shop=`, `DELETE …` | The outbox's emails: `/__lsf/admin/outbox?channel=email`. | `{ "shop", "count", "emails": [...] }`; `DELETE`: `{ "ok": true, "shop", "emails": 2 }` |
 
-The rest of what Shopify, buyers and banks do outside the Admin API:
+What Shopify, buyers and banks do outside the Admin API, and the files it serves:
 
 | Request | What it does | Answer |
 |---|---|---|

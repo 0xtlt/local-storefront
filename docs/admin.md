@@ -67,7 +67,7 @@ api_version = "2026-10"
 
 | Option | Environment variable | What it does |
 |---|---|---|
-| `--app-url <url>` | `LSF_APP_URL` | Where the backend listens. Webhooks with a relative `uri` go there, and an absolute `uri` on the origin of `application_url` (often the tunnel of a `shopify app dev` that is not running) is moved there. Without it, `application_url`, where lsf sends nothing ([where webhooks go](#webhooks)). |
+| `--app-url <url>` | `LSF_APP_URL` | Where the backend listens. Webhooks with a relative `uri` go there, and an absolute `uri` on the origin of `application_url` (often the tunnel of a `shopify app dev` that is not running) is moved there. Without it, `application_url`, where lsf sends only when it is on this machine ([where webhooks go](#webhooks)). |
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The client secret. |
 | `--admin-throttle <plan>` | `LSF_ADMIN_THROTTLE` | The cost bucket: `store` (default), `standard`, `advanced`, `plus`, `enterprise`, `legacy`, `off`. |
 | `--admin-versions <list>` | `LSF_ADMIN_VERSIONS` | The [API versions](#api-versions) served: `2026-10` alone by default, `2026-10,2027-01` with the release candidate. |
@@ -89,7 +89,7 @@ npx local-storefront serve --theme ../my-theme --app ../my-app --app-url http://
 [`examples/admin-backend`](https://github.com/0xtlt/local-storefront/tree/main/examples/admin-backend)
 is a backend written with Shopify's libraries (the React Router package and
 `@shopify/shopify-api`), with a script that runs it against lsf end to end: the JavaScript
-recipes of this page are checked there.
+recipes of "[Point the backend at lsf](#point-the-backend-at-lsf)" are checked there.
 
 ## Point the backend at lsf
 
@@ -344,7 +344,7 @@ an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/r
   one goes to another host only when that host is the origin of `--app-url` or `--address`.
   Anything else (a production backend, a stale tunnel) is not sent, and `GET /__lsf/webhooks`
   logs it `not_sent` with the reason. So give `--app-url`: without it, the subscriptions of
-  `shopify.app.toml` point at `application_url`, and nothing reaches the backend.
+  `shopify.app.toml` point at `application_url`, usually a tunnel, and lsf sends nothing there.
 - **Events**: what the Admin API changes (`productCreate` → `products/create`,
   `inventory_items/create`, `inventory_levels/connect`; `productUpdate` and `tagsAdd` →
   `products/update`; `productDelete` → `products/delete`), an order placed at the checkout
@@ -606,7 +606,7 @@ tokens itself fails until they are gone. So do one of these:
 - end each test with `POST /__lsf/admin/uninstall {"shop"}`, then delete the shop: the backend's
   `app/uninstalled` handler deletes the sessions, as on Shopify.
 
-### Dates and throttling
+### Dates, throttling and the outbox
 
 - **Fixed dates**: with `now` in the store data, every record created or changed is dated then,
   and the same run gives the same answers; [`POST /__lsf/admin/clock`](admin-reference.md#the-shops-clock)
