@@ -302,9 +302,9 @@ fn log_problems(state: &ServerState, rendered: &Rendered) {
     }
 }
 
-/// The reason of a 404 as a header value: printable ASCII only, since the URL it quotes can
-/// hold anything.
-fn header_text(reason: &str) -> String {
+/// A reason (of a 404, of an app proxy that got no answer) as a header value: printable ASCII
+/// only, since the URL it quotes can hold anything.
+pub(super) fn header_text(reason: &str) -> String {
     reason
         .chars()
         .map(|c| {

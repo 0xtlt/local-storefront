@@ -33,7 +33,7 @@ use lsf_core::render::page::{Page, Resource};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
 use super::reply::{Reply, cache};
-use super::storefront::{Visit, reply_from};
+use super::storefront::{Visit, header_text, reply_from};
 use super::{Incoming, SESSION_COOKIE, SESSION_HEADER, ServerState};
 
 /// The first segment of the proxied path, as shopify.dev lists the values a `prefix` may take.
@@ -551,20 +551,6 @@ fn unreachable_page(state: &ServerState, status: u16, url: &str, reason: &str) -
     Reply::html(status, body)
         .header("x-lsf-reason", header_text(reason))
         .cached(cache::PRIVATE)
-}
-
-/// A reason as a header value: printable ASCII only.
-fn header_text(reason: &str) -> String {
-    reason
-        .chars()
-        .map(|c| {
-            if c.is_ascii() && !c.is_ascii_control() {
-                c
-            } else {
-                '?'
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]
