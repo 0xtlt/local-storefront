@@ -59,6 +59,18 @@ impl BlockBody {
     }
 
     pub fn render(&self, ctx: &mut Context, out: &mut String) {
+        // Ruby Liquid's render score: each body rendered counts its nodes. Once the render's
+        // budget is spent, nothing renders: the error is printed where it stopped.
+        if ctx.charge(self.nodes.len() as u64).is_err() {
+            let line = self.nodes.iter().find_map(|node| match node {
+                Node::Output { line, .. } | Node::Tag { line, .. } => Some(*line),
+                Node::Text(_) => None,
+            });
+            if let Some(message) = ctx.budget_error(line.unwrap_or(0)) {
+                out.push_str(&message);
+            }
+            return;
+        }
         let profiler = ctx.profiler().cloned();
         for node in &self.nodes {
             let line = match node {
@@ -86,10 +98,19 @@ impl BlockBody {
                 },
                 Node::Tag { tag, line } => {
                     if let Err(error) = tag.render(ctx, out) {
-                        let message = ctx.handle_error(error, *line);
-                        if !tag.blank() {
-                            out.push_str(&message);
+                        if error.kind == crate::error::ErrorKind::ResourceLimit {
+                            // The render stops: said once, wherever it stopped.
+                            out.push_str(&ctx.budget_error(*line).unwrap_or_default());
+                        } else {
+                            let message = ctx.handle_error(error, *line);
+                            if !tag.blank() {
+                                out.push_str(&message);
+                            }
                         }
+                    }
+                    // Only a tag renders bodies, which may have spent the budget.
+                    if ctx.budget_exceeded() {
+                        break;
                     }
                 }
             }

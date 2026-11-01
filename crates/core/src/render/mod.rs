@@ -218,6 +218,23 @@ fn wrapper_tags(wrapper: &str) -> (String, String) {
     (open, format!("</{tag}>"))
 }
 
+/// The page of a render that spent its budget (`lsf_liquid::RenderLimits`): Liquid's error,
+/// and what lsf counted.
+fn budget_page(template: &str, score: u64, took: std::time::Duration) -> String {
+    let limits = lsf_liquid::RenderLimits::default();
+    format!(
+        "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>Liquid error</title></head><body>\n\
+         <h1>Liquid error: Memory limits exceeded</h1>\n\
+         <p>The render of <code>{}</code> stopped after a render score of {score} in {:.1} s: \
+         lsf stops a render past {} (each body counts its nodes, each loop over a range its \
+         items) or {} s, as Shopify's renderer stops a page that does not end.</p>\n</body></html>\n",
+        escape_html(template),
+        took.as_secs_f64(),
+        limits.score,
+        limits.time.map_or(0, |time| time.as_secs()),
+    )
+}
+
 impl Renderer {
     pub fn new(theme: Arc<Theme>) -> Self {
         Renderer {
@@ -382,6 +399,17 @@ impl Renderer {
                     serde_json::Value::Object(sections).to_string(),
                 )
             }
+        };
+        // A render that spent its budget never ended on Shopify either: what it rendered is cut
+        // where it stopped, and the page says why rather than show half of itself.
+        let (status, content_type, body) = if ctx.budget_exceeded() {
+            (
+                500,
+                "text/html; charset=utf-8",
+                budget_page(&page.template.full(), ctx.render_score(), started.elapsed()),
+            )
+        } else {
+            (status, content_type, body)
         };
         Rendered {
             status,

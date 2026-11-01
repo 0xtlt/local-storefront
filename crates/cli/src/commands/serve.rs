@@ -310,7 +310,7 @@ pub fn run(
         .thread_stack_size(16 * 1024 * 1024)
         .build()
         .map_err(|error| error.to_string())?;
-    runtime.block_on(async move {
+    let served = runtime.block_on(async move {
         // A port that was asked for is the one to listen on, or an error. The default one is a
         // convenience: when another server has it, the next free one does as well.
         let ports = match args.port {
@@ -378,7 +378,11 @@ pub fn run(
         run_server(state, listener)
             .await
             .map_err(|error| error.to_string())
-    })?;
+    });
+    // A request abandoned at the shutdown deadline (a render that does not end) runs on a
+    // blocking thread, which dropping the runtime would wait for, for ever.
+    runtime.shutdown_timeout(Duration::from_millis(200));
+    served?;
     // Interrupted: the builds that run stop too.
     if let Some(watcher) = watcher {
         watcher.stop();

@@ -832,18 +832,60 @@ async fn live_reload(
     }
 }
 
+/// How long the requests being answered when the server is asked to stop may still take: then
+/// they are abandoned, and the server stops. A render ends at its own budget
+/// (`lsf_liquid::RenderLimits`, 10 s) at the latest.
+pub const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(3);
+
 /// Serves the storefront until the process is interrupted.
 pub async fn run(
     state: Arc<ServerState>,
     listener: tokio::net::TcpListener,
 ) -> std::io::Result<()> {
+    run_until(state, listener, interrupted(), SHUTDOWN_DEADLINE).await
+}
+
+/// Serves the storefront until `stop` completes, then for the requests being answered, and for
+/// `deadline` at most: what is still running then (a render that does not end) is abandoned.
+/// A server that waited for it never stopped.
+pub async fn run_until(
+    state: Arc<ServerState>,
+    listener: tokio::net::TcpListener,
+    stop: impl std::future::Future<Output = ()> + Send + 'static,
+    deadline: Duration,
+) -> std::io::Result<()> {
+    use std::future::IntoFuture;
+    let quiet = state.options.quiet;
     let router = axum::Router::new()
         .route("/__lsf/livereload", axum::routing::get(live_reload))
         .fallback(handle)
         .with_state(state);
-    axum::serve(listener, router)
-        .with_graceful_shutdown(interrupted())
-        .await
+    let (stopping, mut stopped) = tokio::sync::watch::channel(false);
+    let signal = async move {
+        stop.await;
+        let _ = stopping.send(true);
+    };
+    let serving = axum::serve(listener, router)
+        .with_graceful_shutdown(signal)
+        .into_future();
+    let abandoned = async move {
+        if stopped.wait_for(|stopped| *stopped).await.is_err() {
+            std::future::pending::<()>().await;
+        }
+        tokio::time::sleep(deadline).await;
+    };
+    tokio::select! {
+        result = serving => result,
+        () = abandoned => {
+            if !quiet {
+                eprintln!(
+                    "stopped: the requests still running {} s after the server was asked to stop were abandoned",
+                    deadline.as_secs_f64()
+                );
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Waits for the process to be asked to stop: Ctrl-C, and on Unix `SIGTERM` (a process manager,

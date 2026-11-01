@@ -65,6 +65,18 @@ impl Object for ForLoop {
     }
 }
 
+/// Charges the items of a range a loop is about to take to the render's budget, before they
+/// are made: `(1..1000000000)` is refused, not allocated.
+pub fn charge_range(ctx: &Context, collection: &Value, from: i64, to: Option<i64>) -> Result<()> {
+    if let Value::Range(start, end) = collection {
+        let length = end.saturating_sub(*start).saturating_add(1).max(0);
+        let until = to.map_or(length, |to| to.min(length));
+        let taken = until.saturating_sub(from.max(0)).max(0);
+        ctx.charge(taken as u64)?;
+    }
+    Ok(())
+}
+
 /// The items a `for` or `tablerow` loop iterates over, with `offset`/`limit` applied
 /// (Ruby Liquid's `slice_collection_for_iteration`).
 pub fn collection_items(collection: &Value, from: i64, to: Option<i64>) -> Vec<Value> {
@@ -148,6 +160,7 @@ impl For {
                 value => Some(to_integer(&value)? + from),
             },
         };
+        charge_range(ctx, &collection, from, to)?;
         let mut segment = collection_items(&collection, from, to);
         if self.reversed {
             segment.reverse();
@@ -179,6 +192,9 @@ impl Tag for For {
             if let Some(interrupt) = ctx.pop_interrupt()
                 && interrupt == Interrupt::Break
             {
+                break;
+            }
+            if ctx.budget_exceeded() {
                 break;
             }
         }
@@ -634,6 +650,7 @@ impl Tag for TableRow {
             Some(expr) => Some(from + lenient_integer(&expr.evaluate(ctx)?)?),
             None => None,
         };
+        charge_range(ctx, &collection, from, to)?;
         let items = collection_items(&collection, from, to);
         let length = items.len();
         let cols = match &self.cols {
@@ -656,6 +673,9 @@ impl Tag for TableRow {
             if let Some(interrupt) = ctx.pop_interrupt()
                 && interrupt == Interrupt::Break
             {
+                break;
+            }
+            if ctx.budget_exceeded() {
                 break;
             }
             let index = tablerowloop.index.load(Ordering::Relaxed);

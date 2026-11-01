@@ -368,6 +368,7 @@ fn class_name(error: &Error) -> &'static str {
         ErrorKind::FileSystem => "Liquid::FileSystemError",
         ErrorKind::StackLevel => "Liquid::StackLevelError",
         ErrorKind::Disabled => "Liquid::DisabledError",
+        ErrorKind::ResourceLimit => "Liquid::MemoryError",
         ErrorKind::Standard => "Liquid::Error",
         ErrorKind::Internal => "Liquid::InternalError",
     }

@@ -58,7 +58,9 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 
 When it is ready, the server prints a line to stderr that starts with
 `ready:  http://127.0.0.1:<port>/`. With `--port 0`, read the port from that line. It runs
-until it is stopped. With `--app`, it also prints how many checkout scenarios the data has and,
+until it is stopped (Ctrl-C, `SIGTERM`, `SIGHUP`): then it finishes the requests it is
+answering, for 3 seconds at most, and abandons the rest. A page whose Liquid never ends stops
+at its render budget (see [the render budget](compatibility.md#the-render-budget)). With `--app`, it also prints how many checkout scenarios the data has and,
 with a theme, the address of the home page of the checkout
 (`home:   http://127.0.0.1:<port>/__lsf/checkouts`). Then the [Admin API](admin.md) of the
 store, which every server serves, and the webhooks of the app:

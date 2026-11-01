@@ -274,6 +274,7 @@ impl Tag for Render {
                 _ => false,
             };
         if iterable {
+            crate::tags::charge_range(ctx, &variable, 0, None)?;
             let items = crate::tags::collection_items(&variable, 0, None);
             let forloop = Arc::new(ForLoop::new(
                 self.template_name.clone(),
@@ -282,6 +283,9 @@ impl Tag for Render {
             ));
             for item in items {
                 render_one(ctx, item, Some(&forloop))?;
+                if ctx.budget_exceeded() {
+                    break;
+                }
             }
         } else {
             render_one(ctx, variable, None)?;

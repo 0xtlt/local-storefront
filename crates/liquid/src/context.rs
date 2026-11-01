@@ -3,8 +3,9 @@
 use std::any::{Any, TypeId};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
@@ -18,6 +19,62 @@ use crate::variable::FilterArgs;
 
 /// The maximum nesting of scopes and partials, as in the reference implementation.
 pub const MAX_DEPTH: usize = 100;
+
+/// What one render may spend before it stops with `Liquid error: Memory limits exceeded`
+/// ([`Error::resource_limit`]): a theme whose loops never end (`(1..1000000000)` nested) would
+/// otherwise hold a thread, and the page, for ever.
+///
+/// - `score` is Ruby Liquid's render score (`ResourceLimits#increment_render_score`): each
+///   body rendered counts its nodes, and a loop over a range counts its items before it takes
+///   them (lsf, which would otherwise allocate every item of `(1..1000000000)` first).
+/// - `time` is the wall time of the render, checked as the score grows.
+///
+/// Shopify documents neither number: "You can do a maximum of 50 iterations with a for loop"
+/// of a paginated array, and pagination stops at 25,000 items; its renderer stops what takes too
+/// long. [`RenderLimits::default`] leaves real pages far below it (`docs/compatibility.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderLimits {
+    pub score: u64,
+    pub time: Option<Duration>,
+}
+
+/// The render score of [`RenderLimits::default`]: the pages of lsf's fixture themes score 11
+/// to 310.
+pub const RENDER_SCORE_LIMIT: u64 = 10_000_000;
+
+/// The wall time of [`RenderLimits::default`].
+pub const RENDER_TIME_LIMIT: Duration = Duration::from_secs(10);
+
+impl Default for RenderLimits {
+    fn default() -> Self {
+        RenderLimits {
+            score: RENDER_SCORE_LIMIT,
+            time: Some(RENDER_TIME_LIMIT),
+        }
+    }
+}
+
+/// What a render spent of its [`RenderLimits`], shared by its sub-contexts.
+struct Budget {
+    limits: RenderLimits,
+    started: Instant,
+    score: AtomicU64,
+    exceeded: AtomicBool,
+    /// Whether the error was printed: once, where the render stopped.
+    reported: AtomicBool,
+}
+
+impl Budget {
+    fn new(limits: RenderLimits) -> Budget {
+        Budget {
+            limits,
+            started: Instant::now(),
+            score: AtomicU64::new(0),
+            exceeded: AtomicBool::new(false),
+            reported: AtomicBool::new(false),
+        }
+    }
+}
 
 /// Loads the templates referenced by `render` and `include`.
 pub trait PartialLoader: Send + Sync {
@@ -122,6 +179,8 @@ pub struct Shared {
     pub time_zone: Tz,
     /// Records what the render spends its time in, when it is asked to.
     profiler: Option<Arc<Profiler>>,
+    /// What the render may still spend.
+    budget: Budget,
 }
 
 pub struct ContextBuilder {
@@ -134,6 +193,7 @@ pub struct ContextBuilder {
     time_zone: Tz,
     template_name: Option<Arc<str>>,
     profiler: Option<Arc<Profiler>>,
+    limits: RenderLimits,
 }
 
 impl ContextBuilder {
@@ -181,6 +241,12 @@ impl ContextBuilder {
         self
     }
 
+    /// What the render may spend ([`RenderLimits::default`] otherwise).
+    pub fn limits(mut self, limits: RenderLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
     pub fn build(self) -> Context {
         Context {
             shared: Arc::new(Shared {
@@ -194,6 +260,7 @@ impl ContextBuilder {
                 now_reads: AtomicU64::new(0),
                 time_zone: self.time_zone,
                 profiler: self.profiler,
+                budget: Budget::new(self.limits),
             }),
             scopes: vec![HashMap::new()],
             environment: self.assigns,
@@ -245,6 +312,7 @@ impl Context {
             time_zone: Tz::UTC,
             template_name: None,
             profiler: None,
+            limits: RenderLimits::default(),
         }
     }
 
@@ -479,6 +547,48 @@ impl Context {
 
     pub fn time_zone(&self) -> Tz {
         self.shared.time_zone
+    }
+
+    // --- the budget --------------------------------------------------------------------------
+
+    /// Charges `cost` to the render's budget ([`RenderLimits`]): an error once it is spent,
+    /// and from then on. The clock is read once every 4096 points, so that charging costs an
+    /// atomic add.
+    pub fn charge(&self, cost: u64) -> Result<()> {
+        let budget = &self.shared.budget;
+        if budget.exceeded.load(Ordering::Relaxed) {
+            return Err(Error::resource_limit());
+        }
+        let before = budget.score.fetch_add(cost, Ordering::Relaxed);
+        let after = before.saturating_add(cost);
+        let over_score = after > budget.limits.score;
+        let over_time = before >> 12 != after >> 12
+            && budget
+                .limits
+                .time
+                .is_some_and(|time| budget.started.elapsed() > time);
+        if over_score || over_time {
+            budget.exceeded.store(true, Ordering::Relaxed);
+            return Err(Error::resource_limit());
+        }
+        Ok(())
+    }
+
+    /// Whether the render spent its budget: nothing renders any more.
+    pub fn budget_exceeded(&self) -> bool {
+        self.shared.budget.exceeded.load(Ordering::Relaxed)
+    }
+
+    /// What the render scored so far ([`RenderLimits::score`]).
+    pub fn render_score(&self) -> u64 {
+        self.shared.budget.score.load(Ordering::Relaxed)
+    }
+
+    /// The text of the budget's error where the render stopped: recorded and printed once,
+    /// nothing after.
+    pub fn budget_error(&self, line: u32) -> Option<String> {
+        let first = !self.shared.budget.reported.swap(true, Ordering::Relaxed);
+        first.then(|| self.handle_error(Error::resource_limit(), line))
     }
 
     // --- diagnostics -----------------------------------------------------------------------

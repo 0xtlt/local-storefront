@@ -6,7 +6,7 @@ mod iteration;
 mod partial;
 mod raw;
 
-pub use iteration::{ForLoop, collection_items};
+pub use iteration::{ForLoop, charge_range, collection_items};
 pub use partial::{
     PartialCall, check_render, parse_partial_call, parse_render, print_partial_call,
     strict2_partial_call,
