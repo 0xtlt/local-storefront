@@ -1314,7 +1314,7 @@ fn record_discounts(state: &mut ShopState, order: &str, result: &lsf_checkout::C
     }
 }
 
-/// The line items of an order record.
+/// The line items of a record that has them: an order, a draft order, a fulfillment order.
 pub fn line_items(state: &ShopState, order: &str) -> Vec<String> {
     state
         .get(order)

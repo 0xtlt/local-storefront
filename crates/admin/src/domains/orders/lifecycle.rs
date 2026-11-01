@@ -1527,10 +1527,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     }
     // The stock the order claims.
     if behaviour != "BYPASS" {
-        let lines = state
-            .get(&order)
-            .map(|record| gids(record.get("lineItems")))
-            .unwrap_or_default();
+        let lines = super::line_items(state, &order);
         for line in lines {
             let Some(item_record) = state.get(&line).cloned() else {
                 continue;

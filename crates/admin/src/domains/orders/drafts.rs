@@ -755,11 +755,7 @@ fn write_draft(
     let currency = model::currency(state);
     let mut line_ids = Vec::new();
     if replace_lines {
-        for old in state
-            .get(id)
-            .map(|record| gids(record.get("lineItems")))
-            .unwrap_or_default()
-        {
+        for old in super::line_items(state, id) {
             state.remove(&old);
         }
         for line in &draft.lines {

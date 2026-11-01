@@ -298,10 +298,7 @@ fn refund_lines(
     path: &str,
     errors: &mut Vec<UserError>,
 ) -> Vec<RefundLine> {
-    let order_lines = state
-        .get(order)
-        .map(|record| gids(record.get("lineItems")))
-        .unwrap_or_default();
+    let order_lines = super::line_items(state, order);
     let mut lines: Vec<RefundLine> = Vec::new();
     for (index, item) in items.iter().enumerate() {
         let index = index.to_string();

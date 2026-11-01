@@ -386,10 +386,7 @@ pub fn fulfillment_order_lines(
     gids(record.get("fulfillmentOrders"))
         .iter()
         .flat_map(|fulfillment_order| {
-            let lines = state
-                .get(fulfillment_order)
-                .map(|record| gids(record.get("lineItems")))
-                .unwrap_or_default();
+            let lines = super::line_items(state, fulfillment_order);
             lines
                 .into_iter()
                 .filter(|id| {

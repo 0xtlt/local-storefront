@@ -840,10 +840,7 @@ fn hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
         );
     }
     if let Some(remaining) = &remaining {
-        let split: Vec<Value> = state
-            .get(remaining)
-            .map(|record| gids(record.get("lineItems")))
-            .unwrap_or_default()
+        let split: Vec<Value> = super::line_items(state, remaining)
             .iter()
             .map(|line| {
                 let quantity = state.get(line).map_or(0, |item| int(item, "totalQuantity"));
