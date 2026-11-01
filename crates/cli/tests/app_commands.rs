@@ -445,3 +445,24 @@ fn check_says_the_pages_of_classic_customer_accounts_are_not_rendered() {
     );
     assert_eq!(json["diagnostics"][0]["severity"], "warning", "{json}");
 }
+
+#[test]
+fn every_path_routes_lists_renders_with_render_strict() {
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = theme.to_str().unwrap();
+    // The demo store: the fixture theme has no data of its own.
+    let output = lsf(Path::new("/"), &["--theme", theme, "routes"]);
+    assert!(output.status.success(), "{}", text(&output));
+    let routes = String::from_utf8(output.stdout).unwrap();
+    let routes: Vec<&str> = routes.lines().collect();
+    assert!(routes.contains(&"/products/ceramic-mug"), "{routes:?}");
+    // The stand-in of the customer accounts is the server's, not the theme's.
+    assert!(!routes.contains(&"/account"), "{routes:?}");
+    for route in routes {
+        let output = lsf(
+            Path::new("/"),
+            &["--theme", theme, "render", route, "--strict"],
+        );
+        assert!(output.status.success(), "{route}: {}", text(&output));
+    }
+}

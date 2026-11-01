@@ -108,7 +108,10 @@ fn status(state: &ServerState) -> Json {
     })
 }
 
-/// Every storefront URL the current data gives a page to.
+/// Every storefront URL the current data gives a page of the theme to: what `lsf render`
+/// renders. The pages only the server answers are left out: `/account` stands in for the
+/// customer accounts Shopify hosts, which are not part of a theme (`server::account`), and
+/// `lsf render /account` is the theme's 404.
 pub fn routes(state: &ServerState) -> Vec<String> {
     let loaded = state.loaded();
     let store = &loaded.store;
@@ -117,7 +120,6 @@ pub fn routes(state: &ServerState) -> Vec<String> {
         "/collections".to_string(),
         "/cart".to_string(),
         "/search".to_string(),
-        "/account".to_string(),
     ];
     if ["json", "liquid"].iter().any(|extension| {
         state
