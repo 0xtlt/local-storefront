@@ -157,7 +157,8 @@ module is not built (the page does not run it). A `.graphql` import is an error.
 What is wrong with the app (a missing build, an unknown Function target, a checkout UI target
 the page has no place for, an `owner_type` that is missing or not one of Shopify's) is printed
 when the server starts (`app: …`), and is in the `diagnostics` of the state and on the home
-page.
+page. A missing build (`no Wasm module`, `not built`): `npx local-storefront app build`, or
+`--build`.
 
 | Option | What it does |
 |---|---|
@@ -372,7 +373,7 @@ request out of them fails the target), but it is not sent: the `.run` target rea
 when the connection fails, `502 Bad Gateway (Connection Failed)`. A Function that only fails on
 some answer of its server is found by opening its scenario, which sends the request.
 
-Running them all takes a moment (under a second for the 86 scenarios of the
+Running them all takes a moment (under a second for the ~90 scenarios of the
 [playground](../examples/checkout-playground)), so the page does not wait for it: it shows
 "Running the Functions…" and asks `GET /__lsf/checkouts/check`, which answers what it found.
 The check has 20 s: it looks at the time before each Function runs (each run is bounded on its
