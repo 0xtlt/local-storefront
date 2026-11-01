@@ -799,22 +799,10 @@ pub fn seed_files(seed: &mut Seed) {
     }
 }
 
-/// What a metafield value of the store data is in the Admin API.
-struct Converted {
-    /// `value`: the string Admin returns. References are GIDs.
-    value: String,
-    /// `jsonValue`.
-    json: Value,
-    /// The GID a single reference names (`reference`).
-    reference: Option<String>,
-    /// The GIDs a list of references names (`references`).
-    references: Option<Vec<String>>,
-}
-
 /// Converts a value of the store data: references (handles, paths, `type/handle`, SKUs) become
 /// GIDs, `money` gets its currency, everything that is not a string becomes the JSON text
 /// Shopify keeps.
-fn convert(seed: &mut Seed, kind: &str, value: &Value) -> Converted {
+fn convert(seed: &mut Seed, kind: &str, value: &Value) -> types::Checked {
     let base = kind.strip_prefix("list.");
     let reference = kind.ends_with("_reference");
     match base {
@@ -846,7 +834,7 @@ fn convert(seed: &mut Seed, kind: &str, value: &Value) -> Converted {
                     .map(str::to_string)
                     .collect()
             });
-            Converted {
+            types::Checked {
                 value: Value::Array(converted.clone()).to_string(),
                 json: Value::Array(converted),
                 reference: None,
@@ -856,7 +844,7 @@ fn convert(seed: &mut Seed, kind: &str, value: &Value) -> Converted {
         None if reference => {
             let resolved = resolve_reference(seed, kind, value);
             let text = resolved.clone().unwrap_or_else(|| text_of(value));
-            Converted {
+            types::Checked {
                 json: Value::String(text.clone()),
                 value: text,
                 reference: resolved,
@@ -866,7 +854,7 @@ fn convert(seed: &mut Seed, kind: &str, value: &Value) -> Converted {
         None => {
             let item = list_item(seed, kind, value);
             let value = text_of(&item);
-            Converted {
+            types::Checked {
                 json: json_value(kind, &value),
                 value,
                 reference: None,
