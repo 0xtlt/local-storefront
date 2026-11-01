@@ -30,7 +30,8 @@ How this was established (all three agree):
 The RC can still change before 2027-01-01. When it does: pin a newer `@shopify/dev-mcp` in
 `tools/checkout/function_schemas.mjs`, run `mise run checkout:schemas`, `mise run
 fixtures:functions`, and look at `git status crates/checkout/schemas`: a schema that changes in
-2027-01 gets its own file in `crates/checkout/schemas/2027-01/`.
+2027-01 gets its own file in a new folder, `crates/checkout/schemas/2027-01/`. There is none
+today: every schema is the one of `2026-10/` (`since` in `src/version.rs`).
 
 ### What 2026-10 added to both (against 2026-07)
 

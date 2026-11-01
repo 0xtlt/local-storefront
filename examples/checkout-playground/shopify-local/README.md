@@ -152,6 +152,11 @@ product with options lists its variants; each gives one value per option:
 - `recommendations` lists the handles returned by product recommendations; by default they are
   other products of the same collections.
 - `template_suffix` selects an alternate template (`templates/product.<suffix>.json`).
+- `status` (`active`, `draft`, `archived`) and `published` (on the Online Store, `true` by
+  default) say whether the product is on the storefront: only an active, published product is.
+  The others have no page, are in no collection, cannot be bought, and what names them (a
+  collection, a menu, an order) leaves them out without an error; the Admin API lists them with
+  their status.
 
 ## Collections
 
@@ -222,7 +227,7 @@ Plans come in groups, which is what a subscription app creates.
   plan's name.
 - `checkout_charge` is what is paid at checkout, for a deposit:
   `{ "value_type": "percentage", "value": 50 }`. It defaults to the whole price. The checkout
-  of an [app](checkout.md#deferred-payments) charges only that today, and shows the rest as due
+  of an [app](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#deferred-payments) charges only that today, and shows the rest as due
   later.
 - `recurring_deliveries` defaults to `true`. Ids are generated and stable; set `id` on a plan
   to reproduce a Shopify id.
@@ -441,7 +446,7 @@ with a warning to remove them.
 `npx local-storefront serve --customer <email>` starts every visitor logged in as that customer.
 It also accepts `default` and `none`.
 
-At the [checkout of an app](checkout.md#log-in-as-a-customer), the customers are the login
+At the [checkout of an app](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#log-in-as-a-customer), the customers are the login
 profiles: "Log in" in the Contact section lists them, and picking one logs the checkout (and the
 session) in as them, with their saved addresses (the first one is the default) and, for a B2B
 customer, the locations they buy for. Give the data a customer of each kind you test: a new one
@@ -489,7 +494,7 @@ name it in the customer:
 - In Liquid, `customer.b2b?` is true, and `customer.current_company`,
   `customer.current_location` and `customer.company_available_locations` are filled.
 - `location.url_to_set_as_current` changes the location, as on Shopify.
-- The [local checkout](checkout.md) shows what Shopify's Functions read of a B2B buyer
+- The [local checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md) shows what Shopify's Functions read of a B2B buyer
   (`purchasingCompany`), and you can set it. A company has `created_at` and `updated_at`, a
   location the same plus `locale` (`"fr"`), `orders_count` and `total_spent` (`"1250.00"`). The
   customer is the contact of their company: `company_contact` holds their `title`, `locale`,
@@ -556,7 +561,7 @@ Each gift card has a page rendered by `templates/gift_card.liquid`. Its URL is l
 ## Checkout
 
 The `checkout` section sets up the local checkout of a Shopify app (`npx local-storefront
-checkout --app <dir>`, see [checkout](checkout.md)). Every field has a default, and the section
+checkout --app <dir>`, see [checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md)). Every field has a default, and the section
 changes nothing for a theme.
 
 ```json
@@ -588,7 +593,9 @@ changes nothing for a theme.
 - `discounts`: each one uses a discount Function of the app by its handle. A `code` makes it a
   code discount; without one it is automatic. `classes` (`PRODUCT`, `ORDER`, `SHIPPING`) says
   what it may reduce, all three by default. `metafields` are those of the discount, by
-  `"namespace.key"`, in the same shorthand as other metafields.
+  `"namespace.key"`, in the same shorthand as other metafields. `id` is the number of the id
+  its Function reads (`gid://shopify/DiscountAutomaticNode/<id>`), its position in the list from
+  1 by default.
 - `functions`: the metafields of the other Functions (cart transform, delivery or payment
   customization, validation), by the handle of the Function.
 - `tax_rate`: a percentage, added to the discounted subtotal.
@@ -598,7 +605,7 @@ changes nothing for a theme.
 A scenario is a named setup of the local checkout: one file in `checkouts/`, named after the
 scenario (`checkouts/b2b-seattle.json` is `b2b-seattle`). The home page of the checkout lists
 them and opens a fresh checkout for each; `app function run --scenario <name>` runs the Functions
-for one ([checkout](checkout.md#scenarios)). A scenario is a set of overrides on top of the
+for one ([checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#scenarios)). A scenario is a set of overrides on top of the
 store data: what it does not set stays as the data says.
 
 ```json
@@ -787,8 +794,13 @@ page and `system.url` is blank. `"template_suffix": "alt"` on an entry renders i
 title is the entry's `title` or `name` field, or its handle. `shopify://metaobjects/<type>/<handle>`
 in a `url` setting leads to the page.
 
-The Functions of the [local checkout](checkout.md) read the same metaobjects as
+The Functions of the [local checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md) read the same metaobjects as
 `shop.metaobject(handle: {type: "designer", handle: "sam"})`, with their `field(key:)`.
+
+The types an app owns are written `$app:<type>` (`"$app:author"`), as its reserved metafield
+namespaces are (`$app:config`). Shopify writes them in full, `app--<app id>--author`, which a
+theme's Liquid uses: `metaobjects['app--1234--author']` and `metaobjects['$app:author']` both
+find them, whatever the id, since the store data does not know it.
 
 
 ## Time and theme settings
@@ -1035,6 +1047,8 @@ default variant, like a product without options in the Shopify admin.
 | `recommendations` | array of string | Handles of the products returned by product recommendations for this product. Defaults to other products from the same collections. |
 | `selling_plan_groups` | array of string | Names of the selling plan groups (from `selling_plan_groups`) this product is sold with, in addition to the groups that list it in their own `products`. |
 | `requires_selling_plan` | boolean | Whether the product can only be bought with a selling plan, like a product sold by subscription only. Defaults to `false`. |
+| `status` | [ProductStatus](#productstatus) | `active`, `draft` or `archived`. Defaults to `active`. Only an active product that is published is on the storefront: a draft, an archived product or one that is not published has no page, is in no collection, and cannot be bought, but the Admin API lists it. What names it (a collection, a menu, an order of the data) leaves it out without an error. |
+| `published` | boolean | Whether the product is published on the Online Store. Defaults to `true`. |
 
 ### Option
 
@@ -1217,6 +1231,16 @@ One file of a video or 3D model.
 Where an external video is hosted.
 
 One of: `"youtube"`, `"vimeo"`.
+
+### ProductStatus
+
+Where a product is in its life, as the Shopify admin shows it.
+
+One of:
+
+- `"active"`: For sale.
+- `"draft"`: Being prepared: not on the storefront yet.
+- `"archived"`: No longer sold: not on the storefront.
 
 ### Collection
 
@@ -1767,6 +1791,7 @@ A discount backed by a discount Function of the app.
 
 | Field | Type | Description |
 |---|---|---|
+| `id` | integer | The number of the discount's id, which its Function reads (`gid://shopify/DiscountAutomaticNode/<id>`, or `DiscountCodeNode` with a code) and the Admin API gives it. Defaults to its position in the list, from 1. |
 | `function` | string | **Required.** The handle of the discount Function in the app. |
 | `title` | string | What the buyer sees. Defaults to the handle of the Function. |
 | `code` | string | The code that triggers the discount. Without one the discount is automatic. |
