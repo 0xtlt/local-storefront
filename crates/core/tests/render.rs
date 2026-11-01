@@ -26,8 +26,11 @@ fn fixture() -> Fixture {
     let options = LoadOptions {
         theme_locales: vec!["en".to_string(), "fr".to_string()],
     };
-    let (store, diagnostics) = load(&DataSource::Demo, &options);
+    let (mut store, diagnostics) = load(&DataSource::Demo, &options);
     assert!(diagnostics.is_empty(), "{diagnostics}");
+    // A fixed instant: the page says the shop's UTC offset, which daylight saving time moves
+    // (New York, -4 h in summer, -5 h in winter), so that the snapshots hold all year.
+    store.now = Some("2026-07-01T12:00:00Z".parse().expect("an RFC 3339 date"));
     Fixture {
         renderer: Renderer::new(theme),
         store: Arc::new(store),
