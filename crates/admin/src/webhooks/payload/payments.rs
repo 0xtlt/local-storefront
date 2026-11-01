@@ -9,6 +9,8 @@ use super::{
     Lookup, field, first, id, items, lower, money_amount, numeric, price_or_zero, records, ref_gid,
     ref_id, resolve, text, text_or, time,
 };
+use crate::domains::orders::return_extras::LAST_DISPOSITIONS;
+use crate::domains::orders::risk::ASSESSMENTS;
 
 /// The dates of payment terms and schedules, which their GraphQL types do not have: lsf keeps
 /// them under these keys (`domains::orders::payments`), a sample under the GraphQL-like ones.
@@ -93,7 +95,7 @@ pub(super) fn tender_transaction(tender: &Map<String, Value>) -> Value {
 /// `orders/risk_assessment_changed`: the newest risk assessment of an order (`provider_id` and
 /// `provider_title` `null` when Shopify made it, as the topic's description says).
 pub(super) fn risk_assessment(order: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
-    let assessment = field(order, "lsfRiskAssessments")
+    let assessment = field(order, ASSESSMENTS)
         .as_array()
         .and_then(|all| all.last())
         .cloned()
@@ -211,7 +213,7 @@ pub(super) fn reverse_delivery(delivery: &Map<String, Value>, lookup: &dyn Looku
 /// `reverse_fulfillment_orders/dispose`: a `ReverseFulfillmentOrder` and the dispositions its
 /// last change made (`lsfLastDispositions`).
 pub(super) fn reverse_dispositions(reverse: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
-    let dispositions: Vec<Value> = records(field(reverse, "lsfLastDispositions"), lookup)
+    let dispositions: Vec<Value> = records(field(reverse, LAST_DISPOSITIONS), lookup)
         .iter()
         .map(|disposition| {
             json!({

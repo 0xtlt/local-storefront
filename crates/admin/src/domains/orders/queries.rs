@@ -337,7 +337,9 @@ fn amount(r: &ShopResolver<'_>, item: &Value, field: &str) -> SortValue {
     }
 }
 
-fn customer_name(r: &ShopResolver<'_>, item: &Value) -> SortValue {
+/// The `CUSTOMER_NAME` sort of a record with a `customer` (an order, a draft order, an
+/// abandoned checkout): the customer's `displayName`.
+pub fn customer_name(r: &ShopResolver<'_>, item: &Value) -> SortValue {
     SortValue::of(
         r.item_map(item)
             .and_then(|record| text(record, "customer"))

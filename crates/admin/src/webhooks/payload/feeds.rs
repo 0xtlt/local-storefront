@@ -14,6 +14,7 @@ use serde_json::{Map, Value, json};
 use super::{
     Lookup, field, item_weight, items, lower, millis, object, records, resolve, text, time,
 };
+use crate::domains::catalog::feeds::{SYNC_FEED, SYNC_METADATA, SYNC_PRODUCT, SYNC_PRODUCT_RECORD};
 
 /// `product_feeds/create`, `product_feeds/update`: the feed's GID, country, language and status.
 pub(super) fn feed(record: &Map<String, Value>) -> Value {
@@ -27,7 +28,7 @@ pub(super) fn feed(record: &Map<String, Value>) -> Value {
 
 /// The `productFeed` of a sync: the feed and the shop's GID.
 fn product_feed(sync: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
-    let feed = object(field(sync, "feed"));
+    let feed = object(field(sync, SYNC_FEED));
     json!({
         "id": text(&feed, "id"),
         "shop_id": lookup.shop().map_or(Value::Null, |shop| text(&shop, "id")),
@@ -38,8 +39,8 @@ fn product_feed(sync: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
 
 /// The product of a sync, as the feed writes it: the record of its GID, else the snapshot's copy.
 fn sync_product(sync: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
-    resolve(field(sync, "product"), lookup)
-        .or_else(|| field(sync, "productRecord").as_object().cloned())
+    resolve(field(sync, SYNC_PRODUCT), lookup)
+        .or_else(|| field(sync, SYNC_PRODUCT_RECORD).as_object().cloned())
         .map_or(Value::Null, |product| {
             product_payload(&product, sync, lookup)
         })
@@ -60,7 +61,7 @@ fn full_metadata(metadata: &Map<String, Value>) -> Value {
 /// `product_feeds/full_sync`: one product of a full sync.
 pub(super) fn full_sync(sync: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
     json!({
-        "metadata": full_metadata(&object(field(sync, "metadata"))),
+        "metadata": full_metadata(&object(field(sync, SYNC_METADATA))),
         "productFeed": product_feed(sync, lookup),
         "product": sync_product(sync, lookup),
         "products": null,
@@ -69,7 +70,7 @@ pub(super) fn full_sync(sync: &Map<String, Value>, lookup: &dyn Lookup) -> Value
 
 /// `product_feeds/incremental_sync`: a product listed, changed or unlisted.
 pub(super) fn incremental_sync(sync: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
-    let metadata = object(field(sync, "metadata"));
+    let metadata = object(field(sync, SYNC_METADATA));
     json!({
         "metadata": {
             "action": text(&metadata, "action"),
@@ -86,7 +87,7 @@ pub(super) fn incremental_sync(sync: &Map<String, Value>, lookup: &dyn Lookup) -
 
 /// `product_feeds/full_sync_finish`: the end of a full sync, with how many products it sent.
 pub(super) fn full_sync_finish(sync: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
-    let metadata = object(field(sync, "metadata"));
+    let metadata = object(field(sync, SYNC_METADATA));
     json!({
         "metadata": full_metadata(&metadata),
         "productFeed": product_feed(sync, lookup),
@@ -158,7 +159,7 @@ fn product_payload(
         .shop()
         .map_or(Value::Null, |shop| text(&shop, "currencyCode"));
     // Published on the feed's channel: what a sync is of, but a product unlisted.
-    let action = field(&object(field(sync, "metadata")), "action").clone();
+    let action = field(&object(field(sync, SYNC_METADATA)), "action").clone();
     let published = action.as_str() != Some("DELETE");
     let images: Vec<Value> = items(field(product, "images")).iter().map(image).collect();
     let media: Vec<Value> = records(field(product, "media"), lookup)
