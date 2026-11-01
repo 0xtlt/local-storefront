@@ -15,7 +15,6 @@ mod tests;
 mod translations;
 pub mod types;
 
-pub use metafields::{owner_type, owner_types_of};
 pub use online_store::refresh_blog;
 
 use chrono::Offset;
