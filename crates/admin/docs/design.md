@@ -32,17 +32,19 @@ lsf app webhook trigger --topic orders/create --app ../my-app [--address URL] [-
 #   as `shopify app webhook trigger`: one webhook, built from the store data, signed, sent
 ```
 
-The server prints, when it starts, the Admin API URL and an access token that works at once:
+With `--app`, the server prints, before `ready:`, the Admin API URL and an access token that works at
+once (without it, nothing: `GET /__lsf/admin` has the token):
 
 ```text
-Admin API  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
-           X-Shopify-Access-Token: shpat_…   (shop: my-shop.myshopify.com)
-Webhooks   3 subscriptions of shopify.app.toml → http://localhost:3000
+admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
+        X-Shopify-Access-Token: shpat_…   (shop: local-supply-co.myshopify.com)
+        client secret: from SHOPIFY_API_SECRET of ../my-app/.env
+webhooks: 3 subscriptions of shopify.app.toml → http://localhost:3000
 ```
 
 | Option | What it does |
 |---|---|
-| `--app-url <url>` (`LSF_APP_URL`) | Where the backend of the app listens. Relative webhook `uri`s are joined to it, and an absolute one on the origin of `application_url` is moved to it. Without it, `application_url` is used. |
+| `--app-url <url>` (`LSF_APP_URL`) | Where the backend of the app listens. Relative webhook `uri`s are joined to it, and an absolute one on the origin of `application_url` is moved to it. Without it, `application_url` is used, and a webhook is sent there only when it is on this machine. |
 | `--client-secret <secret>` (`LSF_CLIENT_SECRET`) | The secret webhooks, OAuth and session tokens are signed with. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else a fixed local secret printed at start. |
 | `--admin-versions <list>` (`LSF_ADMIN_VERSIONS`) | The API versions served, among those lsf knows: `2026-10` (the default) alone without it, `2026-10,2027-01` with the release candidate. See "API versions". |
 | `--admin-throttle <plan>` (`LSF_ADMIN_THROTTLE`) | The cost bucket: `store` (the default: Plus for store data with companies, as the seed's `plan.shopifyPlus`, Standard otherwise), a plan (`standard`, `advanced`, `plus`, `enterprise`, `legacy`), or `off`. |
@@ -1896,8 +1898,9 @@ event, by the shop's clock.
 
 ## The outbox (`outbox`)
 
-lsf never sends anything outside the machine: what Shopify would have sent or bought is recorded
-in the shop's outbox instead, by one API every family uses (`outbox::record(state,
+lsf never sends what Shopify sends the outside world (webhooks go to this machine or
+`--app-url` only): what Shopify would have sent or bought is recorded in the shop's outbox
+instead, by one API every family uses (`outbox::record(state,
 Entry::email(what, to).subject(..).body(..).about(..))`, `Entry::new(channel, what)` for the
 other channels), and read by one (`outbox::entries(state, channel)`, `outbox::clear`).
 

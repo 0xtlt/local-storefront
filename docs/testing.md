@@ -281,8 +281,8 @@ date on every run. An order lives as long as its session; only the last one a se
 kept. `DELETE /__lsf/session` resets one session, `DELETE /__lsf/sessions` every one. With an
 app, the [Admin API](admin.md) records each order too, under the same number unless another
 session or the backend took it first (then under its next one, so that its orders have unique
-names). The backend of the app, its webhooks and its tests:
-[test your backend](admin.md#test-your-backend). The checkout of an app in CI:
+names): the answer of `complete` gives the Admin API's. The backend of the app, its webhooks
+and its tests: [test your backend](admin.md#test-your-backend). The checkout of an app in CI:
 [checkout](checkout.md#in-ci).
 
 ## Simulating a slow network
@@ -503,8 +503,8 @@ jobs:
       - run: npx local-storefront check # every Liquid file parses, and Shopify's strict parser accepts it
       - name: Render every page, and fail on a Liquid error
         run: |
-          for path in $(npx local-storefront routes); do
-            npx local-storefront render "$path" --strict > /dev/null || exit 1
+          for route in $(npx local-storefront routes); do
+            npx local-storefront render "$route" --strict > /dev/null || exit 1
           done
       - run: npx local-storefront fmt --check # once the theme is formatted
       - run: npx playwright install --with-deps chromium
@@ -514,7 +514,8 @@ jobs:
 - `check` reads the files and renders none. A Liquid error at render time (a division by zero)
   shows only when the page renders: with `render --strict`, or in a test.
 - `routes` lists every page of the store data, and `render` answers each one, so the loop
-  renders the whole store. <!-- check: routes/account -->
+  renders the whole store. `/account`, a page of lsf's, is not listed. Name the variable
+  `route`, not `path`: in zsh, `path` is `PATH`, and the loop would lose `npx`.
 - `fmt --check` fails on a theme no one has formatted: Shopify's Horizon has 28 files to
   format. Run `npx local-storefront fmt` first, in a commit of its own, then add the step.
 - The steps before Playwright take a few seconds, and fail before the browser tests start.

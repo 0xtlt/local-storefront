@@ -72,9 +72,22 @@ the same data every run.
   (224 of the 227); the other three are logged, never sent with a made-up body. The storefront's
   cart and the local checkout send `carts/*` and `checkouts/*`, and a checkout left without an
   order becomes an abandoned checkout the backend reads. `lsf app webhook trigger` sends one on
-  demand, compliance topics included, as `shopify app webhook trigger` does.
-  `GET /__lsf/webhooks` lists the deliveries. After an uninstall, nothing is delivered for the
-  shop but `app/uninstalled`.
+  demand, compliance topics included, as `shopify app webhook trigger` does (`--format json`
+  for a tool). After an uninstall, nothing is delivered for the shop but `app/uninstalled`.
+- **Webhooks stay on this machine.** lsf sends one to this machine, to `--app-url`, or to the
+  `--address` you give, nowhere else: a subscription that points at your production backend
+  or a stale tunnel is logged `not_sent`, with why, and `lsf app webhook trigger` sends nothing
+  and exits with `2`. Give `--app-url http://localhost:<port>`: the start lines say when it is
+  missing.
+- **The webhook log, for tests.** `GET /__lsf/webhooks` lists the deliveries, filtered by
+  `topic`, `state`, `shop` (`test-1` or `test-1.myshopify.com`), `resource` (the GID of a
+  record: the order a test placed) and `since` (a delivery's id). `?wait=1` waits for one that
+  matches every filter. Every answer has `last`, the newest id, to pass as `since` next time:
+  a test no longer gets another test's webhook. [Control API](docs/control-api.md#webhook-deliveries).
+- **The start lines of an app.** With `--app`, the Admin API's URL and token, where the client
+  secret came from, where the webhooks go and the app proxy are printed before `ready:`: a tool
+  that reads up to `ready:` has the token. Without `--app`, none of them (`GET /__lsf/admin`
+  has the token).
 - **The app proxy.** A storefront request under the prefix of `[app_proxy]` goes to the backend
   with Shopify's parameters and signature. A Liquid answer is rendered in the theme's layout.
 - **Billing.** `appSubscriptionCreate` and `appPurchaseOneTimeCreate` lead to a local approval
@@ -97,6 +110,13 @@ the same data every run.
     it.
   - `--admin-source <url>=<file>`: a URL of your backend's own answered with a file, never
     downloaded; `PUT /__lsf/admin/sources?url=` stubs one from a test.
+- **`lsf app check --build`** builds the extensions first, for a clone where `dist/` is not
+  committed. `app check` also warns about a Function that ran in no scenario, so that nothing
+  checks it (`ranInNoScenario` in JSON); the exit code does not change. A missing build says
+  to run `lsf app build <handle>`.
+- **The docs ship in the npm package.** `node_modules/local-storefront/` has the `llms.txt`,
+  `docs/` and `CHANGELOG.md` of the version you installed, for a tool or an agent to read
+  offline.
 - **`examples/admin-backend`:** a backend written with Shopify's libraries
   (`@shopify/shopify-app-react-router`, `@shopify/shopify-api`), with a script that runs it
   against lsf end to end (`mise run admin:e2e`).
@@ -108,9 +128,16 @@ the same data every run.
   `id`. [Data format](docs/data-format.md).
 - **Two companies with the same name** are both kept, and reported (`duplicate_company`). The
   second used to replace the first.
+- **`POST /checkouts/cn/<token>/complete` answers the order it placed:**
+  `{"redirect", "order": {"id", "number", "name"}}`, as the Admin API recorded it. Match a
+  webhook by `order.id`. The thank-you page keeps the session's number, which can differ
+  (`#1004` there, `#1005` in the Admin API when the shop has a `#1004` already).
 
 ### Fixed
 
+- **`lsf routes` no longer lists `/account`**, a page of lsf's that `render --strict` refuses:
+  a loop of `render --strict` over `routes` passes on a stock theme. `GET /__lsf/status` lists
+  the same routes.
 - **A large store loads much faster.** The default product recommendations took a time cubic in
   the number of products: 3,000 products took 5 to 6 s to load, and now take 0.3 s. This speeds
   up startup and `--watch` too.
