@@ -2,7 +2,7 @@
 // ones GitHub shows and some tests read, so nothing here asks them to change: the title of a page
 // is its first heading, the sidebar is the index of `docs/README.md`, the anchors are GitHub's,
 // and a link out of `docs/` leads to the file on GitHub.
-import { copyFileSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { slug } from 'github-slugger'
 import { defineConfig, type DefaultTheme } from 'vitepress'
@@ -13,6 +13,28 @@ const docs = fileURLToPath(new URL('../../../docs/', import.meta.url))
 // serves it at `/llms.txt` too.
 const llms = fileURLToPath(new URL('../../../llms.txt', import.meta.url))
 const site = fileURLToPath(new URL('../', import.meta.url))
+
+/** A link out of `docs/` (`../examples/checkout-playground`) leads to the file on GitHub. */
+function outOfDocs(path: string): string {
+  return `${repository}/tree/main/${path}`
+}
+
+/** A guide as Markdown, for an agent that reads `/agents.md` rather than `/agents.html`. */
+function markdown(name: string): string {
+  return readFileSync(`${docs}${name}`, 'utf8').replace(/\]\(\.\.\/([^)]+)\)/g, (_link, path: string) => `](${outOfDocs(path)})`)
+}
+
+/**
+ * `llms.txt` as the site serves it: `docs/agents.md` is `/agents.md` here, and a file of the
+ * repository that is not a guide (`CHANGELOG.md`) is on GitHub.
+ */
+function llmsTxt(): string {
+  return readFileSync(llms, 'utf8').replace(/\]\(([^)#\s:]+)(#[^)]*)?\)/g, (_link, path: string, anchor = '') =>
+    path.startsWith('docs/') ? `](/${path.slice(5)}${anchor})` : `](${repository}/blob/main/${path}${anchor})`,
+  )
+}
+
+const guides = readdirSync(docs).filter((name) => name.endsWith('.md'))
 
 /** The sidebar: each `## Section` of `docs/README.md`, with the pages its table links to. */
 function sidebar(): DefaultTheme.SidebarItem[] {
@@ -54,9 +76,7 @@ export default defineConfig({
       const open = md.renderer.rules.link_open
       md.renderer.rules.link_open = (tokens, index, options, env, self) => {
         const href = tokens[index].attrGet('href')
-        if (href?.startsWith('../')) {
-          tokens[index].attrSet('href', `${repository}/tree/main/${href.slice(3)}`)
-        }
+        if (href?.startsWith('../')) tokens[index].attrSet('href', outOfDocs(href.slice(3)))
         return open ? open(tokens, index, options, env, self) : self.renderToken(tokens, index, options)
       }
     },
@@ -72,8 +92,16 @@ export default defineConfig({
       text: 'Edit this page on GitHub',
     },
   },
-  buildEnd(site) {
-    copyFileSync(llms, `${site.outDir}/llms.txt`)
+  // Each guide is served as Markdown too (`/agents.md`), and `/llms.txt` links to those: a link
+  // of it that leads nowhere fails the build.
+  buildEnd({ outDir }) {
+    for (const name of guides) writeFileSync(`${outDir}/${name}`, markdown(name))
+    const index = llmsTxt()
+    writeFileSync(`${outDir}/llms.txt`, index)
+    const missing = [...index.matchAll(/\]\((\/[^)#]+)/g)]
+      .map(([, path]) => path)
+      .filter((path) => !existsSync(`${outDir}${path}`))
+    if (missing.length > 0) throw new Error(`llms.txt links to pages the site does not have: ${missing.join(', ')}`)
   },
   vite: {
     // `docs/` is outside this folder: the dev server may read it,
@@ -81,10 +109,11 @@ export default defineConfig({
     plugins: [
       {
         name: 'lsf-llms-txt',
+        // In the dev server, `/agents.md` is the page as a module, so only `/llms.txt` is served.
         configureServer(server) {
           server.middlewares.use('/llms.txt', (_request, response) => {
             response.setHeader('content-type', 'text/plain; charset=utf-8')
-            response.end(readFileSync(llms))
+            response.end(llmsTxt())
           })
         },
       },
