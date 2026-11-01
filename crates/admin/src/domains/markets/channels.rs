@@ -45,11 +45,11 @@ use chrono::{DateTime, Utc};
 use lsf_core::util::handleize;
 use serde_json::{Map, Value, json};
 
-use super::{coded, input, is, objects, regions_of, shop_locales, strings, text};
+use super::{coded, input, is, number, objects, regions_of, shop_locales, strings, text};
 use crate::domains::catalog::{self, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, parse_gid, value};
+use crate::state::{Record, ShopState, value};
 
 /// The record field of a channel's publication that names the channel.
 const CHANNEL_OF: &str = "lsfChannel";
@@ -105,13 +105,13 @@ pub fn register(registry: &mut Registry) {
         )
         .field("Channel", "markets", channel_markets)
         .field("Channel", "marketsCount", channel_markets_count)
-        .field("App", "channels", app_channels)
+        .field("App", "channels", all_channels)
         .field("AppInstallation", "channel", |r, _ctx, _object| {
             Ok(Output::object_or_null(
                 r.state().keys("Channel").next().map(Obj::record),
             ))
         })
-        .field("Shop", "channels", shop_channels)
+        .field("Shop", "channels", all_channels)
         .field("Publication", "channels", publication_channels);
     for type_name in ["Product", "Collection", "ProductVariant"] {
         registry
@@ -316,24 +316,13 @@ fn channel_markets_count(
     Ok(r.count(ctx, count))
 }
 
-fn all_channels(r: &ShopResolver<'_>) -> Vec<Value> {
-    r.records_of("Channel")
-}
-
-fn app_channels(
+/// `App.channels` and `Shop.channels`: every channel (lsf serves one app).
+fn all_channels(
     r: &ShopResolver<'_>,
     ctx: &FieldContext<'_>,
     _object: &Obj,
 ) -> Result<Output<Obj>, FieldError> {
-    r.connection(ctx, all_channels(r))
-}
-
-fn shop_channels(
-    r: &ShopResolver<'_>,
-    ctx: &FieldContext<'_>,
-    _object: &Obj,
-) -> Result<Output<Obj>, FieldError> {
-    r.connection(ctx, all_channels(r))
+    r.connection(ctx, r.records_of("Channel"))
 }
 
 /// `Publication.channels`: the channel of a channel's publication.
@@ -425,8 +414,7 @@ fn listing_snapshot(
 /// The key of a listing event: the publishable's GID, with the publication's id (it names no
 /// record, so the payload is built from the snapshot).
 fn listing_key(publishable: &str, publication: &str) -> String {
-    let id = parse_gid(publication).map_or(0, |(_, id)| id);
-    format!("{publishable}?publication_id={id}")
+    format!("{publishable}?publication_id={}", number(publication))
 }
 
 /// Emits a listing event of a channel's publication.
