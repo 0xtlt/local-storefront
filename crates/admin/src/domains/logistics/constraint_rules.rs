@@ -35,7 +35,6 @@ const LIMIT: usize = 10;
 /// The `MetafieldOwnerType` of a rule.
 const OWNER_TYPE: &str = "FULFILLMENT_CONSTRAINT_RULE";
 
-/// `fulfillmentConstraintRuleCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"fulfillmentConstraintRule": null});
     let arguments = ctx.arguments().clone();
@@ -118,7 +117,6 @@ fn rule_of(mutation: &Mutation<'_>, ctx: &FieldContext<'_>) -> Option<String> {
     (mutation.state().type_of(id) == Some("FulfillmentConstraintRule")).then(|| id.to_string())
 }
 
-/// `fulfillmentConstraintRuleUpdate`.
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let Some(id) = rule_of(mutation, ctx) else {
         return Ok(payload(
@@ -135,7 +133,6 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     Ok(payload(json!({"fulfillmentConstraintRule": id}), &[]))
 }
 
-/// `fulfillmentConstraintRuleDelete`.
 fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let Some(id) = rule_of(mutation, ctx) else {
         return Ok(payload(

@@ -1357,7 +1357,6 @@ fn bump(state: &mut ShopState, profile: &str, entries: Vec<Map<String, Value>>) 
 
 // --- The mutations ---
 
-/// `deliveryProfileCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = super::input(ctx, "profile");
     let currency = model::currency(mutation.state());
@@ -1394,7 +1393,6 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     Ok(payload(json!({"profile": id}), &[]))
 }
 
-/// `deliveryProfileUpdate`.
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     if mutation.state().type_of(&id) != Some("DeliveryProfile") {

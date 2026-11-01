@@ -302,7 +302,6 @@ fn refreshed(state: &mut ShopState, fulfillment_orders: &[&str]) {
     }
 }
 
-/// `fulfillmentOrderSplit`.
 fn split(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"fulfillmentOrderSplits": null});
     let splits = objects(ctx.arg("fulfillmentOrderSplits"));
@@ -373,7 +372,6 @@ fn split(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
 /// A fulfillment order of a merge, with the units `(line, quantity)` it gives.
 type Member = (String, Vec<(String, i64)>);
 
-/// `fulfillmentOrderMerge`.
 fn merge(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"fulfillmentOrderMerges": null});
     let inputs = objects(ctx.arg("fulfillmentOrderMergeInputs"));
@@ -497,7 +495,6 @@ fn at_service(state: &ShopState, id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// `fulfillmentOrderReportProgress`.
 fn report_progress(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -588,7 +585,6 @@ pub fn stop_progress(mutation: &mut Mutation<'_>, id: &str) -> Option<Value> {
     Some(payload(json!({"fulfillmentOrder": id}), &[]))
 }
 
-/// `fulfillmentOrderLineItemsPreparedForPickup`.
 fn prepared(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = super::input(ctx, "input");
     let groups = objects(input.get("lineItemsByFulfillmentOrder"));
@@ -708,7 +704,6 @@ fn route(
         .map(str::to_string)
 }
 
-/// `fulfillmentOrdersReroute`.
 fn reroute(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"movedFulfillmentOrders": null});
     let ids = gids(ctx.arg("fulfillmentOrderIds"));
@@ -843,7 +838,6 @@ fn reroute(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
     Ok(payload(json!({"movedFulfillmentOrders": ids}), &[]))
 }
 
-/// `fulfillmentOrdersSetFulfillmentDeadline`.
 fn set_deadline(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let ids = gids(ctx.arg("fulfillmentOrderIds"));
     let deadline = ctx

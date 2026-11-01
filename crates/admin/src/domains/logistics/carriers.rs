@@ -80,7 +80,6 @@ fn check(
     errors
 }
 
-/// `carrierServiceCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = super::input(ctx, "input");
     let errors = check(
@@ -117,7 +116,6 @@ fn service(state: &ShopState, id: &str) -> Option<String> {
     (state.type_of(id) == Some("DeliveryCarrierService")).then(|| id.to_string())
 }
 
-/// `carrierServiceUpdate`.
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = super::input(ctx, "input");
     let code = "CARRIER_SERVICE_UPDATE_FAILED";

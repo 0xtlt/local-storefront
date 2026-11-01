@@ -456,12 +456,10 @@ pub fn remove_shipment(state: &mut ShopState, shipment: &str) {
 
 // --- The mutations ---
 
-/// `inventoryShipmentCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     create_shipment(mutation, ctx, false)
 }
 
-/// `inventoryShipmentCreateInTransit`.
 fn create_in_transit(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -709,7 +707,6 @@ fn remove_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     Ok(payload(json!({"inventoryShipment": id}), &[]))
 }
 
-/// `inventoryShipmentUpdateItemQuantities`.
 fn update_quantities(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -785,7 +782,6 @@ fn update_quantities(
     ))
 }
 
-/// `inventoryShipmentMarkInTransit`.
 fn mark_in_transit(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -813,7 +809,6 @@ fn mark_in_transit(
     Ok(payload(json!({"inventoryShipment": id}), &[]))
 }
 
-/// `inventoryShipmentReceive`.
 fn receive(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryShipment": null});
     let (id, shipment) = match shipment_arg(ctx, mutation.state(), &empty) {
@@ -970,7 +965,6 @@ fn take(receipts: &mut Vec<(String, [i64; 3])>, line: &str, reason: &str, quanti
     }
 }
 
-/// `inventoryShipmentSetTracking`.
 fn set_tracking(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryShipment": null});
     let (id, _) = match shipment_arg(ctx, mutation.state(), &empty) {
@@ -995,7 +989,6 @@ fn set_tracking(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     Ok(payload(json!({"inventoryShipment": id}), &[]))
 }
 
-/// `inventoryShipmentSetBarcode`.
 fn set_barcode(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryShipment": null});
     let (id, _) = match shipment_arg(ctx, mutation.state(), &empty) {

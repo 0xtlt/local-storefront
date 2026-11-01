@@ -84,7 +84,6 @@ fn carrier(code: Option<&str>, origin_country: Option<&str>) -> (String, String)
     (name, code)
 }
 
-/// `shippingLabelPurchase`.
 fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"shippingLabelPurchaseResult": null});
     let input = super::input(ctx, "shippingLabelPurchase");
