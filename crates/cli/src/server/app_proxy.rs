@@ -37,7 +37,7 @@ use super::storefront::{Visit, reply_from};
 use super::{Incoming, SESSION_COOKIE, SESSION_HEADER, ServerState};
 
 /// The first segment of the proxied path, as shopify.dev lists the values a `prefix` may take.
-pub const PREFIXES: [&str; 4] = ["a", "apps", "community", "tools"];
+const PREFIXES: [&str; 4] = ["a", "apps", "community", "tools"];
 
 /// The `subpath`s Shopify refuses ("About app proxies").
 const RESERVED_SUBPATHS: [&str; 4] = ["admin", "services", "password", "login"];
@@ -46,7 +46,7 @@ const RESERVED_SUBPATHS: [&str; 4] = ["admin", "services", "password", "login"];
 /// proxies; lsf waits as long as shopify.dev says Shopify waits for its own APIs ("Shopify waits
 /// up to 10 seconds for a response", the `504 Gateway Timeout` of "API response status and error
 /// codes").
-pub const TIMEOUT: Duration = Duration::from_secs(10);
+const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The most of an answer that is read: the bodies of the requests the server reads are capped
 /// at the same.
@@ -54,7 +54,7 @@ const MAX_ANSWER: u64 = 32 * 1024 * 1024;
 
 /// The headers Shopify strips from the answers of app proxies, "due to security concerns"
 /// (shopify.dev, "About app proxies", "Disallowed headers"), lowercase.
-pub const DISALLOWED_RESPONSE_HEADERS: [&str; 19] = [
+const DISALLOWED_RESPONSE_HEADERS: [&str; 19] = [
     "accept-patch",
     "accept-ranges",
     "connection",
@@ -110,14 +110,14 @@ const PATH_SEGMENT: &AsciiSet = &CONTROLS
 pub struct AppProxy {
     /// `/<prefix>/<subpath>`: the storefront path that is proxied, and the `path_prefix` the
     /// backend is given. Shopify lets a merchant change both; lsf serves the app's.
-    pub path_prefix: String,
+    path_prefix: String,
     /// `url` of `[app_proxy]`, as written.
-    pub url: String,
+    url: String,
     /// Where the requests go: `url` resolved as the `uri` of a webhook (a path joins the app
     /// URL; on the origin of `application_url`, it moves to `--app-url`), or why it cannot be.
-    pub target: Destination,
+    target: Destination,
     /// Why the proxy is not served: an `[app_proxy]` Shopify would not take.
-    pub problem: Option<String>,
+    problem: Option<String>,
     /// How long the backend has to answer: [`TIMEOUT`], shorter in tests.
     timeout: Duration,
     agent: ureq::Agent,
@@ -132,7 +132,7 @@ impl AppProxy {
     }
 
     /// The app proxy of a `shopify.app.toml`, with the backend on `app_url` (`--app-url`).
-    pub fn new(config: &AppConfig, app_url: Option<&str>) -> Option<AppProxy> {
+    fn new(config: &AppConfig, app_url: Option<&str>) -> Option<AppProxy> {
         let proxy = config.app_proxy.as_ref()?;
         let prefix = proxy.prefix.trim().trim_matches('/');
         let subpath = proxy.subpath.trim().trim_matches('/');
@@ -199,7 +199,7 @@ impl AppProxy {
 
     /// The part of a storefront path (its locale prefix removed) below the proxied path: `""`
     /// for the proxied path itself, `/extra/path` below it, `None` elsewhere.
-    pub fn rest_of<'a>(&self, path: &'a str) -> Option<&'a str> {
+    fn rest_of<'a>(&self, path: &'a str) -> Option<&'a str> {
         let rest = path.strip_prefix(&self.path_prefix)?;
         (rest.is_empty() || rest.starts_with('/')).then_some(rest)
     }
@@ -243,7 +243,6 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
     })
 }
 
-/// What the backend answered: its status, its headers and its body.
 struct Answer {
     status: u16,
     headers: Vec<(String, String)>,
@@ -395,7 +394,6 @@ fn forwarded_headers(incoming: &Incoming, language: Option<&str>) -> Vec<(String
     headers
 }
 
-/// Sends the request to the backend, and reads its answer.
 fn send(
     agent: &ureq::Agent,
     method: &str,
