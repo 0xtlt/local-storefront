@@ -16,6 +16,7 @@ use crate::domains::catalog::gids;
 use crate::domains::orders::TAX_RATE_SETTING;
 use crate::domains::orders::model::share;
 use crate::resolve::UserError;
+pub use crate::state::Pointer;
 pub use crate::state::value::str_field as text;
 use crate::state::value::{cents, parse_cents};
 use crate::state::{Record, ShopState, gid_number, value};
@@ -83,21 +84,6 @@ pub fn cycle_error(field: &[&str], code: &str) -> UserError {
 /// The path of a nested input field: `prefix`, then `rest`.
 pub fn path<'a>(prefix: &[&'a str], rest: &[&'a str]) -> Vec<&'a str> {
     prefix.iter().chain(rest).copied().collect()
-}
-
-/// `pointer` for a record, as `Value::pointer` reads a value: `/state/__typename`.
-pub trait Pointer {
-    fn pointer(&self, path: &str) -> Option<&Value>;
-}
-
-impl Pointer for Map<String, Value> {
-    fn pointer(&self, path: &str) -> Option<&Value> {
-        let path = path.strip_prefix('/')?;
-        match path.split_once('/') {
-            Some((first, rest)) => self.get(first)?.pointer(&format!("/{rest}")),
-            None => self.get(path),
-        }
-    }
 }
 
 /// An input object (`{}` when absent).

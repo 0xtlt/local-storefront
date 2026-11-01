@@ -50,6 +50,7 @@ use serde_json::{Map, Value, json};
 use crate::domains::catalog;
 use crate::graphql::FieldContext;
 use crate::resolve::{Registry, UserError};
+use crate::state::Pointer;
 use crate::state::seed::Seed;
 use crate::state::value::str_field as text;
 use crate::state::{Record, ShopState, gid, parse_gid};
@@ -363,18 +364,6 @@ pub fn region(state: &ShopState, code: &str) -> Value {
         "name": reference::country_name(&code).unwrap_or(&code),
         "currency": currency_setting(&currency),
     })
-}
-
-/// A string at a JSON pointer of a record.
-trait Pointer {
-    fn pointer_str(&self, pointer: &str) -> Option<&str>;
-}
-
-impl Pointer for Record {
-    fn pointer_str(&self, pointer: &str) -> Option<&str> {
-        let (first, rest) = pointer.trim_start_matches('/').split_once('/')?;
-        self.get(first)?.pointer(&format!("/{rest}"))?.as_str()
-    }
 }
 
 /// An argument of the field that is an input object (`{}` when it is not given).

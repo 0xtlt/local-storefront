@@ -21,6 +21,27 @@ use serde_json::{Map, Value};
 /// `__typename`.
 pub type Record = Map<String, Value>;
 
+/// A value at a JSON pointer of a record, as `Value::pointer` reads one: `/state/__typename`.
+pub trait Pointer {
+    /// The value at `path`, `None` when there is none.
+    fn pointer(&self, path: &str) -> Option<&Value>;
+
+    /// [`Pointer::pointer`], when it is a string.
+    fn pointer_str(&self, path: &str) -> Option<&str> {
+        self.pointer(path).and_then(Value::as_str)
+    }
+}
+
+impl Pointer for Record {
+    fn pointer(&self, path: &str) -> Option<&Value> {
+        let path = path.strip_prefix('/')?;
+        match path.split_once('/') {
+            Some((first, rest)) => self.get(first)?.pointer(&format!("/{rest}")),
+            None => self.get(path),
+        }
+    }
+}
+
 /// The GID of an entity: `gid://shopify/Product/1`.
 pub fn gid(type_name: &str, id: u64) -> String {
     format!("gid://shopify/{type_name}/{id}")
@@ -1374,6 +1395,24 @@ mod tests {
         let record = state.get(&order).unwrap();
         assert_eq!(record["returns"], json!(["gid://shopify/Return/2"]));
         assert_eq!(record["refunds"], Value::Null);
+    }
+
+    #[test]
+    fn reads_pointers_of_records() {
+        let market = record(json!({
+            "currencySettings": {"baseCurrency": {"currencyCode": "EUR"}},
+            "status": "ACTIVE",
+            "regions": [{"code": "FR"}],
+        }));
+        assert_eq!(
+            market.pointer_str("/currencySettings/baseCurrency/currencyCode"),
+            Some("EUR")
+        );
+        assert_eq!(market.pointer("/status"), Some(&json!("ACTIVE")));
+        assert_eq!(market.pointer_str("/regions/0/code"), Some("FR"));
+        assert_eq!(market.pointer_str("/regions"), None);
+        assert_eq!(market.pointer("status"), None);
+        assert_eq!(market.pointer("/missing/field"), None);
     }
 
     #[test]
