@@ -21,11 +21,14 @@ Format some files only:
 npx local-storefront fmt sections/header.liquid snippets
 ```
 
-Format the files a commit touches:
+Format the files you changed since the last commit, staged or not:
 
 ```bash
-npx local-storefront fmt $(git diff --name-only)
+npx local-storefront fmt $(git diff --name-only --diff-filter=d HEAD)
 ```
+
+`--diff-filter=d` leaves out deleted files, which `fmt` could not read. With nothing changed,
+the list is empty and `fmt` formats the whole theme.
 
 A file named on its own is formatted if it is a `.liquid` file that `.prettierignore` does not
 name, as Prettier does: the other files of that list are left alone.

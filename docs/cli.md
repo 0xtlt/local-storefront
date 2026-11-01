@@ -20,7 +20,14 @@ Installed with mise, from a release or from source, the command is `lsf`: `lsf s
 |---|---|
 | `0` | Done, nothing to report. |
 | `1` | Done, and something to fix: data or app errors (`validate`), problems in the theme (`check`), Liquid errors in the page or nothing at its path (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run or did not run (`app function run`), a scenario that fails (`app check`), a webhook that was not delivered (`app webhook trigger`). |
-| `2` | The command could not run: a wrong option, a theme or a file that cannot be read, a file `fmt` cannot write. The message is on stderr, after `error:`. |
+| `2` | The command could not run: a wrong option, a theme or a file that cannot be read, a file `fmt` cannot write, a port `serve` cannot listen on. The message is on stderr, after `error:`. |
+
+## Output
+
+Results go to stdout; messages and summaries go to stderr. For a tool, `--format json` prints
+one JSON document on stdout: `validate`, `check`, `app check`, `app function run` and
+`app webhook trigger` take it. The other commands print text and refuse `--format`. What each
+one prints: [agents](agents.md#what-each-command-prints).
 
 ## serve
 
@@ -57,14 +64,15 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--admin-fetch-local` | `LSF_ADMIN_FETCH_LOCAL` | Lets `themeCreate`, the `URL` bodies of `themeFilesUpsert` and `urlRedirectImportCreate` download their source from this machine or its network (the loopback, private, link-local and unique-local addresses), for a theme ZIP served from localhost on purpose. Off by default: Shopify cannot reach them, and a backend could otherwise read what the machine serves. See [Sources from a URL](admin.md). |
 | `--admin-source <url>=<file>` | | Answers a URL with a file, never downloading it: what `themeCreate`, a `URL` body of `themeFilesUpsert` or `urlRedirectImportCreate` reads there. Repeatable. For your backend's own URLs (a theme ZIP on its CDN) that nothing serves in a test, wherever they point, `localhost` included. The file must exist when lsf starts, and is read at each use. `PUT /__lsf/admin/sources?url=` stubs others while lsf runs. See [Stubbed URLs](admin.md#stubbed-urls). |
 
-When it is ready, the server prints a line to stderr that starts with
-`ready:  http://127.0.0.1:<port>/`. With `--port 0`, read the port from that line. It runs
-until it is stopped (Ctrl-C, `SIGTERM`, `SIGHUP`): then it finishes the requests it is
-answering, for 3 seconds at most, and abandons the rest. A page whose Liquid never ends stops
-at its render budget (see [the render budget](compatibility.md#the-render-budget)). With `--app`, it also prints how many checkout scenarios the data has and,
-with a theme, the address of the home page of the checkout
-(`home:   http://127.0.0.1:<port>/__lsf/checkouts`). Then the [Admin API](admin.md) of the
-store, which every server serves, and the webhooks of the app:
+Every line of the server goes to stderr; stdout stays empty. It prints the theme and the data
+folder, then, once it takes requests, a line that starts with
+`ready:  http://127.0.0.1:<port>/`. With `--port 0`, read the port from that line. Without
+`--quiet`, each request gets a line (`200 GET / 39.1ms`), with the reason of a 404 above it.
+
+With `--app`, the lines of the app come before `ready:`: how many checkout scenarios the data
+has and, with a theme, the address of the home page of the checkout
+(`home:   http://127.0.0.1:<port>/__lsf/checkouts`), the [Admin API](admin.md) of the store, the
+client secret it signs with and where that secret comes from, and the webhooks of the app:
 
 ```text
 admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
@@ -72,9 +80,17 @@ admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
 webhooks: 1 subscription of shopify.app.toml → http://localhost:3000
 ```
 
-The token is the same every run for a shop and an app. When the data changes on disk (or
-`POST /__lsf/reload`), the shops of the Admin API are seeded again, and the server says when
+Without `--app`, it prints none of these. The token is the same every run for a shop and an
+app; a tool reads it from `GET /__lsf/admin` (`shops[0].token`). When the data changes on disk
+(or `POST /__lsf/reload`), the shops of the Admin API are seeded again, and the server says when
 that drops what the Admin API had changed.
+
+It runs until it is stopped (Ctrl-C, `SIGTERM`, `SIGHUP`): then it finishes the requests it is
+answering, for 3 seconds at most, abandons the rest, and exits with `0`. It exits with `2`
+before `ready:` when it cannot listen on the port (`error: cannot listen on 127.0.0.1:9292:
+Address already in use`), or, with `--strict`, when the store data has errors (each one, then
+`error: the store data has errors (see above)`). A page whose Liquid never ends stops at its
+render budget (see [the render budget](compatibility.md#the-render-budget)).
 
 While it runs, tests talk to it through the [control API](control-api.md).
 
@@ -152,15 +168,19 @@ name their sources (`module`), bundled into `dist/<handle>.js`. Guide:
 Runs the Functions of every checkout scenario, as the home page checks them, without a server:
 for CI. Prints each scenario that does not validate and each Function that fails, with the
 scenarios it fails in, and exits with `1` when there is one, when the time ran out, or when
-there is no scenario at all (`app init` writes a set). No request of a `.fetch` target is
-sent.
+there is no scenario at all (`app init` writes a set). It also lists the Functions that ran in
+no scenario, such as a discount Function no scenario's discount names: nothing checked them. No
+request of a `.fetch` target is sent. It builds nothing: in a fresh clone, where `dist/` is not
+committed, run `npx local-storefront app build` first. Exiting with `0` means every Function ran
+without failing, not that it decided right: assert that with `app function run --format json`.
+CI: [checkout](checkout.md#in-ci).
 
 | Option | Environment variable | What it does |
 |---|---|---|
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
 | `--extension <handle>` | | Only these extensions. Repeat it for several. |
 | `--format text` | | Default. One line per problem, then a summary. |
-| `--format json` | | `{ok, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, file, problems}]}`, and `error` when there is no scenario. |
+| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, file, problems}]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. |
 | `--budget <seconds>` | | How long the Functions may run in all. Default 300. |
 
 ### app function run
@@ -184,13 +204,13 @@ npx local-storefront app function run volume-discount --app ../my-app --session 
 | `--session <file or JSON>` | | The session to run for, as `PUT /__lsf/session` takes it: its `data` goes on top of the store data for this run (a discount for a discount Function, settings in `checkout.functions`). Defaults to the `session` of the store data. |
 | `--checkout <file or JSON>` | | What the buyer entered: `email`, `phone`, `shippingAddress`, `selectedDelivery`, `selectedPayment`, `discountCodes`, `metafields`. |
 | `--locale <iso>` | | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |
-| `--step <step>` | `completion` | `interaction` or `completion`: the step of the buyer journey, what validation Functions read as `buyerJourney.step`. |
+| `--step <step>` | | `interaction` or `completion` (the default): the step of the buyer journey, what validation Functions read as `buyerJourney.step`. |
 | `--format text` | | Default. Each run, then the checkout. |
 | `--format json` | | The checkout as the checkout page reads it, with every run in `runs`. |
 
 Exits with `1` when a Function fails to run, or when a Function named on the command line did not
-run: it says why (no discount names a discount Function, the cart is empty, an error of the
-app…). A handle or a scenario that is close to an existing one is suggested. Errors a validation
+run: it says why (no discount names a discount Function, the cart is empty, the `extensions` of
+the scenario leave it out, an error of the app…). A handle or a scenario that is close to an existing one is suggested. Errors a validation
 Function reports are part of the checkout and do not change the exit code.
 
 ### app function build
@@ -209,7 +229,7 @@ TypeScript without a build command is built by lsf, without Node: its types
 
 ### app webhook trigger
 
-`npx local-storefront app webhook trigger --topic <topic> [--address <url>] [--app <dir>]`
+`npx local-storefront app webhook trigger --topic <topic> [--app <dir> --app-url <url> | --address <url>]`
 
 Sends one webhook, as `shopify app webhook trigger` does, without Shopify: lsf builds the
 payload of the topic (the REST representation Shopify sends) from a record of the store data, as
@@ -223,8 +243,8 @@ backend. To send the webhook of a given record, use `POST /__lsf/webhooks/trigge
 `id` while a server runs.
 
 ```bash
-npx local-storefront app webhook trigger --topic orders/create --address http://localhost:3000/webhooks
 npx local-storefront app webhook trigger --topic products/update --app ../my-app --app-url http://localhost:3000
+npx local-storefront app webhook trigger --topic orders/create --address http://localhost:3000/webhooks --client-secret "$SHOPIFY_API_SECRET"
 ```
 
 Without `--address`, it goes to every subscription of `shopify.app.toml` to the topic, as an
@@ -232,6 +252,15 @@ event of the shop would: each subscription's `uri` joined to the app URL, its `i
 applied. Relative `uri`s join `--app-url` (else `application_url`), and an absolute one on the
 origin of `application_url` moves to `--app-url`, since `application_url` is often the tunnel of
 a `shopify app dev` that is not running. As Shopify's, a triggered webhook is not retried.
+
+Webhooks stay on this machine. One goes to another host only when that host is the origin of
+`--app-url` or of `--address`: otherwise it is not sent (`not_sent`, with the reason), and the
+command exits with `2` and asks for `--app-url`. So `application_url`, often your production
+backend or a dead tunnel, never gets one by accident.
+
+The secret is the app's. Without the app (no `--app`, and run outside its folder), its `.env`
+is not read: give `--client-secret` or set `SHOPIFY_API_SECRET`. Without either, lsf signs with
+its own secret, and the backend answers `401`.
 
 | Option | Environment variable | What it does |
 |---|---|---|
@@ -241,8 +270,8 @@ a `shopify app dev` that is not running. As Shopify's, a triggered webhook is no
 | `--delivery-method <method>` | | `http`, `google-pub-sub` or `event-bridge`; without it, what the address says. lsf delivers over HTTP only: the other two are refused. |
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret of the signature. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else lsf's local secret, `lsf-local-client-secret`. |
 | `--app <dir>`, `--path <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in; may be left out with `--address`. |
-| `--app-url <url>` | `LSF_APP_URL` | Where the backend of the app listens. Without it, `application_url`. |
-| `--json`, `-j` | | Prints the deliveries as JSON: `{ok, deliveries: [{topic, url, request: {headers, body}, attempts: [{status, durationMs, response, error}], state, reason, notes}]}`. |
+| `--app-url <url>` | `LSF_APP_URL` | Where the backend of the app listens. Without it, `application_url`, when it is on this machine. |
+| `--format json` | | Prints the deliveries as JSON: `{ok, deliveries: [{topic, url, request: {headers, body}, attempts: [{status, durationMs, response, error}], state, reason, notes}]}`. `--json` and `-j` do the same. |
 
 lsf builds the payloads of the topics of products, collections, customers, orders, draft
 orders, fulfillments, refunds, inventory items and levels, locations, metaobjects, discounts,
@@ -253,7 +282,8 @@ made up for it.
 Exits with `1` when a delivery failed: an answer out of `2xx` (a redirect included, as on
 Shopify), no answer within 5 seconds, a backend that is not listening. Exits with `2` when
 nothing could be sent: an unknown topic, a topic lsf does not build, no address and no
-subscription to the topic, a Pub/Sub or EventBridge address.
+subscription to the topic, a Pub/Sub or EventBridge address, an address on another machine
+that `--app-url` or `--address` does not name.
 
 ## render
 
@@ -271,6 +301,16 @@ npx local-storefront render '/collections/all?sort_by=price-ascending' --strict 
 | `--section-id <id>` | Renders one section, as the Section Rendering API does. |
 | `--host <host>` | The host of the URLs in the page. Default `localhost:9292`. |
 | `--strict` | Exits with `1` when the page has Liquid errors, or when nothing is at the path (the theme's 404 page). |
+
+The HTML goes to stdout. On stderr: each Liquid error and each warning, then a summary.
+
+```text
+Liquid error (layout/theme line 34): divided by 0
+status 200 · template product · 1 Liquid error(s) · 0 warning(s)
+```
+
+With `--strict`, a path with nothing at it adds `error: nothing at /x: the page is the theme's
+404`.
 
 ## profile
 
@@ -296,7 +336,7 @@ Prints what the render of one page spends its time on: sections, blocks, snippet
 
 Checks the store data and explains every problem, its checkout scenarios included.
 
-The data is the one `lsf app dev` reads: `--data`, or the folder's `shopify-local/`, or the
+The data is the one `app dev` reads: `--data`, or the folder's `shopify-local/`, or the
 app's (`<app>/shopify-local`), or the built-in demo store. In a folder that is not a theme (an
 app, such as [the checkout playground](../examples/checkout-playground)), it checks the data
 alone, with the store's own languages; an app without any is checked with the demo store, as its
@@ -327,6 +367,7 @@ The JSON format:
   "ok": false,
   "errors": 1,
   "warnings": 0,
+  "data": "./shopify-local",
   "diagnostics": [
     {
       "severity": "error",
@@ -336,11 +377,13 @@ The JSON format:
       "message": "unknown field \"titel\"",
       "hint": "did you mean \"title\"?"
     }
-  ]
+  ],
+  "app": null
 }
 ```
 
-`path` is a JSON Pointer into `file`. The codes are listed in the
+`data` is the folder read, and `file` is in it. `path` is a JSON Pointer into `file`. `app` is
+`null` outside a Shopify app. The codes are listed in the
 [data guide](data-format.md#error-codes). Exits with `1` when there is an error; warnings
 alone exit with `0`.
 
@@ -356,7 +399,7 @@ templates, section groups and `config/settings_data.json`. Guide:
 
 | Option | What it does |
 |---|---|
-| `--fix` | Rewrites what the strict parser rejects. A file is written only if it has not changed since it was read. |
+| `--fix` | Rewrites what the strict parser rejects. A file is written only if it has not changed since it was read. Run twice, the second run writes nothing. |
 | `--format text` | Default. One block per problem, for a person. |
 | `--format json` | One JSON document, for a tool. |
 
@@ -433,12 +476,16 @@ stderr.
 Each diagnostic has a `severity` (`error`, or `warning` for what does not count as a
 problem), a `code`, a `file`, a `line` when there is one, and a `message`.
 
+Without `--fix`, the report is a dry run: each `fix` is what `--fix` writes. After `--fix`, the
+problems it fixed stay in `diagnostics`, with `fix.written: true` and still `error`; `problems`
+counts the others.
+
 | `code` | What it is |
 |---|---|
 | `strict_liquid_rejected` | Markup Shopify's strict parser rejects. |
 | `strict_liquid_reinterpreted` | Markup Shopify's strict parser reads differently from today. |
 | `liquid_syntax` | A file that does not parse at all. |
-| `unknown_filter` | A filter that does not exist here. Shopify ignores unknown filters. |
+| `unknown_filter` | A filter local-storefront does not know. Either a typo: Shopify skips an unknown filter, and the value comes out unchanged. Or a filter of Shopify that local-storefront lacks: [report it](https://github.com/0xtlt/local-storefront/issues). |
 | `block_outside_template` | `{% block %}` outside `layout/` and `templates/` (with `--preview liquid-july-26`). |
 | `invalid_json` | A JSON file that does not parse. |
 | `fix_fallback` | A warning: what the code meant could not be written for this file, so only the fixes that keep the output were. |
@@ -471,7 +518,7 @@ Formats Liquid files as Prettier does with Shopify's Liquid plugin. Guide:
 | Option | What it does |
 |---|---|
 | `[paths]` | Files and folders to format. Default: the theme folder. |
-| `--check` | Writes nothing. Lists the files that are not formatted, and exits with `1` if there are any. |
+| `--check` | Writes nothing. Lists the files that are not formatted on stdout, the summary on stderr, and exits with `1` if there are any. |
 | `--stdin` | Formats the standard input and prints it. For an editor. |
 | `--stdin-filepath <path>` | With `--stdin`: the file the source comes from, for its configuration and `.prettierignore`. |
 | `--option <name>=<value>`, `-o` | Sets a Prettier option: `-o printWidth=100`. Wins over the configuration files. |
@@ -488,9 +535,16 @@ Creates the data folder with a demo store, JSON Schemas for editors, and the dat
 `README.md`. For the checkout of a Shopify app, [`app init`](#app-init) writes the
 scenarios.
 
+It keeps the files that exist, so it is safe to run again, and refreshes `schema/`. It prints
+on stderr, and exits with `0`:
+
+```text
+./shopify-local: wrote 16 file(s), kept 0 existing one(s), refreshed schema/
+```
+
 | Option | What it does |
 |---|---|
-| `--force` | Overwrites files that exist. |
+| `--force` | Overwrites files that exist, your edits included. |
 
 ## schema
 
@@ -507,7 +561,9 @@ Prints the JSON Schema of the store data.
 
 `npx local-storefront routes`
 
-Lists the URLs the store data gives a page to, one per line.
+Lists the URLs the store data gives a page to, one per line. Each one renders: a loop of
+`render --strict` over them checks every page.
+<!-- check: routes/account -->
 
 ## docs
 

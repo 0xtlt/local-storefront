@@ -14,7 +14,7 @@
     "lsf": "bin/lsf.js",
     "local-storefront": "bin/lsf.js"
   },
-  "files": ["bin/lsf.js"],
+  "files": ["bin/lsf.js", "docs/*.md", "llms.txt", "CHANGELOG.md"],
   "engines": {
     "node": ">=18"
   },
