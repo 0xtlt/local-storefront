@@ -31,8 +31,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::{Value, json};
 
-use super::{cents, is_reason_code, keys_with, money, record_of, tell_device, text};
-use crate::domains::orders::model::currency;
+use super::{cents, is_reason_code, keys_with, money, tell_device, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::search::SearchValue;
@@ -100,13 +99,6 @@ fn date_value(record: &Record, name: &str) -> Option<Vec<SearchValue>> {
     )
 }
 
-/// A `DateTime` as the records and the arguments write it.
-fn instant(date: Option<&str>) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(date?)
-        .ok()
-        .map(|date| date.with_timezone(&Utc))
-}
-
 /// An error of a session mutation, by its code: the code's description is the message.
 fn coded(field: &[&str], code: &str) -> UserError {
     let message = match code {
@@ -130,7 +122,8 @@ fn coded(field: &[&str], code: &str) -> UserError {
 
 /// The time of an argument (`time`), in UTC as the records write dates, else now.
 fn time_arg(mutation: &Mutation<'_>, ctx: &FieldContext<'_>) -> String {
-    instant(ctx.arg_str("time"))
+    ctx.arg_str("time")
+        .and_then(value::parse_date_time)
         .map(value::date_time)
         .unwrap_or_else(|| mutation.timestamp())
 }
@@ -156,7 +149,7 @@ fn check_common(
         .arg(amount)
         .and_then(|money| money.get("currencyCode"))
         .and_then(Value::as_str)
-        && given != currency(state)
+        && given != state.currency()
     {
         errors.push(coded(&[amount], "CURRENCY_MISMATCH"));
     }
@@ -223,7 +216,7 @@ fn open(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
         .arg_str("pointOfSaleDeviceId")
         .unwrap_or_default()
         .to_string();
-    let Some(device_record) = record_of(state, &device, "PointOfSaleDevice") else {
+    let Some(device_record) = state.get_of(&device, "PointOfSaleDevice") else {
         let error = coded(&["pointOfSaleDeviceId"], "POINT_OF_SALE_DEVICE_NOT_FOUND");
         return Ok(payload(empty, &[error]));
     };
@@ -259,7 +252,7 @@ fn open(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
         "__typename": SESSION,
         "id": session,
         "status": "OPEN",
-        "currency": currency(state),
+        "currency": state.currency(),
         "cashDrawer": drawer,
         "location": location,
         "pointOfSaleDevice": device,
@@ -320,7 +313,7 @@ fn open_session(
         .unwrap_or_default()
         .to_string();
     let field = ["pointOfSaleDevicePaymentSessionId"];
-    let Some(record) = record_of(state, &session, SESSION) else {
+    let Some(record) = state.get_of(&session, SESSION) else {
         return Err(coded(&field, "PAYMENT_SESSION_NOT_FOUND"));
     };
     if text(record, "status") != Some("OPEN") {
@@ -497,8 +490,8 @@ fn in_range(time: Option<&str>, range: Option<&Value>) -> bool {
     let (Some(time), Some(range)) = (time, range) else {
         return time.is_some();
     };
-    let at = |name: &str| instant(range.get(name).and_then(Value::as_str));
-    let Some(time) = instant(Some(time)) else {
+    let at = |name: &str| value::date_time_of(range.get(name));
+    let Some(time) = value::parse_date_time(time) else {
         return false;
     };
     at("from").is_none_or(|from| time >= from) && at("to").is_none_or(|to| time <= to)
@@ -574,8 +567,12 @@ fn summary(
     for drawer in drawers {
         let sessions = sessions_of(state, drawer);
         for session in sessions.iter().filter_map(|session| state.get(session)) {
-            opened += i64::from(within(instant(text(session, "openingTime"))));
-            closed += i64::from(within(instant(text(session, "closingTime"))));
+            opened += i64::from(within(
+                text(session, "openingTime").and_then(value::parse_date_time),
+            ));
+            closed += i64::from(within(
+                text(session, "closingTime").and_then(value::parse_date_time),
+            ));
         }
         let activities = activities_of(state, &sessions);
         let balance = balance_of(state, drawer);
@@ -585,7 +582,7 @@ fn summary(
             activities
                 .iter()
                 .filter(|activity| {
-                    let at = instant(activity.get("time").and_then(Value::as_str));
+                    let at = value::date_time_of(activity.get("time"));
                     time.is_none_or(|time| at.is_some_and(|at| at > time))
                 })
                 .map(|activity| cents(activity.get("cash")))
@@ -594,7 +591,7 @@ fn summary(
         at_start += balance - moved_after(start);
         at_end += balance - end.map_or(0, |end| moved_after(Some(end)));
         for activity in &activities {
-            if !within(instant(activity.get("time").and_then(Value::as_str))) {
+            if !within(value::date_time_of(activity.get("time"))) {
                 continue;
             }
             let amount = cents(activity.get("cash"));
@@ -638,7 +635,7 @@ fn shop_summary(
     _object: &Obj,
 ) -> Result<Output<Obj>, FieldError> {
     let state = r.state();
-    let drawers: Vec<String> = if ctx.arg_str("currencyCode") == Some(currency(state).as_str()) {
+    let drawers: Vec<String> = if ctx.arg_str("currencyCode") == Some(state.currency().as_str()) {
         state.keys("CashDrawer").map(str::to_string).collect()
     } else {
         Vec::new()

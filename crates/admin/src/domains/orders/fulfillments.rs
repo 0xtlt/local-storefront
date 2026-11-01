@@ -49,7 +49,7 @@ use super::model::{self, array, field_cents, int, text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, coded, payload};
-use crate::state::{ShopState, value};
+use crate::state::{ShopState, gid_number, value};
 use crate::webhooks::payload::FULFILLMENT_ORDER_EVENT;
 
 pub fn register(registry: &mut Registry) {
@@ -125,9 +125,7 @@ fn carrier_url(company: Option<&str>, number: Option<&str>) -> Option<String> {
 
 /// A fulfillment order of the shop, with its record.
 fn fulfillment_order(state: &ShopState, id: &str) -> Option<serde_json::Map<String, Value>> {
-    (state.type_of(id) == Some("FulfillmentOrder"))
-        .then(|| state.get(id).cloned())
-        .flatten()
+    state.get_of(id, "FulfillmentOrder").cloned()
 }
 
 /// `fulfillmentCreate`.
@@ -158,7 +156,7 @@ fn fulfillment_create(
         let Some(record) = fulfillment_order(state, id) else {
             return failed(vec![UserError::new(
                 &["fulfillment"],
-                format!("Fulfillment order {} does not exist.", model::number(id)),
+                format!("Fulfillment order {} does not exist.", gid_number(id)),
             )]);
         };
         let status = text(&record, "status").unwrap_or("OPEN");
@@ -167,7 +165,7 @@ fn fulfillment_create(
                 &["fulfillment"],
                 format!(
                     "Fulfillment order {} has an unfulfillable status= {}.",
-                    model::number(id),
+                    gid_number(id),
                     status.to_ascii_lowercase()
                 ),
             )]);
@@ -213,8 +211,8 @@ fn fulfillment_create(
                             &["fulfillment"],
                             format!(
                                 "Fulfillment order line item {} does not belong to fulfillment order {}.",
-                                model::number(line),
-                                model::number(id)
+                                gid_number(line),
+                                gid_number(id)
                             ),
                         )]);
                     }
@@ -263,7 +261,7 @@ fn fulfillment_create(
 
     let state = mutation.state_mut();
     let now = state.timestamp();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let id = state.new_gid("Fulfillment");
     let count = state
         .get(&order)
@@ -332,11 +330,11 @@ fn fulfillment_create(
         "updatedAt": now,
     })));
     for fulfillment_order in &fulfillment_orders {
-        model::push_key(state, fulfillment_order, "fulfillments", &id);
+        state.push_key(fulfillment_order, "fulfillments", &id);
         model::refresh_fulfillment_order(state, fulfillment_order);
         state.touch(fulfillment_order);
     }
-    model::push_key(state, &order, "fulfillments", &id);
+    state.push_key(&order, "fulfillments", &id);
     model::refresh_order(state, &order);
     state.emit("fulfillments/create", &id);
     emit_fulfillment_status(state, &order);
@@ -480,7 +478,7 @@ fn fulfillment_cancel(
             Some((fo, fo_line)) => {
                 let (fo, fo_line) = (fo.clone(), fo_line.clone());
                 let reopened = split_off(state, &fo, &[(fo_line, quantity)], None, false);
-                model::push_key(state, &order, "fulfillmentOrders", &reopened);
+                state.push_key(&order, "fulfillmentOrders", &reopened);
             }
             None => {}
         }
@@ -599,7 +597,7 @@ fn event_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         "longitude": field("longitude"),
         "fulfillment": fulfillment,
     })));
-    model::push_key(state, &fulfillment, "events", &event);
+    state.push_key(&fulfillment, "events", &event);
     if let Some(record) = state.get_mut(&fulfillment) {
         record.insert("displayStatus".into(), json!(status));
         match status.as_str() {
@@ -708,11 +706,6 @@ pub(super) fn the_rest(
         .collect()
 }
 
-/// The app's GID, which holds what it puts on hold.
-fn app_gid(state: &ShopState) -> Option<String> {
-    state.keys("App").next().map(str::to_string)
-}
-
 /// `fulfillmentOrderHold`.
 fn hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
@@ -741,7 +734,7 @@ fn hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
             "The fulfillment order is not in a state that can be held.",
         )]);
     }
-    let app = app_gid(state);
+    let app = state.app_gid().map(str::to_string);
     let holds: Vec<serde_json::Map<String, Value>> = gids(record.get("fulfillmentHolds"))
         .iter()
         .filter_map(|hold| state.get(hold).cloned())
@@ -802,7 +795,7 @@ fn hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
     let remaining = (!rest.is_empty()).then(|| {
         let order = text(&record, "order").unwrap_or_default().to_string();
         let new = split_off(state, &id, &rest, None, true);
-        model::push_key(state, &order, "fulfillmentOrders", &new);
+        state.push_key(&order, "fulfillmentOrders", &new);
         new
     });
     let hold = state.new_gid("FulfillmentHold");
@@ -817,7 +810,7 @@ fn hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
         "heldByRequestingApp": true,
         "fulfillmentOrder": id,
     })));
-    model::push_key(state, &id, "fulfillmentHolds", &hold);
+    state.push_key(&id, "fulfillmentHolds", &hold);
     let was_on_hold = text(&record, "status") == Some("ON_HOLD");
     let held: Vec<Value> = if picked.is_empty() {
         the_rest(state, &record, &[])
@@ -878,7 +871,7 @@ fn release_hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             "FULFILLMENT_ORDER_NOT_FOUND",
         )]);
     };
-    let app = app_gid(state);
+    let app = state.app_gid().map(str::to_string);
     let holds = gids(record.get("fulfillmentHolds"));
     let asked: Option<Vec<String>> = ctx.arg("holdIds").map(|ids| gids(Some(ids)));
     let external = ctx.arg_str("externalId");
@@ -890,7 +883,7 @@ fn release_hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             &["holdIds"],
             format!(
                 "Fulfillment hold {} does not exist on this fulfillment order.",
-                model::number(unknown)
+                gid_number(unknown)
             ),
         )]);
     }
@@ -1023,7 +1016,7 @@ fn move_fulfillment_order(
         id.clone()
     } else {
         let new = split_off(state, &id, &picked, Some(&location), true);
-        model::push_key(state, &order, "fulfillmentOrders", &new);
+        state.push_key(&order, "fulfillmentOrders", &new);
         new
     };
     // The stock the order committed moves along.
@@ -1085,7 +1078,7 @@ fn cancel_fulfillment_order(
     let order = text(&record, "order").unwrap_or_default().to_string();
     let state = mutation.state_mut();
     let replacement = split_off(state, &id, &rest, None, false);
-    model::push_key(state, &order, "fulfillmentOrders", &replacement);
+    state.push_key(&order, "fulfillmentOrders", &replacement);
     if let Some(record) = state.get_mut(&id) {
         record.insert("status".into(), json!("CLOSED"));
         record.insert("requestStatus".into(), json!("CANCELLATION_ACCEPTED"));

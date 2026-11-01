@@ -37,7 +37,7 @@ use super::refunds::{self, RefundLine, RefundSpec};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{Record, ShopState, gid, parse_gid, value};
+use crate::state::{Record, ShopState, gid, gid_number, parse_gid, value};
 use crate::webhooks::payload::{
     EDIT_ADDITIONS, EDIT_COMMITTED_AT, EDIT_NOTIFY_CUSTOMER, EDIT_REMOVALS, EDIT_STAFF_NOTE,
 };
@@ -63,17 +63,13 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         ))
     };
     let state = mutation.state();
-    let Some(order) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Order"))
-        .cloned()
-    else {
+    let Some(order) = state.get_of(&id, "Order").cloned() else {
         return failed(UserError::new(&["id"], "Order does not exist"));
     };
     if model::is_cancelled(&order) {
         return failed(UserError::new(&["id"], "The order cannot be edited."));
     }
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let mut lines = Vec::new();
     for line in gids(order.get("lineItems")) {
@@ -88,7 +84,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         let ordered = int(item, "quantity").max(1);
         let unit = field_cents(item, "discountedTotalSet") / ordered;
         lines.push(json!({
-            "id": gid("CalculatedLineItem", model::number(&line)),
+            "id": gid("CalculatedLineItem", gid_number(&line)),
             "title": item.get("title"),
             "variantTitle": item.get("variantTitle"),
             "sku": item.get("sku"),
@@ -114,7 +110,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     }
     let state = mutation.state_mut();
     let calculated = state.new_gid("CalculatedOrder");
-    let session = gid("OrderEditSession", model::number(&calculated));
+    let session = gid("OrderEditSession", gid_number(&calculated));
     state.insert(value::object(json!({
         "__typename": "OrderEditSession",
         "id": session,
@@ -185,7 +181,7 @@ pub(super) fn staged(
     let line = line.and_then(|line| calculated_line(state, calculated, line));
     let mut fields = json!({
         "calculatedOrder": calculated,
-        "orderEditSession": gid("OrderEditSession", model::number(calculated)),
+        "orderEditSession": gid("OrderEditSession", gid_number(calculated)),
         "calculatedLineItem": line,
     });
     if let (Value::Object(fields), Value::Object(extra)) = (&mut fields, extra) {
@@ -249,7 +245,7 @@ pub(super) fn refresh_calculated(state: &mut ShopState, calculated: &str) {
     let Some(record) = state.get(calculated).cloned() else {
         return;
     };
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let order_id = text(&record, "originalOrder")
         .unwrap_or_default()
@@ -506,11 +502,7 @@ fn add_variant(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         Err(error) => return failed(error),
     };
     let variant = ctx.arg_str("variantId").unwrap_or_default().to_string();
-    let Some(variant_record) = state
-        .get(&variant)
-        .filter(|_| state.type_of(&variant) == Some("ProductVariant"))
-        .cloned()
-    else {
+    let Some(variant_record) = state.get_of(&variant, "ProductVariant").cloned() else {
         return failed(UserError::new(&["variantId"], "Variant does not exist"));
     };
     let on_order = state
@@ -536,7 +528,7 @@ fn add_variant(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         .and_then(|item| state.get(item))
         .cloned()
         .unwrap_or_default();
-    let currency = model::currency(state);
+    let currency = state.currency();
     if let Err(error) = bounded_line(field_cents(&variant_record, "price"), quantity) {
         return failed(error);
     }
@@ -593,7 +585,7 @@ fn add_custom_item(
     if let Err(error) = bounded_line(price, quantity) {
         return failed(error);
     }
-    let currency = model::currency(mutation.state());
+    let currency = mutation.state().currency();
     let line = added_line(
         &currency,
         json!(title),
@@ -714,7 +706,7 @@ fn add_line_item_discount(
         ));
     }
     let discount = model::input_of(ctx.arg("discount"));
-    let currency = model::currency(state);
+    let currency = state.currency();
     let (amount, value) = match discount_of(&line, &discount, &currency) {
         Ok(discount) => discount,
         Err(error) => return failed(error),
@@ -885,7 +877,7 @@ pub(super) fn add_to_fulfillment(
     })));
     match target {
         Some(fo) => {
-            model::push_key(state, &fo, "lineItems", &fo_line);
+            state.push_key(&fo, "lineItems", &fo_line);
             model::refresh_fulfillment_order(state, &fo);
             state.touch(&fo);
         }
@@ -897,7 +889,7 @@ pub(super) fn add_to_fulfillment(
             if let Some(record) = state.get_mut(&new) {
                 record.insert("lineItems".into(), json!([fo_line]));
             }
-            model::push_key(state, order, "fulfillmentOrders", &new);
+            state.push_key(order, "fulfillmentOrders", &new);
         }
     }
 }
@@ -938,7 +930,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         .collect();
 
     let state = mutation.state_mut();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let now = state.timestamp();
     let captured = matches!(
         text(&order_record, "displayFinancialStatus"),
@@ -1072,7 +1064,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                 }
                 state.insert(item);
                 additions.push(json!({"id": id, "delta": units}));
-                model::push_key(state, &order, "lineItems", &id);
+                state.push_key(&order, "lineItems", &id);
                 let location = line
                     .get("lsfLocation")
                     .and_then(Value::as_str)

@@ -54,7 +54,7 @@ use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, gid, value};
+use crate::state::{Record, ShopState, gid, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -103,15 +103,11 @@ pub fn register(registry: &mut Registry) {
             let cents = r
                 .map_of(object)
                 .map_or(0, |order| model::refund_discrepancy(state, order));
-            r.convert(
-                ctx,
-                &value::money_bag(cents, &model::currency(state)),
-                false,
-            )
+            r.convert(ctx, &value::money_bag(cents, &state.currency()), false)
         })
         // Cash rounding is for cash paid at a point of sale: none on a local shop.
         .field("Order", "totalCashRoundingAdjustment", |r, ctx, _object| {
-            let zero = value::money_bag(0, &model::currency(r.state()));
+            let zero = value::money_bag(0, &r.state().currency());
             r.convert(ctx, &json!({"paymentSet": zero, "refundSet": zero}), false)
         })
         .field("OrderTransaction", "paymentId", |r, _ctx, object| {
@@ -138,7 +134,7 @@ pub fn register(registry: &mut Registry) {
                     .into_iter()
                     .find(|(payment, _)| payment == id)
                     .map_or(0, |(_, left)| left);
-                r.convert(ctx, &value::money_v2(left, &model::currency(state)), false)
+                r.convert(ctx, &value::money_v2(left, &state.currency()), false)
             },
         )
         .field("OrderTransaction", "totalUnsettledSet", |r, ctx, object| {
@@ -154,7 +150,7 @@ pub fn register(registry: &mut Registry) {
             } else {
                 0
             };
-            r.convert(ctx, &value::money_bag(held, &model::currency(state)), false)
+            r.convert(ctx, &value::money_bag(held, &state.currency()), false)
         })
         .field(
             "OrderTransaction",
@@ -272,37 +268,21 @@ fn templates(
 
 // --- Dates ---
 
-/// A `DateTime` of a record or an input.
-fn parse_time(value: Option<&Value>) -> Option<DateTime<Utc>> {
-    let text = value?.as_str()?;
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|at| at.with_timezone(&Utc))
-}
-
 /// The shop's day of an instant (`2026-03-15`), in its time zone.
 fn day_of(state: &ShopState, at: DateTime<Utc>) -> String {
-    let shop = state.shop();
-    if let Some(zone) = shop
-        .and_then(|shop| shop.get("ianaTimezone"))
-        .and_then(Value::as_str)
-        .and_then(|zone| zone.parse::<chrono_tz::Tz>().ok())
-    {
-        return at.with_timezone(&zone).format("%Y-%m-%d").to_string();
-    }
-    at.format("%Y-%m-%d").to_string()
+    state.day_of(at).format("%Y-%m-%d").to_string()
 }
 
 /// Whether a schedule is due: not paid, its due date passed.
 fn is_due(schedule: &Record, now: DateTime<Utc>) -> bool {
     schedule.get("completedAt").is_none_or(Value::is_null)
-        && parse_time(schedule.get("dueAt")).is_some_and(|due| due <= now)
+        && value::date_time_of(schedule.get("dueAt")).is_some_and(|due| due <= now)
 }
 
 /// Whether a schedule is overdue: not paid, the shop's day after its due date.
 fn is_overdue(state: &ShopState, schedule: &Record) -> bool {
     schedule.get("completedAt").is_none_or(Value::is_null)
-        && parse_time(schedule.get("dueAt"))
+        && value::date_time_of(schedule.get("dueAt"))
             .is_some_and(|due| day_of(state, due) < day_of(state, state.now()))
 }
 
@@ -346,10 +326,7 @@ pub fn read_terms(
         .map(str::to_string)
         .or_else(|| base.and_then(|base| text(base, "lsfTemplate").map(str::to_string)))
         .unwrap_or_default();
-    let Some(record) = state
-        .get(&template)
-        .filter(|_| state.type_of(&template) == Some("PaymentTermsTemplate"))
-    else {
+    let Some(record) = state.get_of(&template, "PaymentTermsTemplate") else {
         return Err(UserError::new(
             &at("paymentTermsTemplateId"),
             "Payment terms template does not exist",
@@ -374,7 +351,7 @@ pub fn read_terms(
     let given = |field: &str| -> Result<Option<DateTime<Utc>>, UserError> {
         match schedule.and_then(|schedule| schedule.get(field)) {
             None | Some(Value::Null) => Ok(None),
-            Some(value) => parse_time(Some(value)).map(Some).ok_or_else(|| {
+            Some(value) => value::date_time_of(Some(value)).map(Some).ok_or_else(|| {
                 UserError::new(
                     &[path, &["paymentSchedules", "0", field]].concat(),
                     format!("{} is not a valid date", value::humanize(field)),
@@ -391,8 +368,8 @@ pub fn read_terms(
         && let Some(first) = gids(base.get("paymentSchedules")).first()
         && let Some(old) = state.get(first)
     {
-        issued_at = parse_time(old.get("issuedAt"));
-        due_at = parse_time(old.get("dueAt"));
+        issued_at = value::date_time_of(old.get("issuedAt"));
+        due_at = value::date_time_of(old.get("dueAt"));
     }
     if kind == "FIXED" && due_at.is_none() {
         return Err(UserError::new(
@@ -438,7 +415,7 @@ pub fn create_terms(
     let issued_at = spec.issued_at.or_else(|| {
         (reference == "order" && matches!(spec.kind.as_str(), "NET" | "RECEIPT")).then_some(now)
     });
-    let currency = model::currency(state);
+    let currency = state.currency();
     state.insert(value::object(json!({
         "__typename": "PaymentSchedule",
         "id": schedule,
@@ -483,7 +460,7 @@ pub fn update_terms(state: &mut ShopState, terms: &str, spec: &TermsSpec) {
     for schedule in gids(record.get("paymentSchedules")) {
         let old_issued = state
             .get(&schedule)
-            .and_then(|old| parse_time(old.get("issuedAt")));
+            .and_then(|old| value::date_time_of(old.get("issuedAt")));
         let issued_at = spec.issued_at.or(old_issued).or_else(|| {
             (is_order && matches!(spec.kind.as_str(), "NET" | "RECEIPT")).then(|| state.now())
         });
@@ -565,7 +542,7 @@ pub fn refresh_terms(state: &mut ShopState, terms: &str) {
     let Some(record) = state.get(terms).cloned() else {
         return;
     };
-    let currency = model::currency(state);
+    let currency = state.currency();
     let order = text(&record, "order").and_then(|order| state.get(order));
     let draft = text(&record, "draftOrder").and_then(|draft| state.get(draft));
     let (total, balance, to_pay, fulfilled, is_order) = match (order, draft) {
@@ -664,10 +641,7 @@ fn terms_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     let failed = |error: UserError| Ok(payload(json!({"paymentTerms": null}), &[error]));
     let state = mutation.state();
     let reference = ctx.arg_str("referenceId").unwrap_or_default().to_string();
-    let Some(order) = state
-        .get(&reference)
-        .filter(|_| state.type_of(&reference) == Some("Order"))
-    else {
+    let Some(order) = state.get_of(&reference, "Order") else {
         return failed(
             UserError::new(
                 &["referenceId"],
@@ -723,11 +697,7 @@ fn terms_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("PaymentTerms"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&id, "PaymentTerms").cloned() else {
         return failed(
             UserError::new(&["input", "paymentTermsId"], "Payment terms do not exist").code(CODE),
         );
@@ -771,11 +741,7 @@ fn terms_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("PaymentTerms"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&id, "PaymentTerms").cloned() else {
         let error = UserError::new(&["input", "paymentTermsId"], "Payment terms do not exist")
             .code("PAYMENT_TERMS_DELETE_UNSUCCESSFUL");
         return Ok(payload(json!({"deletedId": null}), &[error]));
@@ -796,7 +762,7 @@ fn payment_amount(
     outstanding: i64,
     field: &str,
 ) -> Result<i64, (Vec<String>, String, &'static str)> {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let Some((amount, given_currency)) = given else {
         return Ok(outstanding);
     };
@@ -857,11 +823,7 @@ fn manual_payment(
     };
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(order) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Order"))
-        .cloned()
-    else {
+    let Some(order) = state.get_of(&id, "Order").cloned() else {
         return failed(&["id"], "Order does not exist", "ORDER_NOT_FOUND");
     };
     let outstanding = field_cents(&order, "totalOutstandingSet");
@@ -886,7 +848,7 @@ fn manual_payment(
     };
     let processed_at = match ctx.arg("processedAt").filter(|value| !value.is_null()) {
         None => None,
-        Some(value) => match parse_time(Some(value)) {
+        Some(value) => match value::date_time_of(Some(value)) {
             Some(at) if at <= mutation.now() => Some(value::date_time(at)),
             _ => {
                 return failed(
@@ -1052,7 +1014,7 @@ fn collection_details(
             .shop()
             .and_then(|shop| text(shop, "url"))
             .unwrap_or_default();
-        let number = text(order, "id").map_or(0, model::number);
+        let number = text(order, "id").map_or(0, gid_number);
         format!("{origin}/orders/{number}/pay")
     });
     let methods: Vec<Value> = mandates(state, order)
@@ -1148,11 +1110,7 @@ fn mandate_payment(
     }
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(order) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Order"))
-        .cloned()
-    else {
+    let Some(order) = state.get_of(&id, "Order").cloned() else {
         return failed(&["id"], "Order does not exist");
     };
     let mandate = ctx.arg_str("mandateId").unwrap_or_default();
@@ -1212,8 +1170,7 @@ fn mandate_payment(
 /// wrong with it.
 fn unpaid_schedule(state: &ShopState, id: &str) -> Result<(Record, Record), &'static str> {
     let schedule = state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some("PaymentSchedule"))
+        .get_of(id, "PaymentSchedule")
         .ok_or("Payment schedule does not exist")?;
     let order = text(schedule, "paymentTerms")
         .and_then(|terms| state.get(terms))
@@ -1293,9 +1250,9 @@ fn reminder_send(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .and_then(Value::as_str)
         .unwrap_or("0.0")
         .to_string();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let due = text(&schedule, "dueAt")
-        .and_then(|due| parse_time(Some(&json!(due))))
+        .and_then(value::parse_date_time)
         .map(|due| day_of(state, due));
     let state = mutation.state_mut();
     let body = match &due {
@@ -1331,14 +1288,14 @@ pub fn record_tender(state: &mut ShopState, transaction: &str) -> Option<String>
         _ => return None,
     };
     let amount = field_cents(&record, "amountSet") * sign;
-    let currency = model::currency(state);
+    let currency = state.currency();
     let tender = state.new_gid("TenderTransaction");
     let reference = record
         .get("paymentId")
         .or_else(|| record.get("authorizationCode"))
         .filter(|value| !value.is_null())
         .cloned()
-        .unwrap_or_else(|| json!(model::number(transaction).to_string()));
+        .unwrap_or_else(|| json!(gid_number(transaction).to_string()));
     state.insert(value::object(json!({
         "__typename": "TenderTransaction",
         "id": tender,

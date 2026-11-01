@@ -40,8 +40,8 @@ use chrono_tz::Tz;
 use serde_json::Value as Json;
 
 use super::language::{Clause, DateValue, Expr, Op, Param, ParamTest, Query, Test, Unit, Value};
-use crate::domains::catalog::{cents_of, tags_of};
-use crate::state::{Record, ShopState, parse_gid};
+use crate::domains::catalog::tags_of;
+use crate::state::{Record, ShopState, parse_gid, value};
 
 /// The `app_id` of the orders of the Online Store, which Shopify writes on web orders.
 const ONLINE_STORE_APP_ID: u64 = 580111;
@@ -56,15 +56,9 @@ pub struct Context {
 impl Context {
     /// The shop's clock, in the shop's time zone (`Shop.ianaTimezone`, UTC without one).
     pub fn of(state: &ShopState) -> Context {
-        let zone = state
-            .shop()
-            .and_then(|shop| shop.get("ianaTimezone"))
-            .and_then(Json::as_str)
-            .and_then(|name| name.parse::<Tz>().ok())
-            .unwrap_or(Tz::UTC);
         Context {
             now: state.now(),
-            zone,
+            zone: state.time_zone(),
         }
     }
 
@@ -208,15 +202,8 @@ impl Facts {
     }
 }
 
-fn instant(value: Option<&Json>) -> Option<DateTime<Utc>> {
-    value
-        .and_then(Json::as_str)
-        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-        .map(|at| at.with_timezone(&Utc))
-}
-
 fn decimal(value: Option<&Json>) -> f64 {
-    cents_of(value).map_or(0.0, |cents| cents as f64 / 100.0)
+    value::exact_cents(value).map_or(0.0, |cents| cents as f64 / 100.0)
 }
 
 /// The city of an address as the Help Center writes it in `customer_cities`: its words run
@@ -242,15 +229,6 @@ pub fn created_by_app(state: &ShopState) -> HashSet<String> {
         .map(|change| change.key.to_string())
         .filter(|key| state.type_of(key) == Some("Customer"))
         .collect()
-}
-
-/// The app's numeric id: the app that creates what the Admin API creates.
-pub fn app_id(state: &ShopState) -> Option<u64> {
-    state
-        .keys("App")
-        .next()
-        .and_then(parse_gid)
-        .map(|(_, id)| id)
 }
 
 /// What the filters read of a customer.
@@ -325,8 +303,8 @@ pub fn facts(state: &ShopState, customer: &Record, created: &HashSet<String>) ->
                 .and_then(Json::as_str)
                 .unwrap_or_default()
                 .to_string(),
-            next_expiry: instant(account.get("lsfNextExpiryAt")),
-            last_credit: instant(account.get("lsfLastCreditAt")),
+            next_expiry: value::date_time_of(account.get("lsfNextExpiryAt")),
+            last_credit: value::date_time_of(account.get("lsfLastCreditAt")),
         })
         .collect();
     let metafields = customer
@@ -361,7 +339,7 @@ pub fn facts(state: &ShopState, customer: &Record, created: &HashSet<String>) ->
             Some(Json::Number(n)) => n.as_i64().unwrap_or(0),
             _ => 0,
         },
-        created_at: instant(customer.get("createdAt")),
+        created_at: value::date_time_of(customer.get("createdAt")),
         account_status: text(customer.get("state")).unwrap_or_else(|| "DISABLED".into()),
         email_domain: text(customer.get("email")).and_then(|email| {
             email
@@ -377,7 +355,10 @@ pub fn facts(state: &ShopState, customer: &Record, created: &HashSet<String>) ->
         cities,
         coordinates,
         companies,
-        created_by_app: created.contains(&id).then(|| app_id(state)).flatten(),
+        created_by_app: created
+            .contains(&id)
+            .then(|| state.app_gid().and_then(parse_gid).map(|(_, id)| id))
+            .flatten(),
         abandoned_checkout: crate::domains::checkouts::last_abandonment(state, &id),
         product_subscription: text(customer.get("productSubscriberStatus"))
             .unwrap_or_else(|| "NEVER_SUBSCRIBED".into()),
@@ -425,7 +406,7 @@ fn order_facts(state: &ShopState, order: &Record) -> OrderFacts {
         })
         .collect();
     OrderFacts {
-        at: instant(order.get("processedAt").or_else(|| order.get("createdAt"))),
+        at: value::date_time_of(order.get("processedAt").or_else(|| order.get("createdAt"))),
         total: decimal(
             order
                 .get("totalPriceSet")

@@ -220,8 +220,8 @@ fn pricing_policy(plan: &Record, base: i64, currency: &str) -> Value {
                         .unwrap_or(0.0);
                     base - ((base as f64) * percentage / 100.0).round() as i64
                 }
-                "FIXED_AMOUNT" => base - crate::domains::orders::model::cents(value.get("amount")),
-                _ => crate::domains::orders::model::cents(value.get("amount")),
+                "FIXED_AMOUNT" => base - crate::state::value::cents(value.get("amount")),
+                _ => crate::state::value::cents(value.get("amount")),
             };
             json!({
                 "adjustmentType": kind,

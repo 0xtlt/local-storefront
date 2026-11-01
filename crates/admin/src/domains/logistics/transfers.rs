@@ -41,11 +41,11 @@
 //! the descriptions of each payload's code enum ([`super::coded`]); the names are lsf's: `#T1`
 //! for the first transfer *(chosen: the Help Center names a shipment `T289-1`)*.
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::NaiveDate;
 use serde_json::{Map, Value, json};
 
 use super::{
-    coded, emit_change, idempotent, int, keys_of, location_snapshot, objects, push, record_of,
+    coded, emit_change, idempotent, int, keys_of, location_snapshot, objects, push,
     snapshot_location, stock, text,
 };
 use crate::domains::catalog::{self, gids};
@@ -53,7 +53,7 @@ use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::search::SearchValue;
-use crate::state::{Record, ShopState, parse_gid, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -205,7 +205,7 @@ fn items_of(state: &ShopState, transfer: &Record) -> Vec<String> {
 
 /// The transfer of an id, when it is one.
 pub fn find(state: &ShopState, id: &str) -> Option<Record> {
-    record_of(state, id, "InventoryTransfer").cloned()
+    state.get_of(id, "InventoryTransfer").cloned()
 }
 
 /// The line of a transfer for an inventory item.
@@ -298,7 +298,7 @@ pub fn check_item(
             .chain(std::iter::once(field))
             .collect()
     };
-    let Some(record) = record_of(state, item, "InventoryItem") else {
+    let Some(record) = state.get_of(item, "InventoryItem") else {
         errors.push(coded(ctx, &at("inventoryItemId"), "ITEM_NOT_FOUND"));
         return false;
     };
@@ -431,7 +431,7 @@ struct NewTransfer {
 /// Makes a draft transfer and its lines. Returns its GID.
 fn insert_transfer(state: &mut ShopState, new: &NewTransfer) -> String {
     let id = state.new_gid("InventoryTransfer");
-    let number = parse_gid(&id).map_or(0, |(_, n)| n);
+    let number = gid_number(&id);
     let now = state.timestamp();
     let record = value::object(json!({
         "__typename": "InventoryTransfer",
@@ -660,8 +660,8 @@ fn make_ready(state: &mut ShopState, transfer: &str) {
 /// A `dateCreated` input: a `DateTime`, or a `Date` (`inventoryTransferEdit`) at midnight UTC.
 fn date_input(value: Option<&Value>) -> Option<String> {
     let text = value?.as_str()?;
-    if let Ok(date) = DateTime::parse_from_rfc3339(text) {
-        return Some(value::date_time(date.with_timezone(&Utc)));
+    if let Some(date) = value::parse_date_time(text) {
+        return Some(value::date_time(date));
     }
     let date = NaiveDate::parse_from_str(text, "%Y-%m-%d").ok()?;
     Some(format!("{date}T00:00:00Z"))
@@ -1080,7 +1080,7 @@ fn remove_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                 record.insert("totalQuantity".into(), json!(0));
             }
             settle(state, &id);
-            super::pull(state, &id, "lineItems", line);
+            state.pull_key(&id, "lineItems", line);
             state.remove(line);
         } else if let Some(record) = state.get_mut(line) {
             record.insert("totalQuantity".into(), json!(total - processable));

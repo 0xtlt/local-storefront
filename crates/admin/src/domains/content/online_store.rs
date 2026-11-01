@@ -133,7 +133,7 @@ fn publication(
     let date = input.get("publishDate").and_then(Value::as_str);
     let flag = input.get("isPublished").and_then(Value::as_bool);
     let future = date.is_some_and(|date| {
-        let parse = |text: &str| chrono::DateTime::parse_from_rfc3339(text).ok();
+        let parse = value::parse_date_time;
         matches!((parse(date), parse(now)), (Some(date), Some(now)) if date > now)
     });
     if flag == Some(true) && future {
@@ -238,10 +238,7 @@ fn page_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = ctx.arg_object_or_default("page");
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("Page"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "Page").cloned() else {
         let error = UserError::new(&["id"], "Page does not exist").code("NOT_FOUND");
         return Ok(payload(json!({"page": null}), &[error]));
     };
@@ -301,10 +298,7 @@ fn page_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
 
 fn page_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let Some(record) = (mutation.state().type_of(&id) == Some("Page"))
-        .then(|| mutation.state().get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = mutation.state().get_of(&id, "Page").cloned() else {
         let error = UserError::new(&["id"], "Page does not exist").code("NOT_FOUND");
         return Ok(payload(json!({"deletedPageId": null}), &[error]));
     };
@@ -370,10 +364,7 @@ fn blog_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = ctx.arg_object_or_default("blog");
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("Blog"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "Blog").cloned() else {
         let error = UserError::new(&["id"], "Blog does not exist").code("NOT_FOUND");
         return Ok(coded(
             json!({"blog": null}),
@@ -447,10 +438,7 @@ fn blog_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
 /// `blogDelete`: the blog, its articles and their comments, and their metafields.
 fn blog_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let Some(record) = (mutation.state().type_of(&id) == Some("Blog"))
-        .then(|| mutation.state().get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = mutation.state().get_of(&id, "Blog").cloned() else {
         let error = UserError::new(&["id"], "Blog does not exist").code("NOT_FOUND");
         return Ok(coded(
             json!({"deletedBlogId": null}),
@@ -708,10 +696,7 @@ fn article_update(
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = ctx.arg_object_or_default("article");
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("Article"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "Article").cloned() else {
         let error = UserError::new(&["id"], "Article does not exist").code("NOT_FOUND");
         return Ok(payload(json!({"article": null}), &[error]));
     };
@@ -805,12 +790,7 @@ fn article_update(
         }
     }
     if let Some(blog) = new_blog.as_ref().filter(|blog| **blog != current_blog) {
-        if let Some(Value::Array(articles)) = state
-            .get_mut(&current_blog)
-            .and_then(|record| record.get_mut("articles"))
-        {
-            articles.retain(|article| article.as_str() != Some(id.as_str()));
-        }
+        state.pull_key(&current_blog, "articles", id.as_str());
         if let Some(Value::Array(articles)) = state
             .get_mut(blog)
             .and_then(|record| record.get_mut("articles"))
@@ -851,12 +831,7 @@ fn remove_article(state: &mut ShopState, id: &str) {
     }
     state.delete(id, "articles/delete");
     remove_metafields(state, &record);
-    if let Some(Value::Array(articles)) = state
-        .get_mut(&blog)
-        .and_then(|record| record.get_mut("articles"))
-    {
-        articles.retain(|article| article.as_str() != Some(id));
-    }
+    state.pull_key(&blog, "articles", id);
     refresh_blog(state, &blog);
 }
 
@@ -918,12 +893,7 @@ fn comment_delete(
         .map(|comment| text(comment, "article").to_string())
         .unwrap_or_default();
     state.delete(&id, "comments/delete");
-    if let Some(Value::Array(comments)) = state
-        .get_mut(&article)
-        .and_then(|record| record.get_mut("comments"))
-    {
-        comments.retain(|comment| comment.as_str() != Some(id.as_str()));
-    }
+    state.pull_key(&article, "comments", id.as_str());
     Ok(payload(json!({"deletedCommentId": id}), &[]))
 }
 

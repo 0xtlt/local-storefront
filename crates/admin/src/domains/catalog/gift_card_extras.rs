@@ -202,7 +202,7 @@ fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         && let Some(product) = &product
     {
         let state = mutation.state_mut();
-        let currency = crate::domains::orders::model::currency(state);
+        let currency = state.currency();
         if let Some(record) = state.get_mut(product) {
             record.insert(
                 "lsfGiftCardSettings".into(),
@@ -237,11 +237,7 @@ fn notify(
     };
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(card) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("GiftCard"))
-        .cloned()
-    else {
+    let Some(card) = state.get_of(&id, "GiftCard").cloned() else {
         return failed("The gift card could not be found.", "GIFT_CARD_NOT_FOUND");
     };
     let to = if recipient {

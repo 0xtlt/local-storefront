@@ -298,7 +298,7 @@ fn create(
     if status == "OPEN" {
         super::return_extras::open_reverse_fulfillment(state, &id);
     }
-    model::push_key(state, &order, "returns", &id);
+    state.push_key(&order, "returns", &id);
     model::refresh_order(state, &order);
     state.emit(
         if status == "OPEN" {
@@ -313,9 +313,7 @@ fn create(
 
 /// A return of the shop, its status and its order.
 fn find_return(state: &ShopState, id: &str) -> Option<(String, String)> {
-    let record = state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some("Return"))?;
+    let record = state.get_of(id, "Return")?;
     Some((
         text(record, "status").unwrap_or("OPEN").to_string(),
         text(record, "order").unwrap_or_default().to_string(),

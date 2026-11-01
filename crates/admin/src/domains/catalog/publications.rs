@@ -27,10 +27,10 @@
 use serde_json::{Value, json};
 
 use super::product_changed;
-use super::records::{self, field, is, origin, text};
+use super::records::{self, field, origin, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, parse_gid, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -276,7 +276,7 @@ fn targets(
                 &["input", &at, "publicationId"],
                 "PublicationId cannot be empty",
             )),
-            Some(id) if !is(state, id, "Publication") => {
+            Some(id) if !state.is_of(id, "Publication") => {
                 let message = if channel.is_some() && text(input, "publicationId").is_none() {
                     "Channel does not exist or is not publishable"
                 } else {
@@ -326,7 +326,7 @@ fn publication_snapshot(
 
 /// The GID of a publication event: the publishable's, with the publication's id.
 fn event_gid(publishable: &str, publication: &str) -> String {
-    let id = parse_gid(publication).map_or(0, |(_, id)| id);
+    let id = gid_number(publication);
     format!("{publishable}?publication_id={id}")
 }
 

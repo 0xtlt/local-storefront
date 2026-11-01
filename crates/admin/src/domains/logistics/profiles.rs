@@ -37,7 +37,6 @@ use serde_json::{Map, Value, json};
 
 use super::{int, keys_of, objects, push, text};
 use crate::domains::catalog::{self, gids};
-use crate::domains::orders::model;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::seed::Seed;
@@ -373,7 +372,7 @@ fn profile_items(
     let items: Vec<Value> = items
         .into_iter()
         .map(|(product, variants)| {
-            let number = crate::state::parse_gid(&product).map_or(0, |(_, n)| n);
+            let number = crate::state::gid_number(&product);
             json!({
                 "__typename": "DeliveryProfileItem",
                 "id": gid("DeliveryProfileItem", number),
@@ -612,7 +611,7 @@ fn money_of(input: Option<&Value>, currency: &str) -> Option<Value> {
         Value::String(text) => text.clone(),
         other => other.to_string(),
     };
-    let cents = model::parse_cents(&amount)?;
+    let cents = value::parse_cents(&amount)?;
     let currency = input
         .get("currencyCode")
         .and_then(Value::as_str)
@@ -1046,7 +1045,7 @@ fn apply(state: &mut ShopState, profile: &str, input: &Map<String, Value>, build
             });
         match owner {
             Some(method) => {
-                super::pull(state, &method, "methodConditions", &condition);
+                state.pull_key(&method, "methodConditions", &condition);
                 state.remove(&condition);
             }
             None => build.error(&at(&root, &["conditionsToDelete"]), "Condition not found"),
@@ -1264,7 +1263,7 @@ fn apply(state: &mut ShopState, profile: &str, input: &Map<String, Value>, build
         }
         let holders: Vec<String> = state.keys("DeliveryProfile").map(str::to_string).collect();
         for other in holders {
-            super::pull(state, &other, VARIANTS, &variant);
+            state.pull_key(&other, VARIANTS, &variant);
         }
         if !default {
             push(state, profile, VARIANTS, &variant);
@@ -1281,7 +1280,7 @@ fn apply(state: &mut ShopState, profile: &str, input: &Map<String, Value>, build
             );
             continue;
         }
-        super::pull(state, profile, VARIANTS, &variant);
+        state.pull_key(profile, VARIANTS, &variant);
     }
     for (index, group) in gids(input.get("sellingPlanGroupsToAssociate"))
         .into_iter()
@@ -1297,7 +1296,7 @@ fn apply(state: &mut ShopState, profile: &str, input: &Map<String, Value>, build
         push(state, profile, "sellingPlanGroups", &group);
     }
     for group in gids(input.get("sellingPlanGroupsToDissociate")) {
-        super::pull(state, profile, "sellingPlanGroups", &group);
+        state.pull_key(profile, "sellingPlanGroups", &group);
     }
 }
 
@@ -1357,7 +1356,7 @@ fn bump(state: &mut ShopState, profile: &str, entries: Vec<Map<String, Value>>) 
 
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = ctx.arg_object_or_default("profile");
-    let currency = model::currency(mutation.state());
+    let currency = mutation.state().currency();
     if text(&input, "name").is_none_or(|name| name.trim().is_empty()) {
         return Ok(payload(
             json!({"profile": null}),
@@ -1400,7 +1399,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         ));
     }
     let input = ctx.arg_object_or_default("profile");
-    let currency = model::currency(mutation.state());
+    let currency = mutation.state().currency();
     let state = mutation.state_mut();
     let mut build = Build {
         errors: Vec::new(),
@@ -1420,10 +1419,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
 fn remove(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("DeliveryProfile"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "DeliveryProfile").cloned() else {
         return Ok(payload(
             json!({"job": null}),
             &[UserError::new(&["id"], "Profile could not be found")],
@@ -1493,7 +1489,7 @@ pub fn checkout_rates<'r>(
         }
         let provider = get(text(method, "rateProvider")?)?;
         (text(provider, "__typename") == Some("DeliveryRateDefinition"))
-            .then(|| crate::domains::catalog::cents_of(provider.get("price")?.get("amount")))
+            .then(|| value::exact_cents(provider.get("price")?.get("amount")))
             .flatten()
     };
     let input = |handle: &str, method: &Record, cents: i64| CheckoutShippingRateInput {

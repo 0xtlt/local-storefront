@@ -16,7 +16,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{self, field, is, link_collection, text};
+use super::records::{self, field, link_collection, text};
 use super::{collection_sources, gids, publish_on};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, coded, payload};
@@ -82,7 +82,7 @@ fn collection_duplicate(
     let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let original = text(&input, "collectionId").unwrap_or_default().to_string();
-    if !is(state, &original, "Collection") {
+    if !state.is_of(&original, "Collection") {
         let error = coded(
             &["input", "collectionId"],
             "The collection was not found. Please check the collection ID and try again.",

@@ -24,7 +24,8 @@ use crate::domains::content::{fit_code, types};
 use crate::graphql::{FieldContext, FieldError, Output, Request};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::seed::Seed;
-use crate::state::{Record, ShopState, gid};
+use crate::state::value::str_field_or_empty as text;
+use crate::state::{ShopState, gid};
 
 /// A standard metafield definition template: `(id, name, description, namespace, key, type,
 /// owner types, validations)`.
@@ -316,13 +317,6 @@ pub fn register(registry: &mut Registry) {
         .mutation("standardMetafieldDefinitionEnable", metafield_enable)
         .mutation("standardMetaobjectDefinitionEnable", metaobject_enable)
         .query("standardMetafieldDefinitionTemplates", metafield_templates);
-}
-
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
 }
 
 /// Whether the shop has a definition of a template's namespace and key, for any owner type.

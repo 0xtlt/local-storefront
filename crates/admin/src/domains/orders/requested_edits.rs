@@ -81,11 +81,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&order)
-        .filter(|_| state.type_of(&order) == Some("Order"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&order, "Order").cloned() else {
         return failed(&["input", "orderId"], "Order does not exist", "NOT_FOUND");
     };
     if model::is_cancelled(&record) {
@@ -171,7 +167,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         "requestDeclinedAt": null,
         "requestResolvedAt": null,
     })));
-    model::push_key(state, &order, "requestedOrderEdits", &id);
+    state.push_key(&order, "requestedOrderEdits", &id);
     state.emit("requested_order_edit/created", &id);
     Ok(payload(json!({"requestedOrderEdit": id}), &[]))
 }
@@ -195,11 +191,7 @@ fn close(
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("RequestedOrderEdit"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&id, "RequestedOrderEdit").cloned() else {
         return failed(
             &["input", "id"],
             "Requested order edit does not exist",
@@ -305,13 +297,10 @@ fn calculate(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let Some(order) = state
-        .get(&order_id)
-        .filter(|_| state.type_of(&order_id) == Some("Order"))
-    else {
+    let Some(order) = state.get_of(&order_id, "Order") else {
         return Ok(Output::Null);
     };
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let lines = gids(order.get("lineItems"));
     let (mut subtotal, mut before, mut tax) = (0, 0, 0);

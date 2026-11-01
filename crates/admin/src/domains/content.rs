@@ -12,7 +12,7 @@ pub mod navigation;
 mod online_store;
 #[cfg(test)]
 mod tests;
-mod translations;
+pub(crate) mod translations;
 pub mod types;
 
 pub use online_store::refresh_blog;
@@ -1177,15 +1177,6 @@ pub fn attach_definition(state: &mut ShopState, metafield: &str) -> Option<Strin
         record.insert("definition".to_string(), json!(id));
     }
     Some(id)
-}
-
-/// The numeric id of the app (`gid://shopify/App/<id>`), which its reserved namespaces name.
-pub fn app_id(state: &ShopState) -> u64 {
-    state
-        .keys("App")
-        .next()
-        .and_then(crate::state::parse_gid)
-        .map_or(0, |(_, id)| id)
 }
 
 /// The custom resolvers and the mutations of this family: see "Writing a resolver or a

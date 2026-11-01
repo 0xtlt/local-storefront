@@ -10,7 +10,8 @@ pub mod value;
 
 use std::collections::{BTreeMap, HashMap};
 
-use chrono::{DateTime, SubsecRound, Utc};
+use chrono::{DateTime, NaiveDate, SubsecRound, Utc};
+use chrono_tz::Tz;
 use indexmap::{IndexMap, IndexSet};
 use lsf_checkout::app::App;
 use lsf_core::Store;
@@ -19,6 +20,27 @@ use serde_json::{Map, Value};
 /// A record: a JSON object in the shape of its GraphQL type, with its GID in `id` and its type in
 /// `__typename`.
 pub type Record = Map<String, Value>;
+
+/// A value at a JSON pointer of a record, as `Value::pointer` reads one: `/state/__typename`.
+pub trait Pointer {
+    /// The value at `path`, `None` when there is none.
+    fn pointer(&self, path: &str) -> Option<&Value>;
+
+    /// [`Pointer::pointer`], when it is a string.
+    fn pointer_str(&self, path: &str) -> Option<&str> {
+        self.pointer(path).and_then(Value::as_str)
+    }
+}
+
+impl Pointer for Record {
+    fn pointer(&self, path: &str) -> Option<&Value> {
+        let path = path.strip_prefix('/')?;
+        match path.split_once('/') {
+            Some((first, rest)) => self.get(first)?.pointer(&format!("/{rest}")),
+            None => self.get(path),
+        }
+    }
+}
 
 /// The GID of an entity: `gid://shopify/Product/1`.
 pub fn gid(type_name: &str, id: u64) -> String {
@@ -32,6 +54,11 @@ pub fn parse_gid(gid: &str) -> Option<(&str, u64)> {
     let (type_name, id) = rest.split_once('/')?;
     let id = id.split_once('?').map_or(id, |(id, _)| id);
     Some((type_name, id.parse().ok()?))
+}
+
+/// The number of a GID (`gid://shopify/Order/7` is 7), 0 when it is not one.
+pub fn gid_number(gid: &str) -> u64 {
+    parse_gid(gid).map_or(0, |(_, number)| number)
 }
 
 /// The type a GID names, whatever its id looks like: `Product` for `gid://shopify/Product/1`.
@@ -477,6 +504,27 @@ impl ShopState {
         self.shop_gid().and_then(|gid| self.get(gid))
     }
 
+    /// The GID of the `App` record: the app the shop runs with, which creates what the Admin API
+    /// creates.
+    pub fn app_gid(&self) -> Option<&str> {
+        self.keys("App").next()
+    }
+
+    /// The number of [`ShopState::app_gid`] (its reserved namespaces name it), 0 without an app.
+    pub fn app_id(&self) -> u64 {
+        self.app_gid().map_or(0, gid_number)
+    }
+
+    /// The currency of the shop (`Shop.currencyCode`, `USD` without one): every amount of an
+    /// order is in it.
+    pub fn currency(&self) -> String {
+        self.shop()
+            .and_then(|shop| shop.get("currencyCode"))
+            .and_then(Value::as_str)
+            .unwrap_or("USD")
+            .to_string()
+    }
+
     pub fn clock(&self) -> Clock {
         self.clock
     }
@@ -493,6 +541,29 @@ impl ShopState {
     /// [`ShopState::now`] as a GraphQL `DateTime`: `2026-01-01T00:00:00Z`.
     pub fn timestamp(&self) -> String {
         value::date_time(self.now())
+    }
+
+    /// The shop's time zone, `Shop.ianaTimezone`: `None` when it names none chrono-tz knows.
+    pub fn iana_time_zone(&self) -> Option<Tz> {
+        self.shop()
+            .and_then(|shop| shop.get("ianaTimezone"))
+            .and_then(Value::as_str)
+            .and_then(|zone| zone.parse::<Tz>().ok())
+    }
+
+    /// The zone of the shop's days: [`ShopState::iana_time_zone`], UTC without one.
+    pub fn time_zone(&self) -> Tz {
+        self.iana_time_zone().unwrap_or(Tz::UTC)
+    }
+
+    /// The shop's day of an instant, in [`ShopState::time_zone`].
+    pub fn day_of(&self, at: DateTime<Utc>) -> NaiveDate {
+        at.with_timezone(&self.time_zone()).date_naive()
+    }
+
+    /// The shop's date today: [`ShopState::day_of`] its clock.
+    pub fn today(&self) -> NaiveDate {
+        self.day_of(self.now())
     }
 
     /// The record of a GID (or of the key a record without a GID is kept under, see
@@ -624,6 +695,43 @@ impl ShopState {
     /// The type of the record of a GID: its `__typename`.
     pub fn type_of(&self, gid: &str) -> Option<&str> {
         self.records.get(gid).map(|entry| entry.type_name.as_str())
+    }
+
+    /// Appends `key` to the array field `field` of a record (made when missing), unless it lists
+    /// it already. A field that holds something else is left as it is.
+    pub fn push_key(&mut self, gid: &str, field: &str, key: &str) {
+        if let Some(record) = self.get_mut(gid) {
+            let items = record
+                .entry(field.to_string())
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Value::Array(items) = items
+                && !items.iter().any(|item| item.as_str() == Some(key))
+            {
+                items.push(Value::String(key.to_string()));
+            }
+        }
+    }
+
+    /// Removes `key` from the array field `field` of a record.
+    pub fn pull_key(&mut self, gid: &str, field: &str, key: &str) {
+        if let Some(Value::Array(items)) =
+            self.get_mut(gid).and_then(|record| record.get_mut(field))
+        {
+            items.retain(|item| item.as_str() != Some(key));
+        }
+    }
+
+    /// The record of a GID when it is one of `type_name` ([`ShopState::type_of`]).
+    pub fn get_of(&self, gid: &str, type_name: &str) -> Option<&Record> {
+        self.records
+            .get(gid)
+            .filter(|entry| entry.type_name == type_name)
+            .map(|entry| &entry.record)
+    }
+
+    /// Whether the record of a GID is one of `type_name` ([`ShopState::type_of`]).
+    pub fn is_of(&self, gid: &str, type_name: &str) -> bool {
+        self.type_of(gid) == Some(type_name)
     }
 
     /// Adds a record, or replaces the record of the same GID where it was. The key is the
@@ -1548,6 +1656,88 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_days_of_the_shop_in_its_time_zone() {
+        let now = DateTime::parse_from_rfc3339("2026-03-01T02:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut state = ShopState::new("a.myshopify.com", Clock::Frozen(now));
+        assert_eq!(state.iana_time_zone(), None);
+        assert_eq!(state.today().to_string(), "2026-03-01");
+        let shop = state.insert(record(json!({
+            "__typename": "Shop",
+            "id": "gid://shopify/Shop/1",
+            "ianaTimezone": "America/New_York",
+        })));
+        assert_eq!(state.time_zone(), chrono_tz::America::New_York);
+        assert_eq!(state.today().to_string(), "2026-02-28");
+        state.get_mut(&shop).unwrap()["ianaTimezone"] = json!("Mars/Olympus");
+        assert_eq!(state.iana_time_zone(), None);
+        assert_eq!(state.time_zone(), Tz::UTC);
+    }
+
+    #[test]
+    fn reads_the_app_and_the_currency_of_the_shop() {
+        let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        assert_eq!((state.app_gid(), state.app_id()), (None, 0));
+        assert_eq!(state.currency(), "USD");
+        state.insert(record(
+            json!({"__typename": "App", "id": "gid://shopify/App/42"}),
+        ));
+        state.insert(record(json!({
+            "__typename": "Shop",
+            "id": "gid://shopify/Shop/1",
+            "currencyCode": "EUR",
+        })));
+        assert_eq!(state.app_gid(), Some("gid://shopify/App/42"));
+        assert_eq!(state.app_id(), 42);
+        assert_eq!(state.currency(), "EUR");
+    }
+
+    #[test]
+    fn adds_and_removes_keys_of_array_fields() {
+        let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        let order = state.insert(record(json!({
+            "__typename": "Order",
+            "id": "gid://shopify/Order/1",
+            "refunds": null,
+        })));
+        state.push_key(&order, "returns", "gid://shopify/Return/1");
+        state.push_key(&order, "returns", "gid://shopify/Return/1");
+        state.push_key(&order, "returns", "gid://shopify/Return/2");
+        state.push_key(&order, "refunds", "gid://shopify/Refund/1");
+        state.push_key("gid://shopify/Order/9", "returns", "gid://shopify/Return/1");
+        let record = state.get(&order).unwrap();
+        assert_eq!(
+            record["returns"],
+            json!(["gid://shopify/Return/1", "gid://shopify/Return/2"])
+        );
+        assert_eq!(record["refunds"], Value::Null);
+        state.pull_key(&order, "returns", "gid://shopify/Return/1");
+        state.pull_key(&order, "refunds", "gid://shopify/Refund/1");
+        let record = state.get(&order).unwrap();
+        assert_eq!(record["returns"], json!(["gid://shopify/Return/2"]));
+        assert_eq!(record["refunds"], Value::Null);
+    }
+
+    #[test]
+    fn reads_pointers_of_records() {
+        let market = record(json!({
+            "currencySettings": {"baseCurrency": {"currencyCode": "EUR"}},
+            "status": "ACTIVE",
+            "regions": [{"code": "FR"}],
+        }));
+        assert_eq!(
+            market.pointer_str("/currencySettings/baseCurrency/currencyCode"),
+            Some("EUR")
+        );
+        assert_eq!(market.pointer("/status"), Some(&json!("ACTIVE")));
+        assert_eq!(market.pointer_str("/regions/0/code"), Some("FR"));
+        assert_eq!(market.pointer_str("/regions"), None);
+        assert_eq!(market.pointer("status"), None);
+        assert_eq!(market.pointer("/missing/field"), None);
+    }
+
+    #[test]
     fn reads_gids() {
         assert_eq!(gid("Product", 7), "gid://shopify/Product/7");
         assert_eq!(parse_gid("gid://shopify/Product/7"), Some(("Product", 7)));
@@ -1557,6 +1747,13 @@ mod tests {
         );
         assert_eq!(parse_gid("gid://other/Product/7"), None);
         assert_eq!(parse_gid("gid://shopify/Product/x"), None);
+        assert_eq!(gid_number("gid://shopify/Order/7"), 7);
+        assert_eq!(
+            gid_number("gid://shopify/MailingAddress/3?model_name=Address"),
+            3
+        );
+        assert_eq!(gid_number("gid://shopify/Order/x"), 0);
+        assert_eq!(gid_number(""), 0);
         assert_eq!(
             gid_type("gid://shopify/ShopifyFunction/a-b"),
             Some("ShopifyFunction")

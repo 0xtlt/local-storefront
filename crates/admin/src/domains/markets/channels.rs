@@ -41,15 +41,14 @@
 //!
 //! Errors without a published message are lsf's (each says so).
 
-use chrono::{DateTime, Utc};
 use lsf_core::util::handleize;
 use serde_json::{Map, Value, json};
 
-use super::{is, number, objects, regions_of, shop_locales, strings, text};
+use super::{objects, regions_of, shop_locales, strings, text};
 use crate::domains::catalog::{self, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, payload};
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 /// The record field of a channel's publication that names the channel.
 const CHANNEL_OF: &str = "lsfChannel";
@@ -389,13 +388,6 @@ fn unpublished_channels(
 
 // --- Listings ---
 
-/// The time of a `DateTime` input.
-fn time_of(date: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(date)
-        .ok()
-        .map(|date| date.with_timezone(&Utc))
-}
-
 /// The snapshot of a listing event: the product or collection, with the listing.
 fn listing_snapshot(
     state: &ShopState,
@@ -414,7 +406,7 @@ fn listing_snapshot(
 /// The key of a listing event: the publishable's GID, with the publication's id (it names no
 /// record, so the payload is built from the snapshot).
 fn listing_key(publishable: &str, publication: &str) -> String {
-    format!("{publishable}?publication_id={}", number(publication))
+    format!("{publishable}?publication_id={}", gid_number(publication))
 }
 
 /// Emits a listing event of a channel's publication.
@@ -471,7 +463,7 @@ pub fn scheduled(
         return false;
     }
     let future = date
-        .and_then(time_of)
+        .and_then(value::parse_date_time)
         .is_some_and(|date| date > state.now());
     if !published {
         if unschedule(state, publication, publishable) {
@@ -656,7 +648,7 @@ pub fn publish_due_listings(state: &mut ShopState) {
             ) else {
                 continue;
             };
-            if time_of(&date).is_some_and(|date| date <= now) {
+            if value::parse_date_time(&date).is_some_and(|date| date <= now) {
                 unschedule(state, publication, &publishable);
                 catalog::publish_on(
                     state,
@@ -679,7 +671,7 @@ fn not_found(field: &str) -> UserError {
 /// The channel of an argument.
 fn channel_arg(state: &ShopState, ctx: &FieldContext<'_>, name: &str) -> Option<String> {
     let id = ctx.arg_str(name)?;
-    is(state, id, "Channel").then(|| id.to_string())
+    state.is_of(id, "Channel").then(|| id.to_string())
 }
 
 /// The countries a channel covers: those of the shop's active region markets.
@@ -761,7 +753,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         "channelCreate: lsf has no channel specification to read: the channel covers every country of the shop's active region markets",
     );
     let state = mutation.state();
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let regions = coverage(state);
     let state = mutation.state_mut();
     let channel = state.new_gid("Channel");
@@ -1083,7 +1075,7 @@ fn feedback_create(
         };
         let before = errors.len();
         let product = text(input, "productId").unwrap_or_default().to_string();
-        if !is(state, &product, "Product") {
+        if !state.is_of(&product, "Product") {
             errors.push(error(
                 "productId",
                 "Product does not exist",
@@ -1093,7 +1085,7 @@ fn feedback_create(
         let channel = text(input, "channelId").map(str::to_string);
         if channel
             .as_deref()
-            .is_some_and(|channel| !is(state, channel, "Channel"))
+            .is_some_and(|channel| !state.is_of(channel, "Channel"))
         {
             errors.push(error("channelId", "Channel does not exist", "NOT_FOUND"));
         }
@@ -1120,8 +1112,8 @@ fn feedback_create(
                 existing
                     .get(field)
                     .and_then(Value::as_str)
-                    .and_then(time_of)
-                    .zip(time_of(given))
+                    .and_then(value::parse_date_time)
+                    .zip(value::parse_date_time(given))
                     .is_some_and(|(known, given)| known > given)
             };
             if later("productUpdatedAt", updated) || later("feedbackGeneratedAt", generated) {
@@ -1202,7 +1194,7 @@ fn shop_feedback_create(
     let channel = text(&input, "channelId").map(str::to_string);
     if channel
         .as_deref()
-        .is_some_and(|channel| !is(state, channel, "Channel"))
+        .is_some_and(|channel| !state.is_of(channel, "Channel"))
     {
         errors.push(coded(
             &["input", "channelId"],
@@ -1226,7 +1218,7 @@ fn shop_feedback_create(
             "PRESENT",
         ));
     }
-    let generated = text(&input, "feedbackGeneratedAt").and_then(time_of);
+    let generated = text(&input, "feedbackGeneratedAt").and_then(value::parse_date_time);
     if generated.is_some_and(|generated| generated > state.now()) {
         errors.push(coded(
             &["input", "feedbackGeneratedAt"],
@@ -1239,7 +1231,10 @@ fn shop_feedback_create(
     let memo = format!("{key}/generatedAt");
     if let (Some(generated), Some(last)) = (
         generated,
-        state.memo(&memo).and_then(Value::as_str).and_then(time_of),
+        state
+            .memo(&memo)
+            .and_then(Value::as_str)
+            .and_then(value::parse_date_time),
     ) && last > generated
     {
         // The reference's example.
@@ -1259,7 +1254,7 @@ fn shop_feedback_create(
     .and_then(Value::as_str)
     .unwrap_or_default()
     .to_string();
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let at = generated.map(value::date_time);
     let state = mutation.state_mut();
     state.set_memo(memo, json!(at));

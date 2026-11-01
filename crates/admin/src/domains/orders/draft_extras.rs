@@ -32,7 +32,7 @@ use crate::domains::catalog::{gids, tags_of};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::selection::{Selection, Wording, selection};
 use crate::resolve::{Mutation, Registry, UserError, done_job, payload};
-use crate::state::{ShopState, value};
+use crate::state::{ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -47,7 +47,7 @@ pub fn register(registry: &mut Registry) {
 /// The checkout's delivery rates of a kind (`SHIPPING`, `LOCAL`, `PICK_UP`), as
 /// `DraftOrderShippingRate`s (and `ShippingRate`s, which read the same fields).
 pub(super) fn shipping_rates(state: &ShopState, kind: &str) -> Vec<Value> {
-    let currency = model::currency(state);
+    let currency = state.currency();
     state
         .setting(super::DELIVERY_RATES_SETTING)
         .and_then(Value::as_array)
@@ -88,7 +88,7 @@ fn delivery_options(
             if search.as_ref().is_some_and(|search| !name.to_ascii_lowercase().contains(search)) {
                 return None;
             }
-            let handle = format!("pickup-{}", model::number(key));
+            let handle = format!("pickup-{}", gid_number(key));
             Some(json!({
                 "code": handle,
                 "handle": handle,
@@ -318,11 +318,7 @@ fn create_from_order(
     };
     let id = ctx.arg_str("orderId").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(order) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Order"))
-        .cloned()
-    else {
+    let Some(order) = state.get_of(&id, "Order").cloned() else {
         return failed("Order does not exist");
     };
     let input = input_of_order(state, &order);

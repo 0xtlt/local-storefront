@@ -40,14 +40,14 @@ use std::collections::HashSet;
 
 use serde_json::{Map, Value, json};
 
-use super::{Pointer, is, market_currency, number, objects, shop_currency, strings, text};
-use crate::domains::catalog::{cents_of, gids};
+use super::{Pointer, market_currency, objects, strings, text};
+use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{
     Mutation, Obj, Registry, ShopResolver, UserError, coded, input_path, payload,
 };
 use crate::search::SearchValue;
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -123,7 +123,7 @@ fn scale(cents: i64, bps: i64) -> i64 {
 /// used). What every conversion of lsf uses: prices of price lists, contextual prices, the
 /// orders a subscription bills in its currency.
 pub fn rate_bps(state: &ShopState, currency: &str) -> Option<i64> {
-    if currency == shop_currency(state) {
+    if currency == state.currency() {
         return Some(10_000);
     }
     state.all("Market").find_map(|market| {
@@ -143,8 +143,8 @@ pub fn rate_bps(state: &ShopState, currency: &str) -> Option<i64> {
 /// A variant's price and compare-at price in the shop's currency, in cents.
 fn variant_cents(state: &ShopState, variant: &str) -> (i64, Option<i64>) {
     let record = state.get(variant);
-    let price = cents_of(record.and_then(|record| record.get("price"))).unwrap_or(0);
-    let compare = cents_of(record.and_then(|record| record.get("compareAtPrice")));
+    let price = value::exact_cents(record.and_then(|record| record.get("price"))).unwrap_or(0);
+    let compare = value::exact_cents(record.and_then(|record| record.get("compareAtPrice")));
     (price, compare)
 }
 
@@ -156,8 +156,8 @@ fn fixed_of(list: &Record, variant: &str) -> Option<(i64, Option<i64>)> {
         .find(|price| price.get("variant").and_then(Value::as_str) == Some(variant))
         .map(|price| {
             (
-                cents_of(price.pointer("/price/amount")).unwrap_or(0),
-                cents_of(price.pointer("/compareAtPrice/amount")),
+                value::exact_cents(price.pointer("/price/amount")).unwrap_or(0),
+                value::exact_cents(price.pointer("/compareAtPrice/amount")),
             )
         })
 }
@@ -194,7 +194,7 @@ fn all_variants(state: &ShopState) -> Vec<String> {
     state
         .all("Product")
         .flat_map(|product| gids(product.get("variants")))
-        .filter(|variant| is(state, variant, "ProductVariant"))
+        .filter(|variant| state.is_of(variant, "ProductVariant"))
         .collect()
 }
 
@@ -255,7 +255,7 @@ fn prices(
     if rate_bps(state, currency).is_none() {
         r.note(format!(
             "PriceList.prices: lsf has no exchange rate from {} to {currency}: relative prices are converted at 1.0",
-            shop_currency(state)
+            state.currency()
         ));
     }
     r.connection(ctx, items)
@@ -433,10 +433,9 @@ pub fn contextual_price(
             converted,
         };
     }
-    let currency = market.as_deref().map_or_else(
-        || shop_currency(state),
-        |market| market_currency(state, market),
-    );
+    let currency = market
+        .as_deref()
+        .map_or_else(|| state.currency(), |market| market_currency(state, market));
     let rate = rate_bps(state, &currency);
     let (price, compare) = variant_cents(state, variant);
     let convert = |cents: i64| scale(cents, rate.unwrap_or(10_000));
@@ -486,7 +485,7 @@ fn note_rate(r: &ShopResolver<'_>, converted: bool) {
     if !converted {
         r.note(format!(
             "contextualPricing: lsf has no exchange rates: a price in another currency than {} is converted at 1.0 (or at the market's baseCurrencyManualRate)",
-            shop_currency(r.state())
+            r.state().currency()
         ));
     }
 }
@@ -534,8 +533,8 @@ fn product_contextual_pricing(
         {
             fixed_rules += 1;
         }
-        let cents =
-            cents_of(pricing.get("price").and_then(|price| price.get("amount"))).unwrap_or(0);
+        let cents = value::exact_cents(pricing.get("price").and_then(|price| price.get("amount")))
+            .unwrap_or(0);
         priced.push((cents, pricing));
     }
     note_rate(r, converted);
@@ -550,7 +549,7 @@ fn product_contextual_pricing(
     let currency = min
         .as_ref()
         .and_then(|pricing| pricing.pointer_str("/price/currencyCode"))
-        .map_or_else(|| shop_currency(state), str::to_string);
+        .map_or_else(|| state.currency(), str::to_string);
     let price_of = |pricing: &Option<Record>| {
         pricing
             .as_ref()
@@ -576,7 +575,7 @@ fn product_contextual_pricing(
 /// The price list of an argument.
 fn list_arg(state: &ShopState, ctx: &FieldContext<'_>, name: &str) -> Option<String> {
     let id = ctx.arg_str(name)?;
-    is(state, id, "PriceList").then(|| id.to_string())
+    state.is_of(id, "PriceList").then(|| id.to_string())
 }
 
 /// Recomputes `fixedPricesCount`.
@@ -598,7 +597,7 @@ fn refresh(state: &mut ShopState, list: &str) {
 
 /// A `MoneyInput` in cents, and its currency.
 fn money(input: &Map<String, Value>) -> Option<(i64, String)> {
-    let cents = cents_of(input.get("amount"))?;
+    let cents = value::exact_cents(input.get("amount"))?;
     let currency = input.get("currencyCode")?.as_str()?.to_string();
     Some((cents, currency))
 }
@@ -646,7 +645,7 @@ fn check_prices(
         };
         let variant = text(input, "variantId").unwrap_or_default();
         let mut ok = true;
-        if !is(state, variant, "ProductVariant") {
+        if !state.is_of(variant, "ProductVariant") {
             // The code's description in the schema.
             errors.push(error(&["variantId"], "Variant not found.", variant_code));
             ok = false;
@@ -1162,7 +1161,7 @@ fn check_deletes(
     let fixed = fixed_variants(state, list);
     for (index, id) in ids.iter().enumerate() {
         let index = index.to_string();
-        if !is(state, id, "ProductVariant") {
+        if !state.is_of(id, "ProductVariant") {
             errors.push(coded(
                 &[at, &index],
                 "Variant not found.",
@@ -1213,7 +1212,7 @@ fn fixed_prices_update(
     state.emit("price_lists/update", &list);
     let variants: Vec<String> = prices.iter().map(|price| price.variant.clone()).collect();
     let mut deleted = to_delete;
-    deleted.sort_by_key(|variant| number(variant));
+    deleted.sort_by_key(|variant| gid_number(variant));
     Ok(payload(
         json!({
             "priceList": list,
@@ -1249,7 +1248,7 @@ fn fixed_prices_delete(
     remove_fixed(state, &list, &ids);
     state.emit("price_lists/update", &list);
     let mut deleted = ids;
-    deleted.sort_by_key(|variant| number(variant));
+    deleted.sort_by_key(|variant| gid_number(variant));
     deleted.dedup();
     Ok(payload(
         json!({"deletedFixedPriceVariantIds": deleted}),
@@ -1291,7 +1290,7 @@ fn fixed_prices_by_product_update(
     for (index, input) in to_add.iter().enumerate() {
         let index = index.to_string();
         let product = text(input, "productId").unwrap_or_default().to_string();
-        if !is(state, &product, "Product") {
+        if !state.is_of(&product, "Product") {
             errors.push(coded(
                 &["pricesToAdd", &index, "productId"],
                 "Product does not exist.",
@@ -1355,7 +1354,7 @@ fn fixed_prices_by_product_update(
     }
     let mut deleted_products = Vec::new();
     for (index, product) in to_delete.iter().enumerate() {
-        if !is(state, product, "Product") {
+        if !state.is_of(product, "Product") {
             errors.push(coded(
                 &["pricesToDeleteByProductIds", &index.to_string()],
                 "Product does not exist.",
@@ -1462,7 +1461,7 @@ fn check_rules(
         let minimum = input.get("minimum").and_then(Value::as_i64).unwrap_or(1);
         let maximum = input.get("maximum").and_then(Value::as_i64);
         let increment = input.get("increment").and_then(Value::as_i64).unwrap_or(1);
-        if !is(state, &variant, "ProductVariant") {
+        if !state.is_of(&variant, "ProductVariant") {
             // The code's description in the schema.
             errors.push(error(
                 "variantId",
@@ -1713,7 +1712,7 @@ fn quantity_rules_delete(
     let mut errors = Vec::new();
     for (index, id) in ids.iter().enumerate() {
         let index = index.to_string();
-        if !is(state, id, "ProductVariant") {
+        if !state.is_of(id, "ProductVariant") {
             errors.push(coded(
                 &["variantIds", &index],
                 "Product variant ID does not exist.",
@@ -1768,12 +1767,7 @@ fn add_break(
 
 /// Removes a price break record from its price list.
 fn remove_break(state: &mut ShopState, list: &str, price_break: &str) {
-    if let Some(Value::Array(items)) = state
-        .get_mut(list)
-        .and_then(|record| record.get_mut("lsfPriceBreaks"))
-    {
-        items.retain(|known| known.as_str() != Some(price_break));
-    }
+    state.pull_key(list, "lsfPriceBreaks", price_break);
     state.remove(price_break);
 }
 
@@ -1802,7 +1796,7 @@ fn quantity_pricing_update(
     for (index, id) in prices_to_delete.iter().enumerate() {
         let at = ["input", "pricesToDeleteByVariantId", &index.to_string()].map(str::to_string);
         let at: Vec<&str> = at.iter().map(String::as_str).collect();
-        if !is(state, id, "ProductVariant") {
+        if !state.is_of(id, "ProductVariant") {
             errors.push(coded(
                 &at,
                 "Price list price was not found for the variant.",
@@ -1826,7 +1820,7 @@ fn quantity_pricing_update(
         ]
         .map(str::to_string);
         let at: Vec<&str> = at.iter().map(String::as_str).collect();
-        if !is(state, id, "ProductVariant") {
+        if !state.is_of(id, "ProductVariant") {
             errors.push(coded(
                 &at,
                 "Quantity rule was not found for the variant.",
@@ -1857,7 +1851,7 @@ fn quantity_pricing_update(
     }
     let breaks_by_variant = ids_of("quantityPriceBreaksToDeleteByVariantId");
     for (index, id) in breaks_by_variant.iter().enumerate() {
-        if !is(state, id, "ProductVariant") {
+        if !state.is_of(id, "ProductVariant") {
             errors.push(coded(
                 &[
                     "input",
@@ -1940,7 +1934,7 @@ fn quantity_pricing_update(
             .and_then(Value::as_i64)
             .unwrap_or(0);
         let before = errors.len();
-        if !is(state, &variant, "ProductVariant") {
+        if !state.is_of(&variant, "ProductVariant") {
             errors.push(coded(
                 &at,
                 "Variant was not found.",

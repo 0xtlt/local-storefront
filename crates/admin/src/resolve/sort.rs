@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 
 use super::{ShopResolver, camel_case};
 use crate::graphql::FieldContext;
-use crate::state::parse_gid;
+use crate::state::gid_number;
 
 /// What a record is sorted by.
 #[derive(Clone, Debug, PartialEq)]
@@ -99,7 +99,7 @@ fn id_of(resolver: &ShopResolver<'_>, item: &Value) -> u64 {
 
 /// The number of a GID, which breaks ties (0 without one).
 pub(super) fn tie_of(gid: Option<&str>) -> u64 {
-    gid.and_then(parse_gid).map_or(0, |(_, id)| id)
+    gid.map_or(0, gid_number)
 }
 
 /// How an item compares with another in a sorted list: its value, then its id.

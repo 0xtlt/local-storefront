@@ -32,6 +32,7 @@ use serde_json::{Map, Value, json};
 
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::state::value::non_empty_str_field as text;
 use crate::state::{Record, ShopState};
 
 pub fn register(registry: &mut Registry) {
@@ -115,13 +116,6 @@ pub fn mergeable(state: &ShopState, customer: &str) -> Value {
         "reason": blocked.first().map(|(_, reason)| reason.clone()),
         "mergeInProgress": null,
     })
-}
-
-fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .filter(|text| !text.is_empty())
 }
 
 fn consent_rank(record: &Record) -> u8 {

@@ -45,7 +45,7 @@ use super::catalog::{self, gids};
 use super::customers;
 use crate::state::seed::Seed;
 use crate::state::value::{self, date_time, text};
-use crate::state::{ShopState, gid};
+use crate::state::{ShopState, gid, gid_number};
 
 /// An order about to become records.
 #[derive(Clone, Debug, Default)]
@@ -399,12 +399,7 @@ fn fulfilled_quantities(draft: &OrderDraft) -> Vec<u32> {
 /// fulfillment and transactions as its state implies, its returns. Updates the customer's
 /// derived fields. Returns the GID of the order.
 pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
-    let currency = state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string();
+    let currency = state.currency();
     let taxes_included = state
         .shop()
         .and_then(|shop| shop.get("taxesIncluded"))
@@ -427,7 +422,7 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
     let mut line_discounts = 0;
     let mut quantity = 0;
     let mut grams: u64 = 0;
-    let order_number = model::number(&order);
+    let order_number = gid_number(&order);
     for (position, line) in draft.lines.iter().enumerate() {
         let id = line_item_gid(order_number, position);
         let discounted = line.unit_price * i64::from(line.quantity) - line.discount;

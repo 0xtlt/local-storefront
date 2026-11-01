@@ -29,10 +29,10 @@ use serde_json::{Map, Value, json};
 
 use super::online_store_publication_gid;
 use super::publish_on;
-use super::records::{field, is, objects, text};
+use super::records::{field, objects, text};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{ShopState, parse_gid};
+use crate::state::{ShopState, gid_number};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -48,7 +48,7 @@ const ONLINE_STORE_HANDLE: &str = "online_store";
 /// The publication of a `ProductPublicationInput` or `CollectionPublicationInput`.
 fn publication_of(state: &ShopState, input: &Map<String, Value>) -> Result<String, &'static str> {
     if let Some(id) = text(input, "publicationId").or_else(|| text(input, "channelId")) {
-        if is(state, id, "Publication") {
+        if state.is_of(id, "Publication") {
             return Ok(id.to_string());
         }
         return Err(if text(input, "publicationId").is_some() {
@@ -109,7 +109,7 @@ fn channel_of(state: &ShopState, publication: &str) -> Value {
     {
         return json!(channel);
     }
-    let number = parse_gid(publication).map_or(0, |(_, id)| id);
+    let number = gid_number(publication);
     let online_store = publication == online_store_publication_gid();
     json!({
         "__typename": "Channel",
@@ -181,7 +181,7 @@ fn product_change(
     let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let product = text(&input, "id").unwrap_or_default().to_string();
-    if !is(state, &product, "Product") {
+    if !state.is_of(&product, "Product") {
         // lsf's wording: `publishablePublish`'s "Resource does not exist" names a product here.
         let error = UserError::new(&["input", "id"], "Product does not exist");
         return Ok(payload(empty, &[error]));
@@ -247,7 +247,7 @@ fn collection_change(
     let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let collection = text(&input, "id").unwrap_or_default().to_string();
-    if !is(state, &collection, "Collection") {
+    if !state.is_of(&collection, "Collection") {
         // lsf's wording, as `productPublish`'s.
         let error = UserError::new(&["input", "id"], "Collection does not exist");
         return Ok(payload(empty, &[error]));

@@ -38,7 +38,7 @@ use super::{
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, input_path, payload};
-use crate::state::{Record, ShopState, parse_gid, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -304,7 +304,7 @@ fn create_location(
         "externalId": null,
         "company": company,
         "locale": primary_locale(state),
-        "currency": crate::domains::orders::model::currency(state),
+        "currency": state.currency(),
         "phone": null,
         "note": null,
         "buyerExperienceConfiguration": null,
@@ -319,7 +319,7 @@ fn create_location(
         "taxExemptions": exemptions,
         "ordersCount": {"count": 0, "precision": "EXACT"},
         "orderCount": 0,
-        "totalSpent": value::money_v2(0, &crate::domains::orders::model::currency(state)),
+        "totalSpent": value::money_v2(0, &state.currency()),
         "roleAssignments": [],
         "createdAt": now,
         "updatedAt": now,
@@ -381,7 +381,7 @@ fn company_create(
 
     let state = mutation.state_mut();
     let company = state.new_gid("Company");
-    let number = parse_gid(&company).map_or(0, |(_, id)| id);
+    let number = gid_number(&company);
     let now = state.timestamp();
     let roles: Vec<String> = CONTACT_ROLES
         .iter()
@@ -408,7 +408,7 @@ fn company_create(
         "mainContact": null,
         "contactRoles": roles,
         "defaultRole": contact_role_gid_of(number, CONTACT_ROLES[1].0),
-        "totalSpent": value::money_v2(0, &crate::domains::orders::model::currency(state)),
+        "totalSpent": value::money_v2(0, &state.currency()),
         "metafields": [],
     }));
     apply_company(&mut record, &company_input);

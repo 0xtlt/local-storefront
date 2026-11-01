@@ -18,14 +18,13 @@
 //! lsf does not check that the caller is a tax calculations app, nor computes taxes with it: the
 //! checkout's rate (`checkout.tax_rate`) stays the shop's.
 
-use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 
-use super::model::{self, text};
+use super::model::text;
 use crate::domains::app::CHANGED;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{ShopState, value};
+use crate::state::{ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -35,7 +34,7 @@ pub fn register(registry: &mut Registry) {
 
 /// The key of the app's tax configuration: not a record of a GID (its type has no id).
 fn key(state: &ShopState) -> String {
-    let app = state.keys("App").next().map_or(0, model::number);
+    let app = state.app_id();
     format!("TaxAppConfiguration/{app}")
 }
 
@@ -52,7 +51,7 @@ pub fn tax_state(state: &ShopState) -> String {
 /// or `tax_services/update`.
 fn set_state(state: &mut ShopState, next: &str) {
     let key = key(state);
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let app_record = app
         .as_deref()
         .and_then(|app| state.get(app))
@@ -67,7 +66,7 @@ fn set_state(state: &mut ShopState, next: &str) {
         .map(str::to_string)
         .unwrap_or_else(|| format!("https://{}/admin/apps", state.domain()));
     let created = !state.contains(&key);
-    let number = app.as_deref().map_or(0, model::number);
+    let number = app.as_deref().map_or(0, gid_number);
     let record = value::object(json!({
         "__typename": "TaxAppConfiguration",
         "state": next,
@@ -135,11 +134,7 @@ fn summary_create(
         ))
     };
     let state = mutation.state();
-    let time = |name: &str| {
-        ctx.arg_str(name)
-            .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-            .map(|at| at.with_timezone(&Utc))
-    };
+    let time = |name: &str| ctx.arg_str(name).and_then(value::parse_date_time);
     let orders: Vec<String> = if let Some(order) = ctx.arg_str("orderId") {
         if state.type_of(order) != Some("Order") {
             return failed(&["orderId"], "No order was found.", "ORDER_NOT_FOUND");
@@ -159,11 +154,8 @@ fn summary_create(
                 state
                     .get(key)
                     .and_then(|order| text(order, "processedAt"))
-                    .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-                    .is_some_and(|at| {
-                        let at = at.with_timezone(&Utc);
-                        at >= start && at <= end
-                    })
+                    .and_then(value::parse_date_time)
+                    .is_some_and(|at| at >= start && at <= end)
             })
             .map(str::to_string)
             .collect()

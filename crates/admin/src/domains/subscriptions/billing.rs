@@ -62,7 +62,7 @@ use crate::domains::orders::{
 };
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -259,11 +259,9 @@ fn create_order(
     // amounts in the shop's currency at lsf's rate (a market's manual rate, else 1.0).
     let currency = text(billed, "currencyCode").unwrap_or_default().to_string();
     let presentment =
-        (!currency.is_empty() && currency != orders_model::currency(state)).then(|| {
-            orders_model::Presentment {
-                rate_bps: crate::domains::markets::rate_bps(state, &currency).unwrap_or(10_000),
-                currency: currency.clone(),
-            }
+        (!currency.is_empty() && currency != state.currency()).then(|| orders_model::Presentment {
+            rate_bps: crate::domains::markets::rate_bps(state, &currency).unwrap_or(10_000),
+            currency: currency.clone(),
         });
     let shop_cents = |cents: i64| {
         presentment
@@ -361,7 +359,7 @@ fn create_order(
     let address = model::delivery_address(billed).cloned().map(|mut address| {
         address["id"] = json!(format!(
             "gid://shopify/MailingAddress/{}?model_name=Address",
-            model::number(&id)
+            gid_number(&id)
         ));
         address
     });
@@ -743,7 +741,7 @@ fn attempt_contracts(state: &ShopState, id: &str) -> Vec<String> {
 pub fn challenge_url(origin: &str, shop: &str, attempt: &str) -> String {
     format!(
         "{origin}/__lsf/admin/billing-attempts/{}/challenge?shop={shop}",
-        model::number(attempt)
+        gid_number(attempt)
     )
 }
 
@@ -857,10 +855,7 @@ fn check_attempt(
     origin_time: Option<&str>,
     origin_path: &[&str],
 ) -> Result<Cycle, UserError> {
-    let Some(contract) = state
-        .get(contract_id)
-        .filter(|_| state.type_of(contract_id) == Some(CONTRACT))
-    else {
+    let Some(contract) = state.get_of(contract_id, CONTRACT) else {
         return Err(attempt_error(&[contract_field], "CONTRACT_NOT_FOUND"));
     };
     match text(contract, "status") {

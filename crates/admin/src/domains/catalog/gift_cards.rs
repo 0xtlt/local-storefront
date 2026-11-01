@@ -26,7 +26,7 @@
 use serde_json::{Map, Value, json};
 
 use super::cents_of;
-use super::records::{currency, field, is, text};
+use super::records::{field, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Registry, UserError, coded, payload};
 use crate::state::{Record, ShopState, gid, value};
@@ -71,15 +71,11 @@ fn cents_in(record: &Record, name: &str) -> i64 {
 /// at the end of the shop's day, not of UTC's.
 pub fn today(state: &ShopState) -> String {
     let now = state.now();
-    let shop = state.shop();
-    if let Some(zone) = shop
-        .and_then(|shop| shop.get("ianaTimezone"))
-        .and_then(Value::as_str)
-        .and_then(|zone| zone.parse::<chrono_tz::Tz>().ok())
-    {
+    if let Some(zone) = state.iana_time_zone() {
         return now.with_timezone(&zone).format("%Y-%m-%d").to_string();
     }
-    let offset = shop
+    let offset = state
+        .shop()
         .and_then(|shop| shop.get("timezoneOffsetMinutes"))
         .and_then(Value::as_i64)
         .and_then(|minutes| i32::try_from(minutes * 60).ok())
@@ -128,7 +124,7 @@ fn new_code(state: &ShopState) -> String {
 fn check_recipient(state: &ShopState, input: &Map<String, Value>, errors: &mut Vec<UserError>) {
     if let Some(recipient) = input.get("recipientAttributes").and_then(Value::as_object) {
         let id = text(recipient, "id").unwrap_or_default();
-        if !is(state, id, "Customer") {
+        if !state.is_of(id, "Customer") {
             errors.push(coded(
                 &["input", "recipientAttributes", "id"],
                 "The recipient could not be found.",
@@ -137,7 +133,7 @@ fn check_recipient(state: &ShopState, input: &Map<String, Value>, errors: &mut V
         }
     }
     if let Some(customer) = text(input, "customerId")
-        && !is(state, customer, "Customer")
+        && !state.is_of(customer, "Customer")
     {
         errors.push(coded(
             &["input", "customerId"],
@@ -181,7 +177,7 @@ fn gift_card_create(
     let empty = json!({"giftCard": null, "giftCardCode": null});
     let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
-    let shop_currency = currency(state);
+    let shop_currency = state.currency();
     let mut errors = Vec::new();
     let amount = money_input(input.get("initialAmount")).or_else(|| {
         input
@@ -277,7 +273,7 @@ fn gift_card_create(
 /// The card of `id`.
 fn card_arg(state: &ShopState, ctx: &FieldContext<'_>) -> Option<String> {
     ctx.arg_str("id")
-        .filter(|id| is(state, id, "GiftCard"))
+        .filter(|id| state.is_of(id, "GiftCard"))
         .map(str::to_string)
 }
 
@@ -434,9 +430,7 @@ fn transaction(
 /// A `DateTime` input in UTC, as the Admin API answers it (`2024-09-09T12:48:33-04:00` is
 /// `2024-09-09T16:48:33Z`, the reference's example).
 pub fn normalize_time(time: &str) -> String {
-    chrono::DateTime::parse_from_rfc3339(time)
-        .map(|time| value::date_time(time.with_timezone(&chrono::Utc)))
-        .unwrap_or_else(|_| time.to_string())
+    value::parse_date_time(time).map_or_else(|| time.to_string(), value::date_time)
 }
 
 fn gift_card_credit(

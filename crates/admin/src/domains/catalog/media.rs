@@ -25,7 +25,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{field, is, text};
+use super::records::{field, text};
 use super::{gids, refresh_product};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, coded, payload};
@@ -309,7 +309,7 @@ pub fn remove_media(state: &mut ShopState, product: &str, media: &[String]) -> V
 /// The product of `productId`, or the error of a product that is not one.
 fn product_arg(state: &ShopState, ctx: &FieldContext<'_>, name: &str) -> Result<String, UserError> {
     let id = ctx.arg_str(name).unwrap_or_default();
-    if is(state, id, "Product") {
+    if state.is_of(id, "Product") {
         Ok(id.to_string())
     } else {
         Err(coded(

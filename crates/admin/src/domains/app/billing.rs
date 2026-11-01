@@ -38,14 +38,14 @@
 //! The messages lsf could not verify are Rails' ("Name can't be blank") or its own, said so where
 //! they are written.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
 use serde_json::{Value, json};
 
 use super::CHANGED;
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, gid, parse_gid, value};
+use crate::state::{Record, ShopState, gid, gid_number, parse_gid, value};
 
 /// How long a charge waits for the merchant before it expires (`EXPIRED`: "wasn't approved by
 /// the merchant within two days of being created").
@@ -171,12 +171,6 @@ pub fn confirmation_url(origin: &str, shop: &str, number: u64) -> String {
     format!("{origin}/__lsf/admin/charges/{number}?shop={shop}")
 }
 
-fn parse_time(text: Option<&str>) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text?)
-        .ok()
-        .map(|date| date.with_timezone(&Utc))
-}
-
 /// The pricing details of a line item record.
 fn pricing(state: &ShopState, line: &str) -> Option<Record> {
     state
@@ -211,7 +205,7 @@ pub fn expire_stale(state: &mut ShopState) {
                 return false;
             };
             record.get("status").and_then(Value::as_str) == Some("PENDING")
-                && parse_time(record.get("createdAt").and_then(Value::as_str))
+                && value::date_time_of(record.get("createdAt"))
                     .is_some_and(|created| created + Duration::days(EXPIRES_AFTER_DAYS) <= now)
         })
         .map(|(key, topic)| (key.to_string(), topic))
@@ -546,10 +540,7 @@ fn trial_extend(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         );
         return Ok(payload(failed, &[error]));
     }
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("AppSubscription"))
-    else {
+    let Some(record) = state.get_of(&id, "AppSubscription") else {
         return error(
             "id",
             "The app subscription wasn't found.",
@@ -563,7 +554,7 @@ fn trial_extend(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             "SUBSCRIPTION_NOT_ACTIVE",
         );
     }
-    let trial_ends = parse_time(record.get("trialEndsAt").and_then(Value::as_str));
+    let trial_ends = value::date_time_of(record.get("trialEndsAt"));
     if !trial_ends.is_some_and(|ends| ends > state.now()) {
         return error("id", "The trial isn't active.", "TRIAL_NOT_ACTIVE");
     }
@@ -573,7 +564,7 @@ fn trial_extend(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         let trial = record.get("trialDays").and_then(Value::as_i64).unwrap_or(0);
         record.insert("trialDays".into(), json!(trial + days));
         for field in ["trialEndsAt", "currentPeriodEnd"] {
-            if let Some(date) = parse_time(record.get(field).and_then(Value::as_str)) {
+            if let Some(date) = value::date_time_of(record.get(field)) {
                 record.insert(
                     field.into(),
                     json!(value::date_time(date + Duration::days(days))),
@@ -640,7 +631,7 @@ fn line_item_update(
         record.insert("pendingCappedAmount".into(), money_v2(capped, &currency));
     }
     state.emit(CHANGED, &line);
-    let number = parse_gid(&subscription).map_or(0, |(_, id)| id);
+    let number = gid_number(&subscription);
     Ok(payload(
         json!({
             "appSubscription": subscription,

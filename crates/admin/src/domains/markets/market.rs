@@ -31,9 +31,9 @@ use lsf_core::util::handleize;
 use serde_json::{Map, Value, json};
 
 use super::{
-    BACKUP_REGION, Pointer, is, is_active, market_currency, market_not_found, market_of_country,
-    objects, price_inclusions, records_input, region, region_gid, regions_of, shop_currency,
-    strings, text, web_presences,
+    BACKUP_REGION, Pointer, is_active, market_currency, market_not_found, market_of_country,
+    objects, price_inclusions, records_input, region, region_gid, regions_of, strings, text,
+    web_presences,
 };
 use crate::domains::content::market_gid;
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -180,10 +180,9 @@ fn resolved_values(
         .is_some_and(|strategy| strategy.starts_with("INCLUDES_TAXES"));
     let duties = strategy("/priceInclusions/inclusiveDutiesPricingStrategy").as_deref()
         == Some("INCLUDE_DUTIES_IN_PRICE");
-    let currency = market.as_deref().map_or_else(
-        || shop_currency(state),
-        |market| market_currency(state, market),
-    );
+    let currency = market
+        .as_deref()
+        .map_or_else(|| state.currency(), |market| market_currency(state, market));
     let value = value::object(json!({
         "market": market,
         "currencyCode": currency,
@@ -301,7 +300,7 @@ fn customer_market(
 /// The market of an `id` argument.
 fn market_arg(state: &ShopState, ctx: &FieldContext<'_>, name: &str) -> Option<String> {
     let id = ctx.arg_str(name)?;
-    is(state, id, "Market").then(|| id.to_string())
+    state.is_of(id, "Market").then(|| id.to_string())
 }
 
 /// The regions of a `MarketConditionsRegionsInput` (`regions` of country codes, or
@@ -528,7 +527,7 @@ fn currency_settings(
     existing: Option<&Value>,
     regions: &[Value],
 ) -> Value {
-    let shop = shop_currency(state);
+    let shop = state.currency();
     let local: Vec<String> = regions
         .iter()
         .filter_map(|region| region.pointer("/currency/currencyCode")?.as_str())
@@ -629,7 +628,7 @@ fn catalogs_input(
         let index = index.to_string();
         let field = input_path(at, &[&index]);
         match super::catalog_key(state, id) {
-            Some(key) if is(state, &key, "MarketCatalog") => found.push(key),
+            Some(key) if state.is_of(&key, "MarketCatalog") => found.push(key),
             // lsf's wording.
             Some(_) => errors.push(coded(
                 &field,

@@ -120,7 +120,7 @@ pub fn refundable_shipping(order: &Record) -> i64 {
 /// `order_transactions/create` for each transaction and `refunds/create`; the caller settles the
 /// order's status and emits `orders/updated`. Returns the GID of the refund.
 pub fn create_refund(state: &mut ShopState, order: &str, spec: &RefundSpec) -> String {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let now = state.timestamp();
     let Some(order_record) = state.get(order).cloned() else {
@@ -242,11 +242,11 @@ pub fn create_refund(state: &mut ShopState, order: &str, spec: &RefundSpec) -> S
         "orderAdjustments": [],
         "staffMember": null,
     })));
-    model::push_key(state, order, "refunds", &id);
+    state.push_key(order, "refunds", &id);
     if let Some(return_id) = &spec.return_id {
-        model::push_key(state, return_id, "refunds", &id);
+        state.push_key(return_id, "refunds", &id);
         for transaction in &transactions {
-            model::push_key(state, return_id, "transactions", transaction);
+            state.push_key(return_id, "transactions", transaction);
         }
     }
     model::refresh_order(state, order);
@@ -405,10 +405,7 @@ fn refund_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .to_string();
     let state = mutation.state();
     let failed = |errors: &[UserError]| Ok(payload(json!({"refund": null, "order": null}), errors));
-    let Some(order_record) = state
-        .get(&order)
-        .filter(|_| state.type_of(&order) == Some("Order"))
-    else {
+    let Some(order_record) = state.get_of(&order, "Order") else {
         // lsf's wording.
         return failed(&[UserError::new(&["orderId"], "Order does not exist")]);
     };
@@ -551,7 +548,7 @@ fn suggested_refund(
     };
     let state = r.state();
     let order = text(order_record, "id").unwrap_or_default().to_string();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let full = ctx.arg_bool("suggestFullRefund") == Some(true);
     let items: Vec<Value> = if full {
@@ -630,7 +627,7 @@ pub(super) fn suggested_transactions(
     order: &Record,
     amount: i64,
 ) -> (Vec<Value>, i64) {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let payments = model::refundable_payments(state, order);
     let maximum: i64 = payments.iter().map(|(_, left)| left).sum();

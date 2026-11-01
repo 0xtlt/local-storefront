@@ -30,7 +30,6 @@ use crate::domains::catalog::gids;
 use crate::domains::customers::companies::not_found;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::ShopState;
 use crate::state::seed::Seed;
 
 pub fn register(registry: &mut Registry) {
@@ -65,10 +64,6 @@ pub fn seed(seed: &mut Seed) {
     }
 }
 
-fn is(state: &ShopState, id: &str, type_name: &str) -> bool {
-    state.type_of(id) == Some(type_name)
-}
-
 fn assign_staff_members(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let location = ctx
         .arg_str("companyLocationId")
@@ -77,7 +72,7 @@ fn assign_staff_members(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     let staff = gids(ctx.arg("staffMemberIds"));
     let state = m.state();
     let mut errors = Vec::new();
-    if !is(state, &location, "CompanyLocation") {
+    if !state.is_of(&location, "CompanyLocation") {
         errors.push(not_found(&["companyLocationId"]));
     }
     let assigned: Vec<String> = state
@@ -91,7 +86,7 @@ fn assign_staff_members(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     for (index, member) in staff.iter().enumerate() {
         let path = ["staffMemberIds".to_string(), index.to_string()];
         let path: Vec<&str> = path.iter().map(String::as_str).collect();
-        if !is(state, member, "StaffMember") {
+        if !state.is_of(member, "StaffMember") {
             errors.push(not_found(&path));
         } else if assigned.contains(member) || staff[..index].contains(member) {
             errors.push(
@@ -144,7 +139,7 @@ fn remove_staff_members(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     let ids = gids(ctx.arg("companyLocationStaffMemberAssignmentIds"));
     let mut errors = Vec::new();
     for (index, id) in ids.iter().enumerate() {
-        if !is(m.state(), id, "CompanyLocationStaffMemberAssignment") {
+        if !m.state().is_of(id, "CompanyLocationStaffMemberAssignment") {
             errors.push(not_found(&[
                 "companyLocationStaffMemberAssignmentIds",
                 &index.to_string(),
@@ -194,7 +189,7 @@ fn create_tax_registration(
     let location = ctx.arg_str("locationId").unwrap_or_default().to_string();
     let tax_id = ctx.arg_str("taxId").unwrap_or_default().trim().to_string();
     let mut errors = Vec::new();
-    if !is(m.state(), &location, "CompanyLocation") {
+    if !m.state().is_of(&location, "CompanyLocation") {
         errors.push(not_found(&["locationId"]));
     }
     if tax_id.is_empty() {
@@ -222,7 +217,7 @@ fn revoke_tax_registration(
         .arg_str("companyLocationId")
         .unwrap_or_default()
         .to_string();
-    if !is(m.state(), &location, "CompanyLocation") {
+    if !m.state().is_of(&location, "CompanyLocation") {
         let error = not_found(&["companyLocationId"]);
         return Ok(payload(json!({"companyLocation": null}), &[error]));
     }

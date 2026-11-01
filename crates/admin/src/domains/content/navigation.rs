@@ -263,10 +263,7 @@ fn menu_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
 fn menu_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("Menu"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "Menu").cloned() else {
         let error = UserError::new(&["id"], "Menu does not exist").code("NOT_FOUND");
         return Ok(payload(json!({"menu": null}), &[error]));
     };
@@ -315,10 +312,7 @@ fn menu_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
 fn menu_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("Menu"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "Menu").cloned() else {
         let error = UserError::new(&["id"], "Menu does not exist").code("MENU_DOES_NOT_EXIST");
         return Ok(payload(json!({"deletedMenuId": null}), &[error]));
     };
@@ -459,10 +453,7 @@ fn redirect_update(
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = ctx.arg_object_or_default("urlRedirect");
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("UrlRedirect"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "UrlRedirect").cloned() else {
         let error = UserError::new(&["id"], "Redirect does not exist").code("DOES_NOT_EXIST");
         return Ok(payload(json!({"urlRedirect": null}), &[error]));
     };

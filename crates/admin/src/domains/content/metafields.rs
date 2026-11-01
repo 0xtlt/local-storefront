@@ -39,12 +39,13 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::types::{self, Context};
-use super::{admin_namespace, app_id, metafield_gid};
+use super::{admin_namespace, metafield_gid};
 use crate::auth::scopes::{self, Root};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::access::denied;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, gid_type, parse_gid, value};
+pub(super) use crate::state::value::str_field_or_empty as text;
+use crate::state::{Record, ShopState, gid_number, gid_type, parse_gid, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -179,12 +180,12 @@ fn check_owner_access(
 /// The namespace of an input as the Admin API stores it: omitted, the app's (`app--<id>`);
 /// `$app` and `$app:x`, the app's reserved ones.
 pub fn stored_namespace(state: &ShopState, namespace: Option<&str>) -> String {
-    admin_namespace(app_id(state), namespace.unwrap_or("$app"))
+    admin_namespace(state.app_id(), namespace.unwrap_or("$app"))
 }
 
 /// Whether a stored namespace is the reserved namespace of another app.
 pub fn other_apps(state: &ShopState, namespace: &str) -> bool {
-    let own = format!("app--{}", app_id(state));
+    let own = format!("app--{}", state.app_id());
     namespace.starts_with("app--")
         && namespace != own
         && !namespace.starts_with(&format!("{own}--"))
@@ -259,13 +260,6 @@ pub fn check_namespace_and_key(
             invalid_code,
         ));
     }
-}
-
-pub(super) fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
 }
 
 /// The metafield of an owner with a namespace (as stored) and a key.
@@ -535,24 +529,14 @@ pub fn refresh_definition(state: &mut ShopState, definition: &str) {
 /// shop. Emits nothing.
 pub fn remove(state: &mut ShopState, metafield: &str) -> Option<Record> {
     let record = state.get(metafield)?.clone();
-    if let Some(Value::Array(metafields)) = state
-        .get_mut(text(&record, "owner"))
-        .and_then(|owner| owner.get_mut("metafields"))
-    {
-        metafields.retain(|known| known.as_str() != Some(metafield));
-    }
+    state.pull_key(text(&record, "owner"), "metafields", metafield);
     let definition = record
         .get("definition")
         .and_then(Value::as_str)
         .map(str::to_string);
     state.remove(metafield);
     if let Some(definition) = definition {
-        if let Some(Value::Array(metafields)) = state
-            .get_mut(&definition)
-            .and_then(|record| record.get_mut("metafields"))
-        {
-            metafields.retain(|known| known.as_str() != Some(metafield));
-        }
+        state.pull_key(&definition, "metafields", metafield);
         refresh_definition(state, &definition);
     }
     Some(record)
@@ -604,7 +588,7 @@ fn owner_of(state: &ShopState, id: &str) -> Result<Option<(String, &'static str)
     let key = if state.contains(id) {
         Some(id.to_string())
     } else if type_name == "DiscountNode" {
-        let (_, number) = parse_gid(id).unwrap_or_default();
+        let number = gid_number(id);
         ["DiscountAutomaticNode", "DiscountCodeNode"]
             .into_iter()
             .map(|alias| crate::state::gid(alias, number))

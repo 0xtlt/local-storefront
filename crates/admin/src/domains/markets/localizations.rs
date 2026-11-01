@@ -23,9 +23,9 @@
 //! name. The messages are lsf's, in the words of those of `translationsRegister`.
 
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 
-use super::{is, strings};
+use super::strings;
+use crate::domains::content::translations::{changed_at, digest, is_outdated, resource_of};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, value};
@@ -47,14 +47,6 @@ pub fn register(registry: &mut Registry) {
         )
         .mutation("marketLocalizationsRegister", register_localizations)
         .mutation("marketLocalizationsRemove", remove_localizations);
-}
-
-/// The SHA-256 of a value, in hex.
-fn digest(value: &str) -> String {
-    Sha256::digest(value.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 /// The market localizable content of a record: `(key, value)`. `None` for a record that is not
@@ -131,14 +123,6 @@ fn resource_object(resource: &str) -> Obj {
     Obj::built("MarketLocalizableResource", value)
 }
 
-fn resource_of(r: &ShopResolver<'_>, object: &Obj) -> String {
-    r.map_of(object)
-        .and_then(|record| record.get("resourceId"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
-}
-
 fn resource(
     r: &ShopResolver<'_>,
     ctx: &FieldContext<'_>,
@@ -197,21 +181,13 @@ fn localizable_content(
 
 /// The localizations of a resource for a market, with `outdated`.
 fn for_market(state: &ShopState, resource: &str, market: &str) -> Vec<Map<String, Value>> {
-    let changed = state
-        .get(resource)
-        .and_then(|record| record.get("updatedAt"))
-        .and_then(Value::as_str)
-        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok());
+    let changed = changed_at(state, resource);
     kept(state, resource)
         .into_iter()
         .filter_map(|localization| localization.as_object().cloned())
         .filter(|localization| localization.get("market").and_then(Value::as_str) == Some(market))
         .map(|mut localization| {
-            let at = localization
-                .get("updatedAt")
-                .and_then(Value::as_str)
-                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok());
-            let outdated = matches!((changed, at), (Some(changed), Some(at)) if changed > at);
+            let outdated = is_outdated(changed, localization.get("updatedAt"));
             localization.insert("outdated".into(), json!(outdated));
             localization
         })
@@ -273,7 +249,7 @@ fn register_localizations(
             message,
             code: Some(code.to_string()),
         };
-        if !is(state, get("marketId"), "Market") {
+        if !state.is_of(get("marketId"), "Market") {
             errors.push(error(
                 "marketId",
                 format!("Market {} does not exist", get("marketId")),
@@ -345,7 +321,7 @@ fn remove_localizations(
     let errors: Vec<UserError> = markets
         .iter()
         .enumerate()
-        .filter(|(_, market)| !is(state, market, "Market"))
+        .filter(|(_, market)| !state.is_of(market, "Market"))
         .map(|(index, market)| {
             UserError::new(
                 &["marketIds", &index.to_string()],

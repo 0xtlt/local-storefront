@@ -185,7 +185,7 @@ pub fn commit_new(state: &mut ShopState, record: &Record, origin_order: Option<&
         json!(origin_order.into_iter().collect::<Vec<_>>()),
     );
     contract.insert("billingAttempts".into(), json!([]));
-    contract.insert("app".into(), json!(state.keys("App").next()));
+    contract.insert("app".into(), json!(state.app_gid()));
     contract.insert("appAdminUrl".into(), Value::Null);
     contract.insert("lastPaymentStatus".into(), Value::Null);
     contract.insert("lastBillingAttemptErrorType".into(), Value::Null);
@@ -249,10 +249,7 @@ pub fn commit_update(state: &mut ShopState, contract: &str, record: &Record) {
 
 /// The contract of an id, when it is one of the shop.
 pub fn contract_arg(state: &ShopState, id: &str) -> Option<Record> {
-    state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some(CONTRACT))
-        .cloned()
+    state.get_of(id, CONTRACT).cloned()
 }
 
 /// Whether a contract is cancelled or expired.

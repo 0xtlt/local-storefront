@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Obj, Registry, ShopResolver};
-use crate::state::{gid, parse_gid, value};
+use crate::state::{gid, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -26,7 +26,7 @@ fn product_duplicate_job(
     _object: &Obj,
 ) -> Result<Output<Obj>, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default();
-    let number = parse_gid(id).map_or(0, |(_, number)| number);
+    let number = gid_number(id);
     let state = r.state();
     let known = state.contains(id) || state.contains(&gid("ProductDuplicateOperation", number));
     if !known {

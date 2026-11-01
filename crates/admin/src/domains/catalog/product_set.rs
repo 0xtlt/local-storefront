@@ -34,7 +34,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{self, is, item_of, objects, text};
+use super::records::{self, item_of, objects, text};
 use super::variants::{self, Choice, ProductOption, Reader};
 use super::{gids, media, product_changed, products};
 use crate::graphql::{FieldContext, FieldError};
@@ -120,7 +120,7 @@ fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     }
     let collections = gids(input.get("collections"));
     for (index, collection) in collections.iter().enumerate() {
-        if !is(state, collection, "Collection") {
+        if !state.is_of(collection, "Collection") {
             errors.push(error(
                 &["collections", &index.to_string()],
                 &format!("Collection {collection} does not exist"),
@@ -485,7 +485,7 @@ fn target(
         .and_then(|identifier| text(identifier, "id"))
         .or_else(|| text(input, "id"));
     if let Some(id) = id {
-        return if is(state, id, "Product") {
+        return if state.is_of(id, "Product") {
             Ok(Target::Existing(id.to_string()))
         } else {
             Err(coded(
@@ -705,7 +705,7 @@ fn plan_variants<'i>(
                 field: Some(path.iter().cloned().chain(["id".to_string()]).collect()),
                 message: "Product variant does not exist".into(),
                 code: Some(
-                    if is(state, id, "ProductVariant") {
+                    if state.is_of(id, "ProductVariant") {
                         "INVALID_VARIANT"
                     } else {
                         "PRODUCT_VARIANT_DOES_NOT_EXIST"
@@ -869,7 +869,7 @@ fn new_stock(state: &ShopState, input: &Map<String, Value>) -> variants::Stock {
     let mut stock: variants::Stock = Vec::new();
     for quantity in quantities {
         let location = text(quantity, "locationId").unwrap_or_default().to_string();
-        if !is(state, &location, "Location") {
+        if !state.is_of(&location, "Location") {
             continue;
         }
         let amount = quantity

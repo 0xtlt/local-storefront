@@ -37,7 +37,8 @@ use serde_json::{Value, json};
 use crate::graphql::FieldContext;
 use crate::resolve::{Mutation, Registry};
 use crate::state::seed::Seed;
-use crate::state::{Record, ShopState, gid, value};
+use crate::state::value::str_field as text;
+use crate::state::{ShopState, gid, value};
 
 /// The record field of a device with the location it is at.
 pub const DEVICE_LOCATION: &str = "lsfLocation";
@@ -128,12 +129,12 @@ pub fn register(registry: &mut Registry) {
 
 /// A `MoneyV2` of the shop's currency.
 fn money(state: &ShopState, cents: i64) -> Value {
-    value::money_v2(cents, &crate::domains::orders::model::currency(state))
+    value::money_v2(cents, &state.currency())
 }
 
 /// The cents of a `MoneyV2` (or a `MoneyInput`).
 fn cents(money: Option<&Value>) -> i64 {
-    crate::domains::catalog::cents_of(money.and_then(|money| money.get("amount"))).unwrap_or(0)
+    value::exact_cents(money.and_then(|money| money.get("amount"))).unwrap_or(0)
 }
 
 /// Writes what lsf would have sent a device to the shop's outbox (`what`, about the record
@@ -167,13 +168,6 @@ fn is_reason_code(state: &ShopState, id: &str) -> bool {
         .is_some_and(|type_name| REASON_CODE_TYPES.contains(&type_name))
 }
 
-/// The record `id` when it is of `type_name`.
-fn record_of<'s>(state: &'s ShopState, id: &str, type_name: &str) -> Option<&'s Record> {
-    state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some(type_name))
-}
-
 /// The keys of the records of `type_name` whose `field` is `value`.
 fn keys_with<'s>(
     state: &'s ShopState,
@@ -184,8 +178,4 @@ fn keys_with<'s>(
     state
         .keys(type_name)
         .filter(move |key| state.get(key).and_then(|record| text(record, field)) == Some(value))
-}
-
-fn text<'r>(record: &'r Record, name: &str) -> Option<&'r str> {
-    record.get(name).and_then(Value::as_str)
 }

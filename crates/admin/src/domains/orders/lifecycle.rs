@@ -261,8 +261,7 @@ fn order_cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .code("STORE_CREDIT_REFUND_MISSING_CUSTOMER")]);
     }
     if let Some(Some(expires_at)) = &store_credit
-        && chrono::DateTime::parse_from_rfc3339(expires_at)
-            .is_ok_and(|at| at.with_timezone(&chrono::Utc) <= mutation.now())
+        && value::parse_date_time(expires_at).is_some_and(|at| at <= mutation.now())
     {
         return failed(&[UserError::new(
             &["refundMethod", "storeCreditRefund", "expiresAt"],
@@ -566,11 +565,7 @@ fn transaction_void(
         .to_string();
     let failed = |error: UserError| Ok(payload(json!({"transaction": null}), &[error]));
     let state = mutation.state();
-    let Some(transaction) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("OrderTransaction"))
-        .cloned()
-    else {
+    let Some(transaction) = state.get_of(&id, "OrderTransaction").cloned() else {
         return failed(
             UserError::new(&["parentTransactionId"], "Transaction does not exist.")
                 .code("TRANSACTION_NOT_FOUND"),
@@ -715,7 +710,7 @@ fn order_invoice_send(
             .and_then(|bag| bag.pointer("/shopMoney/amount"))
             .and_then(Value::as_str)
             .unwrap_or("0.0"),
-        model::currency(mutation.state())
+        mutation.state().currency()
     );
     if let Some(message) = email.get("customMessage").and_then(Value::as_str) {
         body.push('\n');
@@ -827,7 +822,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     let state = mutation.state();
     let mut errors: Vec<UserError> = Vec::new();
     let failed = |errors: &[UserError]| Ok(payload(json!({"order": null}), errors));
-    let shop_currency = model::currency(state);
+    let shop_currency = state.currency();
     if let Some(currency) = input.get("currency").and_then(Value::as_str)
         && currency != shop_currency
     {
@@ -926,10 +921,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             ..LineDraft::default()
         };
         if let Some(variant) = get("variantId") {
-            let Some(variant_record) = state
-                .get(variant)
-                .filter(|_| state.type_of(variant) == Some("ProductVariant"))
-            else {
+            let Some(variant_record) = state.get_of(variant, "ProductVariant") else {
                 // lsf's wording.
                 errors.push(
                     UserError::new(
@@ -1119,10 +1111,8 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .and_then(Value::as_str)
         .map(str::to_string);
     let processed = match &processed_at {
-        Some(text) => match chrono::DateTime::parse_from_rfc3339(text) {
-            Ok(at) if at.with_timezone(&chrono::Utc) <= mutation.now() => {
-                Some(at.with_timezone(&chrono::Utc))
-            }
+        Some(text) => match value::parse_date_time(text) {
+            Some(at) if at <= mutation.now() => Some(at),
             _ => {
                 errors.push(
                     UserError::new(
@@ -1571,7 +1561,7 @@ fn record_discount_code(
     applied: &CodeApplied,
     lines: &[super::LineDraft],
 ) {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let (code, allocation_method, target_type, value) = match applied {
         CodeApplied::Percentage { code, percentage } => (
             code,

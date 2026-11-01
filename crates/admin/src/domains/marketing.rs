@@ -197,7 +197,7 @@ fn badge(status: &str) -> &'static str {
 fn money(input: Option<&Value>) -> Value {
     match input.and_then(Value::as_object) {
         Some(money) => json!({
-            "amount": crate::state::value::decimal(crate::domains::catalog::cents_of(money.get("amount")).unwrap_or(0)),
+            "amount": crate::state::value::decimal(crate::state::value::exact_cents(money.get("amount")).unwrap_or(0)),
             "currencyCode": money.get("currencyCode"),
         }),
         None => Value::Null,
@@ -393,7 +393,7 @@ fn write_external(
 
 /// Creates an external activity and its event from an input of `…UpsertExternal`.
 fn create_external(state: &mut ShopState, input: &Map<String, Value>, now: &str) -> String {
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let activity = state.new_gid("MarketingActivity");
     let event = state.new_gid("MarketingEvent");
     let parent = input
@@ -792,7 +792,7 @@ fn activity_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         .to_string();
     let now = m.timestamp();
     let state = m.state_mut();
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let activity = state.new_gid("MarketingActivity");
     let title = input
         .get("marketingActivityTitle")
@@ -837,7 +837,7 @@ fn activity_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     state.emit(crate::domains::app::CHANGED, &activity);
     let redirect = format!(
         "/marketing/activities/{}",
-        crate::state::parse_gid(&activity).map_or(0, |(_, id)| id)
+        crate::state::gid_number(&activity)
     );
     Ok(payload(
         json!({"marketingActivity": activity, "redirectPath": redirect}),
@@ -946,7 +946,7 @@ fn engagement_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
             .filter(|value| !value.is_null())
             .map(|value| {
                 json!(crate::state::value::decimal(
-                    crate::domains::catalog::cents_of(Some(value)).unwrap_or(0)
+                    crate::state::value::exact_cents(Some(value)).unwrap_or(0)
                 ))
             })
             .unwrap_or(Value::Null)
@@ -996,7 +996,7 @@ fn engagement_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
                     .filter_map(|engagement| {
                         let spend = engagement.get("adSpend").filter(|s| !s.is_null())?;
                         currency = spend.get("currencyCode").cloned();
-                        crate::domains::catalog::cents_of(spend.get("amount"))
+                        crate::state::value::exact_cents(spend.get("amount"))
                     })
                     .sum();
                 if let Some(currency) = currency {

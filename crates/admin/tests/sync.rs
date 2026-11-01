@@ -1063,7 +1063,7 @@ fn mutate(state: &mut ShopState, query: &str, variables: Value) -> Value {
 #[test]
 fn the_metaobjects_of_an_app_type_reach_the_storefront_and_the_functions() {
     let (base, mut state) = rich();
-    let app_id = content::app_id(&state);
+    let app_id = state.app_id();
     // The backend makes its own type and an entry of it, and points a product at the entry.
     mutate(
         &mut state,

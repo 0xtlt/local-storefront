@@ -9,12 +9,9 @@ use super::{QUANTITY_NAMES, gids, refresh_product};
 use crate::domains::content;
 use crate::graphql::FieldContext;
 use crate::resolve::UserError;
-use crate::state::{Record, ShopState, gid, parse_gid, value};
-
-/// A string field of an input.
-pub fn text<'i>(input: &'i Map<String, Value>, field: &str) -> Option<&'i str> {
-    input.get(field).and_then(Value::as_str)
-}
+pub use crate::state::value::str_field as text;
+pub use crate::state::value::str_field as field;
+use crate::state::{Record, ShopState, gid, gid_number, parse_gid, value};
 
 /// The objects of a list field of an input, in order.
 pub fn objects<'i>(input: &'i Map<String, Value>, field: &str) -> Vec<&'i Map<String, Value>> {
@@ -42,21 +39,6 @@ pub fn arg_strings(ctx: &FieldContext<'_>, name: &str) -> Vec<String> {
     gids(ctx.arg(name))
 }
 
-/// A string field of a record.
-pub fn field<'r>(record: &'r Record, name: &str) -> Option<&'r str> {
-    record.get(name).and_then(Value::as_str)
-}
-
-/// Whether `key` is a record of `type_name`.
-pub fn is(state: &ShopState, key: &str, type_name: &str) -> bool {
-    state.type_of(key) == Some(type_name)
-}
-
-/// The currency of the shop ([`crate::domains::orders::model::currency`]).
-pub fn currency(state: &ShopState) -> String {
-    crate::domains::orders::model::currency(state)
-}
-
 /// The origin of the shop's URLs: `https://my-shop.myshopify.com`.
 pub fn origin(state: &ShopState) -> String {
     state
@@ -64,15 +46,6 @@ pub fn origin(state: &ShopState) -> String {
         .and_then(|shop| field(shop, "url"))
         .unwrap_or_default()
         .to_string()
-}
-
-/// The id of the app, for its reserved metafield namespaces.
-pub fn app_id(state: &ShopState) -> u64 {
-    state
-        .keys("App")
-        .next()
-        .and_then(parse_gid)
-        .map_or(0, |(_, id)| id)
 }
 
 /// The first record of `type_name` that has `handle`.
@@ -210,12 +183,7 @@ pub fn remove_level(state: &mut ShopState, level: &str) {
         .map(str::to_string)
         .collect();
     for owner in owners {
-        if let Some(Value::Array(levels)) = state
-            .get_mut(&owner)
-            .and_then(|record| record.get_mut("inventoryLevels"))
-        {
-            levels.retain(|known| known.as_str() != Some(level));
-        }
+        state.pull_key(&owner, "inventoryLevels", level);
     }
     state.remove(level);
 }
@@ -308,7 +276,7 @@ pub fn new_inventory_item(
 ) -> String {
     let now = state.timestamp();
     let item = state.new_gid("InventoryItem");
-    let item_id = parse_gid(&item).map_or(0, |(_, id)| id);
+    let item_id = gid_number(&item);
     let mut record = value::object(json!({
         "__typename": "InventoryItem",
         "id": item,
@@ -326,7 +294,7 @@ pub fn new_inventory_item(
         "updatedAt": now,
     }));
     if let Some(input) = input {
-        apply_inventory_item(&mut record, input, &currency(state));
+        apply_inventory_item(&mut record, input, &state.currency());
     }
     state.insert(record);
     item

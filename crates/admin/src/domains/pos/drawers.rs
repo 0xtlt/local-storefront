@@ -20,8 +20,7 @@
 use serde_json::{Value, json};
 
 use super::{
-    DEVICE_LOCATION, REASON_CODE_TYPES, is_reason_code, keys_with, money, record_of, tell_device,
-    text,
+    DEVICE_LOCATION, REASON_CODE_TYPES, is_reason_code, keys_with, money, tell_device, text,
 };
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -193,7 +192,7 @@ fn drawer_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     let empty = json!({"cashDrawer": null});
     let state = mutation.state();
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let Some(record) = record_of(state, &id, "CashDrawer") else {
+    let Some(record) = state.get_of(&id, "CashDrawer") else {
         return Ok(payload(empty, &[coded(&["id"], "CASH_DRAWER_NOT_FOUND")]));
     };
     let location = text(record, "location").unwrap_or_default().to_string();
@@ -228,13 +227,13 @@ fn assign(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         .arg_str("pointOfSaleDeviceId")
         .unwrap_or_default()
         .to_string();
-    let Some(drawer_record) = record_of(state, &drawer, "CashDrawer") else {
+    let Some(drawer_record) = state.get_of(&drawer, "CashDrawer") else {
         return Ok(payload(
             empty,
             &[coded(&["cashDrawerId"], "CASH_DRAWER_NOT_FOUND")],
         ));
     };
-    let Some(device_record) = record_of(state, &device, "PointOfSaleDevice") else {
+    let Some(device_record) = state.get_of(&device, "PointOfSaleDevice") else {
         return Ok(payload(
             empty,
             &[coded(

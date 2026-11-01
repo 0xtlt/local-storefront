@@ -39,7 +39,7 @@ use super::{FinancialStatus, FulfillmentState, LineDraft, OrderDraft, ShippingDr
 use crate::domains::catalog::{gids, tags_of};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -100,10 +100,7 @@ fn line_value(
     let unit;
     match get("variantId") {
         Some(variant) => {
-            let Some(variant_record) = state
-                .get(variant)
-                .filter(|_| state.type_of(variant) == Some("ProductVariant"))
-            else {
+            let Some(variant_record) = state.get_of(variant, "ProductVariant") else {
                 errors.push(UserError::new(
                     &[path, &["variantId"]].concat(),
                     "Product variant does not exist",
@@ -425,7 +422,7 @@ fn read_input(
         }
     }
     let state = mutation.state();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let now = state.timestamp();
     let lines: Option<Vec<Map<String, Value>>> = input
         .get("lineItems")
@@ -640,8 +637,7 @@ fn purchasing_company(
     }
     let of_company = |key: &str, kind: &str| {
         state
-            .get(key)
-            .filter(|_| state.type_of(key) == Some(kind))
+            .get_of(key, kind)
             .filter(|record| text(record, "company") == Some(company_id.as_str()))
     };
     let Some(location_record) = of_company(&location, "CompanyLocation") else {
@@ -752,7 +748,7 @@ fn write_draft(
     draft: &Draft,
     replace_lines: bool,
 ) -> Option<Value> {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let mut line_ids = Vec::new();
     if replace_lines {
         for old in super::line_items(state, id) {
@@ -840,10 +836,10 @@ fn next_draft_number(state: &ShopState) -> u64 {
 fn new_draft(state: &mut ShopState) -> String {
     let id = state.new_gid("DraftOrder");
     let now = state.timestamp();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let shop = state.shop().cloned().unwrap_or_default();
     let origin = text(&shop, "url").unwrap_or_default().to_string();
-    let shop_number = state.shop_gid().map_or(0, model::number);
+    let shop_number = state.shop_gid().map_or(0, gid_number);
     let key = format!("{}/{id}", state.domain());
     let token = format!(
         "{:016x}{:016x}",
@@ -931,8 +927,7 @@ pub(super) fn create_from(
 /// The draft order of a GID, or Shopify's "Draft order not found".
 pub(super) fn find_draft(state: &ShopState, id: &str) -> Result<Record, UserError> {
     state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some("DraftOrder"))
+        .get_of(id, "DraftOrder")
         .cloned()
         .ok_or_else(|| UserError::new(&[], "Draft order not found"))
 }
@@ -1055,7 +1050,7 @@ fn calculate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
         return Ok(payload(json!({"calculatedDraftOrder": null}), &errors));
     }
     let state = mutation.state();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let tax_exempt = draft.fields.get("taxExempt").and_then(Value::as_bool) == Some(true);
     let mut calculated = draft.fields.clone();
     let applied = calculated.remove("lsfAppliedDiscount");

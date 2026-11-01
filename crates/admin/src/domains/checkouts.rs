@@ -46,14 +46,12 @@ use chrono::{DateTime, Duration, Utc};
 use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
-use crate::domains::catalog::cents_of;
-use crate::domains::orders::model;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::search::SearchValue;
 use crate::state::value::{self, money_bag};
-use crate::state::{Record, ShopState, gid};
+use crate::state::{Record, ShopState, gid, gid_number};
 
 /// How long a checkout stays incomplete before it is abandoned (Help Center: "more than ten
 /// minutes").
@@ -136,7 +134,7 @@ pub fn register(registry: &mut Registry) {
             |r, _ctx, object| {
                 let sent = r
                     .map_of(object)
-                    .and_then(|record| instant(record.get("emailSentAt")));
+                    .and_then(|record| value::date_time_of(record.get("emailSentAt")));
                 Ok(Output::value(sent.map_or(0, |sent| {
                     (r.state().now() - sent).num_days().max(0)
                 })))
@@ -261,13 +259,6 @@ pub fn register(registry: &mut Registry) {
         });
 }
 
-fn instant(value: Option<&Value>) -> Option<DateTime<Utc>> {
-    value
-        .and_then(Value::as_str)
-        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-        .map(|at| at.with_timezone(&Utc))
-}
-
 // --- Carts ---
 
 /// What the webhooks of a cart report of its lines: the variants' prices and details as the
@@ -282,7 +273,7 @@ fn cart_lines(state: &ShopState, lines: &[CartLine]) -> Vec<Value> {
                 .and_then(|variant| variant.get("product"))
                 .and_then(Value::as_str)
                 .and_then(|product| state.get(product));
-            let price = cents_of(variant.and_then(|variant| variant.get("price"))).unwrap_or(0);
+            let price = value::exact_cents(variant.and_then(|variant| variant.get("price"))).unwrap_or(0);
             let title = product
                 .and_then(|product| product.get("title"))
                 .and_then(Value::as_str)
@@ -347,7 +338,7 @@ pub fn record_cart(state: &mut ShopState, cart: &Cart<'_>) {
         "note": cart.note,
         "attributes": cart.attributes.iter().map(|(key, value)| json!({"key": key, "value": value})).collect::<Vec<_>>(),
         "lineItems": cart_lines(state, cart.lines),
-        "currencyCode": model::currency(state),
+        "currencyCode": state.currency(),
         "createdAt": created,
         "updatedAt": now,
     }));
@@ -417,7 +408,7 @@ pub(super) fn mailing_address(address: &lsf_checkout::Address, key: &str) -> Val
 fn checkout_fields(state: &ShopState, id: &str, checkout: &Checkout<'_>) -> Record {
     let result = checkout.result;
     let currency = if result.cost.currency_code.is_empty() {
-        model::currency(state)
+        state.currency()
     } else {
         result.cost.currency_code.to_ascii_uppercase()
     };
@@ -567,7 +558,7 @@ pub fn record_checkout(state: &mut ShopState, checkout: &Checkout<'_>) -> Option
         }
         None => {
             let id = state.new_gid("AbandonedCheckout");
-            let number = model::number(&id);
+            let number = gid_number(&id);
             let domain = state
                 .shop()
                 .and_then(|shop| shop.get("primaryDomain"))
@@ -577,7 +568,7 @@ pub fn record_checkout(state: &mut ShopState, checkout: &Checkout<'_>) -> Option
                 .and_then(Value::as_str)
                 .unwrap_or(state.domain())
                 .to_string();
-            let shop_number = state.shop_gid().map_or(0, model::number);
+            let shop_number = state.shop_gid().map_or(0, gid_number);
             let key = value::uuid(&format!("abandoned-checkout-key/{id}")).replace('-', "");
             let mut record = value::object(json!({
                 "__typename": "AbandonedCheckout",
@@ -639,7 +630,7 @@ fn ensure_abandonment(state: &mut ShopState, checkout: &str) {
             })
         })
         .collect();
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let id = state.new_gid("Abandonment");
     state.insert_as(
         id.clone(),
@@ -701,7 +692,7 @@ fn is_abandoned_at(record: &Record, now: DateTime<Utc>) -> bool {
             .and_then(Value::as_str)
             .is_some_and(|text| !text.is_empty())
     });
-    let last = instant(record.get("lsfLastActivityAt"));
+    let last = value::date_time_of(record.get("lsfLastActivityAt"));
     contact && last.is_some_and(|last| now - last > Duration::minutes(ABANDONMENT_DELAY_MINUTES))
 }
 
@@ -721,7 +712,7 @@ pub fn last_abandonment(state: &ShopState, customer: &str) -> Option<DateTime<Ut
         .all("AbandonedCheckout")
         .filter(|record| record.get("customer").and_then(Value::as_str) == Some(customer))
         .filter(|record| is_listed(state, record))
-        .filter_map(|record| instant(record.get("lsfLastActivityAt")))
+        .filter_map(|record| value::date_time_of(record.get("lsfLastActivityAt")))
         .max()
 }
 
@@ -731,7 +722,7 @@ fn latest_abandonment_of(state: &ShopState, customer: &str) -> Option<String> {
         .all("Abandonment")
         .filter(|record| record.get("customer").and_then(Value::as_str) == Some(customer))
         .filter(|record| abandonment_listed(state, record))
-        .max_by_key(|record| instant(record.get("createdAt")))
+        .max_by_key(|record| value::date_time_of(record.get("createdAt")))
         .and_then(|record| record.get("id").and_then(Value::as_str))
         .map(str::to_string)
 }
@@ -752,7 +743,7 @@ pub fn delete_expired(state: &mut ShopState) -> usize {
     let expired: Vec<String> = state
         .all("AbandonedCheckout")
         .filter(|record| {
-            instant(record.get("lsfLastActivityAt"))
+            value::date_time_of(record.get("lsfLastActivityAt"))
                 .is_some_and(|last| now - last > Duration::days(RETENTION_DAYS))
         })
         .filter_map(|record| record.get("id").and_then(Value::as_str))
@@ -808,8 +799,7 @@ fn abandonment(
     let state = r.state();
     Ok(Output::object_or_null(
         state
-            .get(id)
-            .filter(|_| state.type_of(id) == Some("Abandonment"))
+            .get_of(id, "Abandonment")
             .filter(|record| abandonment_listed(state, record))
             .map(|_| Obj::record(id)),
     ))
@@ -837,10 +827,10 @@ fn customer_ordered_since(r: &ShopResolver<'_>, object: &Obj, type_name: &str) -
         return false;
     };
     let customer = record.get("customer").and_then(Value::as_str);
-    let since = instant(record.get("createdAt"));
+    let since = value::date_time_of(record.get("createdAt"));
     r.state().all(type_name).any(|order| {
         order.get("customer").and_then(Value::as_str) == customer
-            && instant(order.get("createdAt"))
+            && value::date_time_of(order.get("createdAt"))
                 .zip(since)
                 .is_some_and(|(at, since)| at >= since)
     })
@@ -1005,7 +995,7 @@ mod tests {
         let variant = shop.keys("ProductVariant").next().unwrap().to_string();
         let record = shop.get(&variant).unwrap();
         let product = record["product"].as_str().unwrap();
-        let price = crate::domains::catalog::cents_of(record.get("price")).unwrap();
+        let price = crate::state::value::exact_cents(record.get("price")).unwrap();
         lsf_checkout::CheckoutResult {
             lines: vec![lsf_checkout::ResultLine {
                 id: "gid://shopify/CartLine/1".into(),

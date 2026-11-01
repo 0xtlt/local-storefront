@@ -100,10 +100,7 @@ pub fn read_exchanges(
             .get("variantId")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let Some(record) = state
-            .get(variant)
-            .filter(|_| state.type_of(variant) == Some("ProductVariant"))
-        else {
+        let Some(record) = state.get_of(variant, "ProductVariant") else {
             errors.push(coded(
                 &at("variantId"),
                 "Variant does not exist.",
@@ -202,7 +199,7 @@ pub fn insert_exchanges(state: &mut ShopState, exchanges: &[Exchange], open: boo
 /// inline, with an id of the fee's.
 pub fn restocking_fee(state: &mut ShopState, input: &Value, subtotal: i64) -> Option<Value> {
     let percentage = input.get("percentage")?.as_f64()?;
-    let currency = model::currency(state);
+    let currency = state.currency();
     let id = state.new_gid("RestockingFee");
     Some(json!({
         "id": id,
@@ -214,7 +211,7 @@ pub fn restocking_fee(state: &mut ShopState, input: &Value, subtotal: i64) -> Op
 /// A return shipping fee of a `ReturnShippingFeeInput` (`{amount}`): `ReturnShippingFee` inline.
 pub fn shipping_fee(state: &mut ShopState, input: &Value) -> Option<Value> {
     let amount = model::cents(input.get("amount"));
-    let currency = model::currency(state);
+    let currency = state.currency();
     let id = state.new_gid("ReturnShippingFee");
     Some(json!({
         "id": id,
@@ -238,7 +235,7 @@ fn tax_rate(state: &ShopState, order: &Record) -> i64 {
 /// at its price after its discount, on an open fulfillment order, its units committed; the
 /// order's tax takes theirs.
 pub fn process_exchanges(state: &mut ShopState, order: &str, items: &[(String, i64)]) {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let now = state.timestamp();
     let Some(order_record) = state.get(order).cloned() else {
         return;
@@ -325,7 +322,7 @@ pub fn process_exchanges(state: &mut ShopState, order: &str, items: &[(String, i
             );
         }
         state.insert(line_record);
-        model::push_key(state, order, "lineItems", &line);
+        state.push_key(order, "lineItems", &line);
         let location = model::assigned_location(
             state,
             gids(order_record.get("fulfillmentOrders"))
@@ -394,7 +391,7 @@ pub fn open_reverse_fulfillment(state: &mut ShopState, return_id: &str) -> Optio
         "thirdPartyConfirmation": null,
         RETURN: return_id,
     })));
-    model::push_key(state, return_id, "reverseFulfillmentOrders", &id);
+    state.push_key(return_id, "reverseFulfillmentOrders", &id);
     Some(id)
 }
 
@@ -454,7 +451,7 @@ fn add_disposition(
         "createdAt": now,
         "lsfLineItem": line,
     })));
-    model::push_key(state, line, "dispositions", &id);
+    state.push_key(line, "dispositions", &id);
     id
 }
 
@@ -507,10 +504,7 @@ fn dispose(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
             .get("reverseFulfillmentOrderLineItemId")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let Some(record) = state
-            .get(line)
-            .filter(|_| state.type_of(line) == Some("ReverseFulfillmentOrderLineItem"))
-        else {
+        let Some(record) = state.get_of(line, "ReverseFulfillmentOrderLineItem") else {
             return failed(coded(
                 &at("reverseFulfillmentOrderLineItemId"),
                 "Reverse fulfillment order line item does not exist.",
@@ -716,11 +710,7 @@ fn delivery_create(
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&reverse)
-        .filter(|_| state.type_of(&reverse) == Some("ReverseFulfillmentOrder"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&reverse, "ReverseFulfillmentOrder").cloned() else {
         return failed(coded(
             &["reverseFulfillmentOrderId"],
             "Reverse fulfillment order does not exist.",
@@ -818,7 +808,7 @@ fn delivery_create(
             Value::Null
         },
     })));
-    model::push_key(state, &reverse, "reverseDeliveries", &id);
+    state.push_key(&reverse, "reverseDeliveries", &id);
     if has_deliverable {
         state.emit("reverse_deliveries/attach_deliverable", &id);
         if notify {
@@ -839,11 +829,7 @@ fn delivery_update(
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("ReverseDelivery"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&id, "ReverseDelivery").cloned() else {
         return failed(coded(
             &["reverseDeliveryId"],
             "Reverse delivery does not exist.",
@@ -890,11 +876,7 @@ fn remove_from_return(
     let failed = |error: UserError| Ok(payload(json!({"return": null}), &[error]));
     let id = ctx.arg_str("returnId").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Return"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&id, "Return").cloned() else {
         return failed(coded(&["returnId"], "Return does not exist.", "NOT_FOUND"));
     };
     if !matches!(text(&record, "status"), Some("OPEN" | "REQUESTED")) {
@@ -1081,11 +1063,7 @@ fn return_refund(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Return"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&id, "Return").cloned() else {
         return failed(&[coded(
             &["returnRefundInput", "returnId"],
             "Return does not exist.",
@@ -1399,7 +1377,7 @@ fn suggested_outcome(
         return Ok(Output::Null);
     };
     let state = r.state();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let lines = asked(ctx, "returnLineItems", &gids(record.get("returnLineItems")));
     let exchanges = asked(
@@ -1455,7 +1433,7 @@ fn suggested_refund(
         return Ok(Output::Null);
     };
     let state = r.state();
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let lines = asked(
         ctx,
@@ -1497,14 +1475,10 @@ fn calculate(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let Some(order) = state
-        .get(&order_id)
-        .filter(|_| state.type_of(&order_id) == Some("Order"))
-        .cloned()
-    else {
+    let Some(order) = state.get_of(&order_id, "Order").cloned() else {
         return Ok(Output::Null);
     };
-    let currency = model::currency(state);
+    let currency = state.currency();
     let bag = |cents: i64| value::money_bag(cents, &currency);
     let mut outcome = Outcome::default();
     let mut lines = Vec::new();

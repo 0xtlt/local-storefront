@@ -45,7 +45,7 @@ use super::model::{
 };
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Registry, UserError, input_path, payload};
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -143,7 +143,7 @@ fn calculated_line(
             "taxable": line.get("taxable").cloned().unwrap_or(json!(true)),
             "variantImage": null,
             "weight": line.get("weight"),
-            "lsfPrice": crate::domains::orders::model::cents(line.get("price")),
+            "lsfPrice": crate::state::value::cents(line.get("price")),
         }))
     } else {
         let variant = text(line, "productVariantId").unwrap_or_default();
@@ -159,7 +159,7 @@ fn calculated_line(
         }
     };
     let price = match line.get("priceOverride").filter(|price| !price.is_null()) {
-        Some(price) => crate::domains::orders::model::cents(Some(price)),
+        Some(price) => crate::state::value::cents(Some(price)),
         None => fields.get("lsfPrice").and_then(Value::as_i64).unwrap_or(0),
     };
     if !value::money_in_bounds(price.saturating_mul(quantity)) {
@@ -201,7 +201,7 @@ fn calculated_discount(
         let fixed = object(given.get("fixedAmount"));
         json!({
             "__typename": "SubscriptionDiscountFixedAmountValue",
-            "amount": model::money(crate::domains::orders::model::cents(fixed.get("amount")), currency),
+            "amount": model::money(crate::state::value::cents(fixed.get("amount")), currency),
             "appliesOnEachItem": fixed.get("appliesOnEachItem").and_then(Value::as_bool).unwrap_or(false),
         })
     };
@@ -472,7 +472,7 @@ fn keep(
     options: Option<Vec<Value>>,
     with_customizations: bool,
 ) -> Value {
-    let number = model::number(&state.new_gid("SubscriptionContractCalculation"));
+    let number = gid_number(&state.new_gid("SubscriptionContractCalculation"));
     let id = format!("gid://shopify/SubscriptionContractCalculation/{number}");
     let (kind, contract, index) = match &target {
         Target::Create => ("create", None, None),

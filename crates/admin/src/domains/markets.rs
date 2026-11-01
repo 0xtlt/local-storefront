@@ -49,7 +49,9 @@ use serde_json::{Map, Value, json};
 
 use crate::domains::catalog;
 use crate::resolve::{Registry, UserError, coded, input_path};
+use crate::state::Pointer;
 use crate::state::seed::Seed;
+use crate::state::value::str_field as text;
 use crate::state::{Record, ShopState, gid, parse_gid};
 
 /// The setting that holds the backup region: the code of its country.
@@ -298,11 +300,6 @@ pub fn is_active(record: &Record) -> bool {
     record.get("status").and_then(Value::as_str) != Some("DRAFT")
 }
 
-/// The shop's currency ([`super::orders::model::currency`]).
-pub fn shop_currency(state: &ShopState) -> String {
-    super::orders::model::currency(state)
-}
-
 /// The market a buyer in a country is in: the first active market of the region whose
 /// regions have the country (a company location or a location market does not match a
 /// country alone).
@@ -326,7 +323,7 @@ pub fn market_currency(state: &ShopState, market: &str) -> String {
     state
         .get(market)
         .and_then(|record| record.pointer_str("/currencySettings/baseCurrency/currencyCode"))
-        .map_or_else(|| shop_currency(state), str::to_string)
+        .map_or_else(|| state.currency(), str::to_string)
 }
 
 /// A `CurrencySetting` of a currency, as the seed writes them.
@@ -358,7 +355,7 @@ pub fn region(state: &ShopState, code: &str) -> Value {
         return known.clone();
     }
     let currency =
-        reference::country_currency(&code).map_or_else(|| shop_currency(state), str::to_string);
+        reference::country_currency(&code).map_or_else(|| state.currency(), str::to_string);
     json!({
         "__typename": "MarketRegionCountry",
         "id": region_gid(&code),
@@ -366,23 +363,6 @@ pub fn region(state: &ShopState, code: &str) -> Value {
         "name": reference::country_name(&code).unwrap_or(&code),
         "currency": currency_setting(&currency),
     })
-}
-
-/// A string at a JSON pointer of a record.
-trait Pointer {
-    fn pointer_str(&self, pointer: &str) -> Option<&str>;
-}
-
-impl Pointer for Record {
-    fn pointer_str(&self, pointer: &str) -> Option<&str> {
-        let (first, rest) = pointer.trim_start_matches('/').split_once('/')?;
-        self.get(first)?.pointer(&format!("/{rest}"))?.as_str()
-    }
-}
-
-/// A string field of an input.
-fn text<'i>(input: &'i Map<String, Value>, field: &str) -> Option<&'i str> {
-    input.get(field).and_then(Value::as_str)
 }
 
 /// The strings of a list field of an input (the GIDs of `marketIds`).
@@ -399,11 +379,6 @@ fn objects(value: Option<&Value>) -> Vec<Map<String, Value>> {
         .filter_map(Value::as_object)
         .cloned()
         .collect()
-}
-
-/// Whether `key` is a record of `type_name`.
-fn is(state: &ShopState, key: &str, type_name: &str) -> bool {
-    state.type_of(key) == Some(type_name)
 }
 
 /// The `CatalogType` of a catalog record type.
@@ -428,7 +403,7 @@ fn records_input(
 ) -> Vec<String> {
     let mut found = Vec::new();
     for (index, id) in ids.iter().enumerate() {
-        if is(state, id, type_name) {
+        if state.is_of(id, type_name) {
             if !found.contains(id) {
                 found.push(id.clone());
             }
@@ -465,9 +440,4 @@ pub fn catalog_key(state: &ShopState, id: &str) -> Option<String> {
 fn market_not_found(field: &str) -> UserError {
     // lsf's wording: shopify.dev publishes the code only.
     coded(&[field], "Market does not exist", "MARKET_NOT_FOUND")
-}
-
-/// The numeric id of a GID, for sorting a list as Shopify answers it (by id).
-fn number(gid: &str) -> u64 {
-    parse_gid(gid).map_or(0, |(_, id)| id)
 }

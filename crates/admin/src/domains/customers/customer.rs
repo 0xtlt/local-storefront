@@ -48,7 +48,7 @@ use super::{
 use crate::domains::catalog::tags_of;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, coded, payload};
-use crate::state::{Record, ShopState, parse_gid, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -443,11 +443,7 @@ fn customer_update(
 /// value.
 fn by_custom_id(state: &ShopState, custom: &Map<String, Value>) -> Option<String> {
     let text = |name: &str| custom.get(name).and_then(Value::as_str);
-    let app = state
-        .keys("App")
-        .next()
-        .and_then(parse_gid)
-        .map_or(0, |(_, id)| id);
+    let app = state.app_id();
     let namespace =
         crate::domains::content::admin_namespace(app, text("namespace").unwrap_or("$app"));
     state.keys("Customer").find_map(|customer| {
@@ -564,10 +560,7 @@ fn customer_delete(
         let error = UserError::new(&["id"], message);
         Ok(payload(json!({"deletedCustomerId": null}), &[error]))
     };
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Customer"))
-    else {
+    let Some(record) = state.get_of(&id, "Customer") else {
         return failed("Customer does not exist");
     };
     if !gids_of(Some(record), "orders").is_empty() {
@@ -623,7 +616,7 @@ fn generate_account_activation_url(
         .and_then(|shop| shop.get("url"))
         .and_then(Value::as_str)
         .map_or_else(|| format!("https://{}", state.domain()), str::to_string);
-    let number = parse_gid(&customer).map_or(0, |(_, id)| id);
+    let number = gid_number(&customer);
     // REST's example: `…/account/activate/207119551/e7c01ca8ca79cd849f7c09f9e5450f9c-1790864247`,
     // a token and the time it expires, 30 days on.
     let expires = mutation.now().timestamp() + 30 * 24 * 3600;

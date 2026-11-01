@@ -93,10 +93,7 @@ fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     let id = text(&input, "fulfillmentOrderId")
         .unwrap_or_default()
         .to_string();
-    let Some(record) = (state.type_of(&id) == Some("FulfillmentOrder"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "FulfillmentOrder").cloned() else {
         return fail(&at("fulfillmentOrderId"), "NOT_FOUND");
     };
     let method = record
@@ -132,9 +129,7 @@ fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     // Days of the shop's time zone: a shipping time later today there is not in the past.
     let zone = crate::search::Options::of(state);
     let today = zone.day_of(state.now());
-    let shipping_date = text(&input, "shippingDatetime")
-        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-        .map(|at| at.with_timezone(&chrono::Utc));
+    let shipping_date = text(&input, "shippingDatetime").and_then(value::parse_date_time);
     match shipping_date {
         None => return fail(&at("shippingDatetime"), "MISSING_SHIPPING_DATE"),
         Some(date) if zone.day_of(date) < today => {

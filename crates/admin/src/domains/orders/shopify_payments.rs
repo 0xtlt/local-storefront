@@ -39,7 +39,7 @@ use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Registry, ShopResolver, UserError, payload};
 use crate::search::SearchValue;
-use crate::state::{Record, ShopState, gid, value};
+use crate::state::{Record, ShopState, gid, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     for field in [
@@ -67,7 +67,7 @@ pub fn register(registry: &mut Registry) {
         )
         .field("ShopifyPaymentsAccount", "balance", |r, ctx, _object| {
             let state = r.state();
-            let currency = model::currency(state);
+            let currency = state.currency();
             let pending: i64 = unpaid(state).iter().map(|(_, net)| net).sum();
             r.convert(ctx, &json!([value::money_v2(pending, &currency)]), false)
         })
@@ -244,7 +244,7 @@ fn shop_facts(state: &ShopState) -> (String, String, String) {
     (
         text(&shop, "name").unwrap_or("Shop").to_string(),
         country,
-        model::currency(state),
+        state.currency(),
     )
 }
 
@@ -329,7 +329,7 @@ pub fn record_balance(state: &mut ShopState, transaction: &str) {
     let order = text(&record, "order")
         .and_then(|order| state.get(order))
         .cloned();
-    let number = model::number(transaction);
+    let number = gid_number(transaction);
     let at = record
         .get("processedAt")
         .or_else(|| record.get("createdAt"))
@@ -365,7 +365,7 @@ struct Balance<'a> {
 }
 
 fn insert_balance(state: &mut ShopState, balance: Balance) -> String {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let id = state.new_gid("ShopifyPaymentsBalanceTransaction");
     state.insert(value::object(json!({
         "__typename": "ShopifyPaymentsBalanceTransaction",
@@ -407,26 +407,17 @@ fn unpaid(state: &ShopState) -> Vec<(String, i64)> {
         .collect()
 }
 
-/// The shop's time zone, for its days.
-fn zone(state: &ShopState) -> chrono_tz::Tz {
-    state
-        .shop()
-        .and_then(|shop| text(shop, "ianaTimezone"))
-        .and_then(|zone| zone.parse().ok())
-        .unwrap_or(chrono_tz::UTC)
-}
-
 /// The shop's day of a balance transaction.
 fn day_of(state: &ShopState, record: &Record) -> Option<NaiveDate> {
-    let at = DateTime::parse_from_rfc3339(text(record, "transactionDate")?).ok()?;
-    Some(at.with_timezone(&zone(state)).date_naive())
+    let at = value::parse_date_time(text(record, "transactionDate")?)?;
+    Some(state.day_of(at))
 }
 
 /// Pays out what the account processed on each day before the shop's day now: one payout per
 /// day, issued the next day.
 pub fn tick(state: &mut ShopState) {
-    let tz = zone(state);
-    let today = state.now().with_timezone(&tz).date_naive();
+    let tz = state.time_zone();
+    let today = state.today();
     let mut days: Vec<(NaiveDate, Vec<String>)> = Vec::new();
     for (id, _) in unpaid(state) {
         let Some(day) = state.get(&id).and_then(|record| day_of(state, record)) else {
@@ -454,7 +445,7 @@ pub fn tick(state: &mut ShopState) {
 /// A payout of balance transactions, at `issued`: the `ShopifyPaymentsPayout`, its `TRANSFER`
 /// balance transaction, each transaction's `associatedPayout`. Returns its GID.
 fn pay_out(state: &mut ShopState, ids: &[String], issued: DateTime<Utc>) -> String {
-    let currency = model::currency(state);
+    let currency = state.currency();
     let money = |cents: i64| value::money_v2(cents, &currency);
     let (mut net, mut charges, mut charges_fee, mut refunds, mut adjustments, mut adjustments_fee) =
         (0, 0, 0, 0, 0, 0);
@@ -525,8 +516,8 @@ fn pay_out(state: &mut ShopState, ids: &[String], issued: DateTime<Utc>) -> Stri
             "usdcRebateCreditAmount": money(0),
         },
     })));
-    model::push_key(state, BANK_ACCOUNT, "payouts", &payout);
-    let number = model::number(&payout);
+    state.push_key(BANK_ACCOUNT, "payouts", &payout);
+    let number = gid_number(&payout);
     let transfer = insert_balance(
         state,
         Balance {
@@ -582,11 +573,7 @@ fn network_reason(reason: &str) -> Option<&'static str> {
 /// A buyer's bank opens a dispute on an order: the dispute and its evidence, prefilled from
 /// the order; for a chargeback, the amount and the fee leave the balance. `disputes/create`.
 pub fn open_dispute(state: &mut ShopState, dispute: &NewDispute) -> Result<String, String> {
-    let Some(order) = state
-        .get(dispute.order)
-        .filter(|_| state.type_of(dispute.order) == Some("Order"))
-        .cloned()
-    else {
+    let Some(order) = state.get_of(dispute.order, "Order").cloned() else {
         return Err(format!(
             "{} is not an order of {}",
             dispute.order,
@@ -596,7 +583,7 @@ pub fn open_dispute(state: &mut ShopState, dispute: &NewDispute) -> Result<Strin
     if !matches!(dispute.kind, "CHARGEBACK" | "INQUIRY") {
         return Err("`type` is CHARGEBACK or INQUIRY".to_string());
     }
-    let currency = model::currency(state);
+    let currency = state.currency();
     let amount = dispute
         .amount
         .unwrap_or_else(|| field_cents(&order, "netPaymentSet"));
@@ -615,7 +602,7 @@ pub fn open_dispute(state: &mut ShopState, dispute: &NewDispute) -> Result<Strin
                 .next()
                 .unwrap_or(Value::Null);
             json!({
-                "id": format!("gid://shopify/ShopifyPaymentsDisputeFulfillment/{}", model::number(text(fulfillment, "id").unwrap_or_default())),
+                "id": format!("gid://shopify/ShopifyPaymentsDisputeFulfillment/{}", gid_number(text(fulfillment, "id").unwrap_or_default())),
                 "shippingCarrier": tracking.get("company"),
                 "shippingTrackingNumber": tracking.get("number"),
                 "shippingDate": text(fulfillment, "createdAt").map(|at| at.chars().take(10).collect::<String>()),
@@ -676,7 +663,7 @@ pub fn open_dispute(state: &mut ShopState, dispute: &NewDispute) -> Result<Strin
         "disputeEvidence": evidence,
     })));
     if dispute.kind == "CHARGEBACK" {
-        let number = model::number(&id);
+        let number = gid_number(&id);
         insert_balance(
             state,
             Balance {
@@ -815,11 +802,7 @@ fn evidence_update(
     };
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(evidence) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("ShopifyPaymentsDisputeEvidence"))
-        .cloned()
-    else {
+    let Some(evidence) = state.get_of(&id, "ShopifyPaymentsDisputeEvidence").cloned() else {
         return failed(
             &["id"],
             "Dispute evidence could not be found.",
@@ -837,8 +820,8 @@ fn evidence_update(
             "EVIDENCE_ALREADY_ACCEPTED",
         );
     }
-    if DateTime::parse_from_rfc3339(text(&dispute, "evidenceDueBy").unwrap_or_default())
-        .is_ok_and(|due| due.with_timezone(&Utc) < mutation.now())
+    if value::parse_date_time(text(&dispute, "evidenceDueBy").unwrap_or_default())
+        .is_some_and(|due| due < mutation.now())
     {
         return failed(&["id"], "Evidence past due date.", "EVIDENCE_PAST_DUE_DATE");
     }
@@ -871,7 +854,7 @@ fn evidence_update(
     {
         let address_id = format!(
             "gid://shopify/MailingAddress/{}?model_name=Address",
-            model::number(&id)
+            gid_number(&id)
         );
         let mut address = address.clone();
         // `country` of the input is a code (the example's "US").
@@ -948,7 +931,7 @@ fn alternate_currency_payout(
     let state = mutation.state();
     let pending = unpaid(state);
     let total: i64 = pending.iter().map(|(_, net)| net).sum();
-    if currency != model::currency(state) || total <= 0 {
+    if currency != state.currency() || total <= 0 {
         return failed(
             &["currency"],
             "Failed to create payout, there is no eligible balance in this currency.",

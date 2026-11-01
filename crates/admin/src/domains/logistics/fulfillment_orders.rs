@@ -39,7 +39,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{app_gid, coded, emit_change, int, keys_of, objects, push, text};
+use super::{coded, emit_change, int, keys_of, objects, push, text};
 use crate::domains::catalog::{self, gids};
 use crate::domains::orders::model;
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -71,9 +71,7 @@ pub const PROGRESS: &str = "lsfProgress";
 const WORKABLE: &[&str] = &["OPEN", "IN_PROGRESS", "SCHEDULED", "ON_HOLD"];
 
 fn fulfillment_order(state: &ShopState, id: &str) -> Option<Record> {
-    (state.type_of(id) == Some("FulfillmentOrder"))
-        .then(|| state.get(id).cloned())
-        .flatten()
+    state.get_of(id, "FulfillmentOrder").cloned()
 }
 
 /// Whether progress was reported on a fulfillment order (and not stopped since).
@@ -224,7 +222,7 @@ fn move_lines(
         let whole = *quantity == remaining && remaining == total;
         match (whole, joined) {
             (true, None) => {
-                super::pull(state, from, "lineItems", line);
+                state.pull_key(from, "lineItems", line);
                 push(state, to, "lineItems", line);
                 moved.push((line.clone(), *quantity));
                 continue;
@@ -250,7 +248,7 @@ fn move_lines(
             }
         }
         if whole {
-            super::pull(state, from, "lineItems", line);
+            state.pull_key(from, "lineItems", line);
             state.remove(line);
         } else if let Some(record) = state.get_mut(line) {
             record.insert("remainingQuantity".into(), json!(remaining - quantity));
@@ -280,7 +278,7 @@ fn new_like(state: &mut ShopState, from: &str) -> String {
     record.remove(PROGRESS);
     state.insert(record);
     if let Some(order) = model::order_of(state, from) {
-        model::push_key(state, &order, "fulfillmentOrders", &id);
+        state.push_key(&order, "fulfillmentOrders", &id);
     }
     id
 }
@@ -537,7 +535,7 @@ fn report_progress(
         .cloned()
         .unwrap_or(Value::Null);
     let state = mutation.state_mut();
-    let app = app_gid(state);
+    let app = state.app_gid().map(str::to_string);
     let initial = record
         .get(PROGRESS)
         .and_then(|progress| progress.get("initialStatus"))
@@ -570,7 +568,7 @@ pub fn stop_progress(mutation: &mut Mutation<'_>, id: &str) -> Option<Value> {
         return None;
     }
     let state = mutation.state_mut();
-    let app = app_gid(state);
+    let app = state.app_gid().map(str::to_string);
     if let Some(record) = state.get_mut(id) {
         record.insert("status".into(), json!("OPEN"));
         record.remove(PROGRESS);
@@ -842,8 +840,8 @@ fn set_deadline(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     let ids = gids(ctx.arg("fulfillmentOrderIds"));
     let deadline = ctx
         .arg_str("fulfillmentDeadline")
-        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-        .map(|at| crate::state::value::date_time(at.with_timezone(&chrono::Utc)));
+        .and_then(crate::state::value::parse_date_time)
+        .map(crate::state::value::date_time);
     let state = mutation.state();
     if ids.is_empty() || ids.iter().any(|id| fulfillment_order(state, id).is_none()) {
         return Ok(payload(

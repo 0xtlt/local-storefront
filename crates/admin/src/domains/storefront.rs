@@ -39,6 +39,7 @@ use serde_json::{Map, Value, json};
 
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::state::value::str_field_or_empty as text;
 use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -70,20 +71,6 @@ pub fn register(registry: &mut Registry) {
         .mutation("storefrontAccessTokenCreate", storefront_token_create)
         .mutation("storefrontAccessTokenDelete", storefront_token_delete)
         .field("Shop", "storefrontAccessTokens", storefront_tokens);
-}
-
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-}
-
-/// The record of `id` when it is one of `type_name`.
-fn record_of<'s>(state: &'s ShopState, id: &str, type_name: &str) -> Option<&'s Record> {
-    state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some(type_name))
 }
 
 // ---- script tags -------------------------------------------------------------------------
@@ -174,7 +161,7 @@ fn script_tag_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
 
 fn script_tag_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let Some(record) = record_of(m.state(), &id, "ScriptTag") else {
+    let Some(record) = m.state().get_of(&id, "ScriptTag") else {
         let error = UserError::new(&["id"], "Script tag does not exist");
         return Ok(payload(json!({"scriptTag": null}), &[error]));
     };
@@ -197,7 +184,7 @@ fn script_tag_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
 
 fn script_tag_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    if record_of(m.state(), &id, "ScriptTag").is_none() {
+    if m.state().get_of(&id, "ScriptTag").is_none() {
         let error = UserError::new(&["id"], "Script tag does not exist");
         return Ok(payload(json!({"deletedScriptTagId": null}), &[error]));
     }
@@ -289,7 +276,7 @@ fn check_settings(
             .code("INVALID_SETTINGS"),
         );
     }
-    let currency = super::orders::model::currency(state);
+    let currency = state.currency();
     for (key, field) in fields {
         let Some(given) = settings.get(key) else {
             continue;
@@ -366,7 +353,7 @@ fn web_pixel_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
 
 fn web_pixel_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    if record_of(m.state(), &id, "WebPixel").is_none() {
+    if m.state().get_of(&id, "WebPixel").is_none() {
         let error = UserError::new(&["id"], "Web pixel not found").code("NOT_FOUND");
         return Ok(payload(json!({"webPixel": null}), &[error]));
     }
@@ -384,7 +371,7 @@ fn web_pixel_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
 
 fn web_pixel_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    if record_of(m.state(), &id, "WebPixel").is_none() {
+    if m.state().get_of(&id, "WebPixel").is_none() {
         let error = UserError::new(&["id"], "Web pixel not found").code("NOT_FOUND");
         return Ok(payload(json!({"deletedWebPixelId": null}), &[error]));
     }
@@ -616,7 +603,7 @@ fn storefront_token_delete(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    if record_of(m.state(), &id, "StorefrontAccessToken").is_none() {
+    if m.state().get_of(&id, "StorefrontAccessToken").is_none() {
         let error = UserError::new(&["id"], "Storefront access token does not exist");
         return Ok(payload(
             json!({"deletedStorefrontAccessTokenId": null}),

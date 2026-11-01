@@ -158,9 +158,9 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                     "the body names the order: {\"order\": \"gid://shopify/Order/1\"}",
                 ));
             };
-            let amount = body.get("amount").and_then(|amount| {
-                orders::model::parse_cents(&amount.to_string().replace('"', ""))
-            });
+            let amount = body
+                .get("amount")
+                .and_then(|amount| value::parse_cents(&amount.to_string().replace('"', "")));
             let kind = body
                 .get("type")
                 .and_then(Value::as_str)
@@ -297,9 +297,8 @@ fn target_time(body: &Value) -> Result<Target, String> {
         .or_else(|| body.get("at"))
         .and_then(Value::as_str)
     {
-        let at = DateTime::parse_from_rfc3339(now)
-            .map_err(|_| format!("`now` is not an RFC 3339 date and time: {now}"))?
-            .with_timezone(&Utc);
+        let at = value::parse_date_time(now)
+            .ok_or_else(|| format!("`now` is not an RFC 3339 date and time: {now}"))?;
         return Ok(Box::new(move |_| Some(at)));
     }
     let advance = match body.get("advance") {

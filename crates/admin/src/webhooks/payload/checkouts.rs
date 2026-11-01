@@ -100,7 +100,7 @@ fn rate(record: &Map<String, Value>) -> Value {
 }
 
 fn cents(amount: &Value) -> i64 {
-    crate::domains::catalog::cents_of(Some(amount)).unwrap_or(0)
+    crate::state::value::exact_cents(Some(amount)).unwrap_or(0)
 }
 
 /// A line item of a checkout, its share of the checkout's tax by its total.

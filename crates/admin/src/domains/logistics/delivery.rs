@@ -110,10 +110,7 @@ fn provider_upsert(
     let state = mutation.state();
     let fail =
         |field: &str, code: &str| Ok(payload(empty.clone(), &[super::coded(ctx, &[field], code)]));
-    let Some(record) = (state.type_of(&location) == Some("Location"))
-        .then(|| state.get(&location))
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&location, "Location") else {
         return fail("locationId", "NOT_FOUND");
     };
     if record.get("isFulfillmentService").and_then(Value::as_bool) != Some(true) {

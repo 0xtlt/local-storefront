@@ -27,7 +27,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{arg_objects, field, is, objects, text};
+use super::records::{arg_objects, field, objects, text};
 use super::variants::{
     self, Choice, ProductOption, add_value, no_product, options_of, product_arg, remove_variant,
 };
@@ -519,12 +519,7 @@ fn option_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         }
     }
     for id in &to_delete {
-        if let Some(Value::Array(values)) = state
-            .get_mut(&option.id)
-            .and_then(|record| record.get_mut("optionValues"))
-        {
-            values.retain(|known| known.as_str() != Some(id.as_str()));
-        }
+        state.pull_key(&option.id, "optionValues", id.as_str());
         state.remove(id);
     }
     sync_values(state, &option.id);
@@ -587,7 +582,7 @@ fn options_delete(
     let mut errors = Vec::new();
     for (index, id) in ids.iter().enumerate() {
         match options.iter().find(|option| option.id == *id) {
-            None if is(state, id, "ProductOption") => errors.push(coded(
+            None if state.is_of(id, "ProductOption") => errors.push(coded(
                 &["options", &index.to_string()],
                 "Options do not belong to the same product.",
                 "OPTIONS_DO_NOT_BELONG_TO_THE_SAME_PRODUCT",

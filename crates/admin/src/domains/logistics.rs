@@ -41,6 +41,7 @@ use crate::domains::catalog::{self, gids};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError};
 use crate::state::seed::Seed;
+pub use crate::state::value::str_field as text;
 use crate::state::{Record, ShopState};
 
 /// The custom resolvers and the mutations of the family: see "Writing a resolver or a mutation"
@@ -143,11 +144,6 @@ pub fn snapshot_location(snapshot: Option<&Value>) -> Option<String> {
     snapshot?.get("location")?.as_str().map(str::to_string)
 }
 
-/// The text of a field of a record.
-pub fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
-    record.get(field).and_then(Value::as_str)
-}
-
 /// An integer field of a record, 0 when absent.
 pub fn int(record: &Record, field: &str) -> i64 {
     record.get(field).and_then(Value::as_i64).unwrap_or(0)
@@ -162,36 +158,17 @@ pub fn objects(value: Option<&Value>) -> Vec<Map<String, Value>> {
     }
 }
 
-/// The record of a GID when it is one of `type_name`.
-pub fn record_of<'s>(state: &'s ShopState, id: &str, type_name: &str) -> Option<&'s Record> {
-    (state.type_of(id) == Some(type_name))
-        .then(|| state.get(id))
-        .flatten()
-}
-
-/// Appends a key to an array field of a record (made when missing).
+/// Appends a key to an array field of a record ([`ShopState::push_key`]): made when missing, and
+/// when it holds something else than an array.
 pub fn push(state: &mut ShopState, record: &str, field: &str, key: &str) {
-    if let Some(record) = state.get_mut(record) {
-        let list = record.entry(field).or_insert_with(|| json!([]));
-        if !list.is_array() {
-            *list = json!([]);
-        }
-        if let Value::Array(items) = list
-            && !items.iter().any(|item| item.as_str() == Some(key))
-        {
-            items.push(json!(key));
-        }
-    }
-}
-
-/// Removes a key from an array field of a record.
-pub fn pull(state: &mut ShopState, record: &str, field: &str, key: &str) {
-    if let Some(Value::Array(items)) = state
+    if let Some(list) = state
         .get_mut(record)
         .and_then(|record| record.get_mut(field))
+        .filter(|list| !list.is_array())
     {
-        items.retain(|item| item.as_str() != Some(key));
+        *list = json!([]);
     }
+    state.push_key(record, field, key);
 }
 
 /// The keys of an array field of a record.
@@ -200,11 +177,6 @@ pub fn keys_of(state: &ShopState, record: &str, field: &str) -> Vec<String> {
         .get(record)
         .map(|record| gids(record.get(field)))
         .unwrap_or_default()
-}
-
-/// The app's GID.
-pub fn app_gid(state: &ShopState) -> Option<String> {
-    state.keys("App").next().map(str::to_string)
 }
 
 /// The event context a payload of the family reads (see `webhooks::payload::logistics`): the

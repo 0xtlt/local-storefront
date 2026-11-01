@@ -80,7 +80,7 @@ fn not_found(field: &str) -> UserError {
 /// A new theme record: `role`, `name`, no files yet.
 fn new_theme(state: &mut ShopState, name: &str, role: &str) -> String {
     let id = state.new_gid("OnlineStoreTheme");
-    let number = crate::state::parse_gid(&id).map_or(0, |(_, n)| n);
+    let number = crate::state::gid_number(&id);
     let now = state.timestamp();
     state.insert(value::object(super::record(
         number, name, role, false, &now,

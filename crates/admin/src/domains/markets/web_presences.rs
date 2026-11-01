@@ -23,10 +23,10 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{is, market_not_found, number, shop_locales, strings, text};
+use super::{market_not_found, shop_locales, strings, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, payload};
-use crate::state::{ShopState, value};
+use crate::state::{ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -117,7 +117,7 @@ fn presence_market(
         .map(|record| strings(record.get("markets")))
         .unwrap_or_default()
         .into_iter()
-        .find(|market| is(state, market, "Market"));
+        .find(|market| state.is_of(market, "Market"));
     Ok(Output::object_or_null(first.as_deref().map(Obj::record)))
 }
 
@@ -328,7 +328,7 @@ fn check(
     let domain = text(input, "domainId").map(str::to_string);
     let suffix = text(input, "subfolderSuffix").map(str::to_string);
     if let Some(domain) = &domain {
-        if !is(state, domain, "Domain") {
+        if !state.is_of(domain, "Domain") {
             // lsf's wording, for the codes Shopify documents without a message.
             errors.push(error(
                 "domainId",
@@ -529,7 +529,7 @@ fn not_found(field: &str) -> UserError {
 /// The presence of an argument.
 fn presence_arg(state: &ShopState, ctx: &FieldContext<'_>, name: &str) -> Option<String> {
     let id = ctx.arg_str(name)?;
-    is(state, id, "MarketWebPresence").then(|| id.to_string())
+    state.is_of(id, "MarketWebPresence").then(|| id.to_string())
 }
 
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
@@ -565,7 +565,7 @@ fn market_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     let state = mutation.state();
     let market = ctx
         .arg_str("marketId")
-        .filter(|market| is(state, market, "Market"))
+        .filter(|market| state.is_of(market, "Market"))
         .map(str::to_string);
     let Some(market) = market else {
         return Ok(payload(
@@ -590,7 +590,7 @@ fn first_market(state: &ShopState, presence: &str) -> Option<String> {
         .map(|record| strings(record.get("markets")))
         .unwrap_or_default()
         .into_iter()
-        .min_by_key(|market| number(market))
+        .min_by_key(|market| gid_number(market))
 }
 
 /// `marketWebPresenceUpdate` (deprecated).
@@ -647,12 +647,7 @@ pub fn remove_locale(state: &mut ShopState, locale: &str) {
         if !has {
             continue;
         }
-        if let Some(Value::Array(alternates)) = state
-            .get_mut(&presence)
-            .and_then(|record| record.get_mut("alternateLocales"))
-        {
-            alternates.retain(|known| known.as_str() != Some(locale));
-        }
+        state.pull_key(&presence, "alternateLocales", locale);
         refresh(state, &presence);
     }
     domains_changed(state);

@@ -32,7 +32,7 @@ use crate::domains::app::CHANGED;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -144,10 +144,7 @@ fn assessment_create(
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(order) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Order"))
-    else {
+    let Some(order) = state.get_of(&id, "Order") else {
         return failed(
             &["orderRiskAssessmentInput", "orderId"],
             "Order does not exist",
@@ -187,7 +184,7 @@ fn assessment_create(
         .iter()
         .map(|fact| json!({"description": fact.get("description"), "sentiment": fact.get("sentiment")}))
         .collect();
-    let provider = state.keys("App").next().map(str::to_string);
+    let provider = state.app_gid().map(str::to_string);
     let assessment = json!({
         "riskLevel": input.get("riskLevel"),
         "facts": facts,
@@ -393,11 +390,7 @@ pub fn set_protect(
 /// A buyer asks for a new link to an order's status page: the email of the link is recorded in
 /// the outbox, and `orders/link_requested` fires. `Err` with why when it cannot.
 pub fn request_link(state: &mut ShopState, order: &str) -> Result<(), String> {
-    let Some(record) = state
-        .get(order)
-        .filter(|_| state.type_of(order) == Some("Order"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(order, "Order").cloned() else {
         return Err(format!("{order} is not an order of {}", state.domain()));
     };
     let Some(email) = text(&record, "email").map(str::to_string) else {
@@ -409,7 +402,7 @@ pub fn request_link(state: &mut ShopState, order: &str) -> Result<(), String> {
         .and_then(|shop| text(shop, "url"))
         .unwrap_or_default()
         .to_string();
-    let number = model::number(order);
+    let number = gid_number(order);
     let key = value::uuid(&format!("{}/{order}/{}", state.domain(), state.timestamp()));
     outbox::record(
         state,

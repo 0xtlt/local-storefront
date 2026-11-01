@@ -39,7 +39,7 @@ use serde_json::{Map, Value, json};
 use super::metafield_definitions::access_of;
 use super::metafields::{shop_currency, text};
 use super::types::{self, Context};
-use super::{app_id, data_type, metaobject_definition_gid, metaobject_gid};
+use super::{data_type, metaobject_definition_gid, metaobject_gid};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -72,7 +72,7 @@ pub fn register(registry: &mut Registry) {
 /// A type as the Admin API stores it: `$app:author` is `app--<app id>--author`.
 pub fn stored_type(state: &ShopState, kind: &str) -> String {
     match kind.strip_prefix("$app:") {
-        Some(name) => format!("app--{}--{name}", app_id(state)),
+        Some(name) => format!("app--{}--{name}", state.app_id()),
         None => kind.to_string(),
     }
 }
@@ -480,13 +480,13 @@ fn definition_create(
     }
     let state = mutation.state_mut();
     let now = state.timestamp();
-    let stable = metaobject_definition_gid(&data_type(app_id(state), &kind));
+    let stable = metaobject_definition_gid(&data_type(state.app_id(), &kind));
     let id = if state.contains(&stable) {
         state.new_gid("MetaobjectDefinition")
     } else {
         stable
     };
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     state.insert(value::object(json!({
         "__typename": "MetaobjectDefinition",
         "id": id,
@@ -519,10 +519,7 @@ fn definition_update(
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = ctx.arg_object_or_default("definition");
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("MetaobjectDefinition"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "MetaobjectDefinition").cloned() else {
         let error = MetaobjectError::new(&["id"], "Record not found", "RECORD_NOT_FOUND");
         return Ok(answer(json!({"metaobjectDefinition": null}), &[error]));
     };
@@ -1190,13 +1187,13 @@ fn plan(
 /// Inserts a new entry of a definition: its id `metaobject_gid(type, handle)`, else a new one.
 fn insert_entry(state: &mut ShopState, definition: &str, kind: &str, planned: Planned) -> String {
     let now = state.timestamp();
-    let stable = metaobject_gid(&data_type(app_id(state), kind), &planned.handle);
+    let stable = metaobject_gid(&data_type(state.app_id(), kind), &planned.handle);
     let id = if state.contains(&stable) {
         state.new_gid("Metaobject")
     } else {
         stable
     };
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     state.insert(value::object(json!({
         "__typename": "Metaobject",
         "id": id,
@@ -1294,10 +1291,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = ctx.arg_object_or_default("metaobject");
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("Metaobject"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "Metaobject").cloned() else {
         let error = MetaobjectError::new(&["id"], "Record not found", "RECORD_NOT_FOUND");
         return Ok(answer(json!({"metaobject": null}), &[error]));
     };

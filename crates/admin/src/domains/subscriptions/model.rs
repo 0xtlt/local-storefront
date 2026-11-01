@@ -13,9 +13,12 @@ use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 
 use crate::domains::catalog::gids;
-use crate::domains::orders::model::{cents, parse_cents, share};
+use crate::domains::orders::model::share;
 use crate::resolve::{UserError, coded, input_path};
-use crate::state::{Record, ShopState, value};
+pub use crate::state::Pointer;
+pub use crate::state::value::str_field as text;
+use crate::state::value::{cents, parse_cents};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub const CONTRACT: &str = "SubscriptionContract";
 pub const DRAFT: &str = "SubscriptionDraft";
@@ -81,26 +84,6 @@ pub fn cycle_error(field: &[&str], code: &str) -> UserError {
     )
 }
 
-/// `pointer` for a record, as `Value::pointer` reads a value: `/state/__typename`.
-pub trait Pointer {
-    fn pointer(&self, path: &str) -> Option<&Value>;
-}
-
-impl Pointer for Map<String, Value> {
-    fn pointer(&self, path: &str) -> Option<&Value> {
-        let path = path.strip_prefix('/')?;
-        match path.split_once('/') {
-            Some((first, rest)) => self.get(first)?.pointer(&format!("/{rest}")),
-            None => self.get(path),
-        }
-    }
-}
-
-/// A string field of a record or an input.
-pub fn text<'r>(record: &'r Map<String, Value>, field: &str) -> Option<&'r str> {
-    record.get(field).and_then(Value::as_str)
-}
-
 /// An input object (`{}` when absent).
 pub fn object(value: Option<&Value>) -> Map<String, Value> {
     value
@@ -122,14 +105,7 @@ pub fn objects(value: Option<&Value>) -> Vec<Map<String, Value>> {
 
 /// A `DateTime` input, in UTC.
 pub fn date_time(text: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text.trim())
-        .ok()
-        .map(|date| date.with_timezone(&Utc))
-}
-
-/// The number of a GID (`5` of `gid://shopify/SubscriptionContract/5`), for the ids made of it.
-pub fn number(gid: &str) -> u64 {
-    crate::state::parse_gid(gid).map_or(0, |(_, id)| id)
+    value::parse_date_time(text.trim())
 }
 
 /// A new id of an object that is not a record, in Shopify's form for it
@@ -408,7 +384,7 @@ pub fn check_policies(
 /// A `MailingAddress` of a contract from a `MailingAddressInput`, with an id of the shop's
 /// address counter.
 pub fn address(state: &mut ShopState, input: &Value) -> Option<Value> {
-    let number = number(&state.new_gid("MailingAddress"));
+    let number = gid_number(&state.new_gid("MailingAddress"));
     crate::domains::orders::model::mailing_address(
         input,
         &format!("gid://shopify/MailingAddress/{number}?model_name=Address"),
@@ -742,8 +718,7 @@ pub fn check_pricing_policy(input: &Value, path: &[&str], errors: &mut Vec<UserE
 pub fn selling_plan_name(state: &ShopState, plan: Option<&str>) -> Option<String> {
     let plan = plan?;
     state
-        .get(plan)
-        .filter(|_| state.type_of(plan) == Some("SellingPlan"))
+        .get_of(plan, "SellingPlan")
         .and_then(|record| text(record, "name"))
         .map(str::to_string)
 }
@@ -1314,10 +1289,7 @@ pub fn check_payment_method(
     customer: Option<&str>,
     field: &[&str],
 ) -> Option<UserError> {
-    let Some(method) = state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some(PAYMENT_METHOD))
-    else {
+    let Some(method) = state.get_of(id, PAYMENT_METHOD) else {
         return Some(invalid_error(
             field,
             "Customer payment method does not exist",

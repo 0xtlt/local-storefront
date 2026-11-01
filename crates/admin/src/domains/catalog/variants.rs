@@ -39,8 +39,8 @@ use serde_json::{Map, Value, json};
 
 use super::media;
 use super::records::{
-    self, apply_inventory_item, arg_objects, currency, default_location, field, is,
-    is_active_location, item_of, new_inventory_item, new_level, objects, text,
+    self, apply_inventory_item, arg_objects, default_location, field, is_active_location, item_of,
+    new_inventory_item, new_level, objects, text,
 };
 use super::{cents_of, gids, product_changed};
 use crate::graphql::{FieldContext, FieldError};
@@ -465,7 +465,7 @@ pub fn insert_variant(
 /// Sets the plain fields of a variant input on a variant (and its inventory item): those given,
 /// and only those. Whether the inventory item changed.
 pub fn apply_fields(state: &mut ShopState, variant: &str, input: &Map<String, Value>) -> bool {
-    let currency = currency(state);
+    let currency = state.currency();
     let item = item_of(state, variant);
     let mut item_changed = false;
     if let Some(item) = &item {
@@ -618,20 +618,10 @@ pub fn remove_variant(state: &mut ShopState, product: &str, variant: &str) {
         .map(str::to_string)
         .collect::<Vec<_>>()
     {
-        if let Some(Value::Array(variants)) = state
-            .get_mut(&group)
-            .and_then(|record| record.get_mut("productVariants"))
-        {
-            variants.retain(|known| known.as_str() != Some(variant));
-        }
+        state.pull_key(&group, "productVariants", variant);
     }
     state.remove(variant);
-    if let Some(Value::Array(variants)) = state
-        .get_mut(product)
-        .and_then(|record| record.get_mut("variants"))
-    {
-        variants.retain(|known| known.as_str() != Some(variant));
-    }
+    state.pull_key(product, "variants", variant);
 }
 
 /// The stock of a `productVariantsBulkCreate` variant: its `inventoryQuantities`, else the
@@ -649,7 +639,7 @@ fn bulk_stock(
     let mut stock = Vec::new();
     for (index, quantity) in quantities.iter().enumerate() {
         let location = text(quantity, "locationId").unwrap_or_default();
-        if !is(state, location, "Location") || !is_active_location(state, location) {
+        if !state.is_of(location, "Location") || !is_active_location(state, location) {
             errors.push(input_error(
                 path,
                 &["inventoryQuantities", &index.to_string(), "locationId"],
@@ -670,7 +660,7 @@ fn bulk_stock(
 /// The product of `productId`.
 pub fn product_arg(state: &ShopState, ctx: &FieldContext<'_>) -> Option<String> {
     ctx.arg_str("productId")
-        .filter(|id| is(state, id, "Product"))
+        .filter(|id| state.is_of(id, "Product"))
         .map(str::to_string)
 }
 
@@ -856,7 +846,7 @@ fn bulk_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
                 "Product variant is missing ID attribute.",
                 "PRODUCT_VARIANT_ID_MISSING",
             ))
-        } else if !is(state, &id, "ProductVariant") {
+        } else if !state.is_of(&id, "ProductVariant") {
             Some((
                 "Product variant does not exist",
                 "PRODUCT_VARIANT_DOES_NOT_EXIST",

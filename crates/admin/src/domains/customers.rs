@@ -27,7 +27,7 @@ use lsf_core::store::{Address, Company, CompanyLocation, Customer};
 use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
-use super::catalog::{cents_of, gids};
+use super::catalog::gids;
 use crate::resolve::Registry;
 use crate::state::seed::Seed;
 use crate::state::value::{self, date_time, text};
@@ -490,7 +490,7 @@ fn order_total(order: &Record) -> (i64, bool) {
     let total = order
         .get("totalPriceSet")
         .and_then(|set| set.get("shopMoney"))
-        .and_then(|money| cents_of(money.get("amount")))
+        .and_then(|money| value::exact_cents(money.get("amount")))
         .unwrap_or(0);
     let cancelled = order.get("cancelledAt").is_some_and(|at| !at.is_null());
     (total, cancelled)
@@ -501,7 +501,7 @@ fn order_total(order: &Record) -> (i64, bool) {
 /// `Customer.amountSpent`), `lastOrder` and `canDelete`. The seed runs it once the orders
 /// exist; a mutation that creates, cancels or deletes an order runs it after.
 pub fn refresh_customer(state: &mut ShopState, customer: &str) {
-    let currency = super::orders::model::currency(state);
+    let currency = state.currency();
     let orders: Vec<(String, i64, bool, String)> = state
         .all("Order")
         .filter(|order| order.get("customer").and_then(Value::as_str) == Some(customer))
@@ -567,7 +567,7 @@ pub fn refresh_company_location(state: &mut ShopState, location: &str) {
     let Some(record) = state.get(location) else {
         return;
     };
-    let currency = super::orders::model::currency(state);
+    let currency = state.currency();
     let base = record.get(ORDERS_BASE);
     let base_count = base
         .and_then(|base| base.get("count"))
@@ -608,7 +608,7 @@ pub fn refresh_company_location(state: &mut ShopState, location: &str) {
         .filter_map(|location| {
             location
                 .get("totalSpent")
-                .and_then(|money| cents_of(money.get("amount")))
+                .and_then(|money| value::exact_cents(money.get("amount")))
         })
         .fold(0i64, i64::saturating_add);
     if let Some(record) = state.get_mut(&company) {

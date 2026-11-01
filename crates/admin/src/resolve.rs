@@ -48,7 +48,7 @@ use serde_json::{Map, Value, json};
 use crate::auth::Grant;
 use crate::graphql::{self, FieldContext, FieldError, Output};
 use crate::schema::{Kind, Schema, TypeRef};
-use crate::state::{Record, ShopState, gid_type, parse_gid};
+use crate::state::{Record, ShopState, gid_number, gid_type, parse_gid};
 use crate::version::{ApiVersion, adapt};
 use crate::webhooks::Webhooks;
 
@@ -718,7 +718,7 @@ impl<'a> ShopResolver<'a> {
                                 .filter_map(|key| parse_gid(key).map(|(_, id)| id))
                                 .collect();
                             ids.sort_unstable();
-                            let id = parse_gid(key).map_or(0, |(_, id)| id);
+                            let id = gid_number(key);
                             ids.partition_point(|known| *known < id)
                         })
                         .unwrap_or(0);
@@ -830,12 +830,7 @@ impl<'a> ShopResolver<'a> {
     /// A namespace as the Admin API stores it: `$app` and `$app:x` are the app's reserved
     /// namespaces, `app--<id>` and `app--<id>--x`.
     pub fn app_namespace(&self, namespace: &str) -> String {
-        let app_id = self
-            .state
-            .keys("App")
-            .next()
-            .and_then(parse_gid)
-            .map_or(0, |(_, id)| id);
+        let app_id = self.state.app_id();
         crate::domains::content::admin_namespace(app_id, namespace)
     }
 

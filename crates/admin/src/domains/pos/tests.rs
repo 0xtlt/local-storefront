@@ -368,3 +368,17 @@ fn a_payment_session_counts_adjusts_and_closes_its_drawer() {
             "adjustments": {"nodes": [{"cash": {"amount": "-20.0"}}]}}])
     );
 }
+
+#[test]
+fn reads_the_cents_of_a_money_v2_as_written() {
+    // Its `amount`, two decimals at most, no rounding: 0 otherwise.
+    assert_eq!(
+        super::cents(Some(&json!({"amount": "12.50", "currencyCode": "USD"}))),
+        1250
+    );
+    assert_eq!(super::cents(Some(&json!({"amount": "-0.05"}))), -5);
+    assert_eq!(super::cents(Some(&json!({"amount": "0.125"}))), 0);
+    assert_eq!(super::cents(Some(&json!({"amount": 12.5}))), 0);
+    assert_eq!(super::cents(Some(&json!("12.50"))), 0);
+    assert_eq!(super::cents(None), 0);
+}

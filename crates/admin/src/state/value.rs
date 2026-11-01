@@ -30,6 +30,66 @@ pub fn money_too_large(name: &str) -> String {
     format!("{name} must be less than {MAX_MONEY_TEXT}")
 }
 
+/// A decimal amount (`"19.99"`, `"20"`, `"0.125"`) in cents, rounded half away from zero.
+/// `None` when it is not a number.
+pub fn parse_cents(text: &str) -> Option<i64> {
+    let text = text.trim();
+    let (negative, digits) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let (units, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    if (units.is_empty() && fraction.is_empty())
+        || !units
+            .bytes()
+            .chain(fraction.bytes())
+            .all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let units: i64 = if units.is_empty() {
+        0
+    } else {
+        units.parse().ok()?
+    };
+    let digit = |index: usize| {
+        fraction
+            .as_bytes()
+            .get(index)
+            .map_or(0, |byte| i64::from(byte - b'0'))
+    };
+    // `None` past what 64 bits of cents hold, rather than an overflow.
+    let cents = units
+        .checked_mul(100)?
+        .checked_add(digit(0) * 10 + digit(1) + i64::from(digit(2) >= 5))?;
+    Some(if negative { -cents } else { cents })
+}
+
+/// The cents of an amount as the records and the inputs write it: a `MoneyBag` (its shop
+/// money), a `MoneyV2` or `MoneyInput` (its `amount`), a `Money` or `Decimal` string, a number.
+/// 0 when there is none.
+pub fn cents(value: Option<&Value>) -> i64 {
+    match value {
+        Some(Value::Object(map)) => match map.get("shopMoney") {
+            Some(shop) => cents(Some(shop)),
+            None => cents(map.get("amount")),
+        },
+        Some(Value::String(text)) => parse_cents(text).unwrap_or(0),
+        Some(Value::Number(number)) => number
+            .as_f64()
+            .map_or(0, |amount| (amount * 100.0).round() as i64),
+        _ => 0,
+    }
+}
+
+/// The cents of a `Money` or `Decimal` string with at most two decimals, as lsf-core reads the
+/// prices of the store data: `None` for anything else (a number, a third decimal, a space). No
+/// rounding, unlike [`parse_cents`].
+pub fn exact_cents(value: Option<&Value>) -> Option<i64> {
+    let text = value?.as_str()?;
+    lsf_core::store::model::Money::Decimal(text.to_string()).cents()
+}
+
 /// Cents as the `Money` scalar: `"19.99"`, `"20.00"` (as `ProductVariant.price` reads).
 pub fn money(cents: i64) -> String {
     let sign = if cents < 0 { "-" } else { "" };
@@ -69,6 +129,34 @@ pub fn date_time(date: DateTime<Utc>) -> String {
 /// A `Date`: `2026-01-31`.
 pub fn date(date: DateTime<Utc>) -> String {
     date.format("%Y-%m-%d").to_string()
+}
+
+/// A `DateTime` as the records and the inputs write it (RFC 3339, any offset), in UTC: `None`
+/// when it is not one.
+pub fn parse_date_time(text: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|at| at.with_timezone(&Utc))
+}
+
+/// [`parse_date_time`] of a field or an argument: `None` when it is missing or not a string.
+pub fn date_time_of(value: Option<&Value>) -> Option<DateTime<Utc>> {
+    value.and_then(Value::as_str).and_then(parse_date_time)
+}
+
+/// A string field of a record or an input: `None` when it is missing or not a string.
+pub fn str_field<'r>(record: &'r Map<String, Value>, field: &str) -> Option<&'r str> {
+    record.get(field).and_then(Value::as_str)
+}
+
+/// [`str_field`], `""` when it is missing or not a string.
+pub fn str_field_or_empty<'r>(record: &'r Map<String, Value>, field: &str) -> &'r str {
+    str_field(record, field).unwrap_or_default()
+}
+
+/// [`str_field`], `None` also when it is empty.
+pub fn non_empty_str_field<'r>(record: &'r Map<String, Value>, field: &str) -> Option<&'r str> {
+    str_field(record, field).filter(|text| !text.is_empty())
 }
 
 /// A string, or `null` when it is empty.
@@ -280,6 +368,85 @@ mod tests {
         assert_eq!(decimal(2000), "20.0");
         assert_eq!(decimal(1950), "19.5");
         assert_eq!(decimal(0), "0.0");
+    }
+
+    #[test]
+    fn reads_amounts_in_cents() {
+        // `parse_cents`: a decimal of any length, rounded half away from zero at the cent.
+        assert_eq!(parse_cents("19.99"), Some(1999));
+        assert_eq!(parse_cents("20"), Some(2000));
+        assert_eq!(parse_cents(" 2.5 "), Some(250));
+        assert_eq!(parse_cents("1."), Some(100));
+        assert_eq!(parse_cents(".5"), Some(50));
+        assert_eq!(parse_cents("0.125"), Some(13));
+        assert_eq!(parse_cents("0.1249"), Some(12));
+        assert_eq!(parse_cents("1.005"), Some(101));
+        assert_eq!(parse_cents("-5.5"), Some(-550));
+        assert_eq!(parse_cents("-0.125"), Some(-13));
+        assert_eq!(parse_cents("-0.124"), Some(-12));
+        assert_eq!(parse_cents("+1"), None);
+        assert_eq!(parse_cents("-"), None);
+        assert_eq!(parse_cents("."), None);
+        assert_eq!(parse_cents("1e2"), None);
+        assert_eq!(parse_cents("x"), None);
+        assert_eq!(parse_cents(""), None);
+        // Past what 64 bits of cents hold: `None`, not an overflow.
+        assert_eq!(parse_cents("92233720368547758.07"), Some(i64::MAX));
+        assert_eq!(parse_cents("-92233720368547758.07"), Some(-i64::MAX));
+        assert_eq!(parse_cents("92233720368547758.09"), None);
+        assert_eq!(parse_cents("92233720368547758.075"), None);
+        // `cents`: any shape an amount comes in, a number rounded as a float, 0 for none.
+        assert_eq!(cents(Some(&json!({"shopMoney": {"amount": "12.5"}}))), 1250);
+        assert_eq!(
+            cents(Some(&json!({"amount": "3", "currencyCode": "EUR"}))),
+            300
+        );
+        assert_eq!(cents(Some(&json!("-0.125"))), -13);
+        assert_eq!(cents(Some(&json!(0.125))), 13);
+        assert_eq!(cents(Some(&json!(-0.125))), -13);
+        assert_eq!(cents(Some(&json!(1.005))), 100);
+        assert_eq!(cents(Some(&json!(7))), 700);
+        assert_eq!(cents(Some(&json!("x"))), 0);
+        assert_eq!(cents(Some(&json!(true))), 0);
+        assert_eq!(cents(None), 0);
+        // `exact_cents`: two decimals at most, as written, no rounding.
+        assert_eq!(exact_cents(Some(&json!("19.99"))), Some(1999));
+        assert_eq!(exact_cents(Some(&json!("19.9"))), Some(1990));
+        assert_eq!(exact_cents(Some(&json!("19"))), Some(1900));
+        assert_eq!(exact_cents(Some(&json!("1."))), Some(100));
+        assert_eq!(exact_cents(Some(&json!("-5.5"))), Some(-550));
+        assert_eq!(exact_cents(Some(&json!("-0.05"))), Some(-5));
+        assert_eq!(exact_cents(Some(&json!("0.125"))), None);
+        assert_eq!(exact_cents(Some(&json!(".5"))), None);
+        assert_eq!(exact_cents(Some(&json!(" 1"))), None);
+        assert_eq!(exact_cents(Some(&json!(19.99))), None);
+        assert_eq!(exact_cents(None), None);
+    }
+
+    #[test]
+    fn reads_date_times_in_utc() {
+        let at = parse_date_time("2024-09-09T12:48:33-04:00").unwrap();
+        assert_eq!(date_time(at), "2024-09-09T16:48:33Z");
+        assert_eq!(parse_date_time(" 2024-09-09T12:48:33Z"), None);
+        assert_eq!(parse_date_time("2024-09-09"), None);
+        assert_eq!(
+            date_time_of(Some(&json!("2024-09-09T12:48:33Z"))),
+            Some(at - chrono::Duration::hours(4))
+        );
+        assert_eq!(date_time_of(Some(&json!(1))), None);
+        assert_eq!(date_time_of(None), None);
+    }
+
+    #[test]
+    fn reads_string_fields() {
+        let record = object(json!({"title": "Shirt", "empty": "", "count": 2}));
+        assert_eq!(str_field(&record, "title"), Some("Shirt"));
+        assert_eq!(str_field(&record, "empty"), Some(""));
+        assert_eq!(str_field(&record, "count"), None);
+        assert_eq!(str_field_or_empty(&record, "count"), "");
+        assert_eq!(str_field_or_empty(&record, "missing"), "");
+        assert_eq!(non_empty_str_field(&record, "empty"), None);
+        assert_eq!(non_empty_str_field(&record, "title"), Some("Shirt"));
     }
 
     #[test]

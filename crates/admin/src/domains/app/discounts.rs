@@ -42,7 +42,8 @@ use crate::resolve::selection::{Selection, Wording, selection};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, done_job, payload};
 use crate::search::{Query, SearchValue, Searchable};
-use crate::state::{Record, ShopState, gid, parse_gid, value};
+use crate::state::value::str_field as text;
+use crate::state::{Record, ShopState, gid, gid_number, parse_gid, value};
 
 /// The API types of the Functions a discount runs: the Discount API, and the legacy product,
 /// order and shipping discount APIs.
@@ -257,16 +258,10 @@ pub(super) fn inner_mut(record: &mut Record) -> Option<&mut Record> {
     record.get_mut(field).and_then(Value::as_object_mut)
 }
 
-fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
-    record.get(field).and_then(Value::as_str)
-}
-
 /// A `DateTime` as lsf writes it (`2026-04-29T06:45:06Z`, UTC, as Shopify answers a date given
 /// with an offset), `None` when it is not one.
 fn date_time(text: &str) -> Option<String> {
-    chrono::DateTime::parse_from_rfc3339(text.trim())
-        .ok()
-        .map(|date| value::date_time(date.with_timezone(&chrono::Utc)))
+    value::parse_date_time(text.trim()).map(value::date_time)
 }
 
 /// The status of a discount at `now`: by its dates.
@@ -319,7 +314,7 @@ fn discount_node_items(r: &ShopResolver<'_>) -> Vec<Value> {
         .keys("DiscountAutomaticNode")
         .chain(state.keys("DiscountCodeNode"))
         .collect();
-    keys.sort_by_key(|key| parse_gid(key).map_or(0, |(_, id)| id));
+    keys.sort_by_key(|key| gid_number(key));
     keys.into_iter()
         .filter_map(|key| as_discount_node(key, state.get(key)?))
         .map(Value::Object)
@@ -1229,12 +1224,7 @@ fn apply_input(
     now: &str,
     creating: bool,
 ) {
-    let currency = state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string();
+    let currency = state.currency();
     if let Some(title) = input.get("title").and_then(Value::as_str) {
         discount.insert("title".into(), json!(title.trim()));
     }
@@ -1807,7 +1797,7 @@ pub(super) fn search_nodes(state: &ShopState, search: &str, types: &[&str]) -> V
                 let searched = Searched {
                     state,
                     record,
-                    id: parse_gid(key).map_or(0, |(_, id)| id),
+                    id: gid_number(key),
                 };
                 query.matches(&searched, &options)
             })

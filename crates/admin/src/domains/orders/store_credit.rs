@@ -31,7 +31,6 @@
 //! The 2026-10 webhook topics have none for store credit: the changes emit
 //! `domains::app::CHANGED`, which no subscription receives.
 
-use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 
 use super::model::{self, text};
@@ -142,7 +141,7 @@ fn account_of(
         "balance": value::money_v2(0, currency),
         "transactions": [],
     })));
-    model::push_key(state, id, "storeCreditAccounts", &account);
+    state.push_key(id, "storeCreditAccounts", &account);
     Ok(account)
 }
 
@@ -153,7 +152,7 @@ fn currency_of(account: &Record) -> Option<&str> {
 
 /// Whether the shop sells in a currency: its own, or one of its presentment currencies.
 fn supported(state: &ShopState, currency: &str) -> bool {
-    model::currency(state) == currency
+    state.currency() == currency
         || state
             .shop()
             .and_then(|shop| shop.get("enabledPresentmentCurrencies"))
@@ -309,9 +308,9 @@ pub fn tick(state: &mut ShopState) {
         .keys("StoreCreditAccountCreditTransaction")
         .filter_map(|key| {
             let record = state.get(key)?;
-            let expires = DateTime::parse_from_rfc3339(text(record, "expiresAt")?).ok()?;
+            let expires = value::parse_date_time(text(record, "expiresAt")?)?;
             let left = model::cents(record.get("remainingAmount"));
-            (left > 0 && expires.with_timezone(&Utc) <= now).then(|| {
+            (left > 0 && expires <= now).then(|| {
                 (
                     key.to_string(),
                     text(record, "account").unwrap_or_default().to_string(),
@@ -356,7 +355,7 @@ fn order_account(state: &mut ShopState, order: &str, create: bool) -> Option<Str
         .get(order)
         .and_then(|record| text(record, "customer"))
         .map(str::to_string)?;
-    let currency = model::currency(state);
+    let currency = state.currency();
     account_of(state, &customer, &currency, create).ok()
 }
 
@@ -365,7 +364,7 @@ pub fn can_pay(state: &ShopState, customer: Option<&str>, amount: i64) -> bool {
     let Some(customer) = customer else {
         return false;
     };
-    let currency = model::currency(state);
+    let currency = state.currency();
     // Reading does not make an account: a savepoint of the caller's mutation would undo it.
     let account = state.get(customer).and_then(|owner| {
         gids(owner.get("storeCreditAccounts"))
@@ -437,7 +436,7 @@ pub fn read_refund(
         .get("amount")
         .and_then(|amount| amount.get("currencyCode"))
         .and_then(Value::as_str)
-        && currency != model::currency(state)
+        && currency != state.currency()
     {
         return Err(UserError::new(
             &[path, &["amount", "currencyCode"]].concat(),
@@ -486,7 +485,7 @@ fn credit_mutation(
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = model::input_of(ctx.arg("creditInput"));
     let (amount, currency) = model::money_input(input.get("creditAmount")).unwrap_or_default();
-    let currency = currency.unwrap_or_else(|| model::currency(mutation.state()));
+    let currency = currency.unwrap_or_else(|| mutation.state().currency());
     let amount_path = ["creditInput", "creditAmount", "amount"];
     if amount <= 0 {
         return failed(
@@ -593,7 +592,7 @@ fn debit_mutation(
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = model::input_of(ctx.arg("debitInput"));
     let (amount, currency) = model::money_input(input.get("debitAmount")).unwrap_or_default();
-    let currency = currency.unwrap_or_else(|| model::currency(mutation.state()));
+    let currency = currency.unwrap_or_else(|| mutation.state().currency());
     let amount_path = ["debitInput", "debitAmount", "amount"];
     if amount <= 0 {
         return failed(

@@ -701,8 +701,7 @@ fn order_create_imports_an_order_with_its_money_and_stock() {
     assert_eq!(created["transactions"][0]["gateway"], json!("bogus"));
     assert_eq!(shop.get(&id).unwrap()["customer"], json!(customer));
     assert_eq!(shop.get(&id).unwrap()["tags"], json!(["imported"]));
-    let price =
-        crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
+    let price = crate::state::value::exact_cents(shop.get(&variant).unwrap().get("price")).unwrap();
     assert_eq!(
         model::field_cents(shop.get(&id).unwrap(), "totalPriceSet"),
         2 * price + 500 + 1000
@@ -1182,8 +1181,7 @@ fn an_order_edit_adds_removes_and_discounts_line_items() {
         .find(|variant| json!(variant) != line_variant)
         .unwrap()
         .to_string();
-    let price =
-        crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
+    let price = crate::state::value::exact_cents(shop.get(&variant).unwrap().get("price")).unwrap();
     let added = run(
         &mut shop,
         "mutation($id: ID!, $variant: ID!) { orderEditAddVariant(id: $id, variantId: $variant, quantity: 2) {
@@ -1302,8 +1300,7 @@ fn draft_orders_are_created_calculated_updated_and_completed() {
     let mut shop = demo();
     shop.set_setting(super::TAX_RATE_SETTING, json!(2000));
     let (variant, item) = first_variant(&shop);
-    let price =
-        crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
+    let price = crate::state::value::exact_cents(shop.get(&variant).unwrap().get("price")).unwrap();
     let customer = shop.keys("Customer").next().unwrap().to_string();
     let input = json!({
         "lineItems": [

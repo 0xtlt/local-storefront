@@ -26,7 +26,8 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use crate::domains::{catalog, content, logistics};
-use crate::state::{ChangeKind, Record, ShopState, gid, gid_type, parse_gid};
+use crate::state::value::non_empty_str_field as text;
+use crate::state::{ChangeKind, Record, ShopState, gid, gid_number, gid_type, parse_gid};
 
 /// The next instant after now at which the time alone changes what [`overlay`] projects: the
 /// earliest start or end of an app discount still to come (the checkout runs those active by
@@ -37,8 +38,7 @@ pub fn next_moment(state: &ShopState) -> Option<chrono::DateTime<chrono::Utc>> {
         .all_of(&["DiscountAutomaticNode", "DiscountCodeNode"])
         .filter_map(app_discount)
         .flat_map(|details| ["startsAt", "endsAt"].map(|field| details.get(field)))
-        .filter_map(|at| chrono::DateTime::parse_from_rfc3339(at?.as_str()?).ok())
-        .map(|at| at.with_timezone(&chrono::Utc))
+        .filter_map(crate::state::value::date_time_of)
         .filter(|at| *at > now)
         .min()
 }
@@ -445,8 +445,7 @@ impl<'s> Sync<'s> {
             }
         }
         let app_namespace = state
-            .keys("App")
-            .next()
+            .app_gid()
             .and_then(parse_gid)
             .map(|(_, id)| format!("app--{id}"));
         let locations_in_data = !store.locations.is_empty()
@@ -1234,7 +1233,7 @@ impl<'s> Sync<'s> {
                 .map(str::to_string)
                 .collect(),
             price: Some(Money::Cents(
-                catalog::cents_of(record.get("price")).unwrap_or(0),
+                crate::state::value::exact_cents(record.get("price")).unwrap_or(0),
             )),
             compare_at_price: catalog::cents_of(record.get("compareAtPrice")).map(Money::Cents),
             sku: string(record, "sku"),
@@ -2281,7 +2280,7 @@ impl<'s> Sync<'s> {
         let removed = self.removed_of(&["DiscountAutomaticNode", "DiscountCodeNode"]);
         let mut keys: Vec<&'s str> = view.keys("DiscountAutomaticNode", &removed);
         keys.extend(view.keys("DiscountCodeNode", &removed));
-        keys.sort_by_key(|key| parse_gid(key).map_or(0, |(_, id)| id));
+        keys.sort_by_key(|key| gid_number(key));
         keys.into_iter()
             .filter_map(|key| {
                 let details = app_discount(view.get(key)?)?;
@@ -2401,14 +2400,6 @@ impl<'s> Sync<'s> {
 /// The type of a record: its `__typename`, else the type its GID names.
 fn type_of<'r>(key: &'r str, record: &'r Record) -> Option<&'r str> {
     text(record, "__typename").or_else(|| gid_type(key))
-}
-
-/// A string field of a record, when it is a non-empty string.
-fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .filter(|text| !text.is_empty())
 }
 
 fn string(record: &Record, field: &str) -> Option<String> {

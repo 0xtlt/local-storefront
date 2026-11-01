@@ -44,10 +44,9 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, U
 use chrono_tz::Tz;
 use serde_json::{Map, Value, json};
 
-use crate::domains::catalog::cents_of;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Obj, ShopResolver};
-use crate::state::{Record, ShopState};
+use crate::state::{Record, ShopState, value};
 
 /// The metrics of the `sales` schema: name, data type, display name. Those lsf computes are in
 /// [`COMPUTED`].
@@ -914,19 +913,12 @@ struct Sale {
 }
 
 fn money(value: Option<&Value>) -> f64 {
-    cents_of(
+    value::exact_cents(
         value
             .and_then(|set| set.get("shopMoney").or(Some(set)))
             .and_then(|money| money.get("amount")),
     )
     .map_or(0.0, |cents| cents as f64 / 100.0)
-}
-
-fn instant(value: Option<&Value>) -> Option<DateTime<Utc>> {
-    value
-        .and_then(Value::as_str)
-        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-        .map(|at| at.with_timezone(&Utc))
 }
 
 fn channel(source: Option<&str>) -> &'static str {
@@ -944,7 +936,7 @@ fn sales(state: &ShopState) -> Vec<Sale> {
     for order in state.all("Order") {
         let (Some(customer), Some(at), Some(id)) = (
             order.get("customer").and_then(Value::as_str),
-            instant(order.get("processedAt")),
+            value::date_time_of(order.get("processedAt")),
             order.get("id").and_then(Value::as_str),
         ) else {
             continue;
@@ -963,7 +955,7 @@ fn sales(state: &ShopState) -> Vec<Sale> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        let at = instant(order.get("processedAt").or_else(|| order.get("createdAt")));
+        let at = value::date_time_of(order.get("processedAt").or_else(|| order.get("createdAt")));
         let customer = order
             .get("customer")
             .and_then(Value::as_str)
@@ -1118,7 +1110,7 @@ fn sales(state: &ShopState) -> Vec<Sale> {
             continue;
         };
         let mut row = Sale {
-            at: instant(refund.get("createdAt")),
+            at: value::date_time_of(refund.get("createdAt")),
             order: order_id.to_string(),
             customer: order
                 .get("customer")
@@ -1325,15 +1317,9 @@ fn run(state: &ShopState, text: &str) -> Result<(Value, Vec<String>), Vec<String
             query.from
         )]);
     }
-    let zone = state
-        .shop()
-        .and_then(|shop| shop.get("ianaTimezone"))
-        .and_then(Value::as_str)
-        .and_then(|zone| zone.parse::<Tz>().ok())
-        .unwrap_or(Tz::UTC);
     let clock = Clock {
         now: state.now(),
-        zone,
+        zone: state.time_zone(),
     };
     let mut dims: Vec<String> = Vec::new();
     if let Some(unit) = &query.timeseries {

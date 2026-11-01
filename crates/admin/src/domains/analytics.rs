@@ -179,13 +179,6 @@ fn date_values(
         .collect()
 }
 
-fn instant(value: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
-    value
-        .as_str()
-        .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
-        .map(|at| at.with_timezone(&chrono::Utc))
-}
-
 /// What is wrong with the fields of an annotation as they would be.
 fn annotation_errors(fields: &Map<String, Value>) -> Vec<UserError> {
     let mut errors = Vec::new();
@@ -209,8 +202,8 @@ fn annotation_errors(fields: &Map<String, Value>) -> Vec<UserError> {
         );
     }
     if let (Some(start), Some(end)) = (
-        fields.get("startedAt").and_then(instant),
-        fields.get("endedAt").and_then(instant),
+        crate::state::value::date_time_of(fields.get("startedAt")),
+        crate::state::value::date_time_of(fields.get("endedAt")),
     ) && end < start
     {
         errors.push(
@@ -223,7 +216,8 @@ fn annotation_errors(fields: &Map<String, Value>) -> Vec<UserError> {
 
 /// Shopify writes the dates of an annotation in UTC (`2026-11-28T00:00:00Z`).
 fn utc(value: &Value) -> Value {
-    instant(value).map_or(Value::Null, |at| json!(crate::state::value::date_time(at)))
+    crate::state::value::date_time_of(Some(value))
+        .map_or(Value::Null, |at| json!(crate::state::value::date_time(at)))
 }
 
 fn annotation_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
@@ -234,7 +228,7 @@ fn annotation_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
     }
     let now = m.timestamp();
     let state = m.state_mut();
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let id = state.new_gid("AnalyticsAnnotation");
     state.insert_as(
         id.clone(),
@@ -258,10 +252,9 @@ fn annotation_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
 
 /// An annotation this app made.
 fn own_annotation(state: &ShopState, id: &str) -> bool {
-    let app = state.keys("App").next();
+    let app = state.app_gid();
     state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some("AnalyticsAnnotation"))
+        .get_of(id, "AnalyticsAnnotation")
         .is_some_and(|record| record.get("createdByApp").and_then(Value::as_str) == app)
 }
 
@@ -419,7 +412,7 @@ fn target_errors(
 /// A decimal input as Shopify writes `Decimal`s.
 fn decimal(value: &Value) -> Value {
     json!(crate::state::value::decimal(
-        crate::domains::catalog::cents_of(Some(value)).unwrap_or(0)
+        crate::state::value::exact_cents(Some(value)).unwrap_or(0)
     ))
 }
 
@@ -430,7 +423,7 @@ fn target_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         return Ok(payload(json!({"analyticsTarget": null}), &errors));
     }
     let now = m.timestamp();
-    let currency = crate::domains::orders::model::currency(m.state());
+    let currency = m.state().currency();
     let query = target_query(&input);
     let state = m.state_mut();
     let id = state.new_gid("AnalyticsTarget");

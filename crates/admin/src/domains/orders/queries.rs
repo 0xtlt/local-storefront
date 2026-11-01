@@ -513,10 +513,7 @@ fn locations_for_move(
 /// The returnable fulfillments of an order, as inline `ReturnableFulfillment`s.
 fn returnable_fulfillments(r: &ShopResolver<'_>, order: &str) -> Vec<Value> {
     let state = r.state();
-    let Some(record) = state
-        .get(order)
-        .filter(|_| state.type_of(order) == Some("Order"))
-    else {
+    let Some(record) = state.get_of(order, "Order") else {
         return Vec::new();
     };
     gids(record.get("fulfillments"))
