@@ -27,7 +27,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{field, is, text};
+use super::records::{field, text};
 use super::variants::{self, Choice};
 use super::{cents_of, gids, product_changed};
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -416,7 +416,7 @@ fn combined_listing_update(
         .arg_str("parentProductId")
         .unwrap_or_default()
         .to_string();
-    if !is(state, &parent, "Product") {
+    if !state.is_of(&parent, "Product") {
         return Ok(payload(
             empty,
             &[error(&["parentProductId"], "PARENT_PRODUCT_NOT_FOUND")],
@@ -482,7 +482,7 @@ fn combined_listing_update(
         let at = index.to_string();
         let path = ["productsAdded", at.as_str()];
         let child = text(item, "childProductId").unwrap_or_default();
-        let code = if !is(state, child, "Product") {
+        let code = if !state.is_of(child, "Product") {
             Some("PRODUCT_NOT_FOUND")
         } else if child == parent || role(state, child).as_deref() == Some("PARENT") {
             Some("CANNOT_HAVE_PARENT_AS_CHILD")

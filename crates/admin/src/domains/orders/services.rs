@@ -335,8 +335,7 @@ fn find_fulfillment_order(
     id: &str,
 ) -> Result<(String, String, String), UserError> {
     let record = state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some("FulfillmentOrder"))
+        .get_of(id, "FulfillmentOrder")
         .ok_or_else(|| UserError::new(&["id"], "Fulfillment order could not be found."))?;
     Ok((
         id.to_string(),

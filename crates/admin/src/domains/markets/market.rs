@@ -31,7 +31,7 @@ use lsf_core::util::handleize;
 use serde_json::{Map, Value, json};
 
 use super::{
-    BACKUP_REGION, Pointer, coded, input, is, is_active, market_currency, market_not_found,
+    BACKUP_REGION, Pointer, coded, input, is_active, market_currency, market_not_found,
     market_of_country, objects, price_inclusions, records_input, region, region_gid, regions_of,
     shop_currency, strings, text, web_presences,
 };
@@ -299,7 +299,7 @@ fn customer_market(
 /// The market of an `id` argument.
 fn market_arg(state: &ShopState, ctx: &FieldContext<'_>, name: &str) -> Option<String> {
     let id = ctx.arg_str(name)?;
-    is(state, id, "Market").then(|| id.to_string())
+    state.is_of(id, "Market").then(|| id.to_string())
 }
 
 /// The regions of a `MarketConditionsRegionsInput` (`regions` of country codes, or
@@ -642,7 +642,7 @@ fn catalogs_input(
         let mut field: Vec<&str> = at.to_vec();
         field.push(&index);
         match super::catalog_key(state, id) {
-            Some(key) if is(state, &key, "MarketCatalog") => found.push(key),
+            Some(key) if state.is_of(&key, "MarketCatalog") => found.push(key),
             // lsf's wording.
             Some(_) => errors.push(coded(
                 &field,

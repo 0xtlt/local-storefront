@@ -574,7 +574,7 @@ fn product_duplicate(
     let empty = json!({"newProduct": null, "imageJob": null, "productDuplicateOperation": null});
     let state = mutation.state();
     let original = ctx.arg_str("productId").unwrap_or_default().to_string();
-    if !records::is(state, &original, "Product") {
+    if !state.is_of(&original, "Product") {
         let error = UserError::new(&["productId"], "Product does not exist");
         return Ok(payload(empty, &[error]));
     }
@@ -825,7 +825,7 @@ fn product_change_status(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let product = ctx.arg_str("productId").unwrap_or_default().to_string();
-    if !records::is(mutation.state(), &product, "Product") {
+    if !mutation.state().is_of(&product, "Product") {
         // shopify.dev's example.
         let error =
             UserError::new(&["productId"], "Product does not exist").code("PRODUCT_NOT_FOUND");

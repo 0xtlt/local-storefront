@@ -565,11 +565,7 @@ fn transaction_void(
         .to_string();
     let failed = |error: UserError| Ok(payload(json!({"transaction": null}), &[error]));
     let state = mutation.state();
-    let Some(transaction) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("OrderTransaction"))
-        .cloned()
-    else {
+    let Some(transaction) = state.get_of(&id, "OrderTransaction").cloned() else {
         return failed(
             UserError::new(&["parentTransactionId"], "Transaction does not exist.")
                 .code("TRANSACTION_NOT_FOUND"),
@@ -925,10 +921,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             ..LineDraft::default()
         };
         if let Some(variant) = get("variantId") {
-            let Some(variant_record) = state
-                .get(variant)
-                .filter(|_| state.type_of(variant) == Some("ProductVariant"))
-            else {
+            let Some(variant_record) = state.get_of(variant, "ProductVariant") else {
                 // lsf's wording.
                 errors.push(
                     UserError::new(

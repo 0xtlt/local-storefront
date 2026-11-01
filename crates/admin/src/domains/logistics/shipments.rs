@@ -36,8 +36,8 @@ use serde_json::{Map, Value, json};
 
 use super::transfers::{self, COMMITTED, SHIPPABLE, TRANSFER};
 use super::{
-    coded, emit_change, idempotent, int, is_url, keys_of, objects, push, record_of,
-    snapshot_location, stock, text,
+    coded, emit_change, idempotent, int, is_url, keys_of, objects, push, snapshot_location, stock,
+    text,
 };
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
@@ -120,7 +120,7 @@ const SHIPMENT_COUNT: &str = "lsfShipmentCount";
 const BARCODE_LIMIT: usize = 255;
 
 fn shipment_of(state: &ShopState, id: &str) -> Option<Record> {
-    record_of(state, id, "InventoryShipment").cloned()
+    state.get_of(id, "InventoryShipment").cloned()
 }
 
 fn transfer_of(state: &ShopState, shipment: &Record) -> Option<String> {

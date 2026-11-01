@@ -577,11 +577,7 @@ fn network_reason(reason: &str) -> Option<&'static str> {
 /// A buyer's bank opens a dispute on an order: the dispute and its evidence, prefilled from
 /// the order; for a chargeback, the amount and the fee leave the balance. `disputes/create`.
 pub fn open_dispute(state: &mut ShopState, dispute: &NewDispute) -> Result<String, String> {
-    let Some(order) = state
-        .get(dispute.order)
-        .filter(|_| state.type_of(dispute.order) == Some("Order"))
-        .cloned()
-    else {
+    let Some(order) = state.get_of(dispute.order, "Order").cloned() else {
         return Err(format!(
             "{} is not an order of {}",
             dispute.order,
@@ -810,11 +806,7 @@ fn evidence_update(
     };
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(evidence) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("ShopifyPaymentsDisputeEvidence"))
-        .cloned()
-    else {
+    let Some(evidence) = state.get_of(&id, "ShopifyPaymentsDisputeEvidence").cloned() else {
         return failed(
             &["id"],
             "Dispute evidence could not be found.",

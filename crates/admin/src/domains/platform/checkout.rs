@@ -18,7 +18,7 @@ use serde_json::{Map, Value, json};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::seed::Seed;
-use crate::state::{Record, ShopState, gid, value};
+use crate::state::{gid, value};
 
 /// The field of a profile or a configuration that keeps its branding (`CheckoutProfile` has
 /// no such field in GraphQL: `checkoutBranding` reads it).
@@ -78,12 +78,6 @@ fn merge(base: &Value, patch: &Value) -> Value {
     }
 }
 
-fn record_of(state: &ShopState, id: &str, type_name: &str) -> Option<Record> {
-    (state.type_of(id) == Some(type_name))
-        .then(|| state.get(id).cloned())
-        .flatten()
-}
-
 fn configuration_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let error = |field: &[&str], message: &str, code: &str| {
@@ -92,7 +86,11 @@ fn configuration_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         error["reason"] = json!(code.to_ascii_lowercase());
         error
     };
-    let Some(mut record) = record_of(m.state(), &id, "CheckoutAndAccountsConfiguration") else {
+    let Some(mut record) = m
+        .state()
+        .get_of(&id, "CheckoutAndAccountsConfiguration")
+        .cloned()
+    else {
         return Ok(json!({
             "configuration": null,
             "userErrors": [error(&["id"], "Configuration not found", "NOT_FOUND")],
@@ -168,7 +166,7 @@ fn branding_upsert(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         .arg_str("checkoutProfileId")
         .unwrap_or_default()
         .to_string();
-    let Some(mut profile) = record_of(m.state(), &id, "CheckoutProfile") else {
+    let Some(mut profile) = m.state().get_of(&id, "CheckoutProfile").cloned() else {
         let error = UserError::new(&["checkoutProfileId"], "Checkout profile not found")
             .code("INTERNAL_ERROR");
         return Ok(payload(json!({"checkoutBranding": null}), &[error]));
@@ -205,10 +203,7 @@ fn checkout_branding(
 ) -> Result<Output<Obj>, FieldError> {
     let id = ctx.arg_str("checkoutProfileId").unwrap_or_default();
     let state = r.state();
-    let Some(profile) = state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some("CheckoutProfile"))
-    else {
+    let Some(profile) = state.get_of(id, "CheckoutProfile") else {
         return Ok(Output::Null);
     };
     let mut branding: Map<String, Value> = match profile.get(BRANDING) {

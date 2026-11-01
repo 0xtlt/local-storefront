@@ -63,11 +63,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         ))
     };
     let state = mutation.state();
-    let Some(order) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Order"))
-        .cloned()
-    else {
+    let Some(order) = state.get_of(&id, "Order").cloned() else {
         return failed(UserError::new(&["id"], "Order does not exist"));
     };
     if model::is_cancelled(&order) {
@@ -506,11 +502,7 @@ fn add_variant(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         Err(error) => return failed(error),
     };
     let variant = ctx.arg_str("variantId").unwrap_or_default().to_string();
-    let Some(variant_record) = state
-        .get(&variant)
-        .filter(|_| state.type_of(&variant) == Some("ProductVariant"))
-        .cloned()
-    else {
+    let Some(variant_record) = state.get_of(&variant, "ProductVariant").cloned() else {
         return failed(UserError::new(&["variantId"], "Variant does not exist"));
     };
     let on_order = state

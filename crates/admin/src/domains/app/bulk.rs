@@ -600,10 +600,7 @@ fn run_mutation(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
 fn cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("BulkOperation"))
-    else {
+    let Some(record) = state.get_of(&id, "BulkOperation") else {
         let error = UserError::new(&["id"], "Bulk operation does not exist");
         return Ok(payload(json!({"bulkOperation": null}), &[error]));
     };

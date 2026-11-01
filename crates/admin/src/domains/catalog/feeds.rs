@@ -36,7 +36,7 @@ use serde_json::{Value, json};
 
 use super::gids;
 use super::gift_cards::normalize_time;
-use super::records::{self, field, input, is, text};
+use super::records::{self, field, input, text};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, gid, parse_gid, value};
@@ -197,7 +197,7 @@ pub fn full_sync(
 
 /// The feed an id names.
 fn feed_arg(state: &ShopState, id: &str) -> Option<String> {
-    is(state, id, FEED).then(|| id.to_string())
+    state.is_of(id, FEED).then(|| id.to_string())
 }
 
 /// `productFeedCreate`.
@@ -207,7 +207,7 @@ fn feed_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     let country = text(&input, "country").unwrap_or_default().to_string();
     let language = text(&input, "language").unwrap_or_default().to_string();
     let channel = match text(&input, "channelId") {
-        Some(channel) if is(state, channel, "Channel") => Some(channel.to_string()),
+        Some(channel) if state.is_of(channel, "Channel") => Some(channel.to_string()),
         Some(_) => None,
         None => state.keys("Channel").next().map(str::to_string),
     };

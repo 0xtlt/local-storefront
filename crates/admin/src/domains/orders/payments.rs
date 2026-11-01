@@ -330,10 +330,7 @@ pub fn read_terms(
         .map(str::to_string)
         .or_else(|| base.and_then(|base| text(base, "lsfTemplate").map(str::to_string)))
         .unwrap_or_default();
-    let Some(record) = state
-        .get(&template)
-        .filter(|_| state.type_of(&template) == Some("PaymentTermsTemplate"))
-    else {
+    let Some(record) = state.get_of(&template, "PaymentTermsTemplate") else {
         return Err(UserError::new(
             &at("paymentTermsTemplateId"),
             "Payment terms template does not exist",
@@ -648,10 +645,7 @@ fn terms_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     let failed = |error: UserError| Ok(payload(json!({"paymentTerms": null}), &[error]));
     let state = mutation.state();
     let reference = ctx.arg_str("referenceId").unwrap_or_default().to_string();
-    let Some(order) = state
-        .get(&reference)
-        .filter(|_| state.type_of(&reference) == Some("Order"))
-    else {
+    let Some(order) = state.get_of(&reference, "Order") else {
         return failed(
             UserError::new(
                 &["referenceId"],
@@ -707,11 +701,7 @@ fn terms_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("PaymentTerms"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&id, "PaymentTerms").cloned() else {
         return failed(
             UserError::new(&["input", "paymentTermsId"], "Payment terms do not exist").code(CODE),
         );
@@ -755,11 +745,7 @@ fn terms_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("PaymentTerms"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&id, "PaymentTerms").cloned() else {
         let error = UserError::new(&["input", "paymentTermsId"], "Payment terms do not exist")
             .code("PAYMENT_TERMS_DELETE_UNSUCCESSFUL");
         return Ok(payload(json!({"deletedId": null}), &[error]));
@@ -841,11 +827,7 @@ fn manual_payment(
     };
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(order) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Order"))
-        .cloned()
-    else {
+    let Some(order) = state.get_of(&id, "Order").cloned() else {
         return failed(&["id"], "Order does not exist", "ORDER_NOT_FOUND");
     };
     let outstanding = field_cents(&order, "totalOutstandingSet");
@@ -1132,11 +1114,7 @@ fn mandate_payment(
     }
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(order) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Order"))
-        .cloned()
-    else {
+    let Some(order) = state.get_of(&id, "Order").cloned() else {
         return failed(&["id"], "Order does not exist");
     };
     let mandate = ctx.arg_str("mandateId").unwrap_or_default();
@@ -1196,8 +1174,7 @@ fn mandate_payment(
 /// wrong with it.
 fn unpaid_schedule(state: &ShopState, id: &str) -> Result<(Record, Record), &'static str> {
     let schedule = state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some("PaymentSchedule"))
+        .get_of(id, "PaymentSchedule")
         .ok_or("Payment schedule does not exist")?;
     let order = text(schedule, "paymentTerms")
         .and_then(|terms| state.get(terms))

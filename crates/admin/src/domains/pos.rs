@@ -167,13 +167,6 @@ fn is_reason_code(state: &ShopState, id: &str) -> bool {
         .is_some_and(|type_name| REASON_CODE_TYPES.contains(&type_name))
 }
 
-/// The record `id` when it is of `type_name`.
-fn record_of<'s>(state: &'s ShopState, id: &str, type_name: &str) -> Option<&'s Record> {
-    state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some(type_name))
-}
-
 /// The keys of the records of `type_name` whose `field` is `value`.
 fn keys_with<'s>(
     state: &'s ShopState,

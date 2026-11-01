@@ -41,7 +41,7 @@ use std::collections::HashSet;
 use serde_json::{Map, Value, json};
 
 use super::{
-    Pointer, coded, input, is, market_currency, number, objects, shop_currency, strings, text,
+    Pointer, coded, input, market_currency, number, objects, shop_currency, strings, text,
 };
 use crate::domains::catalog::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -195,7 +195,7 @@ fn all_variants(state: &ShopState) -> Vec<String> {
     state
         .all("Product")
         .flat_map(|product| gids(product.get("variants")))
-        .filter(|variant| is(state, variant, "ProductVariant"))
+        .filter(|variant| state.is_of(variant, "ProductVariant"))
         .collect()
 }
 
@@ -577,7 +577,7 @@ fn product_contextual_pricing(
 /// The price list of an argument.
 fn list_arg(state: &ShopState, ctx: &FieldContext<'_>, name: &str) -> Option<String> {
     let id = ctx.arg_str(name)?;
-    is(state, id, "PriceList").then(|| id.to_string())
+    state.is_of(id, "PriceList").then(|| id.to_string())
 }
 
 /// Recomputes `fixedPricesCount`.
@@ -647,7 +647,7 @@ fn check_prices(
         };
         let variant = text(input, "variantId").unwrap_or_default();
         let mut ok = true;
-        if !is(state, variant, "ProductVariant") {
+        if !state.is_of(variant, "ProductVariant") {
             // The code's description in the schema.
             errors.push(error(&["variantId"], "Variant not found.", variant_code));
             ok = false;
@@ -1164,7 +1164,7 @@ fn check_deletes(
     let fixed = fixed_variants(state, list);
     for (index, id) in ids.iter().enumerate() {
         let index = index.to_string();
-        if !is(state, id, "ProductVariant") {
+        if !state.is_of(id, "ProductVariant") {
             errors.push(coded(
                 &[at, &index],
                 "Variant not found.",
@@ -1293,7 +1293,7 @@ fn fixed_prices_by_product_update(
     for (index, input) in to_add.iter().enumerate() {
         let index = index.to_string();
         let product = text(input, "productId").unwrap_or_default().to_string();
-        if !is(state, &product, "Product") {
+        if !state.is_of(&product, "Product") {
             errors.push(coded(
                 &["pricesToAdd", &index, "productId"],
                 "Product does not exist.",
@@ -1357,7 +1357,7 @@ fn fixed_prices_by_product_update(
     }
     let mut deleted_products = Vec::new();
     for (index, product) in to_delete.iter().enumerate() {
-        if !is(state, product, "Product") {
+        if !state.is_of(product, "Product") {
             errors.push(coded(
                 &["pricesToDeleteByProductIds", &index.to_string()],
                 "Product does not exist.",
@@ -1464,7 +1464,7 @@ fn check_rules(
         let minimum = input.get("minimum").and_then(Value::as_i64).unwrap_or(1);
         let maximum = input.get("maximum").and_then(Value::as_i64);
         let increment = input.get("increment").and_then(Value::as_i64).unwrap_or(1);
-        if !is(state, &variant, "ProductVariant") {
+        if !state.is_of(&variant, "ProductVariant") {
             // The code's description in the schema.
             errors.push(error(
                 "variantId",
@@ -1716,7 +1716,7 @@ fn quantity_rules_delete(
     let mut errors = Vec::new();
     for (index, id) in ids.iter().enumerate() {
         let index = index.to_string();
-        if !is(state, id, "ProductVariant") {
+        if !state.is_of(id, "ProductVariant") {
             errors.push(coded(
                 &["variantIds", &index],
                 "Product variant ID does not exist.",
@@ -1805,7 +1805,7 @@ fn quantity_pricing_update(
     for (index, id) in prices_to_delete.iter().enumerate() {
         let at = ["input", "pricesToDeleteByVariantId", &index.to_string()].map(str::to_string);
         let at: Vec<&str> = at.iter().map(String::as_str).collect();
-        if !is(state, id, "ProductVariant") {
+        if !state.is_of(id, "ProductVariant") {
             errors.push(coded(
                 &at,
                 "Price list price was not found for the variant.",
@@ -1829,7 +1829,7 @@ fn quantity_pricing_update(
         ]
         .map(str::to_string);
         let at: Vec<&str> = at.iter().map(String::as_str).collect();
-        if !is(state, id, "ProductVariant") {
+        if !state.is_of(id, "ProductVariant") {
             errors.push(coded(
                 &at,
                 "Quantity rule was not found for the variant.",
@@ -1860,7 +1860,7 @@ fn quantity_pricing_update(
     }
     let breaks_by_variant = ids_of("quantityPriceBreaksToDeleteByVariantId");
     for (index, id) in breaks_by_variant.iter().enumerate() {
-        if !is(state, id, "ProductVariant") {
+        if !state.is_of(id, "ProductVariant") {
             errors.push(coded(
                 &[
                     "input",
@@ -1943,7 +1943,7 @@ fn quantity_pricing_update(
             .and_then(Value::as_i64)
             .unwrap_or(0);
         let before = errors.len();
-        if !is(state, &variant, "ProductVariant") {
+        if !state.is_of(&variant, "ProductVariant") {
             errors.push(coded(
                 &at,
                 "Variant was not found.",

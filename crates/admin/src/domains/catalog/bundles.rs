@@ -41,7 +41,7 @@
 use serde_json::{Map, Value, json};
 
 use super::products::{create_options, emit_new_inventory, free_handle, new_record};
-use super::records::{self, error_at, field, input, is, objects, text};
+use super::records::{self, error_at, field, input, objects, text};
 use super::variants::{self, Choice};
 use super::{cents_of, gids, product_changed};
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -409,7 +409,7 @@ fn parent_of(
     index: usize,
 ) -> Result<String, UserError> {
     if let Some(variant) = text(input, "parentProductVariantId") {
-        if is(state, variant, "ProductVariant") {
+        if state.is_of(variant, "ProductVariant") {
             return Ok(variant.to_string());
         }
         return Err(relationship_error(
@@ -421,8 +421,7 @@ fn parent_of(
         return Err(relationship_error(&at(index, &[]), "PARENT_REQUIRED"));
     };
     let variants = state
-        .get(product)
-        .filter(|_| is(state, product, "Product"))
+        .get_of(product, "Product")
         .map(|record| gids(record.get("variants")))
         .unwrap_or_default();
     match variants.as_slice() {
@@ -503,7 +502,7 @@ fn planned_components(
             index,
             &["productVariantRelationshipsToCreate", &position.to_string()],
         );
-        let code = if !is(state, &id, "ProductVariant") {
+        let code = if !state.is_of(&id, "ProductVariant") {
             Some("PRODUCT_VARIANTS_NOT_FOUND")
         } else if id == parent {
             Some("CIRCULAR_REFERENCE")
@@ -735,7 +734,7 @@ fn plan_of(
     for (index, component) in components.iter().enumerate() {
         let at = below(&components_path, &[&index.to_string()]);
         let product = text(component, "productId").unwrap_or_default().to_string();
-        if !is(state, &product, "Product") {
+        if !state.is_of(&product, "Product") {
             errors.push(error_at(
                 &below(&at, &["productId"]),
                 "Product does not exist",
@@ -1299,8 +1298,7 @@ fn bundle_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     let state = mutation.state();
     let product = text(&input, "productId").unwrap_or_default().to_string();
     let bundle = state
-        .get(&product)
-        .filter(|_| is(state, &product, "Product"))
+        .get_of(&product, "Product")
         .and_then(|record| record.get(BUNDLE_INPUT))
         .cloned();
     let Some(bundle) = bundle else {

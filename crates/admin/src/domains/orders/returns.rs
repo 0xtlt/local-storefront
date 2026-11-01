@@ -318,9 +318,7 @@ fn create(
 
 /// A return of the shop, its status and its order.
 fn find_return(state: &ShopState, id: &str) -> Option<(String, String)> {
-    let record = state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some("Return"))?;
+    let record = state.get_of(id, "Return")?;
     Some((
         text(record, "status").unwrap_or("OPEN").to_string(),
         text(record, "order").unwrap_or_default().to_string(),

@@ -93,10 +93,7 @@ fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     let id = text(&input, "fulfillmentOrderId")
         .unwrap_or_default()
         .to_string();
-    let Some(record) = (state.type_of(&id) == Some("FulfillmentOrder"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "FulfillmentOrder").cloned() else {
         return fail(&at("fulfillmentOrderId"), "NOT_FOUND");
     };
     let method = record

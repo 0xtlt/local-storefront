@@ -157,7 +157,7 @@ fn insert_draft(
 /// The draft of `draftId`, not committed, or the error.
 fn open_draft(state: &ShopState, ctx: &FieldContext<'_>) -> Result<(String, Record), UserError> {
     let id = ctx.arg_str("draftId").unwrap_or_default().to_string();
-    let Some(draft) = state.get(&id).filter(|_| state.type_of(&id) == Some(DRAFT)) else {
+    let Some(draft) = state.get_of(&id, DRAFT) else {
         return Err(model::invalid_error(&["draftId"], "Draft does not exist"));
     };
     if draft.get("lsfCommitted").and_then(Value::as_bool) == Some(true) {

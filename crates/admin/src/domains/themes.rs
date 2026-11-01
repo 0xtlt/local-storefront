@@ -126,9 +126,7 @@ pub fn root(state: &ShopState) -> Option<PathBuf> {
 
 /// The theme of `id`, when it is one.
 pub fn theme_of(state: &ShopState, id: &str) -> Option<Record> {
-    (state.type_of(id) == Some("OnlineStoreTheme"))
-        .then(|| state.get(id).cloned())
-        .flatten()
+    state.get_of(id, "OnlineStoreTheme").cloned()
 }
 
 /// Whether a theme is the directory's.

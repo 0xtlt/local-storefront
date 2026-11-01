@@ -26,7 +26,7 @@
 use serde_json::{Map, Value, json};
 
 use super::cents_of;
-use super::records::{coded, currency, field, input, is, text};
+use super::records::{coded, currency, field, input, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, gid, value};
@@ -124,7 +124,7 @@ fn new_code(state: &ShopState) -> String {
 fn check_recipient(state: &ShopState, input: &Map<String, Value>, errors: &mut Vec<UserError>) {
     if let Some(recipient) = input.get("recipientAttributes").and_then(Value::as_object) {
         let id = text(recipient, "id").unwrap_or_default();
-        if !is(state, id, "Customer") {
+        if !state.is_of(id, "Customer") {
             errors.push(coded(
                 &["input", "recipientAttributes", "id"],
                 "The recipient could not be found.",
@@ -133,7 +133,7 @@ fn check_recipient(state: &ShopState, input: &Map<String, Value>, errors: &mut V
         }
     }
     if let Some(customer) = text(input, "customerId")
-        && !is(state, customer, "Customer")
+        && !state.is_of(customer, "Customer")
     {
         errors.push(coded(
             &["input", "customerId"],
@@ -273,7 +273,7 @@ fn gift_card_create(
 /// The card of `id`.
 fn card_arg(state: &ShopState, ctx: &FieldContext<'_>) -> Option<String> {
     ctx.arg_str("id")
-        .filter(|id| is(state, id, "GiftCard"))
+        .filter(|id| state.is_of(id, "GiftCard"))
         .map(str::to_string)
 }
 

@@ -405,10 +405,7 @@ fn refund_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .to_string();
     let state = mutation.state();
     let failed = |errors: &[UserError]| Ok(payload(json!({"refund": null, "order": null}), errors));
-    let Some(order_record) = state
-        .get(&order)
-        .filter(|_| state.type_of(&order) == Some("Order"))
-    else {
+    let Some(order_record) = state.get_of(&order, "Order") else {
         // lsf's wording.
         return failed(&[UserError::new(&["orderId"], "Order does not exist")]);
     };

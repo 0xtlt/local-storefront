@@ -742,8 +742,7 @@ pub fn check_pricing_policy(input: &Value, path: &[&str], errors: &mut Vec<UserE
 pub fn selling_plan_name(state: &ShopState, plan: Option<&str>) -> Option<String> {
     let plan = plan?;
     state
-        .get(plan)
-        .filter(|_| state.type_of(plan) == Some("SellingPlan"))
+        .get_of(plan, "SellingPlan")
         .and_then(|record| text(record, "name"))
         .map(str::to_string)
 }
@@ -1317,10 +1316,7 @@ pub fn check_payment_method(
     customer: Option<&str>,
     field: &[&str],
 ) -> Option<UserError> {
-    let Some(method) = state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some(PAYMENT_METHOD))
-    else {
+    let Some(method) = state.get_of(id, PAYMENT_METHOD) else {
         return Some(invalid_error(
             field,
             "Customer payment method does not exist",

@@ -410,11 +410,6 @@ fn objects(value: Option<&Value>) -> Vec<Map<String, Value>> {
         .collect()
 }
 
-/// Whether `key` is a record of `type_name`.
-fn is(state: &ShopState, key: &str, type_name: &str) -> bool {
-    state.type_of(key) == Some(type_name)
-}
-
 /// The `CatalogType` of a catalog record type.
 fn catalog_type(type_name: &str) -> &'static str {
     match type_name {
@@ -437,7 +432,7 @@ fn records_input(
 ) -> Vec<String> {
     let mut found = Vec::new();
     for (index, id) in ids.iter().enumerate() {
-        if is(state, id, type_name) {
+        if state.is_of(id, type_name) {
             if !found.contains(id) {
                 found.push(id.clone());
             }

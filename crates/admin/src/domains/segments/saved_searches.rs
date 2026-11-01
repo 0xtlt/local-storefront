@@ -27,7 +27,7 @@ use serde_json::{Map, Value, json};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::search::{Node, Query};
-use crate::state::{Record, ShopState};
+use crate::state::ShopState;
 
 /// The root fields that list the saved searches of a resource, and its `SearchResultType`.
 const ROOT_FIELDS: &[(&str, &str)] = &[
@@ -106,15 +106,10 @@ fn split(query: &str) -> Result<(String, Vec<Value>), String> {
     Ok((terms.join(" "), filters))
 }
 
-fn search_of<'s>(state: &'s ShopState, id: &str) -> Option<&'s Record> {
-    state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some("SavedSearch"))
-}
-
 /// The resource type of the saved search `id`.
 fn kind_of(state: &ShopState, id: &str) -> Option<String> {
-    search_of(state, id)
+    state
+        .get_of(id, "SavedSearch")
         .and_then(|search| search.get("resourceType").and_then(Value::as_str))
         .map(str::to_string)
 }
@@ -274,7 +269,8 @@ fn saved_search_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
 
 /// The query of the saved search a connection's `savedSearchId` names, if it names one.
 pub fn query_of(state: &ShopState, id: &str) -> Option<String> {
-    search_of(state, id)
+    state
+        .get_of(id, "SavedSearch")
         .and_then(|search| search.get("query").and_then(Value::as_str))
         .map(str::to_string)
 }
@@ -283,7 +279,8 @@ pub fn query_of(state: &ShopState, id: &str) -> Option<String> {
 /// `SearchResultType`: `URL_REDIRECT`, `DRAFT_ORDER`, …): what a bulk mutation's
 /// `savedSearchId` runs.
 pub fn query_for(state: &ShopState, id: &str, resource_type: &str) -> Option<String> {
-    search_of(state, id)
+    state
+        .get_of(id, "SavedSearch")
         .filter(|search| search.get("resourceType").and_then(Value::as_str) == Some(resource_type))
         .map(|search| {
             search

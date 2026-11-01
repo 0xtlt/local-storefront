@@ -1420,10 +1420,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
 fn remove(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("DeliveryProfile"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "DeliveryProfile").cloned() else {
         return Ok(payload(
             json!({"job": null}),
             &[UserError::new(&["id"], "Profile could not be found")],

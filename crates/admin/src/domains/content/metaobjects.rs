@@ -531,10 +531,7 @@ fn definition_update(
         .cloned()
         .unwrap_or_default();
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("MetaobjectDefinition"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "MetaobjectDefinition").cloned() else {
         let error = MetaobjectError::new(&["id"], "Record not found", "RECORD_NOT_FOUND");
         return Ok(answer(json!({"metaobjectDefinition": null}), &[error]));
     };
@@ -1320,10 +1317,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         .cloned()
         .unwrap_or_default();
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("Metaobject"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "Metaobject").cloned() else {
         let error = MetaobjectError::new(&["id"], "Record not found", "RECORD_NOT_FOUND");
         return Ok(answer(json!({"metaobject": null}), &[error]));
     };

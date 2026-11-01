@@ -23,7 +23,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{coded, input, is, market_not_found, number, shop_locales, strings, text};
+use super::{coded, input, market_not_found, number, shop_locales, strings, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{ShopState, value};
@@ -117,7 +117,7 @@ fn presence_market(
         .map(|record| strings(record.get("markets")))
         .unwrap_or_default()
         .into_iter()
-        .find(|market| is(state, market, "Market"));
+        .find(|market| state.is_of(market, "Market"));
     Ok(Output::object_or_null(first.as_deref().map(Obj::record)))
 }
 
@@ -328,7 +328,7 @@ fn check(
     let domain = text(input, "domainId").map(str::to_string);
     let suffix = text(input, "subfolderSuffix").map(str::to_string);
     if let Some(domain) = &domain {
-        if !is(state, domain, "Domain") {
+        if !state.is_of(domain, "Domain") {
             // lsf's wording, for the codes Shopify documents without a message.
             errors.push(error(
                 "domainId",
@@ -529,7 +529,7 @@ fn not_found(field: &str) -> UserError {
 /// The presence of an argument.
 fn presence_arg(state: &ShopState, ctx: &FieldContext<'_>, name: &str) -> Option<String> {
     let id = ctx.arg_str(name)?;
-    is(state, id, "MarketWebPresence").then(|| id.to_string())
+    state.is_of(id, "MarketWebPresence").then(|| id.to_string())
 }
 
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
@@ -565,7 +565,7 @@ fn market_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     let state = mutation.state();
     let market = ctx
         .arg_str("marketId")
-        .filter(|market| is(state, market, "Market"))
+        .filter(|market| state.is_of(market, "Market"))
         .map(str::to_string);
     let Some(market) = market else {
         return Ok(payload(

@@ -35,7 +35,7 @@
 use serde_json::{Map, Value, json};
 
 use super::inventory::with_idempotency;
-use super::records::{self, coded, field, input, is, is_active_location, objects, text};
+use super::records::{self, coded, field, input, is_active_location, objects, text};
 use super::{gids, product_changed};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
@@ -218,7 +218,7 @@ fn location_edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = input(ctx, "input");
     let state = mutation.state();
-    if !is(state, &id, "Location") {
+    if !state.is_of(&id, "Location") {
         let error = coded(
             &["id"],
             "The record with the ID used as the input value couldn't be found.",
@@ -286,7 +286,7 @@ fn activate_once(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     let key = "locationActivateUserErrors";
     let id = ctx.arg_str("locationId").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(record) = state.get(&id).filter(|_| is(state, &id, "Location")) else {
+    let Some(record) = state.get_of(&id, "Location") else {
         let error = coded(&["locationId"], "Location not found.", "LOCATION_NOT_FOUND");
         return Ok(errors_payload(json!({"location": null}), key, &[error]));
     };
@@ -362,7 +362,7 @@ fn deactivate_once(
     let id = ctx.arg_str("locationId").unwrap_or_default().to_string();
     let destination = ctx.arg_str("destinationLocationId").map(str::to_string);
     let state = mutation.state();
-    if !is(state, &id, "Location") {
+    if !state.is_of(&id, "Location") {
         let error = coded(&["locationId"], "Location not found.", "LOCATION_NOT_FOUND");
         return Ok(errors_payload(json!({"location": null}), key, &[error]));
     }
@@ -387,7 +387,7 @@ fn deactivate_once(
             "DESTINATION_LOCATION_IS_THE_SAME_LOCATION",
         )),
         Some(destination)
-            if !is(state, destination, "Location") || !is_active_location(state, destination) =>
+            if !state.is_of(destination, "Location") || !is_active_location(state, destination) =>
         {
             errors.push(coded(
                 &["destinationLocationId"],
@@ -535,7 +535,7 @@ fn location_delete(
     let id = ctx.arg_str("locationId").unwrap_or_default().to_string();
     let state = mutation.state();
     let mut errors = Vec::new();
-    if !is(state, &id, "Location") {
+    if !state.is_of(&id, "Location") {
         errors.push(coded(
             &["locationId"],
             "Location not found.",
@@ -585,7 +585,7 @@ fn location_delete(
 
 /// The active location of an argument, or the error of local pickup settings.
 fn pickup_location(state: &ShopState, id: &str, path: &[&str]) -> Result<(), UserError> {
-    if is(state, id, "Location") && is_active_location(state, id) {
+    if state.is_of(id, "Location") && is_active_location(state, id) {
         Ok(())
     } else {
         Err(coded(

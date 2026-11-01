@@ -805,8 +805,7 @@ fn abandonment(
     let state = r.state();
     Ok(Output::object_or_null(
         state
-            .get(id)
-            .filter(|_| state.type_of(id) == Some("Abandonment"))
+            .get_of(id, "Abandonment")
             .filter(|record| abandonment_listed(state, record))
             .map(|_| Obj::record(id)),
     ))

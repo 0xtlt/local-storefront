@@ -46,8 +46,8 @@ use chrono::Duration;
 use serde_json::{Map, Value, json};
 
 use super::records::{
-    self, ON_HAND_PARTS, arg_objects, coded, field, input, is, is_active_location, level_at,
-    new_level, objects, quantity, remove_level, text,
+    self, ON_HAND_PARTS, arg_objects, coded, field, input, is_active_location, level_at, new_level,
+    objects, quantity, remove_level, text,
 };
 use super::{gids, product_changed};
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -377,7 +377,7 @@ fn level_of(
         at.push(name);
         at
     };
-    if !is(state, item, "InventoryItem") {
+    if !state.is_of(item, "InventoryItem") {
         errors.push(coded(
             &at("inventoryItemId"),
             "The specified inventory item could not be found.",
@@ -385,7 +385,7 @@ fn level_of(
         ));
         return None;
     }
-    if !is(state, location, "Location") {
+    if !state.is_of(location, "Location") {
         errors.push(coded(
             &at("locationId"),
             "The specified location could not be found.",
@@ -948,13 +948,13 @@ fn activate_once(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .to_string();
     let location = ctx.arg_str("locationId").unwrap_or_default().to_string();
     let mut errors = Vec::new();
-    if !is(state, &item, "InventoryItem") {
+    if !state.is_of(&item, "InventoryItem") {
         errors.push(UserError::new(
             &["inventoryItemId"],
             "Inventory item does not exist",
         ));
     }
-    if !is(state, &location, "Location") {
+    if !state.is_of(&location, "Location") {
         errors.push(UserError::new(&["locationId"], "Location does not exist"));
     } else if !is_active_location(state, &location) {
         errors.push(UserError::new(&["locationId"], "Location is not active"));
@@ -1048,7 +1048,7 @@ fn deactivate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
         .arg_str("inventoryLevelId")
         .unwrap_or_default()
         .to_string();
-    if !is(state, &level, "InventoryLevel") {
+    if !state.is_of(&level, "InventoryLevel") {
         let error = UserError::new(&["inventoryLevelId"], "Inventory level does not exist");
         return Ok(payload(json!({}), &[error]));
     }
@@ -1073,7 +1073,7 @@ fn bulk_toggle_activation(
         .arg_str("inventoryItemId")
         .unwrap_or_default()
         .to_string();
-    if !is(state, &item, "InventoryItem") {
+    if !state.is_of(&item, "InventoryItem") {
         let error = coded(
             &["inventoryItemId"],
             "The inventory item was not found.",
@@ -1095,7 +1095,8 @@ fn bulk_toggle_activation(
             .get("activate")
             .and_then(Value::as_bool)
             .unwrap_or(true);
-        if !is(state, &location, "Location") || (activate && !is_active_location(state, &location))
+        if !state.is_of(&location, "Location")
+            || (activate && !is_active_location(state, &location))
         {
             errors.push(coded(
                 &["inventoryItemUpdates", &at, "locationId"],
@@ -1156,7 +1157,7 @@ fn bulk_toggle_activation(
 fn item_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let state = mutation.state();
     let item = ctx.arg_str("id").unwrap_or_default().to_string();
-    if !is(state, &item, "InventoryItem") {
+    if !state.is_of(&item, "InventoryItem") {
         let error = UserError::new(&["id"], "Inventory item does not exist");
         return Ok(payload(json!({"inventoryItem": null}), &[error]));
     }

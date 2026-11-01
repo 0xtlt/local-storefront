@@ -144,10 +144,7 @@ fn assessment_create(
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(order) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Order"))
-    else {
+    let Some(order) = state.get_of(&id, "Order") else {
         return failed(
             &["orderRiskAssessmentInput", "orderId"],
             "Order does not exist",
@@ -393,11 +390,7 @@ pub fn set_protect(
 /// A buyer asks for a new link to an order's status page: the email of the link is recorded in
 /// the outbox, and `orders/link_requested` fires. `Err` with why when it cannot.
 pub fn request_link(state: &mut ShopState, order: &str) -> Result<(), String> {
-    let Some(record) = state
-        .get(order)
-        .filter(|_| state.type_of(order) == Some("Order"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(order, "Order").cloned() else {
         return Err(format!("{order} is not an order of {}", state.domain()));
     };
     let Some(email) = text(&record, "email").map(str::to_string) else {

@@ -174,10 +174,7 @@ fn update(
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&customer)
-        .filter(|_| state.type_of(&customer) == Some("Customer"))
-    else {
+    let Some(record) = state.get_of(&customer, "Customer") else {
         let error =
             UserError::new(&["input", "customerId"], "Customer does not exist").code("INVALID");
         return Ok(payload(json!({"customer": null}), &[error]));

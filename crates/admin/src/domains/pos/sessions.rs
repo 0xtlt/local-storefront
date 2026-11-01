@@ -31,7 +31,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::{Value, json};
 
-use super::{cents, is_reason_code, keys_with, money, record_of, tell_device, text};
+use super::{cents, is_reason_code, keys_with, money, tell_device, text};
 use crate::domains::orders::model::currency;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -217,7 +217,7 @@ fn open(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
         .arg_str("pointOfSaleDeviceId")
         .unwrap_or_default()
         .to_string();
-    let Some(device_record) = record_of(state, &device, "PointOfSaleDevice") else {
+    let Some(device_record) = state.get_of(&device, "PointOfSaleDevice") else {
         let error = coded(&["pointOfSaleDeviceId"], "POINT_OF_SALE_DEVICE_NOT_FOUND");
         return Ok(payload(empty, &[error]));
     };
@@ -314,7 +314,7 @@ fn open_session(
         .unwrap_or_default()
         .to_string();
     let field = ["pointOfSaleDevicePaymentSessionId"];
-    let Some(record) = record_of(state, &session, SESSION) else {
+    let Some(record) = state.get_of(&session, SESSION) else {
         return Err(coded(&field, "PAYMENT_SESSION_NOT_FOUND"));
     };
     if text(record, "status") != Some("OPEN") {

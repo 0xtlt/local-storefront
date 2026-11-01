@@ -571,10 +571,7 @@ fn customer_delete(
         let error = UserError::new(&["id"], message);
         Ok(payload(json!({"deletedCustomerId": null}), &[error]))
     };
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Customer"))
-    else {
+    let Some(record) = state.get_of(&id, "Customer") else {
         return failed("Customer does not exist");
     };
     if !gids_of(Some(record), "orders").is_empty() {

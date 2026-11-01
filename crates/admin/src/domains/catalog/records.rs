@@ -55,11 +55,6 @@ pub fn field<'r>(record: &'r Record, name: &str) -> Option<&'r str> {
     record.get(name).and_then(Value::as_str)
 }
 
-/// Whether `key` is a record of `type_name`.
-pub fn is(state: &ShopState, key: &str, type_name: &str) -> bool {
-    state.type_of(key) == Some(type_name)
-}
-
 /// The currency of the shop ([`crate::domains::orders::model::currency`]).
 pub fn currency(state: &ShopState) -> String {
     crate::domains::orders::model::currency(state)

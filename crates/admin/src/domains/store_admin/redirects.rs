@@ -297,10 +297,7 @@ fn import_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
 fn import_submit(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = m.state();
-    let Some(import) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("UrlRedirectImport"))
-    else {
+    let Some(import) = state.get_of(&id, "UrlRedirectImport") else {
         let error = UserError::new(&["id"], "Import not found").code("NOT_FOUND");
         return Ok(payload(json!({"job": null}), &[error]));
     };

@@ -105,9 +105,7 @@ fn parsed(text: &str, field: &[&str]) -> Result<Query, UserError> {
 
 /// The segment a GID names.
 fn segment_of<'s>(state: &'s ShopState, id: &str) -> Option<&'s Record> {
-    state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some("Segment"))
+    state.get_of(id, "Segment")
 }
 
 /// The errors of a segment's name: blank, or another segment's (`except` is the one renamed).
@@ -456,10 +454,7 @@ fn customer_segment_members(
     }
     let reverse = ctx.arg_bool("reverse").unwrap_or(false);
     let mut found = if let Some(query_id) = ctx.arg_str("queryId") {
-        let Some(record) = state
-            .get(query_id)
-            .filter(|_| state.type_of(query_id) == Some("CustomerSegmentMembersQuery"))
-        else {
+        let Some(record) = state.get_of(query_id, "CustomerSegmentMembersQuery") else {
             // lsf's words: Shopify does not publish this error.
             return Err(FieldError::new("The segment members query does not exist."));
         };
@@ -526,8 +521,7 @@ fn customer_segment_membership(
     let context = Context::of(state);
     let created = evaluate::created_by_app(state);
     let facts = state
-        .get(customer)
-        .filter(|_| state.type_of(customer) == Some("Customer"))
+        .get_of(customer, "Customer")
         .map(|record| evaluate::facts(state, record, &created));
     let memberships: Vec<Value> = ctx
         .arg("segmentIds")
@@ -834,8 +828,7 @@ pub fn follow(state: &mut ShopState, start: usize, subscribed: &dyn Fn(&str) -> 
         let mut moves = Vec::new();
         for customer in &customers {
             let is_member = state
-                .get(customer)
-                .filter(|_| state.type_of(customer) == Some("Customer"))
+                .get_of(customer, "Customer")
                 .map(|record| {
                     let facts = evaluate::facts(state, record, &created);
                     evaluate::matches(&query, &facts, &context)

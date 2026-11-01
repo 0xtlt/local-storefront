@@ -540,10 +540,7 @@ fn trial_extend(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         );
         return Ok(payload(failed, &[error]));
     }
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("AppSubscription"))
-    else {
+    let Some(record) = state.get_of(&id, "AppSubscription") else {
         return error(
             "id",
             "The app subscription wasn't found.",

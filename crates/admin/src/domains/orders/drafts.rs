@@ -100,10 +100,7 @@ fn line_value(
     let unit;
     match get("variantId") {
         Some(variant) => {
-            let Some(variant_record) = state
-                .get(variant)
-                .filter(|_| state.type_of(variant) == Some("ProductVariant"))
-            else {
+            let Some(variant_record) = state.get_of(variant, "ProductVariant") else {
                 errors.push(UserError::new(
                     &[path, &["variantId"]].concat(),
                     "Product variant does not exist",
@@ -640,8 +637,7 @@ fn purchasing_company(
     }
     let of_company = |key: &str, kind: &str| {
         state
-            .get(key)
-            .filter(|_| state.type_of(key) == Some(kind))
+            .get_of(key, kind)
             .filter(|record| text(record, "company") == Some(company_id.as_str()))
     };
     let Some(location_record) = of_company(&location, "CompanyLocation") else {
@@ -931,8 +927,7 @@ pub(super) fn create_from(
 /// The draft order of a GID, or Shopify's "Draft order not found".
 pub(super) fn find_draft(state: &ShopState, id: &str) -> Result<Record, UserError> {
     state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some("DraftOrder"))
+        .get_of(id, "DraftOrder")
         .cloned()
         .ok_or_else(|| UserError::new(&[], "Draft order not found"))
 }

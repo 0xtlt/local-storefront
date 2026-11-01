@@ -48,7 +48,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{error_at, field, in_collection, input, is, objects, text};
+use super::records::{error_at, field, in_collection, input, objects, text};
 use super::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -523,7 +523,7 @@ fn check_conditions(
             let values = gids(fields.get("values"));
             collections += values.len();
             for (position, collection) in values.iter().enumerate() {
-                if !is(state, collection, "Collection") {
+                if !state.is_of(collection, "Collection") {
                     let field = below(&below(&at, "values"), &position.to_string());
                     errors.push(error_at(&field, "Collection does not exist"));
                 }
@@ -532,7 +532,7 @@ fn check_conditions(
             others += 1;
         }
         if let Some(definition) = text(fields, "definitionId")
-            && !is(state, definition, "MetafieldDefinition")
+            && !state.is_of(definition, "MetafieldDefinition")
         {
             // lsf's wording.
             errors.push(error_at(
@@ -600,7 +600,7 @@ fn check_selections(
     for (index, item) in items.iter().enumerate() {
         let at = below(path, &index.to_string());
         let product = text(item, "productId").unwrap_or_default();
-        if !is(state, product, "Product") {
+        if !state.is_of(product, "Product") {
             errors.push(error_at(&below(&at, "productId"), "Product does not exist"));
             continue;
         }
@@ -1077,9 +1077,7 @@ fn ineligibility(state: &ShopState, target: &str, owner: Option<&str>) -> Option
     if owner == Some(target) {
         return Some("SELF_REFERENCE");
     }
-    let record = state
-        .get(target)
-        .filter(|_| is(state, target, "Collection"));
+    let record = state.get_of(target, "Collection");
     let Some(record) = record else {
         return Some("INVALID_COLLECTION_REFERENCE");
     };

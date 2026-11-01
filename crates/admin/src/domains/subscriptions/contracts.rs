@@ -249,10 +249,7 @@ pub fn commit_update(state: &mut ShopState, contract: &str, record: &Record) {
 
 /// The contract of an id, when it is one of the shop.
 pub fn contract_arg(state: &ShopState, id: &str) -> Option<Record> {
-    state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some(CONTRACT))
-        .cloned()
+    state.get_of(id, CONTRACT).cloned()
 }
 
 /// Whether a contract is cancelled or expired.

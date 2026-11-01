@@ -125,9 +125,7 @@ fn carrier_url(company: Option<&str>, number: Option<&str>) -> Option<String> {
 
 /// A fulfillment order of the shop, with its record.
 fn fulfillment_order(state: &ShopState, id: &str) -> Option<serde_json::Map<String, Value>> {
-    (state.type_of(id) == Some("FulfillmentOrder"))
-        .then(|| state.get(id).cloned())
-        .flatten()
+    state.get_of(id, "FulfillmentOrder").cloned()
 }
 
 /// `fulfillmentCreate`.

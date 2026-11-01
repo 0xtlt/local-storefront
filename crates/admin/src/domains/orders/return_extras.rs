@@ -101,10 +101,7 @@ pub fn read_exchanges(
             .get("variantId")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let Some(record) = state
-            .get(variant)
-            .filter(|_| state.type_of(variant) == Some("ProductVariant"))
-        else {
+        let Some(record) = state.get_of(variant, "ProductVariant") else {
             errors.push(error(
                 &at("variantId"),
                 "Variant does not exist.",
@@ -508,10 +505,7 @@ fn dispose(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
             .get("reverseFulfillmentOrderLineItemId")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let Some(record) = state
-            .get(line)
-            .filter(|_| state.type_of(line) == Some("ReverseFulfillmentOrderLineItem"))
-        else {
+        let Some(record) = state.get_of(line, "ReverseFulfillmentOrderLineItem") else {
             return failed(error(
                 &at("reverseFulfillmentOrderLineItemId"),
                 "Reverse fulfillment order line item does not exist.",
@@ -717,11 +711,7 @@ fn delivery_create(
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&reverse)
-        .filter(|_| state.type_of(&reverse) == Some("ReverseFulfillmentOrder"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&reverse, "ReverseFulfillmentOrder").cloned() else {
         return failed(error(
             &["reverseFulfillmentOrderId"],
             "Reverse fulfillment order does not exist.",
@@ -840,11 +830,7 @@ fn delivery_update(
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("ReverseDelivery"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&id, "ReverseDelivery").cloned() else {
         return failed(error(
             &["reverseDeliveryId"],
             "Reverse delivery does not exist.",
@@ -891,11 +877,7 @@ fn remove_from_return(
     let failed = |error: UserError| Ok(payload(json!({"return": null}), &[error]));
     let id = ctx.arg_str("returnId").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Return"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&id, "Return").cloned() else {
         return failed(error(&["returnId"], "Return does not exist.", "NOT_FOUND"));
     };
     if !matches!(text(&record, "status"), Some("OPEN" | "REQUESTED")) {
@@ -1082,11 +1064,7 @@ fn return_refund(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .unwrap_or_default()
         .to_string();
     let state = mutation.state();
-    let Some(record) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Return"))
-        .cloned()
-    else {
+    let Some(record) = state.get_of(&id, "Return").cloned() else {
         return failed(&[error(
             &["returnRefundInput", "returnId"],
             "Return does not exist.",
@@ -1498,11 +1476,7 @@ fn calculate(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let Some(order) = state
-        .get(&order_id)
-        .filter(|_| state.type_of(&order_id) == Some("Order"))
-        .cloned()
-    else {
+    let Some(order) = state.get_of(&order_id, "Order").cloned() else {
         return Ok(Output::Null);
     };
     let currency = model::currency(state);

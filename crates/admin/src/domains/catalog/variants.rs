@@ -39,7 +39,7 @@ use serde_json::{Map, Value, json};
 
 use super::media;
 use super::records::{
-    self, apply_inventory_item, arg_objects, coded, currency, default_location, field, is,
+    self, apply_inventory_item, arg_objects, coded, currency, default_location, field,
     is_active_location, item_of, new_inventory_item, new_level, objects, text,
 };
 use super::{cents_of, gids, product_changed};
@@ -653,7 +653,7 @@ fn bulk_stock(
     let mut stock = Vec::new();
     for (index, quantity) in quantities.iter().enumerate() {
         let location = text(quantity, "locationId").unwrap_or_default();
-        if !is(state, location, "Location") || !is_active_location(state, location) {
+        if !state.is_of(location, "Location") || !is_active_location(state, location) {
             errors.push(input_error(
                 path,
                 &["inventoryQuantities", &index.to_string(), "locationId"],
@@ -674,7 +674,7 @@ fn bulk_stock(
 /// The product of `productId`.
 pub fn product_arg(state: &ShopState, ctx: &FieldContext<'_>) -> Option<String> {
     ctx.arg_str("productId")
-        .filter(|id| is(state, id, "Product"))
+        .filter(|id| state.is_of(id, "Product"))
         .map(str::to_string)
 }
 
@@ -860,7 +860,7 @@ fn bulk_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
                 "Product variant is missing ID attribute.",
                 "PRODUCT_VARIANT_ID_MISSING",
             ))
-        } else if !is(state, &id, "ProductVariant") {
+        } else if !state.is_of(&id, "ProductVariant") {
             Some((
                 "Product variant does not exist",
                 "PRODUCT_VARIANT_DOES_NOT_EXIST",

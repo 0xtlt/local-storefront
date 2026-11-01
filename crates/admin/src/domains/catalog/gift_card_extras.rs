@@ -240,11 +240,7 @@ fn notify(
     };
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(card) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("GiftCard"))
-        .cloned()
-    else {
+    let Some(card) = state.get_of(&id, "GiftCard").cloned() else {
         return failed("The gift card could not be found.", "GIFT_CARD_NOT_FOUND");
     };
     let to = if recipient {

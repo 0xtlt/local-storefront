@@ -25,7 +25,7 @@
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use super::{is, strings};
+use super::strings;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, value};
@@ -273,7 +273,7 @@ fn register_localizations(
             message,
             code: Some(code.to_string()),
         };
-        if !is(state, get("marketId"), "Market") {
+        if !state.is_of(get("marketId"), "Market") {
             errors.push(error(
                 "marketId",
                 format!("Market {} does not exist", get("marketId")),
@@ -345,7 +345,7 @@ fn remove_localizations(
     let errors: Vec<UserError> = markets
         .iter()
         .enumerate()
-        .filter(|(_, market)| !is(state, market, "Market"))
+        .filter(|(_, market)| !state.is_of(market, "Market"))
         .map(|(index, market)| {
             UserError::new(
                 &["marketIds", &index.to_string()],

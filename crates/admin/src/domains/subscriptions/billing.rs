@@ -874,10 +874,7 @@ fn check_attempt(
     origin_time: Option<&str>,
     origin_path: &[&str],
 ) -> Result<Cycle, UserError> {
-    let Some(contract) = state
-        .get(contract_id)
-        .filter(|_| state.type_of(contract_id) == Some(CONTRACT))
-    else {
+    let Some(contract) = state.get_of(contract_id, CONTRACT) else {
         return Err(attempt_error(&[contract_field], "CONTRACT_NOT_FOUND"));
     };
     match text(contract, "status") {

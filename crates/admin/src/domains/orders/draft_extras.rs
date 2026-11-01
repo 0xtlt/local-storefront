@@ -318,11 +318,7 @@ fn create_from_order(
     };
     let id = ctx.arg_str("orderId").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(order) = state
-        .get(&id)
-        .filter(|_| state.type_of(&id) == Some("Order"))
-        .cloned()
-    else {
+    let Some(order) = state.get_of(&id, "Order").cloned() else {
         return failed("Order does not exist");
     };
     let input = input_of_order(state, &order);

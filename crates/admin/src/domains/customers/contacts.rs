@@ -484,8 +484,7 @@ fn check_assignment(
         found = false;
     }
     let location_company = state
-        .get(location)
-        .filter(|_| state.type_of(location) == Some("CompanyLocation"))
+        .get_of(location, "CompanyLocation")
         .and_then(|record| record.get("company"))
         .and_then(Value::as_str);
     if location_company.is_none() || (company.is_some() && location_company != company.as_deref()) {

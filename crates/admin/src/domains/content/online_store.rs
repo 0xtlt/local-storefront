@@ -271,10 +271,7 @@ fn page_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = input_of(ctx, "page");
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("Page"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "Page").cloned() else {
         let error = UserError::new(&["id"], "Page does not exist").code("NOT_FOUND");
         return Ok(payload(json!({"page": null}), &[error]));
     };
@@ -334,10 +331,7 @@ fn page_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
 
 fn page_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let Some(record) = (mutation.state().type_of(&id) == Some("Page"))
-        .then(|| mutation.state().get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = mutation.state().get_of(&id, "Page").cloned() else {
         let error = UserError::new(&["id"], "Page does not exist").code("NOT_FOUND");
         return Ok(payload(json!({"deletedPageId": null}), &[error]));
     };
@@ -403,10 +397,7 @@ fn blog_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = input_of(ctx, "blog");
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("Blog"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "Blog").cloned() else {
         let error = UserError::new(&["id"], "Blog does not exist").code("NOT_FOUND");
         return Ok(coded(
             json!({"blog": null}),
@@ -480,10 +471,7 @@ fn blog_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
 /// `blogDelete`: the blog, its articles and their comments, and their metafields.
 fn blog_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let Some(record) = (mutation.state().type_of(&id) == Some("Blog"))
-        .then(|| mutation.state().get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = mutation.state().get_of(&id, "Blog").cloned() else {
         let error = UserError::new(&["id"], "Blog does not exist").code("NOT_FOUND");
         return Ok(coded(
             json!({"deletedBlogId": null}),
@@ -741,10 +729,7 @@ fn article_update(
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = input_of(ctx, "article");
     let state = mutation.state();
-    let Some(record) = (state.type_of(&id) == Some("Article"))
-        .then(|| state.get(&id).cloned())
-        .flatten()
-    else {
+    let Some(record) = state.get_of(&id, "Article").cloned() else {
         let error = UserError::new(&["id"], "Article does not exist").code("NOT_FOUND");
         return Ok(payload(json!({"article": null}), &[error]));
     };

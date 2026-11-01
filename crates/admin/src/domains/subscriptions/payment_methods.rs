@@ -333,10 +333,7 @@ pub fn create_method(
 
 /// A method that is not revoked, by its GID, or the error of the field that names it.
 fn live_method(state: &ShopState, id: &str, field: &str) -> Result<Record, UserError> {
-    let Some(method) = state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some(PAYMENT_METHOD))
-    else {
+    let Some(method) = state.get_of(id, PAYMENT_METHOD) else {
         return Err(UserError::new(
             &[field],
             "Customer payment method does not exist",
@@ -892,10 +889,7 @@ fn send_add_email(
         _ => "Order",
     };
     let state = mutation.state();
-    let Some(record) = state
-        .get(&resource)
-        .filter(|_| state.type_of(&resource) == Some(expected))
-    else {
+    let Some(record) = state.get_of(&resource, expected) else {
         // lsf's wording.
         return Ok(payload(
             json!({"customer": null}),
@@ -961,8 +955,7 @@ fn payment_method(
     let show = ctx.arg_bool("showRevoked").unwrap_or(false);
     let state = r.state();
     let found = state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some(PAYMENT_METHOD))
+        .get_of(id, PAYMENT_METHOD)
         .filter(|method| show || !revoked(method));
     Ok(Output::object_or_null(found.map(|_| Obj::record(id))))
 }

@@ -178,13 +178,6 @@ pub fn objects(value: Option<&Value>) -> Vec<Map<String, Value>> {
     }
 }
 
-/// The record of a GID when it is one of `type_name`.
-pub fn record_of<'s>(state: &'s ShopState, id: &str, type_name: &str) -> Option<&'s Record> {
-    (state.type_of(id) == Some(type_name))
-        .then(|| state.get(id))
-        .flatten()
-}
-
 /// Appends a key to an array field of a record (made when missing).
 pub fn push(state: &mut ShopState, record: &str, field: &str, key: &str) {
     if let Some(record) = state.get_mut(record) {

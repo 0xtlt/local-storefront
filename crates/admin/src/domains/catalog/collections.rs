@@ -38,7 +38,7 @@ use serde_json::{Map, Value, json};
 
 use super::collection_sources as sources;
 use super::records::{
-    self, arg_objects, coded, field, input, is, link_collection, objects, origin, text,
+    self, arg_objects, coded, field, input, link_collection, objects, origin, text,
 };
 use super::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -542,7 +542,7 @@ fn collection_create(
     }
     let products = gids(input.get("products"));
     for (index, product) in products.iter().enumerate() {
-        if !is(state, product, "Product") {
+        if !state.is_of(product, "Product") {
             errors.push(UserError::new(
                 &["products", &index.to_string()],
                 format!("Product {product} does not exist"),
@@ -621,7 +621,7 @@ fn collection_update(
     note_ignored(mutation, "collectionUpdate", &input);
     let state = mutation.state();
     let id = text(&input, "id").unwrap_or_default().to_string();
-    let Some(record) = state.get(&id).filter(|_| is(state, &id, "Collection")) else {
+    let Some(record) = state.get_of(&id, "Collection") else {
         let error = UserError::new(&["id"], "Collection does not exist");
         return Ok(payload(json!({"collection": null, "job": null}), &[error]));
     };
@@ -704,7 +704,7 @@ fn collection_delete(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    if !is(mutation.state(), &id, "Collection") {
+    if !mutation.state().is_of(&id, "Collection") {
         // shopify.dev's example.
         let error = UserError::new(&["id"], "Collection does not exist");
         return Ok(payload(json!({"deletedCollectionId": null}), &[error]));
@@ -747,7 +747,7 @@ fn manual_collection(
     id: &str,
     action: &str,
 ) -> Result<(), (String, &'static str)> {
-    let Some(record) = state.get(id).filter(|_| is(state, id, "Collection")) else {
+    let Some(record) = state.get_of(id, "Collection") else {
         return Err((
             "Collection does not exist".into(),
             "COLLECTION_DOES_NOT_EXIST",
@@ -785,7 +785,7 @@ fn check_products(state: &ShopState, ctx: &FieldContext<'_>) -> (Vec<String>, Op
     let products = records::arg_strings(ctx, "productIds");
     let missing: Vec<&str> = products
         .iter()
-        .filter(|product| !is(state, product, "Product"))
+        .filter(|product| !state.is_of(product, "Product"))
         .map(String::as_str)
         .collect();
     let error =
@@ -875,7 +875,7 @@ fn reorder_products(
 ) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(record) = state.get(&id).filter(|_| is(state, &id, "Collection")) else {
+    let Some(record) = state.get_of(&id, "Collection") else {
         let error = coded(&["id"], "Collection does not exist", "COLLECTION_NOT_FOUND");
         return Ok(payload(json!({"job": null}), &[error]));
     };

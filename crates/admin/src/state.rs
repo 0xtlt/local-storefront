@@ -396,6 +396,19 @@ impl ShopState {
         self.records.get(gid).map(|entry| entry.type_name.as_str())
     }
 
+    /// The record of a GID when it is one of `type_name` ([`ShopState::type_of`]).
+    pub fn get_of(&self, gid: &str, type_name: &str) -> Option<&Record> {
+        self.records
+            .get(gid)
+            .filter(|entry| entry.type_name == type_name)
+            .map(|entry| &entry.record)
+    }
+
+    /// Whether the record of a GID is one of `type_name` ([`ShopState::type_of`]).
+    pub fn is_of(&self, gid: &str, type_name: &str) -> bool {
+        self.type_of(gid) == Some(type_name)
+    }
+
     /// Adds a record, or replaces the record of the same GID where it was. The key is the
     /// record's `id`; a record without one gets a new GID of its `__typename`
     /// ([`ShopState::new_gid`]) as its `id`. The type is `__typename`, else the type of the GID.

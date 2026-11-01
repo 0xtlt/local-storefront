@@ -27,7 +27,7 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    CATALOG_TYPES, catalog_key, catalog_type, coded, input, is, market_currency, records_input,
+    CATALOG_TYPES, catalog_key, catalog_type, coded, input, market_currency, records_input,
     strings, text,
 };
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -313,7 +313,7 @@ fn check_links(
 ) -> (Option<String>, Option<String>) {
     let mut list = None;
     if let Some(id) = text(input, "priceListId") {
-        if !is(state, id, "PriceList") {
+        if !state.is_of(id, "PriceList") {
             // The code's description in the schema.
             errors.push(coded(
                 &["input", "priceListId"],
@@ -354,7 +354,7 @@ fn check_links(
     }
     let mut publication = None;
     if let Some(id) = text(input, "publicationId") {
-        if !is(state, id, "Publication") {
+        if !state.is_of(id, "Publication") {
             // The code's description in the schema.
             errors.push(coded(
                 &["input", "publicationId"],
@@ -552,7 +552,7 @@ fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     let Some(catalog) = catalog_arg(state, ctx, "id") else {
         return Ok(payload(json!({"deletedId": null}), &[not_found(&["id"])]));
     };
-    if is(state, &catalog, "AppCatalog") {
+    if state.is_of(&catalog, "AppCatalog") {
         // The code's description in the schema.
         let error = coded(
             &["id"],

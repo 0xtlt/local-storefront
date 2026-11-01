@@ -28,7 +28,7 @@
 use serde_json::{Map, Value, json};
 
 use super::gids;
-use super::records::{self, coded, currency, field, input, is, objects, text};
+use super::records::{self, coded, currency, field, input, objects, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{ShopState, value};
@@ -540,7 +540,7 @@ fn check_resources(
     errors: &mut Vec<UserError>,
 ) {
     for (index, product) in products.iter().enumerate() {
-        if !is(state, product, "Product") {
+        if !state.is_of(product, "Product") {
             errors.push(coded(
                 &["resources", "productIds", &index.to_string()],
                 "Product does not exist.",
@@ -549,7 +549,7 @@ fn check_resources(
         }
     }
     for (index, variant) in variants.iter().enumerate() {
-        if !is(state, variant, "ProductVariant") {
+        if !state.is_of(variant, "ProductVariant") {
             errors.push(coded(
                 &["resources", "productVariantIds", &index.to_string()],
                 "Product variant does not exist.",
@@ -800,7 +800,7 @@ fn group_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
 /// The group of `id`, or its error.
 fn group_arg(state: &ShopState, ctx: &FieldContext<'_>) -> Result<String, UserError> {
     let id = ctx.arg_str("id").unwrap_or_default();
-    if is(state, id, "SellingPlanGroup") {
+    if state.is_of(id, "SellingPlanGroup") {
         Ok(id.to_string())
     } else {
         Err(coded(
@@ -950,7 +950,7 @@ fn change_resources(
     let errors: Vec<UserError> = ids
         .iter()
         .enumerate()
-        .filter(|(_, id)| !is(state, id, type_name))
+        .filter(|(_, id)| !state.is_of(id, type_name))
         .map(|(index, _)| coded(&[argument, &index.to_string()], message, code))
         .collect();
     if !errors.is_empty() {
@@ -1039,7 +1039,7 @@ fn join_groups(
     };
     let state = mutation.state();
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    if !is(state, &id, type_name) {
+    if !state.is_of(&id, type_name) {
         return Ok(payload(
             json!({answer: null}),
             &[coded(&["id"], message, code)],
@@ -1049,7 +1049,7 @@ fn join_groups(
     let errors: Vec<UserError> = groups
         .iter()
         .enumerate()
-        .filter(|(_, group)| !is(state, group, "SellingPlanGroup"))
+        .filter(|(_, group)| !state.is_of(group, "SellingPlanGroup"))
         .map(|(index, _)| {
             coded(
                 &["sellingPlanGroupIds", &index.to_string()],

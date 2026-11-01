@@ -44,7 +44,7 @@
 use lsf_core::util::handleize;
 use serde_json::{Map, Value, json};
 
-use super::{coded, input, is, number, objects, regions_of, shop_locales, strings, text};
+use super::{coded, input, number, objects, regions_of, shop_locales, strings, text};
 use crate::domains::catalog::{self, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -671,7 +671,7 @@ fn not_found(field: &str) -> UserError {
 /// The channel of an argument.
 fn channel_arg(state: &ShopState, ctx: &FieldContext<'_>, name: &str) -> Option<String> {
     let id = ctx.arg_str(name)?;
-    is(state, id, "Channel").then(|| id.to_string())
+    state.is_of(id, "Channel").then(|| id.to_string())
 }
 
 /// The countries a channel covers: those of the shop's active region markets.
@@ -1083,7 +1083,7 @@ fn feedback_create(
         };
         let before = errors.len();
         let product = text(input, "productId").unwrap_or_default().to_string();
-        if !is(state, &product, "Product") {
+        if !state.is_of(&product, "Product") {
             errors.push(error(
                 "productId",
                 "Product does not exist",
@@ -1093,7 +1093,7 @@ fn feedback_create(
         let channel = text(input, "channelId").map(str::to_string);
         if channel
             .as_deref()
-            .is_some_and(|channel| !is(state, channel, "Channel"))
+            .is_some_and(|channel| !state.is_of(channel, "Channel"))
         {
             errors.push(error("channelId", "Channel does not exist", "NOT_FOUND"));
         }
@@ -1202,7 +1202,7 @@ fn shop_feedback_create(
     let channel = text(&input, "channelId").map(str::to_string);
     if channel
         .as_deref()
-        .is_some_and(|channel| !is(state, channel, "Channel"))
+        .is_some_and(|channel| !state.is_of(channel, "Channel"))
     {
         errors.push(coded(
             &["input", "channelId"],

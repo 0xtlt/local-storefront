@@ -71,9 +71,7 @@ pub const PROGRESS: &str = "lsfProgress";
 const WORKABLE: &[&str] = &["OPEN", "IN_PROGRESS", "SCHEDULED", "ON_HOLD"];
 
 fn fulfillment_order(state: &ShopState, id: &str) -> Option<Record> {
-    (state.type_of(id) == Some("FulfillmentOrder"))
-        .then(|| state.get(id).cloned())
-        .flatten()
+    state.get_of(id, "FulfillmentOrder").cloned()
 }
 
 /// Whether progress was reported on a fulfillment order (and not stopped since).

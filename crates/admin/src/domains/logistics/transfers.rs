@@ -45,7 +45,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::{Map, Value, json};
 
 use super::{
-    coded, emit_change, idempotent, int, keys_of, location_snapshot, objects, push, record_of,
+    coded, emit_change, idempotent, int, keys_of, location_snapshot, objects, push,
     snapshot_location, stock, text,
 };
 use crate::domains::catalog::{self, gids};
@@ -209,7 +209,7 @@ fn items_of(state: &ShopState, transfer: &Record) -> Vec<String> {
 
 /// The transfer of an id, when it is one.
 pub fn find(state: &ShopState, id: &str) -> Option<Record> {
-    record_of(state, id, "InventoryTransfer").cloned()
+    state.get_of(id, "InventoryTransfer").cloned()
 }
 
 /// The line of a transfer for an inventory item.
@@ -302,7 +302,7 @@ pub fn check_item(
             .chain(std::iter::once(field))
             .collect()
     };
-    let Some(record) = record_of(state, item, "InventoryItem") else {
+    let Some(record) = state.get_of(item, "InventoryItem") else {
         errors.push(coded(ctx, &at("inventoryItemId"), "ITEM_NOT_FOUND"));
         return false;
     };
