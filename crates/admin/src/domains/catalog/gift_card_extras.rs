@@ -93,16 +93,7 @@ fn identified(state: &ShopState, identifier: &Map<String, Value>) -> Option<Stri
         return (state.type_of(id) == Some("Product")).then(|| id.to_string());
     }
     let handle = identifier.get("handle").and_then(Value::as_str)?;
-    state
-        .keys("Product")
-        .find(|key| {
-            state
-                .get(key)
-                .and_then(|product| product.get("handle"))
-                .and_then(Value::as_str)
-                == Some(handle)
-        })
-        .map(str::to_string)
+    super::records::find_by_handle(state, "Product", handle)
 }
 
 /// The `ProductSetInput` of a `GiftCardProductSetInput`: a gift card, its variants with the
@@ -343,28 +334,7 @@ fn card_text(state: &ShopState, card: &Record, recipient: bool) -> (String, Stri
 mod tests {
     use serde_json::{Value, json};
 
-    use crate::graphql::{self, Request};
-    use crate::resolve::{Registry, ShopResolver};
-    use crate::state::ShopState;
-
-    fn demo() -> ShopState {
-        let (store, _) = lsf_core::store::load::load(
-            &lsf_core::store::load::DataSource::Demo,
-            &Default::default(),
-        );
-        ShopState::seeded(&store, None)
-    }
-
-    fn run(shop: &mut ShopState, query: &str, variables: Value) -> Value {
-        let mut resolver = ShopResolver::new(shop, Registry::standard());
-        graphql::run(
-            crate::schema::admin(),
-            &mut resolver,
-            &Request::new(query).with_variables(variables),
-            None,
-        )
-        .to_json()
-    }
+    use crate::domains::catalog::mutation_tests::{demo, run_with};
 
     const SET: &str = "mutation($input: GiftCardProductSetInput!, $identifier: ProductSetIdentifiers) {
         giftCardProductSet(input: $input, identifier: $identifier) {
@@ -374,7 +344,7 @@ mod tests {
     #[test]
     fn a_gift_card_product_is_set_with_the_gift_card_defaults() {
         let mut shop = demo();
-        let answer = run(
+        let answer = run_with(
             &mut shop,
             SET,
             json!({"input": {
@@ -406,7 +376,7 @@ mod tests {
             "{events:?}"
         );
         // Updated by its id: the title changes, the issuance currency cannot.
-        let updated = run(
+        let updated = run_with(
             &mut shop,
             SET,
             json!({"identifier": {"id": id}, "input": {"title": "Gift card"}}),
@@ -415,7 +385,7 @@ mod tests {
             updated["data"]["giftCardProductSet"]["product"]["title"],
             "Gift card"
         );
-        let refused = run(
+        let refused = run_with(
             &mut shop,
             SET,
             json!({"identifier": {"id": id}, "input": {"issuanceCurrency": "CAD"}}),
@@ -435,7 +405,7 @@ mod tests {
             .unwrap()
             .to_string();
         let before = shop.get(&product).cloned();
-        let answer = run(
+        let answer = run_with(
             &mut shop,
             SET,
             json!({"identifier": {"id": product}, "input": {"title": "Not a card"}}),
@@ -452,7 +422,7 @@ mod tests {
         let mut shop = demo();
         // The demo's first card is jane's, for her: a customer and a recipient.
         let card = shop.keys("GiftCard").next().unwrap().to_string();
-        let to_customer = run(
+        let to_customer = run_with(
             &mut shop,
             "mutation($id: ID!) { giftCardSendNotificationToCustomer(id: $id) { giftCard { id customer { id } } userErrors { field message code } } }",
             json!({"id": card}),
@@ -462,7 +432,7 @@ mod tests {
             json!([]),
             "{to_customer}"
         );
-        let to_recipient = run(
+        let to_recipient = run_with(
             &mut shop,
             "mutation($id: ID!) { giftCardSendNotificationToRecipient(id: $id) { giftCard { id } userErrors { field message code } } }",
             json!({"id": card}),
@@ -489,7 +459,7 @@ mod tests {
             })
             .map(str::to_string);
         if let Some(expired) = expired {
-            let refused = run(
+            let refused = run_with(
                 &mut shop,
                 "mutation($id: ID!) { giftCardSendNotificationToCustomer(id: $id) { giftCard { id } userErrors { code } } }",
                 json!({"id": expired}),
@@ -499,7 +469,7 @@ mod tests {
                 "INVALID"
             );
         }
-        let missing = run(
+        let missing = run_with(
             &mut shop,
             "mutation { giftCardSendNotificationToRecipient(id: \"gid://shopify/GiftCard/1\") { giftCard { id } userErrors { code } } }",
             json!({}),
