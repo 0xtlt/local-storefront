@@ -253,6 +253,11 @@ impl<'a> FieldContext<'a> {
         self.arg(name)?.as_bool()
     }
 
+    /// An input object argument (`input:`).
+    pub fn arg_object(&self, name: &str) -> Option<&'a Map<String, Value>> {
+        self.arg(name)?.as_object()
+    }
+
     /// The path of the field in the response: `["products", "edges", 0, "node", "title"]`.
     pub fn path(&self) -> &'a [Value] {
         self.path

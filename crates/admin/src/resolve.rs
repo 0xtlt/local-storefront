@@ -907,7 +907,7 @@ impl<'a> ShopResolver<'a> {
                     record.get("handle").and_then(Value::as_str) == Some(handle)
                 })));
             }
-            if let Some(Value::Object(identifier)) = ctx.arg("identifier") {
+            if let Some(identifier) = ctx.arg_object("identifier") {
                 return Ok(Output::object_or_null(
                     self.by_identifier(named, identifier),
                 ));
