@@ -3,42 +3,12 @@
 
 use serde_json::{Value, json};
 
-use crate::graphql::{self, Request};
-use crate::resolve::{Registry, ShopResolver};
+pub use crate::domains::test_support::{demo, run as run_with, topics};
 use crate::state::ShopState;
-
-pub fn demo() -> ShopState {
-    let (store, _) = lsf_core::store::load::load(
-        &lsf_core::store::load::DataSource::Demo,
-        &Default::default(),
-    );
-    ShopState::seeded(&store, None)
-}
 
 /// The answer to a query, `extensions` without `cost`.
 pub fn run(shop: &mut ShopState, query: &str) -> Value {
     run_with(shop, query, Value::Null)
-}
-
-/// The answer to a query with variables.
-pub fn run_with(shop: &mut ShopState, query: &str, variables: Value) -> Value {
-    let mut resolver = ShopResolver::new(shop, Registry::standard());
-    let mut request = Request::new(query);
-    if let Value::Object(variables) = variables {
-        request.variables = variables;
-    }
-    let mut answer = graphql::run(crate::schema::admin(), &mut resolver, &request, None);
-    answer.extensions.extend(resolver.extensions());
-    answer.extensions.remove("cost");
-    answer.to_json()
-}
-
-/// The topics emitted since the last call.
-pub fn topics(shop: &mut ShopState) -> Vec<String> {
-    shop.take_events()
-        .into_iter()
-        .map(|event| event.topic)
-        .collect()
 }
 
 /// The GID of the product of a handle.

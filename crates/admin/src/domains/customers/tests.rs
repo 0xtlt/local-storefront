@@ -4,48 +4,20 @@
 
 use serde_json::{Value, json};
 
-use crate::graphql::{self, Request};
-use crate::resolve::{Registry, ShopResolver};
-use crate::state::{Clock, ShopState};
+use crate::domains::test_support::{self, run, topics};
+use crate::state::ShopState;
 
+/// The demo store, and its shop on a frozen clock.
 fn demo() -> (lsf_core::Store, ShopState) {
-    let (store, _) = lsf_core::store::load::load(
-        &lsf_core::store::load::DataSource::Demo,
-        &Default::default(),
-    );
-    let mut state = ShopState::seeded(&store, None);
-    // The demo store runs on the system clock: a frozen one gives every change the same time.
-    let now = chrono::DateTime::parse_from_rfc3339("2026-10-31T12:00:00Z").unwrap();
-    state.set_clock(Clock::Frozen(now.with_timezone(&chrono::Utc)));
+    let store = test_support::demo_store();
+    let state = test_support::frozen(ShopState::seeded(&store, None));
     (store, state)
-}
-
-/// The answer to a query with variables, `extensions` without `cost`.
-fn run(shop: &mut ShopState, query: &str, variables: Value) -> Value {
-    let mut resolver = ShopResolver::new(shop, Registry::standard());
-    let mut answer = graphql::run(
-        crate::schema::admin(),
-        &mut resolver,
-        &Request::new(query).with_variables(variables),
-        None,
-    );
-    answer.extensions.extend(resolver.extensions());
-    answer.extensions.remove("cost");
-    answer.to_json()
 }
 
 /// The payload of the mutation `name` in an answer, which must have no GraphQL error.
 fn data<'a>(answer: &'a Value, name: &str) -> &'a Value {
     assert!(answer.get("errors").is_none(), "{answer}");
     &answer["data"][name]
-}
-
-/// The topics of the events emitted since the last call.
-fn topics(shop: &mut ShopState) -> Vec<String> {
-    shop.take_events()
-        .into_iter()
-        .map(|event| event.topic)
-        .collect()
 }
 
 /// The GID of a demo customer, by email.

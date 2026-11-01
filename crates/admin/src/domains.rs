@@ -25,6 +25,9 @@ pub mod tags;
 pub mod themes;
 pub mod webhook_subscriptions;
 
+#[cfg(test)]
+pub mod test_support;
+
 use crate::resolve::Registry;
 use crate::state::{Record, ShopState};
 

@@ -3,36 +3,10 @@
 
 use serde_json::{Value, json};
 
+pub(super) use crate::domains::test_support::{rich, run, topics};
 use crate::graphql::{self, Request};
 use crate::resolve::{Registry, ShopResolver};
 use crate::state::ShopState;
-
-pub(super) fn rich() -> ShopState {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
-    let (store, _) = lsf_core::store::load::load(
-        &lsf_core::store::load::DataSource::Directory(path),
-        &Default::default(),
-    );
-    ShopState::seeded(&store, None)
-}
-
-/// The answer to a request, `extensions` without `cost`.
-pub(super) fn run(shop: &mut ShopState, query: &str, variables: Value) -> Value {
-    let mut resolver = ShopResolver::new(shop, Registry::standard());
-    let request = Request::new(query).with_variables(variables);
-    let mut answer = graphql::run(crate::schema::admin(), &mut resolver, &request, None);
-    answer.extensions.extend(resolver.extensions());
-    answer.extensions.remove("cost");
-    answer.to_json()
-}
-
-/// The topics of the events taken from the shop, in order.
-pub(super) fn topics(shop: &mut ShopState) -> Vec<String> {
-    shop.take_events()
-        .into_iter()
-        .map(|event| event.topic)
-        .collect()
-}
 
 /// The GID of the first record of a type with `field` equal to `value`.
 pub(super) fn find(shop: &ShopState, type_name: &str, field: &str, value: &str) -> String {
