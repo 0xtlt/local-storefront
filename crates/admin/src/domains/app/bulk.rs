@@ -547,7 +547,6 @@ fn run_mutation(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     if ctx.arg_str("clientIdentifier").is_some() {
         mutation.note("bulkOperationRunMutation: lsf does not keep `clientIdentifier`");
     }
-    let schema = ctx.schema();
     let mut lines = Vec::new();
     let content = String::from_utf8_lossy(&file.bytes).into_owned();
     for (number, line) in content
@@ -563,9 +562,7 @@ fn run_mutation(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                     variables,
                     operation_name: None,
                 };
-                let mut resolver = mutation.resolver();
-                let response = graphql::run(schema, &mut resolver, &request, None);
-                let mut answer = response.to_json();
+                let (mut answer, _) = mutation.run_graphql(&request);
                 if let Some(map) = answer.as_object_mut() {
                     map.remove("extensions");
                 }

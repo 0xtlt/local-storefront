@@ -21,7 +21,7 @@
 use serde_json::{Map, Value, json};
 
 use crate::domains::content::{fit_code, types};
-use crate::graphql::{self, FieldContext, FieldError, Output, Request};
+use crate::graphql::{FieldContext, FieldError, Output, Request};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::seed::Seed;
 use crate::state::{Record, ShopState, gid};
@@ -386,15 +386,6 @@ fn or_invalid(errors: Vec<UserError>) -> Vec<UserError> {
     }
 }
 
-/// Runs a mutation of the registry within this one: what it changes is this mutation's.
-fn run_inner(m: &mut Mutation<'_>, query: &str, variables: Map<String, Value>) -> Value {
-    let mut request = Request::new(query);
-    request.variables = variables;
-    let schema = m.schema();
-    let mut resolver = m.resolver();
-    graphql::run(schema, &mut resolver, &request, None).to_json()
-}
-
 fn metafield_enable(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let refuse = |field: &[&str], message: &str, code: &str| {
         Ok(payload(
@@ -462,11 +453,8 @@ fn metafield_enable(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     }
     let mut variables = Map::new();
     variables.insert("definition".into(), definition);
-    let answer = run_inner(
-        m,
-        "mutation($definition: MetafieldDefinitionInput!) { metafieldDefinitionCreate(definition: $definition) { createdDefinition { id } userErrors { field message code } } }",
-        variables,
-    );
+    let request = Request::new("mutation($definition: MetafieldDefinitionInput!) { metafieldDefinitionCreate(definition: $definition) { createdDefinition { id } userErrors { field message code } } }").with_variables(Value::Object(variables));
+    let (answer, _) = m.run_graphql(&request);
     let created = &answer["data"]["metafieldDefinitionCreate"];
     let errors = errors_of(created, "StandardMetafieldDefinitionEnableUserErrorCode");
     let Some(id) = created["createdDefinition"]["id"]
@@ -560,11 +548,8 @@ fn metaobject_enable(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
             })).collect::<Vec<_>>(),
         }),
     );
-    let answer = run_inner(
-        m,
-        "mutation($definition: MetaobjectDefinitionCreateInput!) { metaobjectDefinitionCreate(definition: $definition) { metaobjectDefinition { id } userErrors { field message code } } }",
-        variables,
-    );
+    let request = Request::new("mutation($definition: MetaobjectDefinitionCreateInput!) { metaobjectDefinitionCreate(definition: $definition) { metaobjectDefinition { id } userErrors { field message code } } }").with_variables(Value::Object(variables));
+    let (answer, _) = m.run_graphql(&request);
     let created = &answer["data"]["metaobjectDefinitionCreate"];
     let errors = errors_of(created, "MetaobjectUserErrorCode");
     let Some(id) = created["metaobjectDefinition"]["id"]

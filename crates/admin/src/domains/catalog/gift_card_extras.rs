@@ -19,7 +19,7 @@
 use serde_json::{Map, Value, json};
 
 use super::gift_cards::{redeemable, today};
-use crate::graphql::{self, FieldContext, FieldError, Request};
+use crate::graphql::{FieldContext, FieldError, Request};
 use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, value};
@@ -165,10 +165,7 @@ fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         })),
         operation_name: None,
     };
-    let answer = {
-        let mut resolver = mutation.resolver();
-        graphql::run(crate::schema::admin(), &mut resolver, &request, None).to_json()
-    };
+    let (answer, _) = mutation.run_graphql(&request);
     let set = &answer["data"]["productSet"];
     if set.is_null() {
         let message = answer["errors"][0]["message"]
