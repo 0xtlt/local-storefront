@@ -690,8 +690,8 @@ fn line_items_of(
 }
 
 /// The units of a fulfillment order that are not in `picked`: what a partial hold or move
-/// leaves.
-fn the_rest(
+/// leaves, everything that remains when nothing is picked.
+pub(super) fn the_rest(
     state: &ShopState,
     record: &serde_json::Map<String, Value>,
     picked: &[(String, i64)],
