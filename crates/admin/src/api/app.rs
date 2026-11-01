@@ -16,9 +16,8 @@
 use serde_json::{Value, json};
 
 use super::admin::origin_of;
-use super::{AdminApi, HttpRequest, HttpResponse};
+use super::{AdminApi, HttpRequest, HttpResponse, escape_html};
 use crate::domains::app::{billing, bulk, uploads};
-use crate::state::ShopState;
 
 /// The answer to a request of the app family's control endpoints, `None` for another path.
 pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Option<HttpResponse> {
@@ -30,17 +29,6 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
         "bulk" => Some(bulk_result(api, request, rest)),
         _ => None,
     }
-}
-
-fn not_found(message: impl Into<String>) -> HttpResponse {
-    HttpResponse::json(404, &json!({"error": message.into()}))
-}
-
-fn method_not_allowed(method: &str) -> HttpResponse {
-    HttpResponse::json(
-        405,
-        &json!({"error": format!("{method} is not allowed here")}),
-    )
 }
 
 /// The shop a request names (`?shop=`, a JSON or form body's `shop`), else the default one.
@@ -64,34 +52,30 @@ fn shop_of(api: &AdminApi, request: &HttpRequest) -> String {
         .unwrap_or_else(|| api.default_shop())
 }
 
-/// Runs `read` on a shop, `None` when there is no such shop.
-fn with_shop<T>(api: &AdminApi, shop: &str, read: impl FnOnce(&mut ShopState) -> T) -> Option<T> {
-    api.change_shop(shop, read)
-}
-
 // ---- charges ------------------------------------------------------------------------------
 
 fn charges(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse {
     let method = request.method.to_ascii_uppercase();
     let (number, action) = rest.split_once('/').unwrap_or((rest, ""));
     let Ok(number) = number.parse::<u64>() else {
-        return not_found(format!(
-            "no charge `{number}`: /__lsf/admin/charges/<number>"
-        ));
+        return HttpResponse::error(
+            404,
+            format!("no charge `{number}`: /__lsf/admin/charges/<number>"),
+        );
     };
     let shop = shop_of(api, request);
     match (method.as_str(), action) {
         ("GET", "") => {
-            let Some(found) = with_shop(api, &shop, |state| billing::charge(state, number)) else {
-                return not_found(format!("there is no shop {shop}"));
+            let Some(found) = api.change_shop(&shop, |state| billing::charge(state, number)) else {
+                return HttpResponse::error(404, format!("there is no shop {shop}"));
             };
             let Some(charge) = found else {
-                return not_found(format!("{shop} has no charge {number}"));
+                return HttpResponse::error(404, format!("{shop} has no charge {number}"));
             };
             if request.query_param("format") == Some("json") {
                 return HttpResponse::json(200, &charge.to_json());
             }
-            html(200, &charge_page(&shop, &charge))
+            HttpResponse::html(200, charge_page(&shop, &charge))
         }
         ("POST", "approve" | "decline") => {
             let decision = if action == "approve" {
@@ -99,11 +83,11 @@ fn charges(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse {
             } else {
                 billing::Decision::Decline
             };
-            let Some(result) = with_shop(api, &shop, |state| {
+            let Some(result) = api.change_shop(&shop, |state| {
                 billing::decide(state, number, decision)
                     .map(|redirect| (redirect, billing::charge(state, number)))
             }) else {
-                return not_found(format!("there is no shop {shop}"));
+                return HttpResponse::error(404, format!("there is no shop {shop}"));
             };
             let from_page = request
                 .header("content-type")
@@ -123,37 +107,20 @@ fn charges(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse {
                     }),
                 ),
                 Err(billing::DecisionError::NotFound) => {
-                    not_found(format!("{shop} has no charge {number}"))
+                    HttpResponse::error(404, format!("{shop} has no charge {number}"))
                 }
-                Err(billing::DecisionError::NotPending(status)) => HttpResponse::json(
+                Err(billing::DecisionError::NotPending(status)) => HttpResponse::error(
                     409,
-                    &json!({"error": format!("charge {number} is {status}: there is nothing to {action}")}),
+                    format!("charge {number} is {status}: there is nothing to {action}"),
                 ),
             }
         }
-        (_, "" | "approve" | "decline") => method_not_allowed(&method),
-        _ => not_found(format!(
-            "no control endpoint at /__lsf/admin/charges/{rest}"
-        )),
+        (_, "" | "approve" | "decline") => HttpResponse::not_allowed(&method),
+        _ => HttpResponse::error(
+            404,
+            format!("no control endpoint at /__lsf/admin/charges/{rest}"),
+        ),
     }
-}
-
-fn html(status: u16, body: &str) -> HttpResponse {
-    HttpResponse {
-        status,
-        headers: vec![(
-            "content-type".to_string(),
-            "text/html; charset=utf-8".to_string(),
-        )],
-        body: body.as_bytes().to_vec(),
-    }
-}
-
-fn esc(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 /// The look of lsf's pages (`checkout.css`'s tokens), inline: the Admin API serves this page
@@ -181,13 +148,13 @@ fn charge_page(shop: &str, charge: &billing::Charge) -> String {
     };
     let mut body = format!(
         "<header><strong>{}</strong><span>{} · local charge page of lsf</span></header><main><div class=\"card\">",
-        esc(&charge.app),
-        esc(shop)
+        escape_html(&charge.app),
+        escape_html(shop)
     );
     body.push_str(&format!("<h1>{what}</h1>"));
     body.push_str(&format!(
         "<p><strong>{}</strong>{}</p>",
-        esc(&charge.name),
+        escape_html(&charge.name),
         if charge.test {
             " <span class=\"badge\">Test</span>"
         } else {
@@ -196,13 +163,13 @@ fn charge_page(shop: &str, charge: &billing::Charge) -> String {
     ));
     body.push_str("<ul>");
     for line in &charge.lines {
-        body.push_str(&format!("<li>{}</li>", esc(line)));
+        body.push_str(&format!("<li>{}</li>", escape_html(line)));
     }
     body.push_str("</ul>");
     if let Some(new) = &charge.pending_capped_amount {
         body.push_str(&format!(
             "<p>The app asks to raise the usage limit to <strong>{}</strong>.</p>",
-            esc(new)
+            escape_html(new)
         ));
     }
     if charge.trial_days > 0 {
@@ -217,16 +184,16 @@ fn charge_page(shop: &str, charge: &billing::Charge) -> String {
             format!(
                 "/__lsf/admin/charges/{}/{name}?shop={}",
                 charge.number,
-                esc(shop)
+                escape_html(shop)
             )
         };
         body.push_str(&format!(
             "<div class=\"actions\"><form method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"shop\" value=\"{}\"><button type=\"submit\">Decline</button></form>\
              <form method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"shop\" value=\"{}\"><button class=\"primary\" type=\"submit\">Approve</button></form></div>",
             action("decline"),
-            esc(shop),
+            escape_html(shop),
             action("approve"),
-            esc(shop)
+            escape_html(shop)
         ));
         body.push_str(
             "<p class=\"muted\">Either way you return to the app, with <code>charge_id</code>. No money moves: lsf simulates the approval Shopify asks of the merchant.</p>",
@@ -234,16 +201,16 @@ fn charge_page(shop: &str, charge: &billing::Charge) -> String {
     } else {
         body.push_str(&format!(
             "<p>This charge is <span class=\"status\">{}</span>: there is nothing to decide.</p><p><a href=\"{}\">Back to the app</a></p>",
-            esc(&charge.status.to_ascii_lowercase()),
-            esc(&charge.return_url)
+            escape_html(&charge.status.to_ascii_lowercase()),
+            escape_html(&charge.return_url)
         ));
     }
     body.push_str("</div></main>");
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>{} · {}</title><style>{STYLE}</style></head><body>{body}</body></html>",
-        esc(what),
-        esc(&charge.app)
+        escape_html(what),
+        escape_html(&charge.app)
     )
 }
 
@@ -258,9 +225,9 @@ fn uploads_endpoint(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpRe
         ("POST", "") => {
             let content_type = request.header("content-type").unwrap_or_default();
             let Some(parts) = uploads::multipart(content_type, &request.body) else {
-                return HttpResponse::json(
+                return HttpResponse::error(
                     400,
-                    &json!({"error": "the body is a multipart/form-data form: the target's parameters, then `file`"}),
+                    "the body is a multipart/form-data form: the target's parameters, then `file`",
                 );
             };
             let field = |name: &str| {
@@ -270,26 +237,26 @@ fn uploads_endpoint(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpRe
                     .map(|part| String::from_utf8_lossy(&part.bytes).into_owned())
             };
             let Some(key) = field("key").filter(|key| !key.is_empty()) else {
-                return HttpResponse::json(400, &json!({"error": "the form has no `key`"}));
+                return HttpResponse::error(400, "the form has no `key`");
             };
             let Some(file) = parts.iter().find(|part| part.name == "file") else {
-                return HttpResponse::json(400, &json!({"error": "the form has no `file`"}));
+                return HttpResponse::error(400, "the form has no `file`");
             };
             let kind = field("Content-Type")
                 .or_else(|| file.content_type.clone())
                 .unwrap_or_else(|| "application/octet-stream".to_string());
-            let stored = with_shop(api, &shop, |state| {
+            let stored = api.change_shop(&shop, |state| {
                 uploads::store(state, &key, file.bytes.clone(), &kind)
             });
             if stored.is_none() {
-                return not_found(format!("there is no shop {shop}"));
+                return HttpResponse::error(404, format!("there is no shop {shop}"));
             }
             let location = format!("{}/{key}", uploads::bucket_url(&origin_of(request), &shop));
             let xml = format!(
                 "<?xml version='1.0' encoding='UTF-8'?><PostResponse><Location>{}</Location><Bucket>{}</Bucket><Key>{}</Key></PostResponse>",
-                esc(&location),
-                esc(&shop),
-                esc(&key)
+                escape_html(&location),
+                escape_html(&shop),
+                escape_html(&key)
             );
             let status = if field("success_action_status").as_deref() == Some("201") {
                 201
@@ -311,7 +278,7 @@ fn uploads_endpoint(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpRe
                 .header("content-type")
                 .unwrap_or("application/octet-stream")
                 .to_string();
-            let stored = with_shop(api, &shop, |state| {
+            let stored = api.change_shop(&shop, |state| {
                 uploads::store(state, key, request.body.clone(), &kind)
             });
             match stored {
@@ -320,21 +287,23 @@ fn uploads_endpoint(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpRe
                     headers: Vec::new(),
                     body: Vec::new(),
                 },
-                None => not_found(format!("there is no shop {shop}")),
+                None => HttpResponse::error(404, format!("there is no shop {shop}")),
             }
         }
         ("GET", key) if !key.is_empty() => {
-            let found = with_shop(api, &shop, |state| state.blob(key).cloned());
+            let found = api.change_shop(&shop, |state| state.blob(key).cloned());
             match found.flatten() {
                 Some(blob) => HttpResponse {
                     status: 200,
                     headers: vec![("content-type".into(), blob.content_type.clone())],
                     body: blob.bytes.to_vec(),
                 },
-                None => not_found(format!("nothing was uploaded to {key} of {shop}")),
+                None => {
+                    HttpResponse::error(404, format!("nothing was uploaded to {key} of {shop}"))
+                }
             }
         }
-        _ => method_not_allowed(&method),
+        _ => HttpResponse::not_allowed(&method),
     }
 }
 
@@ -344,11 +313,11 @@ fn uploads_endpoint(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpRe
 fn bulk_result(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse {
     let method = request.method.to_ascii_uppercase();
     if method != "GET" {
-        return method_not_allowed(&method);
+        return HttpResponse::not_allowed(&method);
     }
     let (shop, file) = rest.split_once('/').unwrap_or((rest, ""));
     let shop = crate::auth::oauth::normalize_shop(shop);
-    let found = with_shop(api, &shop, |state| bulk::result_file(state, file).cloned());
+    let found = api.change_shop(&shop, |state| bulk::result_file(state, file).cloned());
     match found.flatten() {
         Some(blob) => HttpResponse {
             status: 200,
@@ -361,6 +330,6 @@ fn bulk_result(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpRespons
             ],
             body: blob.bytes.to_vec(),
         },
-        None => not_found(format!("{shop} has no bulk operation result {file}")),
+        None => HttpResponse::error(404, format!("{shop} has no bulk operation result {file}")),
     }
 }

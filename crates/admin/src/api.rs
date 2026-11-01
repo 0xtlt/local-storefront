@@ -69,6 +69,28 @@ impl HttpResponse {
         }
     }
 
+    /// `{"error": message}`, the answer of lsf's endpoints to a request they refuse.
+    pub(crate) fn error(status: u16, message: impl Into<String>) -> HttpResponse {
+        HttpResponse::json(status, &serde_json::json!({"error": message.into()}))
+    }
+
+    /// The `405` of an endpoint that does not take `method`.
+    pub(crate) fn not_allowed(method: &str) -> HttpResponse {
+        HttpResponse::error(405, format!("{method} is not allowed here"))
+    }
+
+    /// An HTML page.
+    pub(crate) fn html(status: u16, body: impl Into<String>) -> HttpResponse {
+        HttpResponse {
+            status,
+            headers: vec![(
+                "content-type".to_string(),
+                "text/html; charset=utf-8".to_string(),
+            )],
+            body: body.into().into_bytes(),
+        }
+    }
+
     /// A redirect to `location`.
     pub fn redirect(location: &str) -> HttpResponse {
         HttpResponse {
@@ -82,4 +104,12 @@ impl HttpResponse {
         self.headers.push((name.to_ascii_lowercase(), value.into()));
         self
     }
+}
+
+/// `&`, `<`, `>` and `"` escaped, for the text and the attributes of an HTML page.
+pub(crate) fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }

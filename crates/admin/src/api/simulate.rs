@@ -45,7 +45,7 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
         .or_else(|| body.get("shop").and_then(Value::as_str).map(str::to_string))
         .map(|shop| crate::auth::oauth::normalize_shop(&shop))
         .unwrap_or_else(|| api.default_shop());
-    let no_shop = || HttpResponse::json(404, &json!({"error": format!("there is no shop {shop}")}));
+    let no_shop = || HttpResponse::error(404, format!("there is no shop {shop}"));
     Some(match (area, method.as_str()) {
         ("clock", "GET") => api
             .change_shop(&shop, |state| clock_json(state))
@@ -53,7 +53,7 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
         ("clock", "POST") => {
             let target = match target_time(&body) {
                 Ok(target) => target,
-                Err(error) => return Some(HttpResponse::json(422, &json!({ "error": error }))),
+                Err(error) => return Some(HttpResponse::error(422, error)),
             };
             let moved = api.change_shop(&shop, |state| {
                 let now = target(state.now()).ok_or_else(|| {
@@ -76,7 +76,7 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
             let answer = match moved {
                 None => return Some(no_shop()),
                 Some(Err(error)) => {
-                    return Some(HttpResponse::json(422, &json!({ "error": error })));
+                    return Some(HttpResponse::error(422, error));
                 }
                 Some(Ok(answer)) => answer,
             };
@@ -92,9 +92,9 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                     Some(Some(channel)) => ("outbox", Some(channel)),
                     Some(None) => {
                         let known: Vec<&str> = Channel::ALL.map(Channel::as_str).to_vec();
-                        return Some(HttpResponse::json(
+                        return Some(HttpResponse::error(
                             422,
-                            &json!({"error": format!("`channel` is one of {}", known.join(", "))}),
+                            format!("`channel` is one of {}", known.join(", ")),
                         ));
                     }
                 }
@@ -117,9 +117,9 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 .and_then(Value::as_str)
                 .map(str::to_string)
             else {
-                return Some(HttpResponse::json(
+                return Some(HttpResponse::error(
                     422,
-                    &json!({"error": "the body names the order: {\"order\": \"gid://shopify/Order/1\"}"}),
+                    "the body names the order: {\"order\": \"gid://shopify/Order/1\"}",
                 ));
             };
             let protect = |name: &str, fallback: &str| {
@@ -144,7 +144,7 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 Some(Ok(())) => {
                     HttpResponse::json(200, &json!({"ok": true, "shop": shop, "order": order}))
                 }
-                Some(Err(error)) => HttpResponse::json(422, &json!({ "error": error })),
+                Some(Err(error)) => HttpResponse::error(422, error),
             }
         }
         ("disputes", "POST") => {
@@ -153,9 +153,9 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 .and_then(Value::as_str)
                 .map(str::to_string)
             else {
-                return Some(HttpResponse::json(
+                return Some(HttpResponse::error(
                     422,
-                    &json!({"error": "the body names the order: {\"order\": \"gid://shopify/Order/1\"}"}),
+                    "the body names the order: {\"order\": \"gid://shopify/Order/1\"}",
                 ));
             };
             let amount = body.get("amount").and_then(|amount| {
@@ -187,7 +187,7 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 Some(Ok(dispute)) => {
                     HttpResponse::json(201, &json!({"ok": true, "shop": shop, "dispute": dispute}))
                 }
-                Some(Err(error)) => HttpResponse::json(422, &json!({ "error": error })),
+                Some(Err(error)) => HttpResponse::error(422, error),
             }
         }
         ("tax-app/activate", "POST") => match api.change_shop(&shop, orders::tax::activate) {
@@ -195,15 +195,15 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
             Some(Ok(())) => {
                 HttpResponse::json(200, &json!({"ok": true, "shop": shop, "state": "ACTIVE"}))
             }
-            Some(Err(error)) => HttpResponse::json(409, &json!({ "error": error })),
+            Some(Err(error)) => HttpResponse::error(409, error),
         },
         (path, "POST") if path.starts_with("disputes/") => {
             let rest = &path["disputes/".len()..];
             let (number, outcome) = rest.split_once('/').unwrap_or((rest, ""));
             let Ok(number) = number.parse::<u64>() else {
-                return Some(HttpResponse::json(
+                return Some(HttpResponse::error(
                     404,
-                    &json!({"error": format!("no dispute `{number}`: /__lsf/admin/disputes/<number>/won")}),
+                    format!("no dispute `{number}`: /__lsf/admin/disputes/<number>/won"),
                 ));
             };
             match api.change_shop(&shop, |state| {
@@ -213,16 +213,13 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 Some(Ok(dispute)) => {
                     HttpResponse::json(200, &json!({"ok": true, "shop": shop, "dispute": dispute}))
                 }
-                Some(Err(error)) => HttpResponse::json(409, &json!({ "error": error })),
+                Some(Err(error)) => HttpResponse::error(409, error),
             }
         }
         (
             "clock" | "outbox" | "emails" | "orders/protect" | "orders/link-request" | "disputes",
             _,
-        ) => HttpResponse::json(
-            405,
-            &json!({"error": format!("{method} is not allowed here")}),
-        ),
+        ) => HttpResponse::not_allowed(&method),
         _ => return None,
     })
 }
@@ -235,12 +232,12 @@ fn sources(api: &AdminApi, request: &HttpRequest, method: &str) -> HttpResponse 
             let size = request.body.len();
             match stubs.register(url, request.body.clone()) {
                 Ok(url) => HttpResponse::json(200, &json!({"ok": true, "url": url, "size": size})),
-                Err(error) => HttpResponse::json(422, &json!({ "error": error })),
+                Err(error) => HttpResponse::error(422, error),
             }
         }
-        ("PUT", None) => HttpResponse::json(
+        ("PUT", None) => HttpResponse::error(
             422,
-            &json!({"error": "name the URL, encoded, in `?url=` (PUT /__lsf/admin/sources?url=https%3A%2F%2Fcdn.example.com%2Ftheme.zip), the file as the body"}),
+            "name the URL, encoded, in `?url=` (PUT /__lsf/admin/sources?url=https%3A%2F%2Fcdn.example.com%2Ftheme.zip), the file as the body",
         ),
         ("GET", None) => {
             let entries: Vec<Value> = stubs
@@ -268,18 +265,15 @@ fn sources(api: &AdminApi, request: &HttpRequest, method: &str) -> HttpResponse 
                 )],
                 body: bytes.to_vec(),
             },
-            Some(Err(error)) => HttpResponse::json(422, &json!({"error": error.to_string()})),
-            None => HttpResponse::json(404, &json!({"error": format!("{url} is not stubbed")})),
+            Some(Err(error)) => HttpResponse::error(422, error.to_string()),
+            None => HttpResponse::error(404, format!("{url} is not stubbed")),
         },
         ("DELETE", Some(url)) => {
             let removed = usize::from(stubs.remove(url));
             HttpResponse::json(200, &json!({"ok": true, "removed": removed}))
         }
         ("DELETE", None) => HttpResponse::json(200, &json!({"ok": true, "removed": stubs.clear()})),
-        _ => HttpResponse::json(
-            405,
-            &json!({"error": format!("{method} is not allowed here")}),
-        ),
+        _ => HttpResponse::not_allowed(method),
     }
 }
 
