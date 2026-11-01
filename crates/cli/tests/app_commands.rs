@@ -102,6 +102,12 @@ fn checkout_check_runs_every_scenario_and_fails_on_one_that_fails() {
     let output = lsf(&app.0, &["app", "check"]);
     assert_eq!(output.status.code(), Some(1), "{}", text(&output));
     assert!(text(&output).contains("invalid  typo"), "{}", text(&output));
+    // Counted in the singular.
+    assert!(
+        text(&output).contains("1 error, 0 warnings in the store data"),
+        "{}",
+        text(&output)
+    );
 }
 
 #[test]
@@ -431,7 +437,10 @@ fn check_says_the_pages_of_classic_customer_accounts_are_not_rendered() {
     let output = lsf(&theme, &["check", "--format", "json"]);
     std::fs::remove_dir_all(&theme).ok();
     assert!(
-        text(&text_output).contains("templates/customers: warning: the 1 page(s)"),
+        text(&text_output).contains(
+            "templates/customers: warning: the 1 page of templates/customers/ is for classic \
+             customer accounts, which lsf does not have: it is never rendered."
+        ),
         "{}",
         text(&text_output)
     );

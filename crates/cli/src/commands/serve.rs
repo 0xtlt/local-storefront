@@ -333,8 +333,10 @@ pub fn run(
         }
         if let (Some(dir), Some((functions, ui_extensions))) = (&app_dir, extensions) {
             eprintln!(
-                "app:    {} ({functions} Functions, {ui_extensions} UI extensions)",
-                dir.display()
+                "app:    {} ({}, {})",
+                dir.display(),
+                crate::output::count(functions, "Function", "Functions"),
+                crate::output::count(ui_extensions, "UI extension", "UI extensions")
             );
         }
         eprintln!("data:   {source}");

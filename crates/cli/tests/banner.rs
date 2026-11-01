@@ -265,3 +265,63 @@ fn the_secret_line_says_where_the_secret_came_from() {
         "{line}"
     );
 }
+
+#[test]
+fn the_counted_lines_are_singular_for_one() {
+    let app = App::new("counted");
+    let dir = app.0.to_str().unwrap();
+    // One Function, one UI extension, one subscription.
+    let config = std::fs::read_to_string(app.0.join("shopify.app.toml")).unwrap();
+    std::fs::write(
+        app.0.join("shopify.app.toml"),
+        format!(
+            "{config}\n[webhooks]\napi_version = \"2026-10\"\n\n  [[webhooks.subscriptions]]\n  \
+             topics = [\"orders/create\"]\n  uri = \"/webhooks\"\n"
+        ),
+    )
+    .unwrap();
+    let server = Server::start(
+        &[
+            "app",
+            "dev",
+            "--app",
+            dir,
+            "--app-url",
+            "http://localhost:3999",
+            "--extension",
+            "volume-discount",
+            "--extension",
+            "gift-message",
+        ],
+        &[],
+    );
+    let text = server.before_ready.join("\n");
+    assert!(
+        text.contains(&format!("app:    {dir} (1 Function, 1 UI extension)")),
+        "{text}"
+    );
+    assert!(
+        text.contains("webhooks: 1 subscription of shopify.app.toml → http://localhost:3999"),
+        "{text}"
+    );
+    // Two of each: the plural.
+    drop(server);
+    let server = Server::start(
+        &[
+            "app",
+            "dev",
+            "--app",
+            dir,
+            "--extension",
+            "volume-discount",
+            "--extension",
+            "quantity-limit",
+        ],
+        &[],
+    );
+    let text = server.before_ready.join("\n");
+    assert!(
+        text.contains(&format!("app:    {dir} (2 Functions, 0 UI extensions)")),
+        "{text}"
+    );
+}
