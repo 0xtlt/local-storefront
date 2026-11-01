@@ -197,8 +197,8 @@ status 200 · template product · 1 Liquid error(s) · 0 warning(s)
 
 With `--strict`, exit `1` when the page has Liquid errors, or when nothing is at the path
 (`error: nothing at /x: the page is the theme's 404`). `npx local-storefront routes` lists every
-page of the data, and each one renders: loop over it to check them all.
-<!-- check: routes/account -->
+page of the data, and each one renders: loop over it to check them all. It leaves out
+`/account`, a page of lsf's, which `render --strict` refuses.
 
 ### Run the checks in CI
 
@@ -220,8 +220,8 @@ jobs:
       - run: npx local-storefront check
       - name: Render every page, and fail on a Liquid error
         run: |
-          for path in $(npx local-storefront routes); do
-            npx local-storefront render "$path" --strict > /dev/null || exit 1
+          for route in $(npx local-storefront routes); do
+            npx local-storefront render "$route" --strict > /dev/null || exit 1
           done
 ```
 
@@ -261,6 +261,10 @@ store data's `session`, empty in the demo store. The JSON has `lines`,
 and the error of each Function. Exits with `1` when a Function fails to run, or when a Function
 named on the command line did not run; it says why. Guide: [checkout](checkout.md).
 
+For CI, `npx local-storefront app check --build --format json` builds the extensions, then runs
+the Functions of every scenario: `ok`, `failures`, `invalid`, and `ranInNoScenario`, the
+Functions no scenario ran (a warning: the exit code stays `0`).
+
 ### Test the backend of an app
 
 ```bash
@@ -270,8 +274,10 @@ npx local-storefront app dev --app . --app-url http://localhost:3000 --port 9393
 The local Admin API, OAuth and the app's webhooks, for its backend. Once `ready:` is printed,
 `GET /__lsf/admin` gives the shop (`defaultShop`), the path of the API (`graphql`) and the token
 (`shops[0].token`). Webhooks go to `--app-url`, signed with the client secret the start lines
-name, and `GET /__lsf/webhooks?shop=<shop>&wait=1` waits for one. A shop for each test, orders
-from the checkout, resets: [test your backend](admin.md#test-your-backend).
+name; without it, those that lead off this machine are `not_sent`.
+`GET /__lsf/webhooks?shop=<shop>&since=<last>&wait=1` waits for one: `last` is in every answer
+of `GET /__lsf/webhooks`, read it before the action. A shop for each test, orders from the
+checkout, resets: [test your backend](admin.md#test-your-backend).
 
 ### Run a server
 
@@ -281,8 +287,9 @@ npx local-storefront serve --port 0 --static --quiet
 
 - **Ready.** Run it in the background and read its stderr until a line matches
   `^ready:\s+(http://\S+)`: the URL is group 1. Every line of the server goes to stderr. With
-  `--app`, the `admin:` lines (the token, the client secret) and the `webhooks:` line come
-  before `ready:`; read the token from `GET /__lsf/admin` rather than from the text.
+  `--app`, the `admin:` lines (the token, the client secret), `webhooks:` and `proxy:` come
+  before `ready:`, `home:` and `watch:` after it; read the token from `GET /__lsf/admin` rather
+  than from the text. Without `--app`, none of them is printed.
 - **Failed.** It exits with `2` before `ready:` when the port is taken (`error: cannot listen
   on …`), or with `--strict` when the data has errors (on stderr; `validate --format json` gives
   them as JSON).

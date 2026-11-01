@@ -26,13 +26,16 @@ npx local-storefront app dev --app ../my-app --app-url http://localhost:3000
 ```text
 admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
         X-Shopify-Access-Token: shpat_4f…   (shop: local-supply-co.myshopify.com)
+        client secret: from SHOPIFY_API_SECRET of ../my-app/.env
 webhooks: 3 subscriptions of shopify.app.toml → http://localhost:3000
 ready:  http://127.0.0.1:9292/   (extensions and checkout scenarios; …)
 ```
 
 With `--app`, the client id, the scopes and the webhooks are those of the app's
-`shopify.app.toml`, and the start lines of the Admin API (with one that says where the client
-secret came from) come before `ready:`. The parts lsf reads:
+`shopify.app.toml`, and the start lines of the Admin API come before `ready:`. Without
+`--app-url`, the `webhooks:` line says when they lead off this machine:
+`→ https://my-app.trycloudflare.com, not this machine: not sent (give --app-url http://localhost:<port>)`.
+The parts lsf reads:
 
 ```toml
 client_id = "…"
@@ -63,7 +66,9 @@ api_version = "2026-10"
 - **The client secret** signs webhooks, OAuth answers and session tokens. Give lsf the backend's:
   `--client-secret`, or `SHOPIFY_API_SECRET` in the environment or in the app's `.env` (where
   `shopify app env pull` writes it, and the app templates read it). Without one, lsf signs with
-  `lsf-local-client-secret`.
+  `lsf-local-client-secret`. The `client secret:` line says which: `from --client-secret`,
+  `from SHOPIFY_API_SECRET of the environment`, `from SHOPIFY_API_SECRET of <app>/.env`, or
+  `lsf-local-client-secret   (lsf's own: …)`.
 
 | Option | Environment variable | What it does |
 |---|---|---|
@@ -83,8 +88,8 @@ npx local-storefront serve --theme ../my-theme --app ../my-app --app-url http://
 ```
 
 `serve` without `--app` serves the Admin API too, with a local client id
-(`lsf-local-client-id`), every scope and no subscription, and prints nothing about it:
-`GET /__lsf/admin` has its token.
+(`lsf-local-client-id`), every scope and no subscription, and prints no `admin:`, secret or
+`webhooks:` line: `GET /__lsf/admin` has its token.
 
 [`examples/admin-backend`](https://github.com/0xtlt/local-storefront/tree/main/examples/admin-backend)
 is a backend written with Shopify's libraries (the React Router package and
@@ -309,7 +314,11 @@ request without a valid token is answered `401`
 `{"errors": "[API] Invalid API key or access token (unrecognized login or wrong password)"}`, with
 an `X-Lsf-Reason` header saying why in plain words. A token or a code that expired, and a refresh
 token that was retired, are refused as such for a day; then lsf forgets them, and refuses them as
-tokens it never issued.
+tokens it never issued. For a revoked token, the reason says what revoked it and how to get
+another: `this access token of test-1.myshopify.com was revoked when the shop was deleted
+(DELETE /__lsf/admin/shops/test-1): run the token exchange or OAuth again …` (an uninstall and
+a reset say so too). The server prints it once per token, `--quiet` or not:
+`admin:  401 for a revoked access token: …`.
 
 **Scopes are enforced.** A field or a mutation the token's scopes do not cover answers
 `ACCESS_DENIED` with Shopify's message ("Access denied for products field. Required access:
@@ -341,10 +350,14 @@ an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/r
 - **Where they go**: a `uri` that is a path joins `--app-url` (else `application_url`); an
   absolute one on the origin of `application_url` (the tunnel of a `shopify app dev` that is not
   running) moves to `--app-url`; another goes where it says. **Webhooks stay on this machine**:
-  one goes to another host only when that host is the origin of `--app-url` or `--address`.
-  Anything else (a production backend, a stale tunnel) is not sent, and `GET /__lsf/webhooks`
-  logs it `not_sent` with the reason. So give `--app-url`: without it, the subscriptions of
-  `shopify.app.toml` point at `application_url`, usually a tunnel, and lsf sends nothing there.
+  lsf sends one to the loopback (`localhost`, `127.0.0.0/8`, `::1`), to the scheme, host and
+  port of `--app-url`, or to an address given on purpose (`--address`, `address` of
+  `POST /__lsf/webhooks/trigger`). `*.localhost`, `0.0.0.0` and `::ffff:127.0.0.1` do not count
+  as this machine. Anything else (a production backend, a stale tunnel) is not sent, and
+  `GET /__lsf/webhooks` logs it `not_sent`, with the reason `lsf sends webhooks to this machine
+  or to --app-url only: <url> is neither; start lsf with --app-url http://localhost:<port> (your
+  backend)`. So give `--app-url`: without it, the subscriptions of `shopify.app.toml` point at
+  `application_url`, usually a tunnel, and lsf sends nothing there.
 - **Events**: what the Admin API changes (`productCreate` → `products/create`,
   `inventory_items/create`, `inventory_levels/connect`; `productUpdate` and `tagsAdd` →
   `products/update`; `productDelete` → `products/delete`), an order placed at the checkout
@@ -405,8 +418,10 @@ npx local-storefront app webhook trigger --topic app/uninstalled --app ../my-app
 ```
 
 The topic must be one `shopify.app.toml` subscribes to (or give `--address <url>`). Without
-`--app-url`, a subscription that leads off this machine is not sent: the command exits `2` and
-says to give it. See the [control API](control-api.md) and the [CLI](cli.md#app-webhook-trigger).
+`--app-url`, a subscription that leads off this machine is not sent: the command sends nothing,
+prints `error: lsf sends webhooks to this machine or to --app-url only: …` and exits `2`.
+`--format json` prints each delivery as `GET /__lsf/webhooks` lists it. See the
+[control API](control-api.md) and the [CLI](cli.md#app-webhook-trigger).
 
 ## Test your backend
 
@@ -513,14 +528,18 @@ shop changes stays in the Admin API.
 `GET /__lsf/webhooks?topic=products/create&shop=test-1&wait=1` answers once one delivery that
 matches the filters is done: `delivered`, `failed` or `not_sent` (a `pending` one is still being
 tried). The log keeps every delivery since the last `DELETE /__lsf/webhooks`, those of other
-tests and of earlier runs included, so `wait=1` can answer with an old one at once. Filter it:
+tests and of earlier runs included, so `wait=1` can answer with an old one at once. `wait`
+counts only the deliveries that match every filter. Filter it:
 
-- `shop=`: a test shop, by its name (`test-1`) or its domain.
+- `shop=`: a test shop, by its name (`test-1`, in any case) or its domain.
 - `resource=<gid>`: the deliveries about one record (the order a test placed, the product it
-  made).
-- `since=<id>`: the deliveries after that one. Each answer gives the id to pass next time, in
-  `last`. <!-- check: since-field --> For the second webhook of a topic, pass the `last` of the
-  first wait.
+  made), as each delivery's `resource` gives it. Shops seeded from the same data give the same
+  ids, so two test shops can make the same product GID: give `shop=` with it.
+- `since=<id>`: the deliveries after that one. Every answer has `last`, the newest id of the
+  log (`0` before the first). Ids are never given twice, even after a `DELETE`: read `last`
+  before the action, and `since=<last>` waits for what the action sends only. For the second
+  webhook of a topic, pass the `id` of the first: a `last` read after both were sent skips the
+  second.
 
 A delivery the backend fails is retried after 1, 5 and 15 seconds, and stays `pending` until its
 last attempt, about 21 seconds on. `wait` gives up after `timeout` (10 seconds by default) with a
@@ -556,9 +575,12 @@ const { deliveries } = await webhooks({ topic: "orders/create", resource: order.
 - `complete` needs an email, a payment method and, for a cart that ships, an address with a
   last name, a first line and a city. Otherwise it answers `422` with the state, whose `errors`
   say what is missing.
-- `order.id` is the `admin_graphql_api_id` of the order's `orders/create`: match by it, never by
-  the number. The thank-you page numbers each session's orders after the store data's (`#1004`
-  in every session), while the Admin API names them in turn (`#1005`, `#1006`, …).
+- `order` is the order as the Admin API recorded it. `order.id` is the `admin_graphql_api_id`
+  of its `orders/create`: match by it, never by the number. The thank-you page and the
+  checkout's `.json` keep the session's number: each session numbers its orders after the store
+  data's (`#1004` in every session), while the Admin API gives the next number no order has
+  (`#1004`, then `#1005`, …). So `complete` can answer `#1005` for a thank-you page that says
+  `#1004`.
 - A Function of the app that fails blocks `complete`. A test that only needs an order serves the
   Functions it needs and no other: `--extension <handle>`, repeated.
 - The backend processes the order in the default shop: fulfilling it takes the scope
@@ -830,8 +852,9 @@ sync").
   the store data's, whatever the others do, so a test reads the same number on the thank-you
   page every run ([testing](testing.md)). The Admin API records it under that number when none
   of its orders has it, else under its next one, that of `orderCreate` and draft orders: no two
-  orders share a name there. Two sessions, or a session after an `orderCreate`, can so show
-  `#1004` on their thank-you pages while the Admin API names their orders `#1005` and `#1006`. A
+  orders share a name there. Two sessions so show `#1004` on their thank-you pages while the
+  Admin API names their orders `#1004` and `#1005` (`#1005` and `#1006` after an
+  `orderCreate`); `complete` answers the Admin API's number. A
   guest whose email is a customer's places the order as that customer, as on Shopify: the
   customer's `numberOfOrders` and `amountSpent` count it.
 - **When the store data refuses a change** (an email it does not take, two variants with the

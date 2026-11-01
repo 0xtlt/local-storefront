@@ -32,7 +32,7 @@ uses them: [test your backend](admin.md#test-your-backend).
 
 | Request | What it does | Answer |
 |---|---|---|
-| `GET /__lsf/checkout?session=<id>` | The state of a session's [checkout](checkout.md#test-it), when the server runs with `--app`. The caller's session without `session`. Once the order is placed (`POST /checkouts/cn/<token>/complete`, which answers `{redirect, order: {id, number, name}}`), `status` is `completed` and `order` has its `id` (the `admin_graphql_api_id` of its `orders/create`), `number`, `processedAt`, `totalReceived`, `totalOutstanding`. | JSON |
+| `GET /__lsf/checkout?session=<id>` | The state of a session's [checkout](checkout.md#test-it), when the server runs with `--app`. The caller's session without `session`. Once the order is placed (`POST /checkouts/cn/<token>/complete`, which answers `{redirect, order: {id, number, name}}`), `status` is `completed` and `order` has its `id` (the `admin_graphql_api_id` of its `orders/create`), `number` (the session's, `"#1004"`, as the thank-you page shows it; `complete` answers the Admin API's, which can differ), `processedAt`, `totalReceived`, `totalOutstanding`. | JSON |
 | `GET /__lsf/checkouts` | The home page of the checkout: the extensions of the app and its [checkout scenarios](checkout.md#scenarios). `?format=json` for what it says, `?locale=fr` for a language. With `--app`. | HTML or JSON |
 | `GET /checkout?scenario=<name>` | Opens a checkout for a scenario, in a new session whose cookie it sets. With `--app`. | A redirect |
 | `GET /__lsf/checkout/assets/<file>` | The files of the checkout page, which are in the binary. With `--app`. | The file |
@@ -48,7 +48,7 @@ uses them: [test your backend](admin.md#test-your-backend).
 | `POST /__lsf/admin/uninstall` | Uninstalls the app from a shop (`{"shop"?}`, the default one without), as Shopify does: its tokens stop working, its subscription is cancelled, `app/uninstalled` is delivered, the subscriptions the backend made on the shop are deleted, and nothing more is delivered for the shop until the app is installed again. An app already uninstalled delivers nothing. | `{ "ok": true, "shop", "revoked": 1, "deletedSubscriptions": 2 }` |
 | `POST /__lsf/admin/install` | Installs the app again (`{"shop"?, "scopes"?}`): its default token works again, with the app's scopes or those given (a list, or `"read_products,read_orders"`), and the subscriptions of `shopify.app.toml` deliver for the shop again (OAuth and a token exchange install it too); `app/scopes_update` is delivered when they changed. | `{ "ok": true, "shop", "token", "scopes", "scopesChanged" }` |
 | `GET /__lsf/webhooks` | The webhook deliveries, oldest first, filtered by `topic`, `shop`, `state`, `resource` and `since`; `wait=<n>` waits until n of them are done. See [webhook deliveries](#webhook-deliveries). | `{ "count", "deliveries", "last", "waited"? }`; `408` when fewer are done |
-| `DELETE /__lsf/webhooks` | Forgets the deliveries. | `{ "ok": true, "deliveries": 3 }` |
+| `DELETE /__lsf/webhooks` | Forgets the deliveries. Their ids are not given again. | `{ "ok": true, "deliveries": 3 }` |
 | `POST /__lsf/webhooks/trigger` | Sends one webhook: `{"topic", "id"?, "shop"?, "address"?, "payload"?, "wait"?}`. The payload is built from the record `id` names, else a representative one of the topic, else `payload` as given; it goes to `address`, else to the subscriptions of the topic. | `{ "count", "deliveries": [...] }`; `404` without a record or a subscription, `422` for a topic lsf does not build |
 | `GET /__lsf/admin/clock?shop=`, `POST /__lsf/admin/clock` | A shop's clock (`{shop, now, frozen}`), and moving it: `{"advance": "31d"}` (seconds, or `s`, `m`, `h`, `d`) or `{"now": "<RFC 3339>"}` (`at` too), with `"shop"?`. The clock then stays at that instant, and what waits on time happens, with its webhooks: a checkout left ten minutes is abandoned, a data erasure ten days old is processed (`customers/redact`), payment schedules that came due fire `payment_schedules/due`, store credit expires, Shopify Payments pays out the days left behind, the app's charges pending for two days expire, scheduled listings whose date passed are listed, abandoned checkouts three months old are deleted (`checkouts/delete`). The same runs before every Admin API request, by the shop's clock, frozen or not. `DELETE /__lsf/admin` puts the clock back. | `{ "ok", "shop", "now", "frozen", "erased", "deletedCheckouts" }`; `422` for a bad body or a time past the year 9999 |
 | `GET /__lsf/admin/outbox?shop=&channel=`, `DELETE …` | The [outbox](admin-reference.md#the-outbox): what Shopify would have sent to the outside world, which lsf records instead (emails, shipping labels, Flow triggers, POS messages, data erasures), oldest first, the last 1000; of one channel (`email`, `carrier`, `flow`, `pos`, `data_erasure`) or all. `DELETE` forgets them; a reset empties it. | `{ "shop", "count", "outbox": [{ "id", "at", "channel", "to", "what", "about", "subject"?, "body"?, "data"? }] }`; `DELETE`: `{ "ok": true, "shop", "outbox": 3 }`; `422` for another channel |
@@ -136,7 +136,7 @@ gives:
 | `locales` | The languages of the store. |
 | `customers` | Each customer's `email` and `company`. |
 | `counts` | How many `products`, `collections`, `pages`, `blogs`, `customers`, `sessions`. |
-| `routes` | Every page the data creates, as `npx local-storefront routes` lists them. |
+| `routes` | Every page the data creates, as `npx local-storefront routes` lists them: each one renders. Not `/account`, a page of lsf's, not of the theme. |
 
 A test runner can wait on this URL to know the server is up.
 
@@ -164,33 +164,34 @@ shop, oldest first. The filters combine:
 | Parameter | Keeps |
 |---|---|
 | `topic=orders/create` | One topic. |
-| `shop=test-1` | One shop, by its name (`test-1`) or its domain (`test-1.myshopify.com`). |
+| `shop=test-1` | One shop, by its name (`test-1`, in any case) or its domain (`test-1.myshopify.com`). |
 | `state=delivered` | One state: `delivered`, `failed`, `pending` (still being tried) or `not_sent` (lsf did not send it, and `reason` says why: a topic it does not build, an address off this machine, an EventBridge or Pub/Sub subscription). |
-| `resource=<gid>` | The deliveries about one record (`gid://shopify/Order/…`). |
-| `since=<id>` | The deliveries after this one, by `id`. |
+| `resource=<gid>` | The deliveries about one record (`gid://shopify/Order/…`), as their `resource` names it. |
+| `since=<id>` | The deliveries after this one, by `id`. Not a number: `422`. |
 
 `wait=<n>` makes the request wait until n deliveries match every filter and are done:
 `delivered`, `failed` or `not_sent`. It counts what the log already holds, the deliveries from
-before the request included: with no `since`, `wait=1` can answer at once with an old one.
-`timeout=<ms>` bounds the wait, 10 seconds by default; then the answer is `408`, with the same
+before the request included: with no `since`, `wait=1` can answer at once with an old one. The
+answer lists every delivery that matches, those still `pending` too. `timeout=<ms>` bounds the wait, 10 seconds by default; then the answer is `408`, with the same
 body. A delivery that the backend fails is retried after 1, 5 and 15 seconds, and stays `pending`
 until its last attempt, about 21 seconds after the first: to see it fail, give `timeout=25000`.
 
 ```json
 {
   "count": 1,
-  "deliveries": [{ "id": 24, "topic": "orders/create", "shop": "local-supply-co.myshopify.com", "state": "delivered", … }],
+  "deliveries": [{ "id": 24, "topic": "orders/create", "shop": "local-supply-co.myshopify.com", "resource": "gid://shopify/Order/8987513318340", "state": "delivered", … }],
   "last": 24,
   "waited": { "for": 1, "complete": true, "timeoutMs": 10000 }
 }
 ```
 
-<!-- check: since-field -->
-`last` is the id to pass as `since` next time, to wait for the next delivery only. `waited` is
-there with `wait`. A delivery has `id`, `webhookId`, `eventId`, `topic`, `shop`,
-`subscription`, `url`, `apiVersion`, `triggeredAt`, `request` (`headers`, `body`: exactly what
-was signed), `attempts` (`status`, `durationMs`, `response`, `error`), `state` and `reason`,
-`notes`.
+`last` is in every answer, the `408` too: the newest id of the log, `0` before the first
+delivery. Ids are never given twice, even after a `DELETE`: read `last` before an action, then
+`since=<last>&wait=1` waits for what the action sends only. `waited` is there with `wait`. A
+delivery has `id`, `webhookId`, `eventId`, `topic`, `shop`, `resource` (the GID of the record
+of the event, `null` for one about no record, as `app/uninstalled`), `subscription`, `url`,
+`apiVersion`, `triggeredAt`, `request` (`headers`, `body`: exactly what was signed), `attempts`
+(`status`, `durationMs`, `response`, `error`), `state` and `reason`, `notes`.
 
 ## Response headers
 

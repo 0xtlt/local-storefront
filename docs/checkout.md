@@ -157,8 +157,8 @@ module is not built (the page does not run it). A `.graphql` import is an error.
 What is wrong with the app (a missing build, an unknown Function target, a checkout UI target
 the page has no place for, an `owner_type` that is missing or not one of Shopify's) is printed
 when the server starts (`app: …`), and is in the `diagnostics` of the state and on the home
-page. A missing build (`no Wasm module`, `not built`): `npx local-storefront app build`, or
-`--build`.
+page. A missing build (``no Wasm module at …: build it with `lsf app build <handle>` ``, `not
+built`): `npx local-storefront app build`, or `--build`.
 
 | Option | What it does |
 |---|---|
@@ -374,10 +374,11 @@ when the connection fails, `502 Bad Gateway (Connection Failed)`. A Function tha
 some answer of its server is found by opening its scenario, which sends the request.
 
 Running them all takes a moment (under a second for the ~90 scenarios of the
-[playground](../examples/checkout-playground)), so the page does not wait for it: it shows
-"Running the Functions…" and asks `GET /__lsf/checkouts/check`, which answers what it found.
-The check has 20 s: it looks at the time before each Function runs (each run is bounded on its
-own by the instruction limit), and once they are spent it stops and says so ("Checked 40 of 86
+[playground](https://github.com/0xtlt/local-storefront/tree/main/examples/checkout-playground)),
+so the page does not wait for it: it shows "Running the Functions…" and asks
+`GET /__lsf/checkouts/check`, which answers what it found. The check has 20 s: it looks at the
+time before each Function runs (each run is bounded on its own by the instruction limit), and
+once they are spent it stops and says so ("Checked 40 of 86
 scenarios"). A complete check is kept until the store data or the app (a Function, its Wasm
 module) changes: the page then has it at once, and the next check runs on the next request after
 a change. A partial check, or one whose app changed while it ran (a module rebuilt), is not kept.
@@ -454,12 +455,13 @@ leave `checkout.functions` alone, and the `discount-*` scenarios list the discou
 with the settings (and the code) `checkout.discounts` gives them. The scenarios are a place to
 start: edit them.
 
-**A discount Function runs in `discount-automatic` and `discount-code` only.** It runs only for
-a discount that names it ([set up the checkout](#set-up-the-checkout)), and the other scenarios
-(`b2b`, `abroad`, `large-cart`, …) have none: `app check` passes on them without running it
-(it lists a Function only when it ran in no scenario at all). To run it in every scenario, a
-B2B buyer, another country and a large cart included, give it a discount in the `checkout`
-section of the store data (`store.json`, or the file that has the section):
+**A discount Function runs in `discount-automatic` and `discount-code` only.** It runs only for a
+discount that names it ([set up the checkout](#set-up-the-checkout)), and the other scenarios
+(`b2b`, `abroad`, `large-cart`, …) have none: `app check` passes on them without running it. It
+warns only about a Function no scenario ran at all (`warning  <handle>: ran in no scenario, so
+nothing checks it`, and `ranInNoScenario` in JSON), and its exit code stays the same. To run it in
+every scenario, a B2B buyer, another country and a large cart included, give it a discount in the
+`checkout` section of the store data (`store.json`, or the file that has the section):
 
 ```json
 {
@@ -1045,7 +1047,7 @@ Functions it needs and no others, `--extension <handle>` repeated: a Function th
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |
 | `POST /checkouts/cn/<token>/update` | Applies `{"operations": [...]}`, in order. | `200` and the state, or `400` `{"error": "…"}` and nothing applied |
-| `POST /checkouts/cn/<token>/complete` | Places the order. | `200` `{"redirect": "…/thank-you", "order": {"id", "number", "name"}}` (`id` is the `admin_graphql_api_id` of its `orders/create`), `422` and the state with `errors`, or `409` and the fresh state when the cart changed meanwhile |
+| `POST /checkouts/cn/<token>/complete` | Places the order. | `200` `{"redirect": "…/thank-you", "order": {"id", "number", "name"}}`, the order as the Admin API recorded it (`id` is the `admin_graphql_api_id` of its `orders/create`; the thank-you page shows the session's number, which can differ), `422` and the state with `errors`, or `409` and the fresh state when the cart changed meanwhile |
 | `GET /checkouts/cn/<token>/thank-you` | The page of the order. | HTML |
 | `GET /__lsf/checkout?session=<id>` | The state of a session's checkout, from outside its browser. | JSON |
 
@@ -1106,10 +1108,12 @@ the metafields, the `extensions` to load and `diagnostics`. Money is `{"amount":
 `complete` refuses an empty cart, an order with errors from a Function, and one without an
 email, a payment method or, for a cart that ships, an address with a last name, a first line and
 a city. It empties the cart: the order is what the thank-you page shows, and the state's `order`
-(`id`, `number`, `processedAt`, `totalReceived`, `totalOutstanding`) once `status` is
-`completed`. It takes the cart only if the cart is still the one the Functions
-ran on: if it changed meanwhile (another tab), nothing is bought and the reply is `409`. Completing
-an order that was placed already leads to the same thank-you page, never to a second order.
+(`id`, `number`, `processedAt`, `totalReceived`, `totalOutstanding`) once `status` is `completed`.
+That `number` is the session's (`#1004` every run); the `order` of `complete` has the Admin API's,
+`#1005` when the shop has a `#1004` already. It takes the cart only if the cart is still the one
+the Functions ran on: if it changed meanwhile (another tab), nothing is bought and the reply is
+`409`. Completing an order that was placed already leads to the same thank-you page, never to a
+second order.
 
 ### In CI
 
@@ -1118,7 +1122,7 @@ an order that was placed already leads to the same thank-you page, never to a se
 ```yaml
 - run: npx local-storefront app build      # every Function and UI extension, without Node
 - run: npx local-storefront validate       # the store data, the scenarios and the app
-- run: npx local-storefront app check      # every Function of every scenario runs
+- run: npx local-storefront app check      # every Function of every scenario runs (`--build` builds first)
 - run: npx local-storefront app function run volume-discount --scenario discount-automatic --format json | jq -e '.cost.discounts.amount > 0'
 ```
 

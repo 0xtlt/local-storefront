@@ -70,14 +70,18 @@ folder, then, once it takes requests, a line that starts with
 `--quiet`, each request gets a line (`200 GET / 39.1ms`), with the reason of a 404 above it.
 
 With `--app`, the lines of the app come before `ready:`: how many checkout scenarios the data
-has and, with a theme, the address of the home page of the checkout
-(`home:   http://127.0.0.1:<port>/__lsf/checkouts`), the [Admin API](admin.md) of the store, the
-client secret it signs with and where that secret comes from, and the webhooks of the app:
+has, the [Admin API](admin.md) of the store and its token, the client secret it signs with and
+where that secret comes from, the webhooks of the app, and its proxy. After `ready:`, with a
+theme, the address of the home page of the checkout, then `watch:` with `--watch`:
 
 ```text
+scenarios: 10
 admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
         X-Shopify-Access-Token: shpat_…   (shop: local-supply-co.myshopify.com)
+        client secret: from SHOPIFY_API_SECRET of ../my-app/.env
 webhooks: 1 subscription of shopify.app.toml → http://localhost:3000
+ready:  http://127.0.0.1:9292/   (status and control API: http://127.0.0.1:9292/__lsf)
+home:   http://127.0.0.1:9292/__lsf/checkouts   (extensions and checkout scenarios of the app)
 ```
 
 Without `--app`, it prints none of these. The token is the same every run for a shop and an
@@ -168,19 +172,27 @@ name their sources (`module`), bundled into `dist/<handle>.js`. Guide:
 Runs the Functions of every checkout scenario, as the home page checks them, without a server:
 for CI. Prints each scenario that does not validate and each Function that fails, with the
 scenarios it fails in, and exits with `1` when there is one, when the time ran out, or when
-there is no scenario at all (`app init` writes a set). It also lists the Functions that ran in
-no scenario, such as a discount Function no scenario's discount names: nothing checked them. No
-request of a `.fetch` target is sent. It builds nothing: in a fresh clone, where `dist/` is not
-committed, run `npx local-storefront app build` first. Exiting with `0` means every Function ran
-without failing, not that it decided right: assert that with `app function run --format json`.
-CI: [checkout](checkout.md#in-ci).
+there is no scenario at all (`app init` writes a set). No request of a `.fetch` target is sent.
+It builds nothing without `--build`: in a fresh clone, where `dist/` is not committed, give
+`--build` (or run `npx local-storefront app build` first).
+
+A Function that ran in no scenario, such as a discount Function no scenario's discount names, is
+a warning: nothing checked it, and the exit code stays the same.
+
+```text
+warning  volume-discount: ran in no scenario, so nothing checks it (a discount Function runs only for a discount that names it: …)
+```
+
+Exiting with `0` means no Function failed where it ran, not that it decided right: assert that
+with `app function run --format json`. CI: [checkout](checkout.md#in-ci).
 
 | Option | Environment variable | What it does |
 |---|---|---|
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
 | `--extension <handle>` | | Only these extensions. Repeat it for several. |
+| `--build` | | Builds the extensions first, as `app build` does. |
 | `--format text` | | Default. One line per problem, then a summary. |
-| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, file, problems}]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. |
+| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, file, problems}], ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `ranInNoScenario` is filled only when every scenario ran. |
 | `--budget <seconds>` | | How long the Functions may run in all. Default 300. |
 
 ### app function run
@@ -253,9 +265,10 @@ applied. Relative `uri`s join `--app-url` (else `application_url`), and an absol
 origin of `application_url` moves to `--app-url`, since `application_url` is often the tunnel of
 a `shopify app dev` that is not running. As Shopify's, a triggered webhook is not retried.
 
-Webhooks stay on this machine. One goes to another host only when that host is the origin of
-`--app-url` or of `--address`: otherwise it is not sent (`not_sent`, with the reason), and the
-command exits with `2` and asks for `--app-url`. So `application_url`, often your production
+Webhooks stay on this machine. One goes to another host only when that host is the scheme,
+host and port of `--app-url`, or the `--address` given: otherwise the command sends nothing,
+prints `error: lsf sends webhooks to this machine or to --app-url only: <url> is neither; …`
+and exits with `2`. A server logs the same delivery `not_sent`. So `application_url`, often your production
 backend or a dead tunnel, never gets one by accident.
 
 The secret is the app's. Without the app (no `--app`, and run outside its folder), its `.env`
@@ -271,7 +284,8 @@ its own secret, and the backend answers `401`.
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret of the signature. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else lsf's local secret, `lsf-local-client-secret`. |
 | `--app <dir>`, `--path <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in; may be left out with `--address`. |
 | `--app-url <url>` | `LSF_APP_URL` | Where the backend of the app listens. Without it, `application_url`, when it is on this machine. |
-| `--format json` | | Prints the deliveries as JSON: `{ok, deliveries: [{topic, url, request: {headers, body}, attempts: [{status, durationMs, response, error}], state, reason, notes}]}`. `--json` and `-j` do the same. |
+| `--format text` | | Default. The request it sent, the answer, the state. |
+| `--format json` | | Prints the deliveries as JSON: `{ok, deliveries: [...]}`, each as [`GET /__lsf/webhooks`](control-api.md#webhook-deliveries) lists it (`topic`, `url`, `request`, `attempts`, `state`, `reason`, …). `--json` and `-j`, from before `--format`, still work. |
 
 lsf builds the payloads of the topics of products, collections, customers, orders, draft
 orders, fulfillments, refunds, inventory items and levels, locations, metaobjects, discounts,
@@ -338,7 +352,7 @@ Checks the store data and explains every problem, its checkout scenarios include
 
 The data is the one `app dev` reads: `--data`, or the folder's `shopify-local/`, or the
 app's (`<app>/shopify-local`), or the built-in demo store. In a folder that is not a theme (an
-app, such as [the checkout playground](../examples/checkout-playground)), it checks the data
+app, such as [the checkout playground](https://github.com/0xtlt/local-storefront/tree/main/examples/checkout-playground)), it checks the data
 alone, with the store's own languages; an app without any is checked with the demo store, as its
 checkout runs. A folder that is neither a theme nor an app, and has no store data, is an error.
 
@@ -562,8 +576,8 @@ Prints the JSON Schema of the store data.
 `npx local-storefront routes`
 
 Lists the URLs the store data gives a page to, one per line. Each one renders: a loop of
-`render --strict` over them checks every page.
-<!-- check: routes/account -->
+`render --strict` over them checks every page. `/account`, a page of lsf's rather than of the
+theme, is not listed; `GET /__lsf/status` lists the same `routes`.
 
 ## docs
 
