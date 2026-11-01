@@ -80,10 +80,10 @@ fn text<'r>(record: &'r Record, field: &str) -> &'r str {
 }
 
 /// The record of `id` when it is one of `type_name`.
-fn record_of(state: &ShopState, id: &str, type_name: &str) -> Option<Record> {
-    (state.type_of(id) == Some(type_name))
-        .then(|| state.get(id).cloned())
-        .flatten()
+fn record_of<'s>(state: &'s ShopState, id: &str, type_name: &str) -> Option<&'s Record> {
+    state
+        .get(id)
+        .filter(|_| state.type_of(id) == Some(type_name))
 }
 
 // ---- script tags -------------------------------------------------------------------------
@@ -158,7 +158,6 @@ fn input_of(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
-/// `scriptTagCreate`.
 fn script_tag_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = input_of(ctx, "input");
     let mut errors = Vec::new();
@@ -180,7 +179,6 @@ fn script_tag_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
     Ok(payload(json!({"scriptTag": id}), &[]))
 }
 
-/// `scriptTagUpdate`.
 fn script_tag_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let Some(record) = record_of(m.state(), &id, "ScriptTag") else {
@@ -189,7 +187,7 @@ fn script_tag_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
     };
     let input = input_of(ctx, "input");
     let mut errors = Vec::new();
-    let (src, scope, cache) = check_script_tag(&input, Some(&record), &mut errors);
+    let (src, scope, cache) = check_script_tag(&input, Some(record), &mut errors);
     if !errors.is_empty() {
         return Ok(payload(json!({"scriptTag": null}), &errors));
     }
@@ -204,7 +202,6 @@ fn script_tag_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
     Ok(payload(json!({"scriptTag": id}), &[]))
 }
 
-/// `scriptTagDelete`.
 fn script_tag_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     if record_of(m.state(), &id, "ScriptTag").is_none() {
@@ -265,11 +262,11 @@ fn check_settings(
     extension: &Value,
     settings: &Map<String, Value>,
 ) -> Vec<UserError> {
+    let no_fields = Map::new();
     let fields = extension
         .get("fields")
         .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+        .unwrap_or(&no_fields);
     let mut errors = Vec::new();
     let missing: Vec<&str> = fields
         .keys()
@@ -299,13 +296,8 @@ fn check_settings(
             .code("INVALID_SETTINGS"),
         );
     }
-    let currency = state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string();
-    for (key, field) in &fields {
+    let currency = super::orders::model::currency(state);
+    for (key, field) in fields {
         let Some(given) = settings.get(key) else {
             continue;
         };
@@ -320,12 +312,11 @@ fn check_settings(
         let validations = field
             .get("validations")
             .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+            .map_or(&[][..], Vec::as_slice);
         let cx = super::content::types::Context {
             state,
             currency: &currency,
-            validations: &validations,
+            validations,
         };
         if let Err(invalid) = super::content::types::check(kind, &raw, &cx) {
             errors.push(
@@ -379,7 +370,6 @@ fn web_pixel_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     Ok(payload(json!({"webPixel": id}), &[]))
 }
 
-/// `webPixelUpdate`.
 fn web_pixel_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     if record_of(m.state(), &id, "WebPixel").is_none() {
@@ -398,7 +388,6 @@ fn web_pixel_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     Ok(payload(json!({"webPixel": id}), &[]))
 }
 
-/// `webPixelDelete`.
 fn web_pixel_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     if record_of(m.state(), &id, "WebPixel").is_none() {
@@ -458,7 +447,6 @@ fn server_pixel_create(m: &mut Mutation<'_>, _ctx: &FieldContext<'_>) -> Result<
     Ok(payload(json!({"serverPixel": id}), &[]))
 }
 
-/// `serverPixelDelete`.
 fn server_pixel_delete(m: &mut Mutation<'_>, _ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let Some(id) = server_pixel_key(m.state()) else {
         let error = UserError::new(&[], "Server pixel not found").code("NOT_FOUND");
@@ -551,7 +539,7 @@ fn pub_sub_server_pixel_update(
 // ---- storefront access tokens ------------------------------------------------------------
 
 /// How many storefront access tokens a shop can have.
-pub const MAX_STOREFRONT_TOKENS: usize = 100;
+const MAX_STOREFRONT_TOKENS: usize = 100;
 
 /// The scopes a storefront access token gets: the app's `unauthenticated_*` ones.
 fn unauthenticated_scopes(state: &ShopState) -> Vec<Value> {
@@ -572,7 +560,6 @@ fn unauthenticated_scopes(state: &ShopState) -> Vec<Value> {
         .collect()
 }
 
-/// `storefrontAccessTokenCreate`.
 fn storefront_token_create(
     m: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -625,7 +612,6 @@ fn storefront_token_create(
     Ok(payload(json!({"storefrontAccessToken": id}), &[]))
 }
 
-/// `storefrontAccessTokenDelete`.
 fn storefront_token_delete(
     m: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
