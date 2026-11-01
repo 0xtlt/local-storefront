@@ -751,8 +751,8 @@ pub const BODY_LIMIT: usize = 32 << 20;
 /// form around it.
 pub const UPLOAD_BODY_LIMIT: usize = (1 << 30) + (1 << 20);
 
-/// The largest body of `PUT /__lsf/admin/sources`: a source one byte over what one may be, so
-/// that a test sees `ZIP_TOO_LARGE`, and a MiB more.
+/// The largest body of `PUT /__lsf/admin/sources`: room for a source over 50 MB, for a test of
+/// `ZIP_TOO_LARGE`.
 pub const SOURCE_BODY_LIMIT: usize = lsf_admin::sources::MAX_SOURCE_BYTES + (1 << 20);
 
 /// The largest body a request to `path` may have.

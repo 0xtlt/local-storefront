@@ -139,8 +139,7 @@ pub struct AdminApi {
     theme: Option<std::path::PathBuf>,
     /// What the sources of the mutations may reach.
     fetch: crate::sources::FetchOptions,
-    /// The URLs it answers itself, never fetched (`--admin-source`, `/__lsf/admin/sources`): one
-    /// set for every shop, kept when they are reset.
+    /// One set for every shop, kept when they are reset.
     stubs: crate::sources::Stubs,
     /// What a test runs once at a point of a request ([`Hook`]).
     #[cfg(test)]
@@ -308,15 +307,12 @@ impl AdminApi {
         self
     }
 
-    /// Answers these URLs itself, with their files (`--admin-source <url>=<file>`), when a
-    /// mutation reads them: they are never fetched.
+    /// `--admin-source <url>=<file>`.
     pub fn with_sources(mut self, stubs: crate::sources::Stubs) -> AdminApi {
         self.stubs = stubs;
         self
     }
 
-    /// The URLs it answers itself: `--admin-source`, and those `PUT /__lsf/admin/sources`
-    /// registered.
     pub fn stubs(&self) -> &crate::sources::Stubs {
         &self.stubs
     }

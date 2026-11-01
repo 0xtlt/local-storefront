@@ -486,7 +486,7 @@ fn a_stubbed_url_is_read_without_being_fetched() {
         created["data"]["themeCreate"]["theme"]["name"], "Comfort",
         "{created}"
     );
-    // The configured file, read when the import is made.
+    // The configured file.
     let (_, import) = graphql(
         &api,
         &token,
@@ -498,7 +498,6 @@ fn a_stubbed_url_is_read_without_being_fetched() {
         import["data"]["urlRedirectImportCreate"]["urlRedirectImport"]["count"], 1,
         "{import}"
     );
-    // Listed, and given back.
     let (_, listed, _) = control("GET", None, Vec::new());
     assert_eq!(listed["count"], 2, "{listed}");
     assert_eq!(listed["sources"][0]["from"], csv.display().to_string());
@@ -538,7 +537,6 @@ fn a_stubbed_url_is_read_without_being_fetched() {
             .contains("--admin-source"),
         "{refused}"
     );
-    // Not a URL a stub may have.
     let (status, bad, _) = control("PUT", Some("file:///etc/passwd"), b"x".to_vec());
     assert_eq!(status, 422, "{bad}");
     assert_eq!(control("PUT", None, b"x".to_vec()).0, 422);

@@ -89,20 +89,18 @@ pub struct FetchOptions {
     pub allow_local: bool,
 }
 
-/// The URLs lsf answers itself, never fetched: by URL ([`stub_key`]), the bytes it stands for.
+/// The URLs lsf answers itself, keyed by [`stub_key`].
 ///
-/// - `configured`: `--admin-source <url>=<file>`, the file read at each use, so that an edit is
-///   seen at once. Only the developer names a file: a request never does, or any client of the
-///   machine could read a file of it back as a theme file.
-/// - `registered`: `PUT /__lsf/admin/sources?url=`, the body, until `DELETE`. One overrides a
-///   configured URL, which is back once it is deleted.
+/// - `configured` (`--admin-source`): the file is read at each use, so that an edit is seen at
+///   once. Only the developer names a file: a request never does, or any client of the machine
+///   could read a file of it back as a theme file.
+/// - `registered` (`PUT /__lsf/admin/sources`): overrides a configured URL until `DELETE`.
 #[derive(Debug, Default)]
 pub struct Stubs {
     configured: HashMap<String, PathBuf>,
     registered: RwLock<HashMap<String, Arc<[u8]>>>,
 }
 
-/// Where a stubbed URL's bytes come from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StubFrom {
     /// `--admin-source`.
@@ -177,7 +175,7 @@ impl Stubs {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Answers `url` with `bytes` from now on: the URL as it is looked up.
+    /// The URL as it is looked up.
     pub fn register(&self, url: &str, bytes: Vec<u8>) -> Result<String, String> {
         let key = stub_key(url)?;
         self.registered_mut().insert(key.clone(), Arc::from(bytes));
@@ -221,7 +219,7 @@ impl Stubs {
         Some(read.and_then(|bytes| bytes.map(Arc::from).ok_or(SourceError::TooLarge)))
     }
 
-    /// Every stubbed URL, in order, with what answers it now.
+    /// Sorted by URL; a configured URL a request overrides is listed once, as the request's.
     pub fn list(&self) -> Vec<StubEntry> {
         let registered = self.registered();
         let mut entries: Vec<StubEntry> = registered
@@ -1005,14 +1003,12 @@ mod tests {
         assert!(!stubs.remove(&url));
         assert_eq!(bytes_of(&stubs).as_deref(), Ok("edited"));
         assert_eq!(stubs.list()[0].from, StubFrom::File(file.clone()));
-        // `clear` forgets the requests' alone.
         stubs
             .register("https://example.com/a.csv", Vec::new())
             .unwrap();
         assert_eq!(stubs.clear(), 1);
         assert_eq!(stubs.list().len(), 1);
         assert_eq!(hits.load(Ordering::SeqCst), 0, "nothing was connected to");
-        // A file gone, or larger than a source may be: what a source says then.
         std::fs::remove_file(&file).unwrap();
         assert!(
             matches!(bytes_of(&stubs), Err(SourceError::Unreadable(why)) if why.contains("cannot be read")),
@@ -1020,7 +1016,6 @@ mod tests {
         assert_eq!(stubs.list()[0].size, None);
         stubs.register(&url, vec![0; MAX_SOURCE_BYTES + 1]).unwrap();
         assert_eq!(bytes_of(&stubs), Err(SourceError::TooLarge));
-        // A URL stubbed nowhere is fetched as before.
         assert!(stubs.get("https://example.com/other.zip").is_none());
         let _ = std::fs::remove_dir_all(dir);
     }

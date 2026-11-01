@@ -8870,7 +8870,7 @@ async fn a_body_over_the_limit_is_refused_and_an_upload_takes_more() {
     let response = send("PUT", path, Some(super::UPLOAD_BODY_LIMIT + 1), Vec::new()).await;
     assert_eq!(response.status(), 413);
 
-    // A stubbed source takes what a source may be, and more, for `ZIP_TOO_LARGE`.
+    // A stubbed source is over the 32 MiB of other requests.
     let stub = "/__lsf/admin/sources?url=https%3A%2F%2Fcdn.example.com%2Ftheme.zip";
     let response = send("PUT", stub, None, vec![7; size]).await;
     assert_eq!(response.status(), 200);

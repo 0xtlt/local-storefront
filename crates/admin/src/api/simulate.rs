@@ -227,7 +227,6 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
     })
 }
 
-/// `/__lsf/admin/sources`: the URLs lsf answers itself.
 fn sources(api: &AdminApi, request: &HttpRequest, method: &str) -> HttpResponse {
     let stubs = api.stubs();
     let url = request.query_param("url");
