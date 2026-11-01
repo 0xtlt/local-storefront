@@ -361,6 +361,19 @@ pub fn run(
                 eprintln!("scenarios: {}", scenarios.len());
             }
         }
+        // With an app, what its backend's tests need comes before `ready:`, so that a tool that
+        // reads up to it has the token. Without one, a theme has no use for them: the Admin API
+        // is served all the same, and `GET /__lsf/admin` has its token.
+        if app_dir.is_some() {
+            if let Some(admin) = &state.admin {
+                for line in admin.banner(&format!("http://{local}")) {
+                    eprintln!("{line}");
+                }
+            }
+            if let Some(proxy) = &state.app_proxy {
+                eprintln!("{}", proxy.banner(&format!("http://{local}")));
+            }
+        }
         if standalone {
             eprintln!(
                 "ready:  http://{local}/   (extensions and checkout scenarios; checkout: http://{local}/checkout; status and control API: http://{local}/__lsf)"
@@ -372,14 +385,6 @@ pub fn run(
                     "home:   http://{local}/__lsf/checkouts   (extensions and checkout scenarios of the app)"
                 );
             }
-        }
-        if let Some(admin) = &state.admin {
-            for line in admin.banner(&format!("http://{local}")) {
-                eprintln!("{line}");
-            }
-        }
-        if let Some(proxy) = &state.app_proxy {
-            eprintln!("{}", proxy.banner(&format!("http://{local}")));
         }
         if args.watch {
             eprintln!("watch:  the Functions build again when their files change, and the pages reload (Ctrl-C to stop)");

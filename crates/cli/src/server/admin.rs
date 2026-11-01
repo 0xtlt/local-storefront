@@ -42,6 +42,8 @@ pub struct Admin {
     pub api: AdminApi,
     pub secret: String,
     pub secret_source: SecretSource,
+    /// The `.env` the secret was read from, when it was.
+    secret_file: Option<std::path::PathBuf>,
 }
 
 impl Admin {
@@ -85,10 +87,12 @@ impl Admin {
             api,
             secret,
             secret_source,
+            secret_file: app_dir.map(|dir| dir.join(".env")),
         }
     }
 
-    /// What the server prints of its Admin API when it starts, under `ready:`.
+    /// What the server prints of its Admin API when it starts with an app, before `ready:`: a
+    /// tool that reads up to `ready:` has the token.
     pub fn banner(&self, origin: &str) -> Vec<String> {
         let shop = self.api.default_shop();
         let mut lines = vec![format!("admin:  {origin}{}", self.api.graphql_path())];
@@ -108,14 +112,28 @@ impl Admin {
             "        X-Shopify-Access-Token: {}   (shop: {shop})",
             self.api.token(&shop)
         ));
-        if self.secret_source == SecretSource::Default {
-            lines.push(format!(
-                "        client secret: {}   (lsf's own: give --client-secret, or SHOPIFY_API_SECRET in the app's .env)",
-                self.secret
-            ));
-        }
+        lines.push(format!("        client secret: {}", self.secret_line()));
         lines.push(format!("webhooks: {}", self.api.webhooks().summary()));
         lines
+    }
+
+    /// Where the client secret came from: the value only when it is lsf's own, which is no
+    /// secret, so that a webhook the backend refuses has a first place to look.
+    fn secret_line(&self) -> String {
+        match self.secret_source {
+            SecretSource::Explicit => "from --client-secret".to_string(),
+            SecretSource::Environment => "from SHOPIFY_API_SECRET of the environment".to_string(),
+            SecretSource::DotEnv => format!(
+                "from SHOPIFY_API_SECRET of {}",
+                self.secret_file
+                    .as_deref()
+                    .map_or_else(|| ".env".to_string(), |file| file.display().to_string())
+            ),
+            SecretSource::Default => format!(
+                "{}   (lsf's own: give --client-secret, or SHOPIFY_API_SECRET in the app's .env)",
+                self.secret
+            ),
+        }
     }
 }
 

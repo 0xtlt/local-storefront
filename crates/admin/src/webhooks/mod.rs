@@ -210,7 +210,7 @@ impl Webhooks {
         let count = self.app_subscriptions.len();
         let target = match self.urls.base() {
             None => "no app URL (give --app-url)".to_string(),
-            Some(base) if !self.urls.may_send_to(base) => format!(
+            Some(base) if count > 0 && !self.urls.may_send_to(base) => format!(
                 "{base}, not this machine: not sent (give --app-url http://localhost:<port>)"
             ),
             Some(base) => base.to_string(),

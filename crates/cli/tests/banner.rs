@@ -1,0 +1,267 @@
+//! What the server prints when it starts: the lines of the Admin API only with an app, before
+//! `ready:`, so that a tool that reads up to `ready:` has the token; and where the client secret
+//! came from.
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
+/// A copy of the fixture app of lsf-checkout, in a folder of the test's own.
+struct App(PathBuf);
+
+impl App {
+    fn new(name: &str) -> App {
+        let path = std::env::temp_dir().join(format!("lsf-banner-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        copy(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app"),
+            &path,
+        );
+        App(path)
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn copy(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        let kind = entry.file_type().unwrap();
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
+            copy(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// A server of the test, stopped when dropped.
+struct Server {
+    child: Child,
+    lines: mpsc::Receiver<String>,
+    /// What it printed to stderr up to its `ready:` line, that line included.
+    before_ready: Vec<String>,
+    /// Its address, from the `ready:` line.
+    address: String,
+}
+
+impl Server {
+    fn start(args: &[&str], env: &[(&str, &str)]) -> Server {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_lsf"));
+        command
+            .args(args)
+            .args(["--host", "127.0.0.1", "--port", "0", "--static", "--quiet"])
+            .current_dir(std::env::temp_dir())
+            .env_remove("LSF_APP")
+            .env_remove("LSF_APP_URL")
+            .env_remove("LSF_CLIENT_SECRET")
+            .env_remove("SHOPIFY_API_SECRET")
+            .env_remove("LSF_THEME")
+            .env_remove("LSF_DATA")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        let mut child = command.spawn().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let (send, lines) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                let _ = send.send(line);
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut before_ready = Vec::new();
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let line = lines
+                .recv_timeout(left)
+                .unwrap_or_else(|_| panic!("no `ready:` line:\n{}", before_ready.join("\n")));
+            let ready = line.starts_with("ready:");
+            before_ready.push(line);
+            if ready {
+                break;
+            }
+        }
+        let ready = before_ready.last().unwrap();
+        let address = ready
+            .split_whitespace()
+            .nth(1)
+            .and_then(|url| url.strip_prefix("http://"))
+            .unwrap()
+            .trim_end_matches('/')
+            .to_string();
+        Server {
+            child,
+            lines,
+            before_ready,
+            address,
+        }
+    }
+
+    /// The body of `GET path`.
+    fn get(&self, path: &str) -> String {
+        let mut stream = TcpStream::connect(&self.address).unwrap();
+        write!(
+            stream,
+            "GET {path} HTTP/1.1\r\nhost: {}\r\nconnection: close\r\n\r\n",
+            self.address
+        )
+        .unwrap();
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer).unwrap();
+        answer
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body.to_string())
+            .unwrap_or_default()
+    }
+
+    /// Everything it printed so far.
+    fn said(&self) -> Vec<String> {
+        let mut all = self.before_ready.clone();
+        all.extend(self.lines.try_iter());
+        all
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn theme() -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../core/tests/fixtures/theme")
+        .to_str()
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn a_theme_without_an_app_prints_no_admin_webhook_or_secret_line() {
+    let theme = theme();
+    let server = Server::start(&["--theme", &theme, "serve"], &[]);
+    // The Admin API is served all the same, with its token.
+    let admin: serde_json::Value = serde_json::from_str(&server.get("/__lsf/admin")).unwrap();
+    let token = admin["shops"][0]["token"].as_str().unwrap();
+    assert!(token.starts_with("shpat_"), "{admin}");
+    let said = server.said();
+    for line in &said {
+        let line = line.trim_start();
+        assert!(
+            !line.starts_with("admin:")
+                && !line.starts_with("webhooks:")
+                && !line.starts_with("X-Shopify-Access-Token")
+                && !line.contains("client secret"),
+            "{}",
+            said.join("\n")
+        );
+    }
+    assert!(!said.join("\n").contains(token), "{}", said.join("\n"));
+}
+
+#[test]
+fn an_app_prints_its_token_webhooks_and_secret_before_ready() {
+    let app = App::new("app");
+    std::fs::write(app.0.join(".env"), "SHOPIFY_API_SECRET=from-dotenv\n").unwrap();
+    // A Function not built: the advice is lsf's own build.
+    std::fs::remove_file(app.0.join("extensions/quantity-limit/dist/function.wasm")).unwrap();
+    let dir = app.0.to_str().unwrap();
+    let server = Server::start(
+        &[
+            "app",
+            "dev",
+            "--app",
+            dir,
+            "--app-url",
+            "http://localhost:3999",
+        ],
+        &[],
+    );
+    let before = &server.before_ready;
+    let text = before.join("\n");
+    let at = |prefix: &str| {
+        before
+            .iter()
+            .position(|line| line.trim_start().starts_with(prefix))
+            .unwrap_or_else(|| panic!("no `{prefix}` line before `ready:`:\n{text}"))
+    };
+    let (admin, token, secret, webhooks) = (
+        at("admin:"),
+        at("X-Shopify-Access-Token: shpat_"),
+        at("client secret:"),
+        at("webhooks:"),
+    );
+    assert!(
+        admin < token && token < secret && secret < webhooks,
+        "{text}"
+    );
+    assert!(webhooks < before.len() - 1, "{text}");
+    // Where the secret came from, never the value.
+    assert_eq!(
+        before[secret].trim(),
+        format!(
+            "client secret: from SHOPIFY_API_SECRET of {}",
+            app.0.join(".env").display()
+        )
+    );
+    assert!(!server.said().join("\n").contains("from-dotenv"), "{text}");
+    assert!(
+        before[webhooks].ends_with("→ http://localhost:3999"),
+        "{text}"
+    );
+    assert!(
+        text.contains("quantity-limit: no Wasm module at ",)
+            && text.contains(": build it with `lsf app build quantity-limit` (or `--build`)"),
+        "{text}"
+    );
+    assert!(!text.contains("shopify app build"), "{text}");
+}
+
+#[test]
+fn the_secret_line_says_where_the_secret_came_from() {
+    let app = App::new("secret");
+    let dir = app.0.to_str().unwrap();
+    let secret_line = |args: &[&str], env: &[(&str, &str)]| {
+        let server = Server::start(&[&["app", "dev", "--app", dir][..], args].concat(), env);
+        let line = server
+            .before_ready
+            .iter()
+            .find(|line| line.trim_start().starts_with("client secret:"))
+            .unwrap_or_else(|| panic!("{}", server.before_ready.join("\n")))
+            .trim()
+            .to_string();
+        (line, server.said().join("\n"))
+    };
+    let (line, said) = secret_line(&["--client-secret", "given-secret"], &[]);
+    assert_eq!(line, "client secret: from --client-secret");
+    assert!(!said.contains("given-secret"), "{said}");
+    let (line, said) = secret_line(&[], &[("SHOPIFY_API_SECRET", "env-secret")]);
+    assert_eq!(
+        line,
+        "client secret: from SHOPIFY_API_SECRET of the environment"
+    );
+    assert!(!said.contains("env-secret"), "{said}");
+    // lsf's own is no secret: its value is printed.
+    let (line, _) = secret_line(&[], &[]);
+    assert!(
+        line.starts_with("client secret: lsf-local-client-secret   (lsf's own: "),
+        "{line}"
+    );
+}
