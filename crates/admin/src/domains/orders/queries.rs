@@ -286,9 +286,7 @@ fn keywords(value: Option<String>) -> Vec<SearchValue> {
 }
 
 fn ids<'a>(gids: impl Iterator<Item = &'a str>) -> Vec<SearchValue> {
-    gids.filter_map(parse_gid)
-        .map(|(_, id)| SearchValue::Id(id))
-        .collect()
+    gids.filter_map(SearchValue::id).collect()
 }
 
 /// What `fulfillment_status:` matches an order on, as shopify.dev's valid values name them.

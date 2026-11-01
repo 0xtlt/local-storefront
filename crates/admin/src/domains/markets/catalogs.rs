@@ -73,8 +73,7 @@ pub fn register(registry: &mut Registry) {
                 strings(catalog.get("companyLocations"))
                     .iter()
                     .filter_map(|location| r.state().get(location)?.get("company")?.as_str())
-                    .filter_map(crate::state::parse_gid)
-                    .map(|(_, id)| SearchValue::Id(id))
+                    .filter_map(SearchValue::id)
                     .collect(),
             )
         });

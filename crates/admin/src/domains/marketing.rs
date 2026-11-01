@@ -92,8 +92,7 @@ pub fn register(registry: &mut Registry) {
                     activity
                         .get("parentActivityId")
                         .and_then(Value::as_str)
-                        .and_then(crate::state::parse_gid)
-                        .map(|(_, id)| crate::search::SearchValue::Id(id))
+                        .and_then(crate::search::SearchValue::id)
                         .into_iter()
                         .collect(),
                 )
@@ -143,8 +142,7 @@ fn event_date(
         .and_then(|event| r.state().get(event))
         .and_then(|event| event.get(field))
         .and_then(Value::as_str)
-        .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
-        .map(|at| crate::search::SearchValue::Date(at.with_timezone(&chrono::Utc)))
+        .and_then(crate::search::SearchValue::date)
         .into_iter()
         .collect()
 }

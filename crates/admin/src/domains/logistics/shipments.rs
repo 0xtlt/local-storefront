@@ -86,8 +86,7 @@ pub fn register(registry: &mut Registry) {
                 Some(
                     destination
                         .as_deref()
-                        .and_then(parse_gid)
-                        .map(|(_, id)| SearchValue::Id(id))
+                        .and_then(SearchValue::id)
                         .into_iter()
                         .collect(),
                 )

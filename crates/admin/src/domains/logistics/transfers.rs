@@ -186,17 +186,13 @@ pub const SHIPPABLE: &[&str] = &["DRAFT", "READY_TO_SHIP", "IN_PROGRESS"];
 
 fn id_values(gid: Option<String>) -> Vec<SearchValue> {
     gid.as_deref()
-        .and_then(parse_gid)
-        .map(|(_, id)| SearchValue::Id(id))
+        .and_then(SearchValue::id)
         .into_iter()
         .collect()
 }
 
 fn date_value(value: Option<&Value>) -> Option<SearchValue> {
-    let text = value?.as_str()?;
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|date| SearchValue::Date(date.with_timezone(&Utc)))
+    SearchValue::date(value?.as_str()?)
 }
 
 /// The inventory items of a transfer's lines.

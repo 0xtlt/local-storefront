@@ -85,8 +85,7 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn id_value(gid: Option<&Value>) -> Option<Vec<SearchValue>> {
-    let (_, id) = crate::state::parse_gid(gid?.as_str()?)?;
-    Some(vec![SearchValue::Id(id)])
+    Some(vec![SearchValue::id(gid?.as_str()?)?])
 }
 
 // --- Prices ---

@@ -421,8 +421,7 @@ fn search_values(state: &ShopState, record: &Record, field: &str) -> Option<Vec<
     let date = |name: &str| {
         Some(
             text(discount, name)
-                .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
-                .map(|date| SearchValue::Date(date.with_timezone(&chrono::Utc)))
+                .and_then(SearchValue::date)
                 .into_iter()
                 .collect::<Vec<_>>(),
         )

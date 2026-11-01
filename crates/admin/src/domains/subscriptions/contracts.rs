@@ -87,7 +87,7 @@ fn line_values(contract: &Record, field: &str) -> Vec<SearchValue> {
     lines(contract)
         .iter()
         .filter_map(|line| line.get(field)?.as_str())
-        .filter_map(|gid| crate::state::parse_gid(gid).map(|(_, id)| SearchValue::Id(id)))
+        .filter_map(SearchValue::id)
         .collect()
 }
 
