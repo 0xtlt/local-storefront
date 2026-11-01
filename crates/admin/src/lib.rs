@@ -13,6 +13,7 @@ pub mod outbox;
 pub mod resolve;
 pub mod schema;
 pub mod search;
+pub mod sources;
 pub mod state;
 pub mod sync;
 pub mod throttle;

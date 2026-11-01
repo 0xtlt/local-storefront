@@ -16,7 +16,10 @@
 //!   `themes/create`.
 //! - **`themeUpdate(id:, input: {name})`**: `TOO_LONG` past 50 characters (the admin's limit),
 //!   `INVALID` for a blank name. `themes/update`.
-//! - **`themeDelete(id:)`**: the main theme cannot be deleted. `themes/delete`.
+//! - **`themeDelete(id:)`**: the main theme cannot be deleted ("if the theme is the last
+//!   published theme", the REST reference says; the payload's only code is `NOT_FOUND`, so the
+//!   error has none). Nor can the local theme, published or not: it is the directory, which
+//!   has no copy in the shop to publish again. `themes/delete`.
 //! - **`themeDuplicate(id:, name:)`**: an `UNPUBLISHED` copy with every file, named
 //!   "Copy of <name>" unless given one (the admin's). `themes/create`.
 //! - **`themePublish(id:)`**: the theme becomes `MAIN` and the main one `UNPUBLISHED` ("There
@@ -44,9 +47,9 @@ use serde_json::{Value, json};
 
 use super::files::{self, ThemeFile, check_filename};
 use super::{FILES, LOCAL, is_local, local_theme_gid, theme_name, theme_of};
-use crate::domains::store_admin::redirects::source_bytes;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, done_job, payload};
+use crate::sources::{self, SourceError};
 use crate::state::{ShopState, value};
 
 /// The most files one `themeFilesUpsert` (or copy, or delete) takes.
@@ -113,8 +116,15 @@ fn theme_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         );
     }
     let source = ctx.arg_str("source").unwrap_or_default().trim().to_string();
-    let bytes = match source_bytes(m.state(), &source) {
+    let bytes = match sources::bytes(m, &source) {
         Ok(bytes) => bytes,
+        Err(SourceError::TooLarge) => {
+            return refuse(
+                &["source"],
+                "May not be used to fetch a file bigger than 50MB",
+                "ZIP_TOO_LARGE",
+            );
+        }
         Err(why) => {
             return refuse(
                 &["source"],
@@ -219,6 +229,8 @@ fn theme_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         && let Some(theme) = state.get_mut(&id)
     {
         theme.insert("name".into(), json!(name));
+        // The storefront's `Shopify.theme.name` follows it from now on.
+        theme.insert(super::RENAMED.into(), json!(true));
     }
     state.touch(&id);
     state.emit("themes/update", &id);
@@ -235,6 +247,16 @@ fn theme_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         let error = UserError::new(
             &["id"],
             "The main theme can't be deleted: publish another theme first",
+        );
+        return Ok(payload(json!({"deletedThemeId": null}), &[error]));
+    }
+    // The theme directory has no copy in the shop: deleted, nothing could publish it again
+    // until a reset. It is refused as the main theme is, whatever its role now.
+    if is_local(&theme) {
+        let error = UserError::new(
+            &["id"],
+            "The local theme can't be deleted: it is the theme directory lsf serves, which \
+             themePublish makes the main theme again",
         );
         return Ok(payload(json!({"deletedThemeId": null}), &[error]));
     }
@@ -434,7 +456,12 @@ fn files_upsert(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
                 base64::Engine::decode(&base64::engine::general_purpose::STANDARD, given.trim())
                     .map_err(|_| format!("The body of {filename} is not Base64"))
             }
-            "URL" => source_bytes(m.state(), given),
+            "URL" => sources::bytes(m, given).map_err(|error| match error {
+                SourceError::TooLarge => {
+                    format!("The body of {filename} at {given} is bigger than 50MB")
+                }
+                SourceError::Unreadable(why) => why,
+            }),
             _ => Ok(given.as_bytes().to_vec()),
         };
         let bytes = match bytes.and_then(|bytes| check_content(filename, &bytes).map(|_| bytes)) {

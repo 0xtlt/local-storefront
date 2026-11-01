@@ -24,7 +24,6 @@ use crate::drops::search::{predictive_search_value, recommendations_value, searc
 use crate::drops::shop::{ShopDrop, policy_value};
 use crate::drops::{hash, strings};
 use crate::site::Site;
-use crate::urls;
 
 pub struct Globals {
     site: Arc<Site>,
@@ -51,11 +50,11 @@ impl Globals {
     }
 
     fn theme_value(&self) -> Value {
-        let (name, _) = super::platform::theme_info(&self.site.theme);
+        let (id, name, role) = super::platform::served_theme(&self.site.theme);
         hash([
-            ("id", Value::Int(urls::THEME_ID as i64)),
+            ("id", Value::Int(id as i64)),
             ("name", Value::from(name)),
-            ("role", Value::str("main")),
+            ("role", Value::from(role)),
         ])
     }
 

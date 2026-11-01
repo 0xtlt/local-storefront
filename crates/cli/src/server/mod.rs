@@ -307,7 +307,8 @@ impl ServerState {
 
     /// Reloads the store from disk. Sessions keep their cart and customer; the shops of the
     /// Admin API are seeded again, and what it changed in them is dropped (the terminal says so):
-    /// the store is the files'.
+    /// the store is the files', and the theme the directory's, without the Admin API's files or
+    /// script tags.
     pub fn reload(&self) -> Arc<Loaded> {
         // A build that panicked leaves nothing half done behind this lock: it guards no data.
         let _rebuilding = self
@@ -340,6 +341,9 @@ impl ServerState {
                     );
                 }
                 admin.api.sync_store(files.base.clone());
+                // The reseed dropped what the Admin API wrote to the theme and the script tags:
+                // the storefront serves the directory again, as the Admin API now reports it.
+                self.sync_theme(&admin.api);
                 // Nothing changed since the reseed, unless a request of the backend came in
                 // meanwhile: then the store has it already.
                 match admin.api.synced() {
@@ -395,6 +399,10 @@ impl ServerState {
         hasher.write_u64(self.app.theme.files().overlay_generation());
         for src in self.app.theme.script_tags().iter() {
             hasher.write(src.as_bytes());
+        }
+        if let Some(identity) = self.app.theme.identity() {
+            hasher.write_u64(identity.id);
+            hasher.write(identity.name.as_deref().unwrap_or_default().as_bytes());
         }
         let root = self.app.theme.files().root();
         for directory in THEME_DIRECTORIES {
@@ -650,9 +658,11 @@ async fn handle(
         })
         .collect();
     let content_type = headers.get("content-type").cloned().unwrap_or_default();
-    let body = axum::body::to_bytes(body, 32 * 1024 * 1024)
-        .await
-        .unwrap_or_default();
+    let limit = body_limit(parts.uri.path());
+    let body = match read_body(body, limit, headers.get("content-length")).await {
+        Ok(body) => body,
+        Err(refused) => return refused.into_response(limit),
+    };
     let incoming = Incoming {
         method: parts.method.as_str().to_string(),
         path: percent_decode(parts.uri.path()),
@@ -733,6 +743,82 @@ async fn handle(
         .unwrap_or_else(|_| Response::new(Body::empty()))
 }
 
+/// The largest body most requests may have: a form, a GraphQL request, the data of a session.
+pub const BODY_LIMIT: usize = 32 << 20;
+
+/// The largest body of an upload to a staged upload target: Shopify's largest staged upload, a
+/// video ("Max 1 GB"; an image 20 MB, a 3D model 500 MB, a theme ZIP 50 MB), and a MiB for the
+/// form around it.
+pub const UPLOAD_BODY_LIMIT: usize = (1 << 30) + (1 << 20);
+
+/// The largest body a request to `path` may have.
+fn body_limit(path: &str) -> usize {
+    if path.starts_with(lsf_admin::domains::app::uploads::UPLOADS_PATH) {
+        UPLOAD_BODY_LIMIT
+    } else {
+        BODY_LIMIT
+    }
+}
+
+/// Why a body was not read.
+#[derive(Debug, PartialEq)]
+enum BodyRefused {
+    /// More than the limit: `413`, rather than an empty body, which an upload took for an empty
+    /// file.
+    TooLarge,
+    /// The connection failed while it was sent.
+    Unreadable(String),
+}
+
+impl BodyRefused {
+    fn into_response(self, limit: usize) -> Response<Body> {
+        let (status, message) = match self {
+            BodyRefused::TooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!(
+                    "the body is larger than the {} MiB this path takes",
+                    limit >> 20
+                ),
+            ),
+            BodyRefused::Unreadable(why) => (
+                StatusCode::BAD_REQUEST,
+                format!("the body could not be read: {why}"),
+            ),
+        };
+        Response::builder()
+            .status(status)
+            .header("content-type", "text/plain; charset=utf-8")
+            .body(Body::from(message))
+            .unwrap_or_else(|_| Response::new(Body::empty()))
+    }
+}
+
+/// The body of a request, of `limit` bytes at most: one that says it is larger is refused before
+/// it is read, one that turns out larger as soon as it passes the limit.
+async fn read_body(
+    body: Body,
+    limit: usize,
+    content_length: Option<&String>,
+) -> Result<bytes::Bytes, BodyRefused> {
+    use futures_util::StreamExt;
+    if content_length
+        .and_then(|length| length.trim().parse::<u64>().ok())
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(BodyRefused::TooLarge);
+    }
+    let mut stream = body.into_data_stream();
+    let mut bytes = bytes::BytesMut::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| BodyRefused::Unreadable(error.to_string()))?;
+        if bytes.len() + chunk.len() > limit {
+            return Err(BodyRefused::TooLarge);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes.freeze())
+}
+
 /// `/__lsf/livereload`: a WebSocket for the pages that open one, and otherwise the token of
 /// the files, like the rest of the control API.
 async fn live_reload(
@@ -746,18 +832,60 @@ async fn live_reload(
     }
 }
 
+/// How long the requests being answered when the server is asked to stop may still take: then
+/// they are abandoned, and the server stops. A render ends at its own budget
+/// (`lsf_liquid::RenderLimits`, 10 s) at the latest.
+pub const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(3);
+
 /// Serves the storefront until the process is interrupted.
 pub async fn run(
     state: Arc<ServerState>,
     listener: tokio::net::TcpListener,
 ) -> std::io::Result<()> {
+    run_until(state, listener, interrupted(), SHUTDOWN_DEADLINE).await
+}
+
+/// Serves the storefront until `stop` completes, then for the requests being answered, and for
+/// `deadline` at most: what is still running then (a render that does not end) is abandoned.
+/// A server that waited for it never stopped.
+pub async fn run_until(
+    state: Arc<ServerState>,
+    listener: tokio::net::TcpListener,
+    stop: impl std::future::Future<Output = ()> + Send + 'static,
+    deadline: Duration,
+) -> std::io::Result<()> {
+    use std::future::IntoFuture;
+    let quiet = state.options.quiet;
     let router = axum::Router::new()
         .route("/__lsf/livereload", axum::routing::get(live_reload))
         .fallback(handle)
         .with_state(state);
-    axum::serve(listener, router)
-        .with_graceful_shutdown(interrupted())
-        .await
+    let (stopping, mut stopped) = tokio::sync::watch::channel(false);
+    let signal = async move {
+        stop.await;
+        let _ = stopping.send(true);
+    };
+    let serving = axum::serve(listener, router)
+        .with_graceful_shutdown(signal)
+        .into_future();
+    let abandoned = async move {
+        if stopped.wait_for(|stopped| *stopped).await.is_err() {
+            std::future::pending::<()>().await;
+        }
+        tokio::time::sleep(deadline).await;
+    };
+    tokio::select! {
+        result = serving => result,
+        () = abandoned => {
+            if !quiet {
+                eprintln!(
+                    "stopped: the requests still running {} s after the server was asked to stop were abandoned",
+                    deadline.as_secs_f64()
+                );
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Waits for the process to be asked to stop: Ctrl-C, and on Unix `SIGTERM` (a process manager,

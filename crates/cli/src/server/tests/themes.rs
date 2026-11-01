@@ -170,3 +170,112 @@ fn the_storefront_serves_the_association_files_of_the_shops_mobile_apps() {
     let answer = admin_query(&state, "{ themes(first: 1) { nodes { role } } }");
     assert_eq!(answer["data"]["themes"]["nodes"][0]["role"], "MAIN");
 }
+
+/// A reload of the store data (`--watch`, `POST /__lsf/reload`) reseeds the shops, which drops
+/// the Admin API's files and script tags: the storefront kept serving them, while the Admin API
+/// reported the directory.
+#[test]
+fn a_reload_of_the_store_data_serves_the_directory_again() {
+    let state = admin_server();
+    mutate(
+        &state,
+        UPSERT,
+        json!({"files": [
+            {"filename": "templates/index.json", "body": {"type": "TEXT", "value": "{\"sections\": {\"main\": {\"type\": \"admin-banner\", \"settings\": {}}}, \"order\": [\"main\"]}"}},
+            {"filename": "sections/admin-banner.liquid", "body": {"type": "TEXT", "value": "<p>Written by the Admin API</p>"}},
+        ]}),
+    );
+    mutate(
+        &state,
+        "mutation { scriptTagCreate(input: {src: \"https://js.example.org/bar.js\", displayScope: ONLINE_STORE}) { scriptTag { id } userErrors { message } } }",
+        json!({}),
+    );
+    let home = text(&get(&state, "/", "visitor"));
+    assert!(home.contains("Written by the Admin API"), "{home}");
+    assert!(home.contains("asyncLoad"));
+
+    state.reload();
+
+    let home = text(&get(&state, "/", "visitor"));
+    assert!(home.contains("Stored title"), "{home}");
+    assert!(!home.contains("Written by the Admin API"), "{home}");
+    assert!(!home.contains("asyncLoad"), "{home}");
+    // As the Admin API reports it.
+    let answer = admin_query(
+        &state,
+        "{ theme(id: \"gid://shopify/OnlineStoreTheme/1\") { files(filenames: [\"sections/admin-banner.liquid\"], first: 1) { nodes { filename } } } scriptTags(first: 5) { nodes { id } } }",
+    );
+    assert_eq!(
+        answer["data"]["theme"]["files"]["nodes"],
+        json!([]),
+        "{answer}"
+    );
+    assert_eq!(answer["data"]["scriptTags"]["nodes"], json!([]), "{answer}");
+}
+
+/// The `Shopify.theme` line of a page: what `content_for_header` says of the theme served.
+fn shopify_theme(page: &str) -> Json {
+    let line = page
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Shopify.theme = "))
+        .unwrap_or_else(|| panic!("no Shopify.theme in {page}"));
+    serde_json::from_str(line.trim_end_matches(';')).unwrap()
+}
+
+/// `Shopify.theme.id` stayed 1, and its name the directory's, while another theme was published.
+#[test]
+fn shopify_theme_names_the_published_theme() {
+    let state = admin_server();
+    let local = shopify_theme(&text(&get(&state, "/", "visitor")));
+    assert_eq!(local["id"], 1);
+    assert_eq!(local["role"], "main");
+    let schema_name = local["schema_name"].clone();
+
+    let duplicated = mutate(
+        &state,
+        "mutation { themeDuplicate(id: \"gid://shopify/OnlineStoreTheme/1\", name: \"Sale\") { newTheme { id } userErrors { message } } }",
+        json!({}),
+    );
+    let id = duplicated["data"]["themeDuplicate"]["newTheme"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let number: u64 = id.rsplit('/').next().unwrap().parse().unwrap();
+    mutate(
+        &state,
+        "mutation($id: ID!) { themePublish(id: $id) { theme { role } userErrors { message } } }",
+        json!({"id": id}),
+    );
+    let home = text(&get(&state, "/", "visitor"));
+    let published = shopify_theme(&home);
+    assert_eq!(published["id"], number, "{published}");
+    assert_eq!(published["name"], "Sale");
+    assert_eq!(published["role"], "main");
+    assert_eq!(
+        published["schema_name"], schema_name,
+        "the files' theme_info"
+    );
+    let assets = format!("/cdn/shop/t/{number}/assets/");
+    assert!(home.contains(&assets), "{home}");
+    assert_eq!(
+        get(&state, &format!("{assets}base.css"), "visitor").status,
+        200,
+        "the CDN serves the published theme's assets under its id"
+    );
+
+    // The local theme published again, renamed: id 1, the name the Admin API gave it.
+    mutate(
+        &state,
+        "mutation { themePublish(id: \"gid://shopify/OnlineStoreTheme/1\") { theme { role } userErrors { message } } }",
+        json!({}),
+    );
+    assert_eq!(shopify_theme(&text(&get(&state, "/", "visitor"))), local);
+    mutate(
+        &state,
+        "mutation { themeUpdate(id: \"gid://shopify/OnlineStoreTheme/1\", input: {name: \"Renamed\"}) { theme { name } userErrors { message } } }",
+        json!({}),
+    );
+    let renamed = shopify_theme(&text(&get(&state, "/", "visitor")));
+    assert_eq!(renamed["id"], 1);
+    assert_eq!(renamed["name"], "Renamed");
+}

@@ -10,7 +10,8 @@
 //!   (`SAVED_SEARCH_NOT_FOUND`).
 //! - **Imports**: the file is Shopify's redirect CSV (`Redirect from,Redirect to`, the export of
 //!   the admin's URL redirects page), at `url`: a staged upload's `resourceUrl` (the bytes
-//!   lsf keeps), or a URL lsf downloads, as Shopify does. `urlRedirectImportCreate` reads it
+//!   lsf keeps), or a URL lsf downloads, as Shopify does (before the shop is locked:
+//!   `crate::sources`). `urlRedirectImportCreate` reads it
 //!   (`count` its rows, `previewRedirects` "up to three previews"); `urlRedirectImportSubmit`
 //!   creates and updates the redirects (a path already redirected is updated), counts them,
 //!   and finishes: `finished`, `finishedAt`, `createdCount`, `updatedCount`, `failedCount` (a row
@@ -27,7 +28,7 @@ use serde_json::{Value, json};
 use crate::domains::content::navigation::set_redirect;
 use crate::graphql::{self, FieldContext, FieldError, Output, Request};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, done_job, payload};
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -199,40 +200,6 @@ fn delete_by_saved_search(
 
 // ---- imports -----------------------------------------------------------------------------
 
-/// The bytes at `url`: a staged upload of the shop, else a download (an `http(s)` URL, 10 s at
-/// most, 50 MB at most).
-pub fn source_bytes(state: &ShopState, url: &str) -> Result<Vec<u8>, String> {
-    if let Some(blob) = crate::domains::app::uploads::bytes(state, url) {
-        return Ok(blob.bytes.to_vec());
-    }
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err(format!(
-            "{url} is neither a staged upload nor an http(s) URL"
-        ));
-    }
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(10)))
-        .timeout_connect(Some(std::time::Duration::from_secs(3)))
-        .http_status_as_error(false)
-        .build()
-        .into();
-    let response = agent
-        .get(url)
-        .call()
-        .map_err(|error| format!("{url} could not be downloaded: {error}"))?;
-    let status = response.status().as_u16();
-    if !(200..300).contains(&status) {
-        return Err(format!("{url} answered {status}"));
-    }
-    let mut bytes = Vec::new();
-    std::io::Read::read_to_end(
-        &mut std::io::Read::take(response.into_body().as_reader(), 50 << 20),
-        &mut bytes,
-    )
-    .map_err(|error| format!("{url} could not be read: {error}"))?;
-    Ok(bytes)
-}
-
 /// The records of a CSV text, as RFC 4180 has them: fields separated by commas, records by
 /// line breaks (`\r\n` or `\n`), a quoted field holding commas, line breaks and doubled quotes
 /// (`""`). Each cell is trimmed; blank records are left out. One pass, no recursion.
@@ -308,9 +275,9 @@ fn import_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
             &[UserError::new(&["url"], message).code("NOT_FOUND")],
         ))
     };
-    let bytes = match source_bytes(m.state(), &url) {
+    let bytes = match crate::sources::bytes(m, &url) {
         Ok(bytes) => bytes,
-        Err(message) => return refuse(message),
+        Err(error) => return refuse(error.to_string()),
     };
     let rows = match rows(&String::from_utf8_lossy(&bytes)) {
         Ok(rows) => rows,

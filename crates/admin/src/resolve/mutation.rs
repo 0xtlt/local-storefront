@@ -43,6 +43,7 @@ pub struct Mutation<'m> {
     webhooks: Option<&'m Webhooks>,
     version: ApiVersion,
     origin: &'m str,
+    fetched: Option<&'m crate::sources::Fetched>,
     notes: Vec<String>,
     /// Whether the changes stay when the payload has user errors (a partial update).
     keep: bool,
@@ -99,22 +100,30 @@ impl Mutation<'_> {
         self.origin
     }
 
+    /// What the request's sources gave, fetched before the shop was locked: what
+    /// [`crate::sources::bytes`] reads. `None` for a resolver run alone.
+    pub fn fetched(&self) -> Option<&crate::sources::Fetched> {
+        self.fetched
+    }
+
     /// A resolver over the same shop, the same token and webhooks: what runs the GraphQL of a
     /// bulk operation (its query, or its mutation once per line). What it changes is changed
     /// here (within this mutation's savepoint, as [`Mutation::state_mut`] opens it), and its
     /// events are the request's.
     pub fn resolver(&mut self) -> ShopResolver<'_> {
-        let (registry, grant, webhooks, version, origin) = (
+        let (registry, grant, webhooks, version, origin, fetched) = (
             self.registry,
             self.grant,
             self.webhooks,
             self.version,
             self.origin,
+            self.fetched,
         );
         let mut resolver = ShopResolver::new(self.state_mut(), registry).with_origin(origin);
         resolver.grant = grant;
         resolver.webhooks = webhooks;
         resolver.version = version;
+        resolver.fetched = fetched;
         resolver
     }
 
@@ -285,6 +294,7 @@ pub(super) fn run(
         webhooks: resolver.webhooks,
         version: resolver.version,
         origin: resolver.origin,
+        fetched: resolver.fetched,
         notes: Vec::new(),
         keep: false,
     };

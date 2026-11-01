@@ -81,6 +81,27 @@ struct LiveShop {
     /// Whether it is the default shop, the one store sync projects. It stays the default one
     /// when a reseed moves it to another domain.
     default: bool,
+    /// Moves with every change of what the tokens of the shop grant (an uninstall, scopes
+    /// revoked or installed, a delegate destroyed, a reset, an OAuth grant): a request whose
+    /// token was looked up before it moved looks it up again before it runs ([`AdminApi::
+    /// authorized`]).
+    auth_generation: u64,
+    /// The changes of the tokens a request decided under this lock (its `AuthEffect`s) that are
+    /// not applied to them yet: they are applied once the shop is unlocked, the tokens coming
+    /// first in the order of the locks. No request runs while one is pending.
+    auth_pending: u32,
+}
+
+impl LiveShop {
+    fn new(state: ShopState, default: bool) -> LiveShop {
+        LiveShop {
+            state,
+            changed: false,
+            default,
+            auth_generation: 0,
+            auth_pending: 0,
+        }
+    }
 }
 
 /// What a reseed dropped, for the server to say.
@@ -116,7 +137,26 @@ pub struct AdminApi {
     /// The directory of the theme the storefront serves: the shops' main theme
     /// ([`AdminApi::with_theme`]).
     theme: Option<std::path::PathBuf>,
+    /// What the sources of the mutations may reach.
+    fetch: crate::sources::FetchOptions,
+    /// What a test runs once at a point of a request ([`Hook`]).
+    #[cfg(test)]
+    test_hooks: TestHooks,
 }
+
+/// A point of a GraphQL request a test runs code at.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Hook {
+    /// After the request looked its token up, before it locks the shop: the window of a
+    /// request that waits on a shop another holds.
+    LookedUp,
+    /// After the request unlocked the shop, before it applies its auth effects to the tokens.
+    Unlocked,
+}
+
+#[cfg(test)]
+type TestHooks = Mutex<std::collections::HashMap<Hook, Box<dyn FnOnce() + Send>>>;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
@@ -194,11 +234,7 @@ impl AdminApi {
         let mut shops = IndexMap::new();
         shops.insert(
             default.domain().to_string(),
-            Arc::new(Mutex::new(LiveShop {
-                state: default,
-                changed: false,
-                default: true,
-            })),
+            Arc::new(Mutex::new(LiveShop::new(default, true))),
         );
         AdminApi {
             registry: Registry::standard(),
@@ -213,6 +249,9 @@ impl AdminApi {
             sync: StoreSync::default(),
             versions: Served::default(),
             theme: None,
+            fetch: crate::sources::FetchOptions::default(),
+            #[cfg(test)]
+            test_hooks: Mutex::new(Default::default()),
         }
     }
 
@@ -231,10 +270,38 @@ impl AdminApi {
     }
 
     /// What the storefront serves of the default shop's main theme beside the theme directory
-    /// (`domains::themes::storefront_overlay`): `None` for the directory alone.
-    pub fn storefront_overlay(&self) -> Option<lsf_core::theme::FileOverlay> {
-        self.with_default_shop(crate::domains::themes::storefront_overlay)
+    /// (`domains::themes::storefront_overlay`): `None` for the directory alone. The files of
+    /// `previous`, the overlay served, are kept where they did not change.
+    pub fn storefront_overlay(
+        &self,
+        previous: Option<&lsf_core::theme::FileOverlay>,
+    ) -> Option<lsf_core::theme::FileOverlay> {
+        self.with_default_shop(|state| {
+            crate::domains::themes::storefront_overlay_from(state, previous)
+        })
+        .flatten()
+    }
+
+    /// The generation of [`AdminApi::storefront_overlay`] without making it: `0` for the
+    /// directory alone. What a server compares before it asks for the overlay.
+    pub fn storefront_overlay_generation(&self) -> u64 {
+        self.with_default_shop(crate::domains::themes::storefront_overlay_generation)
+            .unwrap_or(0)
+    }
+
+    /// Which theme of the default shop the storefront serves (`domains::themes::
+    /// storefront_identity`): `None` for the theme directory as its files name it.
+    pub fn storefront_theme(&self) -> Option<lsf_core::theme::ThemeIdentity> {
+        self.with_default_shop(crate::domains::themes::storefront_identity)
             .flatten()
+    }
+
+    /// What the sources of `themeCreate`, `themeFilesUpsert` and `urlRedirectImportCreate` may
+    /// reach (`--admin-fetch-local`, [`crate::sources::FetchOptions`]): public addresses alone
+    /// otherwise, as Shopify reaches nothing else.
+    pub fn with_fetch(mut self, fetch: crate::sources::FetchOptions) -> AdminApi {
+        self.fetch = fetch;
+        self
     }
 
     /// Serves these versions of the Admin API (`--admin-versions`), for requests and for the
@@ -513,6 +580,7 @@ impl AdminApi {
             }
             tokens.revoke_shop(&domain);
             tokens.install(&domain, &self.auth.client_id, &self.scopes, Utc::now());
+            live.auth_generation += 1;
             domains.push(domain);
         }
         self.webhooks.registry().clear_all();
@@ -536,11 +604,7 @@ impl AdminApi {
             }
             shops.insert(
                 domain.clone(),
-                Arc::new(Mutex::new(LiveShop {
-                    state: shop,
-                    changed: false,
-                    default: false,
-                })),
+                Arc::new(Mutex::new(LiveShop::new(shop, false))),
             );
         }
         // The map of the shops is released before the tokens are locked (see `AdminApi`).
@@ -633,10 +697,20 @@ impl AdminApi {
                 shops: &names,
                 now: Utc::now(),
             };
-            let mut tokens = lock(&self.tokens);
-            let response = oauth::handle(request, &cx, &mut tokens);
-            // An authorization or a token exchange installs the app where it was not.
-            self.note_installs(&tokens);
+            let response = {
+                let mut tokens = lock(&self.tokens);
+                let response = oauth::handle(request, &cx, &mut tokens);
+                // An authorization or a token exchange installs the app where it was not.
+                self.note_installs(&tokens);
+                response
+            };
+            // A grant may install the app again with fewer scopes, which narrows every token of
+            // the installation: the requests waiting on a shop look their token up again.
+            if path.trim_end_matches('/') == "/admin/oauth/access_token" {
+                for (domain, _) in self.all_shops() {
+                    self.auth_changed(&domain);
+                }
+            }
             return response;
         }
         let trimmed = path.trim_end_matches('/');
@@ -672,15 +746,16 @@ impl AdminApi {
                 version,
             );
         }
-        let grant = match self.grant_of(request) {
+        let unauthorized = |reason: String| {
+            Self::api_headers(
+                HttpResponse::json(401, &json!({ "errors": INVALID_TOKEN })),
+                version,
+            )
+            .header("x-lsf-reason", reason)
+        };
+        let first = match self.grant_of(request) {
             Ok(grant) => grant,
-            Err(reason) => {
-                return Self::api_headers(
-                    HttpResponse::json(401, &json!({ "errors": INVALID_TOKEN })),
-                    version,
-                )
-                .header("x-lsf-reason", reason);
-            }
+            Err(reason) => return unauthorized(reason),
         };
         let query = match graphql_request(request) {
             Ok(query) => query,
@@ -695,18 +770,32 @@ impl AdminApi {
                 .header("x-lsf-reason", reason);
             }
         };
-        let Some(shop) = self.shop(&grant.shop) else {
-            return Self::api_headers(
-                HttpResponse::json(401, &json!({ "errors": INVALID_TOKEN })),
-                version,
-            )
-            .header(
-                "x-lsf-reason",
-                format!("the shop {} of this token is gone", grant.shop),
-            );
+        // The URLs its mutations read, fetched now: no shop is locked while they download.
+        let access = crate::auth::scopes::for_version(version);
+        let may_run = |field: &str| {
+            access
+                .required_access(crate::auth::scopes::Root::Mutation, field)
+                .is_none_or(|required| first.allows(&required))
+        };
+        let fetched = crate::sources::prefetch(&crate::sources::urls(&query, &may_run), self.fetch);
+        let ((grant, generation), shop) = match self.authorized(request) {
+            Ok(authorized) => authorized,
+            Err(reason) => return unauthorized(reason),
+        };
+        let live = lock(&shop);
+        // The token as of the last change of what the shop's tokens grant: one that moved since
+        // it was looked up (an uninstall, a revoke, a reset that ran while this request waited
+        // on the shop) is looked up again, which may now refuse it or narrow its scopes.
+        let (grant, mut live) = if live.auth_generation == generation && live.auth_pending == 0 {
+            (grant, live)
+        } else {
+            drop(live);
+            match self.authorized_again(request, &shop) {
+                Ok(authorized) => authorized,
+                Err(reason) => return unauthorized(reason),
+            }
         };
         let key = throttle::key(&grant.shop, &grant.client_id);
-        let mut live = lock(&shop);
         let before = (live.state.revision(), live.state.clock());
         // What the shop's clock passed since the last request (a payment schedule that came due,
         // a data erasure ten days old, a scheduled listing): a change like the request's own.
@@ -716,7 +805,8 @@ impl AdminApi {
             .with_version(version)
             .with_grant(&grant)
             .with_webhooks(&self.webhooks)
-            .with_origin(&origin);
+            .with_origin(&origin)
+            .with_fetched(&fetched);
         let bucket = Bucket {
             throttle: &self.throttle,
             key: &key,
@@ -727,6 +817,12 @@ impl AdminApi {
         self.count_change(&live, before);
         let events = live.state.take_events();
         let effects = platform::access::effects(&events);
+        if !effects.is_empty() {
+            // Applied to the tokens once the shop is unlocked: no request runs on the shop
+            // until they are.
+            live.auth_generation += 1;
+            live.auth_pending += 1;
+        }
         if !events.is_empty() {
             live.changed = true;
             // Built now from the shop as the request left it, queued for the worker: nothing
@@ -745,7 +841,14 @@ impl AdminApi {
         drop(live);
         // What the request changed of the tokens, now that the shop is unlocked (the tokens
         // come first in the order of the locks), before the backend hears the answer.
-        self.apply_auth_effects(&grant.shop, &effects);
+        if !effects.is_empty() {
+            #[cfg(test)]
+            self.hook(Hook::Unlocked);
+            self.apply_auth_effects(&grant.shop, &effects);
+            let mut live = lock(&shop);
+            live.auth_pending -= 1;
+            live.auth_generation += 1;
+        }
         let answer = response.to_json();
         super::audit::record(
             self,
@@ -758,6 +861,79 @@ impl AdminApi {
             app,
         );
         Self::api_headers(HttpResponse::json(200, &answer), version)
+    }
+
+    /// What the request's token grants, the shop it is for, and the shop's auth generation it
+    /// was looked up at: read first, once no change of the tokens is pending, so that every
+    /// change counted by then is in what the lookup finds.
+    #[allow(clippy::type_complexity)]
+    fn authorized(
+        &self,
+        request: &HttpRequest,
+    ) -> Result<((Grant, u64), Arc<Mutex<LiveShop>>), String> {
+        let grant = self.grant_of(request)?;
+        let shop = self
+            .shop(&grant.shop)
+            .ok_or_else(|| format!("the shop {} of this token is gone", grant.shop))?;
+        let generation = Self::settled_generation(&shop);
+        let grant = self.grant_of(request)?;
+        #[cfg(test)]
+        self.hook(Hook::LookedUp);
+        Ok(((grant, generation), shop))
+    }
+
+    /// [`AdminApi::authorized`] again, until the token is looked up at the generation the shop
+    /// has once it is locked: the grant, and the locked shop.
+    fn authorized_again<'s>(
+        &self,
+        request: &HttpRequest,
+        shop: &'s Arc<Mutex<LiveShop>>,
+    ) -> Result<(Grant, MutexGuard<'s, LiveShop>), String> {
+        loop {
+            let generation = Self::settled_generation(shop);
+            let grant = self.grant_of(request)?;
+            let live = lock(shop);
+            if live.auth_generation == generation && live.auth_pending == 0 {
+                return Ok((grant, live));
+            }
+        }
+    }
+
+    /// The auth generation of a shop once no change of its tokens is pending: those are applied
+    /// right after the request that made them unlocks the shop.
+    fn settled_generation(shop: &Mutex<LiveShop>) -> u64 {
+        loop {
+            {
+                let live = lock(shop);
+                if live.auth_pending == 0 {
+                    return live.auth_generation;
+                }
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    /// Counts a change of what the tokens of `domain` grant, made outside its lock (after the
+    /// change): a request that looked its token up before looks it up again.
+    fn auth_changed(&self, domain: &str) {
+        if let Some(shop) = self.shop(domain) {
+            lock(&shop).auth_generation += 1;
+        }
+    }
+
+    /// Runs what a test set at `at`, once.
+    #[cfg(test)]
+    fn hook(&self, at: Hook) {
+        let hook = lock(&self.test_hooks).remove(&at);
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
+    /// Runs `hook` once, when the next request reaches `at`.
+    #[cfg(test)]
+    pub(crate) fn at_next(&self, at: Hook, hook: impl FnOnce() + Send + 'static) {
+        lock(&self.test_hooks).insert(at, Box::new(hook));
     }
 
     /// What the request's `X-Shopify-Access-Token` grants, or why it grants nothing.
@@ -1018,6 +1194,7 @@ impl AdminApi {
     /// were revoked and subscriptions deleted.
     fn finish_uninstall(&self, domain: &str, delivered: impl FnOnce()) -> (usize, usize) {
         let revoked = lock(&self.tokens).uninstall(domain, &self.auth.client_id);
+        self.auth_changed(domain);
         // From now on only `app/uninstalled` is delivered for the shop, through the
         // subscriptions it had; an app uninstalled already is not uninstalled again.
         self.webhooks.registry().set_installed(domain, false);
@@ -1129,6 +1306,8 @@ impl AdminApi {
             .collect();
         if let Some(shop) = self.shop(&domain) {
             let mut live = lock(&shop);
+            // The tokens carry the scopes installed now.
+            live.auth_generation += 1;
             let installation = live
                 .state
                 .keys("AppInstallation")

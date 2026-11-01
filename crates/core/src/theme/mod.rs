@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use lsf_liquid::{Environment, Template};
 use serde_json::Value as Json;
 
-pub use files::{FileOverlay, OverlayFile, Revalidate, ThemeFiles};
+pub use files::{FileOverlay, OverlayFile, Revalidate, ThemeFiles, resolve_in};
 pub use locales::Translations;
 pub use schema::{Schema, SettingDef, Wrapper};
 pub use template_json::{BlockInstance, Layout, SectionInstance, TemplateJson};
@@ -90,6 +90,22 @@ pub struct Theme {
     /// The script tags of the shop's apps that `content_for_header` loads
     /// ([`Theme::set_script_tags`]): the Admin API's, the theme's files say nothing of them.
     script_tags: RwLock<Arc<[String]>>,
+    /// Which theme of the shop is served, when the Admin API published another one or renamed
+    /// this one ([`Theme::set_identity`]).
+    identity: RwLock<Option<Arc<ThemeIdentity>>>,
+}
+
+/// The theme of the shop the storefront serves, as `Shopify.theme`, the `theme` object and the
+/// asset URLs (`/cdn/shop/t/<id>/…`) name it: the shop's main theme. Without one, the theme
+/// directory: [`crate::urls::THEME_ID`], the name of its `config/settings_schema.json`, `main`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThemeIdentity {
+    /// The number of its `OnlineStoreTheme` GID.
+    pub id: u64,
+    /// Its name in the admin; `None` for the name of the files' `theme_info`.
+    pub name: Option<String>,
+    /// `main`, as `Shopify.theme.role` writes it.
+    pub role: String,
 }
 
 /// The directories a theme is made of.
@@ -127,6 +143,7 @@ impl Theme {
             texts: Mutex::new(HashMap::new()),
             revalidate,
             script_tags: RwLock::new(Arc::default()),
+            identity: RwLock::new(None),
         })
     }
 
@@ -145,6 +162,28 @@ impl Theme {
             .read()
             .map(|tags| tags.clone())
             .unwrap_or_default()
+    }
+
+    /// Says which theme of the shop is served: the Admin API's main theme. `None` for the theme
+    /// directory as it is.
+    pub fn set_identity(&self, identity: Option<ThemeIdentity>) {
+        if let Ok(mut current) = self.identity.write() {
+            *current = identity.map(Arc::new);
+        }
+    }
+
+    /// Which theme of the shop is served, when it is not the directory as it is.
+    pub fn identity(&self) -> Option<Arc<ThemeIdentity>> {
+        self.identity
+            .read()
+            .ok()
+            .and_then(|identity| identity.clone())
+    }
+
+    /// The id of the theme served: the id of its `OnlineStoreTheme`, in `/cdn/shop/t/<id>/…`.
+    pub fn id(&self) -> u64 {
+        self.identity()
+            .map_or(crate::urls::THEME_ID, |identity| identity.id)
     }
 
     /// Memoizes a value derived from the theme's files for as long as the files are not

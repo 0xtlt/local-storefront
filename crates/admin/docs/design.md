@@ -304,7 +304,7 @@ builder is copied per version. A version is a view of the records:
   is reached only in those: there is nothing to gate by hand. `Registry::check_versions` (a test)
   accepts a registration that one known version has, and lists one that none has.
 - **What reads differently** is an `Adapter` of the version (`version::adapt`), declared in its
-  entry of `KNOWN`. Three kinds:
+  entry of `KNOWN`. Four kinds:
   - `Field { type_name, field, read }`: the version's `type_name.field` is `read(record)` rather
     than the record's value under `field`; the value is then converted by the field's type as a
     stored one is (a GID becomes its record, an object an inline one). A renamed field reads the
@@ -316,6 +316,12 @@ builder is copied per version. A version is a view of the records:
     the mutation or the resolver runs (`FieldContext::with_arguments`).
   - `Payload { topic, write }`: the payload of a webhook topic in the version, from the one the
     builders make; applied when a delivery is built in the version.
+  - `Typename { from, to }`: a type the records hold that the version removed reads as the one
+    that replaced it, for a record (`ShopResolver::type_of`, `reference`) and an inline object
+    (`inline_of`, which otherwise falls back to the first possible type of an interface: a
+    removed type silently became another). `version::adapt`'s
+    `every_type_the_records_hold_exists_in_every_version` checks every type the code writes
+    and the demo and rich stores hold against each version, through these adapters.
 
   An adapter maps any record to the version's view, whatever version wrote it: it is total (a
   value the version has passes through), so that it still holds when the default version, and
@@ -354,10 +360,12 @@ MERCHANT_READ instead. Removed in API version 2027-01." 2027-01 removes them; it
   Shopify does not say what it answers for such a definition in 2027-01: lsf reads the
   deprecation reason as the mapping.
 
-The rest of what 2027-01 changes needs no code: `QueryRoot.automaticDiscounts`,
+The rest of what 2027-01 changes needs no code but two adapters: `QueryRoot.automaticDiscounts`,
 `Mutation.marketCurrencySettingsUpdate`, `StandardMetaobjectDefinitionFieldTemplate
 .visibleToStorefrontApi` and the collection sources' `metafieldInteger` are removed (refused by
-the schema); `InventoryItemMeasurement.packedDimensions: BoxDimensions!` and
+the schema; a condition made with it in 2026-10 reads in 2027-01 as the
+`CollectionSourceInclusionConditionMetafieldInt` that "replaces this one entirely", through a
+`Typename` adapter and a `Field` one for its `value`, a `String` there); `InventoryItemMeasurement.packedDimensions: BoxDimensions!` and
 `Mutation.appDowngradeAccessScopes` are added (the first answered with a default, reported in
 `extensions.lsf.defaulted`; the second simulated, registered like any mutation: only 2027-01
 reaches it); new `MarketUserErrorCode` values. Its
@@ -468,7 +476,10 @@ fall forward), and `OLDEST_ACCESSIBLE` moves; its files can go once nothing serv
   of the shop stop (see "Events and webhooks").
 - **Delegate tokens** (`delegateAccessTokenCreate`): `shppa_` and 32 hex digits (the guide's
   `shppa_…`), a subset of the parent's scopes, expiring with the parent or sooner; their grant's
-  source is `GrantSource::Delegate`, which may not make delegates. When the installation's scopes
+  source is `GrantSource::Delegate`, which may not make delegates, nor be migrated to an
+  expiring offline token (`Tokens::migrate`, `MigrationError::Delegate`): the token it would
+  become is the installation's, with all its scopes. The other grants start from a code, a
+  session token, a refresh token or the client secret, never from an access token. When the installation's scopes
   change (`Tokens::set_scopes`: an install with other scopes, `appRevokeAccessScopes`), every
   token of it carries the new ones, but a delegate keeps those of its own still granted.
 - **What a mutation changes of the tokens.** A mutation runs under the shop's lock, and the tokens
@@ -483,6 +494,16 @@ fall forward), and `OLDEST_ACCESSIBLE` moves; its files can go once nothing serv
   narrowed. A failed mutation emits nothing, so changes nothing of the tokens either. The
   uninstall is the control endpoint's path (`AdminApi::finish_uninstall`), its `app/uninstalled`
   delivered with the mutation's events.
+- **A request that waited on the shop** runs with the tokens as they are when it gets the shop,
+  not as they were when it looked its token up. Each `LiveShop` has an `auth_generation`, moved
+  under its lock by every change of what its tokens grant: a request with auth effects (which
+  also counts them `auth_pending` until it has applied them, the shop unlocked), a reset, an
+  install, an uninstall and an OAuth grant (after they changed the tokens). A GraphQL request
+  reads the generation once nothing is pending, looks its token up, locks the shop, and runs
+  only if the generation did not move; otherwise it looks the token up again (`401` for one
+  revoked, the narrowed scopes for one revoked from). Without it, a `productCreate` queued
+  behind an `appUninstall` ran after it with the token it had revoked
+  (`api::tests::a_request_that_waited_on_the_shop_runs_with_the_tokens_as_they_are_now`).
 - **OAuth**, as Shopify (`auth::oauth`): `GET /admin/oauth/authorize` approves at once and
   redirects to the `redirect_uri` with `code`, `hmac`, `host`, `shop`, `state`, `timestamp`;
   `POST /admin/oauth/access_token` (JSON, form, or query parameters) exchanges the code (once,
@@ -1750,9 +1771,15 @@ never written to.**
 - *What the storefront serves* (`themes::storefront_overlay`, `AdminApi::storefront_overlay`):
   the main theme of the default shop. The local theme without writes: nothing (the directory
   alone). With writes: the overlay. Another theme published: all its files, exclusively. Its
-  `generation` is a hash of what it holds. The server applies it where store sync builds the store
-  (`ServerState::sync_theme`, when the count of changes moved, under the build lock), only when
-  the generation differs; live reload's token includes it. The CDN serves an asset of the overlay
+  `generation` is a hash of the filenames and digests it holds
+  (`storefront_overlay_generation`, which reads no byte): the server makes a new overlay only
+  when it moved, from the one it serves (`storefront_overlay_from`), whose files it keeps where
+  their blob is the same `Arc` (no byte is copied, the text `Arc` the Liquid caches are keyed by
+  stays). `OnlineStoreTheme.files` lists the filenames first (`files::listed`, no file read),
+  pages them, and reads, digests and encodes only the files of the page. The server applies it where store sync builds the store
+  (`ServerState::sync_theme`, when the count of changes moved, under the build lock, and after
+  each reseed of `reload`, which drops the Admin API's files and script tags), only when the
+  generation differs; live reload's token includes it. The CDN serves an asset of the overlay
   as it is (`/cdn/shop/t/1/assets/…`; an image without the CDN's transforms).
 - *What it costs* (release builds of the commit before themes and of this one, the fixture theme
   of lsf-core, the demo store, the two servers' renders interleaved by batches of 25, 1000 each,
@@ -1762,11 +1789,32 @@ never written to.**
   within ±5 µs (±1.5 %) either way, which is the noise. With an overlay of two files and a script
   tag, `/` renders in 163 to 172 µs against 161 to 165 µs before (alternated runs): a few µs,
   most of it the 640 bytes of the script tag's loader.
-- *What does not follow*: `Shopify.theme` of `content_for_header` keeps id 1 and the name of the
-  directory's `settings_schema.json` while another theme is published (its files are served); a
-  `URL` body of `themeFilesUpsert` and a `themeCreate` from a URL are downloaded within the
-  request (10 s), where Shopify processes them in the background (`processing: true` until done):
-  lsf's are done when the mutation answers.
+- *Which theme the page names*: `Shopify.theme` of `content_for_header`, the `theme` object and
+  the asset URLs (`/cdn/shop/t/<id>/…`) name the main theme (`themes::storefront_identity`,
+  `AdminApi::storefront_theme`, given to `lsf_core::theme::Theme::set_identity` by
+  `sync_theme`): its id and name while another theme is published, the name `themeUpdate` gave
+  the local theme. `schema_name` stays the files' `theme_info`. Without either, the directory:
+  id 1, the name its files give.
+- *Sources from a URL* (`crate::sources`): the `source` of `themeCreate`, the `URL` bodies of
+  `themeFilesUpsert` and the `url` of `urlRedirectImportCreate` are found in the parsed request
+  (its query and variables, through fragments; only for the fields the token may run; a query
+  that names none of the three is not parsed again) and fetched by the api layer before it locks
+  the shop: 8 at a time, 10 s each, 30 s for all of them. The mutation reads them from the
+  request's `Fetched` (`ShopResolver::with_fetched`, `Mutation::fetched`). A download within the
+  mutation held the shop, and every request waiting on it (carts and checkouts recorded by the
+  storefront too), for as long as it took: 500 s for 50 slow bodies, and a URL to lsf itself
+  waited on itself until the timeout. lsf's own upload URLs (`/__lsf/admin/uploads/…`) are read
+  from the shop's blobs, never fetched; a URL that was not prefetched (a line of a bulk
+  operation) is refused, and says why. Only public addresses are fetched from (Shopify cannot
+  reach the developer's machine): `sources::PublicOnly`, the ureq resolver of every connection,
+  redirects included, refuses a host that resolves to the loopback, a private network,
+  link-local, unique-local, unspecified, multicast or reserved addresses (IPv6 ones embedding
+  an IPv4 address as that one), so that what is checked is what is connected to; proxies of the
+  environment are off. `--admin-fetch-local` (`AdminApi::with_fetch`) lifts it. A refused
+  source answers what an unreachable one does: `INVALID_ZIP`, `FILE_VALIDATION_ERROR`,
+  `NOT_FOUND`.
+- *What does not follow*: Shopify processes a theme from a URL in the background
+  (`processing: true` until done): lsf's are done when the mutation answers.
 
 ### The online store and the app platform (`domains/storefront.rs`, `store_admin.rs`, `platform.rs`)
 
@@ -2163,8 +2211,9 @@ which every mutation would have paid on the Admin request's path, ten times for 
 6. **The files change** (`--watch`, `POST /__lsf/reload`): `reload` reads the files again and
    loads the new base, reseeds
    (`AdminApi::reseed`; the terminal says what was dropped), moves sync to the new base
-   (`sync_store`, which counts a change), and builds from `synced()`: the store is the new base,
-   unless the backend changed the shop in between.
+   (`sync_store`, which counts a change), applies the theme the reseeded shop has
+   (`sync_theme`: the directory, without the Admin API's files or script tags), and builds
+   from `synced()`: the store is the new base, unless the backend changed the shop in between.
 7. **What the store data refuses** of the overlay: the problems of the store built with it that
    the files alone do not have (`Applied::diagnostics`) are printed when they differ from the
    last build's, and given to `AdminApi::sync_built`, which `GET /__lsf/admin` shows in

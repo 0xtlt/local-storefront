@@ -54,10 +54,13 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret webhooks, OAuth and session tokens are signed with. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else `lsf-local-client-secret`, printed at start. |
 | `--admin-throttle <plan>` | `LSF_ADMIN_THROTTLE` | The cost bucket of the Admin API, per shop and app: `store` (the default: Plus for store data with companies, Standard otherwise), `standard` (2000 points, 100 a second), `advanced` (4000, 200), `plus` (20000, 1000), `enterprise` (40000, 2000), `legacy` (1000, 50), or `off`. |
 | `--admin-versions <list>` | `LSF_ADMIN_VERSIONS` | The versions of the Admin API served, comma-separated, among those lsf knows: `2026-10` alone by default, `2026-10,2027-01` with the release candidate. Another version answers `404`; one Shopify no longer supports is answered by the oldest stable version served, as Shopify does. See [API versions](admin.md#api-versions). |
+| `--admin-fetch-local` | `LSF_ADMIN_FETCH_LOCAL` | Lets `themeCreate`, the `URL` bodies of `themeFilesUpsert` and `urlRedirectImportCreate` download their source from this machine or its network (the loopback, private, link-local and unique-local addresses), for a theme ZIP served from localhost on purpose. Off by default: Shopify cannot reach them, and a backend could otherwise read what the machine serves. See [Sources from a URL](admin.md). |
 
 When it is ready, the server prints a line to stderr that starts with
 `ready:  http://127.0.0.1:<port>/`. With `--port 0`, read the port from that line. It runs
-until it is stopped. With `--app`, it also prints how many checkout scenarios the data has and,
+until it is stopped (Ctrl-C, `SIGTERM`, `SIGHUP`): then it finishes the requests it is
+answering, for 3 seconds at most, and abandons the rest. A page whose Liquid never ends stops
+at its render budget (see [the render budget](compatibility.md#the-render-budget)). With `--app`, it also prints how many checkout scenarios the data has and,
 with a theme, the address of the home page of the checkout
 (`home:   http://127.0.0.1:<port>/__lsf/checkouts`). Then the [Admin API](admin.md) of the
 store, which every server serves, and the webhooks of the app:

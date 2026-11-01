@@ -492,6 +492,9 @@ fn token_exchange<'p>(
                         MigrationError::NotMigratable => {
                             "only a non-expiring offline token can be migrated"
                         }
+                        MigrationError::Delegate => {
+                            "a delegate token cannot be exchanged: it makes no token"
+                        }
                     },
                 ),
             };

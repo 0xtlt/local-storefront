@@ -8815,3 +8815,125 @@ fn placing_the_order_completes_the_checkout() {
     let answer = admin_query(&state, "{ abandonedCheckoutsCount { count } }");
     assert_eq!(answer["data"]["abandonedCheckoutsCount"]["count"], 0);
 }
+
+/// A body over the limit was read as an empty one: a 40 MB `PUT` to a staged upload target
+/// answered `200` and stored nothing. The target takes it now, and a body over a limit is `413`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_body_over_the_limit_is_refused_and_an_upload_takes_more() {
+    use axum::extract::State;
+
+    let state = std::sync::Arc::new(admin_server());
+    let staged = admin_query(
+        &state,
+        r#"mutation { stagedUploadsCreate(input: {resource: FILE, filename: "big.bin", mimeType: "application/octet-stream"}) { stagedTargets { url resourceUrl } } }"#,
+    );
+    let target = &staged["data"]["stagedUploadsCreate"]["stagedTargets"][0];
+    let url = target["url"].as_str().unwrap().to_string();
+    let resource = target["resourceUrl"].as_str().unwrap().to_string();
+    let path = &url[url.find("/__lsf/").unwrap()..];
+    let send = |method: &str, path: &str, length: Option<usize>, body: Vec<u8>| {
+        let mut request = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", "127.0.0.1:9292");
+        if let Some(length) = length {
+            request = request.header("content-length", length.to_string());
+        }
+        let request = request.body(axum::body::Body::from(body)).unwrap();
+        super::handle(State(state.clone()), request)
+    };
+
+    let size = 40 << 20;
+    let response = send("PUT", path, None, vec![7; size]).await;
+    assert_eq!(response.status(), 200);
+    let stored = state
+        .admin
+        .as_ref()
+        .unwrap()
+        .api
+        .with_default_shop(|shop| {
+            lsf_admin::domains::app::uploads::bytes(shop, &resource).map(|blob| blob.bytes.len())
+        })
+        .flatten();
+    assert_eq!(stored, Some(size), "every byte is stored");
+
+    // Elsewhere, 32 MiB at most: refused, not read as nothing.
+    let response = send(
+        "POST",
+        "/admin/api/2026-10/graphql.json",
+        None,
+        vec![b' '; super::BODY_LIMIT + 1],
+    )
+    .await;
+    assert_eq!(response.status(), 413);
+    // A body that says it is larger than the limit is refused before it is read.
+    let response = send("PUT", path, Some(super::UPLOAD_BODY_LIMIT + 1), Vec::new()).await;
+    assert_eq!(response.status(), 413);
+}
+
+/// A `layout/theme.liquid` the Admin API wrote, with nested `(1..1000000000)` loops, never
+/// answered `/` and pinned a core: the render stops at its budget, and the page says why.
+#[test]
+fn a_theme_file_that_never_ends_answers_the_render_limit() {
+    let state = admin_server();
+    let upsert = admin_query(
+        &state,
+        r#"mutation { themeFilesUpsert(themeId: "gid://shopify/OnlineStoreTheme/1", files: [{filename: "layout/theme.liquid", body: {type: TEXT, value: "<html><body>{% for i in (1..1000000000) %}{% for j in (1..1000000000) %}{{ j }}{% endfor %}{% endfor %}</body></html>"}}]) { userErrors { message } } }"#,
+    );
+    assert_eq!(
+        upsert["data"]["themeFilesUpsert"]["userErrors"],
+        json!([]),
+        "{upsert}"
+    );
+    let started = std::time::Instant::now();
+    let reply = get(&state, "/", "visitor");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(reply.status, 500);
+    let page = text(&reply);
+    assert!(
+        page.contains("Liquid error: Memory limits exceeded"),
+        "{page}"
+    );
+    assert_eq!(header(&reply, "x-lsf-liquid-errors"), Some("1"));
+    // The other pages of the theme are not held up.
+    let reset = admin_request(&state, "DELETE", "/__lsf/admin", "");
+    assert_eq!(reset.status, 200);
+    assert_eq!(get(&state, "/", "visitor").status, 200);
+}
+
+/// After SIGTERM, a server with a request that did not end was still alive 12 minutes later:
+/// the requests still running at the shutdown deadline are abandoned.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_server_does_not_wait_for_a_request_that_does_not_end() {
+    // A page held for a minute by the throttle stands for a request that does not end.
+    let state = std::sync::Arc::new(server_with_throttle("page=60s"));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(super::run_until(
+        state,
+        listener,
+        async move {
+            let _ = stopped.await;
+        },
+        std::time::Duration::from_millis(300),
+    ));
+    let waiting = tokio::spawn(async move { http_request(address, "/", &[]).await });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let asked = std::time::Instant::now();
+    stop.send(()).unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("the server stopped at its deadline");
+    assert!(result.unwrap().is_ok());
+    let took = asked.elapsed();
+    assert!(
+        took >= std::time::Duration::from_millis(300) && took < std::time::Duration::from_secs(2),
+        "{took:?}"
+    );
+    waiting.abort();
+}

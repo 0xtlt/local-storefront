@@ -126,6 +126,20 @@ const EXCLUSION_KINDS: &[(&str, &str)] = &[
     ("productVendor", "ProductVendor"),
 ];
 
+/// The types of every condition a source can hold, made by name from the kinds: what a test
+/// checks each served version has.
+#[cfg(test)]
+pub(crate) fn condition_type_names() -> Vec<String> {
+    [false, true]
+        .into_iter()
+        .flat_map(|exclusion| {
+            kinds(exclusion)
+                .iter()
+                .map(move |(_, suffix)| format!("{}{suffix}", prefix(exclusion)))
+        })
+        .collect()
+}
+
 /// The prefix of the type of an inclusion or an exclusion condition.
 fn prefix(exclusion: bool) -> &'static str {
     if exclusion {

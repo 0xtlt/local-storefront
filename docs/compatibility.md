@@ -54,6 +54,31 @@ not parse, and filters that do not exist here.
 With `--preview liquid-july-26`: `block` and `partial`. Without it they are unknown tags, as
 on a live store.
 
+### The render budget
+
+A render that does not end (nested `{% for i in (1..1000000000) %}`, in a file of the theme or
+one the Admin API wrote) would hold a thread of the server, and its page, for ever. A render
+stops once it spends its budget, as Ruby Liquid's resource limits stop it:
+
+- a **render score** of 10,000,000: each body rendered counts its nodes (Ruby Liquid's
+  `increment_render_score`), and a loop over a range counts its items before it takes them;
+- **10 seconds** of wall time.
+
+The page then answers `500` with Liquid's error, `Liquid error: Memory limits exceeded`, and what
+lsf counted; what was rendered is not shown, and nothing more renders. The pages of lsf's
+fixture themes score 11 to 310 (a collection page the most): the limit is tens of thousands
+of times what they need. Counting costs what it does not show: release builds before and after
+it, the fixture theme and the demo store, 1000 renders a page interleaved by batches of 25,
+medians of `Server-Timing: render` (2026-11-01, alternated twice): `/` 173 → 176 and
+174 → 175 µs, a collection 291 → 295 and 291 → 292 µs, a product 232 → 231 and 230 → 231 µs, a
+search 139 → 141 and 139 → 139 µs.
+
+Shopify documents neither number. What it documents: "You can do a maximum of 50 iterations
+with a `for` loop" over a paginated array (`collection.products` and the others of `paginate`),
+pages of 1 to 250 items, and no further than the 25,000th item. Its renderer stops a page that
+takes too long, without publishing the time. lsf's limits are set far above what a real page
+needs, so that only a render that would never end is stopped.
+
 ## Liquid filters
 
 Every one of the 154 filters of Shopify's reference: array, string, math, date, money, color,

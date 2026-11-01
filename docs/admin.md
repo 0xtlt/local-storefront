@@ -60,6 +60,7 @@ end: every recipe below is checked there.
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The client secret. |
 | `--admin-throttle <plan>` | `LSF_ADMIN_THROTTLE` | The cost bucket: `store` (default), `standard`, `advanced`, `plus`, `enterprise`, `legacy`, `off`. |
 | `--admin-versions <list>` | `LSF_ADMIN_VERSIONS` | The [API versions](#api-versions) served: `2026-10` alone by default, `2026-10,2027-01` with the release candidate. |
+| `--admin-fetch-local` | `LSF_ADMIN_FETCH_LOCAL` | Sources from a URL (`themeCreate`, `themeFilesUpsert`, `urlRedirectImportCreate`) may be on this machine or its network. Off by default. |
 
 ## API versions
 
@@ -98,7 +99,9 @@ admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
 - **The records are the same** in every version: what a 2027-01 request creates, a 2026-10 one
   reads. Where 2027-01 shows a record differently, lsf adapts it: a metaobject definition whose
   admin access is `PUBLIC_READ` or `PRIVATE` (removed in 2027-01, "Use MERCHANT_READ instead")
-  reads `MERCHANT_READ` in 2027-01.
+  reads `MERCHANT_READ` in 2027-01, and a collection source condition made with
+  `metafieldInteger` (removed in 2027-01) reads as a
+  `CollectionSourceInclusionConditionMetafieldInt`, its `value` a string.
 - `GET /__lsf/admin` lists the versions lsf knows, their status and whether they are served
   (`apiVersions`).
 
@@ -421,7 +424,8 @@ The full list, field by field, is in the design notes of `lsf-admin`
   what they change stays in the Admin API.
 - **The files do not change.** lsf builds the store from the files with the Admin API's changes on
   top; nothing is written to disk. `DELETE /__lsf/admin` (and the store data edited, with
-  `--watch`, or `POST /__lsf/reload`) puts the storefront back to the files.
+  `--watch`, or `POST /__lsf/reload`) puts the storefront back to the files, and the theme back
+  to the directory, without the files and script tags the Admin API added.
 - **A session with its own data** (`PUT /__lsf/session` with `data`) sees its data on top of the
   Admin API's changes.
 - **An order placed at the checkout** is recorded in the Admin API, and the store is not built
@@ -1456,8 +1460,11 @@ does, the next query reads `COMPLETED` with its `url`, `objectCount` and `fileSi
 Cloud Storage ones: a `POST` target (`url` and form `parameters`, the `file` last) or a `PUT`
 target (the default). The bytes stay in the shop until it is reset, for
 `bulkOperationRunMutation` (`stagedUploadPath`) and `fileCreate` (`originalSource`, the
-`resourceUrl`). The deprecated `stagedUploadTargetGenerate` (one target) and
-`stagedUploadTargetsGenerate` (`urls`) answer the same targets.
+`resourceUrl`). A target takes up to 1 GiB (Shopify's largest staged upload, a video; an image
+is 20 MB there, a 3D model 500 MB), and a MiB for the form around it; any other request of lsf
+takes 32 MiB. A larger body is answered `413`, never read as an empty one. The deprecated
+`stagedUploadTargetGenerate` (one target) and `stagedUploadTargetsGenerate` (`urls`) answer the
+same targets.
 
 Credits, revenue attribution records and frozen subscriptions have no data behind them. The
 app's access, delegate tokens and Flow triggers are in "[The app's installation and Shopify's
@@ -1477,18 +1484,45 @@ the connection's `userErrors` (`NOT_FOUND`).
   `themeFilesDelete` on the main theme are kept in memory and served by the storefront on top of
   the directory: a backend that writes `templates/index.json` sees its page on the storefront,
   and your files stay yours. `DELETE /__lsf/admin` drops what it wrote.
-- `themeCreate` from a ZIP (a staged upload of `stagedUploadsCreate`, or a URL lsf downloads,
-  50 MB at most; `INVALID_ZIP`, `ZIP_IS_EMPTY`, `ZIP_TOO_LARGE`; roles `UNPUBLISHED` and
+- `themeCreate` from a ZIP (a staged upload of `stagedUploadsCreate`, or a URL lsf downloads:
+  see "Sources from a URL"; 50 MB at most; `INVALID_ZIP`, `ZIP_IS_EMPTY`, `ZIP_TOO_LARGE`; roles `UNPUBLISHED` and
   `DEVELOPMENT`), `themeDuplicate` (all the files, "Copy of …"), `themeUpdate` (the name, 50
-  characters), `themeDelete` (not the main theme), `themePublish`. A published theme is what the
-  storefront serves, alone; publishing the local theme again serves the directory.
-- `themeFilesUpsert`: 50 files at most, one input per filename, files in the theme's directories,
-  JSON files valid JSON (`FILE_VALIDATION_ERROR`, `DUPLICATE_FILE_INPUT`,
+  characters), `themeDelete` (not the main theme, and never the local theme, even once another
+  is published: it is the directory, which would be gone until a reset), `themePublish`. A
+  published theme is what the storefront serves, alone, and what the page names: `Shopify.theme`
+  and the `theme` object have its id and name, and asset URLs are under `/cdn/shop/t/<id>/`;
+  publishing the local theme again serves the directory, id 1.
+- `themeFilesUpsert`: 50 files at most, one input per filename, files in the theme's directories
+  (no `..`, and no `\`, `:`, NUL or control character: what Windows would read as another
+  path is refused on every system, and no file outside the directory is ever read), JSON files
+  valid JSON (`FILE_VALIDATION_ERROR`, `DUPLICATE_FILE_INPUT`,
   `LESS_THAN_OR_EQUAL_TO`); `TEXT`, `BASE64` and `URL` bodies (a `URL` file comes through the
-  `job`, done, as in Shopify's example). Nothing is written when a file is refused.
+  `job`, done, as in Shopify's example; one over 50 MB is refused, `FILE_VALIDATION_ERROR`, never
+  cut). Nothing is written when a file is refused.
   `layout/theme.liquid` cannot be deleted.
 - Webhooks: `themes/create`, `themes/update`, `themes/publish`, `themes/delete` (none for files,
   as on Shopify).
+
+**Sources from a URL.** The `source` of `themeCreate`, the `URL` bodies of `themeFilesUpsert`
+and the `url` of `urlRedirectImportCreate` are read from lsf's staged uploads when they are
+one (`/__lsf/admin/uploads/…`, never over HTTP), and otherwise downloaded before the request
+locks the shop: a slow source holds up no other request of the shop (the storefront's carts and
+checkouts included). 8 are fetched at a time, each within 10 s, all of a request's within 30 s;
+one over 50 MB is refused. A URL that only a line of a bulk operation names is not fetched, and
+the line says so.
+
+Only public addresses are fetched from: Shopify downloads a source from the internet and can
+never reach your machine, and lsf refuses the same, or a backend (yours under development, or
+a third party's) could read what your machine serves locally and get it back as a theme file.
+The loopback (`localhost`, `127.0.0.1`, `::1`), private networks (`10/8`, `172.16/12`,
+`192.168/16`, `100.64/10`), link-local (`169.254/16`, `fe80::/10`, cloud metadata endpoints),
+unique-local (`fc00::/7`), unspecified, multicast and reserved addresses are refused, IPv6 ones
+that embed an IPv4 address (`::ffff:127.0.0.1`) as that address. The check is made on the
+addresses a host resolves to, on every redirect, and proxies of the environment are not used.
+A refused source answers what an unreachable one does (`INVALID_ZIP` for `themeCreate`,
+`FILE_VALIDATION_ERROR` for a file, `NOT_FOUND` for an import), its message saying why. To serve
+a theme ZIP from your machine on purpose, start lsf with `--admin-fetch-local`. `file://` and
+the schemes other than `http` and `https` are never fetched.
 
 **Script tags.** `scriptTagCreate`, `scriptTagUpdate`, `scriptTagDelete`; `scriptTag`,
 `scriptTags(src:, query:)`. A script tag shown on the online store (`ONLINE_STORE`, or the
@@ -1544,8 +1578,9 @@ scopes into `read_x`. To grant optional scopes first: `POST /__lsf/admin/install
 **Delegate access tokens.** `delegateAccessTokenCreate` makes a `shppa_…` token with a subset of
 the parent's scopes (`UNKNOWN_SCOPES` for one the app was not granted), expiring with its parent
 or sooner (`expiresIn`, `EXPIRES_AFTER_PARENT`); it authenticates the Admin API with those
-scopes only, and cannot make delegates of its own (`DELEGATE_ACCESS_TOKEN`).
-`delegateAccessTokenDestroy` revokes one. A scope the installation loses goes from its delegates
+scopes only, and cannot make delegates of its own (`DELEGATE_ACCESS_TOKEN`), nor be exchanged
+at `/admin/oauth/access_token` as an offline token (`400` `invalid_subject_token`: what it would
+become carries every scope of the installation). `delegateAccessTokenDestroy` revokes one. A scope the installation loses goes from its delegates
 too.
 
 **Flow triggers.** `flowTriggerReceive(handle:, payload:)` is checked against the app's

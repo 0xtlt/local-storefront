@@ -1323,3 +1323,60 @@ fn the_extras_queries_answer_without_defaults_on_the_demo_store() {
     );
     assert_eq!(read["data"]["productDuplicateJob"]["done"], json!(true));
 }
+
+/// A condition made with `metafieldInteger` (removed in 2027-01) answered there as the first
+/// possible type of the interface, `…MetafieldBoolean`, with the id of an `Integer` one: it
+/// reads as `…MetafieldInt`, the type that "replaces this one entirely".
+#[test]
+fn an_integer_metafield_condition_reads_as_its_replacement_in_2027_01() {
+    let mut shop = demo();
+    let definition = shop
+        .keys("MetafieldDefinition")
+        .next()
+        .expect("the demo store has a metafield definition")
+        .to_string();
+    let created = run_with(
+        &mut shop,
+        r#"mutation($input: CollectionCreateConditionsSourceInput!) { collectionConditionsSourceCreate(input: $input) {
+            source { id inclusion { conditions { __typename id ... on CollectionSourceInclusionConditionMetafieldInteger { value } } } }
+            userErrors { field message } } }"#,
+        json!({"input": {"title": "Sized", "inclusion": {"matchType": "ALL", "conditions": [
+            {"metafieldInteger": {"definitionId": definition, "relation": "GREATER_THAN", "value": 5}},
+        ]}}}),
+    );
+    let source = &ok(&created, "collectionConditionsSourceCreate")["source"];
+    let id = source["id"].as_str().unwrap().to_string();
+    let condition = &source["inclusion"]["conditions"][0];
+    assert_eq!(
+        condition["__typename"],
+        "CollectionSourceInclusionConditionMetafieldInteger"
+    );
+    assert_eq!(condition["value"], 5);
+    let condition_id = condition["id"].clone();
+
+    let version = crate::version::ApiVersion::get("2027-01").unwrap();
+    let mut resolver =
+        crate::resolve::ShopResolver::new(&mut shop, crate::resolve::Registry::standard())
+            .with_version(version);
+    let request = crate::graphql::Request::new(
+        r#"query($id: ID!) { node(id: $id) { ... on CollectionConditionsSource { inclusion { conditions {
+            __typename id
+            ... on CollectionSourceInclusionConditionMetafieldInt { relation value definition { id } }
+            ... on CollectionSourceInclusionConditionMetafieldBoolean { boolean: value }
+        } } } } }"#,
+    )
+    .with_variables(json!({"id": id}));
+    let answer = crate::graphql::run(version.schema(), &mut resolver, &request, None).to_json();
+    assert!(answer.get("errors").is_none(), "{answer}");
+    assert_eq!(
+        answer["data"]["node"]["inclusion"]["conditions"][0],
+        json!({
+            "__typename": "CollectionSourceInclusionConditionMetafieldInt",
+            "id": condition_id,
+            "relation": "GREATER_THAN",
+            "value": "5",
+            "definition": {"id": definition},
+        }),
+        "{answer}"
+    );
+}
