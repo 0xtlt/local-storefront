@@ -25,6 +25,56 @@ export async function gql(admin, query, variables, { mutation } = {}) {
   return { ...body.data, extensions: body.extensions };
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Polls a bulk operation (`fields` of `BulkOperation`) until it ends, and answers it once
+// COMPLETED.
+async function finishedBulkOperation(admin, id, fields) {
+  let operation;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    ({ node: operation } = await gql(
+      admin,
+      `#graphql
+      query Poll($id: ID!) { node(id: $id) { ... on BulkOperation { ${fields} } } }`,
+      { id },
+    ));
+    if (!["CREATED", "RUNNING"].includes(operation.status)) break;
+    await sleep(200);
+  }
+  if (operation.status !== "COMPLETED") throw new AdminError(`bulk operation ${operation.status}`, operation);
+  return operation;
+}
+
+// The JSON Lines of a URL, parsed.
+async function jsonLines(url) {
+  const text = await (await fetch(url)).text();
+  return text.trim().split("\n").map((line) => JSON.parse(line));
+}
+
+// A staged upload target of `input` (`stagedUploadsCreate`), and the multipart POST of `bytes`
+// to it, as shopify.dev documents it.
+async function stagedUpload(admin, input, bytes) {
+  const staged = await gql(
+    admin,
+    `#graphql
+    mutation Stage($input: [StagedUploadInput!]!) {
+      stagedUploadsCreate(input: $input) {
+        stagedTargets { url resourceUrl parameters { name value } }
+        userErrors { field message }
+      }
+    }`,
+    { input: [input] },
+    { mutation: "stagedUploadsCreate" },
+  );
+  const target = staged.stagedTargets[0];
+  const form = new FormData();
+  for (const { name, value } of target.parameters) form.append(name, value);
+  form.append("file", new Blob([bytes], { type: input.mimeType }), input.filename);
+  const upload = await fetch(target.url, { method: "POST", body: form });
+  if (!upload.ok) throw new AdminError(`upload answered ${upload.status}`, await upload.text());
+  return { target, upload };
+}
+
 // Every product, five at a time, following `pageInfo`.
 export async function listProducts(admin) {
   const titles = [];
@@ -414,23 +464,12 @@ export async function bulkExport(admin) {
     {},
     { mutation: "bulkOperationRunQuery" },
   );
-  const id = started.bulkOperation.id;
-  let operation;
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    ({ node: operation } = await gql(
-      admin,
-      `#graphql
-      query Poll($id: ID!) {
-        node(id: $id) { ... on BulkOperation { id status errorCode objectCount fileSize url partialDataUrl } }
-      }`,
-      { id },
-    ));
-    if (!["CREATED", "RUNNING"].includes(operation.status)) break;
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  if (operation.status !== "COMPLETED") throw new AdminError(`bulk operation ${operation.status}`, operation);
-  const text = await (await fetch(operation.url)).text();
-  const lines = text.trim().split("\n").map((line) => JSON.parse(line));
+  const operation = await finishedBulkOperation(
+    admin,
+    started.bulkOperation.id,
+    "id status errorCode objectCount fileSize url partialDataUrl",
+  );
+  const lines = await jsonLines(operation.url);
   return {
     initialStatus: started.bulkOperation.status,
     operation,
@@ -444,24 +483,11 @@ export async function bulkExport(admin) {
 // then bulkOperationRunMutation, as shopify.dev's "Bulk import data" does.
 export async function bulkImport(admin, { titles }) {
   const jsonl = titles.map((title) => JSON.stringify({ product: { title, tags: ["e2e-bulk"] } })).join("\n");
-  const staged = await gql(
+  const { target } = await stagedUpload(
     admin,
-    `#graphql
-    mutation Stage($input: [StagedUploadInput!]!) {
-      stagedUploadsCreate(input: $input) {
-        stagedTargets { url resourceUrl parameters { name value } }
-        userErrors { field message }
-      }
-    }`,
-    { input: [{ filename: "products.jsonl", mimeType: "text/jsonl", resource: "BULK_MUTATION_VARIABLES", httpMethod: "POST" }] },
-    { mutation: "stagedUploadsCreate" },
+    { filename: "products.jsonl", mimeType: "text/jsonl", resource: "BULK_MUTATION_VARIABLES", httpMethod: "POST" },
+    jsonl,
   );
-  const target = staged.stagedTargets[0];
-  const form = new FormData();
-  for (const { name, value } of target.parameters) form.append(name, value);
-  form.append("file", new Blob([jsonl], { type: "text/jsonl" }), "products.jsonl");
-  const upload = await fetch(target.url, { method: "POST", body: form });
-  if (!upload.ok) throw new AdminError(`upload answered ${upload.status}`, await upload.text());
   const key = target.parameters.find((parameter) => parameter.name === "key").value;
   const started = await gql(
     admin,
@@ -478,43 +504,22 @@ export async function bulkImport(admin, { titles }) {
     },
     { mutation: "bulkOperationRunMutation" },
   );
-  let operation;
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    ({ node: operation } = await gql(
-      admin,
-      `#graphql
-      query Poll($id: ID!) { node(id: $id) { ... on BulkOperation { id status type errorCode objectCount url } } }`,
-      { id: started.bulkOperation.id },
-    ));
-    if (!["CREATED", "RUNNING"].includes(operation.status)) break;
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  if (operation.status !== "COMPLETED") throw new AdminError(`bulk operation ${operation.status}`, operation);
-  const lines = (await (await fetch(operation.url)).text()).trim().split("\n").map((line) => JSON.parse(line));
-  return { operation, results: lines };
+  const operation = await finishedBulkOperation(
+    admin,
+    started.bulkOperation.id,
+    "id status type errorCode objectCount url",
+  );
+  return { operation, results: await jsonLines(operation.url) };
 }
 
 // A file uploaded the way Shopify documents it: a staged target, a multipart POST of the bytes,
 // then fileCreate with the target's resourceUrl.
 export async function uploadFile(admin, { filename, bytes, mimeType }) {
-  const staged = await gql(
+  const { target, upload } = await stagedUpload(
     admin,
-    `#graphql
-    mutation Stage($input: [StagedUploadInput!]!) {
-      stagedUploadsCreate(input: $input) {
-        stagedTargets { url resourceUrl parameters { name value } }
-        userErrors { field message }
-      }
-    }`,
-    { input: [{ filename, mimeType, resource: "IMAGE", httpMethod: "POST", fileSize: String(bytes.length) }] },
-    { mutation: "stagedUploadsCreate" },
+    { filename, mimeType, resource: "IMAGE", httpMethod: "POST", fileSize: String(bytes.length) },
+    bytes,
   );
-  const target = staged.stagedTargets[0];
-  const form = new FormData();
-  for (const { name, value } of target.parameters) form.append(name, value);
-  form.append("file", new Blob([bytes], { type: mimeType }), filename);
-  const upload = await fetch(target.url, { method: "POST", body: form });
-  if (!upload.ok) throw new AdminError(`upload answered ${upload.status}`, await upload.text());
 
   const created = await gql(
     admin,
@@ -540,7 +545,7 @@ export async function uploadFile(admin, { filename, bytes, mimeType }) {
       { id },
     ));
     if (file.fileStatus === "READY" || file.fileStatus === "FAILED") break;
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await sleep(200);
   }
   let downloaded = null;
   if (file.image?.url) {
