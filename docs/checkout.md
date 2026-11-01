@@ -1045,7 +1045,7 @@ Functions it needs and no others, `--extension <handle>` repeated: a Function th
 | `GET /checkout?scenario=<name>` | Opens a checkout for a [scenario](#scenarios), in a new session. | A redirect to its checkout with a new session cookie, or `404`/`422` and a page that says why |
 | `GET /checkout?customer=<email>` | Logs the session in as a [customer of the data](#log-in-as-a-customer) (`default`, `none` too), then leads to its checkout. With `scenario=`, opens the scenario as them. | A redirect, or `404` and a page that lists the customers |
 | `GET /` (`lsf app dev`) or `GET /__lsf/checkouts` | The [home page](#the-home-page). `?format=json` for what it says, `?check=1` to [run the Functions of the scenarios](#the-functions-that-fail) first. | HTML, or JSON |
-| `GET /__lsf/checkouts/check` | Runs the Functions of every scenario (or takes the last run on the same app and data): [the ones that fail](#the-functions-that-fail). | JSON: `failures` (`handle`, `target`, `error`, `scenarios`), and what the page shows of it |
+| `GET /__lsf/checkouts/check` | Runs the Functions of every scenario (or takes the last run on the same app and data): [the ones that fail](#the-functions-that-fail). | JSON: `failures` (`handle`, `target`, `error`, `logs`, `scenarios`), and what the page shows of it |
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |
 | `POST /checkouts/cn/<token>/update` | Applies `{"operations": [...]}`, in order. | `200` and the state, or `400` `{"error": "…"}` and nothing applied |
@@ -1142,7 +1142,9 @@ second order.
 ```
 
 `app check` fails on a scenario that does not validate, and on a Function that traps or panics,
-runs past 11 million instructions or answers an output out of its schema. It does not check
+runs past 11 million instructions or answers an output out of its schema. A trap ends with the
+last message the Function logged (`the Function trapped: Error: boom (in b2b)` for a `throw new
+Error("boom")`), and the JSON has the `logs` of each failure. It does not check
 what a Function decides: a discount of the wrong amount passes. Assert that with
 `app function run --format json` (`lines`, `discounts`, `deliveryGroups`, `paymentMethods`,
 `errors`, `cost`, and each run in `runs`), or through the checkout in a test, as above. The

@@ -176,6 +176,12 @@ there is no scenario at all (`app init` writes a set). No request of a `.fetch` 
 It builds nothing without `--build`: in a fresh clone, where `dist/` is not committed, give
 `--build` (or run `npx local-storefront app build` first).
 
+A trap ends with the last message the Function logged, such as the one of a `throw`:
+
+```text
+fails    my-discount · cart.lines.discounts.generate.run: the Function trapped: Error: boom (in b2b)
+```
+
 A Function that ran in no scenario, such as a discount Function no scenario's discount names, is
 a warning: nothing checked it, and the exit code stays the same.
 
@@ -192,7 +198,7 @@ with `app function run --format json`. CI: [checkout](checkout.md#in-ci).
 | `--extension <handle>` | | Only these extensions. Repeat it for several. |
 | `--build` | | Builds the extensions first, as `app build` does. |
 | `--format text` | | Default. One line per problem, then a summary. |
-| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, file, problems}], ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `ranInNoScenario` is filled only when every scenario ran. |
+| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `ranInNoScenario` is filled only when every scenario ran. |
 | `--budget <seconds>` | | How long the Functions may run in all. Default 300. |
 
 ### app function run

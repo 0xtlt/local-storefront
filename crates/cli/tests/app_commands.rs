@@ -359,6 +359,68 @@ fn app_check_names_the_functions_no_scenario_ran() {
 }
 
 #[test]
+fn app_check_says_what_a_function_threw() {
+    let app = App::new("threw");
+    assert!(lsf(&app.0, &["init"]).status.success());
+    app.write(
+        "extensions/boom/shopify.extension.toml",
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Boom"
+handle = "boom"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/cart_validations_generate_run.graphql"
+  export = "cart-validations-generate-run"
+"#,
+    );
+    app.write(
+        "extensions/boom/package.json",
+        r#"{ "name": "boom", "type": "module", "dependencies": { "@shopify/shopify_function": "2.0.1" } }"#,
+    );
+    app.write(
+        "extensions/boom/src/index.js",
+        "export * from './cart_validations_generate_run';\n",
+    );
+    app.write(
+        "extensions/boom/src/cart_validations_generate_run.js",
+        "export function cartValidationsGenerateRun(input) {\n  console.log('checking');\n  throw new Error('boom b2b');\n}\n",
+    );
+    app.write(
+        "extensions/boom/src/cart_validations_generate_run.graphql",
+        "query Input { cart { lines { quantity } } }\n",
+    );
+    app.write(
+        "shopify-local/checkouts/b2b.json",
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}}"#,
+    );
+    let check = ["app", "check", "--build", "--extension", "boom"];
+    let output = lsf(&app.0, &check);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    // The message the Function threw, not the lines of its stack.
+    assert!(
+        text(&output).contains(
+            "fails    boom · cart.validations.generate.run: the Function trapped: Error: boom b2b (in b2b)"
+        ),
+        "{}",
+        text(&output)
+    );
+    let output = lsf(&app.0, &[&check[..], &["--format", "json"]].concat());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("JSON: {}", text(&output)));
+    let failure = &json["failures"][0];
+    assert_eq!(
+        failure["error"], "the Function trapped: Error: boom b2b",
+        "{json}"
+    );
+    let logs = failure["logs"].as_str().unwrap();
+    assert!(logs.starts_with("checking\nError: boom b2b\n"), "{logs}");
+}
+
+#[test]
 fn a_missing_build_says_to_run_lsf_app_build() {
     let app = App::new("unbuilt");
     assert!(lsf(&app.0, &["init"]).status.success());

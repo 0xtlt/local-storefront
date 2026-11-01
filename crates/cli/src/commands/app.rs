@@ -45,7 +45,7 @@ enum Subcommand {
 enum Format {
     /// One line per problem.
     Text,
-    /// `{ok, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, problems}], ranInNoScenario: [handle]}`.
+    /// `{ok, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, problems}], ranInNoScenario: [handle]}`.
     Json,
 }
 
