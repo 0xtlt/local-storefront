@@ -320,15 +320,6 @@ impl Deliveries {
             .collect()
     }
 
-    pub fn get(&self, id: u64) -> Option<Delivery> {
-        self.shared
-            .lock()
-            .entries
-            .iter()
-            .find(|delivery| delivery.id == id)
-            .cloned()
-    }
-
     /// Forgets every delivery, those still pending included (they are not sent). How many there
     /// were.
     pub fn clear(&self) -> usize {
@@ -573,15 +564,15 @@ fn describe(error: &ureq::Error, url: &str, options: &DeliveryOptions) -> String
             std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
         )
     };
+    let no_answer = || {
+        format!(
+            "no answer within {} s: Shopify takes that for a failure",
+            options.timeout.as_secs_f64()
+        )
+    };
     match error {
-        Error::Timeout(_) => format!(
-            "no answer within {} s: Shopify takes that for a failure",
-            options.timeout.as_secs_f64()
-        ),
-        Error::Io(io) if timed_out(io.kind()) => format!(
-            "no answer within {} s: Shopify takes that for a failure",
-            options.timeout.as_secs_f64()
-        ),
+        Error::Timeout(_) => no_answer(),
+        Error::Io(io) if timed_out(io.kind()) => no_answer(),
         Error::Io(io) if io.kind() == std::io::ErrorKind::ConnectionRefused => {
             format!("connection refused: is the backend of the app listening on {url}?")
         }
