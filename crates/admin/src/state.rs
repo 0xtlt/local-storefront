@@ -422,6 +422,30 @@ impl ShopState {
         self.records.get(gid).map(|entry| entry.type_name.as_str())
     }
 
+    /// Appends `key` to the array field `field` of a record (made when missing), unless it lists
+    /// it already. A field that holds something else is left as it is.
+    pub fn push_key(&mut self, gid: &str, field: &str, key: &str) {
+        if let Some(record) = self.get_mut(gid) {
+            let items = record
+                .entry(field.to_string())
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Value::Array(items) = items
+                && !items.iter().any(|item| item.as_str() == Some(key))
+            {
+                items.push(Value::String(key.to_string()));
+            }
+        }
+    }
+
+    /// Removes `key` from the array field `field` of a record.
+    pub fn pull_key(&mut self, gid: &str, field: &str, key: &str) {
+        if let Some(Value::Array(items)) =
+            self.get_mut(gid).and_then(|record| record.get_mut(field))
+        {
+            items.retain(|item| item.as_str() != Some(key));
+        }
+    }
+
     /// The record of a GID when it is one of `type_name` ([`ShopState::type_of`]).
     pub fn get_of(&self, gid: &str, type_name: &str) -> Option<&Record> {
         self.records
@@ -1324,6 +1348,32 @@ mod tests {
         assert_eq!(state.app_gid(), Some("gid://shopify/App/42"));
         assert_eq!(state.app_id(), 42);
         assert_eq!(state.currency(), "EUR");
+    }
+
+    #[test]
+    fn adds_and_removes_keys_of_array_fields() {
+        let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        let order = state.insert(record(json!({
+            "__typename": "Order",
+            "id": "gid://shopify/Order/1",
+            "refunds": null,
+        })));
+        state.push_key(&order, "returns", "gid://shopify/Return/1");
+        state.push_key(&order, "returns", "gid://shopify/Return/1");
+        state.push_key(&order, "returns", "gid://shopify/Return/2");
+        state.push_key(&order, "refunds", "gid://shopify/Refund/1");
+        state.push_key("gid://shopify/Order/9", "returns", "gid://shopify/Return/1");
+        let record = state.get(&order).unwrap();
+        assert_eq!(
+            record["returns"],
+            json!(["gid://shopify/Return/1", "gid://shopify/Return/2"])
+        );
+        assert_eq!(record["refunds"], Value::Null);
+        state.pull_key(&order, "returns", "gid://shopify/Return/1");
+        state.pull_key(&order, "refunds", "gid://shopify/Refund/1");
+        let record = state.get(&order).unwrap();
+        assert_eq!(record["returns"], json!(["gid://shopify/Return/2"]));
+        assert_eq!(record["refunds"], Value::Null);
     }
 
     #[test]

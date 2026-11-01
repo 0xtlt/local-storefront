@@ -330,11 +330,11 @@ fn fulfillment_create(
         "updatedAt": now,
     })));
     for fulfillment_order in &fulfillment_orders {
-        model::push_key(state, fulfillment_order, "fulfillments", &id);
+        state.push_key(fulfillment_order, "fulfillments", &id);
         model::refresh_fulfillment_order(state, fulfillment_order);
         state.touch(fulfillment_order);
     }
-    model::push_key(state, &order, "fulfillments", &id);
+    state.push_key(&order, "fulfillments", &id);
     model::refresh_order(state, &order);
     state.emit("fulfillments/create", &id);
     emit_fulfillment_status(state, &order);
@@ -478,7 +478,7 @@ fn fulfillment_cancel(
             Some((fo, fo_line)) => {
                 let (fo, fo_line) = (fo.clone(), fo_line.clone());
                 let reopened = split_off(state, &fo, &[(fo_line, quantity)], None, false);
-                model::push_key(state, &order, "fulfillmentOrders", &reopened);
+                state.push_key(&order, "fulfillmentOrders", &reopened);
             }
             None => {}
         }
@@ -597,7 +597,7 @@ fn event_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         "longitude": field("longitude"),
         "fulfillment": fulfillment,
     })));
-    model::push_key(state, &fulfillment, "events", &event);
+    state.push_key(&fulfillment, "events", &event);
     if let Some(record) = state.get_mut(&fulfillment) {
         record.insert("displayStatus".into(), json!(status));
         match status.as_str() {
@@ -800,7 +800,7 @@ fn hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
     let remaining = (!rest.is_empty()).then(|| {
         let order = text(&record, "order").unwrap_or_default().to_string();
         let new = split_off(state, &id, &rest, None, true);
-        model::push_key(state, &order, "fulfillmentOrders", &new);
+        state.push_key(&order, "fulfillmentOrders", &new);
         new
     });
     let hold = state.new_gid("FulfillmentHold");
@@ -815,7 +815,7 @@ fn hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
         "heldByRequestingApp": true,
         "fulfillmentOrder": id,
     })));
-    model::push_key(state, &id, "fulfillmentHolds", &hold);
+    state.push_key(&id, "fulfillmentHolds", &hold);
     let was_on_hold = text(&record, "status") == Some("ON_HOLD");
     let held: Vec<Value> = if picked.is_empty() {
         the_rest(state, &record, &[])
@@ -1021,7 +1021,7 @@ fn move_fulfillment_order(
         id.clone()
     } else {
         let new = split_off(state, &id, &picked, Some(&location), true);
-        model::push_key(state, &order, "fulfillmentOrders", &new);
+        state.push_key(&order, "fulfillmentOrders", &new);
         new
     };
     // The stock the order committed moves along.
@@ -1083,7 +1083,7 @@ fn cancel_fulfillment_order(
     let order = text(&record, "order").unwrap_or_default().to_string();
     let state = mutation.state_mut();
     let replacement = split_off(state, &id, &rest, None, false);
-    model::push_key(state, &order, "fulfillmentOrders", &replacement);
+    state.push_key(&order, "fulfillmentOrders", &replacement);
     if let Some(record) = state.get_mut(&id) {
         record.insert("status".into(), json!("CLOSED"));
         record.insert("requestStatus".into(), json!("CANCELLATION_ACCEPTED"));

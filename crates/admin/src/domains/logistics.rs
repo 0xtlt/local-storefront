@@ -174,29 +174,17 @@ pub fn objects(value: Option<&Value>) -> Vec<Map<String, Value>> {
     }
 }
 
-/// Appends a key to an array field of a record (made when missing).
+/// Appends a key to an array field of a record ([`ShopState::push_key`]): made when missing, and
+/// when it holds something else than an array.
 pub fn push(state: &mut ShopState, record: &str, field: &str, key: &str) {
-    if let Some(record) = state.get_mut(record) {
-        let list = record.entry(field).or_insert_with(|| json!([]));
-        if !list.is_array() {
-            *list = json!([]);
-        }
-        if let Value::Array(items) = list
-            && !items.iter().any(|item| item.as_str() == Some(key))
-        {
-            items.push(json!(key));
-        }
-    }
-}
-
-/// Removes a key from an array field of a record.
-pub fn pull(state: &mut ShopState, record: &str, field: &str, key: &str) {
-    if let Some(Value::Array(items)) = state
+    if let Some(list) = state
         .get_mut(record)
         .and_then(|record| record.get_mut(field))
+        .filter(|list| !list.is_array())
     {
-        items.retain(|item| item.as_str() != Some(key));
+        *list = json!([]);
     }
+    state.push_key(record, field, key);
 }
 
 /// The keys of an array field of a record.

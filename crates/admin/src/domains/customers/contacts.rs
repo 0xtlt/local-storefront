@@ -233,12 +233,7 @@ pub fn delete_contact(state: &mut ShopState, contact: &str) {
             .map(str::to_string)
     };
     if let Some(company) = text("company") {
-        if let Some(Value::Array(contacts)) = state
-            .get_mut(&company)
-            .and_then(|record| record.get_mut("contacts"))
-        {
-            contacts.retain(|item| item.as_str() != Some(contact));
-        }
+        state.pull_key(&company, "contacts", contact);
         let main = state
             .get(&company)
             .and_then(|record| record.get("mainContact"))

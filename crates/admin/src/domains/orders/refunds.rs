@@ -242,11 +242,11 @@ pub fn create_refund(state: &mut ShopState, order: &str, spec: &RefundSpec) -> S
         "orderAdjustments": [],
         "staffMember": null,
     })));
-    model::push_key(state, order, "refunds", &id);
+    state.push_key(order, "refunds", &id);
     if let Some(return_id) = &spec.return_id {
-        model::push_key(state, return_id, "refunds", &id);
+        state.push_key(return_id, "refunds", &id);
         for transaction in &transactions {
-            model::push_key(state, return_id, "transactions", transaction);
+            state.push_key(return_id, "transactions", transaction);
         }
     }
     model::refresh_order(state, order);

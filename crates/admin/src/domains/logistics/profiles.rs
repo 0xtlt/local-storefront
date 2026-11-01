@@ -1045,7 +1045,7 @@ fn apply(state: &mut ShopState, profile: &str, input: &Map<String, Value>, build
             });
         match owner {
             Some(method) => {
-                super::pull(state, &method, "methodConditions", &condition);
+                state.pull_key(&method, "methodConditions", &condition);
                 state.remove(&condition);
             }
             None => build.error(&at(&root, &["conditionsToDelete"]), "Condition not found"),
@@ -1263,7 +1263,7 @@ fn apply(state: &mut ShopState, profile: &str, input: &Map<String, Value>, build
         }
         let holders: Vec<String> = state.keys("DeliveryProfile").map(str::to_string).collect();
         for other in holders {
-            super::pull(state, &other, VARIANTS, &variant);
+            state.pull_key(&other, VARIANTS, &variant);
         }
         if !default {
             push(state, profile, VARIANTS, &variant);
@@ -1280,7 +1280,7 @@ fn apply(state: &mut ShopState, profile: &str, input: &Map<String, Value>, build
             );
             continue;
         }
-        super::pull(state, profile, VARIANTS, &variant);
+        state.pull_key(profile, VARIANTS, &variant);
     }
     for (index, group) in gids(input.get("sellingPlanGroupsToAssociate"))
         .into_iter()
@@ -1296,7 +1296,7 @@ fn apply(state: &mut ShopState, profile: &str, input: &Map<String, Value>, build
         push(state, profile, "sellingPlanGroups", &group);
     }
     for group in gids(input.get("sellingPlanGroupsToDissociate")) {
-        super::pull(state, profile, "sellingPlanGroups", &group);
+        state.pull_key(profile, "sellingPlanGroups", &group);
     }
 }
 

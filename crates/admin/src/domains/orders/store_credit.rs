@@ -141,7 +141,7 @@ fn account_of(
         "balance": value::money_v2(0, currency),
         "transactions": [],
     })));
-    model::push_key(state, id, "storeCreditAccounts", &account);
+    state.push_key(id, "storeCreditAccounts", &account);
     Ok(account)
 }
 

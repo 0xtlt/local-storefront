@@ -529,24 +529,14 @@ pub fn refresh_definition(state: &mut ShopState, definition: &str) {
 /// shop. Emits nothing.
 pub fn remove(state: &mut ShopState, metafield: &str) -> Option<Record> {
     let record = state.get(metafield)?.clone();
-    if let Some(Value::Array(metafields)) = state
-        .get_mut(text(&record, "owner"))
-        .and_then(|owner| owner.get_mut("metafields"))
-    {
-        metafields.retain(|known| known.as_str() != Some(metafield));
-    }
+    state.pull_key(text(&record, "owner"), "metafields", metafield);
     let definition = record
         .get("definition")
         .and_then(Value::as_str)
         .map(str::to_string);
     state.remove(metafield);
     if let Some(definition) = definition {
-        if let Some(Value::Array(metafields)) = state
-            .get_mut(&definition)
-            .and_then(|record| record.get_mut("metafields"))
-        {
-            metafields.retain(|known| known.as_str() != Some(metafield));
-        }
+        state.pull_key(&definition, "metafields", metafield);
         refresh_definition(state, &definition);
     }
     Some(record)

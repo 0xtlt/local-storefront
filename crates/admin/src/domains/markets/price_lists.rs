@@ -1768,12 +1768,7 @@ fn add_break(
 
 /// Removes a price break record from its price list.
 fn remove_break(state: &mut ShopState, list: &str, price_break: &str) {
-    if let Some(Value::Array(items)) = state
-        .get_mut(list)
-        .and_then(|record| record.get_mut("lsfPriceBreaks"))
-    {
-        items.retain(|known| known.as_str() != Some(price_break));
-    }
+    state.pull_key(list, "lsfPriceBreaks", price_break);
     state.remove(price_break);
 }
 

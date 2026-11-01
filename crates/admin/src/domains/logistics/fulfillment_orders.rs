@@ -222,7 +222,7 @@ fn move_lines(
         let whole = *quantity == remaining && remaining == total;
         match (whole, joined) {
             (true, None) => {
-                super::pull(state, from, "lineItems", line);
+                state.pull_key(from, "lineItems", line);
                 push(state, to, "lineItems", line);
                 moved.push((line.clone(), *quantity));
                 continue;
@@ -248,7 +248,7 @@ fn move_lines(
             }
         }
         if whole {
-            super::pull(state, from, "lineItems", line);
+            state.pull_key(from, "lineItems", line);
             state.remove(line);
         } else if let Some(record) = state.get_mut(line) {
             record.insert("remainingQuantity".into(), json!(remaining - quantity));
@@ -278,7 +278,7 @@ fn new_like(state: &mut ShopState, from: &str) -> String {
     record.remove(PROGRESS);
     state.insert(record);
     if let Some(order) = model::order_of(state, from) {
-        model::push_key(state, &order, "fulfillmentOrders", &id);
+        state.push_key(&order, "fulfillmentOrders", &id);
     }
     id
 }

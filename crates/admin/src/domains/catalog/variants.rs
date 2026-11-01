@@ -622,20 +622,10 @@ pub fn remove_variant(state: &mut ShopState, product: &str, variant: &str) {
         .map(str::to_string)
         .collect::<Vec<_>>()
     {
-        if let Some(Value::Array(variants)) = state
-            .get_mut(&group)
-            .and_then(|record| record.get_mut("productVariants"))
-        {
-            variants.retain(|known| known.as_str() != Some(variant));
-        }
+        state.pull_key(&group, "productVariants", variant);
     }
     state.remove(variant);
-    if let Some(Value::Array(variants)) = state
-        .get_mut(product)
-        .and_then(|record| record.get_mut("variants"))
-    {
-        variants.retain(|known| known.as_str() != Some(variant));
-    }
+    state.pull_key(product, "variants", variant);
 }
 
 /// The stock of a `productVariantsBulkCreate` variant: its `inventoryQuantities`, else the

@@ -167,7 +167,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         "requestDeclinedAt": null,
         "requestResolvedAt": null,
     })));
-    model::push_key(state, &order, "requestedOrderEdits", &id);
+    state.push_key(&order, "requestedOrderEdits", &id);
     state.emit("requested_order_edit/created", &id);
     Ok(payload(json!({"requestedOrderEdit": id}), &[]))
 }

@@ -303,7 +303,7 @@ fn create(
     if status == "OPEN" {
         super::return_extras::open_reverse_fulfillment(state, &id);
     }
-    model::push_key(state, &order, "returns", &id);
+    state.push_key(&order, "returns", &id);
     model::refresh_order(state, &order);
     state.emit(
         if status == "OPEN" {

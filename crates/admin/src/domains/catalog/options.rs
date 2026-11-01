@@ -519,12 +519,7 @@ fn option_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         }
     }
     for id in &to_delete {
-        if let Some(Value::Array(values)) = state
-            .get_mut(&option.id)
-            .and_then(|record| record.get_mut("optionValues"))
-        {
-            values.retain(|known| known.as_str() != Some(id.as_str()));
-        }
+        state.pull_key(&option.id, "optionValues", id.as_str());
         state.remove(id);
     }
     sync_values(state, &option.id);

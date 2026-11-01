@@ -520,7 +520,7 @@ fn pay_out(state: &mut ShopState, ids: &[String], issued: DateTime<Utc>) -> Stri
             "usdcRebateCreditAmount": money(0),
         },
     })));
-    model::push_key(state, BANK_ACCOUNT, "payouts", &payout);
+    state.push_key(BANK_ACCOUNT, "payouts", &payout);
     let number = gid_number(&payout);
     let transfer = insert_balance(
         state,

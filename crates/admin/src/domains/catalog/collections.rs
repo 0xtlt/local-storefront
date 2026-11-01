@@ -721,12 +721,7 @@ pub fn delete_collection(state: &mut ShopState, collection: &str) {
         return;
     };
     for product in gids(record.get("products")) {
-        if let Some(Value::Array(collections)) = state
-            .get_mut(&product)
-            .and_then(|record| record.get_mut("collections"))
-        {
-            collections.retain(|known| known.as_str() != Some(collection));
-        }
+        state.pull_key(&product, "collections", collection);
     }
     // The listings of the sales channels that have it.
     crate::domains::markets::removing(state, collection);

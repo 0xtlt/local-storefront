@@ -323,7 +323,7 @@ pub fn process_exchanges(state: &mut ShopState, order: &str, items: &[(String, i
             );
         }
         state.insert(line_record);
-        model::push_key(state, order, "lineItems", &line);
+        state.push_key(order, "lineItems", &line);
         let location = model::assigned_location(
             state,
             gids(order_record.get("fulfillmentOrders"))
@@ -392,7 +392,7 @@ pub fn open_reverse_fulfillment(state: &mut ShopState, return_id: &str) -> Optio
         "thirdPartyConfirmation": null,
         RETURN: return_id,
     })));
-    model::push_key(state, return_id, "reverseFulfillmentOrders", &id);
+    state.push_key(return_id, "reverseFulfillmentOrders", &id);
     Some(id)
 }
 
@@ -452,7 +452,7 @@ fn add_disposition(
         "createdAt": now,
         "lsfLineItem": line,
     })));
-    model::push_key(state, line, "dispositions", &id);
+    state.push_key(line, "dispositions", &id);
     id
 }
 
@@ -809,7 +809,7 @@ fn delivery_create(
             Value::Null
         },
     })));
-    model::push_key(state, &reverse, "reverseDeliveries", &id);
+    state.push_key(&reverse, "reverseDeliveries", &id);
     if has_deliverable {
         state.emit("reverse_deliveries/attach_deliverable", &id);
         if notify {

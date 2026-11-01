@@ -366,7 +366,7 @@ fn merchant_request(
         "responseData": null,
         "sentAt": now,
     })));
-    model::push_key(state, fulfillment_order, "merchantRequests", &id);
+    state.push_key(fulfillment_order, "merchantRequests", &id);
     id
 }
 
@@ -461,7 +461,7 @@ fn submit_fulfillment_request(
     let order = text(&record, "order").unwrap_or_default().to_string();
     let unsubmitted = (!rest.is_empty()).then(|| {
         let new = split_off(state, &id, &rest, None, true);
-        model::push_key(state, &order, "fulfillmentOrders", &new);
+        state.push_key(&order, "fulfillmentOrders", &new);
         new
     });
     let request_id = merchant_request(
@@ -595,7 +595,7 @@ fn accept_cancellation(
     let order = text(&record, "order").unwrap_or_default().to_string();
     if !rest.is_empty() {
         let replacement = split_off(state, &id, &rest, None, true);
-        model::push_key(state, &order, "fulfillmentOrders", &replacement);
+        state.push_key(&order, "fulfillmentOrders", &replacement);
     }
     if let Some(record) = state.get_mut(&id) {
         record.insert("requestStatus".into(), json!("CANCELLATION_ACCEPTED"));

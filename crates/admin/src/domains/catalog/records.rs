@@ -208,12 +208,7 @@ pub fn remove_level(state: &mut ShopState, level: &str) {
         .map(str::to_string)
         .collect();
     for owner in owners {
-        if let Some(Value::Array(levels)) = state
-            .get_mut(&owner)
-            .and_then(|record| record.get_mut("inventoryLevels"))
-        {
-            levels.retain(|known| known.as_str() != Some(level));
-        }
+        state.pull_key(&owner, "inventoryLevels", level);
     }
     state.remove(level);
 }

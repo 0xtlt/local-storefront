@@ -1416,12 +1416,7 @@ fn source_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     let collections = linking(state, &id);
     let state = mutation.state_mut();
     for collection in &collections {
-        if let Some(Value::Array(sources)) = state
-            .get_mut(collection)
-            .and_then(|record| record.get_mut("sources"))
-        {
-            sources.retain(|source| source.as_str() != Some(id.as_str()));
-        }
+        state.pull_key(collection, "sources", id.as_str());
     }
     state.delete(&id, "collection_sources/delete");
     for collection in &collections {

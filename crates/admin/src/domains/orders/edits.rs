@@ -877,7 +877,7 @@ pub(super) fn add_to_fulfillment(
     })));
     match target {
         Some(fo) => {
-            model::push_key(state, &fo, "lineItems", &fo_line);
+            state.push_key(&fo, "lineItems", &fo_line);
             model::refresh_fulfillment_order(state, &fo);
             state.touch(&fo);
         }
@@ -889,7 +889,7 @@ pub(super) fn add_to_fulfillment(
             if let Some(record) = state.get_mut(&new) {
                 record.insert("lineItems".into(), json!([fo_line]));
             }
-            model::push_key(state, order, "fulfillmentOrders", &new);
+            state.push_key(order, "fulfillmentOrders", &new);
         }
     }
 }
@@ -1064,7 +1064,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                 }
                 state.insert(item);
                 additions.push(json!({"id": id, "delta": units}));
-                model::push_key(state, &order, "lineItems", &id);
+                state.push_key(&order, "lineItems", &id);
                 let location = line
                     .get("lsfLocation")
                     .and_then(Value::as_str)

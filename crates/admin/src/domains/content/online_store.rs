@@ -823,12 +823,7 @@ fn article_update(
         }
     }
     if let Some(blog) = new_blog.as_ref().filter(|blog| **blog != current_blog) {
-        if let Some(Value::Array(articles)) = state
-            .get_mut(&current_blog)
-            .and_then(|record| record.get_mut("articles"))
-        {
-            articles.retain(|article| article.as_str() != Some(id.as_str()));
-        }
+        state.pull_key(&current_blog, "articles", id.as_str());
         if let Some(Value::Array(articles)) = state
             .get_mut(blog)
             .and_then(|record| record.get_mut("articles"))
@@ -869,12 +864,7 @@ fn remove_article(state: &mut ShopState, id: &str) {
     }
     state.delete(id, "articles/delete");
     remove_metafields(state, &record);
-    if let Some(Value::Array(articles)) = state
-        .get_mut(&blog)
-        .and_then(|record| record.get_mut("articles"))
-    {
-        articles.retain(|article| article.as_str() != Some(id));
-    }
+    state.pull_key(&blog, "articles", id);
     refresh_blog(state, &blog);
 }
 
@@ -936,12 +926,7 @@ fn comment_delete(
         .map(|comment| text(comment, "article").to_string())
         .unwrap_or_default();
     state.delete(&id, "comments/delete");
-    if let Some(Value::Array(comments)) = state
-        .get_mut(&article)
-        .and_then(|record| record.get_mut("comments"))
-    {
-        comments.retain(|comment| comment.as_str() != Some(id.as_str()));
-    }
+    state.pull_key(&article, "comments", id.as_str());
     Ok(payload(json!({"deletedCommentId": id}), &[]))
 }
 

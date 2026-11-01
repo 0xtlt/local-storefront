@@ -1084,7 +1084,7 @@ fn remove_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                 record.insert("totalQuantity".into(), json!(0));
             }
             settle(state, &id);
-            super::pull(state, &id, "lineItems", line);
+            state.pull_key(&id, "lineItems", line);
             state.remove(line);
         } else if let Some(record) = state.get_mut(line) {
             record.insert("totalQuantity".into(), json!(total - processable));

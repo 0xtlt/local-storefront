@@ -240,20 +240,6 @@ pub fn array(record: &Record, field: &str) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// Appends a key to an array field of a record (made if missing).
-pub fn push_key(state: &mut ShopState, record: &str, field: &str, key: &str) {
-    if let Some(record) = state.get_mut(record) {
-        let items = record
-            .entry(field.to_string())
-            .or_insert_with(|| Value::Array(Vec::new()));
-        if let Value::Array(items) = items
-            && !items.iter().any(|item| item.as_str() == Some(key))
-        {
-            items.push(json!(key));
-        }
-    }
-}
-
 /// Emits `orders/paid` for an order whose financial status is `PAID`.
 pub fn emit_if_paid(state: &mut ShopState, order: &str) {
     if state
@@ -826,7 +812,7 @@ pub fn add_transaction_with_status(
         "processedAt": now,
         "fees": [],
     })));
-    push_key(state, order, "transactions", &id);
+    state.push_key(order, "transactions", &id);
     state.emit("order_transactions/create", &id);
     if let Some(tender) = super::payments::record_tender(state, &id) {
         state.emit("tender_transactions/create", &tender);

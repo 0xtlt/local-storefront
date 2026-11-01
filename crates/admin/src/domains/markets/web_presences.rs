@@ -647,12 +647,7 @@ pub fn remove_locale(state: &mut ShopState, locale: &str) {
         if !has {
             continue;
         }
-        if let Some(Value::Array(alternates)) = state
-            .get_mut(&presence)
-            .and_then(|record| record.get_mut("alternateLocales"))
-        {
-            alternates.retain(|known| known.as_str() != Some(locale));
-        }
+        state.pull_key(&presence, "alternateLocales", locale);
         refresh(state, &presence);
     }
     domains_changed(state);

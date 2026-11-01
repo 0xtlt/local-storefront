@@ -443,7 +443,7 @@ pub fn remove_shipment(state: &mut ShopState, shipment: &str) {
         state.remove(&line);
     }
     if let Some(transfer) = transfer_of(state, &record) {
-        super::pull(state, &transfer, "shipments", shipment);
+        state.pull_key(&transfer, "shipments", shipment);
         transfers::refresh(state, &transfer);
     }
 }
@@ -642,7 +642,7 @@ fn set_units(state: &mut ShopState, shipment: &str, line: &str, quantity: i64) {
         move_units(state, &transfer, item, delta);
     }
     if quantity == 0 {
-        super::pull(state, shipment, "lineItems", line);
+        state.pull_key(shipment, "lineItems", line);
         state.remove(line);
     } else if let Some(record) = state.get_mut(line) {
         record.insert("quantity".into(), json!(quantity));
