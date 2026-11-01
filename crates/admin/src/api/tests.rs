@@ -401,3 +401,148 @@ fn a_theme_is_not_created_from_the_developers_machine() {
         "the URL was never connected to"
     );
 }
+
+/// `PUT /__lsf/admin/sources?url=`, an `--admin-source` or a request's body: what `themeCreate`
+/// and `urlRedirectImportCreate` read at a URL of the backend's own, which nothing serves in a
+/// test; never connected to, on the loopback without `--admin-fetch-local`. Every shop's, kept
+/// by a reset; `DELETE` forgets it, and the URL is refused again.
+#[test]
+fn a_stubbed_url_is_read_without_being_fetched() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let hits = std::sync::Arc::new(AtomicUsize::new(0));
+    let counted = hits.clone();
+    std::thread::spawn(move || {
+        for _ in listener.incoming() {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+    let (store, _) = lsf_core::store::load::load(
+        &lsf_core::store::load::DataSource::Demo,
+        &Default::default(),
+    );
+    let dir = std::env::temp_dir().join(format!("lsf-api-stubs-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let csv = dir.join("redirects.csv");
+    std::fs::write(&csv, "Redirect from,Redirect to\n/old,/products/new\n").unwrap();
+    let api = super::AdminApi::new(
+        &store,
+        super::AdminOptions {
+            throttle: ThrottleSetting::Off,
+            ..Default::default()
+        },
+    )
+    .with_sources(crate::sources::Stubs::configured([(
+        format!("{origin}/redirects.csv"),
+        csv.clone(),
+    )]));
+    let token = api.token(&api.default_shop());
+    let control = |method: &str, url: Option<&str>, body: Vec<u8>| {
+        let response = api
+            .handle(&HttpRequest {
+                method: method.into(),
+                path: "/__lsf/admin/sources".into(),
+                query: url
+                    .map(|url| vec![("url".to_string(), url.to_string())])
+                    .unwrap_or_default(),
+                body,
+                ..HttpRequest::default()
+            })
+            .expect("routed");
+        let json = serde_json::from_slice(&response.body).unwrap_or(json!(null));
+        (response.status, json, response.body)
+    };
+    let theme_url = format!("{origin}/themes/comfort.zip?v=2");
+    let archive = crate::domains::themes::zip::stored(&[
+        (
+            "layout/theme.liquid",
+            b"<html>{{ content_for_header }}{{ content_for_layout }}</html>",
+        ),
+        ("templates/index.liquid", b"home"),
+        (
+            "config/settings_schema.json",
+            br#"[{"name": "theme_info", "theme_name": "Comfort"}]"#,
+        ),
+    ]);
+    let (status, put, _) = control("PUT", Some(&theme_url), archive.clone());
+    assert_eq!(status, 200, "{put}");
+    assert_eq!(
+        put,
+        json!({"ok": true, "url": theme_url, "size": archive.len()})
+    );
+    let create = |api: &super::AdminApi| {
+        graphql(
+            api,
+            &token,
+            &format!(
+                r#"mutation {{ themeCreate(source: "{theme_url}") {{ theme {{ name }} userErrors {{ code message }} }} }}"#
+            ),
+        )
+        .1
+    };
+    let created = create(&api);
+    assert_eq!(
+        created["data"]["themeCreate"]["theme"]["name"], "Comfort",
+        "{created}"
+    );
+    // The configured file, read when the import is made.
+    let (_, import) = graphql(
+        &api,
+        &token,
+        &format!(
+            r#"mutation {{ urlRedirectImportCreate(url: "{origin}/redirects.csv") {{ urlRedirectImport {{ count }} userErrors {{ message }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        import["data"]["urlRedirectImportCreate"]["urlRedirectImport"]["count"], 1,
+        "{import}"
+    );
+    // Listed, and given back.
+    let (_, listed, _) = control("GET", None, Vec::new());
+    assert_eq!(listed["count"], 2, "{listed}");
+    assert_eq!(listed["sources"][0]["from"], csv.display().to_string());
+    assert_eq!(listed["sources"][1]["from"], "request");
+    let (status, _, bytes) = control("GET", Some(&theme_url), Vec::new());
+    assert_eq!((status, bytes), (200, archive));
+    // A reset keeps it: the internet is not the shop.
+    assert_eq!(send(&api, "DELETE", "/__lsf/admin", None, "").status, 200);
+    let token = api.token(&api.default_shop());
+    let again = graphql(
+        &api,
+        &token,
+        &format!(r#"mutation {{ themeCreate(source: "{theme_url}") {{ theme {{ name }} }} }}"#),
+    )
+    .1;
+    assert_eq!(
+        again["data"]["themeCreate"]["theme"]["name"], "Comfort",
+        "{again}"
+    );
+    // Forgotten: the URL is the developer's machine again, refused.
+    let (_, deleted, _) = control("DELETE", None, Vec::new());
+    assert_eq!(deleted, json!({"ok": true, "removed": 1}));
+    let refused = graphql(
+        &api,
+        &token,
+        &format!(
+            r#"mutation {{ themeCreate(source: "{theme_url}") {{ userErrors {{ code message }} }} }}"#
+        ),
+    )
+    .1;
+    let error = &refused["data"]["themeCreate"]["userErrors"][0];
+    assert_eq!(error["code"], "INVALID_ZIP", "{refused}");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("--admin-source"),
+        "{refused}"
+    );
+    // Not a URL a stub may have.
+    let (status, bad, _) = control("PUT", Some("file:///etc/passwd"), b"x".to_vec());
+    assert_eq!(status, 422, "{bad}");
+    assert_eq!(control("PUT", None, b"x".to_vec()).0, 422);
+    assert_eq!(control("POST", None, Vec::new()).0, 405);
+    assert_eq!(hits.load(Ordering::SeqCst), 0, "nothing was connected to");
+    let _ = std::fs::remove_dir_all(dir);
+}

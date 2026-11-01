@@ -92,6 +92,11 @@ the same data every run.
   - `--client-secret`: else `SHOPIFY_API_SECRET`, else the app's `.env`.
   - `--admin-throttle`.
   - `--admin-versions`: the API versions served.
+  - `--admin-fetch-local`: sources from a URL (`themeCreate`, `themeFilesUpsert`,
+    `urlRedirectImportCreate`) may be on this machine. Off by default, as Shopify cannot reach
+    it.
+  - `--admin-source <url>=<file>`: a URL of your backend's own answered with a file, never
+    downloaded; `PUT /__lsf/admin/sources?url=` stubs one from a test.
 - **`examples/admin-backend`:** a backend written with Shopify's libraries
   (`@shopify/shopify-app-react-router`, `@shopify/shopify-api`), with a script that runs it
   against lsf end to end (`mise run admin:e2e`).

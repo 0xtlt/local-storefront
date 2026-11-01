@@ -31,6 +31,8 @@ pub struct AdminSettings {
     /// `--admin-fetch-local` (`LSF_ADMIN_FETCH_LOCAL`): the sources of the theme and redirect
     /// mutations may be on this machine or its network.
     pub fetch_local: bool,
+    /// `--admin-source <url>=<file>`: the URLs lsf answers itself with a file, never fetched.
+    pub sources: Vec<(String, std::path::PathBuf)>,
 }
 
 /// The Admin API of a server, and where its client secret came from.
@@ -69,6 +71,9 @@ impl Admin {
         .with_fetch(lsf_admin::sources::FetchOptions {
             allow_local: settings.fetch_local,
         })
+        .with_sources(lsf_admin::sources::Stubs::configured(
+            settings.sources.iter().cloned(),
+        ))
         .with_theme(theme.to_path_buf());
         api.sync_store(store.clone());
         Admin {

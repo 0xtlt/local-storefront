@@ -139,6 +139,9 @@ pub struct AdminApi {
     theme: Option<std::path::PathBuf>,
     /// What the sources of the mutations may reach.
     fetch: crate::sources::FetchOptions,
+    /// The URLs it answers itself, never fetched (`--admin-source`, `/__lsf/admin/sources`): one
+    /// set for every shop, kept when they are reset.
+    stubs: crate::sources::Stubs,
     /// What a test runs once at a point of a request ([`Hook`]).
     #[cfg(test)]
     test_hooks: TestHooks,
@@ -250,6 +253,7 @@ impl AdminApi {
             versions: Served::default(),
             theme: None,
             fetch: crate::sources::FetchOptions::default(),
+            stubs: crate::sources::Stubs::default(),
             #[cfg(test)]
             test_hooks: Mutex::new(Default::default()),
         }
@@ -302,6 +306,19 @@ impl AdminApi {
     pub fn with_fetch(mut self, fetch: crate::sources::FetchOptions) -> AdminApi {
         self.fetch = fetch;
         self
+    }
+
+    /// Answers these URLs itself, with their files (`--admin-source <url>=<file>`), when a
+    /// mutation reads them: they are never fetched.
+    pub fn with_sources(mut self, stubs: crate::sources::Stubs) -> AdminApi {
+        self.stubs = stubs;
+        self
+    }
+
+    /// The URLs it answers itself: `--admin-source`, and those `PUT /__lsf/admin/sources`
+    /// registered.
+    pub fn stubs(&self) -> &crate::sources::Stubs {
+        &self.stubs
     }
 
     /// Serves these versions of the Admin API (`--admin-versions`), for requests and for the
@@ -777,7 +794,11 @@ impl AdminApi {
                 .required_access(crate::auth::scopes::Root::Mutation, field)
                 .is_none_or(|required| first.allows(&required))
         };
-        let fetched = crate::sources::prefetch(&crate::sources::urls(&query, &may_run), self.fetch);
+        let fetched = crate::sources::prefetch(
+            &crate::sources::urls(&query, &may_run),
+            self.fetch,
+            &self.stubs,
+        );
         let ((grant, generation), shop) = match self.authorized(request) {
             Ok(authorized) => authorized,
             Err(reason) => return unauthorized(reason),

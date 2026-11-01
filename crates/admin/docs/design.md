@@ -1813,6 +1813,15 @@ never written to.**
   environment are off. `--admin-fetch-local` (`AdminApi::with_fetch`) lifts it. A refused
   source answers what an unreachable one does: `INVALID_ZIP`, `FILE_VALIDATION_ERROR`,
   `NOT_FOUND`.
+- *Stubbed URLs* (`sources::Stubs`, on the `AdminApi`): `prefetch` answers a URL a stub has
+  without fetching it, wherever it points, for a backend's own URL that a test has no server
+  for. Configured ones (`--admin-source <url>=<file>`, `AdminApi::with_sources`) are read from
+  their file at each use; registered ones (`PUT /__lsf/admin/sources?url=`, `api/simulate.rs`)
+  hold the body, override a configured one, and go with `DELETE`. Only the developer names a
+  file: an endpoint that took a path would let any client of the machine read its files back
+  as theme files. One set for the server, not per shop (the internet is the same for every
+  shop), so a reset keeps it. URLs are matched by `sources::stub_key`: scheme and host
+  lowercased, the fragment dropped, the query kept.
 - *What does not follow*: Shopify processes a theme from a URL in the background
   (`processing: true` until done): lsf's are done when the mutation answers.
 

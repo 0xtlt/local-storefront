@@ -742,6 +742,7 @@ pub(crate) fn run_fetching(shop: &mut ShopState, query: &str, variables: Value) 
     let fetched = crate::sources::prefetch(
         &crate::sources::urls(&request, &|_| true),
         crate::sources::FetchOptions { allow_local: true },
+        &crate::sources::Stubs::default(),
     );
     let mut resolver =
         crate::resolve::ShopResolver::new(shop, crate::resolve::Registry::standard())

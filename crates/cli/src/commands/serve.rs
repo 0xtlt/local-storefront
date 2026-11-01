@@ -136,6 +136,14 @@ pub struct Args {
     /// Shopify cannot reach them, and a backend could otherwise read what the machine serves.
     #[arg(long, env = "LSF_ADMIN_FETCH_LOCAL")]
     admin_fetch_local: bool,
+
+    /// A URL lsf answers itself with a file, never downloading it: `<url>=<file>`, repeatable
+    /// (`--admin-source https://cdn.example.com/theme.zip=./fixtures/theme.zip`). For the URLs of
+    /// your backend that `themeCreate`, the `URL` bodies of `themeFilesUpsert` and
+    /// `urlRedirectImportCreate` read, when nothing serves them in a test. The file is read at
+    /// each use. `PUT /__lsf/admin/sources?url=` stubs others while lsf runs.
+    #[arg(long = "admin-source", value_name = "URL=FILE", value_parser = super::admin_source)]
+    admin_sources: Vec<(String, std::path::PathBuf)>,
 }
 
 /// The port used when `--port` is not given.
@@ -236,6 +244,7 @@ pub fn run(
             None => Default::default(),
         },
         fetch_local: args.admin_fetch_local,
+        sources: args.admin_sources.clone(),
     };
     // The app's store data when the theme has none.
     let data = crate::app::data_with_app(theme, data, app_dir.as_deref());

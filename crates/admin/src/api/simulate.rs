@@ -14,9 +14,13 @@
 //! | `POST /__lsf/admin/disputes` (`{"shop"?, "order", "amount"?, "type"?, "reason"?}`) | The buyer's bank opens a dispute (a `CHARGEBACK` of what the order was paid, `FRAUDULENT`, by default): `disputes/create`. `201` `{ok, shop, dispute}`. |
 //! | `POST /__lsf/admin/disputes/<n>/won`, `…/lost`, `…/accepted` | The bank decides it: `disputes/update`. `409` when it is decided already. |
 //! | `POST /__lsf/admin/tax-app/activate` (`{"shop"?}`) | The merchant turns on the tax app the app made `READY` (`taxAppConfigure`): `ACTIVE`, `tax_services/update`. `409` otherwise. |
+//! | `PUT /__lsf/admin/sources?url=` | Stubs a URL ([`crate::sources::Stubs`]): the body is what `themeCreate`, a `URL` body of `themeFilesUpsert` or `urlRedirectImportCreate` reads there from now on, never fetched. `{ok, url, size}`. |
+//! | `GET /__lsf/admin/sources` | The stubbed URLs, `--admin-source` ones included: `{count, sources: [{url, size, from}]}`, `from` the file or `"request"`. `?url=` gives one's bytes. |
+//! | `DELETE /__lsf/admin/sources?url=` | Forgets what requests stubbed, at `url` or everywhere (the `--admin-source` ones stay): `{ok, removed}`. |
 //!
-//! The shop is `?shop=` or the body's `shop`, else the default one. No token is needed: these
-//! are lsf's, for the tests on this machine, as the other control endpoints are.
+//! The shop is `?shop=` or the body's `shop`, else the default one; the stubbed URLs are every
+//! shop's, as the internet is, and a reset keeps them. No token is needed: these are lsf's, for
+//! the tests on this machine, as the other control endpoints are.
 
 use chrono::{DateTime, Datelike, Duration, Utc};
 use serde_json::{Value, json};
@@ -30,6 +34,10 @@ use crate::state::{Clock, ShopState, value};
 pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Option<HttpResponse> {
     let area = path.strip_prefix("/__lsf/admin/")?;
     let method = request.method.to_ascii_uppercase();
+    if area == "sources" {
+        // The body is a source's bytes, not JSON; no shop is named.
+        return Some(sources(api, request, &method));
+    }
     let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
     let shop = request
         .query_param("shop")
@@ -217,6 +225,63 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
         ),
         _ => return None,
     })
+}
+
+/// `/__lsf/admin/sources`: the URLs lsf answers itself.
+fn sources(api: &AdminApi, request: &HttpRequest, method: &str) -> HttpResponse {
+    let stubs = api.stubs();
+    let url = request.query_param("url");
+    match (method, url) {
+        ("PUT", Some(url)) => {
+            let size = request.body.len();
+            match stubs.register(url, request.body.clone()) {
+                Ok(url) => HttpResponse::json(200, &json!({"ok": true, "url": url, "size": size})),
+                Err(error) => HttpResponse::json(422, &json!({ "error": error })),
+            }
+        }
+        ("PUT", None) => HttpResponse::json(
+            422,
+            &json!({"error": "name the URL, encoded, in `?url=` (PUT /__lsf/admin/sources?url=https%3A%2F%2Fcdn.example.com%2Ftheme.zip), the file as the body"}),
+        ),
+        ("GET", None) => {
+            let entries: Vec<Value> = stubs
+                .list()
+                .into_iter()
+                .map(|entry| {
+                    json!({
+                        "url": entry.url,
+                        "size": entry.size,
+                        "from": match entry.from {
+                            crate::sources::StubFrom::File(file) => json!(file.display().to_string()),
+                            crate::sources::StubFrom::Request => json!("request"),
+                        },
+                    })
+                })
+                .collect();
+            HttpResponse::json(200, &json!({"count": entries.len(), "sources": entries}))
+        }
+        ("GET", Some(url)) => match stubs.get(url) {
+            Some(Ok(bytes)) => HttpResponse {
+                status: 200,
+                headers: vec![(
+                    "content-type".to_string(),
+                    "application/octet-stream".to_string(),
+                )],
+                body: bytes.to_vec(),
+            },
+            Some(Err(error)) => HttpResponse::json(422, &json!({"error": error.to_string()})),
+            None => HttpResponse::json(404, &json!({"error": format!("{url} is not stubbed")})),
+        },
+        ("DELETE", Some(url)) => {
+            let removed = usize::from(stubs.remove(url));
+            HttpResponse::json(200, &json!({"ok": true, "removed": removed}))
+        }
+        ("DELETE", None) => HttpResponse::json(200, &json!({"ok": true, "removed": stubs.clear()})),
+        _ => HttpResponse::json(
+            405,
+            &json!({"error": format!("{method} is not allowed here")}),
+        ),
+    }
 }
 
 /// `{shop, now, frozen}`.

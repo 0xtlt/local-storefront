@@ -61,6 +61,7 @@ end: every recipe below is checked there.
 | `--admin-throttle <plan>` | `LSF_ADMIN_THROTTLE` | The cost bucket: `store` (default), `standard`, `advanced`, `plus`, `enterprise`, `legacy`, `off`. |
 | `--admin-versions <list>` | `LSF_ADMIN_VERSIONS` | The [API versions](#api-versions) served: `2026-10` alone by default, `2026-10,2027-01` with the release candidate. |
 | `--admin-fetch-local` | `LSF_ADMIN_FETCH_LOCAL` | Sources from a URL (`themeCreate`, `themeFilesUpsert`, `urlRedirectImportCreate`) may be on this machine or its network. Off by default. |
+| `--admin-source <url>=<file>` | | Answers a URL with a file instead of downloading it ([stubbed URLs](#stubbed-urls)). Repeatable. |
 
 ## API versions
 
@@ -1523,6 +1524,41 @@ A refused source answers what an unreachable one does (`INVALID_ZIP` for `themeC
 `FILE_VALIDATION_ERROR` for a file, `NOT_FOUND` for an import), its message saying why. To serve
 a theme ZIP from your machine on purpose, start lsf with `--admin-fetch-local`. `file://` and
 the schemes other than `http` and `https` are never fetched.
+
+<a id="stubbed-urls"></a>
+**Stubbed URLs.** A URL your backend has of its own (a theme ZIP on its CDN, a CSV a service of yours makes) has
+nothing behind it in a test. Stub it: lsf answers it with the bytes you give, and never
+downloads it, wherever it points (`localhost` too, without `--admin-fetch-local`).
+
+- **From a request**, in a test's setup: the body is the file.
+
+  ```js
+  const url = "https://cdn.example.com/themes/comfort.zip";
+  await fetch(`${LSF}/__lsf/admin/sources?url=${encodeURIComponent(url)}`, {
+    method: "PUT",
+    body: await readFile("fixtures/comfort.zip"),
+  });
+  // themeCreate(source: "https://cdn.example.com/themes/comfort.zip") reads it.
+  ```
+
+- **From a file**, for the whole run:
+  `lsf serve --admin-source https://cdn.example.com/themes/comfort.zip=./fixtures/comfort.zip`.
+  Repeatable. The file must exist when lsf starts, and is read at each use: an edit is seen at
+  once.
+
+A URL is matched as written, its query included; the scheme and host in any case, the fragment
+left out. A stub stands for the internet, not for a shop: every shop reads it, and a reset
+(`DELETE /__lsf/admin`) keeps it. `GET /__lsf/admin/sources` lists the stubs,
+`GET /__lsf/admin/sources?url=` gives one's bytes back, and `DELETE /__lsf/admin/sources`
+forgets those requests made (`?url=` one of them; an `--admin-source` file answers its URL
+again). A stub over 50 MB answers what a source that large does (`ZIP_TOO_LARGE`), and an
+`--admin-source` file gone since lsf started answers what an unreachable source does.
+
+A request never names a file of the machine: only `--admin-source` does, or any client of
+lsf could read a file of yours back as a theme file. A backend that takes the URL as a
+parameter needs no stub: give it a staged upload of lsf
+(`PUT /__lsf/admin/uploads/<shop>/<key>`, then
+`http://127.0.0.1:9292/__lsf/admin/uploads/<shop>/<key>`), which is read from the shop.
 
 **Script tags.** `scriptTagCreate`, `scriptTagUpdate`, `scriptTagDelete`; `scriptTag`,
 `scriptTags(src:, query:)`. A script tag shown on the online store (`ONLINE_STORE`, or the

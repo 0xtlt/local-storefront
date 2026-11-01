@@ -8869,6 +8869,24 @@ async fn a_body_over_the_limit_is_refused_and_an_upload_takes_more() {
     // A body that says it is larger than the limit is refused before it is read.
     let response = send("PUT", path, Some(super::UPLOAD_BODY_LIMIT + 1), Vec::new()).await;
     assert_eq!(response.status(), 413);
+
+    // A stubbed source takes what a source may be, and more, for `ZIP_TOO_LARGE`.
+    let stub = "/__lsf/admin/sources?url=https%3A%2F%2Fcdn.example.com%2Ftheme.zip";
+    let response = send("PUT", stub, None, vec![7; size]).await;
+    assert_eq!(response.status(), 200);
+    let stubbed = state
+        .admin
+        .as_ref()
+        .unwrap()
+        .api
+        .stubs()
+        .get("https://cdn.example.com/theme.zip");
+    assert_eq!(
+        stubbed.and_then(Result::ok).map(|bytes| bytes.len()),
+        Some(size)
+    );
+    let response = send("PUT", stub, Some(super::SOURCE_BODY_LIMIT + 1), Vec::new()).await;
+    assert_eq!(response.status(), 413);
 }
 
 /// A `layout/theme.liquid` the Admin API wrote, with nested `(1..1000000000)` loops, never

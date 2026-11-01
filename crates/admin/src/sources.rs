@@ -3,6 +3,10 @@
 //!
 //! - **lsf's own staged uploads** (`/__lsf/admin/uploads/…`, the `resourceUrl` of a target, or
 //!   its key) are read from the shop's blobs, never over HTTP: lsf does not call itself.
+//! - **A stubbed URL** ([`Stubs`]) is answered by lsf, never fetched: a backend's own URL (a
+//!   theme ZIP on its CDN) that a test has no server for. The developer gives its bytes, a file
+//!   (`--admin-source <url>=<file>`) or a request's body (`PUT /__lsf/admin/sources?url=`). It
+//!   is the internet as the test sees it: one for every shop, kept when the shops are reset.
 //! - **Any other URL is fetched before the request locks its shop** ([`prefetch`]): a mutation
 //!   runs under the shop's lock, and a download within it held the shop (and every request
 //!   waiting on it, the storefront's carts and checkouts included) for as long as the source
@@ -29,8 +33,9 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
@@ -82,6 +87,164 @@ pub struct FetchOptions {
     /// `--admin-fetch-local`: the loopback, private networks and link-local addresses too, for
     /// a developer who serves a source from their machine on purpose.
     pub allow_local: bool,
+}
+
+/// The URLs lsf answers itself, never fetched: by URL ([`stub_key`]), the bytes it stands for.
+///
+/// - `configured`: `--admin-source <url>=<file>`, the file read at each use, so that an edit is
+///   seen at once. Only the developer names a file: a request never does, or any client of the
+///   machine could read a file of it back as a theme file.
+/// - `registered`: `PUT /__lsf/admin/sources?url=`, the body, until `DELETE`. One overrides a
+///   configured URL, which is back once it is deleted.
+#[derive(Debug, Default)]
+pub struct Stubs {
+    configured: HashMap<String, PathBuf>,
+    registered: RwLock<HashMap<String, Arc<[u8]>>>,
+}
+
+/// Where a stubbed URL's bytes come from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StubFrom {
+    /// `--admin-source`.
+    File(PathBuf),
+    /// `PUT /__lsf/admin/sources`.
+    Request,
+}
+
+/// A stubbed URL, as `GET /__lsf/admin/sources` lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StubEntry {
+    pub url: String,
+    /// Its bytes, `None` for a file that cannot be read now.
+    pub size: Option<u64>,
+    pub from: StubFrom,
+}
+
+/// The URL a stub answers for, as it is looked up: `http` or `https`, the scheme and the host
+/// in lowercase, without the fragment (which a client never sends), the path `/` when it has
+/// none. `Err` for another scheme, a URL without a host, and lsf's own uploads, which are read
+/// from the shop already.
+pub fn stub_key(url: &str) -> Result<String, String> {
+    let url = url.trim();
+    let url = url.split('#').next().unwrap_or_default();
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return Err(format!("`{url}` is not an http:// or https:// URL"));
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!("`{url}` is not an http:// or https:// URL"));
+    }
+    let split = rest.find(['/', '?']).unwrap_or(rest.len());
+    let (host, path) = rest.split_at(split);
+    if host.is_empty() {
+        return Err(format!("`{url}` has no host"));
+    }
+    if is_upload(url) {
+        return Err(format!(
+            "`{url}` is a staged upload of lsf, read from the shop already: upload to it instead"
+        ));
+    }
+    let path = if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    };
+    Ok(format!("{scheme}://{}{path}", host.to_ascii_lowercase()))
+}
+
+impl Stubs {
+    /// The stubs of `--admin-source`: each URL ([`stub_key`]) answered with its file. A URL that
+    /// is not one is left out: the option checks them when it is read.
+    pub fn configured(files: impl IntoIterator<Item = (String, PathBuf)>) -> Stubs {
+        Stubs {
+            configured: files
+                .into_iter()
+                .filter_map(|(url, file)| Some((stub_key(&url).ok()?, file)))
+                .collect(),
+            registered: RwLock::default(),
+        }
+    }
+
+    fn registered(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, Arc<[u8]>>> {
+        self.registered
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn registered_mut(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<String, Arc<[u8]>>> {
+        self.registered
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Answers `url` with `bytes` from now on: the URL as it is looked up.
+    pub fn register(&self, url: &str, bytes: Vec<u8>) -> Result<String, String> {
+        let key = stub_key(url)?;
+        self.registered_mut().insert(key.clone(), Arc::from(bytes));
+        Ok(key)
+    }
+
+    /// Forgets what a request registered for `url`: whether there was something. A configured
+    /// URL answers with its file again.
+    pub fn remove(&self, url: &str) -> bool {
+        stub_key(url).is_ok_and(|key| self.registered_mut().remove(&key).is_some())
+    }
+
+    /// Forgets what requests registered: how many URLs. The configured ones stay.
+    pub fn clear(&self) -> usize {
+        let mut registered = self.registered_mut();
+        let count = registered.len();
+        registered.clear();
+        count
+    }
+
+    /// What `url` is answered with, `None` when it is not stubbed: the bytes, or why there are
+    /// none (more than [`MAX_SOURCE_BYTES`], a file that cannot be read).
+    pub fn get(&self, url: &str) -> Option<Outcome> {
+        let key = stub_key(url).ok()?;
+        if let Some(bytes) = self.registered().get(&key) {
+            return Some(if bytes.len() > MAX_SOURCE_BYTES {
+                Err(SourceError::TooLarge)
+            } else {
+                Ok(bytes.clone())
+            });
+        }
+        let file = self.configured.get(&key)?;
+        let read = std::fs::File::open(file)
+            .and_then(|opened| read_at_most(opened, MAX_SOURCE_BYTES))
+            .map_err(|error| {
+                SourceError::Unreadable(format!(
+                    "{url} is stubbed with {}, which cannot be read: {error}",
+                    file.display()
+                ))
+            });
+        Some(read.and_then(|bytes| bytes.map(Arc::from).ok_or(SourceError::TooLarge)))
+    }
+
+    /// Every stubbed URL, in order, with what answers it now.
+    pub fn list(&self) -> Vec<StubEntry> {
+        let registered = self.registered();
+        let mut entries: Vec<StubEntry> = registered
+            .iter()
+            .map(|(url, bytes)| StubEntry {
+                url: url.clone(),
+                size: Some(bytes.len() as u64),
+                from: StubFrom::Request,
+            })
+            .chain(
+                self.configured
+                    .iter()
+                    .filter(|(url, _)| !registered.contains_key(*url))
+                    .map(|(url, file)| StubEntry {
+                        url: url.clone(),
+                        size: std::fs::metadata(file).ok().map(|meta| meta.len()),
+                        from: StubFrom::File(file.clone()),
+                    }),
+            )
+            .collect();
+        entries.sort_by(|a, b| a.url.cmp(&b.url));
+        entries
+    }
 }
 
 /// Why lsf does not fetch from `ip` (`None` for a public address): what Shopify could not reach
@@ -157,7 +320,8 @@ impl std::fmt::Display for Refused {
         write!(
             f,
             "{} resolves to {}, {}: Shopify cannot reach it, and lsf does not fetch it (start lsf \
-             with --admin-fetch-local to fetch sources from your machine or network)",
+             with --admin-fetch-local to fetch sources from your machine or network, or stub the \
+             URL: --admin-source <url>=<file>, or PUT /__lsf/admin/sources?url=)",
             self.host, self.address, self.why
         )
     }
@@ -408,14 +572,26 @@ fn value_of(value: &crate::graphql::ast::Value<'_>, variables: &Map<String, Valu
 
 /// Fetches `urls`, [`PARALLEL_FETCHES`] at a time, each within [`FETCH_TIMEOUT`] and all within
 /// [`REQUEST_FETCH_BUDGET`], from the addresses `options` allow: what a request does before it
-/// locks its shop. No lock is held.
-pub fn prefetch(urls: &[String], options: FetchOptions) -> Fetched {
+/// locks its shop. No lock is held. A URL `stubs` answers is not fetched, wherever it points.
+pub fn prefetch(urls: &[String], options: FetchOptions, stubs: &Stubs) -> Fetched {
     let refuse: fn(IpAddr) -> Option<&'static str> = if options.allow_local {
         |_| None
     } else {
         local_address
     };
-    prefetch_with(urls, refuse)
+    let mut answered = HashMap::new();
+    let mut fetching = Vec::new();
+    for url in urls {
+        match stubs.get(url) {
+            Some(outcome) => {
+                answered.insert(url.clone(), outcome);
+            }
+            None => fetching.push(url.clone()),
+        }
+    }
+    let mut fetched = prefetch_with(&fetching, refuse);
+    fetched.by_url.extend(answered);
+    fetched
 }
 
 fn prefetch_with(urls: &[String], refuse: fn(IpAddr) -> Option<&'static str>) -> Fetched {
@@ -690,7 +866,7 @@ mod tests {
             format!("http://LOCALHOST.:{port}/admin"),
             format!("http://[::ffff:127.0.0.1]:{port}/admin"),
         ];
-        let fetched = prefetch(&urls, FetchOptions::default());
+        let fetched = prefetch(&urls, FetchOptions::default(), &Stubs::default());
         for url in &urls {
             let answer = fetched.get(url).unwrap();
             assert!(
@@ -719,7 +895,11 @@ mod tests {
             );
         }
         // With `--admin-fetch-local`, it is fetched.
-        let allowed = prefetch(&urls[..1], FetchOptions { allow_local: true });
+        let allowed = prefetch(
+            &urls[..1],
+            FetchOptions { allow_local: true },
+            &Stubs::default(),
+        );
         assert_eq!(
             allowed.get(&urls[0]).unwrap().as_deref().ok(),
             Some(&b"secret"[..])
@@ -754,5 +934,94 @@ mod tests {
             0,
             "the redirect was not followed"
         );
+    }
+
+    #[test]
+    fn a_stub_answers_for_its_url_as_a_client_writes_it() {
+        assert_eq!(
+            stub_key(" HTTPS://CDN.Example.com/Themes/a.zip?v=1#top ").as_deref(),
+            Ok("https://cdn.example.com/Themes/a.zip?v=1")
+        );
+        assert_eq!(
+            stub_key("http://example.com").as_deref(),
+            Ok("http://example.com/")
+        );
+        assert_eq!(
+            stub_key("http://example.com?x=1").as_deref(),
+            Ok("http://example.com/?x=1")
+        );
+        for bad in [
+            "file:///etc/passwd",
+            "ftp://example.com/a.zip",
+            "https:///a.zip",
+            "cdn.example.com/a.zip",
+            "http://127.0.0.1:9292/__lsf/admin/uploads/shop/tmp/1/a.zip",
+        ] {
+            assert!(stub_key(bad).is_err(), "{bad}");
+        }
+    }
+
+    /// A stubbed URL is answered by lsf, never connected to: on the loopback without
+    /// `--admin-fetch-local`, a request's bytes over a configured file, the file again once they
+    /// are deleted.
+    #[test]
+    fn a_stubbed_url_is_never_fetched() {
+        let (port, hits) = server("127.0.0.1:0", |_| ok("from the network")).unwrap();
+        let url = format!("http://127.0.0.1:{port}/theme.zip");
+        let dir = std::env::temp_dir().join(format!("lsf-stubs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("theme.zip");
+        std::fs::write(&file, b"from the file").unwrap();
+        let stubs = Stubs::configured([(url.clone(), file.clone())]);
+        let bytes_of = |stubs: &Stubs| {
+            prefetch(std::slice::from_ref(&url), FetchOptions::default(), stubs)
+                .get(&url)
+                .cloned()
+                .unwrap()
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        };
+        assert_eq!(bytes_of(&stubs).as_deref(), Ok("from the file"));
+        // An edit of the file is seen at once.
+        std::fs::write(&file, b"edited").unwrap();
+        assert_eq!(bytes_of(&stubs).as_deref(), Ok("edited"));
+        // A request's bytes override it, as the URL is written or not.
+        let key = stubs
+            .register(
+                &url.replace("http://", "HTTP://"),
+                b"from a request".to_vec(),
+            )
+            .unwrap();
+        assert_eq!(key, url);
+        assert_eq!(bytes_of(&stubs).as_deref(), Ok("from a request"));
+        assert_eq!(
+            stubs.list(),
+            [StubEntry {
+                url: url.clone(),
+                size: Some(14),
+                from: StubFrom::Request
+            }]
+        );
+        assert!(stubs.remove(&url));
+        assert!(!stubs.remove(&url));
+        assert_eq!(bytes_of(&stubs).as_deref(), Ok("edited"));
+        assert_eq!(stubs.list()[0].from, StubFrom::File(file.clone()));
+        // `clear` forgets the requests' alone.
+        stubs
+            .register("https://example.com/a.csv", Vec::new())
+            .unwrap();
+        assert_eq!(stubs.clear(), 1);
+        assert_eq!(stubs.list().len(), 1);
+        assert_eq!(hits.load(Ordering::SeqCst), 0, "nothing was connected to");
+        // A file gone, or larger than a source may be: what a source says then.
+        std::fs::remove_file(&file).unwrap();
+        assert!(
+            matches!(bytes_of(&stubs), Err(SourceError::Unreadable(why)) if why.contains("cannot be read")),
+        );
+        assert_eq!(stubs.list()[0].size, None);
+        stubs.register(&url, vec![0; MAX_SOURCE_BYTES + 1]).unwrap();
+        assert_eq!(bytes_of(&stubs), Err(SourceError::TooLarge));
+        // A URL stubbed nowhere is fetched as before.
+        assert!(stubs.get("https://example.com/other.zip").is_none());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
