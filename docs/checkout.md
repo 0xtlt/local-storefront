@@ -157,8 +157,10 @@ module is not built (the page does not run it). A `.graphql` import is an error.
 What is wrong with the app (a missing build, an unknown Function target, a checkout UI target
 the page has no place for, an `owner_type` that is missing or not one of Shopify's) is printed
 when the server starts (`app: …`), and is in the `diagnostics` of the state and on the home
-page. A missing build (``no Wasm module at …: build it with `lsf app build <handle>` ``, `not
-built`): `npx local-storefront app build`, or `--build`.
+page. A missing build (``no Wasm module at …: build it with `npx local-storefront app build
+<handle>` ``, `not built`): `npx local-storefront app build`, or `--build`. With `--build`,
+`app dev`, `serve` and `app function run` build first, then print what is still wrong: a
+module the build wrote is not reported missing.
 
 | Option | What it does |
 |---|---|
