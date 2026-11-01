@@ -584,64 +584,82 @@ fn apply_removals(merged: &mut MergedInput, removed: &Removals) {
     if removed.is_empty() {
         return;
     }
-    let listed = |keys: &[String], key: &str| keys.iter().any(|candidate| candidate == key);
-    let listed_any_case = |keys: &[String], key: &str| {
-        keys.iter()
-            .any(|candidate| candidate.to_lowercase() == key.to_lowercase())
-    };
+    // The keys removed, in sets: each entity is looked up once.
+    fn listed(keys: &[String]) -> HashSet<&str> {
+        keys.iter().map(String::as_str).collect()
+    }
+    fn listed_any_case(keys: &[String]) -> HashSet<String> {
+        keys.iter().map(|key| key.to_lowercase()).collect()
+    }
     let date =
         |index: usize| Some(undated(index).to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
 
     for (index, product) in merged.products.iter_mut().enumerate() {
         product.value.created_at = product.value.created_at.take().or_else(|| date(index));
     }
+    let products = listed(&removed.products);
     merged.products.retain(|product| {
         let handle = effective_handle(&product.value.handle, &product.value.title);
-        !listed(&removed.products, &handle)
+        !products.contains(handle.as_ref())
     });
     for (index, collection) in merged.collections.iter_mut().enumerate() {
         let value = &mut collection.value;
         value.published_at = value.published_at.take().or_else(|| date(index));
     }
+    let collections = listed(&removed.collections);
     merged.collections.retain(|collection| {
         let handle = effective_handle(&collection.value.handle, &collection.value.title);
-        !listed(&removed.collections, &handle)
+        !collections.contains(handle.as_ref())
     });
     for (index, page) in merged.pages.iter_mut().enumerate() {
         page.value.published_at = page.value.published_at.take().or_else(|| date(index));
     }
+    let pages = listed(&removed.pages);
     merged.pages.retain(|page| {
         let handle = effective_handle(&page.value.handle, &page.value.title);
-        !listed(&removed.pages, &handle)
+        !pages.contains(handle.as_ref())
     });
+    let blogs = listed(&removed.blogs);
     merged.blogs.retain(|blog| {
         let handle = effective_handle(&blog.value.handle, &blog.value.title);
-        !listed(&removed.blogs, &handle)
+        !blogs.contains(handle.as_ref())
     });
+    let menus = listed(&removed.menus);
     merged
         .menus
-        .retain(|handle, _| !listed(&removed.menus, handle));
+        .retain(|handle, _| !menus.contains(handle.as_str()));
+    let customers = listed_any_case(&removed.customers);
     merged
         .customers
-        .retain(|customer| !listed_any_case(&removed.customers, &customer.value.email));
+        .retain(|customer| !customers.contains(&customer.value.email.to_lowercase()));
     for (index, company) in merged.companies.iter_mut().enumerate() {
         company.value.created_at = company.value.created_at.take().or_else(|| date(index));
     }
+    let companies = listed_any_case(&removed.companies);
     merged
         .companies
-        .retain(|company| !listed_any_case(&removed.companies, &company.value.name));
+        .retain(|company| !companies.contains(&company.value.name.to_lowercase()));
+    let gift_cards = listed_any_case(&removed.gift_cards);
     merged
         .gift_cards
-        .retain(|card| !listed_any_case(&removed.gift_cards, &card.value.code));
+        .retain(|card| !gift_cards.contains(&card.value.code.to_lowercase()));
+    let locations = listed_any_case(&removed.locations);
     merged
         .locations
-        .retain(|location| !listed_any_case(&removed.locations, &location.value.name));
+        .retain(|location| !locations.contains(&location.value.name.to_lowercase()));
+    let selling_plan_groups = listed_any_case(&removed.selling_plan_groups);
     merged
         .selling_plan_groups
-        .retain(|group| !listed_any_case(&removed.selling_plan_groups, &group.value.name));
+        .retain(|group| !selling_plan_groups.contains(&group.value.name.to_lowercase()));
+    let metaobjects: Vec<(&str, HashSet<&str>)> = removed
+        .metaobjects
+        .iter()
+        .map(|(kind, handles)| (kind.as_str(), listed(handles)))
+        .collect();
     merged.metaobjects.retain(|(kind, entry)| {
-        !removed.metaobjects.iter().any(|(removed_kind, handles)| {
-            super::same_metaobject_type(removed_kind, kind) && listed(handles, &entry.value.handle)
+        !metaobjects.iter().any(|(removed_kind, handles)| {
+            super::same_metaobject_type(removed_kind, kind)
+                && handles.contains(entry.value.handle.as_str())
         })
     });
     if let Some(shop) = &mut merged.shop {
@@ -720,11 +738,10 @@ fn apply_overlay(
         merged.menus.insert(handle, Sourced { value, origin });
     }
     for (kind, entries) in input.metaobjects {
+        let replaced: HashSet<&str> = entries.iter().map(|entry| entry.handle.as_str()).collect();
         merged.metaobjects.retain(|(existing, entry)| {
             !super::same_metaobject_type(existing, &kind)
-                || !entries
-                    .iter()
-                    .any(|replacement| replacement.handle == entry.value.handle)
+                || !replaced.contains(entry.value.handle.as_str())
         });
         for (index, value) in entries.into_iter().enumerate() {
             let origin = origin(format!("/metaobjects/{kind}/{index}"));
