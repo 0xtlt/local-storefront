@@ -221,11 +221,7 @@ const CART_TRANSFORM: Owner = Owner {
 /// transform.
 fn input_of(ctx: &FieldContext<'_>, owner: &Owner) -> Map<String, Value> {
     match owner.input {
-        Some(name) => ctx
-            .arg(name)
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default(),
+        Some(name) => ctx.arg_object_or_default(name),
         None => ctx.arguments().clone(),
     }
 }

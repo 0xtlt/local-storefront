@@ -31,7 +31,7 @@ use lsf_core::util::handleize;
 use serde_json::{Map, Value, json};
 
 use super::{
-    BACKUP_REGION, Pointer, coded, input, is, is_active, market_currency, market_not_found,
+    BACKUP_REGION, Pointer, coded, is, is_active, market_currency, market_not_found,
     market_of_country, objects, price_inclusions, records_input, region, region_gid, regions_of,
     shop_currency, strings, text, web_presences,
 };
@@ -718,7 +718,7 @@ fn note_ignored(mutation: &mut Mutation<'_>, name: &str, input: &Map<String, Val
 
 /// `marketCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let mut errors = Vec::new();
     let mut notes = Vec::new();
@@ -904,7 +904,7 @@ fn duplicate_error(state: &ShopState, others: &[String]) -> UserError {
 
 /// `marketUpdate`.
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let Some(market) = market_arg(state, ctx, "id") else {
         return Ok(payload(json!({"market": null}), &[market_not_found("id")]));
@@ -1307,7 +1307,7 @@ fn currency_settings_update(
             &[market_not_found("marketId")],
         ));
     };
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let existing = state.get(&market).cloned().unwrap_or_default();
     let regions: Vec<Value> = existing
         .get("regions")

@@ -236,7 +236,7 @@ fn order_cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         )
         .code("INVALID")]);
     }
-    let method = ctx.arg("refundMethod").and_then(Value::as_object);
+    let method = ctx.arg_object("refundMethod");
     let refund_money = method
         .and_then(|method| method.get("originalPaymentMethodsRefund"))
         .and_then(Value::as_bool)

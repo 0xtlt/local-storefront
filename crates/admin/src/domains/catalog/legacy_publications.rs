@@ -29,7 +29,7 @@ use serde_json::{Map, Value, json};
 
 use super::online_store_publication_gid;
 use super::publish_on;
-use super::records::{field, input, is, objects, text};
+use super::records::{field, is, objects, text};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{ShopState, parse_gid};
@@ -178,7 +178,7 @@ fn product_change(
     } else {
         json!({"product": null})
     };
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let product = text(&input, "id").unwrap_or_default().to_string();
     if !is(state, &product, "Product") {
@@ -244,7 +244,7 @@ fn collection_change(
     } else {
         json!({"collection": null})
     };
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let collection = text(&input, "id").unwrap_or_default().to_string();
     if !is(state, &collection, "Collection") {

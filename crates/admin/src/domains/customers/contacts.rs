@@ -25,7 +25,7 @@ use serde_json::{Map, Value, json};
 
 use super::companies::{ids_arg, not_found, record_arg, with_company};
 use super::customer::{check_fields, create_customer, update_customer};
-use super::{field_path, gids_of, given_text, object_arg};
+use super::{field_path, gids_of, given_text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
@@ -277,7 +277,7 @@ fn contact_create(
         Ok(company) => company,
         Err(error) => return Ok(payload(json!({"companyContact": null}), &[error])),
     };
-    let input = object_arg(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     check_contact(state, &input, &["input"], None, true, &mut errors);
     if !errors.is_empty() {
@@ -297,7 +297,7 @@ fn contact_update(
         Ok(contact) => contact,
         Err(error) => return Ok(payload(json!({"companyContact": null}), &[error])),
     };
-    let input = object_arg(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     check_contact(
         state,

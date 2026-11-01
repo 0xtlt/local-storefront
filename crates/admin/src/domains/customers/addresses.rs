@@ -29,7 +29,7 @@ use lsf_core::store::Address;
 use lsf_core::store::reference::{country_code_from_name, country_name, is_country_code};
 use serde_json::{Map, Value, json};
 
-use super::{given_text, object_arg};
+use super::given_text;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, parse_gid, value};
@@ -285,7 +285,7 @@ fn address_create(
         Ok(customer) => customer,
         Err(error) => return Ok(payload(json!({"address": null}), &[error])),
     };
-    let input = object_arg(ctx, "address");
+    let input = ctx.arg_object_or_default("address");
     let set_as_default = ctx.arg("setAsDefault").and_then(Value::as_bool) == Some(true);
     let state = mutation.state_mut();
     let id = new_address_id(state);
@@ -314,7 +314,7 @@ fn address_update(
         Ok(found) => found,
         Err(error) => return Ok(payload(json!({"address": null}), &[error])),
     };
-    let input = object_arg(ctx, "address");
+    let input = ctx.arg_object_or_default("address");
     let mut list = addresses(&record);
     let base = list[index].clone();
     let id = base

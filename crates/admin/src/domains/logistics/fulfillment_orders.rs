@@ -586,7 +586,7 @@ pub fn stop_progress(mutation: &mut Mutation<'_>, id: &str) -> Option<Value> {
 }
 
 fn prepared(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = super::input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let groups = objects(input.get("lineItemsByFulfillmentOrder"));
     let state = mutation.state();
     let mut errors = Vec::new();

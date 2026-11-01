@@ -48,7 +48,6 @@ use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
 use crate::domains::catalog;
-use crate::graphql::FieldContext;
 use crate::resolve::{Registry, UserError};
 use crate::state::seed::Seed;
 use crate::state::{Record, ShopState, gid, parse_gid};
@@ -379,14 +378,6 @@ impl Pointer for Record {
         let (first, rest) = pointer.trim_start_matches('/').split_once('/')?;
         self.get(first)?.pointer(&format!("/{rest}"))?.as_str()
     }
-}
-
-/// An argument of the field that is an input object (`{}` when it is not given).
-fn input(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
-    ctx.arg(name)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
 }
 
 /// A string field of an input.

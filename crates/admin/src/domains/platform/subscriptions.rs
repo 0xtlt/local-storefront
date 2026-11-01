@@ -39,11 +39,7 @@ enum Endpoint {
 /// endpoint as the `uri` the registry reads.
 fn rewritten(ctx: &FieldContext<'_>, endpoint: Endpoint) -> Map<String, Value> {
     let mut arguments = ctx.arguments().clone();
-    let mut input = ctx
-        .arg("webhookSubscription")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let mut input = ctx.arg_object_or_default("webhookSubscription");
     let uri = match endpoint {
         Endpoint::EventBridge => input
             .remove("arn")

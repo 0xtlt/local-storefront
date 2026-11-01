@@ -435,11 +435,7 @@ fn redirect_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = ctx
-        .arg("urlRedirect")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = ctx.arg_object_or_default("urlRedirect");
     let mut errors = Vec::new();
     let (path, target) = check_redirect(
         mutation.state(),
@@ -461,11 +457,7 @@ fn redirect_update(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let input = ctx
-        .arg("urlRedirect")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = ctx.arg_object_or_default("urlRedirect");
     let state = mutation.state();
     let Some(record) = (state.type_of(&id) == Some("UrlRedirect"))
         .then(|| state.get(&id).cloned())

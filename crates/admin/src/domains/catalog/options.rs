@@ -362,7 +362,7 @@ fn option_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         return Ok(payload(json!({"product": null}), &[no_product()]));
     };
     let options = options_of(state, &product);
-    let option_input = super::records::input(ctx, "option");
+    let option_input = ctx.arg_object_or_default("option");
     let option_id = text(&option_input, "id").unwrap_or_default().to_string();
     let Some(option) = options
         .iter()

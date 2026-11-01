@@ -86,7 +86,7 @@ fn carrier(code: Option<&str>, origin_country: Option<&str>) -> (String, String)
 
 fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"shippingLabelPurchaseResult": null});
-    let input = super::input(ctx, "shippingLabelPurchase");
+    let input = ctx.arg_object_or_default("shippingLabelPurchase");
     let state = mutation.state();
     let at = |field: &'static str| ["shippingLabelPurchase", field];
     let fail = |field: &[&str], code: &str| Ok(payload(empty.clone(), &[coded(ctx, field, code)]));

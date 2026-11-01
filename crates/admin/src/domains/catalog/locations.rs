@@ -35,7 +35,7 @@
 use serde_json::{Map, Value, json};
 
 use super::inventory::with_idempotency;
-use super::records::{self, coded, field, input, is, is_active_location, objects, text};
+use super::records::{self, coded, field, is, is_active_location, objects, text};
 use super::{gids, product_changed};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
@@ -163,7 +163,7 @@ fn check_name(
 
 /// `locationAdd`.
 fn location_add(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let mut errors = Vec::new();
     check_name(state, text(&input, "name"), None, true, &mut errors);
@@ -216,7 +216,7 @@ fn location_add(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
 /// `locationEdit`.
 fn location_edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     if !is(state, &id, "Location") {
         let error = coded(
@@ -601,7 +601,7 @@ fn local_pickup_enable(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let settings = input(ctx, "localPickupSettings");
+    let settings = ctx.arg_object_or_default("localPickupSettings");
     let id = text(&settings, "locationId")
         .unwrap_or_default()
         .to_string();

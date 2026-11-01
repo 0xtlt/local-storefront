@@ -412,11 +412,7 @@ fn definition_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = ctx
-        .arg("definition")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = ctx.arg_object_or_default("definition");
     let get = |name: &str| input.get(name).and_then(Value::as_str);
     let state = mutation.state();
     let mut errors = Vec::new();
@@ -525,11 +521,7 @@ fn definition_update(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let input = ctx
-        .arg("definition")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = ctx.arg_object_or_default("definition");
     let state = mutation.state();
     let Some(record) = (state.type_of(&id) == Some("MetaobjectDefinition"))
         .then(|| state.get(&id).cloned())
@@ -1274,11 +1266,7 @@ fn delete_entry(state: &mut ShopState, id: &str) {
 }
 
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = ctx
-        .arg("metaobject")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = ctx.arg_object_or_default("metaobject");
     let state = mutation.state();
     let given_type = input
         .get("type")
@@ -1314,11 +1302,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
 
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let input = ctx
-        .arg("metaobject")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = ctx.arg_object_or_default("metaobject");
     let state = mutation.state();
     let Some(record) = (state.type_of(&id) == Some("Metaobject"))
         .then(|| state.get(&id).cloned())
@@ -1356,11 +1340,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
 /// `metaobjectUpsert`: the entry of the type and handle is updated (`metaobject.fields` patch it,
 /// `values` replace its values), or created.
 fn upsert(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = ctx
-        .arg("metaobject")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = ctx.arg_object_or_default("metaobject");
     let values = ctx.arg("values");
     let get = |name: &str| {
         ctx.arg("handle")

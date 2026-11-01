@@ -34,7 +34,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{self, coded, input, is, item_of, objects, text};
+use super::records::{self, coded, is, item_of, objects, text};
 use super::variants::{self, Choice, ProductOption, Reader};
 use super::{gids, media, product_changed, products};
 use crate::graphql::{FieldContext, FieldError};
@@ -81,7 +81,7 @@ fn error(path: &[&str], message: &str, code: &str) -> UserError {
 /// `productSet`.
 fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"product": null, "productSetOperation": null});
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let target = match target(state, ctx, &input) {
         Ok(target) => target,
@@ -480,7 +480,7 @@ fn target(
     ctx: &FieldContext<'_>,
     input: &Map<String, Value>,
 ) -> Result<Target, UserError> {
-    let identifier = ctx.arg("identifier").and_then(Value::as_object);
+    let identifier = ctx.arg_object("identifier");
     let id = identifier
         .and_then(|identifier| text(identifier, "id"))
         .or_else(|| text(input, "id"));

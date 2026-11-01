@@ -338,10 +338,7 @@ fn merge_errors(
 }
 
 fn overrides_of(ctx: &FieldContext<'_>) -> Map<String, Value> {
-    ctx.arg("overrideFields")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
+    ctx.arg_object_or_default("overrideFields")
 }
 
 fn customer_merge(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {

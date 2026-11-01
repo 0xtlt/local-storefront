@@ -305,7 +305,7 @@ fn package_update(
         Ok(index) => index,
         Err(error) => return Ok(payload(json!({}), &[error])),
     };
-    let input = super::input(ctx, "shippingPackage");
+    let input = ctx.arg_object_or_default("shippingPackage");
     let mut errors = Vec::new();
     if let Some(name) = input.get("name").and_then(Value::as_str)
         && name.trim().is_empty()

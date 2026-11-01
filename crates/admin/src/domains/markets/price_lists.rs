@@ -40,9 +40,7 @@ use std::collections::HashSet;
 
 use serde_json::{Map, Value, json};
 
-use super::{
-    Pointer, coded, input, is, market_currency, number, objects, shop_currency, strings, text,
-};
+use super::{Pointer, coded, is, market_currency, number, objects, shop_currency, strings, text};
 use crate::domains::catalog::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -493,7 +491,7 @@ fn note_rate(r: &ShopResolver<'_>, converted: bool) {
 }
 
 fn context_arg(ctx: &FieldContext<'_>) -> Map<String, Value> {
-    input(ctx, "context")
+    ctx.arg_object_or_default("context")
 }
 
 fn variant_contextual_pricing(
@@ -976,7 +974,7 @@ fn link_catalog(state: &mut ShopState, list: &str, catalog: &str) {
 
 /// `priceListCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let mut errors = Vec::new();
     let name = text(&input, "name").unwrap_or_default().trim().to_string();
@@ -1025,7 +1023,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
 
 /// `priceListUpdate`. A new currency removes the fixed prices (and their price breaks).
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let Some(list) = list_arg(state, ctx, "id") else {
         return Ok(payload(
@@ -1795,7 +1793,7 @@ fn quantity_pricing_update(
         );
         return Ok(payload(json!({"productVariants": null}), &[error]));
     };
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let list_of = |name: &str| objects(input.get(name));
     let ids_of = |name: &str| strings(input.get(name));
     let currency = currency_of(state, &list);

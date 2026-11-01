@@ -1356,7 +1356,7 @@ fn bump(state: &mut ShopState, profile: &str, entries: Vec<Map<String, Value>>) 
 // --- The mutations ---
 
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = super::input(ctx, "profile");
+    let input = ctx.arg_object_or_default("profile");
     let currency = model::currency(mutation.state());
     if text(&input, "name").is_none_or(|name| name.trim().is_empty()) {
         return Ok(payload(
@@ -1399,7 +1399,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
             &[UserError::new(&["id"], "Profile could not be found")],
         ));
     }
-    let input = super::input(ctx, "profile");
+    let input = ctx.arg_object_or_default("profile");
     let currency = model::currency(mutation.state());
     let state = mutation.state_mut();
     let mut build = Build {

@@ -110,7 +110,7 @@ fn metafield_definition(
     ctx: &FieldContext<'_>,
     object: &Obj,
 ) -> Result<Output<Obj>, FieldError> {
-    let Some(identifier) = ctx.arg("identifier").and_then(Value::as_object) else {
+    let Some(identifier) = ctx.arg_object("identifier") else {
         return r.generic(ctx, object);
     };
     let get = |name: &str| identifier.get(name).and_then(Value::as_str);
@@ -397,11 +397,7 @@ fn check_name(input: &Map<String, Value>, required: bool, errors: &mut Vec<UserE
 }
 
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = ctx
-        .arg("definition")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = ctx.arg_object_or_default("definition");
     let get = |name: &str| input.get(name).and_then(Value::as_str);
     let state = mutation.state();
     let mut errors = Vec::new();
@@ -567,11 +563,7 @@ fn definition_named(
 /// `metafieldDefinitionUpdate`: the definition by `ownerType`, `namespace` and `key`; its name,
 /// description, validations (its metafields checked again), pin, access and capabilities.
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = ctx
-        .arg("definition")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = ctx.arg_object_or_default("definition");
     let state = mutation.state();
     let empty = json!({"updatedDefinition": null, "validationJob": null});
     let Some(id) = definition_named(state, None, Some(&input)) else {
@@ -671,11 +663,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
 fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let state = mutation.state();
     let empty = json!({"deletedDefinitionId": null, "deletedDefinition": null});
-    let Some(id) = definition_named(
-        state,
-        ctx.arg_str("id"),
-        ctx.arg("identifier").and_then(Value::as_object),
-    ) else {
+    let Some(id) = definition_named(state, ctx.arg_str("id"), ctx.arg_object("identifier")) else {
         let error = UserError::new(&["id"], "Definition not found.").code("NOT_FOUND");
         return Ok(payload(empty, &[error]));
     };
@@ -756,7 +744,7 @@ fn pin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fie
     let Some(id) = definition_named(
         state,
         ctx.arg_str("definitionId"),
-        ctx.arg("identifier").and_then(Value::as_object),
+        ctx.arg_object("identifier"),
     ) else {
         let error = UserError::new(&["definitionId"], "The metafield definition was not found.")
             .code("NOT_FOUND");
@@ -795,7 +783,7 @@ fn unpin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     let Some(id) = definition_named(
         state,
         ctx.arg_str("definitionId"),
-        ctx.arg("identifier").and_then(Value::as_object),
+        ctx.arg_object("identifier"),
     ) else {
         let error = UserError::new(&["definitionId"], "The metafield definition was not found.")
             .code("NOT_FOUND");

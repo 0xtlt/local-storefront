@@ -81,7 +81,7 @@ fn check(
 }
 
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = super::input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let errors = check(
         mutation.state(),
         &input,
@@ -117,7 +117,7 @@ fn service(state: &ShopState, id: &str) -> Option<String> {
 }
 
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = super::input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let code = "CARRIER_SERVICE_UPDATE_FAILED";
     let Some(id) = service(mutation.state(), text(&input, "id").unwrap_or_default()) else {
         // lsf's wording.

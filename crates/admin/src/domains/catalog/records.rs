@@ -11,14 +11,6 @@ use crate::graphql::FieldContext;
 use crate::resolve::UserError;
 use crate::state::{Record, ShopState, gid, parse_gid, value};
 
-/// An argument of the field that is an input object (`{}` when it is not given).
-pub fn input(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
-    ctx.arg(name)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
-}
-
 /// A string field of an input.
 pub fn text<'i>(input: &'i Map<String, Value>, field: &str) -> Option<&'i str> {
     input.get(field).and_then(Value::as_str)

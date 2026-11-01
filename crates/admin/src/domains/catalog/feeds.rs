@@ -36,7 +36,7 @@ use serde_json::{Value, json};
 
 use super::gids;
 use super::gift_cards::normalize_time;
-use super::records::{self, field, input, is, text};
+use super::records::{self, field, is, text};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, gid, parse_gid, value};
@@ -202,7 +202,7 @@ fn feed_arg(state: &ShopState, id: &str) -> Option<String> {
 
 /// `productFeedCreate`.
 fn feed_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let country = text(&input, "country").unwrap_or_default().to_string();
     let language = text(&input, "language").unwrap_or_default().to_string();

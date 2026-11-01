@@ -46,8 +46,8 @@ use chrono::{DateTime, Duration, Utc};
 use serde_json::{Map, Value, json};
 
 use super::records::{
-    self, ON_HAND_PARTS, arg_objects, coded, field, input, is, is_active_location, level_at,
-    new_level, objects, quantity, remove_level, text,
+    self, ON_HAND_PARTS, arg_objects, coded, field, is, is_active_location, level_at, new_level,
+    objects, quantity, remove_level, text,
 };
 use super::{gids, product_changed};
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -528,7 +528,7 @@ fn adjust_quantities_once(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let empty = json!({"inventoryAdjustmentGroup": null});
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let name = text(&input, "name").unwrap_or_default().to_string();
     let mut errors = Vec::new();
@@ -634,7 +634,7 @@ fn set_quantities_once(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let name = text(&input, "name").unwrap_or_default().to_string();
     let mut errors = Vec::new();
     if !matches!(name.as_str(), "available" | "on_hand") {
@@ -658,7 +658,7 @@ fn set_on_hand_quantities(
         json!({"inventoryAdjustmentGroup": null}),
         "userErrors",
         |mutation, ctx| {
-            let input = input(ctx, "input");
+            let input = ctx.arg_object_or_default("input");
             set_quantities_of(mutation, &input, "setQuantities", "on_hand", Vec::new())
         },
     )
@@ -774,7 +774,7 @@ fn move_quantities_once(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let empty = json!({"inventoryAdjustmentGroup": null});
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let mut errors = Vec::new();
     check_reason(&input, &mut errors);
@@ -1164,7 +1164,7 @@ fn item_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         let error = UserError::new(&["id"], "Inventory item does not exist");
         return Ok(payload(json!({"inventoryItem": null}), &[error]));
     }
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     if let Some(cost) = input.get("cost").filter(|cost| !cost.is_null())
         && super::variants::money_cents(cost).is_none_or(|cents| cents < 0)

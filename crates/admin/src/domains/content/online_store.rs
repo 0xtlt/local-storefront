@@ -57,13 +57,6 @@ pub fn register(registry: &mut Registry) {
 /// The longest title Shopify takes.
 const TITLE_LENGTH: usize = 255;
 
-fn input_of(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
-    ctx.arg(name)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
-}
-
 /// The checks of a title: required on creation, at most 255 characters.
 fn check_title(
     input: &Map<String, Value>,
@@ -214,7 +207,7 @@ fn remove_metafields(state: &mut ShopState, record: &Record) {
 // ---- pages -------------------------------------------------------------------------------
 
 fn page_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx, "page");
+    let input = ctx.arg_object_or_default("page");
     let state = mutation.state();
     let now = state.timestamp();
     let mut errors = Vec::new();
@@ -269,7 +262,7 @@ fn summary(body: &str) -> String {
 
 fn page_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let input = input_of(ctx, "page");
+    let input = ctx.arg_object_or_default("page");
     let state = mutation.state();
     let Some(record) = (state.type_of(&id) == Some("Page"))
         .then(|| state.get(&id).cloned())
@@ -373,7 +366,7 @@ fn insert_blog(state: &mut ShopState, input: &Map<String, Value>, handle: &str) 
 }
 
 fn blog_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx, "blog");
+    let input = ctx.arg_object_or_default("blog");
     let state = mutation.state();
     let mut errors = Vec::new();
     check_title(&input, "blog", true, &mut errors);
@@ -401,7 +394,7 @@ fn blog_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
 
 fn blog_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let input = input_of(ctx, "blog");
+    let input = ctx.arg_object_or_default("blog");
     let state = mutation.state();
     let Some(record) = (state.type_of(&id) == Some("Blog"))
         .then(|| state.get(&id).cloned())
@@ -635,7 +628,7 @@ fn article_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = input_of(ctx, "article");
+    let input = ctx.arg_object_or_default("article");
     let state = mutation.state();
     let now = state.timestamp();
     let mut errors = Vec::new();
@@ -739,7 +732,7 @@ fn article_update(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let input = input_of(ctx, "article");
+    let input = ctx.arg_object_or_default("article");
     let state = mutation.state();
     let Some(record) = (state.type_of(&id) == Some("Article"))
         .then(|| state.get(&id).cloned())

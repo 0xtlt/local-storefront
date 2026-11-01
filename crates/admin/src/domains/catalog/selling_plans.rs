@@ -28,7 +28,7 @@
 use serde_json::{Map, Value, json};
 
 use super::gids;
-use super::records::{self, coded, currency, field, input, is, objects, text};
+use super::records::{self, coded, currency, field, is, objects, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{ShopState, value};
@@ -759,8 +759,8 @@ fn check_group(
 
 /// `sellingPlanGroupCreate`.
 fn group_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
-    let resources = records::input(ctx, "resources");
+    let input = ctx.arg_object_or_default("input");
+    let resources = ctx.arg_object_or_default("resources");
     let products = gids(resources.get("productIds"));
     let variants = gids(resources.get("productVariantIds"));
     let state = mutation.state();
@@ -819,7 +819,7 @@ fn group_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         Ok(group) => group,
         Err(error) => return Ok(payload(empty, &[error])),
     };
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     check_group(state, &input, Some(&group), &mut errors);
     if !errors.is_empty() {

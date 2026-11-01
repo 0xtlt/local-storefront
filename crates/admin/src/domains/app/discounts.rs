@@ -1484,13 +1484,6 @@ fn redeem_code(state: &ShopState, node: &str, code: &str, created: &str) -> Valu
 
 // ---- the mutations ------------------------------------------------------------------------
 
-fn input_of(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
-    ctx.arg(name)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
-}
-
 /// The payload of a create or an update: the discount for an app discount, the node otherwise.
 fn answer(state: &ShopState, kind: &Kind, node: Option<&str>) -> Value {
     let value = match node {
@@ -1510,7 +1503,7 @@ fn create(
     ctx: &FieldContext<'_>,
     kind: &Kind,
 ) -> Result<Value, FieldError> {
-    let input = input_of(ctx, kind.input);
+    let input = ctx.arg_object_or_default(kind.input);
     let state = mutation.state();
     let mut errors = Vec::new();
     check_common(state, kind, &input, None, &mut errors);
@@ -1584,7 +1577,7 @@ fn update(
     kind: &Kind,
 ) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default();
-    let input = input_of(ctx, kind.input);
+    let input = ctx.arg_object_or_default(kind.input);
     let state = mutation.state();
     let node = node_of(state, id, &[kind.node_type()]).filter(|node| {
         state

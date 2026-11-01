@@ -43,8 +43,7 @@ use super::addresses::replace_addresses;
 use super::consent::{Channel, consent_of, missing_contact};
 use super::metafields;
 use super::{
-    contact_fields, exemptions_changed, gids_of, given_text, object_arg, primary_locale,
-    refresh_customer,
+    contact_fields, exemptions_changed, gids_of, given_text, primary_locale, refresh_customer,
 };
 use crate::domains::catalog::tags_of;
 use crate::graphql::{FieldContext, FieldError};
@@ -413,7 +412,7 @@ fn customer_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = object_arg(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     note_ignored(mutation, "customerCreate", &input);
     let mut errors = Vec::new();
     let checked = check(mutation.state(), &input, None, &mut errors);
@@ -428,7 +427,7 @@ fn customer_update(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = object_arg(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     note_ignored(mutation, "customerUpdate", &input);
     let state = mutation.state();
     let id = input.get("id").and_then(Value::as_str).unwrap_or_default();
@@ -472,9 +471,9 @@ fn by_custom_id(state: &ShopState, custom: &Map<String, Value>) -> Option<String
 }
 
 fn customer_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let mut input = object_arg(ctx, "input");
+    let mut input = ctx.arg_object_or_default("input");
     note_ignored(mutation, "customerSet", &input);
-    let identifier = object_arg(ctx, "identifier");
+    let identifier = ctx.arg_object_or_default("identifier");
     let state = mutation.state();
     let failed = |errors: Vec<UserError>| Ok(payload(json!({"customer": null}), &errors));
     // Not published: the codes are the payload's, the messages lsf's.

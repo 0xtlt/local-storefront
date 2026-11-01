@@ -126,8 +126,8 @@ fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             &[UserError::new(field, message).code(code)],
         ))
     };
-    let input = crate::domains::orders::model::input_of(ctx.arg("input"));
-    let identifier = crate::domains::orders::model::input_of(ctx.arg("identifier"));
+    let input = ctx.arg_object_or_default("input");
+    let identifier = ctx.arg_object_or_default("identifier");
     let existing = identified(mutation.state(), &identifier);
     if let Some(product) = &existing {
         if mutation

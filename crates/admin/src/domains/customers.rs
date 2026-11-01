@@ -28,7 +28,6 @@ use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
 use super::catalog::{cents_of, gids};
-use crate::graphql::FieldContext;
 use crate::resolve::Registry;
 use crate::state::seed::Seed;
 use crate::state::value::{self, date_time, text};
@@ -277,14 +276,6 @@ pub fn primary_locale(state: &ShopState) -> String {
 /// The GIDs of an array of a record (`locations`, `contacts`, `roleAssignments`).
 pub fn gids_of(record: Option<&Record>, field: &str) -> Vec<String> {
     gids(record.and_then(|record| record.get(field)))
-}
-
-/// The object argument `name` (empty when it is not given).
-fn object_arg(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
-    ctx.arg(name)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
 }
 
 /// Adds then removes exemptions from a list of them.

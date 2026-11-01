@@ -686,7 +686,7 @@ fn create_transfer(
     ctx: &FieldContext<'_>,
     ready: bool,
 ) -> Result<Value, FieldError> {
-    let input = super::input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let mut errors = Vec::new();
     let origin_id = text(&input, "originLocationId");
@@ -847,7 +847,7 @@ fn duplicate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
 fn edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryTransfer": null});
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let input = super::input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let transfer = match transfer_arg(ctx, mutation.state(), &id, &["id"], &empty) {
         Ok(record) => record,
         Err(answer) => return Ok(answer),
@@ -935,7 +935,7 @@ fn edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
 
 fn set_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryTransfer": null, "updatedLineItems": null});
-    let input = super::input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let id = text(&input, "id").unwrap_or_default().to_string();
     let transfer = match transfer_arg(ctx, mutation.state(), &id, &["input", "id"], &empty) {
         Ok(record) => record,
@@ -1019,7 +1019,7 @@ fn set_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
 
 fn remove_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryTransfer": null, "removedQuantities": null});
-    let input = super::input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let id = text(&input, "id").unwrap_or_default().to_string();
     let transfer = match transfer_arg(ctx, mutation.state(), &id, &["input", "id"], &empty) {
         Ok(record) => record,

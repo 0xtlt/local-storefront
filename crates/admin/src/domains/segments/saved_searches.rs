@@ -22,7 +22,7 @@
 //!
 //! Saved searches are not store data: they do not sync.
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -162,15 +162,8 @@ fn topic(kind: &str, action: &str) -> String {
     }
 }
 
-fn input_of(ctx: &FieldContext<'_>) -> Map<String, Value> {
-    ctx.arg("input")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
-}
-
 fn saved_search_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx);
+    let input = ctx.arg_object_or_default("input");
     let text = |field: &str| {
         input
             .get(field)
@@ -212,7 +205,7 @@ fn saved_search_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
 }
 
 fn saved_search_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx);
+    let input = ctx.arg_object_or_default("input");
     let id = input
         .get("id")
         .and_then(Value::as_str)
@@ -258,7 +251,7 @@ fn saved_search_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
 }
 
 fn saved_search_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx);
+    let input = ctx.arg_object_or_default("input");
     let id = input
         .get("id")
         .and_then(Value::as_str)

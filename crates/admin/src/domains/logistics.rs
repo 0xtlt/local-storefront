@@ -161,14 +161,6 @@ pub fn int(record: &Record, field: &str) -> i64 {
     record.get(field).and_then(Value::as_i64).unwrap_or(0)
 }
 
-/// The object an argument holds (an empty one when it holds none).
-pub fn input(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
-    ctx.arg(name)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
-}
-
 /// The objects of a list (an input field or an argument), `[]` when it is none.
 pub fn objects(value: Option<&Value>) -> Vec<Map<String, Value>> {
     match value {

@@ -45,7 +45,7 @@ use chrono::{DateTime, Utc};
 use lsf_core::util::handleize;
 use serde_json::{Map, Value, json};
 
-use super::{coded, input, is, number, objects, regions_of, shop_locales, strings, text};
+use super::{coded, is, number, objects, regions_of, shop_locales, strings, text};
 use crate::domains::catalog::{self, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -707,7 +707,7 @@ fn handle_taken(state: &ShopState, handle: &str, channel: Option<&str>) -> bool 
 
 /// `channelCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let mut errors = Vec::new();
     let account_id = text(&input, "accountId")
@@ -827,7 +827,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     let Some(channel) = channel_arg(state, ctx, "id") else {
         return Ok(payload(json!({"channel": null}), &[not_found("id")]));
     };
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     for field in ["accountId", "accountName", "specificationHandle"] {
         if text(&input, field).is_some_and(|value| value.trim().is_empty()) {
@@ -1205,7 +1205,7 @@ fn shop_feedback_create(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let state = mutation.state();
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     let channel = text(&input, "channelId").map(str::to_string);
     if channel

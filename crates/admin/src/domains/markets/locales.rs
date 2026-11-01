@@ -302,11 +302,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         let error = UserError::new(&["locale"], format!("Locale {asked} is not enabled"));
         return Ok(payload(json!({"shopLocale": null}), &[error]));
     };
-    let input = ctx
-        .arg("shopLocale")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = ctx.arg_object_or_default("shopLocale");
     let mut errors = Vec::new();
     let primary = state
         .get(&locale)
