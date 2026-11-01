@@ -72,6 +72,31 @@ pub struct CheckoutOptions {
     pub variant: Variant,
     /// The server has no theme: it serves the checkout alone.
     pub standalone: bool,
+    /// `--no-functions`: the app's Functions are left out, so none runs.
+    pub no_functions: bool,
+}
+
+impl CheckoutOptions {
+    /// The extensions a checkout of `scenario` uses ([`selection_for`]). With `--no-functions`,
+    /// its UI extensions alone: the app has no Function then (`ServerState::load_app`), and a
+    /// discount of the data whose Function is not run is left out, not an error.
+    pub fn selection(
+        &self,
+        app: &App,
+        scenario: Option<&CheckoutScenario>,
+    ) -> Result<Selection, String> {
+        if !self.no_functions {
+            return selection_for(app, &self.extensions, scenario);
+        }
+        let mut handles: Vec<String> = Selection::resolve(app, &self.extensions)?
+            .ui_extensions(app)
+            .map(|extension| extension.handle.clone())
+            .collect();
+        if let Some(named) = scenario.and_then(|scenario| scenario.extensions.as_ref()) {
+            handles.retain(|handle| named.contains(handle));
+        }
+        Ok(Selection::only(handles))
+    }
 }
 
 /// Loads the app and the extensions the options select, and builds the Functions on request.

@@ -310,10 +310,19 @@ impl ServerState {
     }
 
     /// Reads the app of the checkout. With `--watch`, the Functions it builds run the copy of
-    /// their last module that built, never what a build is writing.
+    /// their last module that built, never what a build is writing; with `--no-functions`, it
+    /// has none.
     pub(crate) fn load_app(&self, dir: &Path) -> Result<lsf_checkout::app::App, String> {
         let mut app = lsf_checkout::app::load(dir)?;
         self.builds.apply(&mut app);
+        if self
+            .options
+            .checkout
+            .as_ref()
+            .is_some_and(|options| options.no_functions)
+        {
+            app.without_functions();
+        }
         Ok(app)
     }
 
