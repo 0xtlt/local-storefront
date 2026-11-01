@@ -2,8 +2,8 @@
 
 `npx local-storefront fmt` formats Liquid files the way [Prettier](https://prettier.io) does
 with Shopify's Liquid plugin (`@shopify/prettier-plugin-liquid`). Neither is needed:
-local-storefront does it itself, and the 283 files of Shopify's Horizon theme take less than a
-tenth of a second.
+local-storefront does it itself, and Shopify's Horizon theme, some 280 files, takes about a
+fifth of a second.
 
 ## Format the theme
 
@@ -21,12 +21,13 @@ Format some files only:
 npx local-storefront fmt sections/header.liquid snippets
 ```
 
-Format the files you changed since the last commit, staged or not:
+Format the files you changed since the last commit, staged or not, and the new ones:
 
 ```bash
-npx local-storefront fmt $(git diff --name-only --diff-filter=d HEAD)
+npx local-storefront fmt $(git diff --name-only --diff-filter=d HEAD; git ls-files --others --exclude-standard)
 ```
 
+`git diff` leaves out the new files that are not staged: `git ls-files --others` adds them.
 `--diff-filter=d` leaves out deleted files, which `fmt` could not read. With nothing changed,
 the list is empty and `fmt` formats the whole theme.
 

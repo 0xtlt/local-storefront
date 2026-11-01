@@ -105,7 +105,7 @@ A Function is a folder of `extensions/`:
 |---|---|
 | `shopify.extension.toml` | `type = "function"`, its `handle`, a `[[extensions.targeting]]` with its `target`, `input_query` and `export`, and `[extensions.build]` with `command = ""` and `path = "dist/function.wasm"`. |
 | `package.json` | `"@shopify/shopify_function": "2.0.1"` in `dependencies`: lsf needs it declared, not installed. The `codegen` section, for the types. |
-| `src/index.js` (or `.ts`) | `export * from "./cart_validations_generate_run";` |
+| `src/index.js` (or `.ts`) | `export * from "./<target>";`, the target with `_` for `.`: `./cart_lines_discounts_generate_run` for a discount. |
 | `src/<target>.graphql`, `src/<target>.js` | The input query, and the function the `export` names, in camel case (`cart-validations-generate-run`: `cartValidationsGenerateRun`). |
 
 Then build it at each save with `npx local-storefront app dev --watch`. A discount Function runs
@@ -965,7 +965,8 @@ npx local-storefront app function run volume-discount --app ../my-app --scenario
 Builds the input of each Function from the store data and the [scenario](#scenarios), runs them
 in checkout order, and prints each input, output and log with the checkout that results. Without
 a handle, every Function of the app runs. Without `--scenario` or `--session`, the cart is the
-`session` of the store data, empty in the demo store: nothing runs on it.
+`session` of the store data, empty in the demo store: a Function that runs gets an empty cart
+and changes nothing. Give `--scenario`.
 
 ```text
 == scenario discount-automatic: An automatic discount
@@ -1117,7 +1118,10 @@ second order.
 
 ### In CI
 
-`dist/` is not committed: build the extensions before checking them. In the app's folder:
+Once, in the app's folder: `npm install --save-dev local-storefront`, then commit
+`package.json` and `package-lock.json`. In the job, `actions/setup-node` and `npm ci` come
+before these steps, as in [testing](testing.md#in-ci). `dist/` is not committed: build the
+extensions before checking them.
 
 ```yaml
 - run: npx local-storefront app build      # every Function and UI extension, without Node

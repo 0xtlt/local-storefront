@@ -47,6 +47,15 @@ To use your own products instead of the demo's, delete `shopify-local/products/*
 `npx local-storefront validate --format json`. The demo's collections, menus and subscriptions
 still name its products: each one is an `unknown_product` or an `unknown_reference`, at its
 `file` (`collections.json`, `menus.json`, `store.json`) and `path`. Replace or remove each.
+Remove from the last `path` to the first: removing an item of a list moves the `path` of the
+items after it. A collection or a selling-plan group may be left with no products
+(`"products": []`).
+
+The demo's Apparel, Home goods, Accessories and Sale collections pick products by `type`
+(`Apparel`, `Home`, `Accessories`) and by the tag `sale`: give yours a `type` and `tags`, or
+change the `rules` of each collection. Otherwise they are empty, and every check still passes.
+The shop's name is `shop.name` in `store.json` (`Local Supply Co.`), and the pages and articles
+of `pages.json` and `blogs.json` are the demo's too.
 
 ### Write store data
 
@@ -117,6 +126,12 @@ then run the command again until `ok` is `true`. `app` is `null` outside a Shopi
 codes: [data guide](data-format.md#error-codes). The format of every field:
 `npx local-storefront docs`, or `npx local-storefront schema <kind>` for a JSON Schema.
 
+Fix the errors in `products/` and `customers.json` first. A product or a customer with a value
+that cannot be read (a `wrong_type`, an `invalid_value`, an `invalid_format`, a
+`missing_field`) is left out, so each reference to it is an error too, in its own file: in the
+demo store, one float price gives 4 errors in 4 files. Run `validate` again before you edit a
+reference.
+
 ### Check the theme
 
 ```bash
@@ -152,8 +167,8 @@ npx local-storefront check --format json
 ```
 
 This is the dry run: each `fix` is exactly what `--fix` writes. A diagnostic with `no_fix`, or
-with neither key (an `unknown_filter`), needs a person. Exit `1` while a problem is left. Every
-key and code: [CLI reference](cli.md#the-json-format).
+with neither key (an `unknown_filter`), is not fixed by `--fix`: see the rules of the next task.
+Exit `1` while a problem is left. Every key and code: [CLI reference](cli.md#the-json-format).
 
 `check` reads the files and renders none: a Liquid error at render time (a division by zero)
 shows only with `render --strict`.
@@ -173,8 +188,14 @@ Rules for an agent:
 - A fix with `changes_output` changes the rendered HTML on purpose: the code now does what it
   says. Report each one to the person, with its `file` and `line`. Do not revert it to silence
   the change.
-- A `no_fix` needs a person's decision. Do not invent a rewrite: the reason says what the strict
-  parser cannot express. Report it with its `file`, `line` and `no_fix`.
+- Two `no_fix` reasons have a rewrite in [strict Liquid](strict-liquid.md#fix-by-hand):
+  `` `a.b` is not a name the strict parser reads `` and `` `=<` is read as an operator… ``.
+  Apply the rewrite, and report it as you report a `changes_output`: the page changes. Any other
+  `no_fix` needs a person's decision. Do not invent a rewrite: report it with its `file`,
+  `line` and `no_fix`.
+- An `unknown_filter` named almost like a filter of Shopify is a typo (`uppercas` for
+  `upcase`): fix the name, and report it, since the page changes. Any other may be a filter
+  that local-storefront lacks: report it.
 - It is safe to run twice: the second run writes nothing.
 - Run `npx local-storefront check --format json` again: `problems` is `0`, or every problem left
   is reported to the person.
@@ -220,13 +241,18 @@ jobs:
       - run: npx local-storefront check
       - name: Render every page, and fail on a Liquid error
         run: |
+          npx local-storefront routes > /dev/null # stops the step when `routes` cannot run
           for route in $(npx local-storefront routes); do
-            npx local-storefront render "$route" --strict > /dev/null || exit 1
+            npx local-storefront render "$route" --strict > /dev/null ||
+              { echo "::error::render failed: $route"; exit 1; }
           done
 ```
 
 `npm ci` needs `package-lock.json`: commit it with `package.json` after the
-`npm install --save-dev local-storefront` of the setup. Add
+`npm install --save-dev local-storefront` of the setup. Commit `shopify-local/` too, `schema/`
+and `README.md` included: the steps read the store data, and editors read `schema/`, which
+`init` writes again at each run. A `for` over `$(…)` ignores the exit code of `routes`: the
+first line of the step stops it when `routes` fails (a wrong `--theme`). Add
 `- run: npx local-storefront fmt --check` only once the theme is formatted: a stock theme is not.
 With browser tests: [testing](testing.md#in-ci).
 
