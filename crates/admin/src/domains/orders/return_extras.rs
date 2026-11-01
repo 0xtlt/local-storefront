@@ -1146,38 +1146,14 @@ fn return_refund(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         };
         lines.push((line.to_string(), line_item, quantity));
     }
-    let payments = model::refundable_payments(state, &order_record);
-    let mut moves = Vec::new();
-    for (index, transaction) in array(&input, "orderTransactions").iter().enumerate() {
-        let index = index.to_string();
-        let parent = transaction
-            .get("parentId")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let amount = model::cents(transaction.get("transactionAmount"));
-        let path = ["returnRefundInput", "orderTransactions", index.as_str()];
-        let Some((_, left)) = payments.iter().find(|(known, _)| known == parent) else {
-            errors.push(error(
-                &[&path[..], &["parentId"]].concat(),
-                "Parent transaction does not exist.",
-                "NOT_FOUND",
-            ));
-            continue;
-        };
-        if amount <= 0 || amount > *left {
-            errors.push(error(
-                &[&path[..], &["transactionAmount"]].concat(),
-                "Transaction amount is invalid.",
-                "INVALID",
-            ));
-            continue;
-        }
-        let gateway = state
-            .get(parent)
-            .and_then(|record| text(record, "gateway"))
-            .map(str::to_string);
-        moves.push((amount, gateway, Some(parent.to_string())));
-    }
+    let moves = super::returns::refund_moves(
+        state,
+        &order_record,
+        &array(&input, "orderTransactions"),
+        false,
+        &["returnRefundInput", "orderTransactions"],
+        &mut errors,
+    );
     if lines.is_empty() && errors.is_empty() {
         errors.push(error(
             &["returnRefundInput", "returnRefundLineItems"],

@@ -34,7 +34,7 @@ use super::refunds::{self, RefundLine, RefundSpec};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{ShopState, value};
+use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -105,6 +105,52 @@ pub const UPDATE_REMOVALS: &str = "lsfUpdateRemovals";
 /// A return error with its code.
 pub(super) fn error(field: &[&str], message: &str, code: &str) -> UserError {
     UserError::new(field, message).code(code)
+}
+
+/// What a refund of a return moves through the `orderTransactions` given (`[{parentId,
+/// transactionAmount}]`), each checked against what its payment may still refund (past it when
+/// `over`): `(amount, gateway, parent)`. The errors are under `path`.
+pub(super) fn refund_moves(
+    state: &ShopState,
+    order: &Record,
+    transactions: &[Value],
+    over: bool,
+    path: &[&str],
+    errors: &mut Vec<UserError>,
+) -> Vec<(i64, Option<String>, Option<String>)> {
+    let payments = model::refundable_payments(state, order);
+    let mut moves = Vec::new();
+    for (index, transaction) in transactions.iter().enumerate() {
+        let index = index.to_string();
+        let at = |field: &'static str| [path, &[index.as_str(), field][..]].concat();
+        let parent = transaction
+            .get("parentId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let amount = model::cents(transaction.get("transactionAmount"));
+        let Some((_, left)) = payments.iter().find(|(id, _)| id == parent) else {
+            errors.push(error(
+                &at("parentId"),
+                "Parent transaction does not exist.",
+                "NOT_FOUND",
+            ));
+            continue;
+        };
+        if amount <= 0 || (!over && amount > *left) {
+            errors.push(error(
+                &at("transactionAmount"),
+                "Transaction amount is invalid.",
+                "INVALID",
+            ));
+            continue;
+        }
+        let gateway = state
+            .get(parent)
+            .and_then(|record| text(record, "gateway"))
+            .map(str::to_string);
+        moves.push((amount, gateway, Some(parent.to_string())));
+    }
+    moves
 }
 
 /// `returnCreate` (an open return) and `returnRequest` (a requested one).
@@ -500,52 +546,19 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
     let transfer = model::input_of(input.get("financialTransfer"));
     let refund = model::input_of(transfer.get("issueRefund"));
     let order_record = state.get(&order).cloned().unwrap_or_default();
-    let payments = model::refundable_payments(state, &order_record);
-    let mut moves = Vec::new();
-    for (index, transaction) in array(&refund, "orderTransactions").iter().enumerate() {
-        let index = index.to_string();
-        let parent = transaction
-            .get("parentId")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let amount = model::cents(transaction.get("transactionAmount"));
-        let Some((_, left)) = payments.iter().find(|(id, _)| id == parent) else {
-            errors.push(error(
-                &[
-                    "input",
-                    "financialTransfer",
-                    "issueRefund",
-                    "orderTransactions",
-                    &index,
-                    "parentId",
-                ],
-                "Parent transaction does not exist.",
-                "NOT_FOUND",
-            ));
-            continue;
-        };
-        let over = refund.get("allowOverRefunding").and_then(Value::as_bool) == Some(true);
-        if amount <= 0 || (!over && amount > *left) {
-            errors.push(error(
-                &[
-                    "input",
-                    "financialTransfer",
-                    "issueRefund",
-                    "orderTransactions",
-                    &index,
-                    "transactionAmount",
-                ],
-                "Transaction amount is invalid.",
-                "INVALID",
-            ));
-            continue;
-        }
-        let gateway = state
-            .get(parent)
-            .and_then(|record| text(record, "gateway"))
-            .map(str::to_string);
-        moves.push((amount, gateway, Some(parent.to_string())));
-    }
+    let moves = refund_moves(
+        state,
+        &order_record,
+        &array(&refund, "orderTransactions"),
+        refund.get("allowOverRefunding").and_then(Value::as_bool) == Some(true),
+        &[
+            "input",
+            "financialTransfer",
+            "issueRefund",
+            "orderTransactions",
+        ],
+        &mut errors,
+    );
     let store_credit = refunds::store_credit_refunds(
         state,
         &order_record,
