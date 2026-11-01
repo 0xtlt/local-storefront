@@ -1021,16 +1021,23 @@ does, the next query reads `COMPLETED` with its `url`, `objectCount` and `fileSi
 (filtered by `status`, `operation_type`, `created_at`), `currentBulkOperation`.
 
 ```js
-// admin(query, variables): a POST to /admin/api/2026-10/graphql.json that returns `data`.
-const { bulkOperationRunQuery } = await admin(`mutation {
-  bulkOperationRunQuery(query: "{ products { edges { node { id title variants { edges { node { id sku } } } } } } }") {
-    bulkOperation { id status }
-    userErrors { field message }
-  }
-}`);
+// In a loader or an action of the React Router template: `const { admin } = await authenticate.admin(request);`
+const started = await admin.graphql(`#graphql
+  mutation {
+    bulkOperationRunQuery(query: "{ products { edges { node { id title variants { edges { node { id sku } } } } } } }") {
+      bulkOperation { id status }
+      userErrors { field message }
+    }
+  }`);
+const { bulkOperationRunQuery } = (await started.json()).data;
 const { id } = bulkOperationRunQuery.bulkOperation; // status CREATED
 
-const { node } = await admin(`query($id: ID!) { node(id: $id) { ... on BulkOperation { status url } } }`, { id });
+const polled = await admin.graphql(
+  `#graphql
+  query($id: ID!) { node(id: $id) { ... on BulkOperation { status url } } }`,
+  { variables: { id } },
+);
+const { node } = (await polled.json()).data;
 // COMPLETED at the first poll on lsf; on Shopify, poll until it is, or wait for bulk_operations/finish.
 const lines = (await (await fetch(node.url)).text()).trim().split("\n").map((line) => JSON.parse(line));
 // { id: "gid://shopify/Product/…", title }, then its variants, each with the product's id in __parentId

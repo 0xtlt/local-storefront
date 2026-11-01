@@ -165,6 +165,7 @@ built`): `npx local-storefront app build`, or `--build`.
 | `--app <dir>` (`LSF_APP`) | The app. The commands of `lsf app` default to the app the current folder is in. |
 | `--extension <handle>` | Uses only this extension, a Function or a checkout UI extension. Repeat it for several. Without it, every extension of the app is used. |
 | `--build` | Builds each Function first: its build command, or lsf's build of a JavaScript Function. |
+| `--no-functions` | Serves the UI extensions and the Admin API, and runs no Function: for a backend's tests ([Admin API](admin.md#place-an-order)). |
 | `--watch` | Develops the app as `shopify app dev` does: builds a Function again when its files change, and reloads the open pages. With `--build`, builds every Function at start. See [watch mode](#watch-mode). |
 | `--variant <standard\|shop>` | The look of the page: Shopify's one-page checkout, or the Shop app's. A URL can ask for the other with `?variant=shop`. |
 
@@ -1036,8 +1037,8 @@ const { order } = await (await request.post(`${path}/complete`)).json(); // { id
 
 The order is an order of the [Admin API](admin.md#place-an-order), and its `orders/create`
 reaches the backend of the app. A test that only needs an order (for its webhooks) serves the
-Functions it needs and no others, `--extension <handle>` repeated: a Function that fails blocks
-`complete`.
+Functions it needs and no others, `--extension <handle>` repeated, or none, `--no-functions`: a
+Function that fails blocks `complete`.
 
 | Request | What it does | Answer |
 |---|---|---|

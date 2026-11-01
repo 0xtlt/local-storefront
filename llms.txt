@@ -25,6 +25,7 @@ The links below are relative to this file. Read the docs of the version you run 
 ## Reference
 
 - [Control API](docs/control-api.md): `/__lsf` endpoints, sessions, response headers
+- [Admin API reference](docs/admin-reference.md): what the local Admin API simulates, family by family: billing, bulk operations, discounts, staged uploads
 - [Field reference](docs/data-reference.md): every field of the store data
 - [Compatibility](docs/compatibility.md): what matches Shopify, and the known differences
 

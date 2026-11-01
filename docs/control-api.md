@@ -5,6 +5,9 @@ there is ever delayed by `--throttle`, nor are the Admin API and OAuth under `/a
 API has its own cost bucket). How to use it in tests: [testing](testing.md); the backend of an
 app: [Admin API](admin.md).
 
+Bodies are JSON: send `Content-Type: application/json`. A body that is JSON is read as JSON
+without it too (`fetch` sends a string as `text/plain`, `curl -d` as a form).
+
 ## Endpoints
 
 ### Storefront and tests
@@ -47,9 +50,9 @@ uses them: [test your backend](admin.md#test-your-backend).
 | `POST /__lsf/admin/charges/<n>/approve`, `…/decline` | The merchant's decision (`?shop=` or `{"shop"}`; charges count from 1 in each shop, and without `shop` the default shop's is meant: keep the `?shop=` of the `confirmationUrl`): the charge becomes `ACTIVE` or `DECLINED`, its webhook is delivered. From the page's form, a `303` to the charge's `returnUrl` with `charge_id`, as Shopify redirects. | `{ "ok": true, "charge", "redirect" }`; `409` when it is not waiting for the merchant |
 | `POST /__lsf/admin/uninstall` | Uninstalls the app from a shop (`{"shop"?}`, the default one without), as Shopify does: its tokens stop working, its subscription is cancelled, `app/uninstalled` is delivered, the subscriptions the backend made on the shop are deleted, and nothing more is delivered for the shop until the app is installed again. An app already uninstalled delivers nothing. | `{ "ok": true, "shop", "revoked": 1, "deletedSubscriptions": 2 }` |
 | `POST /__lsf/admin/install` | Installs the app again (`{"shop"?, "scopes"?}`): its default token works again, with the app's scopes or those given (a list, or `"read_products,read_orders"`), and the subscriptions of `shopify.app.toml` deliver for the shop again (OAuth and a token exchange install it too); `app/scopes_update` is delivered when they changed. | `{ "ok": true, "shop", "token", "scopes", "scopesChanged" }` |
-| `GET /__lsf/webhooks` | The webhook deliveries, oldest first, filtered by `topic`, `shop`, `state`, `resource` and `since`; `wait=<n>` waits until n of them are done. See [webhook deliveries](#webhook-deliveries). | `{ "count", "deliveries", "last", "waited"? }`; `408` when fewer are done |
+| `GET /__lsf/webhooks` | The webhook deliveries, oldest first, filtered by `topic`, `shop`, `state`, `resource` and `since`; `wait=<n>` waits until n of them are done. See [webhook deliveries](#webhook-deliveries). | `{ "count", "deliveries", "last", "waited"? }`; `408` when fewer are done; `422` at once for a wait that could only time out |
 | `DELETE /__lsf/webhooks` | Forgets the deliveries. Their ids are not given again. | `{ "ok": true, "deliveries": 3 }` |
-| `POST /__lsf/webhooks/trigger` | Sends one webhook: `{"topic", "id"?, "shop"?, "address"?, "payload"?, "wait"?}`. The payload is built from the record `id` names, else a representative one of the topic, else `payload` as given; it goes to `address`, else to the subscriptions of the topic. | `{ "count", "deliveries": [...] }`; `404` without a record or a subscription, `422` for a topic lsf does not build |
+| `POST /__lsf/webhooks/trigger` | Sends one webhook: `{"topic", "id"?, "shop"?, "address"?, "payload"?, "wait"?}`. The payload is built from the record `id` names, else a representative one of the topic, else `payload` as given; it goes to `address`, else to the subscriptions of the topic. Without `wait`, it answers at once, the deliveries `pending`; with `"wait": true`, once they are done (`delivered`, `failed`, `not_sent`), or after `?timeout=<ms>` (10 seconds by default) with those left still `pending`. | `{ "count", "deliveries": [...] }`, `200` either way; `404` without a record or a subscription, `422` for a topic lsf does not build |
 | `GET /__lsf/admin/clock?shop=`, `POST /__lsf/admin/clock` | A shop's clock (`{shop, now, frozen}`), and moving it: `{"advance": "31d"}` (seconds, or `s`, `m`, `h`, `d`) or `{"now": "<RFC 3339>"}` (`at` too), with `"shop"?`. The clock then stays at that instant, and what waits on time happens, with its webhooks: a checkout left ten minutes is abandoned, a data erasure ten days old is processed (`customers/redact`), payment schedules that came due fire `payment_schedules/due`, store credit expires, Shopify Payments pays out the days left behind, the app's charges pending for two days expire, scheduled listings whose date passed are listed, abandoned checkouts three months old are deleted (`checkouts/delete`). The same runs before every Admin API request, by the shop's clock, frozen or not. `DELETE /__lsf/admin` puts the clock back. | `{ "ok", "shop", "now", "frozen", "erased", "deletedCheckouts" }`; `422` for a bad body or a time past the year 9999 |
 | `GET /__lsf/admin/outbox?shop=&channel=`, `DELETE …` | The [outbox](admin-reference.md#the-outbox): what Shopify would have sent to the outside world, which lsf records instead (emails, shipping labels, Flow triggers, POS messages, data erasures), oldest first, the last 1000; of one channel (`email`, `carrier`, `flow`, `pos`, `data_erasure`) or all. `DELETE` forgets them; a reset empties it. | `{ "shop", "count", "outbox": [{ "id", "at", "channel", "to", "what", "about", "subject"?, "body"?, "data"? }] }`; `DELETE`: `{ "ok": true, "shop", "outbox": 3 }`; `422` for another channel |
 | `GET /__lsf/admin/emails?shop=`, `DELETE …` | The outbox's emails: `/__lsf/admin/outbox?channel=email`. | `{ "shop", "count", "emails": [...] }`; `DELETE`: `{ "ok": true, "shop", "emails": 2 }` |
@@ -175,6 +178,15 @@ before the request included: with no `since`, `wait=1` can answer at once with a
 answer lists every delivery that matches, those still `pending` too. `timeout=<ms>` bounds the wait, 10 seconds by default; then the answer is `408`, with the same
 body. A delivery that the backend fails is retried after 1, 5 and 15 seconds, and stays `pending`
 until its last attempt, about 21 seconds after the first: to see it fail, give `timeout=25000`.
+Its `reason` is the last failure meanwhile (`answered 503`), then says how many attempts were
+made (`answered 503 (4 attempts)`). For a `401` or `403`, it adds the secret lsf signed with:
+`answered 401 (4 attempts): lsf signed it with the client secret from SHOPIFY_API_SECRET of
+../my-app/.env: does the backend verify with the same one?`.
+
+A wait that could only time out answers `422` at once: no delivery of the log matches, and none
+can come, the `shop` being none the Admin API has, or no subscription of the app covering the
+`topic` on that shop (on any shop without `shop`), in `shopify.app.toml` or through the Admin
+API. A topic nothing subscribes to is never logged.
 
 ```json
 {

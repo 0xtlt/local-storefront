@@ -305,9 +305,15 @@ curl -s http://127.0.0.1:9292/admin/api/2026-10/graphql.json \
 | The default token of a shop | Printed at start, in `GET /__lsf/admin` (`shops[].token`), and the answer of `POST /__lsf/admin/shops`. Offline, never expiring, the scopes of the app. |
 | A session token (App Bridge's `id_token`) | `POST /__lsf/admin/session-token` `{"shop"?, "user"?}`: HS256 with the client secret, the claims of shopify.dev's "ID tokens". |
 | An access token by token exchange | `POST /admin/oauth/access_token` with the session token, as the React Router template and the libraries do: offline or online, expiring or not. |
-| An access token by the authorization code grant | `GET /admin/oauth/authorize?client_id=&scope=&redirect_uri=&state=` approves at once and redirects to `redirect_uri` with `code`, `hmac`, `host`, `shop`, `state`, `timestamp`; then `POST /admin/oauth/access_token`. `redirect_uri` must be one of `[auth] redirect_urls` (also on the origin of `--app-url`). |
+| An access token by the authorization code grant | `GET /admin/oauth/authorize?client_id=&scope=&redirect_uri=&state=` approves at once and redirects to `redirect_uri` with `code`, `hmac`, `host`, `shop`, `state`, `timestamp`; then `POST /admin/oauth/access_token`. `redirect_uri` must be one of `[auth] redirect_urls`, or one of them on the origin of `application_url` moved to the origin of `--app-url`, the same path: with `https://my-app.trycloudflare.com/auth/callback` in the file and `--app-url http://localhost:3000`, `http://localhost:3000/auth/callback` is accepted, and `http://localhost:3000/other/callback` is not. An app with no `[auth] redirect_urls` accepts none. |
 | Refresh tokens, client credentials | `grant_type=refresh_token`, `grant_type=client_credentials`, as Shopify. |
 | A delegate access token | `delegateAccessTokenCreate`: `shppa_…`, a subset of the parent's scopes, expiring with it or sooner (see "[The app's installation](admin-reference.md#the-apps-installation-and-shopifys-other-services)"). |
+
+OAuth without a library (in Python, say): send the browser to
+`$LSF_URL/admin/oauth/authorize?client_id=…&scope=…&redirect_uri=…&state=…` (with `&shop=` for a
+shop other than the default one), and POST the code of the callback to
+`$LSF_URL/admin/oauth/access_token`, `{"client_id", "client_secret", "code"}`: the code knows its
+shop.
 
 Every access token is `shpat_` and 32 hex digits, as Shopify's. A token belongs to one shop. A
 request without a valid token is answered `401`
@@ -361,8 +367,9 @@ an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/r
   backend)`. So give `--app-url`: without it, the subscriptions of `shopify.app.toml` point at
   `application_url`, usually a tunnel, and lsf sends nothing there.
 - **Events**: what the Admin API changes (`productCreate` → `products/create`,
-  `inventory_items/create`, `inventory_levels/connect`; `productUpdate` and `tagsAdd` →
-  `products/update`; `productDelete` → `products/delete`), an order placed at the checkout
+  `inventory_items/create`, `inventory_levels/connect`; any other change of a product, such as
+  `productUpdate`, `tagsAdd` or `metafieldsSet` on it → `products/update`; `productDelete` →
+  `products/delete`), an order placed at the checkout
   (`orders/create`, `order_transactions/create`, then `orders/paid` when it is paid in full), an
   uninstall, a change of scopes.
 - **The storefront's own events**, as the online store's cart and checkout fire them on
@@ -391,7 +398,9 @@ an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/r
   Shopify-Captain-Hook`. Every library's verification accepts them with the shared secret
   (`authenticate.webhook` of the React Router package).
 - **Delivery** is from a background worker, in order, retried after 1, 5 and 15 seconds when the
-  backend does not answer `2xx` within 5 seconds.
+  backend does not answer `2xx` within 5 seconds. The delivery stays `pending` through the
+  retries, its `reason` the last failure, and becomes `failed` after the last attempt, about 21
+  seconds after the first.
 
 Without a library, verify the HMAC on the raw bytes of the body, before parsing it: the JSON
 parsed and serialized again is not what was signed. In Python:
@@ -406,14 +415,27 @@ def verify_webhook(raw_body: bytes, header: str, secret: str) -> bool:
 # Flask: verify_webhook(request.get_data(), request.headers.get("X-Shopify-Hmac-Sha256"), SECRET)
 ```
 
-**The backend answers `401`** (`failed: answered 401` in lsf's log): the two secrets differ. lsf
-signs with `--client-secret` (`LSF_CLIENT_SECRET`), else `SHOPIFY_API_SECRET` of the
-environment, else the one of the app's `.env`, else `lsf-local-client-secret`; without `--app`, no
-`.env` is read. The start banner says where its secret came from.
+**The backend answers `401`** (or `403`): the two secrets differ. lsf signs with
+`--client-secret` (`LSF_CLIENT_SECRET`), else `SHOPIFY_API_SECRET` of the environment, else the
+one of the app's `.env`, else `lsf-local-client-secret`; without `--app`, no `.env` is read. lsf
+says so where you look, naming the secret it signed with as the start line `client secret:`
+does:
+
+- the server prints one line at the first refusal of each delivery, `--quiet` or not:
+  `webhooks: products/create → http://localhost:3000/webhooks answered 401: lsf signed it with
+  the client secret from SHOPIFY_API_SECRET of ../my-app/.env: does the backend verify with the
+  same one?`;
+- the delivery's `reason` in `GET /__lsf/webhooks` says the same: `answered 401: lsf signed it
+  with …` while it is `pending`, `answered 401 (4 attempts): lsf signed it with …` once `failed`;
+- `lsf app webhook trigger` prints `failed: answered 401 (1 attempt): lsf signed it with …`.
 
 On demand: `POST /__lsf/webhooks/trigger {"topic": "orders/create", "id"?: "<gid>"}` sends the
-webhook of a record of the shop (a representative one without `id`), and the command line does it
-without a server:
+webhook of a record of the shop (a representative one without `id`: for `orders/create`, the
+first order), and the command line does it without a server. In the demo store, the first order,
+`#1001`, is fulfilled already: its fulfillment order is `CLOSED`, and a handler's
+`fulfillmentCreate` answers a `userError`. To test a fulfillment handler, [place an
+order](#place-an-order), or give the `id` of an unfulfilled one:
+`{"topic": "orders/create", "id": "gid://shopify/Order/7888001690128"}` (`#1002`).
 
 ```bash
 npx local-storefront app webhook trigger --topic app/uninstalled --app ../my-app --app-url http://localhost:3000
@@ -435,8 +457,18 @@ delivers back. Tests that run in parallel each take a shop of their own.
 ### Start lsf and the backend
 
 Fix both ports: the backend reads lsf's address when it starts (`LSF_URL`), and lsf delivers the
-webhooks to the backend's (`--app-url`). Both read the client secret from `SHOPIFY_API_SECRET` of
-the app's `.env`. With Playwright:
+webhooks to the backend's (`--app-url`). Both need the same client secret. lsf reads
+`SHOPIFY_API_SECRET` of the app's `.env` (its start line `client secret:` says where it found
+one); the backend reads that file only when something loads it:
+
+- `npx react-router dev`, the React Router template's dev server, loads it into the backend
+  (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES`), after `npm run setup` (its Prisma session
+  storage);
+- `npm run start` (`react-router-serve` of a build) reads no `.env`: run `npm run build` first,
+  and pass the three in `env`;
+- a plain Node server reads it with `node --env-file=.env server.mjs`.
+
+With Playwright:
 
 ```ts
 // playwright.config.ts
@@ -451,8 +483,8 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
     },
     {
-      // The backend, without the Shopify CLI (the React Router template: `npx react-router dev`).
-      command: "npm run start",
+      // The backend, without the Shopify CLI: the React Router template's dev server.
+      command: "npx react-router dev",
       url: "http://localhost:3000/",
       env: { PORT: "3000", LSF_URL: "http://127.0.0.1:9292", SHOPIFY_APP_URL: "http://localhost:3000" },
       reuseExistingServer: !process.env.CI,
@@ -463,7 +495,8 @@ export default defineConfig({
 
 The backend's `url` must answer without a session token: Playwright waits for a `2xx`, `3xx` or
 `400` to `403`. Without Playwright, start both, then wait until `GET /__lsf/status` answers (or
-`ready:` is printed on stderr) and the backend's port does.
+`ready:` is printed on stderr) and the backend's port does: with pytest, a fixture does it
+([in Python](#in-python)).
 
 ### A shop per test
 
@@ -479,7 +512,12 @@ export const BACKEND = "http://localhost:3000";
 const BROWSER = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
 
 export async function lsf(method, path, body) {
-  const answer = await fetch(LSF + path, { method, body: body && JSON.stringify(body) });
+  const answer = await fetch(LSF + path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body && JSON.stringify(body),
+  });
+  if (!answer.ok) throw new Error(`${method} ${path}: ${answer.status} ${await answer.text()}`);
   return answer.json();
 }
 
@@ -496,7 +534,8 @@ export async function callBackend(shop, method, path, body) {
   });
 }
 
-// The deliveries that match the filters, once `wait` of them are done.
+// The deliveries that match the filters, once `wait` of them are done. Throws on a `408`
+// (fewer were done than `wait` asks) and on a `422` (a wait that could only time out).
 export const webhooks = (filters) => lsf("GET", `/__lsf/webhooks?${new URLSearchParams(filters)}`);
 ```
 
@@ -537,7 +576,9 @@ counts only the deliveries that match every filter. Filter it:
 - `shop=`: a test shop, by its name (`test-1`, in any case) or its domain.
 - `resource=<gid>`: the deliveries about one record (the order a test placed, the product it
   made), as each delivery's `resource` gives it. Shops seeded from the same data give the same
-  ids, so two test shops can make the same product GID: give `shop=` with it.
+  ids, so two test shops can make the same product GID: give `shop=` with it. Ids come back
+  after a reset too: after `DELETE /__lsf/admin`, the next order has the id of the run before's,
+  whose delivery the log still has. Give `since=` with it, or reset the log as well.
 - `since=<id>`: the deliveries after that one. Every answer has `last`, the newest id of the
   log (`0` before the first). Ids are never given twice, even after a `DELETE`: read `last`
   before the action, and `since=<last>` waits for what the action sends only. For the second
@@ -545,9 +586,16 @@ counts only the deliveries that match every filter. Filter it:
   second.
 
 A delivery the backend fails is retried after 1, 5 and 15 seconds, and stays `pending` until its
-last attempt, about 21 seconds on. `wait` gives up after `timeout` (10 seconds by default) with a
-`408` and the same body: to see a failure's last attempt, give `timeout=25000`. Then assert
-`state`, and `attempts.at(-1).status` for what the backend answered.
+last attempt, about 21 seconds on, its `reason` the last failure (`answered 401: lsf signed it
+with …` names the secret). `wait` gives up after `timeout` (10 seconds by default) with a `408`
+and the same body: to see a failure's last attempt, give `timeout=25000`. Then assert `state`,
+and `attempts.at(-1).status` for what the backend answered.
+
+A wait that could only time out answers `422` at once, when the log has nothing that matches: a
+`shop=` lsf does not have (`there is no shop nosuchshop.myshopify.com: …`), or a topic no
+subscription of the app covers on that shop, in `shopify.app.toml` or through the Admin API
+(``no subscription to `inventory_items/create` for test-1.myshopify.com, …``). Such a topic is
+never logged: subscribe to it to wait on it.
 
 ### Place an order
 
@@ -561,7 +609,9 @@ const headers = { "x-lsf-session": `order-${crypto.randomUUID()}`, "Content-Type
 const buyer = (method, path, body) =>
   fetch(LSF + path, { method, headers, body: body && JSON.stringify(body), redirect: "manual" });
 
-await buyer("PUT", "/__lsf/session", { cart: { items: [{ variant: "TEE-BLK-S", quantity: 1 }] } });
+const { last: since } = await webhooks({}); // the newest delivery before this order
+const session = await buyer("PUT", "/__lsf/session", { cart: { items: [{ variant: "TEE-BLK-S", quantity: 1 }] } });
+if (!session.ok) throw new Error(JSON.stringify((await session.json()).diagnostics)); // a SKU of your data?
 const checkout = (await buyer("GET", "/checkout")).headers.get("location"); // /checkouts/cn/<token>
 await buyer("POST", `${checkout}/update`, {
   operations: [
@@ -570,11 +620,15 @@ await buyer("POST", `${checkout}/update`, {
     { type: "paymentMethod", handle: "card" },
   ],
 });
-const { order } = await (await buyer("POST", `${checkout}/complete`)).json(); // { id, number, name }
-const { deliveries } = await webhooks({ topic: "orders/create", resource: order.id, wait: 1 });
+const completed = await buyer("POST", `${checkout}/complete`);
+const { order, errors } = await completed.json(); // order: { id, number, name }
+if (!completed.ok) throw new Error(JSON.stringify(errors)); // what is missing, or the Function that failed
+const { deliveries } = await webhooks({ topic: "orders/create", resource: order.id, since, wait: 1 });
 ```
 
-- `TEE-BLK-S` is a SKU of the demo store; use one of your data.
+- `TEE-BLK-S` is a SKU of the demo store; use one of your data. A SKU the data lacks answers
+  `422`, and the `diagnostics` say so (`"MUG-RED" is neither the SKU of a variant nor the handle
+  of a product`, `did you mean "MUG-RST"?`).
 - `complete` needs an email, a payment method and, for a cart that ships, an address with a
   last name, a first line and a city. Otherwise it answers `422` with the state, whose `errors`
   say what is missing.
@@ -584,8 +638,10 @@ const { deliveries } = await webhooks({ topic: "orders/create", resource: order.
   data's (`#1004` in every session), while the Admin API gives the next number no order has
   (`#1004`, then `#1005`, …). So `complete` can answer `#1005` for a thank-you page that says
   `#1004`.
-- A Function of the app that fails blocks `complete`. A test that only needs an order serves the
-  Functions it needs and no other: `--extension <handle>`, repeated.
+- A Function of the app that fails blocks `complete`: its error is in `errors`. A test that
+  only needs an order serves the Functions it needs and no other (`--extension <handle>`,
+  repeated), or none: `--no-functions` serves the UI extensions and the Admin API, and runs no
+  Function.
 - The backend processes the order in the default shop: fulfilling it takes the scope
   `write_merchant_managed_fulfillment_orders` ([orders](admin-reference.md#orders-fulfillments-and-draft-orders)).
   An order in a test shop is one the test makes there with `orderCreate`.
@@ -619,8 +675,9 @@ store); `DELETE /__lsf/admin/shops/<shop>` deletes one. After the three, a run p
 orders, with the same ids, as the run before: a test can hard-code them.
 
 **A reset revokes the backend's tokens.** `DELETE /__lsf/admin`, and deleting a shop, revoke
-every token of the app on the shop, those the backend got by token exchange too, and send no
-`app/uninstalled`. The backend's session storage still holds the old token, which the Admin API
+every token the backend got by token exchange or OAuth, and send no `app/uninstalled`. After
+`DELETE /__lsf/admin`, the printed token, `shops[].token`, keeps working: the reset installs the
+app again with it. The backend's session storage still holds the old token, which the Admin API
 now answers `401` (its `X-Lsf-Reason` says why). Shopify's React Router package then deletes the
 session, so its next request exchanges a new token: only one call fails. Code that keeps its
 tokens itself fails until they are gone. So do one of these:
@@ -655,26 +712,78 @@ LSF_URL = os.environ.get("LSF_URL", "http://127.0.0.1:9292")
 
 def place_order(sku="TEE-BLK-S", email="buyer@example.com"):
     buyer = requests.Session()
-    buyer.put(LSF_URL + "/__lsf/session", json={"cart": {"items": [{"variant": sku, "quantity": 1}]}})
+    session = buyer.put(LSF_URL + "/__lsf/session", json={"cart": {"items": [{"variant": sku, "quantity": 1}]}})
+    if not session.ok:  # 422: a SKU of your data?
+        raise RuntimeError(session.json()["diagnostics"])
     checkout = LSF_URL + buyer.get(LSF_URL + "/checkout", allow_redirects=False).headers["location"]
     buyer.post(checkout + "/update", json={"operations": [
         {"type": "email", "value": email},
         {"type": "shippingAddress", "address": {"lastName": "Buyer", "address1": "1 Main St",
             "city": "New York", "countryCode": "US", "provinceCode": "NY", "zip": "10001"}},
         {"type": "paymentMethod", "handle": "card"},
-    ]}).raise_for_status()
-    answer = buyer.post(checkout + "/complete")
-    answer.raise_for_status()
-    return answer.json()["order"]  # id, number, name
+    ]})
+    completed = buyer.post(checkout + "/complete")
+    if not completed.ok:  # 422: what is missing, or the Function that failed
+        raise RuntimeError(completed.json()["errors"])
+    return completed.json()["order"]  # id, number, name
 
-def wait_for_webhooks(**filters):  # topic=, shop=, resource=, since=, wait=, timeout=
+def webhooks(**filters):  # topic=, shop=, resource=, since=, wait=, timeout=
     answer = requests.get(LSF_URL + "/__lsf/webhooks", params=filters)
-    answer.raise_for_status()  # 408: fewer are done than `wait` asks
-    return answer.json()["deliveries"]
+    if not answer.ok:  # 408: fewer are done than `wait` asks; 422: it could only time out
+        raise RuntimeError(f"{answer.status_code} {answer.text}")
+    return answer.json()
 
+since = webhooks()["last"]  # the newest delivery before the order
 order = place_order()
-[delivery] = wait_for_webhooks(topic="orders/create", resource=order["id"], wait=1)
+[delivery] = webhooks(topic="orders/create", resource=order["id"], since=since, wait=1)["deliveries"]
 assert delivery["state"] == "delivered"
+```
+
+The storefront does not show what the backend did to the order ([orders do not
+sync](admin-reference.md#orders-fulfillments-and-draft-orders)): read it back with the Admin
+API. Here, after a backend that fulfills the order before it answers its `orders/create`:
+
+```python
+token = requests.get(LSF_URL + "/__lsf/admin").json()["shops"][0]["token"]
+answer = requests.post(LSF_URL + "/admin/api/2026-10/graphql.json", headers={"X-Shopify-Access-Token": token}, json={
+    "query": "query($id: ID!) { order(id: $id) { displayFulfillmentStatus fulfillments { trackingInfo { number } } } }",
+    "variables": {"id": order["id"]},
+})
+assert answer.json()["data"]["order"]["displayFulfillmentStatus"] == "FULFILLED"
+```
+
+With pytest, a fixture starts lsf once for the run, and resets it before each test ([reset
+between runs](#reset-between-runs)). Start the backend the same way, on the port of
+`--app-url`:
+
+```python
+# tests/conftest.py: lsf for the whole run, and a clean state for each test.
+import subprocess, time, requests, pytest
+
+LSF_URL = "http://127.0.0.1:9292"
+
+@pytest.fixture(scope="session")
+def lsf():
+    server = subprocess.Popen(["npx", "local-storefront", "app", "dev", "--app", ".", "--port", "9292",
+                               "--app-url", "http://localhost:3000", "--static", "--quiet"])
+    for _ in range(100):
+        try:
+            if requests.get(LSF_URL + "/__lsf/status").ok:
+                break
+        except requests.ConnectionError:
+            pass
+        time.sleep(0.1)
+    else:
+        server.terminate()
+        raise RuntimeError("lsf did not start: its lines above say why")
+    yield LSF_URL
+    server.terminate()
+    server.wait()
+
+@pytest.fixture(autouse=True)
+def clean(lsf):
+    for path in ("/__lsf/admin", "/__lsf/webhooks", "/__lsf/sessions"):
+        requests.delete(lsf + path).raise_for_status()
 ```
 
 ## App proxy
