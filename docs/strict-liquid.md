@@ -25,9 +25,9 @@ snippets/card.liquid:1: Shopify's strict Liquid parser rejects this {% render %}
 snippets/card.liquid:8: Shopify's strict Liquid parser rejects this {% when %}: Expected end_of_string but found id
   was: 'collection' and collection.handle
   fix: 'collection'
-2 file(s) checked, 2 problem(s)
+2 files checked, 2 problems
 2 of them can be fixed: run again with `--fix`
-1 of the fixes change the output, where the code now does what it says: review the diff
+1 of the fixes changes the output, where the code now does what it says: review the diff
 ```
 
 Each problem gives the message Shopify gives, the markup, and the fix. `changes the output`

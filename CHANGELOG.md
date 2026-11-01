@@ -174,6 +174,9 @@ the same data every run.
   `hint: did you mean "upcase"?`, in the text and the JSON of `check`.
 - **`app init`'s `discount-code` scenario** says that one Function "applies as a code
   discount".
+- **One is in the singular, everywhere lsf counts:** `1 Liquid error · 0 warnings` (`render`),
+  `wrote 1 file, kept 15 existing ones` (`init`, `app init`), `1 file formatted` (`fmt`),
+  `validate`, `check`, the banner, the store data's errors and the status page. No more `(s)`.
 
 ## 0.2.0 - 2026-10-30
 
