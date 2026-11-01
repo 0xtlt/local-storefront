@@ -688,7 +688,9 @@ fn apply_overlay(
     let Some(overlay) = checked(FileKind::Store, name, overlay, "", diagnostics) else {
         return;
     };
-    let input = match serde_json::from_value::<model::StoreInput>(overlay.clone()) {
+    // `shop` is merged from the JSON, field by field: only what it gives changes.
+    let shop_patch = overlay.get("shop").cloned();
+    let input = match serde_json::from_value::<model::StoreInput>(overlay) {
         Ok(input) => input,
         Err(error) => {
             diagnostics.error("invalid_value", name, "", error.to_string());
@@ -696,13 +698,13 @@ fn apply_overlay(
         }
     };
     let origin = |pointer: String| Origin::new(name, pointer);
-    if let Some(patch) = overlay.get("shop") {
+    if let Some(patch) = shop_patch {
         let mut shop = merged
             .shop
             .as_ref()
             .and_then(|shop| serde_json::to_value(&shop.value).ok())
             .unwrap_or(Json::Object(serde_json::Map::new()));
-        merge_json(&mut shop, patch);
+        merge_json(&mut shop, &patch);
         if let Ok(value) = serde_json::from_value::<model::ShopInput>(shop) {
             merged.shop = Some(Sourced {
                 value,
