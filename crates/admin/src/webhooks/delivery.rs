@@ -571,6 +571,10 @@ fn describe(error: &ureq::Error, url: &str, options: &DeliveryOptions) -> String
         )
     };
     match error {
+        Error::Timeout(ureq::Timeout::Connect) => format!(
+            "no connection within {} s: Shopify takes that for a failure (is the backend of the app listening on {url}?)",
+            options.connect_timeout.as_secs_f64()
+        ),
         Error::Timeout(_) => no_answer(),
         Error::Io(io) if timed_out(io.kind()) => no_answer(),
         Error::Io(io) if io.kind() == std::io::ErrorKind::ConnectionRefused => {
@@ -581,5 +585,20 @@ fn describe(error: &ureq::Error, url: &str, options: &DeliveryOptions) -> String
         }
         Error::HostNotFound => format!("the host of {url} was not found"),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_timeout_says_which_one_fired() {
+        let options = DeliveryOptions::default();
+        let url = "http://localhost:3000/webhooks";
+        let connect = describe(&ureq::Error::Timeout(ureq::Timeout::Connect), url, &options);
+        assert!(connect.starts_with("no connection within 1 s"), "{connect}");
+        let answer = describe(&ureq::Error::Timeout(ureq::Timeout::Global), url, &options);
+        assert!(answer.starts_with("no answer within 5 s"), "{answer}");
     }
 }

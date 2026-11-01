@@ -444,9 +444,13 @@ fn sum_set(amounts: impl Iterator<Item = Option<(i128, Value)>>, currency: &Valu
     if code.is_null() {
         code = currency.clone();
     }
-    let sign = if total < 0 { "-" } else { "" };
-    let amount = format!("{sign}{}.{:02}", total.abs() / 100, total.abs() % 100);
-    amount_set(&json!(amount), &code)
+    amount_set(&json!(decimal(total)), &code)
+}
+
+/// Cents as a decimal amount: `-150` is `-1.50`.
+fn decimal(cents: i128) -> String {
+    let sign = if cents < 0 { "-" } else { "" };
+    format!("{sign}{}.{:02}", cents.abs() / 100, cents.abs() % 100)
 }
 
 /// `taxLines` as REST writes them.
@@ -597,7 +601,7 @@ fn discount_codes(
                 };
             json!({
                 "code": application.get("code").cloned().unwrap_or(Value::Null),
-                "amount": format!("{}.{:02}", total / 100, total % 100),
+                "amount": decimal(total),
                 "type": kind,
             })
         })
@@ -1360,6 +1364,9 @@ mod tests {
         assert_eq!(cents(&json!("-5.5")), Some(-550));
         assert_eq!(cents(&json!(12.5)), Some(1250));
         assert_eq!(cents(&json!("x")), None);
+        assert_eq!(decimal(-150), "-1.50");
+        assert_eq!(decimal(-5), "-0.05");
+        assert_eq!(decimal(1999), "19.99");
         let total = sum_set(
             [Some((1999, json!("EUR"))), None, Some((1, json!("EUR")))].into_iter(),
             &Value::Null,
