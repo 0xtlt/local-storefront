@@ -481,10 +481,7 @@ fn checkout_fields(state: &ShopState, id: &str, checkout: &Checkout<'_>) -> Reco
             }))
         })
         .collect();
-    let rate = state
-        .setting("taxRateBps")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
+    let rate = super::orders::tax_rate_setting(state);
     let mut fields = value::object(json!({
         "updatedAt": state.timestamp(),
         "lineItems": lines,

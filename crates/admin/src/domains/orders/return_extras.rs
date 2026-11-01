@@ -37,9 +37,9 @@
 
 use serde_json::{Value, json};
 
+use super::LineDraft;
 use super::model::{self, array, field_cents, int, text};
 use super::refunds::{self, RefundLine, RefundSpec};
-use super::{LineDraft, TAX_RATE_SETTING};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::outbox::{self, Entry};
@@ -227,27 +227,15 @@ pub fn shipping_fee(state: &mut ShopState, input: &Value) -> Option<Value> {
     }))
 }
 
-/// The order's tax rate for exchanged items, in basis points: the store data's, else what the
-/// order's tax is of its subtotal. None when the order's prices include their taxes.
+/// The order's tax rate for exchanged items, in basis points: its edits' rate, none when the
+/// order's prices include their taxes or it is tax exempt.
 fn tax_rate(state: &ShopState, order: &Record) -> i64 {
     if order.get("taxesIncluded").and_then(Value::as_bool) == Some(true)
         || order.get("taxExempt").and_then(Value::as_bool) == Some(true)
     {
         return 0;
     }
-    let setting = state
-        .setting(TAX_RATE_SETTING)
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-    if setting > 0 {
-        return setting;
-    }
-    let subtotal = field_cents(order, "subtotalPriceSet");
-    if subtotal <= 0 {
-        0
-    } else {
-        model::share(field_cents(order, "totalTaxSet"), 10_000, subtotal)
-    }
+    super::edits::tax_rate_bps(state, order)
 }
 
 /// Processes units of a return's exchange line items: each becomes a line item of the order,

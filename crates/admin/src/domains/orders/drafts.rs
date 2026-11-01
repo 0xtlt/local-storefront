@@ -34,7 +34,6 @@
 use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
-use super::TAX_RATE_SETTING;
 use super::model::{self, NewTransaction, array, field_cents, int, text};
 use super::{FinancialStatus, FulfillmentState, LineDraft, OrderDraft, ShippingDraft};
 use crate::domains::catalog::{gids, tags_of};
@@ -304,10 +303,7 @@ fn totals(
     let shipping_price = shipping.map_or(0, |line| {
         field_cents(line.as_object().unwrap_or(&Map::new()), "originalPriceSet")
     });
-    let rate = state
-        .setting(TAX_RATE_SETTING)
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
+    let rate = super::tax_rate_setting(state);
     let included = state
         .shop()
         .and_then(|shop| shop.get("taxesIncluded"))

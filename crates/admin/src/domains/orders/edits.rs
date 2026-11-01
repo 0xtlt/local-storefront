@@ -31,9 +31,9 @@
 
 use serde_json::{Map, Value, json};
 
+use super::LineDraft;
 use super::model::{self, field_cents, int, text};
 use super::refunds::{self, RefundLine, RefundSpec};
-use super::{LineDraft, TAX_RATE_SETTING};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
@@ -230,11 +230,8 @@ pub(super) fn change_line(
 
 /// The tax rate of an order's edits, in basis points: the store data's, else what the order's
 /// tax is of its subtotal.
-fn tax_rate_bps(state: &ShopState, order: &Record) -> i64 {
-    let setting = state
-        .setting(TAX_RATE_SETTING)
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
+pub(super) fn tax_rate_bps(state: &ShopState, order: &Record) -> i64 {
+    let setting = super::tax_rate_setting(state);
     if setting > 0 {
         return setting;
     }

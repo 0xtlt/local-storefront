@@ -233,6 +233,14 @@ fn derived(type_name: &str, kind: &str, order: &str, key: &str) -> String {
 /// draft orders compute their taxes with it.
 pub const TAX_RATE_SETTING: &str = "taxRateBps";
 
+/// The checkout's tax rate ([`TAX_RATE_SETTING`]), in basis points: 0 without one.
+pub fn tax_rate_setting(state: &ShopState) -> i64 {
+    state
+        .setting(TAX_RATE_SETTING)
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+}
+
 /// The setting of the shop that holds the checkout's delivery rates (`checkout.shipping_rates`:
 /// `[{handle, title, price (cents), description, kind}]`): what a draft order may be delivered
 /// by.
