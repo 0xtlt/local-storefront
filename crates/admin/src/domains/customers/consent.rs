@@ -167,11 +167,7 @@ fn update(
     ctx: &FieldContext<'_>,
     channel: Channel,
 ) -> Result<Value, FieldError> {
-    let input = ctx
-        .arg("input")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = super::object_arg(ctx, "input");
     let customer = input
         .get("customerId")
         .and_then(Value::as_str)

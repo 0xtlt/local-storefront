@@ -23,9 +23,10 @@
 
 use serde_json::{Map, Value, json};
 
-use super::companies::{not_found, record_arg, with_company};
+use super::companies::{ids_arg, not_found, record_arg, with_company};
 use super::customer::{check_fields, create_customer, update_customer};
-use super::{field_path, gids_of, given_text};
+use super::{field_path, gids_of, given_text, object_arg};
+use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, gid, parse_gid, value};
@@ -88,7 +89,7 @@ fn contact_id(state: &mut ShopState, customer: &str) -> String {
 
 /// Makes `customer` a contact of `company`, and emits `company_contacts/create`. Returns the
 /// contact's GID.
-pub fn link_customer(
+fn link_customer(
     state: &mut ShopState,
     company: &str,
     customer: &str,
@@ -182,7 +183,7 @@ pub fn assign_role(state: &mut ShopState, contact: &str, role: &str, location: &
 
 /// Takes an assignment out of its contact's and its location's `roleAssignments`; the record
 /// stays.
-pub fn unlink_assignment(state: &mut ShopState, assignment: &str) {
+fn unlink_assignment(state: &mut ShopState, assignment: &str) {
     let Some(record) = state.get(assignment).cloned() else {
         return;
     };
@@ -194,6 +195,15 @@ pub fn unlink_assignment(state: &mut ShopState, assignment: &str) {
         {
             items.retain(|item| item.as_str() != Some(assignment));
         }
+    }
+}
+
+/// Removes the role assignments of a contact or a location, from their other owner too. No
+/// event.
+pub fn remove_assignments(state: &mut ShopState, owner: &Record) {
+    for assignment in gids_of(Some(owner), "roleAssignments") {
+        unlink_assignment(state, &assignment);
+        state.remove(&assignment);
     }
 }
 
@@ -215,10 +225,7 @@ pub fn delete_contact(state: &mut ShopState, contact: &str) {
         return;
     };
     let record = state.get(contact).cloned().unwrap_or_default();
-    for assignment in gids_of(Some(&record), "roleAssignments") {
-        unlink_assignment(state, &assignment);
-        state.remove(&assignment);
-    }
+    remove_assignments(state, &record);
     let text = |field: &str| {
         record
             .get(field)
@@ -261,7 +268,6 @@ fn company_of(state: &ShopState, contact: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// `companyContactCreate`.
 fn contact_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -271,11 +277,7 @@ fn contact_create(
         Ok(company) => company,
         Err(error) => return Ok(payload(json!({"companyContact": null}), &[error])),
     };
-    let input = ctx
-        .arg("input")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = object_arg(ctx, "input");
     let mut errors = Vec::new();
     check_contact(state, &input, &["input"], None, true, &mut errors);
     if !errors.is_empty() {
@@ -295,11 +297,7 @@ fn contact_update(
         Ok(contact) => contact,
         Err(error) => return Ok(payload(json!({"companyContact": null}), &[error])),
     };
-    let input = ctx
-        .arg("input")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = object_arg(ctx, "input");
     let mut errors = Vec::new();
     check_contact(
         state,
@@ -337,7 +335,6 @@ fn contact_update(
     Ok(payload(json!({"companyContact": contact}), &[]))
 }
 
-/// `companyContactDelete`.
 fn contact_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -363,26 +360,18 @@ fn remove_from_company(
     Ok(payload(json!({"removedCompanyContactId": contact}), &[]))
 }
 
-/// `companyContactsDelete`.
 fn contacts_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let state = mutation.state();
-    let ids: Vec<String> = ctx
-        .arg("companyContactIds")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
-    let errors: Vec<UserError> = ids
-        .iter()
-        .enumerate()
-        .filter(|(_, id)| state.type_of(id) != Some("CompanyContact"))
-        .map(|(index, _)| not_found(&["companyContactIds", &index.to_string()]))
-        .collect();
+    let mut errors = Vec::new();
+    let ids = ids_arg(
+        mutation.state(),
+        ctx,
+        "companyContactIds",
+        "CompanyContact",
+        &mut errors,
+    );
     if !errors.is_empty() {
         return Ok(payload(json!({"deletedCompanyContactIds": null}), &errors));
     }
@@ -393,7 +382,6 @@ fn contacts_delete(
     Ok(payload(json!({"deletedCompanyContactIds": ids}), &[]))
 }
 
-/// `companyAssignCustomerAsContact`.
 fn assign_customer_as_contact(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -422,7 +410,6 @@ fn assign_customer_as_contact(
     Ok(payload(json!({"companyContact": contact}), &[]))
 }
 
-/// `companyAssignMainContact`.
 fn assign_main_contact(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -452,7 +439,6 @@ fn assign_main_contact(
     Ok(payload(json!({"company": company}), &[]))
 }
 
-/// `companyRevokeMainContact`.
 fn revoke_main_contact(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -530,7 +516,6 @@ fn check_assignment(
     }
 }
 
-/// `companyContactAssignRole`.
 fn contact_assign_role(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -546,11 +531,7 @@ fn contact_assign_role(
         mutation.state(),
         (&contact, &role, &location),
         &[],
-        (
-            "companyContactId",
-            "companyContactRoleId",
-            "companyLocationId",
-        ),
+        ROLE_FIELDS,
         &[],
         &mut errors,
     );
@@ -567,14 +548,38 @@ fn contact_assign_role(
     ))
 }
 
-/// The items of a list argument, as objects.
-fn items(ctx: &FieldContext<'_>, name: &str) -> Vec<Map<String, Value>> {
-    ctx.arg(name)
+/// The input fields of an assignment's contact, role and location, which its errors name.
+const ROLE_FIELDS: (&str, &str, &str) = (
+    "companyContactId",
+    "companyContactRoleId",
+    "companyLocationId",
+);
+
+/// The `(contact, role, location)` of each item of `rolesToAssign`: the mutation's own contact
+/// or location when it has one, else the item's.
+fn roles_to_assign(
+    ctx: &FieldContext<'_>,
+    contact: Option<&str>,
+    location: Option<&str>,
+) -> Vec<(String, String, String)> {
+    let (contact_field, role_field, location_field) = ROLE_FIELDS;
+    ctx.arg("rolesToAssign")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(Value::as_object)
-        .cloned()
+        .map(|item| {
+            let field = |name: &str, own: Option<&str>| {
+                own.or_else(|| item.get(name).and_then(Value::as_str))
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            (
+                field(contact_field, contact),
+                field(role_field, None),
+                field(location_field, location),
+            )
+        })
         .collect()
 }
 
@@ -616,7 +621,6 @@ fn assign_all(
     Ok(payload(json!({"roleAssignments": made}), &[]))
 }
 
-/// `companyContactAssignRoles`.
 fn contact_assign_roles(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -629,35 +633,10 @@ fn contact_assign_roles(
         let error = not_found(&["companyContactId"]);
         return Ok(payload(json!({"roleAssignments": null}), &[error]));
     }
-    let field = |item: &Map<String, Value>, name: &str| {
-        item.get(name)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string()
-    };
-    let wanted = items(ctx, "rolesToAssign")
-        .iter()
-        .map(|item| {
-            (
-                contact.clone(),
-                field(item, "companyContactRoleId"),
-                field(item, "companyLocationId"),
-            )
-        })
-        .collect();
-    assign_all(
-        mutation,
-        wanted,
-        "rolesToAssign",
-        (
-            "companyContactId",
-            "companyContactRoleId",
-            "companyLocationId",
-        ),
-    )
+    let wanted = roles_to_assign(ctx, Some(&contact), None);
+    assign_all(mutation, wanted, "rolesToAssign", ROLE_FIELDS)
 }
 
-/// `companyLocationAssignRoles`.
 fn location_assign_roles(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -670,32 +649,8 @@ fn location_assign_roles(
         let error = not_found(&["companyLocationId"]);
         return Ok(payload(json!({"roleAssignments": null}), &[error]));
     }
-    let field = |item: &Map<String, Value>, name: &str| {
-        item.get(name)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string()
-    };
-    let wanted = items(ctx, "rolesToAssign")
-        .iter()
-        .map(|item| {
-            (
-                field(item, "companyContactId"),
-                field(item, "companyContactRoleId"),
-                location.clone(),
-            )
-        })
-        .collect();
-    assign_all(
-        mutation,
-        wanted,
-        "rolesToAssign",
-        (
-            "companyContactId",
-            "companyContactRoleId",
-            "companyLocationId",
-        ),
-    )
+    let wanted = roles_to_assign(ctx, None, Some(&location));
+    assign_all(mutation, wanted, "rolesToAssign", ROLE_FIELDS)
 }
 
 /// Revokes the assignments named, each checked to be one of `owner`'s (`roleAssignments`): all
@@ -742,18 +697,6 @@ fn revoke_all(
     ))
 }
 
-/// The ids of a list argument.
-fn ids(ctx: &FieldContext<'_>, name: &str) -> Vec<String> {
-    ctx.arg(name)
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect()
-}
-
-/// `companyContactRevokeRole`.
 fn contact_revoke_role(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -790,12 +733,11 @@ fn contact_revoke_roles(
     let assignments = if ctx.arg("revokeAll").and_then(Value::as_bool) == Some(true) {
         gids_of(mutation.state().get(&contact), "roleAssignments")
     } else {
-        ids(ctx, "roleAssignmentIds")
+        gids(ctx.arg("roleAssignmentIds"))
     };
     revoke_all(mutation, &contact, assignments, "roleAssignmentIds", false)
 }
 
-/// `companyLocationRevokeRoles`.
 fn location_revoke_roles(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -809,6 +751,6 @@ fn location_revoke_roles(
         Ok(location) => location,
         Err(error) => return Ok(payload(json!({"revokedRoleAssignmentIds": null}), &[error])),
     };
-    let assignments = ids(ctx, "rolesToRevoke");
+    let assignments = gids(ctx.arg("rolesToRevoke"));
     revoke_all(mutation, &location, assignments, "rolesToRevoke", false)
 }

@@ -42,7 +42,10 @@ use serde_json::{Map, Value, json};
 use super::addresses::replace_addresses;
 use super::consent::{Channel, consent_of, missing_contact};
 use super::metafields;
-use super::{contact_fields, gids_of, given_text, primary_locale, refresh_customer};
+use super::{
+    contact_fields, exemptions_changed, gids_of, given_text, object_arg, primary_locale,
+    refresh_customer,
+};
 use crate::domains::catalog::tags_of;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
@@ -78,7 +81,7 @@ pub fn is_email(email: &str) -> bool {
 
 /// A phone as lsf keeps it: its digits, after a `+` when it had one, without separators; `None`
 /// when it is not a phone number (fewer than 7 or more than 15 digits, letters).
-pub fn normalized_phone(phone: &str) -> Option<String> {
+fn normalized_phone(phone: &str) -> Option<String> {
     let trimmed = phone.trim();
     let plus = trimmed.starts_with('+');
     let rest = trimmed.trim_start_matches('+');
@@ -122,11 +125,6 @@ fn holder<'s>(
     })
 }
 
-/// Whether a customer other than `except` has `value` as its `field`.
-fn taken(state: &ShopState, field: &str, value: &str, except: Option<&str>) -> bool {
-    holder(state, field, value, except).is_some()
-}
-
 /// An error, with the code the payload's error type has (`CustomerSetUserError`), which the
 /// others ignore.
 fn error(field: &[&str], message: &str, code: &str) -> UserError {
@@ -155,14 +153,14 @@ fn check(
     if let Some(Some(email)) = &email {
         if !is_email(email) {
             errors.push(error(&["email"], "Email is invalid", "INVALID"));
-        } else if taken(state, "email", email, existing) {
+        } else if holder(state, "email", email, existing).is_some() {
             errors.push(error(&["email"], "Email has already been taken", "TAKEN"));
         }
     }
     let phone = given_text(input, "phone").map(|phone| match phone {
         Some(given) => match normalized_phone(&given) {
             Some(phone) => {
-                if taken(state, "phone", &phone, existing) {
+                if holder(state, "phone", &phone, existing).is_some() {
                     errors.push(error(&["phone"], "Phone has already been taken", "TAKEN"));
                 }
                 Some(phone)
@@ -411,20 +409,11 @@ pub(super) fn update_customer(state: &mut ShopState, customer: &str, input: &Map
     update(state, customer, input, &checked);
 }
 
-/// `input` of a customer mutation.
-fn input_of(ctx: &FieldContext<'_>) -> Map<String, Value> {
-    ctx.arg("input")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
-}
-
-/// `customerCreate`.
 fn customer_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = input_of(ctx);
+    let input = object_arg(ctx, "input");
     note_ignored(mutation, "customerCreate", &input);
     let mut errors = Vec::new();
     let checked = check(mutation.state(), &input, None, &mut errors);
@@ -435,12 +424,11 @@ fn customer_create(
     Ok(payload(json!({"customer": customer}), &[]))
 }
 
-/// `customerUpdate`.
 fn customer_update(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = input_of(ctx);
+    let input = object_arg(ctx, "input");
     note_ignored(mutation, "customerUpdate", &input);
     let state = mutation.state();
     let id = input.get("id").and_then(Value::as_str).unwrap_or_default();
@@ -483,15 +471,10 @@ fn by_custom_id(state: &ShopState, custom: &Map<String, Value>) -> Option<String
     })
 }
 
-/// `customerSet`.
 fn customer_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let mut input = input_of(ctx);
+    let mut input = object_arg(ctx, "input");
     note_ignored(mutation, "customerSet", &input);
-    let identifier = ctx
-        .arg("identifier")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let identifier = object_arg(ctx, "identifier");
     let state = mutation.state();
     let failed = |errors: Vec<UserError>| Ok(payload(json!({"customer": null}), &errors));
     // Not published: the codes are the payload's, the messages lsf's.
@@ -573,7 +556,6 @@ fn customer_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     Ok(payload(json!({"customer": customer}), &[]))
 }
 
-/// `customerDelete`.
 fn customer_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -629,7 +611,6 @@ fn enabled(state: &ShopState, customer: &str) -> bool {
         == Some("ENABLED")
 }
 
-/// `customerGenerateAccountActivationUrl`.
 fn generate_account_activation_url(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -658,7 +639,6 @@ fn generate_account_activation_url(
     Ok(payload(json!({"accountActivationUrl": url}), &[]))
 }
 
-/// `customerSendAccountInviteEmail`.
 fn send_account_invite_email(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -716,11 +696,7 @@ fn add_tax_exemptions(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     tax_exemptions(mutation, ctx, |current, given| {
-        for exemption in given {
-            if !current.contains(exemption) {
-                current.push(exemption.clone());
-            }
-        }
+        exemptions_changed(current, given, &[])
     })
 }
 
@@ -729,7 +705,7 @@ fn remove_tax_exemptions(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     tax_exemptions(mutation, ctx, |current, given| {
-        current.retain(|exemption| !given.contains(exemption));
+        exemptions_changed(current, &[], given)
     })
 }
 
@@ -737,9 +713,7 @@ fn replace_tax_exemptions(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    tax_exemptions(mutation, ctx, |current, given| {
-        *current = given.to_vec();
-    })
+    tax_exemptions(mutation, ctx, |_, given| json!(given))
 }
 
 /// `customerAddTaxExemptions`, `customerRemoveTaxExemptions`, `customerReplaceTaxExemptions`:
@@ -747,7 +721,7 @@ fn replace_tax_exemptions(
 fn tax_exemptions(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
-    change: fn(&mut Vec<Value>, &[Value]),
+    change: fn(Option<&Value>, &[Value]) -> Value,
 ) -> Result<Value, FieldError> {
     let customer = match customer_arg(mutation.state(), ctx) {
         Ok(customer) => customer,
@@ -760,13 +734,8 @@ fn tax_exemptions(
         .unwrap_or_default();
     let state = mutation.state_mut();
     if let Some(record) = state.get_mut(&customer) {
-        let mut current = record
-            .get("taxExemptions")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        change(&mut current, &given);
-        record.insert("taxExemptions".into(), json!(current));
+        let exemptions = change(record.get("taxExemptions"), &given);
+        record.insert("taxExemptions".into(), exemptions);
     }
     state.touch(&customer);
     state.emit("customers/update", &customer);

@@ -11,6 +11,7 @@
 
 use serde_json::Value;
 
+use super::addresses::addresses;
 use super::gids_of;
 use crate::graphql::Output;
 use crate::resolve::sort::SortValue;
@@ -165,16 +166,6 @@ pub fn register(registry: &mut Registry) {
         .field("Company", "contactCount", |r, _ctx, object| {
             Ok(Output::value(r.items_of(object, "contacts").len()))
         });
-}
-
-/// The addresses of a customer.
-fn addresses(customer: &Record) -> Vec<Value> {
-    customer
-        .get("addressesV2")
-        .or_else(|| customer.get("addresses"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
 }
 
 /// Dates written in RFC 3339, as search values.
