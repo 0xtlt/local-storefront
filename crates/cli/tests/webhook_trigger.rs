@@ -95,6 +95,7 @@ fn lsf(directory: &Path, args: &[&str]) -> Output {
         .env_remove("LSF_APP_URL")
         .env_remove("LSF_CLIENT_SECRET")
         .env_remove("SHOPIFY_API_SECRET")
+        .env_remove("LSF_COMMAND")
         .output()
         .unwrap()
 }
@@ -289,6 +290,38 @@ fn a_failed_delivery_exits_with_1() {
     assert_eq!(output.status.code(), Some(1), "{}", text(&output));
     assert!(
         text(&output).contains("failed: answered 500"),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn installed_with_npm_a_refused_delivery_names_the_command_to_give_the_secret_to() {
+    let (url, _) = backend(401);
+    let output = Command::new(env!("CARGO_BIN_EXE_lsf"))
+        .args([
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "app/uninstalled",
+            "--address",
+            &url,
+        ])
+        .current_dir(std::env::temp_dir())
+        .env_remove("LSF_APP")
+        .env_remove("LSF_APP_URL")
+        .env_remove("LSF_CLIENT_SECRET")
+        .env_remove("SHOPIFY_API_SECRET")
+        .env("LSF_COMMAND", "npx local-storefront")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains(
+            "its own: give npx local-storefront the backend's secret (--client-secret, or --app \
+             for the SHOPIFY_API_SECRET of its .env)"
+        ),
         "{}",
         text(&output)
     );

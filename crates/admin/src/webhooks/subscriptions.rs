@@ -232,7 +232,10 @@ impl AppUrls {
 pub fn off_machine(url: &str) -> String {
     off_machine_with(
         url,
-        "start lsf with --app-url http://localhost:<port> (your backend)",
+        &format!(
+            "start {} with --app-url http://localhost:<port> (your backend)",
+            lsf_core::util::command()
+        ),
     )
 }
 
