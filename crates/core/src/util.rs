@@ -127,7 +127,8 @@ pub fn closest_match<'a>(
     (distance <= threshold).then_some(candidate)
 }
 
-fn edit_distance(a: &str, b: &str) -> usize {
+/// The Levenshtein distance between two strings, in characters.
+pub fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let mut previous: Vec<usize> = (0..=b.len()).collect();
