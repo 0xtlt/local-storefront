@@ -74,23 +74,39 @@ fn erasure_memo(customer: &str) -> String {
     format!("{ERASURE_PREFIX}{customer}")
 }
 
+fn is_pending(request: &Value) -> bool {
+    request.get("status").and_then(Value::as_str) == Some("PENDING")
+}
+
 /// Whether a customer's data erasure is pending.
 pub fn erasure_pending(state: &ShopState, customer: &str) -> bool {
-    state
-        .memo(&erasure_memo(customer))
-        .is_some_and(|request| request.get("status").and_then(Value::as_str) == Some("PENDING"))
+    state.memo(&erasure_memo(customer)).is_some_and(is_pending)
 }
 
 fn is_customer(state: &ShopState, id: &str) -> bool {
     state.type_of(id) == Some("Customer")
 }
 
+/// The answer of the erasure mutations for a `customerId` that is no customer's.
+fn no_such_customer() -> Value {
+    let error = UserError::new(&["customerId"], "Customer does not exist").code("DOES_NOT_EXIST");
+    payload(json!({"customerId": null}), &[error])
+}
+
+/// The email of a customer, `""` without one: who the outbox entries of an erasure went to.
+fn email_of(state: &ShopState, customer: &str) -> String {
+    state
+        .get(customer)
+        .and_then(|record| record.get("email"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
 fn request_data_erasure(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let customer = ctx.arg_str("customerId").unwrap_or_default().to_string();
     if !is_customer(m.state(), &customer) {
-        let error =
-            UserError::new(&["customerId"], "Customer does not exist").code("DOES_NOT_EXIST");
-        return Ok(payload(json!({"customerId": null}), &[error]));
+        return Ok(no_such_customer());
     }
     if erasure_pending(m.state(), &customer) {
         let error = UserError::new(
@@ -111,12 +127,7 @@ fn request_data_erasure(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
             "dueAt": crate::state::value::date_time(due),
         }),
     );
-    let email = state
-        .get(&customer)
-        .and_then(|record| record.get("email"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
+    let email = email_of(state, &customer);
     outbox::record(
         state,
         Entry::new(Channel::DataErasure, "data_erasure_requested")
@@ -135,9 +146,7 @@ fn request_data_erasure(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
 fn cancel_data_erasure(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let customer = ctx.arg_str("customerId").unwrap_or_default().to_string();
     if !is_customer(m.state(), &customer) {
-        let error =
-            UserError::new(&["customerId"], "Customer does not exist").code("DOES_NOT_EXIST");
-        return Ok(payload(json!({"customerId": null}), &[error]));
+        return Ok(no_such_customer());
     }
     if !erasure_pending(m.state(), &customer) {
         let error = UserError::new(
@@ -164,7 +173,7 @@ fn cancel_data_erasure(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
 pub fn due_erasures(state: &ShopState) -> Vec<String> {
     let pending = state
         .memos_with_prefix(ERASURE_PREFIX)
-        .any(|(_, request)| request.get("status").and_then(Value::as_str) == Some("PENDING"));
+        .any(|(_, request)| is_pending(request));
     if !pending {
         return Vec::new();
     }
@@ -174,7 +183,7 @@ pub fn due_erasures(state: &ShopState) -> Vec<String> {
         .filter(|customer| {
             state
                 .memo(&erasure_memo(customer))
-                .filter(|request| request.get("status").and_then(Value::as_str) == Some("PENDING"))
+                .filter(|request| is_pending(request))
                 .and_then(|request| request.get("dueAt").and_then(Value::as_str))
                 .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
                 .is_some_and(|at| at <= now)
@@ -194,12 +203,7 @@ pub fn process_due_erasures(state: &mut ShopState) -> Vec<Record> {
         if let Some(record) = state.get(customer) {
             erased.push(record.clone());
         }
-        let email = state
-            .get(customer)
-            .and_then(|record| record.get("email"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
+        let email = email_of(state, customer);
         if let Some(record) = state.get_mut(customer) {
             for field in ["firstName", "lastName", "email", "phone", "note"] {
                 record.insert(field.into(), Value::Null);
