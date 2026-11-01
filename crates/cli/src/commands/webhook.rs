@@ -375,6 +375,11 @@ mod tests {
             check_address("http://localhost:3000/webhooks", Some(DeliveryMethod::Http)).is_ok()
         );
         assert!(check_address("http://127.0.0.1:3000/webhooks", None).is_ok());
+        // RFC 6761 reserves the names under `localhost` for the loopback.
+        assert!(check_address("http://app.localhost:3000/webhooks", None).is_ok());
+        for address in ["http://0.0.0.0:3000/x", "http://[::ffff:127.0.0.1]:3000/x"] {
+            assert!(check_address(address, None).is_err(), "{address}");
+        }
         let remote = check_address("http://hooks.example.com/x", None).unwrap_err();
         assert!(remote.contains("https://"), "{remote}");
         let pubsub = check_address("pubsub://project:topic", None).unwrap_err();

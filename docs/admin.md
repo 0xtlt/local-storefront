@@ -350,10 +350,12 @@ an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/r
 - **Where they go**: a `uri` that is a path joins `--app-url` (else `application_url`); an
   absolute one on the origin of `application_url` (the tunnel of a `shopify app dev` that is not
   running) moves to `--app-url`; another goes where it says. **Webhooks stay on this machine**:
-  lsf sends one to the loopback (`localhost`, `127.0.0.0/8`, `::1`), to the scheme, host and
-  port of `--app-url`, or to an address given on purpose (`--address`, `address` of
-  `POST /__lsf/webhooks/trigger`). `*.localhost`, `0.0.0.0` and `::ffff:127.0.0.1` do not count
-  as this machine. Anything else (a production backend, a stale tunnel) is not sent, and
+  lsf sends one to the loopback (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), to the
+  scheme, host and port of `--app-url`, or to an address given on purpose (`--address`,
+  `address` of `POST /__lsf/webhooks/trigger`). A name under `localhost` (`app.localhost`) is
+  sent to the loopback whatever your system's resolver says, with its own `Host` header: the
+  name is reserved for the loopback (RFC 6761). `0.0.0.0` and `::ffff:127.0.0.1` do not count as
+  this machine. Anything else (a production backend, a stale tunnel) is not sent, and
   `GET /__lsf/webhooks` logs it `not_sent`, with the reason `lsf sends webhooks to this machine
   or to --app-url only: <url> is neither; start lsf with --app-url http://localhost:<port> (your
   backend)`. So give `--app-url`: without it, the subscriptions of `shopify.app.toml` point at

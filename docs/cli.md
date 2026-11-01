@@ -278,7 +278,7 @@ its own secret, and the backend answers `401`.
 | Option | Environment variable | What it does |
 |---|---|---|
 | `--topic <topic>` | | The topic, as Shopify writes it (`orders/create`) or as the GraphQL enum does (`ORDERS_CREATE`). Every topic of the API version (`--api-version`) and the compliance topics (`customers/data_request`, `customers/redact`, `shop/redact`). A topic close to an existing one is suggested. |
-| `--address <url>` | | Where to send it: `https://…`, or `http://localhost:<port>/<path>` (any address of this machine). |
+| `--address <url>` | | Where to send it: `https://…`, or `http://localhost:<port>/<path>` (any address of this machine: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`). |
 | `--api-version <version>` | | The version the payload is built in: `2026-10` (the default) or another lsf knows (`2027-01`). A topic the version does not have is refused. |
 | `--delivery-method <method>` | | `http`, `google-pub-sub` or `event-bridge`; without it, what the address says. lsf delivers over HTTP only: the other two are refused. |
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret of the signature. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else lsf's local secret, `lsf-local-client-secret`. |

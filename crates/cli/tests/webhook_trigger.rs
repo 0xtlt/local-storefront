@@ -425,3 +425,62 @@ api_version = "2026-10"
     assert_eq!(received.len(), 1);
     assert_eq!(received[0].0, "/webhooks/products");
 }
+
+/// A name under `localhost` is this machine (RFC 6761): sent without `--app-url`, to the
+/// loopback whatever the system resolver says, with its `Host`.
+#[test]
+fn a_name_under_localhost_is_this_machine() {
+    let (url, received) = backend(200);
+    let port = url.rsplit(':').next().unwrap();
+    let app = App::new(
+        "localhost-name",
+        &format!(
+            r#"
+client_id = "abc"
+application_url = "http://app.localhost:{port}"
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["products/update"]
+  uri = "/webhooks/products"
+"#
+        ),
+    );
+    let output = lsf(
+        &app.0,
+        &["app", "webhook", "trigger", "--topic", "products/update"],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let address = format!("http://hooks.localhost:{port}/direct");
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "products/update",
+            "--address",
+            &address,
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let received = received.lock().unwrap();
+    let seen: Vec<(&str, Option<&str>)> = received
+        .iter()
+        .map(|(path, headers, _)| (path.as_str(), header(headers, "host")))
+        .collect();
+    let (app_host, hooks_host) = (
+        format!("app.localhost:{port}"),
+        format!("hooks.localhost:{port}"),
+    );
+    assert_eq!(
+        seen,
+        [
+            ("/webhooks/products", Some(app_host.as_str())),
+            ("/direct", Some(hooks_host.as_str())),
+        ]
+    );
+}
