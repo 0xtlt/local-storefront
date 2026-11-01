@@ -409,7 +409,6 @@ fn capabilities_of(input: Option<&Value>, before: Option<&Value>) -> Value {
     })
 }
 
-/// `metaobjectDefinitionCreate`.
 fn definition_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -1280,7 +1279,6 @@ fn delete_entry(state: &mut ShopState, id: &str) {
     }
 }
 
-/// `metaobjectCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = ctx
         .arg("metaobject")
@@ -1320,7 +1318,6 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     Ok(answer(json!({"metaobject": id}), &[]))
 }
 
-/// `metaobjectUpdate`.
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = ctx
@@ -1429,7 +1426,6 @@ fn upsert(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     Ok(answer(json!({"metaobject": id}), &[]))
 }
 
-/// `metaobjectDelete`.
 fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     if mutation.state().type_of(&id) != Some("Metaobject") {

@@ -435,7 +435,6 @@ fn translation_locales(state: &ShopState) -> Vec<String> {
         .collect()
 }
 
-/// `translationsRegister`.
 fn register_translations(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -547,7 +546,6 @@ fn store(state: &mut ShopState, resource: &str, translations: Vec<Value>) {
     state.insert_as(key, record);
 }
 
-/// `translationsRemove`.
 fn remove_translations(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,

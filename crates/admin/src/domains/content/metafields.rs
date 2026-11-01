@@ -819,7 +819,6 @@ pub fn set_owned(state: &mut ShopState, owner: &str, checked: &[Checked]) {
     }
 }
 
-/// `metafieldsSet`.
 fn metafields_set(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,

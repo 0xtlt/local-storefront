@@ -378,7 +378,6 @@ fn check_name(input: &Map<String, Value>, required: bool, errors: &mut Vec<UserE
     }
 }
 
-/// `metafieldDefinitionCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = ctx
         .arg("definition")
@@ -677,7 +676,6 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     ))
 }
 
-/// `metafieldDefinitionDelete`.
 fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let state = mutation.state();
     let empty = json!({"deletedDefinitionId": null, "deletedDefinition": null});
@@ -760,7 +758,6 @@ fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     ))
 }
 
-/// `metafieldDefinitionPin`.
 fn pin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let state = mutation.state();
     let empty = json!({"pinnedDefinition": null});
@@ -800,7 +797,6 @@ fn pin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fie
     Ok(payload(json!({"pinnedDefinition": id}), &[]))
 }
 
-/// `metafieldDefinitionUnpin`.
 fn unpin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let state = mutation.state();
     let empty = json!({"unpinnedDefinition": null});

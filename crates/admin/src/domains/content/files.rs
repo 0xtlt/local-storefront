@@ -325,7 +325,6 @@ struct Planned {
     replaces: Option<String>,
 }
 
-/// `fileCreate`.
 fn file_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let inputs: Vec<Map<String, Value>> = ctx
         .arg("files")
@@ -521,7 +520,6 @@ fn set_reference(state: &mut ShopState, product: &str, file: &str, add: bool) ->
     true
 }
 
-/// `fileUpdate`.
 fn file_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let inputs: Vec<Map<String, Value>> = ctx
         .arg("files")
@@ -668,7 +666,6 @@ fn file_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     Ok(payload(json!({"files": ids}), &[]))
 }
 
-/// `fileDelete`.
 fn file_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let ids = gids(ctx.arg("fileIds"));
     let state = mutation.state();
