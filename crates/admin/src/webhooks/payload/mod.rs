@@ -886,6 +886,14 @@ fn grams(weight: &Value) -> Value {
     Value::from((value * factor).round() as i64)
 }
 
+/// The `measurement.weight` of an `InventoryItem`, `Null` without one.
+fn item_weight(item: &Map<String, Value>) -> Value {
+    field(item, "measurement")
+        .get("weight")
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
 /// A `WeightUnit` as REST abbreviates it.
 fn weight_unit(unit: &Value) -> Value {
     Value::String(

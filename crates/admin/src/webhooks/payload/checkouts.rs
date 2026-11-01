@@ -7,7 +7,8 @@ use serde_json::{Map, Value, json};
 
 use super::customers::{embedded, order_address};
 use super::{
-    Lookup, bag_amount, field, grams, millis, numeric, price, price_or_zero, resolve, text, time,
+    Lookup, bag_amount, field, grams, item_weight, millis, numeric, price, price_or_zero, resolve,
+    text, time,
 };
 
 /// A price in the cart's currency as a `MoneyBag`, as REST writes `*_set`.
@@ -121,12 +122,7 @@ fn checkout_line(
     };
     let variant = resolve(field(line, "variant"), lookup).unwrap_or_default();
     let weight = resolve(field(&variant, "inventoryItem"), lookup)
-        .and_then(|item| {
-            item.get("measurement")
-                .and_then(|m| m.get("weight"))
-                .cloned()
-        })
-        .unwrap_or(Value::Null);
+        .map_or(Value::Null, |item| item_weight(&item));
     let quantity = field(line, "quantity").as_i64().unwrap_or(1).max(1);
     let tax_price = crate::state::value::money(share);
     json!({

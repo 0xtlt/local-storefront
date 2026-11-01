@@ -11,7 +11,9 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{Lookup, field, items, lower, millis, object, records, resolve, text, time};
+use super::{
+    Lookup, field, item_weight, items, lower, millis, object, records, resolve, text, time,
+};
 
 /// `product_feeds/create`, `product_feeds/update`: the feed's GID, country, language and status.
 pub(super) fn feed(record: &Map<String, Value>) -> Value {
@@ -178,7 +180,7 @@ fn product_payload(
         .iter()
         .map(|variant| {
             let item = resolve(field(variant, "inventoryItem"), lookup).unwrap_or_default();
-            let weight = object(field(&object(field(&item, "measurement")), "weight"));
+            let weight = object(&item_weight(&item));
             let money = |name: &str| match field(variant, name) {
                 Value::String(amount) => json!({"amount": amount, "currencyCode": currency}),
                 Value::Object(money) => Value::Object(money.clone()),

@@ -7,8 +7,8 @@ use sha2::{Digest, Sha256};
 use super::customers::{embedded, order_address};
 use super::{
     Lookup, attributes, bag_amount, bag_currency, boolean, decimal_text, field, first, grams, id,
-    integer, items, lower, merge, money_amount, money_set, numeric, object, price, price_or_zero,
-    records, ref_gid, ref_id, resolve, strings, tags, text, text_or, time, zero_set,
+    integer, item_weight, items, lower, merge, money_amount, money_set, numeric, object, price,
+    price_or_zero, records, ref_gid, ref_id, resolve, strings, tags, text, text_or, time, zero_set,
 };
 
 /// The first of several `MoneyBag` fields that the record has: a `current…Set` and the original
@@ -340,21 +340,13 @@ impl LineParts {
             },
         };
         let product = field(line, "product");
-        let variant = resolve(field(line, "variant"), lookup);
-        let tracked = variant
+        let item = resolve(field(line, "variant"), lookup)
+            .and_then(|variant| resolve(field(&variant, "inventoryItem"), lookup));
+        let tracked = item
             .as_ref()
-            .and_then(|variant| resolve(field(variant, "inventoryItem"), lookup))
-            .and_then(|item| field(&item, "tracked").as_bool());
+            .and_then(|item| field(item, "tracked").as_bool());
         let weight = match field(line, "weight") {
-            Value::Null => variant
-                .as_ref()
-                .and_then(|variant| resolve(field(variant, "inventoryItem"), lookup))
-                .and_then(|item| {
-                    item.get("measurement")
-                        .and_then(|m| m.get("weight"))
-                        .cloned()
-                })
-                .unwrap_or(Value::Null),
+            Value::Null => item.as_ref().map_or(Value::Null, item_weight),
             weight => weight.clone(),
         };
         let unit = first(line, &["originalUnitPriceSet", "originalUnitPrice"]);
