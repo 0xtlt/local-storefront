@@ -40,7 +40,8 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, 
 use chrono_tz::Tz;
 use serde_json::{Map, Value, json};
 
-use super::model::{self, CONTRACT, Pointer, cycle_error, date_time, object, text};
+use super::contracts::{contract_arg, is_terminated};
+use super::model::{self, Pointer, cycle_error, date_time, object, text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -703,6 +704,27 @@ pub fn to_value(state: &ShopState, contract_gid: &str, contract: &Record, cycle:
     })
 }
 
+/// The topic of a cycle skipped or unskipped.
+fn skip_topic(skipped: bool) -> &'static str {
+    if skipped {
+        "subscription_billing_cycles/skip"
+    } else {
+        "subscription_billing_cycles/unskip"
+    }
+}
+
+/// The topic of an edit about to be made to a cycle: `/update` when the cycle has one already.
+pub fn edit_topic(state: &ShopState, contract: &str, index: i64) -> &'static str {
+    if state
+        .get(contract)
+        .is_some_and(|record| edits(record, index).is_some())
+    {
+        "subscription_billing_cycle_edits/update"
+    } else {
+        "subscription_billing_cycle_edits/create"
+    }
+}
+
 /// Emits an event about a cycle, with the cycle as it is now as what its payload is built from.
 pub fn emit_cycle(state: &mut ShopState, topic: &str, contract_gid: &str, index: i64) {
     let Some(contract) = state.get(contract_gid).cloned() else {
@@ -717,14 +739,6 @@ pub fn emit_cycle(state: &mut ShopState, topic: &str, contract_gid: &str, index:
 
 // ---- queries --------------------------------------------------------------------------------
 
-/// The contract of a `contractId`, when it is one of the shop.
-pub fn contract_of(state: &ShopState, id: &str) -> Option<Record> {
-    state
-        .get(id)
-        .filter(|_| state.type_of(id) == Some(CONTRACT))
-        .cloned()
-}
-
 /// `subscriptionBillingCycle(billingCycleInput:)`.
 fn billing_cycle(
     r: &ShopResolver<'_>,
@@ -733,7 +747,7 @@ fn billing_cycle(
 ) -> Result<Output<Obj>, FieldError> {
     let input = object(ctx.arg("billingCycleInput"));
     let id = text(&input, "contractId").unwrap_or_default();
-    let Some(contract) = contract_of(r.state(), id) else {
+    let Some(contract) = contract_arg(r.state(), id) else {
         return Ok(Output::Null);
     };
     match select(r.state(), &contract, &object(input.get("selector"))) {
@@ -751,7 +765,7 @@ fn billing_cycles(
     _object: &Obj,
 ) -> Result<Output<Obj>, FieldError> {
     let id = ctx.arg_str("contractId").unwrap_or_default();
-    let Some(contract) = contract_of(r.state(), id) else {
+    let Some(contract) = contract_arg(r.state(), id) else {
         return r.connection(ctx, Vec::new());
     };
     let state = r.state();
@@ -809,7 +823,7 @@ fn edited_contract_cycles(
         .and_then(Value::as_i64)
         .unwrap_or(0);
     let state = r.state();
-    let items = match contract_of(state, &contract_gid) {
+    let items = match contract_arg(state, &contract_gid) {
         Some(contract) => cycle(state, &contract, index)
             .map(|cycle| vec![to_value(state, &contract_gid, &contract, &cycle)])
             .unwrap_or_default(),
@@ -828,7 +842,7 @@ fn edited_contract_orders(
     let items: Vec<Value> = r
         .map_of(object)
         .and_then(|edited| {
-            let contract = contract_of(state, text(edited, "lsfContract")?)?;
+            let contract = contract_arg(state, text(edited, "lsfContract")?)?;
             let index = edited.get("lsfCycleIndex")?.as_i64()?;
             Some(
                 attempts(state, &contract, index)
@@ -857,13 +871,12 @@ fn input_cycle(
     field: &str,
 ) -> Result<(String, Record, Cycle), UserError> {
     let id = text(input, "contractId").unwrap_or_default().to_string();
-    let Some(contract) = contract_of(state, &id) else {
+    let Some(contract) = contract_arg(state, &id) else {
         // lsf's wording, as `BillingAttemptUserErrorCode.CONTRACT_NOT_FOUND`'s.
-        return Err(UserError::new(
+        return Err(model::invalid_error(
             &[field, "contractId"],
             "Subscription contract does not exist",
-        )
-        .code("INVALID"));
+        ));
     };
     match select(state, &contract, &object(input.get("selector"))) {
         Ok(cycle) => Ok((id, contract, cycle)),
@@ -894,28 +907,26 @@ fn skip(
         Ok(found) => found,
         Err(error) => return Ok(payload(json!({"billingCycle": null}), &[invalid(error)])),
     };
-    if model::TERMINATED.contains(&text(&contract, "status").unwrap_or_default()) {
+    if is_terminated(&contract) {
         return Ok(payload(
             json!({"billingCycle": null}),
-            &[UserError::new(
+            &[model::invalid_error(
                 &["billingCycleInput", "contractId"],
                 model::described(
                     "SubscriptionContractStatusUpdateErrorCode",
                     "CONTRACT_TERMINATED",
                 ),
-            )
-            .code("INVALID")],
+            )],
         ));
     }
     if is_billed(state, &contract, cycle.index) {
         // lsf's wording: a billed cycle is not skipped.
         return Ok(payload(
             json!({"billingCycle": null}),
-            &[UserError::new(
+            &[model::invalid_error(
                 &["billingCycleInput", "selector"],
                 "Billing cycle has already been billed",
-            )
-            .code("INVALID")],
+            )],
         ));
     }
     if has_incomplete_attempt(state, &contract, cycle.index) {
@@ -932,15 +943,10 @@ fn skip(
         if let Some(record) = state.get_mut(&id) {
             set_edit(record, cycle.index, "skipped", Some(json!(skipped)));
         }
-        let topic = if skipped {
-            "subscription_billing_cycles/skip"
-        } else {
-            "subscription_billing_cycles/unskip"
-        };
-        emit_cycle(state, topic, &id, cycle.index);
+        emit_cycle(state, skip_topic(skipped), &id, cycle.index);
     }
     let state = mutation.state();
-    let contract = contract_of(state, &id).unwrap_or_default();
+    let contract = contract_arg(state, &id).unwrap_or_default();
     Ok(payload(
         json!({"billingCycle": to_value(state, &id, &contract, &cycle)}),
         &[],
@@ -997,11 +1003,10 @@ fn schedule_edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     if is_billed(state, &contract, cycle.index) {
         return Ok(payload(
             json!({"billingCycle": null}),
-            &[UserError::new(
+            &[model::invalid_error(
                 &["billingCycleInput", "selector"],
                 "Billing cycle has already been billed",
-            )
-            .code("INVALID")],
+            )],
         ));
     }
     if has_incomplete_attempt(state, &contract, cycle.index) {
@@ -1013,7 +1018,7 @@ fn schedule_edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
             )],
         ));
     }
-    let was_edited = edits(&contract, cycle.index).is_some();
+    let edited_topic = edit_topic(state, &id, cycle.index);
     let was_skipped = is_skipped(&contract, cycle.index);
     let state = mutation.state_mut();
     if let Some(record) = state.get_mut(&id) {
@@ -1038,23 +1043,13 @@ fn schedule_edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     if let Some(skip) = skip
         && skip != was_skipped
     {
-        let topic = if skip {
-            "subscription_billing_cycles/skip"
-        } else {
-            "subscription_billing_cycles/unskip"
-        };
-        emit_cycle(state, topic, &id, cycle.index);
+        emit_cycle(state, skip_topic(skip), &id, cycle.index);
     }
     if date.is_some() {
-        let topic = if was_edited {
-            "subscription_billing_cycle_edits/update"
-        } else {
-            "subscription_billing_cycle_edits/create"
-        };
-        emit_cycle(state, topic, &id, cycle.index);
+        emit_cycle(state, edited_topic, &id, cycle.index);
     }
     let state = mutation.state();
-    let contract = contract_of(state, &id).unwrap_or_default();
+    let contract = contract_arg(state, &id).unwrap_or_default();
     Ok(payload(
         json!({"billingCycle": to_value(state, &id, &contract, &cycle)}),
         &[],
@@ -1070,7 +1065,7 @@ fn delete_edits(state: &mut ShopState, id: &str, indexes: &[i64]) -> Vec<Value> 
             clear_edits(record, *index);
         }
     }
-    let contract = contract_of(state, id).unwrap_or_default();
+    let contract = contract_arg(state, id).unwrap_or_default();
     indexes
         .iter()
         .filter_map(|index| cycle(state, &contract, *index))
@@ -1101,13 +1096,13 @@ fn edit_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
 fn edits_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("contractId").unwrap_or_default().to_string();
     let state = mutation.state();
-    let Some(contract) = contract_of(state, &id) else {
+    let Some(contract) = contract_arg(state, &id) else {
         return Ok(payload(
             json!({"billingCycles": null}),
-            &[
-                UserError::new(&["contractId"], "Subscription contract does not exist")
-                    .code("INVALID"),
-            ],
+            &[model::invalid_error(
+                &["contractId"],
+                "Subscription contract does not exist",
+            )],
         ));
     };
     let current = current(state, &contract).index;

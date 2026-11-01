@@ -21,7 +21,7 @@
 
 use serde_json::{Value, json};
 
-use super::{coded, input, is, strings, text};
+use super::{catalog_type, coded, input, is, strings, text};
 use crate::domains::catalog;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -48,12 +48,9 @@ fn catalog_type_of(state: &ShopState, publication: &str) -> &'static str {
         .get(publication)
         .and_then(|record| record.get("catalog"))
         .and_then(Value::as_str);
-    match catalog.and_then(|catalog| state.type_of(catalog)) {
-        Some("MarketCatalog") => "MARKET",
-        Some("CompanyLocationCatalog") => "COMPANY_LOCATION",
-        Some("AppCatalog") => "APP",
-        _ => "NONE",
-    }
+    catalog
+        .and_then(|catalog| state.type_of(catalog))
+        .map_or("NONE", catalog_type)
 }
 
 fn of_type(state: &ShopState, wanted: Option<&str>) -> Vec<Value> {

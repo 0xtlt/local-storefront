@@ -40,7 +40,9 @@ use std::collections::HashSet;
 
 use serde_json::{Map, Value, json};
 
-use super::{coded, input, is, market_currency, number, objects, shop_currency, strings, text};
+use super::{
+    Pointer, coded, input, is, market_currency, number, objects, shop_currency, strings, text,
+};
 use crate::domains::catalog::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -548,8 +550,8 @@ fn product_contextual_pricing(
         .map(|(_, p)| p.clone());
     let currency = min
         .as_ref()
-        .and_then(|pricing| pricing.pointer_currency())
-        .unwrap_or_else(|| shop_currency(state));
+        .and_then(|pricing| pricing.pointer_str("/price/currencyCode"))
+        .map_or_else(|| shop_currency(state), str::to_string);
     let price_of = |pricing: &Option<Record>| {
         pricing
             .as_ref()
@@ -568,19 +570,6 @@ fn product_contextual_pricing(
         "ProductContextualPricing",
         value,
     )))
-}
-
-trait PricingCurrency {
-    fn pointer_currency(&self) -> Option<String>;
-}
-
-impl PricingCurrency for Record {
-    fn pointer_currency(&self) -> Option<String> {
-        self.get("price")?
-            .get("currencyCode")?
-            .as_str()
-            .map(str::to_string)
-    }
 }
 
 // --- What the mutations share ---
@@ -608,7 +597,7 @@ fn refresh(state: &mut ShopState, list: &str) {
     }
 }
 
-/// A `MoneyInput` in cents, and whether it is in `currency`.
+/// A `MoneyInput` in cents, and its currency.
 fn money(input: &Map<String, Value>) -> Option<(i64, String)> {
     let cents = cents_of(input.get("amount"))?;
     let currency = input.get("currencyCode")?.as_str()?.to_string();

@@ -150,10 +150,11 @@ pub fn seed(seed: &mut Seed) {
     }
     // The backup region: the shop's country, else the first market's.
     let country = seed.store.shop.address.country_code.to_ascii_uppercase();
-    let backup = if regions_of_all(state).contains(&country) {
+    let regions = regions_of_all(state);
+    let backup = if regions.contains(&country) {
         country
     } else {
-        regions_of_all(state).into_iter().next().unwrap_or(country)
+        regions.into_iter().next().unwrap_or(country)
     };
     state.set_setting(BACKUP_REGION, json!(backup));
 }
@@ -350,12 +351,12 @@ pub fn region(state: &ShopState, code: &str) -> Value {
             market
                 .get("regions")
                 .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default()
+                .into_iter()
+                .flatten()
         })
         .find(|region| region.get("code").and_then(Value::as_str) == Some(code.as_str()))
     {
-        return known;
+        return known.clone();
     }
     let currency =
         reference::country_currency(&code).map_or_else(|| shop_currency(state), str::to_string);
@@ -414,6 +415,42 @@ fn is(state: &ShopState, key: &str, type_name: &str) -> bool {
     state.type_of(key) == Some(type_name)
 }
 
+/// The `CatalogType` of a catalog record type.
+fn catalog_type(type_name: &str) -> &'static str {
+    match type_name {
+        "MarketCatalog" => "MARKET",
+        "CompanyLocationCatalog" => "COMPANY_LOCATION",
+        "AppCatalog" => "APP",
+        _ => "NONE",
+    }
+}
+
+/// The GIDs of a list of an input that must be records of `type_name`, or the errors at `at`.
+fn records_input(
+    state: &ShopState,
+    ids: &[String],
+    type_name: &str,
+    at: &[&str],
+    message: &str,
+    code: &str,
+    errors: &mut Vec<UserError>,
+) -> Vec<String> {
+    let mut found = Vec::new();
+    for (index, id) in ids.iter().enumerate() {
+        if is(state, id, type_name) {
+            if !found.contains(id) {
+                found.push(id.clone());
+            }
+        } else {
+            let index = index.to_string();
+            let mut field: Vec<&str> = at.to_vec();
+            field.push(&index);
+            errors.push(coded(&field, message, code));
+        }
+    }
+    found
+}
+
 /// The record a catalog GID names: `Catalog/<n>` is the catalog of that number, whatever its
 /// type, as Shopify's examples name them.
 pub fn catalog_key(state: &ShopState, id: &str) -> Option<String> {
@@ -432,6 +469,12 @@ pub fn catalog_key(state: &ShopState, id: &str) -> Option<String> {
                 .find(|key| state.contains(key))
         })
         .flatten()
+}
+
+/// The error of a market that is not one.
+fn market_not_found(field: &str) -> UserError {
+    // lsf's wording: shopify.dev publishes the code only.
+    coded(&[field], "Market does not exist", "MARKET_NOT_FOUND")
 }
 
 /// A user error with a code.

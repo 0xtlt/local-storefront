@@ -31,9 +31,9 @@ use lsf_core::util::handleize;
 use serde_json::{Map, Value, json};
 
 use super::{
-    BACKUP_REGION, Pointer, coded, input, is, is_active, market_currency, market_of_country,
-    objects, price_inclusions, region, region_gid, regions_of, shop_currency, strings, text,
-    web_presences,
+    BACKUP_REGION, Pointer, coded, input, is, is_active, market_currency, market_not_found,
+    market_of_country, objects, price_inclusions, records_input, region, region_gid, regions_of,
+    shop_currency, strings, text, web_presences,
 };
 use crate::domains::content::market_gid;
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -135,17 +135,16 @@ fn backup_region_value(state: &ShopState) -> Value {
     let code = state
         .setting(BACKUP_REGION)
         .and_then(Value::as_str)
-        .unwrap_or("US")
-        .to_string();
-    region(state, &code)
+        .unwrap_or("US");
+    region(state, code)
 }
 
 fn backup_region(
-    _r: &ShopResolver<'_>,
+    r: &ShopResolver<'_>,
     _ctx: &FieldContext<'_>,
     _object: &Obj,
 ) -> Result<Output<Obj>, FieldError> {
-    let Value::Object(region) = backup_region_value(_r.state()) else {
+    let Value::Object(region) = backup_region_value(r.state()) else {
         return Ok(Output::Null);
     };
     Ok(Output::Object(Obj::inline("MarketRegionCountry", region)))
@@ -303,12 +302,6 @@ fn market_arg(state: &ShopState, ctx: &FieldContext<'_>, name: &str) -> Option<S
     is(state, id, "Market").then(|| id.to_string())
 }
 
-/// The error of a market that is not one.
-fn market_not_found(field: &str) -> UserError {
-    // lsf's wording: shopify.dev publishes the code only.
-    coded(&[field], "Market does not exist", "MARKET_NOT_FOUND")
-}
-
 /// The regions of a `MarketConditionsRegionsInput` (`regions` of country codes, or
 /// `regionIds`), as inline `MarketRegionCountry`s, or the errors at `at`.
 fn regions_input(
@@ -368,10 +361,11 @@ fn known_region(state: &ShopState, id: &str) -> Option<Value> {
             market
                 .get("regions")
                 .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default()
+                .into_iter()
+                .flatten()
         })
         .find(|region| region.get("id").and_then(Value::as_str) == Some(id))
+        .cloned()
         .or_else(|| {
             lsf_core::store::reference::country_names()
                 .iter()
@@ -379,32 +373,6 @@ fn known_region(state: &ShopState, id: &str) -> Option<Value> {
                 .find(|code| region_gid(code) == id)
                 .map(|code| region(state, code))
         })
-}
-
-/// The GIDs of a list of an input that must be records of `type_name`, or the errors at `at`.
-fn records_input(
-    state: &ShopState,
-    ids: &[String],
-    type_name: &str,
-    at: &[&str],
-    message: &str,
-    code: &str,
-    errors: &mut Vec<UserError>,
-) -> Vec<String> {
-    let mut found = Vec::new();
-    for (index, id) in ids.iter().enumerate() {
-        if is(state, id, type_name) {
-            if !found.contains(id) {
-                found.push(id.clone());
-            }
-        } else {
-            let index = index.to_string();
-            let mut field: Vec<&str> = at.to_vec();
-            field.push(&index);
-            errors.push(coded(&field, message, code));
-        }
-    }
-    found
 }
 
 /// The `type` of a market of its conditions.
@@ -477,15 +445,8 @@ fn conditions_input(
 ) -> (Map<String, Value>, Vec<Value>) {
     let mut built = Map::new();
     let mut regions = Vec::new();
-    let path = |name: &str| -> Vec<String> {
-        at.iter()
-            .map(|part| part.to_string())
-            .chain([name.to_string()])
-            .collect()
-    };
     if let Some(Value::Object(condition)) = conditions.get("regionsCondition") {
-        let field = path("regionsCondition");
-        let field: Vec<&str> = field.iter().map(String::as_str).collect();
+        let field = [at, &["regionsCondition"]].concat();
         regions = regions_input(state, condition, &field, errors, notes);
         let level = if text(condition, "applicationLevel") == Some("ALL") {
             "ALL"
@@ -508,8 +469,7 @@ fn conditions_input(
         ("channelsCondition", "channels", "channelIds", "Channel"),
     ] {
         if let Some(Value::Object(condition)) = conditions.get(name) {
-            let field = path(name);
-            let field: Vec<&str> = field.iter().map(String::as_str).collect();
+            let field = [at, &[name]].concat();
             let value = records_condition(state, condition, list, ids, type_name, &field, errors);
             built.insert(name.into(), value);
         }
@@ -1342,8 +1302,10 @@ fn currency_settings_update(
 ) -> Result<Value, FieldError> {
     let state = mutation.state();
     let Some(market) = market_arg(state, ctx, "marketId") else {
-        let error = coded(&["marketId"], "Market does not exist", "MARKET_NOT_FOUND");
-        return Ok(payload(json!({"market": null}), &[error]));
+        return Ok(payload(
+            json!({"market": null}),
+            &[market_not_found("marketId")],
+        ));
     };
     let input = input(ctx, "input");
     let existing = state.get(&market).cloned().unwrap_or_default();
@@ -1431,11 +1393,7 @@ fn regions_create(
     let Some(market) = market_arg(state, ctx, "marketId") else {
         return Ok(payload(
             json!({"market": null}),
-            &[coded(
-                &["marketId"],
-                "Market does not exist",
-                "MARKET_NOT_FOUND",
-            )],
+            &[market_not_found("marketId")],
         ));
     };
     let regions: Vec<Value> = objects(ctx.arg("regions"))
