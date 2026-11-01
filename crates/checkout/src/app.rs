@@ -60,8 +60,6 @@ impl App {
 /// The parts of `shopify.app.toml` the Admin API and the webhooks of `lsf-admin` read.
 #[derive(Clone, Debug, Default)]
 pub struct AppConfig {
-    /// The configuration file that was read.
-    pub file: Option<PathBuf>,
     /// `application_url`: where Shopify loads the app, and the base of the relative webhook
     /// `uri`s.
     pub application_url: Option<String>,
@@ -71,8 +69,6 @@ pub struct AppConfig {
     pub scopes: Vec<String>,
     /// `[access_scopes] optional_scopes`.
     pub optional_scopes: Vec<String>,
-    /// `[access_scopes] use_legacy_install_flow`.
-    pub use_legacy_install_flow: bool,
     /// `[auth] redirect_urls`.
     pub redirect_urls: Vec<String>,
     /// `[webhooks] api_version`.
@@ -599,7 +595,7 @@ fn load_app_config(app: &mut App) {
     app.name = text("name");
     app.client_id = text("client_id");
     app.handle = text("handle");
-    app.config = app_config(&table, file);
+    app.config = app_config(&table);
 }
 
 /// The strings of an array, or of a comma-separated string (`scopes = "read_products,write_orders"`).
@@ -621,7 +617,7 @@ fn strings(value: Option<&toml::Value>) -> Vec<String> {
     }
 }
 
-fn app_config(table: &toml::Table, file: PathBuf) -> AppConfig {
+fn app_config(table: &toml::Table) -> AppConfig {
     let section = |name: &str| table.get(name).and_then(|value| value.as_table());
     let text_in = |table: Option<&toml::Table>, key: &str| {
         table
@@ -655,15 +651,10 @@ fn app_config(table: &toml::Table, file: PathBuf) -> AppConfig {
         prefix: text_in(Some(proxy), "prefix").unwrap_or_default(),
     });
     AppConfig {
-        file: Some(file),
         application_url: text_in(Some(table), "application_url"),
         embedded: table.get("embedded").and_then(|value| value.as_bool()),
         scopes: strings(access_scopes.and_then(|scopes| scopes.get("scopes"))),
         optional_scopes: strings(access_scopes.and_then(|scopes| scopes.get("optional_scopes"))),
-        use_legacy_install_flow: access_scopes
-            .and_then(|scopes| scopes.get("use_legacy_install_flow"))
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false),
         redirect_urls: strings(section("auth").and_then(|auth| auth.get("redirect_urls"))),
         webhooks_api_version: text_in(webhooks, "api_version"),
         webhook_subscriptions,
@@ -1198,7 +1189,6 @@ prefix = "apps"
             (proxy.subpath.as_str(), proxy.prefix.as_str()),
             ("tools", "apps")
         );
-        assert!(config.file.as_ref().unwrap().ends_with("shopify.app.toml"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
