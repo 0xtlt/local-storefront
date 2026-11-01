@@ -23,7 +23,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{coded, input, is, number, shop_locales, strings, text};
+use super::{coded, input, is, market_not_found, number, shop_locales, strings, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{ShopState, value};
@@ -568,8 +568,10 @@ fn market_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .filter(|market| is(state, market, "Market"))
         .map(str::to_string);
     let Some(market) = market else {
-        let error = coded(&["marketId"], "Market does not exist", "MARKET_NOT_FOUND");
-        return Ok(payload(json!({"market": null}), &[error]));
+        return Ok(payload(
+            json!({"market": null}),
+            &[market_not_found("marketId")],
+        ));
     };
     let input = input(ctx, "webPresence");
     match create_presence(mutation, &input, "webPresence", vec![market.clone()]) {

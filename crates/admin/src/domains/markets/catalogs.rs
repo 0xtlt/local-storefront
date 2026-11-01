@@ -26,7 +26,10 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{CATALOG_TYPES, catalog_key, coded, input, is, market_currency, strings, text};
+use super::{
+    CATALOG_TYPES, catalog_key, catalog_type, coded, input, is, market_currency, records_input,
+    strings, text,
+};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -75,16 +78,6 @@ pub fn register(registry: &mut Registry) {
                     .collect(),
             )
         });
-}
-
-/// The `CatalogType` of a catalog record type.
-fn catalog_type(type_name: &str) -> &'static str {
-    match type_name {
-        "MarketCatalog" => "MARKET",
-        "CompanyLocationCatalog" => "COMPANY_LOCATION",
-        "AppCatalog" => "APP",
-        _ => "NONE",
-    }
 }
 
 /// The catalogs of a `CatalogType` (every one without), in creation order.
@@ -289,40 +282,24 @@ fn context_of(
             None
         }
     };
-    let check = |ids: &[String], field: &str, type_name: &str, message: &str, code: &str| {
-        let mut found = Vec::new();
-        let mut problems = Vec::new();
-        for (index, id) in ids.iter().enumerate() {
-            if is(state, id, type_name) {
-                if !found.contains(id) {
-                    found.push(id.clone());
-                }
-            } else {
-                let index = index.to_string();
-                let mut path: Vec<&str> = at.to_vec();
-                path.push(field);
-                path.push(&index);
-                problems.push(coded(&path, message, code));
-            }
-        }
-        (found, problems)
-    };
-    let (markets, market_errors) = check(
+    let markets = records_input(
+        state,
         markets.as_deref().unwrap_or_default(),
-        "marketIds",
         "Market",
+        &[at, &["marketIds"]].concat(),
         "Market not found.",
         "MARKET_NOT_FOUND",
+        errors,
     );
-    let (locations, location_errors) = check(
+    let locations = records_input(
+        state,
         locations.as_deref().unwrap_or_default(),
-        "companyLocationIds",
         "CompanyLocation",
+        &[at, &["companyLocationIds"]].concat(),
         "Company location not found.",
         "COMPANY_LOCATION_NOT_FOUND",
+        errors,
     );
-    errors.extend(market_errors);
-    errors.extend(location_errors);
     (kind, markets, locations)
 }
 
