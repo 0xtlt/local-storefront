@@ -10,17 +10,9 @@
 use serde_json::{Value, json};
 
 use crate::domains::catalog::gids;
+use crate::domains::content::files::FILE_TYPES;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-
-/// The types a `File` is.
-const FILE_TYPES: [&str; 5] = [
-    "ExternalVideo",
-    "GenericFile",
-    "MediaImage",
-    "Model3d",
-    "Video",
-];
 
 pub fn register(registry: &mut Registry) {
     registry.mutation("fileAcknowledgeUpdateFailed", acknowledge_update_failed);

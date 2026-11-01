@@ -2459,7 +2459,7 @@ fn mentions(record: &Record, targets: &HashSet<&str>) -> bool {
 fn files_path(url: &str) -> Option<String> {
     let (_, rest) = url.split_once("/cdn/shop/files/")?;
     let path = rest.split(['?', '#']).next().unwrap_or(rest);
-    (!path.is_empty()).then(|| percent_decode(path))
+    (!path.is_empty()).then(|| lsf_core::urls::percent_decode(path))
 }
 
 /// The path in `files/` of a file record (`MediaImage`, `Video`, `GenericFile`).
@@ -2603,27 +2603,6 @@ fn strip_origin(url: &str, origin: Option<&str>) -> String {
         Some(path) if path.starts_with('/') => path.to_string(),
         _ => url.to_string(),
     }
-}
-
-/// `%XX` escapes decoded.
-fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%'
-            && let Some(byte) = text
-                .get(index + 1..index + 3)
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-        {
-            out.push(byte);
-            index += 3;
-        } else {
-            out.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Whether a top-level section of the projected data says nothing: it is left out.

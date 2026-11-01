@@ -41,7 +41,7 @@
 use serde_json::{Map, Value, json};
 
 use super::products::{create_options, emit_new_inventory, free_handle, new_record};
-use super::records::{self, error_at, field, input, is, objects, text};
+use super::records::{self, error_at, field, is, objects, text};
 use super::variants::{self, Choice};
 use super::{cents_of, gids, product_changed};
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -1256,7 +1256,7 @@ fn operation(state: &mut ShopState, product: &str) -> String {
 
 /// `productBundleCreate`.
 fn bundle_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let path = vec!["input".to_string()];
     let state = mutation.state();
     let mut errors = Vec::new();
@@ -1294,7 +1294,7 @@ fn bundle_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
 
 /// `productBundleUpdate`.
 fn bundle_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let path = vec!["input".to_string()];
     let state = mutation.state();
     let product = text(&input, "productId").unwrap_or_default().to_string();

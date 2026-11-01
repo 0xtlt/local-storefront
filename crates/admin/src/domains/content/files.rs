@@ -193,23 +193,26 @@ fn record_type(content_type: &str) -> &'static str {
     }
 }
 
+/// The types a `File` is, in the order the shop's files are listed.
+pub const FILE_TYPES: [&str; 5] = [
+    "MediaImage",
+    "Video",
+    "ExternalVideo",
+    "Model3d",
+    "GenericFile",
+];
+
 /// The files of the shop, of every type of `File`.
 fn files(state: &ShopState) -> Vec<String> {
-    [
-        "MediaImage",
-        "Video",
-        "ExternalVideo",
-        "Model3d",
-        "GenericFile",
-    ]
-    .iter()
-    .flat_map(|type_name| {
-        state
-            .keys(type_name)
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-    })
-    .collect()
+    FILE_TYPES
+        .iter()
+        .flat_map(|type_name| {
+            state
+                .keys(type_name)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 fn file_named(state: &ShopState, name: &str) -> Option<String> {
@@ -532,12 +535,10 @@ fn file_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     for (index, input) in inputs.iter().enumerate() {
         let index = index.to_string();
         let id = input.get("id").and_then(Value::as_str).unwrap_or_default();
-        let Some(record) = state.get(id).filter(|_| {
-            matches!(
-                gid_type(id),
-                Some("MediaImage" | "Video" | "ExternalVideo" | "Model3d" | "GenericFile")
-            )
-        }) else {
+        let Some(record) = state
+            .get(id)
+            .filter(|_| gid_type(id).is_some_and(|kind| FILE_TYPES.contains(&kind)))
+        else {
             errors.push(
                 UserError::new(
                     &["files", &index, "id"],
@@ -672,10 +673,9 @@ fn file_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         .iter()
         .enumerate()
         .filter(|(_, id)| {
-            !matches!(
-                state.type_of(id),
-                Some("MediaImage" | "Video" | "ExternalVideo" | "Model3d" | "GenericFile")
-            )
+            !state
+                .type_of(id)
+                .is_some_and(|kind| FILE_TYPES.contains(&kind))
         })
         .map(|(index, id)| {
             UserError::new(

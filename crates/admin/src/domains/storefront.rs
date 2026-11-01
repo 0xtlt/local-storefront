@@ -151,15 +151,8 @@ fn check_script_tag(
     (src, scope, cache)
 }
 
-fn input_of(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
-    ctx.arg(name)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
-}
-
 fn script_tag_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     let (src, scope, cache) = check_script_tag(&input, None, &mut errors);
     if !errors.is_empty() {
@@ -185,7 +178,7 @@ fn script_tag_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
         let error = UserError::new(&["id"], "Script tag does not exist");
         return Ok(payload(json!({"scriptTag": null}), &[error]));
     };
-    let input = input_of(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     let (src, scope, cache) = check_script_tag(&input, Some(record), &mut errors);
     if !errors.is_empty() {
@@ -342,7 +335,8 @@ fn checked_settings(m: &Mutation<'_>, ctx: &FieldContext<'_>) -> Result<String, 
             .code("NO_EXTENSION"),
         ]);
     };
-    let settings = settings_of(&input_of(ctx, "webPixel")).map_err(|error| vec![error])?;
+    let settings =
+        settings_of(&ctx.arg_object_or_default("webPixel")).map_err(|error| vec![error])?;
     let errors = check_settings(state, &extension, &settings);
     if !errors.is_empty() {
         return Err(errors);
@@ -564,7 +558,7 @@ fn storefront_token_create(
     m: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = input_of(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let title = input
         .get("title")
         .and_then(Value::as_str)
@@ -616,7 +610,8 @@ fn storefront_token_delete(
     m: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let id = input_of(ctx, "input")
+    let id = ctx
+        .arg_object_or_default("input")
         .get("id")
         .and_then(Value::as_str)
         .unwrap_or_default()

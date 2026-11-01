@@ -43,12 +43,11 @@ use super::addresses::replace_addresses;
 use super::consent::{Channel, consent_of, missing_contact};
 use super::metafields;
 use super::{
-    contact_fields, exemptions_changed, gids_of, given_text, object_arg, primary_locale,
-    refresh_customer,
+    contact_fields, exemptions_changed, gids_of, given_text, primary_locale, refresh_customer,
 };
 use crate::domains::catalog::tags_of;
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, coded, payload};
 use crate::state::{Record, ShopState, parse_gid, value};
 
 pub fn register(registry: &mut Registry) {
@@ -125,12 +124,6 @@ fn holder<'s>(
     })
 }
 
-/// An error, with the code the payload's error type has (`CustomerSetUserError`), which the
-/// others ignore.
-fn error(field: &[&str], message: &str, code: &str) -> UserError {
-    UserError::new(field, message).code(code)
-}
-
 /// What a customer input (`CustomerInput`, `CustomerSetInput`) changes, checked: the email and
 /// the phone as kept, the consents as the record keeps them.
 struct Checked {
@@ -152,21 +145,21 @@ fn check(
     let email = given_text(input, "email");
     if let Some(Some(email)) = &email {
         if !is_email(email) {
-            errors.push(error(&["email"], "Email is invalid", "INVALID"));
+            errors.push(coded(&["email"], "Email is invalid", "INVALID"));
         } else if holder(state, "email", email, existing).is_some() {
-            errors.push(error(&["email"], "Email has already been taken", "TAKEN"));
+            errors.push(coded(&["email"], "Email has already been taken", "TAKEN"));
         }
     }
     let phone = given_text(input, "phone").map(|phone| match phone {
         Some(given) => match normalized_phone(&given) {
             Some(phone) => {
                 if holder(state, "phone", &phone, existing).is_some() {
-                    errors.push(error(&["phone"], "Phone has already been taken", "TAKEN"));
+                    errors.push(coded(&["phone"], "Phone has already been taken", "TAKEN"));
                 }
                 Some(phone)
             }
             None => {
-                errors.push(error(&["phone"], "Phone is invalid", "INVALID"));
+                errors.push(coded(&["phone"], "Phone is invalid", "INVALID"));
                 None
             }
         },
@@ -190,7 +183,7 @@ fn check(
         .iter()
         .any(|field| will_have(&given_text(input, field), field).is_some());
     if final_email.is_none() && final_phone.is_none() && !named {
-        errors.push(error(
+        errors.push(coded(
             &[],
             "Customer must have a name, phone number or email address",
             "BLANK",
@@ -199,7 +192,7 @@ fn check(
     let mut consent = |channel: Channel, has: bool| {
         let given = input.get(channel.field()).and_then(Value::as_object)?;
         if !has {
-            errors.push(error(
+            errors.push(coded(
                 &[channel.field()],
                 missing_contact(channel),
                 "INVALID",
@@ -413,7 +406,7 @@ fn customer_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = object_arg(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     note_ignored(mutation, "customerCreate", &input);
     let mut errors = Vec::new();
     let checked = check(mutation.state(), &input, None, &mut errors);
@@ -428,7 +421,7 @@ fn customer_update(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = object_arg(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     note_ignored(mutation, "customerUpdate", &input);
     let state = mutation.state();
     let id = input.get("id").and_then(Value::as_str).unwrap_or_default();
@@ -472,14 +465,14 @@ fn by_custom_id(state: &ShopState, custom: &Map<String, Value>) -> Option<String
 }
 
 fn customer_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let mut input = object_arg(ctx, "input");
+    let mut input = ctx.arg_object_or_default("input");
     note_ignored(mutation, "customerSet", &input);
-    let identifier = object_arg(ctx, "identifier");
+    let identifier = ctx.arg_object_or_default("identifier");
     let state = mutation.state();
     let failed = |errors: Vec<UserError>| Ok(payload(json!({"customer": null}), &errors));
     // Not published: the codes are the payload's, the messages lsf's.
     if input.get("id").is_some_and(|id| !id.is_null()) && !identifier.is_empty() {
-        return failed(vec![error(
+        return failed(vec![coded(
             &["input", "id"],
             "The id field is not allowed if identifier is provided",
             "ID_NOT_ALLOWED",
@@ -492,7 +485,7 @@ fn customer_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .and_then(Value::as_str)
     {
         if state.type_of(id) != Some("Customer") {
-            return failed(vec![error(
+            return failed(vec![coded(
                 &["identifier", "id"],
                 "Resource matching the identifier was not found",
                 "NOT_FOUND",
@@ -511,7 +504,7 @@ fn customer_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         if let Some(given) = given_text(&input, key).flatten()
             && !same(key, &given, &wanted)
         {
-            return failed(vec![error(
+            return failed(vec![coded(
                 &["input", key],
                 "The identifier value does not match the value of the corresponding field in the input",
                 "INPUT_MISMATCH",
@@ -598,7 +591,7 @@ fn customer_arg(state: &ShopState, ctx: &FieldContext<'_>) -> Result<String, Use
     if state.type_of(id) == Some("Customer") {
         Ok(id.to_string())
     } else {
-        Err(error(&["customerId"], "Customer does not exist", "INVALID"))
+        Err(coded(&["customerId"], "Customer does not exist", "INVALID"))
     }
 }
 
@@ -668,7 +661,7 @@ fn send_account_invite_email(
         None
     };
     if let Some(message) = problem {
-        let error = error(&["customerId"], message, "INVALID");
+        let error = coded(&["customerId"], message, "INVALID");
         return Ok(payload(json!({"customer": null}), &[error]));
     }
     let to = ctx

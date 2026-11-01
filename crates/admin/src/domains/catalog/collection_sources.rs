@@ -48,7 +48,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{error_at, field, in_collection, input, is, objects, text};
+use super::records::{error_at, field, in_collection, is, objects, text};
 use super::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -1357,7 +1357,7 @@ fn shareable(state: &ShopState, id: &str) -> bool {
 
 /// `collectionConditionsSourceCreate`: a shareable source of the app, linked to no collection.
 fn source_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     check_conditions_source(
         mutation.state(),
@@ -1383,7 +1383,7 @@ fn source_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
 
 /// `collectionConditionsSourceUpdate`: the source changes, and every collection that links it.
 fn source_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let id = text(&input, "id").unwrap_or_default().to_string();
     if !shareable(state, &id) {

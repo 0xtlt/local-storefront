@@ -258,6 +258,11 @@ impl<'a> FieldContext<'a> {
         self.arg(name)?.as_object()
     }
 
+    /// [`FieldContext::arg_object`], owned: `{}` when the argument is not given.
+    pub fn arg_object_or_default(&self, name: &str) -> Map<String, Value> {
+        self.arg_object(name).cloned().unwrap_or_default()
+    }
+
     /// The path of the field in the response: `["products", "edges", 0, "node", "title"]`.
     pub fn path(&self) -> &'a [Value] {
         self.path

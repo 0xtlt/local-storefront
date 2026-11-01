@@ -16,10 +16,10 @@
 
 use serde_json::{Map, Value, json};
 
-use super::records::{self, field, input, is, link_collection, text};
+use super::records::{self, field, is, link_collection, text};
 use super::{collection_sources, gids, publish_on};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, coded, payload};
 use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -79,11 +79,11 @@ fn collection_duplicate(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let empty = json!({"collection": null, "job": null});
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let original = text(&input, "collectionId").unwrap_or_default().to_string();
     if !is(state, &original, "Collection") {
-        let error = records::coded(
+        let error = coded(
             &["input", "collectionId"],
             "The collection was not found. Please check the collection ID and try again.",
             "COLLECTION_NOT_FOUND",
@@ -111,7 +111,7 @@ fn collection_duplicate(
         None
     };
     if let Some((message, code)) = error {
-        let error = records::coded(&["input", "newTitle"], message, code);
+        let error = coded(&["input", "newTitle"], message, code);
         return Ok(payload(empty, &[error]));
     }
     let copy_publications = input

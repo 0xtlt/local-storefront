@@ -4,39 +4,19 @@
 
 use serde_json::{Value, json};
 
-use crate::graphql::{self, Request};
-use crate::resolve::{Registry, ShopResolver};
+use crate::domains::test_support::{self, run, topics};
+use crate::resolve::Registry;
 use crate::state::{Clock, ShopState};
 
+/// The demo store on a frozen clock.
 fn demo() -> ShopState {
-    let (store, _) = lsf_core::store::load::load(
-        &lsf_core::store::load::DataSource::Demo,
-        &Default::default(),
-    );
-    let mut state = ShopState::seeded(&store, None);
-    // The demo store runs on the system clock: a frozen one gives the same dates every run.
-    state.set_clock(Clock::Frozen(at("2026-10-31T12:00:00Z")));
-    state
+    test_support::frozen(test_support::demo())
 }
 
 fn at(date: &str) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339(date)
         .unwrap()
         .with_timezone(&chrono::Utc)
-}
-
-/// The answer to a query with variables, `extensions` without `cost`.
-fn run(shop: &mut ShopState, query: &str, variables: Value) -> Value {
-    let mut resolver = ShopResolver::new(shop, Registry::standard());
-    let mut answer = graphql::run(
-        crate::schema::admin(),
-        &mut resolver,
-        &Request::new(query).with_variables(variables),
-        None,
-    );
-    answer.extensions.extend(resolver.extensions());
-    answer.extensions.remove("cost");
-    answer.to_json()
 }
 
 /// The payload of a mutation that succeeded: no GraphQL error, no user error.
@@ -71,10 +51,6 @@ fn events(shop: &mut ShopState) -> Vec<(String, String)> {
         .collect()
 }
 
-fn topics(shop: &mut ShopState) -> Vec<String> {
-    events(shop).into_iter().map(|(topic, _)| topic).collect()
-}
-
 /// The GID of the market of a country.
 fn market_of(shop: &ShopState, code: &str) -> String {
     super::market_of_country(shop, code).unwrap()
@@ -90,14 +66,7 @@ fn first_variant(shop: &ShopState) -> (String, String) {
 
 /// The first company location of the rich fixture's shop.
 fn rich() -> ShopState {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
-    let (store, _) = lsf_core::store::load::load(
-        &lsf_core::store::load::DataSource::Directory(path),
-        &Default::default(),
-    );
-    let mut state = ShopState::seeded(&store, None);
-    state.set_clock(Clock::Frozen(at("2026-10-31T12:00:00Z")));
-    state
+    test_support::frozen(test_support::rich())
 }
 
 const MARKET_FIELDS: &str = "id name handle type status enabled primary

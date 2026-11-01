@@ -41,7 +41,7 @@ fn record_of(state: &ShopState, id: &str) -> Option<Record> {
 
 /// The platform of an input (`android` or `apple`) and its fields.
 fn platform(ctx: &FieldContext<'_>) -> Option<(&'static str, Map<String, Value>)> {
-    let input = ctx.arg("input")?.as_object()?;
+    let input = ctx.arg_object("input")?;
     for (name, kind) in [
         ("android", "AndroidApplication"),
         ("apple", "AppleApplication"),

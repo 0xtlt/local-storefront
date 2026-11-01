@@ -286,9 +286,7 @@ fn keywords(value: Option<String>) -> Vec<SearchValue> {
 }
 
 fn ids<'a>(gids: impl Iterator<Item = &'a str>) -> Vec<SearchValue> {
-    gids.filter_map(parse_gid)
-        .map(|(_, id)| SearchValue::Id(id))
-        .collect()
+    gids.filter_map(SearchValue::id).collect()
 }
 
 /// What `fulfillment_status:` matches an order on, as shopify.dev's valid values name them.
@@ -339,7 +337,9 @@ fn amount(r: &ShopResolver<'_>, item: &Value, field: &str) -> SortValue {
     }
 }
 
-fn customer_name(r: &ShopResolver<'_>, item: &Value) -> SortValue {
+/// The `CUSTOMER_NAME` sort of a record with a `customer` (an order, a draft order, an
+/// abandoned checkout): the customer's `displayName`.
+pub fn customer_name(r: &ShopResolver<'_>, item: &Value) -> SortValue {
     SortValue::of(
         r.item_map(item)
             .and_then(|record| text(record, "customer"))

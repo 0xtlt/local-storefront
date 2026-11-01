@@ -48,7 +48,7 @@ use serde_json::{Value, json};
 use super::model::{self, array, field_cents, int, text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, coded, payload};
 use crate::state::{ShopState, value};
 use crate::webhooks::payload::FULFILLMENT_ORDER_EVENT;
 
@@ -619,11 +619,6 @@ fn event_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     state.emit("fulfillment_events/create", &event);
     state.emit("fulfillments/update", &fulfillment);
     Ok(payload(json!({"fulfillmentEvent": event}), &[]))
-}
-
-/// A `FulfillmentOrder…UserError` with its code.
-fn coded(field: &[&str], message: &str, code: &str) -> UserError {
-    UserError::new(field, message).code(code)
 }
 
 /// What the admin shows for a hold reason *(chosen: the reason in words)*.

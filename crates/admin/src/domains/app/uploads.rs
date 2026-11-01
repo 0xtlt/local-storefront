@@ -58,10 +58,11 @@ pub fn key_of(url_or_path: &str) -> Option<String> {
         // `/<shop>/<key>`
         let rest = rest.trim_start_matches('/');
         let (_, key) = rest.split_once('/')?;
-        return Some(percent_decode(key)).filter(|key| !key.is_empty());
+        return Some(lsf_core::urls::percent_decode(key)).filter(|key| !key.is_empty());
     }
     let key = path.trim_start_matches('/');
-    key.starts_with("tmp/").then(|| percent_decode(key))
+    key.starts_with("tmp/")
+        .then(|| lsf_core::urls::percent_decode(key))
 }
 
 /// The bytes of a staged upload, by its `resourceUrl`, a URL or path of lsf's upload endpoint,
@@ -74,27 +75,6 @@ pub fn bytes<'s>(state: &'s ShopState, url_or_path: &str) -> Option<&'s Blob> {
 /// Keeps what a client uploaded to a target.
 pub fn store(state: &mut ShopState, key: &str, bytes: Vec<u8>, content_type: &str) {
     state.put_blob(key, Blob::new(bytes, content_type));
-}
-
-fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%'
-            && index + 2 < bytes.len()
-            && let Some(byte) = std::str::from_utf8(&bytes[index + 1..index + 3])
-                .ok()
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-        {
-            out.push(byte);
-            index += 3;
-            continue;
-        }
-        out.push(bytes[index]);
-        index += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// The folder of a resource's keys, as Shopify's keys name them (`products`, `bulk`, …).

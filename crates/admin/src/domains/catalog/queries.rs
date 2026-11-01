@@ -23,7 +23,7 @@ use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Obj, Registry, ShopResolver};
 use crate::search::SearchValue;
-use crate::state::{Record, parse_gid};
+use crate::state::Record;
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -117,8 +117,7 @@ pub fn register(registry: &mut Registry) {
                                 .any(|known| known == key)
                         })
                     })
-                    .filter_map(parse_gid)
-                    .map(|(_, id)| SearchValue::Id(id))
+                    .filter_map(SearchValue::id)
                     .collect(),
             )
         })
@@ -184,8 +183,7 @@ pub fn register(registry: &mut Registry) {
                     .map(|product| gids(product.get("collections")))
                     .unwrap_or_default()
                     .iter()
-                    .filter_map(|collection| parse_gid(collection))
-                    .map(|(_, id)| SearchValue::Id(id))
+                    .filter_map(|collection| SearchValue::id(collection))
                     .collect(),
             )
         })
@@ -197,8 +195,7 @@ pub fn register(registry: &mut Registry) {
                     .iter()
                     .filter_map(|level| r.state().get(level))
                     .filter_map(|level| field(level, "location"))
-                    .filter_map(parse_gid)
-                    .map(|(_, id)| SearchValue::Id(id))
+                    .filter_map(SearchValue::id)
                     .collect(),
             )
         })
@@ -448,10 +445,7 @@ fn number(value: Option<&Value>) -> Vec<SearchValue> {
 
 /// The number of a GID, as an id.
 fn ids(gid: Option<&str>) -> Vec<SearchValue> {
-    gid.and_then(parse_gid)
-        .map(|(_, id)| SearchValue::Id(id))
-        .into_iter()
-        .collect()
+    gid.and_then(SearchValue::id).into_iter().collect()
 }
 
 /// The product of a variant record.

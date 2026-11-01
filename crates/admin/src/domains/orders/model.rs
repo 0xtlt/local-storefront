@@ -1614,6 +1614,26 @@ pub fn attributes(input: Option<&Value>) -> Value {
     )
 }
 
+/// `(key, value)` of each attribute of a `customAttributes` (a `null` value is `""`), as an
+/// order draft takes them.
+pub fn attribute_pairs(attributes: Option<&Value>) -> Vec<(String, String)> {
+    attributes
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|attribute| {
+            Some((
+                attribute.get("key")?.as_str()?.to_string(),
+                attribute
+                    .get("value")?
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            ))
+        })
+        .collect()
+}
+
 /// An input object of a mutation argument, empty when absent.
 pub fn input_of(value: Option<&Value>) -> Map<String, Value> {
     value

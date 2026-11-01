@@ -92,8 +92,7 @@ pub fn register(registry: &mut Registry) {
                     activity
                         .get("parentActivityId")
                         .and_then(Value::as_str)
-                        .and_then(crate::state::parse_gid)
-                        .map(|(_, id)| crate::search::SearchValue::Id(id))
+                        .and_then(crate::search::SearchValue::id)
                         .into_iter()
                         .collect(),
                 )
@@ -143,8 +142,7 @@ fn event_date(
         .and_then(|event| r.state().get(event))
         .and_then(|event| event.get(field))
         .and_then(Value::as_str)
-        .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
-        .map(|at| crate::search::SearchValue::Date(at.with_timezone(&chrono::Utc)))
+        .and_then(crate::search::SearchValue::date)
         .into_iter()
         .collect()
 }
@@ -547,13 +545,6 @@ fn taken(
     }
 }
 
-fn input_of(ctx: &FieldContext<'_>) -> Map<String, Value> {
-    ctx.arg("input")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
-}
-
 /// What an external activity's input must hold, created or upserted: a hierarchy, or UTM
 /// parameters or a URL parameter; one currency.
 fn check_external(m: &Mutation<'_>, input: &Map<String, Value>, errors: &mut Vec<UserError>) {
@@ -582,7 +573,7 @@ fn create_external_mutation(
     m: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let mut input = input_of(ctx);
+    let mut input = ctx.arg_object_or_default("input");
     if input.get("marketingChannelType").is_none_or(Value::is_null)
         && let Some(channel) = input.get("channel").cloned()
     {
@@ -611,7 +602,7 @@ fn create_external_mutation(
 }
 
 fn upsert_external(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx);
+    let input = ctx.arg_object_or_default("input");
     let remote = input
         .get("remoteId")
         .and_then(Value::as_str)
@@ -660,7 +651,7 @@ fn upsert_external(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
 fn named_activity(m: &Mutation<'_>, ctx: &FieldContext<'_>) -> Result<String, UserError> {
     let id = ctx.arg_str("marketingActivityId");
     let remote = ctx.arg_str("remoteId");
-    let utm = ctx.arg("utm").and_then(Value::as_object);
+    let utm = ctx.arg_object("utm");
     let given = [id.is_some(), remote.is_some(), utm.is_some()]
         .iter()
         .filter(|given| **given)
@@ -682,7 +673,7 @@ fn named_activity(m: &Mutation<'_>, ctx: &FieldContext<'_>) -> Result<String, Us
 }
 
 fn update_external(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx);
+    let input = ctx.arg_object_or_default("input");
     let activity = match named_activity(m, ctx) {
         Ok(activity) => activity,
         Err(error) => return Ok(payload(json!({"marketingActivity": null}), &[error])),
@@ -777,7 +768,7 @@ fn delete_all_external(m: &mut Mutation<'_>, _ctx: &FieldContext<'_>) -> Result<
 }
 
 fn activity_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx);
+    let input = ctx.arg_object_or_default("input");
     let extension = input
         .get("marketingActivityExtensionId")
         .and_then(Value::as_str)
@@ -855,7 +846,7 @@ fn activity_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
 }
 
 fn activity_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx);
+    let input = ctx.arg_object_or_default("input");
     let id = input
         .get("id")
         .and_then(Value::as_str)
@@ -919,11 +910,7 @@ fn activity_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
 }
 
 fn engagement_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let engagement = ctx
-        .arg("marketingEngagement")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let engagement = ctx.arg_object_or_default("marketingEngagement");
     let id = ctx.arg_str("marketingActivityId");
     let remote = ctx.arg_str("remoteId");
     let channel = ctx.arg_str("channelHandle");
@@ -1102,7 +1089,7 @@ fn marketing_activities(
         .flatten()
         .filter_map(Value::as_str)
         .collect();
-    let utm = ctx.arg("utm").and_then(Value::as_object);
+    let utm = ctx.arg_object("utm");
     let items = r
         .state()
         .all("MarketingActivity")

@@ -25,7 +25,7 @@ use serde_json::{Map, Value, json};
 
 use super::{Obj, Registry, ShopResolver};
 use crate::auth::Grant;
-use crate::graphql::{FieldContext, FieldError, Output};
+use crate::graphql::{self, FieldContext, FieldError, Output, Request};
 use crate::state::{Record, Savepoint, ShopState};
 use crate::version::ApiVersion;
 use crate::webhooks::Webhooks;
@@ -127,6 +127,17 @@ impl Mutation<'_> {
         resolver
     }
 
+    /// Runs `request` within this mutation, through [`Mutation::resolver`], on the schema of the
+    /// request's version: a mutation run inside another (`productSet` inside
+    /// `giftCardProductSet`) runs as the version asked has it. Its answer, and what its resolver
+    /// reports for `extensions` (`search` warnings, `lsf` notes).
+    pub fn run_graphql(&mut self, request: &Request) -> (Value, Map<String, Value>) {
+        let schema = self.schema();
+        let mut resolver = self.resolver();
+        let answer = graphql::run(schema, &mut resolver, request, None).to_json();
+        (answer, resolver.extensions())
+    }
+
     /// The domain of the shop: `my-shop.myshopify.com`.
     pub fn shop(&self) -> &str {
         self.state.domain()
@@ -216,14 +227,36 @@ pub fn done_job(state: &mut ShopState, kind: &str) -> String {
     id
 }
 
+/// A user error at `field` with its code: `UserError::new(field, message).code(code)`.
+///
+/// Where shopify.dev documents an error by its code only, the domains word its message as the
+/// description the 2026-10 schema gives the code, which is how Shopify words the messages it
+/// does publish (`IDEMPOTENCY_KEY_PARAMETER_MISMATCH`: "The same idempotency key cannot be used
+/// with different operation parameters.", in the schema and in shopify.dev's "Implementing
+/// idempotency").
+pub fn coded(field: &[&str], message: impl Into<String>, code: &str) -> UserError {
+    UserError::new(field, message).code(code)
+}
+
+/// The path of an input field nested under `prefix`: `prefix`, then `rest`
+/// (`["input", "variants", "0"]`, `["price"]`).
+pub fn input_path<'a>(prefix: &[&'a str], rest: &[&'a str]) -> Vec<&'a str> {
+    prefix.iter().chain(rest).copied().collect()
+}
+
 /// A payload: `fields` (an object), with `userErrors` set to `errors`.
 pub fn payload(fields: Value, errors: &[UserError]) -> Value {
+    payload_at(fields, "userErrors", errors)
+}
+
+/// A payload whose errors are in `key` rather than `userErrors` (`locationDeactivateUserErrors`).
+pub fn payload_at(fields: Value, key: &str, errors: &[UserError]) -> Value {
     let mut payload = match fields {
         Value::Object(map) => map,
         _ => Map::new(),
     };
     payload.insert(
-        "userErrors".into(),
+        key.into(),
         Value::Array(errors.iter().map(UserError::to_json).collect()),
     );
     Value::Object(payload)
@@ -538,6 +571,50 @@ mod tests {
             shop.unwinding(|state| state.count("Product")).ok(),
             Some(shop.count("Product"))
         );
+    }
+
+    /// A `productCreate` that runs `appDowngradeAccessScopes`, a mutation of 2027-01 only,
+    /// within itself, and keeps its answer.
+    fn runs_a_mutation_of_2027_01(
+        m: &mut Mutation<'_>,
+        _ctx: &FieldContext<'_>,
+    ) -> Result<Value, FieldError> {
+        let request = Request::new(
+            "mutation { appDowngradeAccessScopes(scopes: [\"write_customers\"]) { userErrors { code } } }",
+        );
+        let (answer, _) = m.run_graphql(&request);
+        m.state_mut().set_memo("inner", answer);
+        Ok(payload(json!({"product": null}), &[]))
+    }
+
+    #[test]
+    fn a_mutation_run_within_another_runs_on_the_version_of_the_request() {
+        let mut registry = Registry::new();
+        crate::domains::register(&mut registry);
+        registry.mutation("productCreate", runs_a_mutation_of_2027_01);
+        let outer = Request::new(
+            r#"mutation { productCreate(product: {title: "x"}) { userErrors { message } } }"#,
+        );
+        let inner_on = |name: &str| {
+            let version = ApiVersion::get(name).unwrap();
+            let mut shop = ShopState::new("a.myshopify.com", Clock::System);
+            let mut resolver = ShopResolver::new(&mut shop, &registry).with_version(version);
+            let answer = graphql::run(version.schema(), &mut resolver, &outer, None).to_json();
+            assert!(answer.get("errors").is_none(), "{answer}");
+            shop.memo("inner").cloned().unwrap()
+        };
+
+        // On 2027-01 the inner mutation exists and runs.
+        let inner = inner_on("2027-01");
+        assert!(inner.get("errors").is_none(), "{inner}");
+        assert!(
+            inner["data"]["appDowngradeAccessScopes"]["userErrors"].is_array(),
+            "{inner}"
+        );
+        // On 2026-10 it does not exist: the inner run is refused, as the version's schema says.
+        let inner = inner_on("2026-10");
+        assert!(inner["errors"][0]["message"].as_str().is_some(), "{inner}");
+        assert!(inner.get("data").is_none_or(Value::is_null), "{inner}");
     }
 
     #[test]

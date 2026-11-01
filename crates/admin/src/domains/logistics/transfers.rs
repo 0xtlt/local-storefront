@@ -186,17 +186,13 @@ pub const SHIPPABLE: &[&str] = &["DRAFT", "READY_TO_SHIP", "IN_PROGRESS"];
 
 fn id_values(gid: Option<String>) -> Vec<SearchValue> {
     gid.as_deref()
-        .and_then(parse_gid)
-        .map(|(_, id)| SearchValue::Id(id))
+        .and_then(SearchValue::id)
         .into_iter()
         .collect()
 }
 
 fn date_value(value: Option<&Value>) -> Option<SearchValue> {
-    let text = value?.as_str()?;
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|date| SearchValue::Date(date.with_timezone(&Utc)))
+    SearchValue::date(value?.as_str()?)
 }
 
 /// The inventory items of a transfer's lines.
@@ -686,7 +682,7 @@ fn create_transfer(
     ctx: &FieldContext<'_>,
     ready: bool,
 ) -> Result<Value, FieldError> {
-    let input = super::input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let mut errors = Vec::new();
     let origin_id = text(&input, "originLocationId");
@@ -847,7 +843,7 @@ fn duplicate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
 fn edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryTransfer": null});
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let input = super::input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let transfer = match transfer_arg(ctx, mutation.state(), &id, &["id"], &empty) {
         Ok(record) => record,
         Err(answer) => return Ok(answer),
@@ -935,7 +931,7 @@ fn edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
 
 fn set_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryTransfer": null, "updatedLineItems": null});
-    let input = super::input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let id = text(&input, "id").unwrap_or_default().to_string();
     let transfer = match transfer_arg(ctx, mutation.state(), &id, &["input", "id"], &empty) {
         Ok(record) => record,
@@ -1019,7 +1015,7 @@ fn set_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
 
 fn remove_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"inventoryTransfer": null, "removedQuantities": null});
-    let input = super::input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let id = text(&input, "id").unwrap_or_default().to_string();
     let transfer = match transfer_arg(ctx, mutation.state(), &id, &["input", "id"], &empty) {
         Ok(record) => record,

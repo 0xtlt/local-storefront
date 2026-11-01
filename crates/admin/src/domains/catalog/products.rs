@@ -420,7 +420,7 @@ fn product_to_update(
     ctx: &FieldContext<'_>,
     input: &Map<String, Value>,
 ) -> Option<String> {
-    let identifier = ctx.arg("identifier").and_then(Value::as_object);
+    let identifier = ctx.arg_object("identifier");
     let id = text(input, "id").or_else(|| identifier.and_then(|identifier| text(identifier, "id")));
     if let Some(id) = id {
         return (state.type_of(id) == Some("Product")).then(|| id.to_string());

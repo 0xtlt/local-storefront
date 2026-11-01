@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 
 use crate::domains::catalog::gids;
 use crate::domains::content::navigation::set_redirect;
-use crate::graphql::{self, FieldContext, FieldError, Output, Request};
+use crate::graphql::{FieldContext, FieldError, Output, Request};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, done_job, payload};
 use crate::state::{Record, value};
 
@@ -96,12 +96,7 @@ fn search(m: &mut Mutation<'_>, query: &str) -> Result<Vec<String>, Vec<String>>
         );
         request.variables.insert("query".into(), json!(query));
         request.variables.insert("after".into(), json!(after));
-        let schema = m.schema();
-        let (answer, warnings) = {
-            let mut resolver = m.resolver();
-            let answer = graphql::run(schema, &mut resolver, &request, None).to_json();
-            (answer, resolver.extensions())
-        };
+        let (answer, warnings) = m.run_graphql(&request);
         let invalid: Vec<String> = warnings
             .get("search")
             .and_then(Value::as_array)

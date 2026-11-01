@@ -33,7 +33,7 @@ use super::model::{self, array, int, text};
 use super::refunds::{self, RefundLine, RefundSpec};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, coded, payload};
 use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -102,11 +102,6 @@ pub fn returnable_quantity(state: &ShopState, fulfillment_line: &str) -> i64 {
 /// `returns/update` reports.
 pub const UPDATE_REMOVALS: &str = "lsfUpdateRemovals";
 
-/// A return error with its code.
-pub(super) fn error(field: &[&str], message: &str, code: &str) -> UserError {
-    UserError::new(field, message).code(code)
-}
-
 /// What a refund of a return moves through the `orderTransactions` given (`[{parentId,
 /// transactionAmount}]`), each checked against what its payment may still refund (past it when
 /// `over`): `(amount, gateway, parent)`. The errors are under `path`.
@@ -129,7 +124,7 @@ pub(super) fn refund_moves(
             .unwrap_or_default();
         let amount = model::cents(transaction.get("transactionAmount"));
         let Some((_, left)) = payments.iter().find(|(id, _)| id == parent) else {
-            errors.push(error(
+            errors.push(coded(
                 &at("parentId"),
                 "Parent transaction does not exist.",
                 "NOT_FOUND",
@@ -137,7 +132,7 @@ pub(super) fn refund_moves(
             continue;
         };
         if amount <= 0 || (!over && amount > *left) {
-            errors.push(error(
+            errors.push(coded(
                 &at("transactionAmount"),
                 "Transaction amount is invalid.",
                 "INVALID",
@@ -169,7 +164,7 @@ fn create(
         .to_string();
     let state = mutation.state();
     if state.type_of(&order) != Some("Order") {
-        return failed(&[error(
+        return failed(&[coded(
             &[argument, "orderId"],
             "Order does not exist.",
             "NOT_FOUND",
@@ -177,7 +172,7 @@ fn create(
     }
     let items = array(&input, "returnLineItems");
     if items.is_empty() {
-        return failed(&[error(
+        return failed(&[coded(
             &[argument, "returnLineItems"],
             "Return line items can't be blank.",
             "BLANK",
@@ -196,7 +191,7 @@ fn create(
         if state.type_of(line) != Some("FulfillmentLineItem")
             || order_of_fulfillment_line(state, line).as_deref() != Some(order.as_str())
         {
-            errors.push(error(
+            errors.push(coded(
                 &[&path[..], &["fulfillmentLineItemId"]].concat(),
                 "Fulfillment Line Item was not found.",
                 "NOT_FOUND",
@@ -209,7 +204,7 @@ fn create(
             .map(|(_, quantity, _)| quantity)
             .sum();
         if quantity <= 0 || quantity + taken > returnable_quantity(state, line) {
-            errors.push(error(
+            errors.push(coded(
                 &[&path[..], &["quantity"]].concat(),
                 "Return line item has an invalid quantity.",
                 "INVALID",
@@ -360,14 +355,14 @@ fn approve(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         .to_string();
     let failed = |error: UserError| Ok(payload(json!({"return": null}), &[error]));
     let Some((status, order)) = find_return(mutation.state(), &id) else {
-        return failed(self::error(
+        return failed(coded(
             &["input", "id"],
             "Return does not exist.",
             "NOT_FOUND",
         ));
     };
     if status != "REQUESTED" {
-        return failed(self::error(
+        return failed(coded(
             &["input", "id"],
             "Return is not approvable. Only returns with status REQUESTED can be approved.",
             "INVALID_STATE",
@@ -396,14 +391,14 @@ fn decline(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         .to_string();
     let failed = |error: UserError| Ok(payload(json!({"return": null}), &[error]));
     let Some((status, order)) = find_return(mutation.state(), &id) else {
-        return failed(self::error(
+        return failed(coded(
             &["input", "id"],
             "Return does not exist.",
             "NOT_FOUND",
         ));
     };
     if status != "REQUESTED" {
-        return failed(self::error(
+        return failed(coded(
             &["input", "id"],
             "Return is not declinable. Only non-refunded returns with status REQUESTED can be declined.",
             "INVALID_STATE",
@@ -435,7 +430,7 @@ fn change_status(
     let failed = |error: UserError| Ok(payload(json!({"return": null}), &[error]));
     let state = mutation.state();
     let Some((status, order)) = find_return(state, &id) else {
-        return failed(self::error(&["id"], "Return does not exist.", "NOT_FOUND"));
+        return failed(coded(&["id"], "Return does not exist.", "NOT_FOUND"));
     };
     let processed_or_refunded = state.get(&id).is_some_and(|record| {
         !gids(record.get("refunds")).is_empty()
@@ -452,7 +447,7 @@ fn change_status(
                 "Return is not cancelable. Only returns that were not processed or refunded can be canceled."
             }
         };
-        return failed(self::error(&["id"], message, "INVALID_STATE"));
+        return failed(coded(&["id"], message, "INVALID_STATE"));
     }
     let now = mutation.timestamp();
     let state = mutation.state_mut();
@@ -484,14 +479,14 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
     let failed = |errors: &[UserError]| Ok(payload(json!({"return": null}), errors));
     let state = mutation.state();
     let Some((status, order)) = find_return(state, &id) else {
-        return failed(&[error(
+        return failed(&[coded(
             &["input", "returnId"],
             "Return does not exist.",
             "NOT_FOUND",
         )]);
     };
     if status != "OPEN" {
-        return failed(&[error(
+        return failed(&[coded(
             &["input", "returnId"],
             "Return is not processable. Only returns with status OPEN can be processed.",
             "INVALID_STATE",
@@ -509,7 +504,7 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         let line = item.get("id").and_then(Value::as_str).unwrap_or_default();
         let quantity = item.get("quantity").and_then(Value::as_i64).unwrap_or(0);
         if !return_lines.iter().any(|known| known == line) {
-            errors.push(error(
+            errors.push(coded(
                 &["input", "returnLineItems", &index, "id"],
                 "Return line item does not exist.",
                 "NOT_FOUND",
@@ -520,7 +515,7 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
             .get(line)
             .map_or(0, |line| int(line, "processableQuantity"));
         if quantity <= 0 || quantity > processable {
-            errors.push(error(
+            errors.push(coded(
                 &["input", "returnLineItems", &index, "quantity"],
                 "Return line item has an invalid quantity.",
                 "INVALID",
@@ -576,7 +571,7 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         let line = item.get("id").and_then(Value::as_str).unwrap_or_default();
         let quantity = item.get("quantity").and_then(Value::as_i64).unwrap_or(0);
         if !exchange_lines.iter().any(|known| known == line) {
-            errors.push(error(
+            errors.push(coded(
                 &["input", "exchangeLineItems", &index, "id"],
                 "Exchange line item does not exist.",
                 "NOT_FOUND",
@@ -587,7 +582,7 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
             .get(line)
             .map_or(0, |line| int(line, "processableQuantity"));
         if quantity <= 0 || quantity > processable {
-            errors.push(error(
+            errors.push(coded(
                 &["input", "exchangeLineItems", &index, "quantity"],
                 "Exchange line item has an invalid quantity.",
                 "INVALID",
@@ -602,7 +597,7 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         && exchanges.is_empty()
         && errors.is_empty()
     {
-        errors.push(error(
+        errors.push(coded(
             &["input", "returnLineItems"],
             "Return line items can't be blank.",
             "BLANK",

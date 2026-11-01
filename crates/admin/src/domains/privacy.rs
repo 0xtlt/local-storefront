@@ -317,11 +317,7 @@ fn whatsapp_consent_update(
     m: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = ctx
-        .arg("input")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = ctx.arg_object_or_default("input");
     let customer = input
         .get("customerId")
         .and_then(Value::as_str)

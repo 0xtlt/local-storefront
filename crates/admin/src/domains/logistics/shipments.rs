@@ -37,8 +37,8 @@ use serde_json::{Map, Value, json};
 
 use super::transfers::{self, COMMITTED, SHIPPABLE, TRANSFER};
 use super::{
-    coded, emit_change, idempotent, int, is_url, keys_of, objects, push, record_of,
-    snapshot_location, stock, text,
+    coded, emit_change, idempotent, int, keys_of, objects, push, record_of, snapshot_location,
+    stock, text,
 };
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
@@ -86,8 +86,7 @@ pub fn register(registry: &mut Registry) {
                 Some(
                     destination
                         .as_deref()
-                        .and_then(parse_gid)
-                        .map(|(_, id)| SearchValue::Id(id))
+                        .and_then(SearchValue::id)
                         .into_iter()
                         .collect(),
                 )
@@ -168,7 +167,7 @@ fn tracking_of(
         return Value::Null;
     };
     if let Some(url) = text(input, "trackingUrl")
-        && !is_url(url)
+        && !lsf_core::urls::is_http_url(url)
     {
         let mut at = path.to_vec();
         at.push("trackingUrl");
@@ -471,7 +470,7 @@ fn create_shipment(
     in_transit: bool,
 ) -> Result<Value, FieldError> {
     let empty = json!({"inventoryShipment": null});
-    let input = super::input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let transfer_id = text(&input, "movementId").unwrap_or_default().to_string();
     let Some(transfer) = transfers::find(state, &transfer_id) else {
@@ -970,12 +969,7 @@ fn set_tracking(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         Err(answer) => return Ok(answer),
     };
     let mut errors = Vec::new();
-    let tracking = tracking_of(
-        ctx,
-        ctx.arg("tracking").and_then(Value::as_object),
-        &["tracking"],
-        &mut errors,
-    );
+    let tracking = tracking_of(ctx, ctx.arg_object("tracking"), &["tracking"], &mut errors);
     if !errors.is_empty() {
         return Ok(payload(empty, &errors));
     }

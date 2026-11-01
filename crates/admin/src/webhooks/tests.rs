@@ -238,7 +238,11 @@ fn an_event_is_delivered_signed_to_each_subscription_of_its_topic() {
         assert_eq!(request.header("content-type"), Some("application/json"));
         assert_eq!(request.header("user-agent"), Some("Shopify-Captain-Hook"));
         let signature = request.header("x-shopify-hmac-sha256").unwrap();
-        assert!(sign::verify(SECRET, &request.body, signature));
+        assert!(crate::auth::signing::verify_webhook_hmac(
+            SECRET,
+            &request.body,
+            signature
+        ));
     }
     // One webhook id per delivery, one event id for both.
     assert_ne!(

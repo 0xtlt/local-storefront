@@ -183,11 +183,7 @@ fn keyword(value: Option<&str>) -> Vec<SearchValue> {
 }
 
 fn date(value: Option<&str>) -> Vec<SearchValue> {
-    value
-        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .map(|at| SearchValue::Date(at.with_timezone(&Utc)))
-        .into_iter()
-        .collect()
+    value.and_then(SearchValue::date).into_iter().collect()
 }
 
 fn money_sort(r: &ShopResolver<'_>, item: &Value, field: &str) -> SortValue {

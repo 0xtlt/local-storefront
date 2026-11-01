@@ -23,9 +23,9 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{coded, input, is, market_not_found, number, shop_locales, strings, text};
+use super::{is, market_not_found, number, shop_locales, strings, text};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, payload};
 use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -533,7 +533,7 @@ fn presence_arg(state: &ShopState, ctx: &FieldContext<'_>, name: &str) -> Option
 }
 
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     match create_presence(mutation, &input, "input", Vec::new()) {
         Ok(presence) => Ok(payload(json!({"webPresence": presence}), &[])),
         Err(errors) => Ok(payload(json!({"webPresence": null}), &errors)),
@@ -545,7 +545,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         return Ok(payload(json!({"webPresence": null}), &[not_found("id")]));
     };
     // `WebPresenceUpdateInput` has no `domainId`: a presence keeps its domain.
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let errors = update_presence(mutation, &presence, &input, "input");
     let presence = errors.is_empty().then_some(presence);
     Ok(payload(json!({"webPresence": presence}), &errors))
@@ -573,7 +573,7 @@ fn market_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
             &[market_not_found("marketId")],
         ));
     };
-    let input = input(ctx, "webPresence");
+    let input = ctx.arg_object_or_default("webPresence");
     match create_presence(mutation, &input, "webPresence", vec![market.clone()]) {
         Ok(_) => {
             mutation.state_mut().emit("markets/update", &market);
@@ -601,7 +601,7 @@ fn market_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
             &[not_found("webPresenceId")],
         ));
     };
-    let input = input(ctx, "webPresence");
+    let input = ctx.arg_object_or_default("webPresence");
     let errors = update_presence(mutation, &presence, &input, "webPresence");
     if !errors.is_empty() {
         return Ok(payload(json!({"market": null}), &errors));

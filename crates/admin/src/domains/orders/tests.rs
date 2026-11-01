@@ -3,26 +3,8 @@
 use serde_json::{Value, json};
 
 use super::model;
-use crate::graphql::{self, Request};
-use crate::resolve::{Registry, ShopResolver};
+pub(super) use crate::domains::test_support::{demo, rich, run, topics};
 use crate::state::ShopState;
-
-pub(super) fn demo() -> ShopState {
-    let (store, _) = lsf_core::store::load::load(
-        &lsf_core::store::load::DataSource::Demo,
-        &Default::default(),
-    );
-    ShopState::seeded(&store, None)
-}
-
-pub(super) fn rich() -> ShopState {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
-    let (store, _) = lsf_core::store::load::load(
-        &lsf_core::store::load::DataSource::Directory(path),
-        &Default::default(),
-    );
-    ShopState::seeded(&store, None)
-}
 
 /// Every seeded order is left as the seed made it by `refresh_order`: the mutations and the
 /// seed derive the same values.
@@ -54,30 +36,12 @@ fn refreshing_a_seeded_order_changes_nothing() {
     }
 }
 
-/// Runs a request on the shop: its answer (`extensions` without `cost`).
-pub(super) fn run(shop: &mut ShopState, query: &str, variables: Value) -> Value {
-    let mut resolver = ShopResolver::new(shop, Registry::standard());
-    let mut answer = graphql::run(
-        crate::schema::admin(),
-        &mut resolver,
-        &Request::new(query).with_variables(variables),
-        None,
-    );
-    answer.extensions.extend(resolver.extensions());
-    answer.extensions.remove("cost");
-    answer.to_json()
-}
-
 /// The topics of the events emitted since the last call, with the GIDs they are about.
 pub(super) fn events(shop: &mut ShopState) -> Vec<(String, String)> {
     shop.take_events()
         .into_iter()
         .map(|event| (event.topic, event.gid))
         .collect()
-}
-
-pub(super) fn topics(shop: &mut ShopState) -> Vec<String> {
-    events(shop).into_iter().map(|(topic, _)| topic).collect()
 }
 
 /// The orders of the demo store: `#1001` (paid, fulfilled), `#1002` and `#1003` (paid,

@@ -44,7 +44,7 @@ use super::model::{
     self, CALCULATION, Pointer, lines, manual_discount, object, objects, refresh, text,
 };
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, input_path, payload};
 use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -110,7 +110,7 @@ fn calculated_line(
     let quantity = line.get("quantity").and_then(Value::as_i64).unwrap_or(0);
     if quantity < 1 {
         errors.push(model::invalid_error(
-            &model::path(path, &[kind, "quantity"]),
+            &input_path(path, &[kind, "quantity"]),
             "Quantity must be greater than 0",
         ));
         return None;
@@ -125,7 +125,7 @@ fn calculated_line(
         }
         Some(_) => {
             errors.push(model::invalid_error(
-                &model::path(path, &[kind, "id"]),
+                &input_path(path, &[kind, "id"]),
                 "Line does not exist",
             ));
             return None;
@@ -152,7 +152,7 @@ fn calculated_line(
             None => {
                 diagnostics.push(diagnostic(
                     "MERCHANDISE_NOT_FOUND",
-                    &model::path(path, &[kind, "productVariantId"]),
+                    &input_path(path, &[kind, "productVariantId"]),
                 ));
                 return None;
             }
@@ -164,7 +164,7 @@ fn calculated_line(
     };
     if !value::money_in_bounds(price.saturating_mul(quantity)) {
         errors.push(model::invalid_error(
-            &model::path(path, &[kind]),
+            &input_path(path, &[kind]),
             value::money_too_large("Price"),
         ));
         return None;
@@ -241,7 +241,7 @@ fn calculate(
     if !model::currency_enabled(state, &currency) {
         diagnostics.push(diagnostic(
             "CURRENCY_NOT_SUPPORTED",
-            &model::path(path, &["currencyCode"]),
+            &input_path(path, &["currencyCode"]),
         ));
     }
     if policies
@@ -298,7 +298,7 @@ fn calculate(
         match model::calculated_delivery_method(
             state,
             &object(Some(method)),
-            &model::path(path, &["deliveryMethod"]),
+            &input_path(path, &["deliveryMethod"]),
         ) {
             Ok(Some((method, price))) => {
                 record.insert("deliveryMethod".into(), method);
@@ -322,7 +322,7 @@ fn calculate(
                 if model::check_payment_method(state, id, customer.as_deref(), &[]).is_some() {
                     diagnostics.push(diagnostic(
                         "PAYMENT_METHOD_NOT_FOUND",
-                        &model::path(path, &["paymentMethod"]),
+                        &input_path(path, &["paymentMethod"]),
                     ));
                 } else {
                     record.insert("customerPaymentMethod".into(), json!(id));
@@ -344,7 +344,7 @@ fn calculate(
                 line,
                 &currency,
                 &existing,
-                &model::path(path, &["lines", &index]),
+                &input_path(path, &["lines", &index]),
                 &mut diagnostics,
                 &mut errors,
                 &mut line_discounts,
@@ -412,7 +412,7 @@ fn calculate(
             let index = index.to_string();
             warnings.push(diagnostic(
                 "DISCOUNT_CODE_NOT_APPLIED",
-                &model::path(path, &["discountCodes", &index]),
+                &input_path(path, &["discountCodes", &index]),
             ));
         } else {
             let mut discounts = model::discounts(&record);
@@ -446,17 +446,17 @@ fn calculate(
         if ships && !has_method {
             diagnostics.push(diagnostic(
                 "DELIVERY_METHOD_REQUIRED",
-                &model::path(path, &["deliveryMethod"]),
+                &input_path(path, &["deliveryMethod"]),
             ));
         } else if !ships && has_method {
             warnings.push(diagnostic(
                 "DELIVERY_METHOD_UNUSED",
-                &model::path(path, &["deliveryMethod"]),
+                &input_path(path, &["deliveryMethod"]),
             ));
         }
     }
     if lines(&record).is_empty() && diagnostics.is_empty() {
-        diagnostics.push(diagnostic("INVALID", &model::path(path, &["lines"])));
+        diagnostics.push(diagnostic("INVALID", &input_path(path, &["lines"])));
     }
     refresh(state, &mut record);
     Ok((record, diagnostics, warnings, options))

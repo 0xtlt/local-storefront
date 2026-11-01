@@ -21,10 +21,10 @@
 
 use serde_json::{Value, json};
 
-use super::{catalog_type, coded, input, is, strings, text};
+use super::{catalog_type, is, strings, text};
 use crate::domains::catalog;
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, payload};
 use crate::state::{ShopState, value};
 
 /// The most publishables `publicationUpdate` takes at once.
@@ -91,7 +91,7 @@ fn is_app_publication(state: &ShopState, publication: &str) -> bool {
 
 /// `publicationCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let mut errors = Vec::new();
     let catalog = match text(&input, "catalogId") {
@@ -203,7 +203,7 @@ fn publishables(
 
 /// `publicationUpdate`.
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let Some(publication) = ctx
         .arg_str("id")

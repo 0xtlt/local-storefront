@@ -4,10 +4,11 @@
 // - `--version <v>` names the version (`2027-01`); without it, the default version of lsf-admin,
 //   read from `pub const DEFAULT` in crates/admin/src/version.rs, so that the scripts and the
 //   crate have one default.
-// - The introspection comes from the npm package @shopify/dev-mcp (ISC, Shopify), pinned below and
-//   checked against its SHA-256, which ships the introspection of each Admin API version it
-//   supports (`dist/data/admin_<version>.json.gz`, with the `requiredAccess` of each type and
-//   field). It is reproducible: the same package gives the same files.
+// - The introspection comes from the npm package @shopify/dev-mcp (ISC, Shopify), pinned and
+//   checked against its SHA-256 in tools/dev_mcp.mjs, which ships the introspection of each
+//   Admin API version it supports (`dist/data/admin_<version>.json.gz`, with the
+//   `requiredAccess` of each type and field). It is reproducible: the same package gives the
+//   same files.
 // - A version the package does not ship (a release newer than it) is introspected from Shopify's
 //   public proxy of the Admin API, the one shopify.dev's GraphiQL explorer queries
 //   (`https://shopify.dev/admin-graphql-direct-proxy/<version>`), which answers introspection
@@ -16,16 +17,14 @@
 //   `LSF_ADMIN_SOURCE=shopify.dev` reads every version there (a release candidate as it is now).
 //
 // Needs network access, and `npm` for the package.
-import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 
-export const PACKAGE = "@shopify/dev-mcp@1.17.0";
-const SHA256 = "f651c221109dbc55601ab7a85353f3b82fec8ec9bbf9f260440139e28c7e8a7a";
+import { PACKAGE, SHA256, devMcp } from "../dev_mcp.mjs";
+
+export { PACKAGE };
 const PROXY = "https://shopify.dev/admin-graphql-direct-proxy";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -47,28 +46,6 @@ export function versionArg(argv = process.argv.slice(2)) {
     throw new Error(`\`${version}\` is not an API version (2027-01, unstable)`);
   }
   return version;
-}
-
-let unpacked = null;
-
-/** The pinned package, unpacked once per process into a temporary directory. */
-function devMcp() {
-  if (unpacked) return unpacked;
-  const work = mkdtempSync(join(tmpdir(), "lsf-admin-dev-mcp-"));
-  process.on("exit", () => rmSync(work, { recursive: true, force: true }));
-  execFileSync("npm", ["pack", PACKAGE, "--silent", "--pack-destination", work], {
-    stdio: ["ignore", "ignore", "inherit"],
-  });
-  const tarballs = readdirSync(work);
-  if (tarballs.length !== 1) throw new Error(`expected one tarball in ${work}, got ${tarballs}`);
-  const tarball = join(work, tarballs[0]);
-  const sha = createHash("sha256").update(readFileSync(tarball)).digest("hex");
-  if (sha !== SHA256) throw new Error(`${PACKAGE}: SHA-256 is ${sha}, expected ${SHA256}`);
-  const dir = join(work, "unpacked");
-  mkdirSync(dir);
-  execFileSync("tar", ["xzf", tarball, "-C", dir]);
-  unpacked = join(dir, "package");
-  return unpacked;
 }
 
 /**

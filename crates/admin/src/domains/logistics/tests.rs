@@ -2,48 +2,8 @@
 
 use serde_json::{Value, json};
 
-use crate::graphql::{self, Request};
-use crate::resolve::{Registry, ShopResolver};
+use crate::domains::test_support::{demo, rich, run, topics};
 use crate::state::ShopState;
-
-fn demo() -> ShopState {
-    let (store, _) = lsf_core::store::load::load(
-        &lsf_core::store::load::DataSource::Demo,
-        &Default::default(),
-    );
-    ShopState::seeded(&store, None)
-}
-
-fn rich() -> ShopState {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
-    let (store, _) = lsf_core::store::load::load(
-        &lsf_core::store::load::DataSource::Directory(path),
-        &Default::default(),
-    );
-    ShopState::seeded(&store, None)
-}
-
-/// Runs a request on the shop: its answer (`extensions` without `cost`).
-fn run(shop: &mut ShopState, query: &str, variables: Value) -> Value {
-    let mut resolver = ShopResolver::new(shop, Registry::standard());
-    let mut answer = graphql::run(
-        crate::schema::admin(),
-        &mut resolver,
-        &Request::new(query).with_variables(variables),
-        None,
-    );
-    answer.extensions.extend(resolver.extensions());
-    answer.extensions.remove("cost");
-    answer.to_json()
-}
-
-/// The topics of the events emitted since the last call.
-fn topics(shop: &mut ShopState) -> Vec<String> {
-    shop.take_events()
-        .into_iter()
-        .map(|event| event.topic)
-        .collect()
-}
 
 /// The payload of the last event of a topic emitted since the last call, as the webhooks build
 /// it.

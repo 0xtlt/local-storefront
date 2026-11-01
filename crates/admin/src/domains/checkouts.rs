@@ -237,15 +237,11 @@ pub fn register(registry: &mut Registry) {
                     .and_then(|set| set.pointer("/shopMoney/amount")),
             )
         })
-        .sort_key("AbandonedCheckout", "CUSTOMER_NAME", |r, item| {
-            SortValue::of(
-                r.item_map(item)
-                    .and_then(|record| record.get("customer"))
-                    .and_then(Value::as_str)
-                    .and_then(|customer| r.state().get(customer))
-                    .and_then(|customer| customer.get("displayName")),
-            )
-        })
+        .sort_key(
+            "AbandonedCheckout",
+            "CUSTOMER_NAME",
+            crate::domains::orders::queries::customer_name,
+        )
         .default_text("AbandonedCheckout", |r, record| {
             let mut texts: Vec<String> = ["name", "lsfEmail"]
                 .iter()

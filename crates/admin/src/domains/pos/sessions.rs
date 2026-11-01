@@ -93,9 +93,10 @@ pub fn register(registry: &mut Registry) {
 /// A date of a record, as a search value.
 fn date_value(record: &Record, name: &str) -> Option<Vec<SearchValue>> {
     Some(
-        instant(text(record, name))
-            .map(|date| vec![SearchValue::Date(date)])
-            .unwrap_or_default(),
+        text(record, name)
+            .and_then(SearchValue::date)
+            .into_iter()
+            .collect(),
     )
 }
 

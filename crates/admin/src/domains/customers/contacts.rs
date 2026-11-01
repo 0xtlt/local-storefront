@@ -25,10 +25,10 @@ use serde_json::{Map, Value, json};
 
 use super::companies::{ids_arg, not_found, record_arg, with_company};
 use super::customer::{check_fields, create_customer, update_customer};
-use super::{field_path, gids_of, given_text, object_arg};
+use super::{gids_of, given_text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, input_path, payload};
 use crate::state::{Record, ShopState, gid, parse_gid, value};
 
 pub fn register(registry: &mut Registry) {
@@ -277,7 +277,7 @@ fn contact_create(
         Ok(company) => company,
         Err(error) => return Ok(payload(json!({"companyContact": null}), &[error])),
     };
-    let input = object_arg(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     check_contact(state, &input, &["input"], None, true, &mut errors);
     if !errors.is_empty() {
@@ -297,7 +297,7 @@ fn contact_update(
         Ok(contact) => contact,
         Err(error) => return Ok(payload(json!({"companyContact": null}), &[error])),
     };
-    let input = object_arg(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     check_contact(
         state,
@@ -470,7 +470,7 @@ fn check_assignment(
     let company = company_of(state, contact);
     let mut found = true;
     if state.type_of(contact) != Some("CompanyContact") {
-        errors.push(not_found(&field_path(path, contact_name)));
+        errors.push(not_found(&input_path(path, &[contact_name])));
         found = false;
     }
     let company_roles = company
@@ -480,7 +480,7 @@ fn check_assignment(
     if state.type_of(role) != Some("CompanyContactRole")
         || (found && !company_roles.iter().any(|known| known == role))
     {
-        errors.push(not_found(&field_path(path, role_name)));
+        errors.push(not_found(&input_path(path, &[role_name])));
         found = false;
     }
     let location_company = state
@@ -489,7 +489,7 @@ fn check_assignment(
         .and_then(|record| record.get("company"))
         .and_then(Value::as_str);
     if location_company.is_none() || (company.is_some() && location_company != company.as_deref()) {
-        errors.push(not_found(&field_path(path, location_name)));
+        errors.push(not_found(&input_path(path, &[location_name])));
         found = false;
     }
     if !found {
@@ -508,7 +508,7 @@ fn check_assignment(
         // Not published: lsf's words, with the payload's code.
         errors.push(
             UserError::new(
-                &field_path(path, location_name),
+                &input_path(path, &[location_name]),
                 "Company contact has already been assigned a role in that company location",
             )
             .code("TAKEN"),

@@ -173,8 +173,7 @@ fn dates<'v>(values: impl IntoIterator<Item = Option<&'v Value>>) -> Vec<SearchV
     values
         .into_iter()
         .filter_map(|value| value.and_then(Value::as_str))
-        .filter_map(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
-        .map(|date| SearchValue::Date(date.with_timezone(&chrono::Utc)))
+        .filter_map(SearchValue::date)
         .collect()
 }
 

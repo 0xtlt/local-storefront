@@ -28,7 +28,6 @@ use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
 use super::catalog::{cents_of, gids};
-use crate::graphql::FieldContext;
 use crate::resolve::Registry;
 use crate::state::seed::Seed;
 use crate::state::value::{self, date_time, text};
@@ -279,14 +278,6 @@ pub fn gids_of(record: Option<&Record>, field: &str) -> Vec<String> {
     gids(record.and_then(|record| record.get(field)))
 }
 
-/// The object argument `name` (empty when it is not given).
-fn object_arg(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
-    ctx.arg(name)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
-}
-
 /// Adds then removes exemptions from a list of them.
 fn exemptions_changed(current: Option<&Value>, add: &[Value], remove: &[Value]) -> Value {
     let mut list: Vec<Value> = current
@@ -300,11 +291,6 @@ fn exemptions_changed(current: Option<&Value>, add: &[Value], remove: &[Value]) 
     }
     list.retain(|exemption| !remove.contains(exemption));
     json!(list)
-}
-
-/// The path of `field` in an input at `path`: what a user error names.
-pub fn field_path<'a>(path: &[&'a str], field: &'a str) -> Vec<&'a str> {
-    path.iter().copied().chain([field]).collect()
 }
 
 /// A string of an input object: `None` when it is not given, `Some(None)` when it is given as

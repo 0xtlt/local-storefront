@@ -48,8 +48,7 @@ use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
 use crate::domains::catalog;
-use crate::graphql::FieldContext;
-use crate::resolve::{Registry, UserError};
+use crate::resolve::{Registry, UserError, coded, input_path};
 use crate::state::seed::Seed;
 use crate::state::{Record, ShopState, gid, parse_gid};
 
@@ -381,14 +380,6 @@ impl Pointer for Record {
     }
 }
 
-/// An argument of the field that is an input object (`{}` when it is not given).
-fn input(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
-    ctx.arg(name)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
-}
-
 /// A string field of an input.
 fn text<'i>(input: &'i Map<String, Value>, field: &str) -> Option<&'i str> {
     input.get(field).and_then(Value::as_str)
@@ -443,8 +434,7 @@ fn records_input(
             }
         } else {
             let index = index.to_string();
-            let mut field: Vec<&str> = at.to_vec();
-            field.push(&index);
+            let field = input_path(at, &[&index]);
             errors.push(coded(&field, message, code));
         }
     }
@@ -475,11 +465,6 @@ pub fn catalog_key(state: &ShopState, id: &str) -> Option<String> {
 fn market_not_found(field: &str) -> UserError {
     // lsf's wording: shopify.dev publishes the code only.
     coded(&[field], "Market does not exist", "MARKET_NOT_FOUND")
-}
-
-/// A user error with a code.
-fn coded(field: &[&str], message: impl Into<String>, code: &str) -> UserError {
-    UserError::new(field, message).code(code)
 }
 
 /// The numeric id of a GID, for sorting a list as Shopify answers it (by id).

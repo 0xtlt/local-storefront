@@ -40,12 +40,12 @@ use std::collections::HashSet;
 
 use serde_json::{Map, Value, json};
 
-use super::{
-    Pointer, coded, input, is, market_currency, number, objects, shop_currency, strings, text,
-};
+use super::{Pointer, is, market_currency, number, objects, shop_currency, strings, text};
 use crate::domains::catalog::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{
+    Mutation, Obj, Registry, ShopResolver, UserError, coded, input_path, payload,
+};
 use crate::search::SearchValue;
 use crate::state::{Record, ShopState, value};
 
@@ -87,8 +87,7 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn id_value(gid: Option<&Value>) -> Option<Vec<SearchValue>> {
-    let (_, id) = crate::state::parse_gid(gid?.as_str()?)?;
-    Some(vec![SearchValue::Id(id)])
+    Some(vec![SearchValue::id(gid?.as_str()?)?])
 }
 
 // --- Prices ---
@@ -493,7 +492,7 @@ fn note_rate(r: &ShopResolver<'_>, converted: bool) {
 }
 
 fn context_arg(ctx: &FieldContext<'_>) -> Map<String, Value> {
-    input(ctx, "context")
+    ctx.arg_object_or_default("context")
 }
 
 fn variant_contextual_pricing(
@@ -852,8 +851,7 @@ fn check_parent(parent: &Map<String, Value>, at: &[&str], errors: &mut Vec<UserE
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
     let decrease = text(adjustment, "type") == Some("PERCENTAGE_DECREASE");
-    let mut field: Vec<&str> = at.to_vec();
-    field.extend(["adjustment", "value"]);
+    let field = input_path(at, &["adjustment", "value"]);
     // lsf's bounds and wording: a decrease of more than 100% would make prices negative;
     // shopify.dev documents the codes only.
     if value < 0.0 {
@@ -976,7 +974,7 @@ fn link_catalog(state: &mut ShopState, list: &str, catalog: &str) {
 
 /// `priceListCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let mut errors = Vec::new();
     let name = text(&input, "name").unwrap_or_default().trim().to_string();
@@ -1025,7 +1023,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
 
 /// `priceListUpdate`. A new currency removes the fixed prices (and their price breaks).
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let Some(list) = list_arg(state, ctx, "id") else {
         return Ok(payload(
@@ -1608,8 +1606,7 @@ fn check_rules_against_breaks(
             continue;
         };
         let index = index.to_string();
-        let mut field: Vec<&str> = inputs_at.to_vec();
-        field.push(&index);
+        let field = input_path(inputs_at, &[&index]);
         for minimum in break_minimums(state, list, &rule.variant) {
             // The codes' descriptions in the schema.
             if rule.minimum > minimum {
@@ -1795,7 +1792,7 @@ fn quantity_pricing_update(
         );
         return Ok(payload(json!({"productVariants": null}), &[error]));
     };
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let list_of = |name: &str| objects(input.get(name));
     let ids_of = |name: &str| strings(input.get(name));
     let currency = currency_of(state, &list);

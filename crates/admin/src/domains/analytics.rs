@@ -179,13 +179,6 @@ fn date_values(
         .collect()
 }
 
-fn input_of(ctx: &FieldContext<'_>) -> Map<String, Value> {
-    ctx.arg("input")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
-}
-
 fn instant(value: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
     value
         .as_str()
@@ -234,7 +227,7 @@ fn utc(value: &Value) -> Value {
 }
 
 fn annotation_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx);
+    let input = ctx.arg_object_or_default("input");
     let errors = annotation_errors(&input);
     if !errors.is_empty() {
         return Ok(payload(json!({"analyticsAnnotation": null}), &errors));
@@ -278,7 +271,7 @@ fn annotation_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
         let error = UserError::new(&["id"], "Analytics annotation not found").code("NOT_FOUND");
         return Ok(payload(json!({"analyticsAnnotation": null}), &[error]));
     }
-    let input = input_of(ctx);
+    let input = ctx.arg_object_or_default("input");
     let merged = merged(m.state(), &id, &input);
     let mut checked = Map::new();
     for field in ["title", "type"] {
@@ -431,7 +424,7 @@ fn decimal(value: &Value) -> Value {
 }
 
 fn target_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx);
+    let input = ctx.arg_object_or_default("input");
     let errors = target_errors(m.state(), &input, None);
     if !errors.is_empty() {
         return Ok(payload(json!({"analyticsTarget": null}), &errors));
@@ -472,7 +465,7 @@ fn target_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         let error = UserError::new(&["id"], "Analytics target not found").code("NOT_FOUND");
         return Ok(payload(json!({"analyticsTarget": null}), &[error]));
     }
-    let input = input_of(ctx);
+    let input = ctx.arg_object_or_default("input");
     let merged = merged(m.state(), &id, &input);
     let errors = target_errors(m.state(), &merged, Some(&id));
     if !errors.is_empty() {

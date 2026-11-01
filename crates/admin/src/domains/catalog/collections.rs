@@ -37,12 +37,10 @@
 use serde_json::{Map, Value, json};
 
 use super::collection_sources as sources;
-use super::records::{
-    self, arg_objects, coded, field, input, is, link_collection, objects, origin, text,
-};
+use super::records::{self, arg_objects, field, is, link_collection, objects, origin, text};
 use super::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, done_job, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, done_job, payload};
 use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -434,9 +432,9 @@ fn note_rules(mutation: &mut Mutation<'_>, name: &str, rule_set: Option<&Value>)
 
 /// The input of a collection mutation: `collection`, else the deprecated `input`.
 fn collection_input(ctx: &FieldContext<'_>) -> Map<String, Value> {
-    match ctx.arg("collection").and_then(Value::as_object) {
+    match ctx.arg_object("collection") {
         Some(collection) => collection.clone(),
-        None => input(ctx, "input"),
+        None => ctx.arg_object_or_default("input"),
     }
 }
 
@@ -699,7 +697,8 @@ fn collection_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let id = input(ctx, "input")
+    let id = ctx
+        .arg_object_or_default("input")
         .get("id")
         .and_then(Value::as_str)
         .unwrap_or_default()

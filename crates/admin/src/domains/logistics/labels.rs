@@ -27,7 +27,7 @@ use serde_json::{Map, Value, json};
 use super::{coded, int, objects, text};
 use crate::domains::catalog::gids;
 use crate::domains::orders::model;
-use crate::graphql::{self, FieldContext, FieldError, Request};
+use crate::graphql::{FieldContext, FieldError, Request};
 use crate::outbox::{self, Channel, Entry};
 use crate::resolve::{Mutation, Registry, payload};
 use crate::state::{Record, ShopState, value};
@@ -86,7 +86,7 @@ fn carrier(code: Option<&str>, origin_country: Option<&str>) -> (String, String)
 
 fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"shippingLabelPurchaseResult": null});
-    let input = super::input(ctx, "shippingLabelPurchase");
+    let input = ctx.arg_object_or_default("shippingLabelPurchase");
     let state = mutation.state();
     let at = |field: &'static str| ["shippingLabelPurchase", field];
     let fail = |field: &[&str], code: &str| Ok(payload(empty.clone(), &[coded(ctx, field, code)]));
@@ -251,7 +251,7 @@ fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
                 "package": package.cloned().map(Value::Object).or(default_package),
             })),
     );
-    fulfill(mutation, ctx.schema(), &id, &tracking, notify)?;
+    fulfill(mutation, &id, &tracking, notify)?;
     mutation.note(
         "shippingLabelPurchase: lsf buys nothing: the label is recorded in the shop's outbox \
          (GET /__lsf/admin/outbox)",
@@ -263,7 +263,6 @@ fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
 /// `fulfillmentCreate` run within this mutation.
 fn fulfill(
     mutation: &mut Mutation<'_>,
-    schema: &crate::schema::Schema,
     fulfillment_order: &str,
     tracking: &Value,
     notify: bool,
@@ -275,10 +274,7 @@ fn fulfill(
         "notifyCustomer": notify,
     }});
     let request = Request::new(query).with_variables(variables);
-    let answer = {
-        let mut resolver = mutation.resolver();
-        graphql::run(schema, &mut resolver, &request, None).to_json()
-    };
+    let (answer, _) = mutation.run_graphql(&request);
     let errors: Vec<Map<String, Value>> =
         objects(answer.pointer("/data/fulfillmentCreate/userErrors"));
     if let Some(error) = errors.first().or(answer

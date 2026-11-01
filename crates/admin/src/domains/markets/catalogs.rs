@@ -27,12 +27,11 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    CATALOG_TYPES, catalog_key, catalog_type, coded, input, is, market_currency, records_input,
-    strings, text,
+    CATALOG_TYPES, catalog_key, catalog_type, is, market_currency, records_input, strings, text,
 };
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, payload};
 use crate::search::SearchValue;
 use crate::state::{ShopState, value};
 
@@ -73,8 +72,7 @@ pub fn register(registry: &mut Registry) {
                 strings(catalog.get("companyLocations"))
                     .iter()
                     .filter_map(|location| r.state().get(location)?.get("company")?.as_str())
-                    .filter_map(crate::state::parse_gid)
-                    .map(|(_, id)| SearchValue::Id(id))
+                    .filter_map(SearchValue::id)
                     .collect(),
             )
         });
@@ -404,7 +402,7 @@ fn set_owner(state: &mut ShopState, record: Option<&str>, catalog: Option<&str>)
 
 /// `catalogCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let mut errors = Vec::new();
     let title = text(&input, "title").unwrap_or_default().trim().to_string();
@@ -455,7 +453,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
 
 /// `catalogUpdate`.
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let Some(catalog) = catalog_arg(state, ctx, "id") else {
         return Ok(payload(json!({"catalog": null}), &[not_found(&["id"])]));
@@ -607,11 +605,8 @@ fn context_update(
         );
         return Ok(payload(json!({"catalog": null}), &[error]));
     }
-    let add = ctx.arg("contextsToAdd").and_then(Value::as_object).cloned();
-    let remove = ctx
-        .arg("contextsToRemove")
-        .and_then(Value::as_object)
-        .cloned();
+    let add = ctx.arg_object("contextsToAdd").cloned();
+    let remove = ctx.arg_object("contextsToRemove").cloned();
     if add.is_none() && remove.is_none() {
         // The code's description in the schema.
         let error = coded(

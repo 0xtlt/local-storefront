@@ -26,9 +26,9 @@
 use serde_json::{Map, Value, json};
 
 use super::cents_of;
-use super::records::{coded, currency, field, input, is, text};
+use super::records::{currency, field, is, text};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, coded, payload};
 use crate::state::{Record, ShopState, gid, value};
 
 pub fn register(registry: &mut Registry) {
@@ -179,7 +179,7 @@ fn gift_card_create(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let empty = json!({"giftCard": null, "giftCardCode": null});
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let shop_currency = currency(state);
     let mut errors = Vec::new();
@@ -303,7 +303,7 @@ fn gift_card_update(
         let error = UserError::new(&["id"], "Gift card does not exist");
         return Ok(payload(json!({"giftCard": null}), &[error]));
     };
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     check_recipient(state, &input, &mut errors);
     if !errors.is_empty() {
@@ -348,7 +348,7 @@ fn transaction(
         );
         return Ok(payload(empty, &[error]));
     };
-    let input = input(ctx, input_name);
+    let input = ctx.arg_object_or_default(input_name);
     let record = state.get(&card).cloned().unwrap_or_default();
     let card_currency = record
         .get("balance")

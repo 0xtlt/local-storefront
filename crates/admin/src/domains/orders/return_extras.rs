@@ -40,11 +40,10 @@ use serde_json::{Value, json};
 use super::LineDraft;
 use super::model::{self, array, field_cents, int, text};
 use super::refunds::{self, RefundLine, RefundSpec};
-use super::returns::error;
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::outbox::{self, Entry};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, payload};
 use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -105,7 +104,7 @@ pub fn read_exchanges(
             .get(variant)
             .filter(|_| state.type_of(variant) == Some("ProductVariant"))
         else {
-            errors.push(error(
+            errors.push(coded(
                 &at("variantId"),
                 "Variant does not exist.",
                 "NOT_FOUND",
@@ -114,7 +113,7 @@ pub fn read_exchanges(
         };
         let quantity = item.get("quantity").and_then(Value::as_i64).unwrap_or(0);
         if quantity <= 0 {
-            errors.push(error(
+            errors.push(coded(
                 &at("quantity"),
                 "Exchange line item has an invalid quantity.",
                 "INVALID",
@@ -129,7 +128,7 @@ pub fn read_exchanges(
                 (Some(percentage), _) if !percentage.is_null() => {
                     let percentage = percentage.as_f64().unwrap_or(0.0);
                     if !(0.0..=100.0).contains(&percentage) {
-                        errors.push(error(
+                        errors.push(coded(
                             &at("appliedDiscount"),
                             "Percentage must be between 0 and 100.",
                             "INVALID",
@@ -147,9 +146,9 @@ pub fn read_exchanges(
             None => 0,
         };
         if !value::money_in_bounds(total) {
-            errors.push(error(
+            errors.push(coded(
                 &at("quantity"),
-                &value::money_too_large("Total price"),
+                value::money_too_large("Total price"),
                 "INVALID",
             ));
             continue;
@@ -493,7 +492,7 @@ fn dispose(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         .cloned()
         .unwrap_or_default();
     if inputs.is_empty() {
-        return failed(error(
+        return failed(coded(
             &["dispositionInputs"],
             "Disposition inputs can't be blank.",
             "BLANK",
@@ -512,7 +511,7 @@ fn dispose(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
             .get(line)
             .filter(|_| state.type_of(line) == Some("ReverseFulfillmentOrderLineItem"))
         else {
-            return failed(error(
+            return failed(coded(
                 &at("reverseFulfillmentOrderLineItemId"),
                 "Reverse fulfillment order line item does not exist.",
                 "NOT_FOUND",
@@ -527,7 +526,7 @@ fn dispose(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         if quantity <= 0
             || quantity + already + disposed(state, record) > int(record, "totalQuantity")
         {
-            return failed(error(
+            return failed(coded(
                 &at("quantity"),
                 "Quantity is more than what is left to dispose of the line item.",
                 "INVALID",
@@ -546,14 +545,14 @@ fn dispose(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
             match &location {
                 Some(location) if state.type_of(location) == Some("Location") => {}
                 Some(_) => {
-                    return failed(error(
+                    return failed(coded(
                         &at("locationId"),
                         "Location does not exist.",
                         "NOT_FOUND",
                     ));
                 }
                 None => {
-                    return failed(error(
+                    return failed(coded(
                         &at("locationId"),
                         "A location is required to restock.",
                         "BLANK",
@@ -722,14 +721,14 @@ fn delivery_create(
         .filter(|_| state.type_of(&reverse) == Some("ReverseFulfillmentOrder"))
         .cloned()
     else {
-        return failed(error(
+        return failed(coded(
             &["reverseFulfillmentOrderId"],
             "Reverse fulfillment order does not exist.",
             "NOT_FOUND",
         ));
     };
     if text(&record, "status") != Some("OPEN") {
-        return failed(error(
+        return failed(coded(
             &["reverseFulfillmentOrderId"],
             "Reverse fulfillment order is not open.",
             "INVALID_STATE",
@@ -741,7 +740,7 @@ fn delivery_create(
         .cloned()
         .unwrap_or_default();
     if items.is_empty() {
-        return failed(error(
+        return failed(coded(
             &["reverseDeliveryLineItems"],
             "Reverse delivery line items can't be blank.",
             "BLANK",
@@ -756,7 +755,7 @@ fn delivery_create(
             .and_then(Value::as_str)
             .unwrap_or_default();
         if !own.iter().any(|known| known == line) {
-            return failed(error(
+            return failed(coded(
                 &[
                     "reverseDeliveryLineItems",
                     &index,
@@ -778,7 +777,7 @@ fn delivery_create(
         let total = state.get(line).map_or(0, |item| int(item, "totalQuantity"));
         let quantity = item.get("quantity").and_then(Value::as_i64).unwrap_or(0);
         if quantity <= 0 || quantity + carried > total {
-            return failed(error(
+            return failed(coded(
                 &["reverseDeliveryLineItems", &index, "quantity"],
                 "Quantity is more than what is left to deliver of the line item.",
                 "INVALID",
@@ -845,7 +844,7 @@ fn delivery_update(
         .filter(|_| state.type_of(&id) == Some("ReverseDelivery"))
         .cloned()
     else {
-        return failed(error(
+        return failed(coded(
             &["reverseDeliveryId"],
             "Reverse delivery does not exist.",
             "NOT_FOUND",
@@ -856,7 +855,7 @@ fn delivery_update(
         ctx.arg("labelInput").cloned(),
     );
     if tracking.as_ref().is_none_or(Value::is_null) && label.as_ref().is_none_or(Value::is_null) {
-        return failed(error(
+        return failed(coded(
             &["trackingInput"],
             "A tracking or a label is required.",
             "BLANK",
@@ -896,10 +895,10 @@ fn remove_from_return(
         .filter(|_| state.type_of(&id) == Some("Return"))
         .cloned()
     else {
-        return failed(error(&["returnId"], "Return does not exist.", "NOT_FOUND"));
+        return failed(coded(&["returnId"], "Return does not exist.", "NOT_FOUND"));
     };
     if !matches!(text(&record, "status"), Some("OPEN" | "REQUESTED")) {
-        return failed(error(
+        return failed(coded(
             &["returnId"],
             "Return is not editable. Only returns with status OPEN or REQUESTED can be changed.",
             "INVALID_STATE",
@@ -942,7 +941,7 @@ fn remove_from_return(
             let index = index.to_string();
             let line = item.get(*key).and_then(Value::as_str).unwrap_or_default();
             if !own.iter().any(|known| known == line) {
-                return failed(error(
+                return failed(coded(
                     &[argument, &index, key],
                     "Line item does not exist on the return.",
                     "NOT_FOUND",
@@ -958,7 +957,7 @@ fn remove_from_return(
                 .map(|(_, quantity, _)| quantity)
                 .sum();
             if quantity <= 0 || quantity + already > unprocessed {
-                return failed(error(
+                return failed(coded(
                     &[argument, &index, "quantity"],
                     "Quantity is more than what is unprocessed of the line item.",
                     "INVALID",
@@ -968,7 +967,7 @@ fn remove_from_return(
         }
     }
     if removals.is_empty() {
-        return failed(error(
+        return failed(coded(
             &["returnLineItems"],
             "Return line items can't be blank.",
             "BLANK",
@@ -985,7 +984,7 @@ fn remove_from_return(
             .map(|(_, quantity, _)| quantity)
             .sum::<i64>();
     if left <= 0 {
-        return failed(error(
+        return failed(coded(
             &["returnLineItems"],
             "A return must keep at least one return line item: cancel it instead.",
             "INVALID",
@@ -1087,14 +1086,14 @@ fn return_refund(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .filter(|_| state.type_of(&id) == Some("Return"))
         .cloned()
     else {
-        return failed(&[error(
+        return failed(&[coded(
             &["returnRefundInput", "returnId"],
             "Return does not exist.",
             "NOT_FOUND",
         )]);
     };
     if !matches!(text(&record, "status"), Some("OPEN" | "CLOSED")) {
-        return failed(&[error(
+        return failed(&[coded(
             &["returnRefundInput", "returnId"],
             "Return is not refundable. Only returns with status OPEN or CLOSED can be refunded.",
             "INVALID_STATE",
@@ -1113,7 +1112,7 @@ fn return_refund(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
             .and_then(Value::as_str)
             .unwrap_or_default();
         if !own.iter().any(|known| known == line) {
-            errors.push(error(
+            errors.push(coded(
                 &[&path[..], &["returnLineItemId"]].concat(),
                 "Return line item does not exist.",
                 "NOT_FOUND",
@@ -1125,7 +1124,7 @@ fn return_refund(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         };
         let quantity = item.get("quantity").and_then(Value::as_i64).unwrap_or(0);
         if quantity <= 0 || quantity > int(item_record, "refundableQuantity") {
-            errors.push(error(
+            errors.push(coded(
                 &[&path[..], &["quantity"]].concat(),
                 "Return line item has an invalid quantity.",
                 "INVALID",
@@ -1137,7 +1136,7 @@ fn return_refund(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
             .and_then(|fulfillment| text(fulfillment, "lineItem"))
             .map(str::to_string);
         let Some(line_item) = line_item else {
-            errors.push(error(
+            errors.push(coded(
                 &[&path[..], &["returnLineItemId"]].concat(),
                 "Return line item is not of a fulfilled line item.",
                 "INVALID",
@@ -1155,7 +1154,7 @@ fn return_refund(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         &mut errors,
     );
     if lines.is_empty() && errors.is_empty() {
-        errors.push(error(
+        errors.push(coded(
             &["returnRefundInput", "returnRefundLineItems"],
             "Return refund line items can't be blank.",
             "BLANK",
@@ -1169,7 +1168,7 @@ fn return_refund(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         model::cents(shipping_input.get("shippingRefundAmount"))
     };
     if shipping < 0 || shipping > remaining_shipping {
-        errors.push(error(
+        errors.push(coded(
             &["returnRefundInput", "refundShipping"],
             "Shipping must have amount less than or equal to remaining shipping",
             "INVALID",

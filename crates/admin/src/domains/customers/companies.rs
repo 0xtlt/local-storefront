@@ -33,12 +33,11 @@ use serde_json::{Map, Value, json};
 
 use super::contacts::{self, delete_contact};
 use super::{
-    CONTACT_ROLES, contact_role_gid_of, exemptions_changed, field_path, gids_of, given_text,
-    object_arg, primary_locale,
+    CONTACT_ROLES, contact_role_gid_of, exemptions_changed, gids_of, given_text, primary_locale,
 };
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, input_path, payload};
 use crate::state::{Record, ShopState, parse_gid, value};
 
 pub fn register(registry: &mut Registry) {
@@ -104,7 +103,7 @@ fn check_company(
         Some(Some(name)) if name.chars().count() > 255 => errors.push(
             // Rails' wording, with the payload's code.
             UserError::new(
-                &field_path(path, "name"),
+                &input_path(path, &["name"]),
                 "Name is too long (maximum is 255 characters)",
             )
             .code("TOO_LONG"),
@@ -112,9 +111,9 @@ fn check_company(
         Some(Some(_)) => {}
         // The `companyCreate` example's error.
         None if creating => errors
-            .push(UserError::new(&field_path(path, "name"), "Name must exist").code("REQUIRED")),
+            .push(UserError::new(&input_path(path, &["name"]), "Name must exist").code("REQUIRED")),
         Some(None) => errors
-            .push(UserError::new(&field_path(path, "name"), "Name must exist").code("REQUIRED")),
+            .push(UserError::new(&input_path(path, &["name"]), "Name must exist").code("REQUIRED")),
         None => {}
     }
     if let Some(Some(external)) = given_text(input, "externalId")
@@ -123,7 +122,7 @@ fn check_company(
         // Not published: Rails' wording, with the payload's code.
         errors.push(
             UserError::new(
-                &field_path(path, "externalId"),
+                &input_path(path, &["externalId"]),
                 "External ID has already been taken",
             )
             .code("TAKEN"),
@@ -150,7 +149,7 @@ fn check_address(input: &Map<String, Value>, path: &[&str], errors: &mut Vec<Use
         // Not published: Rails' wording, with the payload's code.
         errors.push(
             UserError::new(
-                &field_path(path, "countryCode"),
+                &input_path(path, &["countryCode"]),
                 "Country code can't be blank",
             )
             .code("BLANK"),
@@ -224,11 +223,12 @@ fn check_location(
 ) {
     if named && given_text(input, "name").flatten().is_none() {
         // As `companyCreate`'s name.
-        errors.push(UserError::new(&field_path(path, "name"), "Name must exist").code("REQUIRED"));
+        errors
+            .push(UserError::new(&input_path(path, &["name"]), "Name must exist").code("REQUIRED"));
     }
     for field in ["shippingAddress", "billingAddress"] {
         if let Some(address) = input.get(field).and_then(Value::as_object) {
-            check_address(address, &field_path(path, field), errors);
+            check_address(address, &input_path(path, &[field]), errors);
         }
     }
 }
@@ -341,7 +341,7 @@ fn company_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let input = object_arg(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let object = |name: &str| input.get(name).and_then(Value::as_object).cloned();
     let company_input = object("company").unwrap_or_default();
     let location_input = object("companyLocation");
@@ -442,7 +442,7 @@ fn company_update(
         Ok(company) => company,
         Err(error) => return Ok(payload(json!({"company": null}), &[error])),
     };
-    let input = object_arg(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     check_company(
         state,
@@ -562,7 +562,7 @@ fn location_create(
         Ok(company) => company,
         Err(error) => return Ok(payload(json!({"companyLocation": null}), &[error])),
     };
-    let input = object_arg(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let mut errors = Vec::new();
     check_location(&input, &["input"], true, &mut errors);
     if !errors.is_empty() {
@@ -582,7 +582,7 @@ fn location_update(
         Ok(location) => location,
         Err(error) => return Ok(payload(json!({"companyLocation": null}), &[error])),
     };
-    let input = object_arg(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     if let Some(None) = given_text(&input, "name") {
         let error = UserError::new(&["input", "name"], "Name must exist").code("REQUIRED");
         return Ok(payload(json!({"companyLocation": null}), &[error]));
@@ -672,7 +672,7 @@ fn location_assign_address(
         Ok(location) => location,
         Err(error) => return Ok(payload(json!({"addresses": null}), &[error])),
     };
-    let input = object_arg(ctx, "address");
+    let input = ctx.arg_object_or_default("address");
     let types: Vec<String> = ctx
         .arg("addressTypes")
         .and_then(Value::as_array)

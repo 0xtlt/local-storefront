@@ -3,34 +3,13 @@
 
 use serde_json::{Value, json};
 
-use crate::graphql::{self, Request};
-use crate::resolve::{Registry, ShopResolver};
+use crate::domains::test_support;
+pub(crate) use crate::domains::test_support::run;
 use crate::state::{Clock, ShopState};
 
 /// The demo store on a frozen clock (it runs on the system's).
 pub(crate) fn demo() -> ShopState {
-    let (store, _) = lsf_core::store::load::load(
-        &lsf_core::store::load::DataSource::Demo,
-        &Default::default(),
-    );
-    let mut state = ShopState::seeded(&store, None);
-    let now = chrono::DateTime::parse_from_rfc3339("2026-10-31T12:00:00Z").unwrap();
-    state.set_clock(Clock::Frozen(now.with_timezone(&chrono::Utc)));
-    state
-}
-
-/// The answer to a query with variables, `extensions` without `cost`.
-pub(crate) fn run(shop: &mut ShopState, query: &str, variables: Value) -> Value {
-    let mut resolver = ShopResolver::new(shop, Registry::standard());
-    let mut answer = graphql::run(
-        crate::schema::admin(),
-        &mut resolver,
-        &Request::new(query).with_variables(variables),
-        None,
-    );
-    answer.extensions.extend(resolver.extensions());
-    answer.extensions.remove("cost");
-    answer.to_json()
+    test_support::frozen(test_support::demo())
 }
 
 /// The data of a field of an answer that has no GraphQL error.
@@ -41,9 +20,8 @@ pub(crate) fn data<'a>(answer: &'a Value, name: &str) -> &'a Value {
 
 /// The topics of the events emitted since the last call, `lsf/changed` left out.
 pub(crate) fn topics(shop: &mut ShopState) -> Vec<String> {
-    shop.take_events()
+    test_support::topics(shop)
         .into_iter()
-        .map(|event| event.topic)
         .filter(|topic| topic != crate::domains::app::CHANGED)
         .collect()
 }

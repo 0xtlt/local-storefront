@@ -11,14 +11,6 @@ use crate::graphql::FieldContext;
 use crate::resolve::UserError;
 use crate::state::{Record, ShopState, gid, parse_gid, value};
 
-/// An argument of the field that is an input object (`{}` when it is not given).
-pub fn input(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
-    ctx.arg(name)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
-}
-
 /// A string field of an input.
 pub fn text<'i>(input: &'i Map<String, Value>, field: &str) -> Option<&'i str> {
     input.get(field).and_then(Value::as_str)
@@ -655,13 +647,4 @@ pub fn apply_move(list: &mut Vec<String>, change: &Map<String, Value>) {
 pub fn error_at(path: &[String], message: impl Into<String>) -> UserError {
     let path: Vec<&str> = path.iter().map(String::as_str).collect();
     UserError::new(&path, message)
-}
-
-/// The message and code of a user error that Shopify documents only by its code: the
-/// description the 2026-10 schema gives the code, which is how Shopify words the messages it
-/// does publish (`IDEMPOTENCY_KEY_PARAMETER_MISMATCH`: "The same idempotency key cannot be used
-/// with different operation parameters.", in the schema and in shopify.dev's "Implementing
-/// idempotency").
-pub fn coded(field: &[&str], message: &str, code: &str) -> UserError {
-    UserError::new(field, message).code(code)
 }

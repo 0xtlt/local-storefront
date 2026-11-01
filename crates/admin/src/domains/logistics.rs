@@ -67,7 +67,7 @@ pub fn seed(seed: &mut Seed) {
 /// code in the code enum of the payload's error type (`InventoryTransferCreateUserErrorCode`
 /// for `inventoryTransferCreate`): shopify.dev documents these errors by their codes only, and
 /// Shopify words the messages it does publish as these descriptions (see
-/// `catalog::records::coded`). A description of several sentences gives its first. The schema
+/// `resolve::coded`). A description of several sentences gives its first. The schema
 /// is the request's, so the message is that of the version asked.
 pub fn coded(ctx: &FieldContext<'_>, field: &[&str], code: &str) -> UserError {
     let schema = ctx.schema();
@@ -143,14 +143,6 @@ pub fn snapshot_location(snapshot: Option<&Value>) -> Option<String> {
     snapshot?.get("location")?.as_str().map(str::to_string)
 }
 
-/// Whether a text is an `http(s)` URL with a host: a carrier's callback, a tracking link.
-pub fn is_url(text: &str) -> bool {
-    ["http://", "https://"].iter().any(|scheme| {
-        text.strip_prefix(scheme)
-            .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
-    })
-}
-
 /// The text of a field of a record.
 pub fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
     record.get(field).and_then(Value::as_str)
@@ -159,14 +151,6 @@ pub fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
 /// An integer field of a record, 0 when absent.
 pub fn int(record: &Record, field: &str) -> i64 {
     record.get(field).and_then(Value::as_i64).unwrap_or(0)
-}
-
-/// The object an argument holds (an empty one when it holds none).
-pub fn input(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
-    ctx.arg(name)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
 }
 
 /// The objects of a list (an input field or an argument), `[]` when it is none.

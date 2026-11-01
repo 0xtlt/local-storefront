@@ -246,11 +246,7 @@ fn input_query(state: &ShopState, input: &Map<String, Value>) -> Result<Query, U
 }
 
 fn members_query_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = ctx
-        .arg("input")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = ctx.arg_object_or_default("input");
     let query = match input_query(m.state(), &input) {
         Ok(query) => query,
         Err(error) => {

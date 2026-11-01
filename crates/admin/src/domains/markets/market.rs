@@ -31,13 +31,15 @@ use lsf_core::util::handleize;
 use serde_json::{Map, Value, json};
 
 use super::{
-    BACKUP_REGION, Pointer, coded, input, is, is_active, market_currency, market_not_found,
-    market_of_country, objects, price_inclusions, records_input, region, region_gid, regions_of,
-    shop_currency, strings, text, web_presences,
+    BACKUP_REGION, Pointer, is, is_active, market_currency, market_not_found, market_of_country,
+    objects, price_inclusions, records_input, region, region_gid, regions_of, shop_currency,
+    strings, text, web_presences,
 };
 use crate::domains::content::market_gid;
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{
+    Mutation, Obj, Registry, ShopResolver, UserError, coded, input_path, payload,
+};
 use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -330,10 +332,8 @@ fn regions_input(
         match known_region(state, id) {
             Some(region) => regions.push(region),
             None => {
-                let mut field: Vec<&str> = at.to_vec();
-                field.push("regionIds");
                 let index = index.to_string();
-                field.push(&index);
+                let field = input_path(at, &["regionIds", &index]);
                 // lsf's wording.
                 errors.push(coded(&field, "Region does not exist", "REGION_NOT_FOUND"));
             }
@@ -420,8 +420,7 @@ fn records_condition(
     if text(input, "applicationLevel") == Some("ALL") {
         return json!({"applicationLevel": "ALL", list: []});
     }
-    let mut field: Vec<&str> = at.to_vec();
-    field.push(ids_field);
+    let field = input_path(at, &[ids_field]);
     // lsf's wording.
     let found = records_input(
         state,
@@ -628,8 +627,7 @@ fn catalogs_input(
     let mut found = Vec::new();
     for (index, id) in ids.iter().enumerate() {
         let index = index.to_string();
-        let mut field: Vec<&str> = at.to_vec();
-        field.push(&index);
+        let field = input_path(at, &[&index]);
         match super::catalog_key(state, id) {
             Some(key) if is(state, &key, "MarketCatalog") => found.push(key),
             // lsf's wording.
@@ -671,8 +669,7 @@ fn discounts_input(
             Some(key) => found.push(key),
             None => {
                 let index = index.to_string();
-                let mut field: Vec<&str> = at.to_vec();
-                field.push(&index);
+                let field = input_path(at, &[&index]);
                 // lsf's wording.
                 errors.push(coded(&field, "Discount does not exist", "INVALID"));
             }
@@ -707,7 +704,7 @@ fn note_ignored(mutation: &mut Mutation<'_>, name: &str, input: &Map<String, Val
 
 /// `marketCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let mut errors = Vec::new();
     let mut notes = Vec::new();
@@ -893,7 +890,7 @@ fn duplicate_error(state: &ShopState, others: &[String]) -> UserError {
 
 /// `marketUpdate`.
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let state = mutation.state();
     let Some(market) = market_arg(state, ctx, "id") else {
         return Ok(payload(json!({"market": null}), &[market_not_found("id")]));
@@ -1296,7 +1293,7 @@ fn currency_settings_update(
             &[market_not_found("marketId")],
         ));
     };
-    let input = input(ctx, "input");
+    let input = ctx.arg_object_or_default("input");
     let existing = state.get(&market).cloned().unwrap_or_default();
     let regions: Vec<Value> = existing
         .get("regions")
