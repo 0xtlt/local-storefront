@@ -25,8 +25,8 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 
 export const PACKAGE = "@shopify/dev-mcp@1.17.0";
-export const SHA256 = "f651c221109dbc55601ab7a85353f3b82fec8ec9bbf9f260440139e28c7e8a7a";
-export const PROXY = "https://shopify.dev/admin-graphql-direct-proxy";
+const SHA256 = "f651c221109dbc55601ab7a85353f3b82fec8ec9bbf9f260440139e28c7e8a7a";
+const PROXY = "https://shopify.dev/admin-graphql-direct-proxy";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -52,7 +52,7 @@ export function versionArg(argv = process.argv.slice(2)) {
 let unpacked = null;
 
 /** The pinned package, unpacked once per process into a temporary directory. */
-export function devMcp() {
+function devMcp() {
   if (unpacked) return unpacked;
   const work = mkdtempSync(join(tmpdir(), "lsf-admin-dev-mcp-"));
   process.on("exit", () => rmSync(work, { recursive: true, force: true }));
