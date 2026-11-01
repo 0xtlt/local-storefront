@@ -3,20 +3,24 @@
 // page, the storefront, the checkout), checks what the backend and lsf answered, prints a table,
 // and stops both. Run it with `npm run e2e` (after `cargo build -p lsf`).
 //
-// Options (environment): LSF_BIN (default: target/debug/lsf of the repository), E2E_VERBOSE=1
+// Options (environment): LSF_BIN (default: debug/lsf of `CARGO_TARGET_DIR`, where `cargo build`
+// put it, else target/debug/lsf of the repository), E2E_VERBOSE=1
 // (print the logs of lsf and the backend), E2E_ONLY=<substring> (only the checks whose name has
 // it, and those they depend on run anyway).
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createAdminApiClient } from "@shopify/admin-api-client";
 import { appRoot, config } from "../server/config.mjs";
 import { lsfFetch } from "../server/lsf.mjs";
 import { Browser } from "./browser.mjs";
 
 const repoRoot = join(appRoot, "..", "..");
-const lsfBin = process.env.LSF_BIN ?? join(repoRoot, "target", "debug", "lsf");
+const targetDir = process.env.CARGO_TARGET_DIR
+  ? resolve(process.env.CARGO_TARGET_DIR)
+  : join(repoRoot, "target");
+const lsfBin = process.env.LSF_BIN ?? join(targetDir, "debug", "lsf");
 const verbose = Boolean(process.env.E2E_VERBOSE);
 const SHOP = "local-supply-co.myshopify.com";
 
