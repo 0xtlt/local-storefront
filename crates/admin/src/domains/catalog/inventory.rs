@@ -42,7 +42,7 @@
 //! Where shopify.dev documents an error only by its code, the message is the code's description
 //! in the 2026-10 schema (see [`super::records::coded`]).
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
 use serde_json::{Map, Value, json};
 
 use super::records::{
@@ -160,11 +160,7 @@ pub fn idempotency(
     let memo = format!("idempotency/{name}/{key}");
     let now = mutation.now();
     if let Some(remembered) = mutation.state().memo(&memo) {
-        let at = remembered
-            .get("at")
-            .and_then(Value::as_str)
-            .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-            .map(|at| at.with_timezone(&Utc));
+        let at = value::date_time_of(remembered.get("at"));
         let fresh = at.is_some_and(|at| now - at < Duration::hours(KEY_RETENTION_HOURS));
         if fresh {
             if remembered.get("fingerprint").and_then(Value::as_str) == Some(fingerprint.as_str()) {

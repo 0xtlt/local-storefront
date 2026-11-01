@@ -32,7 +32,6 @@
 //! `…/delete`; a barcode set is `inventory_shipments/update`, which no subscription can name.
 //! A shipment is named after its transfer: `T1-1`, `T1-2` (the Help Center's `T289-1`).
 
-use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 
 use super::transfers::{self, COMMITTED, SHIPPABLE, TRANSFER};
@@ -174,11 +173,8 @@ fn tracking_of(
         at.push("trackingUrl");
         errors.push(coded(ctx, &at, "INVALID_URL"));
     }
-    let arrives = input
-        .get("arrivesAt")
-        .and_then(Value::as_str)
-        .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-        .map(|at| json!(value::date_time(at.with_timezone(&Utc))))
+    let arrives = value::date_time_of(input.get("arrivesAt"))
+        .map(|at| json!(value::date_time(at)))
         .unwrap_or(Value::Null);
     json!({
         "arrivesAt": arrives,
@@ -522,11 +518,7 @@ fn create_shipment(
     if !errors.is_empty() {
         return Ok(payload(empty, &errors));
     }
-    let date = input
-        .get("dateCreated")
-        .and_then(Value::as_str)
-        .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-        .map(|at| value::date_time(at.with_timezone(&Utc)));
+    let date = value::date_time_of(input.get("dateCreated")).map(value::date_time);
     let state = mutation.state_mut();
     let shipment = insert_shipment(
         state,
@@ -801,8 +793,8 @@ fn mark_in_transit(
     }
     let date = ctx
         .arg_str("dateShipped")
-        .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-        .map(|at| value::date_time(at.with_timezone(&Utc)));
+        .and_then(value::parse_date_time)
+        .map(value::date_time);
     ship(mutation.state_mut(), &id, date);
     Ok(payload(json!({"inventoryShipment": id}), &[]))
 }
@@ -895,8 +887,8 @@ fn receive(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         .and_then(|record| transfers::locations(state, record).1);
     let date = ctx
         .arg_str("dateReceived")
-        .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-        .map(|at| value::date_time(at.with_timezone(&Utc)));
+        .and_then(value::parse_date_time)
+        .map(value::date_time);
     let state = mutation.state_mut();
     let mut context = Vec::new();
     for (line, [accepted, rejected, canceled]) in &receipts {

@@ -71,6 +71,19 @@ pub fn date(date: DateTime<Utc>) -> String {
     date.format("%Y-%m-%d").to_string()
 }
 
+/// A `DateTime` as the records and the inputs write it (RFC 3339, any offset), in UTC: `None`
+/// when it is not one.
+pub fn parse_date_time(text: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|at| at.with_timezone(&Utc))
+}
+
+/// [`parse_date_time`] of a field or an argument: `None` when it is missing or not a string.
+pub fn date_time_of(value: Option<&Value>) -> Option<DateTime<Utc>> {
+    value.and_then(Value::as_str).and_then(parse_date_time)
+}
+
 /// A string, or `null` when it is empty.
 pub fn text(value: &str) -> Value {
     if value.is_empty() {
@@ -280,6 +293,20 @@ mod tests {
         assert_eq!(decimal(2000), "20.0");
         assert_eq!(decimal(1950), "19.5");
         assert_eq!(decimal(0), "0.0");
+    }
+
+    #[test]
+    fn reads_date_times_in_utc() {
+        let at = parse_date_time("2024-09-09T12:48:33-04:00").unwrap();
+        assert_eq!(date_time(at), "2024-09-09T16:48:33Z");
+        assert_eq!(parse_date_time(" 2024-09-09T12:48:33Z"), None);
+        assert_eq!(parse_date_time("2024-09-09"), None);
+        assert_eq!(
+            date_time_of(Some(&json!("2024-09-09T12:48:33Z"))),
+            Some(at - chrono::Duration::hours(4))
+        );
+        assert_eq!(date_time_of(Some(&json!(1))), None);
+        assert_eq!(date_time_of(None), None);
     }
 
     #[test]

@@ -41,7 +41,6 @@
 //!
 //! Errors without a published message are lsf's (each says so).
 
-use chrono::{DateTime, Utc};
 use lsf_core::util::handleize;
 use serde_json::{Map, Value, json};
 
@@ -389,13 +388,6 @@ fn unpublished_channels(
 
 // --- Listings ---
 
-/// The time of a `DateTime` input.
-fn time_of(date: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(date)
-        .ok()
-        .map(|date| date.with_timezone(&Utc))
-}
-
 /// The snapshot of a listing event: the product or collection, with the listing.
 fn listing_snapshot(
     state: &ShopState,
@@ -471,7 +463,7 @@ pub fn scheduled(
         return false;
     }
     let future = date
-        .and_then(time_of)
+        .and_then(value::parse_date_time)
         .is_some_and(|date| date > state.now());
     if !published {
         if unschedule(state, publication, publishable) {
@@ -656,7 +648,7 @@ pub fn publish_due_listings(state: &mut ShopState) {
             ) else {
                 continue;
             };
-            if time_of(&date).is_some_and(|date| date <= now) {
+            if value::parse_date_time(&date).is_some_and(|date| date <= now) {
                 unschedule(state, publication, &publishable);
                 catalog::publish_on(
                     state,
@@ -1128,8 +1120,8 @@ fn feedback_create(
                 existing
                     .get(field)
                     .and_then(Value::as_str)
-                    .and_then(time_of)
-                    .zip(time_of(given))
+                    .and_then(value::parse_date_time)
+                    .zip(value::parse_date_time(given))
                     .is_some_and(|(known, given)| known > given)
             };
             if later("productUpdatedAt", updated) || later("feedbackGeneratedAt", generated) {
@@ -1234,7 +1226,7 @@ fn shop_feedback_create(
             "PRESENT",
         ));
     }
-    let generated = text(&input, "feedbackGeneratedAt").and_then(time_of);
+    let generated = text(&input, "feedbackGeneratedAt").and_then(value::parse_date_time);
     if generated.is_some_and(|generated| generated > state.now()) {
         errors.push(coded(
             &["input", "feedbackGeneratedAt"],
@@ -1247,7 +1239,10 @@ fn shop_feedback_create(
     let memo = format!("{key}/generatedAt");
     if let (Some(generated), Some(last)) = (
         generated,
-        state.memo(&memo).and_then(Value::as_str).and_then(time_of),
+        state
+            .memo(&memo)
+            .and_then(Value::as_str)
+            .and_then(value::parse_date_time),
     ) && last > generated
     {
         // The reference's example.

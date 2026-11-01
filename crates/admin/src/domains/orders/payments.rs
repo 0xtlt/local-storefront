@@ -272,14 +272,6 @@ fn templates(
 
 // --- Dates ---
 
-/// A `DateTime` of a record or an input.
-fn parse_time(value: Option<&Value>) -> Option<DateTime<Utc>> {
-    let text = value?.as_str()?;
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|at| at.with_timezone(&Utc))
-}
-
 /// The shop's day of an instant (`2026-03-15`), in its time zone.
 fn day_of(state: &ShopState, at: DateTime<Utc>) -> String {
     let shop = state.shop();
@@ -296,13 +288,13 @@ fn day_of(state: &ShopState, at: DateTime<Utc>) -> String {
 /// Whether a schedule is due: not paid, its due date passed.
 fn is_due(schedule: &Record, now: DateTime<Utc>) -> bool {
     schedule.get("completedAt").is_none_or(Value::is_null)
-        && parse_time(schedule.get("dueAt")).is_some_and(|due| due <= now)
+        && value::date_time_of(schedule.get("dueAt")).is_some_and(|due| due <= now)
 }
 
 /// Whether a schedule is overdue: not paid, the shop's day after its due date.
 fn is_overdue(state: &ShopState, schedule: &Record) -> bool {
     schedule.get("completedAt").is_none_or(Value::is_null)
-        && parse_time(schedule.get("dueAt"))
+        && value::date_time_of(schedule.get("dueAt"))
             .is_some_and(|due| day_of(state, due) < day_of(state, state.now()))
 }
 
@@ -374,7 +366,7 @@ pub fn read_terms(
     let given = |field: &str| -> Result<Option<DateTime<Utc>>, UserError> {
         match schedule.and_then(|schedule| schedule.get(field)) {
             None | Some(Value::Null) => Ok(None),
-            Some(value) => parse_time(Some(value)).map(Some).ok_or_else(|| {
+            Some(value) => value::date_time_of(Some(value)).map(Some).ok_or_else(|| {
                 UserError::new(
                     &[path, &["paymentSchedules", "0", field]].concat(),
                     format!("{} is not a valid date", value::humanize(field)),
@@ -391,8 +383,8 @@ pub fn read_terms(
         && let Some(first) = gids(base.get("paymentSchedules")).first()
         && let Some(old) = state.get(first)
     {
-        issued_at = parse_time(old.get("issuedAt"));
-        due_at = parse_time(old.get("dueAt"));
+        issued_at = value::date_time_of(old.get("issuedAt"));
+        due_at = value::date_time_of(old.get("dueAt"));
     }
     if kind == "FIXED" && due_at.is_none() {
         return Err(UserError::new(
@@ -483,7 +475,7 @@ pub fn update_terms(state: &mut ShopState, terms: &str, spec: &TermsSpec) {
     for schedule in gids(record.get("paymentSchedules")) {
         let old_issued = state
             .get(&schedule)
-            .and_then(|old| parse_time(old.get("issuedAt")));
+            .and_then(|old| value::date_time_of(old.get("issuedAt")));
         let issued_at = spec.issued_at.or(old_issued).or_else(|| {
             (is_order && matches!(spec.kind.as_str(), "NET" | "RECEIPT")).then(|| state.now())
         });
@@ -886,7 +878,7 @@ fn manual_payment(
     };
     let processed_at = match ctx.arg("processedAt").filter(|value| !value.is_null()) {
         None => None,
-        Some(value) => match parse_time(Some(value)) {
+        Some(value) => match value::date_time_of(Some(value)) {
             Some(at) if at <= mutation.now() => Some(value::date_time(at)),
             _ => {
                 return failed(
@@ -1295,7 +1287,7 @@ fn reminder_send(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .to_string();
     let currency = model::currency(state);
     let due = text(&schedule, "dueAt")
-        .and_then(|due| parse_time(Some(&json!(due))))
+        .and_then(value::parse_date_time)
         .map(|due| day_of(state, due));
     let state = mutation.state_mut();
     let body = match &due {

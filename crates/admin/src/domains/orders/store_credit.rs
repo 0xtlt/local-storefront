@@ -31,7 +31,6 @@
 //! The 2026-10 webhook topics have none for store credit: the changes emit
 //! `domains::app::CHANGED`, which no subscription receives.
 
-use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 
 use super::model::{self, text};
@@ -309,9 +308,9 @@ pub fn tick(state: &mut ShopState) {
         .keys("StoreCreditAccountCreditTransaction")
         .filter_map(|key| {
             let record = state.get(key)?;
-            let expires = DateTime::parse_from_rfc3339(text(record, "expiresAt")?).ok()?;
+            let expires = value::parse_date_time(text(record, "expiresAt")?)?;
             let left = model::cents(record.get("remainingAmount"));
-            (left > 0 && expires.with_timezone(&Utc) <= now).then(|| {
+            (left > 0 && expires <= now).then(|| {
                 (
                     key.to_string(),
                     text(record, "account").unwrap_or_default().to_string(),

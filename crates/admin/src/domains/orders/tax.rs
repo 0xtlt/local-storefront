@@ -18,7 +18,6 @@
 //! lsf does not check that the caller is a tax calculations app, nor computes taxes with it: the
 //! checkout's rate (`checkout.tax_rate`) stays the shop's.
 
-use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 
 use super::model::{self, text};
@@ -135,11 +134,7 @@ fn summary_create(
         ))
     };
     let state = mutation.state();
-    let time = |name: &str| {
-        ctx.arg_str(name)
-            .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-            .map(|at| at.with_timezone(&Utc))
-    };
+    let time = |name: &str| ctx.arg_str(name).and_then(value::parse_date_time);
     let orders: Vec<String> = if let Some(order) = ctx.arg_str("orderId") {
         if state.type_of(order) != Some("Order") {
             return failed(&["orderId"], "No order was found.", "ORDER_NOT_FOUND");
@@ -159,11 +154,8 @@ fn summary_create(
                 state
                     .get(key)
                     .and_then(|order| text(order, "processedAt"))
-                    .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-                    .is_some_and(|at| {
-                        let at = at.with_timezone(&Utc);
-                        at >= start && at <= end
-                    })
+                    .and_then(value::parse_date_time)
+                    .is_some_and(|at| at >= start && at <= end)
             })
             .map(str::to_string)
             .collect()

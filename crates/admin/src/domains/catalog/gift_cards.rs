@@ -434,9 +434,7 @@ fn transaction(
 /// A `DateTime` input in UTC, as the Admin API answers it (`2024-09-09T12:48:33-04:00` is
 /// `2024-09-09T16:48:33Z`, the reference's example).
 pub fn normalize_time(time: &str) -> String {
-    chrono::DateTime::parse_from_rfc3339(time)
-        .map(|time| value::date_time(time.with_timezone(&chrono::Utc)))
-        .unwrap_or_else(|_| time.to_string())
+    value::parse_date_time(time).map_or_else(|| time.to_string(), value::date_time)
 }
 
 fn gift_card_credit(

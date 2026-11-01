@@ -297,9 +297,8 @@ fn target_time(body: &Value) -> Result<Target, String> {
         .or_else(|| body.get("at"))
         .and_then(Value::as_str)
     {
-        let at = DateTime::parse_from_rfc3339(now)
-            .map_err(|_| format!("`now` is not an RFC 3339 date and time: {now}"))?
-            .with_timezone(&Utc);
+        let at = value::parse_date_time(now)
+            .ok_or_else(|| format!("`now` is not an RFC 3339 date and time: {now}"))?;
         return Ok(Box::new(move |_| Some(at)));
     }
     let advance = match body.get("advance") {

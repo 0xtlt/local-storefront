@@ -664,8 +664,8 @@ fn make_ready(state: &mut ShopState, transfer: &str) {
 /// A `dateCreated` input: a `DateTime`, or a `Date` (`inventoryTransferEdit`) at midnight UTC.
 fn date_input(value: Option<&Value>) -> Option<String> {
     let text = value?.as_str()?;
-    if let Ok(date) = DateTime::parse_from_rfc3339(text) {
-        return Some(value::date_time(date.with_timezone(&Utc)));
+    if let Some(date) = value::parse_date_time(text) {
+        return Some(value::date_time(date));
     }
     let date = NaiveDate::parse_from_str(text, "%Y-%m-%d").ok()?;
     Some(format!("{date}T00:00:00Z"))

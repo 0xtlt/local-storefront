@@ -136,7 +136,7 @@ pub fn register(registry: &mut Registry) {
             |r, _ctx, object| {
                 let sent = r
                     .map_of(object)
-                    .and_then(|record| instant(record.get("emailSentAt")));
+                    .and_then(|record| value::date_time_of(record.get("emailSentAt")));
                 Ok(Output::value(sent.map_or(0, |sent| {
                     (r.state().now() - sent).num_days().max(0)
                 })))
@@ -263,13 +263,6 @@ pub fn register(registry: &mut Registry) {
             }
             texts
         });
-}
-
-fn instant(value: Option<&Value>) -> Option<DateTime<Utc>> {
-    value
-        .and_then(Value::as_str)
-        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-        .map(|at| at.with_timezone(&Utc))
 }
 
 // --- Carts ---
@@ -705,7 +698,7 @@ fn is_abandoned_at(record: &Record, now: DateTime<Utc>) -> bool {
             .and_then(Value::as_str)
             .is_some_and(|text| !text.is_empty())
     });
-    let last = instant(record.get("lsfLastActivityAt"));
+    let last = value::date_time_of(record.get("lsfLastActivityAt"));
     contact && last.is_some_and(|last| now - last > Duration::minutes(ABANDONMENT_DELAY_MINUTES))
 }
 
@@ -725,7 +718,7 @@ pub fn last_abandonment(state: &ShopState, customer: &str) -> Option<DateTime<Ut
         .all("AbandonedCheckout")
         .filter(|record| record.get("customer").and_then(Value::as_str) == Some(customer))
         .filter(|record| is_listed(state, record))
-        .filter_map(|record| instant(record.get("lsfLastActivityAt")))
+        .filter_map(|record| value::date_time_of(record.get("lsfLastActivityAt")))
         .max()
 }
 
@@ -735,7 +728,7 @@ fn latest_abandonment_of(state: &ShopState, customer: &str) -> Option<String> {
         .all("Abandonment")
         .filter(|record| record.get("customer").and_then(Value::as_str) == Some(customer))
         .filter(|record| abandonment_listed(state, record))
-        .max_by_key(|record| instant(record.get("createdAt")))
+        .max_by_key(|record| value::date_time_of(record.get("createdAt")))
         .and_then(|record| record.get("id").and_then(Value::as_str))
         .map(str::to_string)
 }
@@ -756,7 +749,7 @@ pub fn delete_expired(state: &mut ShopState) -> usize {
     let expired: Vec<String> = state
         .all("AbandonedCheckout")
         .filter(|record| {
-            instant(record.get("lsfLastActivityAt"))
+            value::date_time_of(record.get("lsfLastActivityAt"))
                 .is_some_and(|last| now - last > Duration::days(RETENTION_DAYS))
         })
         .filter_map(|record| record.get("id").and_then(Value::as_str))
@@ -841,10 +834,10 @@ fn customer_ordered_since(r: &ShopResolver<'_>, object: &Obj, type_name: &str) -
         return false;
     };
     let customer = record.get("customer").and_then(Value::as_str);
-    let since = instant(record.get("createdAt"));
+    let since = value::date_time_of(record.get("createdAt"));
     r.state().all(type_name).any(|order| {
         order.get("customer").and_then(Value::as_str) == customer
-            && instant(order.get("createdAt"))
+            && value::date_time_of(order.get("createdAt"))
                 .zip(since)
                 .is_some_and(|(at, since)| at >= since)
     })

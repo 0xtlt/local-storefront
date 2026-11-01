@@ -93,17 +93,11 @@ pub fn register(registry: &mut Registry) {
 /// A date of a record, as a search value.
 fn date_value(record: &Record, name: &str) -> Option<Vec<SearchValue>> {
     Some(
-        instant(text(record, name))
+        text(record, name)
+            .and_then(value::parse_date_time)
             .map(|date| vec![SearchValue::Date(date)])
             .unwrap_or_default(),
     )
-}
-
-/// A `DateTime` as the records and the arguments write it.
-fn instant(date: Option<&str>) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(date?)
-        .ok()
-        .map(|date| date.with_timezone(&Utc))
 }
 
 /// An error of a session mutation, by its code: the code's description is the message.
@@ -129,7 +123,8 @@ fn coded(field: &[&str], code: &str) -> UserError {
 
 /// The time of an argument (`time`), in UTC as the records write dates, else now.
 fn time_arg(mutation: &Mutation<'_>, ctx: &FieldContext<'_>) -> String {
-    instant(ctx.arg_str("time"))
+    ctx.arg_str("time")
+        .and_then(value::parse_date_time)
         .map(value::date_time)
         .unwrap_or_else(|| mutation.timestamp())
 }
@@ -496,8 +491,8 @@ fn in_range(time: Option<&str>, range: Option<&Value>) -> bool {
     let (Some(time), Some(range)) = (time, range) else {
         return time.is_some();
     };
-    let at = |name: &str| instant(range.get(name).and_then(Value::as_str));
-    let Some(time) = instant(Some(time)) else {
+    let at = |name: &str| value::date_time_of(range.get(name));
+    let Some(time) = value::parse_date_time(time) else {
         return false;
     };
     at("from").is_none_or(|from| time >= from) && at("to").is_none_or(|to| time <= to)
@@ -573,8 +568,12 @@ fn summary(
     for drawer in drawers {
         let sessions = sessions_of(state, drawer);
         for session in sessions.iter().filter_map(|session| state.get(session)) {
-            opened += i64::from(within(instant(text(session, "openingTime"))));
-            closed += i64::from(within(instant(text(session, "closingTime"))));
+            opened += i64::from(within(
+                text(session, "openingTime").and_then(value::parse_date_time),
+            ));
+            closed += i64::from(within(
+                text(session, "closingTime").and_then(value::parse_date_time),
+            ));
         }
         let activities = activities_of(state, &sessions);
         let balance = balance_of(state, drawer);
@@ -584,7 +583,7 @@ fn summary(
             activities
                 .iter()
                 .filter(|activity| {
-                    let at = instant(activity.get("time").and_then(Value::as_str));
+                    let at = value::date_time_of(activity.get("time"));
                     time.is_none_or(|time| at.is_some_and(|at| at > time))
                 })
                 .map(|activity| cents(activity.get("cash")))
@@ -593,7 +592,7 @@ fn summary(
         at_start += balance - moved_after(start);
         at_end += balance - end.map_or(0, |end| moved_after(Some(end)));
         for activity in &activities {
-            if !within(instant(activity.get("time").and_then(Value::as_str))) {
+            if !within(value::date_time_of(activity.get("time"))) {
                 continue;
             }
             let amount = cents(activity.get("cash"));

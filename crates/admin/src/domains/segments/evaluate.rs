@@ -41,7 +41,7 @@ use serde_json::Value as Json;
 
 use super::language::{Clause, DateValue, Expr, Op, Param, ParamTest, Query, Test, Unit, Value};
 use crate::domains::catalog::{cents_of, tags_of};
-use crate::state::{Record, ShopState, parse_gid};
+use crate::state::{Record, ShopState, parse_gid, value};
 
 /// The `app_id` of the orders of the Online Store, which Shopify writes on web orders.
 const ONLINE_STORE_APP_ID: u64 = 580111;
@@ -208,13 +208,6 @@ impl Facts {
     }
 }
 
-fn instant(value: Option<&Json>) -> Option<DateTime<Utc>> {
-    value
-        .and_then(Json::as_str)
-        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-        .map(|at| at.with_timezone(&Utc))
-}
-
 fn decimal(value: Option<&Json>) -> f64 {
     cents_of(value).map_or(0.0, |cents| cents as f64 / 100.0)
 }
@@ -325,8 +318,8 @@ pub fn facts(state: &ShopState, customer: &Record, created: &HashSet<String>) ->
                 .and_then(Json::as_str)
                 .unwrap_or_default()
                 .to_string(),
-            next_expiry: instant(account.get("lsfNextExpiryAt")),
-            last_credit: instant(account.get("lsfLastCreditAt")),
+            next_expiry: value::date_time_of(account.get("lsfNextExpiryAt")),
+            last_credit: value::date_time_of(account.get("lsfLastCreditAt")),
         })
         .collect();
     let metafields = customer
@@ -361,7 +354,7 @@ pub fn facts(state: &ShopState, customer: &Record, created: &HashSet<String>) ->
             Some(Json::Number(n)) => n.as_i64().unwrap_or(0),
             _ => 0,
         },
-        created_at: instant(customer.get("createdAt")),
+        created_at: value::date_time_of(customer.get("createdAt")),
         account_status: text(customer.get("state")).unwrap_or_else(|| "DISABLED".into()),
         email_domain: text(customer.get("email")).and_then(|email| {
             email
@@ -425,7 +418,7 @@ fn order_facts(state: &ShopState, order: &Record) -> OrderFacts {
         })
         .collect();
     OrderFacts {
-        at: instant(order.get("processedAt").or_else(|| order.get("createdAt"))),
+        at: value::date_time_of(order.get("processedAt").or_else(|| order.get("createdAt"))),
         total: decimal(
             order
                 .get("totalPriceSet")

@@ -166,7 +166,7 @@ fn publication(
     let date = input.get("publishDate").and_then(Value::as_str);
     let flag = input.get("isPublished").and_then(Value::as_bool);
     let future = date.is_some_and(|date| {
-        let parse = |text: &str| chrono::DateTime::parse_from_rfc3339(text).ok();
+        let parse = value::parse_date_time;
         matches!((parse(date), parse(now)), (Some(date), Some(now)) if date > now)
     });
     if flag == Some(true) && future {

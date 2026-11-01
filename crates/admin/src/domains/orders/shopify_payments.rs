@@ -422,7 +422,7 @@ fn zone(state: &ShopState) -> chrono_tz::Tz {
 
 /// The shop's day of a balance transaction.
 fn day_of(state: &ShopState, record: &Record) -> Option<NaiveDate> {
-    let at = DateTime::parse_from_rfc3339(text(record, "transactionDate")?).ok()?;
+    let at = value::parse_date_time(text(record, "transactionDate")?)?;
     Some(at.with_timezone(&zone(state)).date_naive())
 }
 
@@ -841,8 +841,8 @@ fn evidence_update(
             "EVIDENCE_ALREADY_ACCEPTED",
         );
     }
-    if DateTime::parse_from_rfc3339(text(&dispute, "evidenceDueBy").unwrap_or_default())
-        .is_ok_and(|due| due.with_timezone(&Utc) < mutation.now())
+    if value::parse_date_time(text(&dispute, "evidenceDueBy").unwrap_or_default())
+        .is_some_and(|due| due < mutation.now())
     {
         return failed(&["id"], "Evidence past due date.", "EVIDENCE_PAST_DUE_DATE");
     }

@@ -124,9 +124,7 @@ pub fn objects(value: Option<&Value>) -> Vec<Map<String, Value>> {
 
 /// A `DateTime` input, in UTC.
 pub fn date_time(text: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text.trim())
-        .ok()
-        .map(|date| date.with_timezone(&Utc))
+    value::parse_date_time(text.trim())
 }
 
 /// The number of a GID (`5` of `gid://shopify/SubscriptionContract/5`), for the ids made of it.

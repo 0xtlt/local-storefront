@@ -261,8 +261,7 @@ fn order_cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .code("STORE_CREDIT_REFUND_MISSING_CUSTOMER")]);
     }
     if let Some(Some(expires_at)) = &store_credit
-        && chrono::DateTime::parse_from_rfc3339(expires_at)
-            .is_ok_and(|at| at.with_timezone(&chrono::Utc) <= mutation.now())
+        && value::parse_date_time(expires_at).is_some_and(|at| at <= mutation.now())
     {
         return failed(&[UserError::new(
             &["refundMethod", "storeCreditRefund", "expiresAt"],
@@ -1119,10 +1118,8 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .and_then(Value::as_str)
         .map(str::to_string);
     let processed = match &processed_at {
-        Some(text) => match chrono::DateTime::parse_from_rfc3339(text) {
-            Ok(at) if at.with_timezone(&chrono::Utc) <= mutation.now() => {
-                Some(at.with_timezone(&chrono::Utc))
-            }
+        Some(text) => match value::parse_date_time(text) {
+            Some(at) if at <= mutation.now() => Some(at),
             _ => {
                 errors.push(
                     UserError::new(

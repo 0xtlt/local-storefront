@@ -132,9 +132,7 @@ fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     // Days of the shop's time zone: a shipping time later today there is not in the past.
     let zone = crate::search::Options::of(state);
     let today = zone.day_of(state.now());
-    let shipping_date = text(&input, "shippingDatetime")
-        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-        .map(|at| at.with_timezone(&chrono::Utc));
+    let shipping_date = text(&input, "shippingDatetime").and_then(value::parse_date_time);
     match shipping_date {
         None => return fail(&at("shippingDatetime"), "MISSING_SHIPPING_DATE"),
         Some(date) if zone.day_of(date) < today => {

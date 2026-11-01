@@ -842,8 +842,8 @@ fn set_deadline(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     let ids = gids(ctx.arg("fulfillmentOrderIds"));
     let deadline = ctx
         .arg_str("fulfillmentDeadline")
-        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-        .map(|at| crate::state::value::date_time(at.with_timezone(&chrono::Utc)));
+        .and_then(crate::state::value::parse_date_time)
+        .map(crate::state::value::date_time);
     let state = mutation.state();
     if ids.is_empty() || ids.iter().any(|id| fulfillment_order(state, id).is_none()) {
         return Ok(payload(

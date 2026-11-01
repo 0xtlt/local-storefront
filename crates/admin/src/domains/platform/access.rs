@@ -107,11 +107,7 @@ impl AuthEffect {
             "delegate" => AuthEffect::Delegate {
                 token: token()?,
                 scopes: strings("scopes"),
-                expires_at: record
-                    .get("expiresAt")
-                    .and_then(Value::as_str)
-                    .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-                    .map(|at| at.with_timezone(&chrono::Utc)),
+                expires_at: value::date_time_of(record.get("expiresAt")),
             },
             "destroy" => AuthEffect::Destroy { token: token()? },
             _ => return None,

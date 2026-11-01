@@ -264,9 +264,7 @@ fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
 /// A `DateTime` as lsf writes it (`2026-04-29T06:45:06Z`, UTC, as Shopify answers a date given
 /// with an offset), `None` when it is not one.
 fn date_time(text: &str) -> Option<String> {
-    chrono::DateTime::parse_from_rfc3339(text.trim())
-        .ok()
-        .map(|date| value::date_time(date.with_timezone(&chrono::Utc)))
+    value::parse_date_time(text.trim()).map(value::date_time)
 }
 
 /// The status of a discount at `now`: by its dates.

@@ -872,16 +872,10 @@ fn time(value: &Value) -> Value {
 fn millis(value: &Value) -> Value {
     value
         .as_str()
-        .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+        .and_then(crate::state::value::parse_date_time)
         .map_or_else(
             || value.clone(),
-            |at| {
-                json!(
-                    at.with_timezone(&chrono::Utc)
-                        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-                        .to_string()
-                )
-            },
+            |at| json!(at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()),
         )
 }
 

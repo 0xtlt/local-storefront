@@ -37,8 +37,7 @@ pub fn next_moment(state: &ShopState) -> Option<chrono::DateTime<chrono::Utc>> {
         .all_of(&["DiscountAutomaticNode", "DiscountCodeNode"])
         .filter_map(app_discount)
         .flat_map(|details| ["startsAt", "endsAt"].map(|field| details.get(field)))
-        .filter_map(|at| chrono::DateTime::parse_from_rfc3339(at?.as_str()?).ok())
-        .map(|at| at.with_timezone(&chrono::Utc))
+        .filter_map(crate::state::value::date_time_of)
         .filter(|at| *at > now)
         .min()
 }

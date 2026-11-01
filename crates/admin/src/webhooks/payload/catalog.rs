@@ -22,10 +22,7 @@ pub(super) fn product(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value
         .iter()
         .map(|variant| (text(variant, "id"), text(variant, "updatedAt")))
         .collect();
-    let instant = |at: &Value| {
-        at.as_str()
-            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-    };
+    let instant = |at: &Value| at.as_str().and_then(crate::state::value::parse_date_time);
     variant_gids.sort_by_key(|(_, updated_at)| std::cmp::Reverse(instant(updated_at)));
     let requires_components = field(record, "hasVariantsThatRequiresComponents")
         .as_bool()

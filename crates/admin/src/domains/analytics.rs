@@ -186,13 +186,6 @@ fn input_of(ctx: &FieldContext<'_>) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
-fn instant(value: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
-    value
-        .as_str()
-        .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
-        .map(|at| at.with_timezone(&chrono::Utc))
-}
-
 /// What is wrong with the fields of an annotation as they would be.
 fn annotation_errors(fields: &Map<String, Value>) -> Vec<UserError> {
     let mut errors = Vec::new();
@@ -216,8 +209,8 @@ fn annotation_errors(fields: &Map<String, Value>) -> Vec<UserError> {
         );
     }
     if let (Some(start), Some(end)) = (
-        fields.get("startedAt").and_then(instant),
-        fields.get("endedAt").and_then(instant),
+        crate::state::value::date_time_of(fields.get("startedAt")),
+        crate::state::value::date_time_of(fields.get("endedAt")),
     ) && end < start
     {
         errors.push(
@@ -230,7 +223,8 @@ fn annotation_errors(fields: &Map<String, Value>) -> Vec<UserError> {
 
 /// Shopify writes the dates of an annotation in UTC (`2026-11-28T00:00:00Z`).
 fn utc(value: &Value) -> Value {
-    instant(value).map_or(Value::Null, |at| json!(crate::state::value::date_time(at)))
+    crate::state::value::date_time_of(Some(value))
+        .map_or(Value::Null, |at| json!(crate::state::value::date_time(at)))
 }
 
 fn annotation_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
