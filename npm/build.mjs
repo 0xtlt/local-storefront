@@ -7,10 +7,11 @@
 // The result is one directory per package, ready for `npm publish`:
 //
 //   npm-dist/local-storefront-<platform>-<arch>/   the binary of one platform
-//   npm-dist/local-storefront/                     the launcher, which depends on all of them
+//   npm-dist/local-storefront/                     the launcher, which depends on all of them,
+//                                                  and the docs (docs/, llms.txt, CHANGELOG.md)
 
 import { execFileSync } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -111,6 +112,14 @@ for (const { os, cpu, target, label } of PLATFORMS) {
 // The launcher depends on exactly this version of every platform package.
 const directory = join(options.out, manifest.name);
 cpSync(launcher, directory, { recursive: true });
+
+// The docs of this version go with it, for a tool or an agent to read offline:
+// `node_modules/local-storefront/llms.txt` lists them, with links relative to it.
+const root = join(here, '..');
+const docs = readdirSync(join(root, 'docs')).filter((name) => name.endsWith('.md'));
+for (const file of [...docs.map((name) => join('docs', name)), 'llms.txt', 'CHANGELOG.md']) {
+  cpSync(join(root, file), join(directory, file));
+}
 write(
   directory,
   'package.json',

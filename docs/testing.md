@@ -7,7 +7,7 @@ The examples use Playwright; nothing is specific to it.
 ## Starting the server
 
 ```bash
-npx local-storefront serve --theme path/to/theme --port 9292 --static --quiet --strict
+npx local-storefront serve --theme path/to/theme --port 9393 --static --quiet --strict
 ```
 
 | Flag | Why in tests |
@@ -15,7 +15,7 @@ npx local-storefront serve --theme path/to/theme --port 9292 --static --quiet --
 | `--static` | Reads the theme and the data once. Fastest, and nothing changes under a running test. |
 | `--strict` | Refuses to start when the store data has errors, instead of serving what is valid. |
 | `--quiet` | No request log. |
-| `--port 9292` | The port the tests expect, or an error: without `--port`, a taken `9292` makes the server move to the next free port. |
+| `--port 9393` | The port the tests expect, or an error: without `--port`, a taken `9292` makes the server move to the next free port. |
 | `--port 0` | Picks a free port; the chosen address is printed as `ready:  http://127.0.0.1:<port>/`. |
 | `--host 0.0.0.0` | Listens on every interface, e.g. inside a container. |
 | `--throttle <rules>` | Answers requests late: a preset (`simulated`, `slow`) or rules by kind. See [Simulating a slow network](#simulating-a-slow-network). |
@@ -39,14 +39,18 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   fullyParallel: true,
-  use: { baseURL: 'http://127.0.0.1:9292' },
+  use: { baseURL: 'http://127.0.0.1:9393' },
   webServer: {
-    command: 'npx local-storefront serve --port 9292 --static --quiet --strict',
-    url: 'http://127.0.0.1:9292/__lsf/status',
+    command: 'npx local-storefront serve --port 9393 --static --quiet --strict',
+    url: 'http://127.0.0.1:9393/__lsf/status',
     reuseExistingServer: !process.env.CI,
   },
 });
 ```
+
+The tests get a port of their own, outside the `9292` to `9391` that `serve` takes without
+`--port`. A local run then never reuses your dev server, with its live reload and its data that
+changes.
 
 ## Sessions: every test is isolated
 
@@ -66,7 +70,9 @@ curl -H 'x-lsf-session: my-test' http://127.0.0.1:9292/cart.js
 ## Putting a session in a known state
 
 `PUT /__lsf/session` replaces the state of the caller's session. The body is a
-[session](data-reference.md#session); every endpoint is in the [control API](control-api.md):
+[session](data-reference.md#session); every endpoint is in the [control API](control-api.md).
+The examples use the demo store that `npx local-storefront init` writes: the SKU `TEE-BLK-M`,
+the customer `jane.doe@example.com`, the product `ceramic-mug`. Put your own SKUs and emails.
 
 ```ts
 import { test, expect } from '@playwright/test';
@@ -83,9 +89,13 @@ test('a logged-in customer sees their cart', async ({ page }) => {
   expect(response.ok()).toBeTruthy();
 
   await page.goto('/cart');
-  await expect(page.getByText('Organic Cotton T-Shirt')).toBeVisible();
+  await expect(
+    page.getByRole('main').getByRole('link', { name: 'Organic Cotton T-Shirt', exact: true }),
+  ).toBeVisible();
 });
 ```
+
+Look in `main`: the menu of the header often names the same products.
 
 Variants are referenced by SKU, by id, or by a product handle (its first variant). When the body
 is wrong the answer is `422` with the same diagnostics as
@@ -123,6 +133,8 @@ To start every test logged in, start the server with `--customer default` (or an
 Fail the test on a wrong body, so that a wrong fixture never looks like a theme bug:
 
 ```ts
+import { test, expect, type Page } from '@playwright/test';
+
 async function setSession(page: Page, session: object) {
   const response = await page.request.put('/__lsf/session', { data: session });
   if (!response.ok()) throw new Error(JSON.stringify(await response.json(), null, 2));
@@ -202,11 +214,11 @@ npx local-storefront app dev --app ../my-app --port 0 --quiet --strict    # no t
 // playwright.config.ts
 export default defineConfig({
   webServer: {
-    command: 'npx local-storefront serve --app ../my-app --port 9292 --static --quiet --strict',
-    url: 'http://127.0.0.1:9292/__lsf/status',
+    command: 'npx local-storefront serve --app ../my-app --port 9393 --static --quiet --strict',
+    url: 'http://127.0.0.1:9393/__lsf/status',
     reuseExistingServer: !process.env.CI,
   },
-  use: { baseURL: 'http://127.0.0.1:9292' },
+  use: { baseURL: 'http://127.0.0.1:9393' },
 });
 ```
 
@@ -269,16 +281,9 @@ date on every run. An order lives as long as its session; only the last one a se
 kept. `DELETE /__lsf/session` resets one session, `DELETE /__lsf/sessions` every one. With an
 app, the [Admin API](admin.md) records each order too, under the same number unless another
 session or the backend took it first (then under its next one, so that its orders have unique
-names).
-
-**In CI, without a browser:**
-
-| Command | Exits with 1 when |
-|---|---|
-| `lsf validate` (in the app, or `--app`) | the store data or the app has errors |
-| `lsf app check` | a scenario does not validate, a Function fails in one, or there is no scenario |
-| `lsf app function run <handle> --scenario <name>` | the Function fails, or did not run (with why) |
-| `lsf render <path> --strict` | the page has Liquid errors, or nothing is at the path |
+names). The backend of the app, its webhooks and its tests:
+[test your backend](admin.md#test-your-backend). The checkout of an app in CI:
+[checkout](checkout.md#in-ci).
 
 ## Simulating a slow network
 
@@ -317,15 +322,23 @@ A throttle on the command line slows the whole suite. To slow one test, give its
 throttle of its own, which replaces the server's for that session:
 
 ```ts
-test('the button shows a spinner while the item is added', async ({ page }) => {
-  await page.request.put('/__lsf/session', {
-    data: { throttle: { 'cart-add': '1s' } },
-  });
+test('the cart count waits for the server', async ({ page }) => {
+  await setSession(page, { throttle: { 'cart-add': '1s' } });
   await page.goto('/products/ceramic-mug');
-  await page.getByRole('button', { name: 'Add to cart' }).click();
-  await expect(page.locator('.add-to-cart .spinner')).toBeVisible();
+  const added = page.waitForResponse('**/cart/add*');
+  await page
+    .locator('form[data-type="add-to-cart-form"]')
+    .getByRole('button', { name: 'Add to cart' })
+    .click();
+  await expect(page.getByTestId('cart-bubble')).toHaveText('0'); // the request is on its way
+  expect((await added).headers()['x-lsf-throttle']).toBe('1000ms');
+  await expect(page.getByTestId('cart-bubble')).toHaveText('1');
 });
 ```
+
+The selectors are Horizon's: its product page has a second "Add to cart" button, in a bar that
+sticks to the bottom, and its cart count is `data-testid="cart-bubble"`. Put your theme's own,
+and its loading state (a spinner, a disabled button) where Horizon has none.
 
 `throttle` takes the same rules as the command line: a string (`"simulated"`,
 `"simulated,cart-add=2s"`), a number of milliseconds for everything, or an object
@@ -400,7 +413,7 @@ writes (cart changes, forms) are estimates. `slow` is not measured.
 - **Pages that are not found.** A 404 renders the theme's `404` template, so a wrong URL looks
   like a page that works. The response carries `x-lsf-not-found` with the cause (`no product
   with the handle "x"`, `no page at "/x"`, `no metaobject "type/x" in the store data`, `the
-  theme has no templates/metaobject/<type>.json...`) and `lsf serve` prints it in its log. To
+  theme has no templates/metaobject/<type>.json...`) and the server prints it in its log. To
   fail a test on a link that leads nowhere:
 
   ```ts
@@ -411,7 +424,7 @@ writes (cart changes, forms) are estimates. `slow` is not measured.
   ```
 
   A test of the theme's own 404 page can leave this out: a 404 is what it expects. Outside a
-  browser, `lsf render <path> --strict` fails on a 404.
+  browser, `npx local-storefront render <path> --strict` fails on a 404.
 - **The cart.** `GET /cart.js` returns the cart in Shopify's Ajax API format.
 - **Render time.** Every response carries `Server-Timing`, as on Shopify: `processing` for the
   whole request, `render` for the Liquid, and with `--timings` one entry per section and per
@@ -468,15 +481,41 @@ npx local-storefront render '/collections/all?sort_by=price-ascending' --strict 
 
 ## In CI
 
-With `local-storefront` in the dev dependencies of the theme, `npm ci` installs
-local-storefront:
+A complete workflow, for GitHub Actions. `npm ci` installs what `package-lock.json` locks: run
+`npm install --save-dev local-storefront @playwright/test` once, and commit `package.json` and
+`package-lock.json`.
 
 ```yaml
-- run: npm ci
-- run: npx local-storefront validate      # fail fast on bad fixtures
-- run: npx local-storefront check         # every Liquid file parses, Shopify's strict parser accepts it
-- run: npx local-storefront fmt --check   # every Liquid file is formatted
-- run: npx playwright test
+# .github/workflows/storefront.yml
+name: storefront
+on: [push, pull_request]
+jobs:
+  storefront:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24 # 18 or later
+          cache: npm
+      - run: npm ci
+      - run: npx local-storefront validate # the store data
+      - run: npx local-storefront check # every Liquid file parses, and Shopify's strict parser accepts it
+      - name: Render every page, and fail on a Liquid error
+        run: |
+          for path in $(npx local-storefront routes); do
+            npx local-storefront render "$path" --strict > /dev/null || exit 1
+          done
+      - run: npx local-storefront fmt --check # once the theme is formatted
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
 ```
 
-These take a fraction of a second, so they are worth running before the browser tests.
+- `check` reads the files and renders none. A Liquid error at render time (a division by zero)
+  shows only when the page renders: with `render --strict`, or in a test.
+- `routes` lists every page of the store data, and `render` answers each one, so the loop
+  renders the whole store. <!-- check: routes/account -->
+- `fmt --check` fails on a theme no one has formatted: Shopify's Horizon has 28 files to
+  format. Run `npx local-storefront fmt` first, in a commit of its own, then add the step.
+- The steps before Playwright take a few seconds, and fail before the browser tests start.
+- For an app: [its checkout in CI](checkout.md#in-ci), and [its backend](admin.md#test-your-backend).

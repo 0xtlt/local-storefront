@@ -1,5 +1,21 @@
 # Documentation
 
+local-storefront runs a Shopify theme on your machine, without Shopify, from JSON store data.
+
+## Get started
+
+In your theme folder:
+
+```bash
+npm install --save-dev local-storefront
+npx local-storefront serve        # http://127.0.0.1:9292, with a demo store
+npx local-storefront init         # writes shopify-local/, the store data to edit
+```
+
+Write `npx local-storefront`, not `npx lsf`: `lsf` is another package on npm. Other ways to
+install (mise, a binary, from source):
+[the project's README](https://github.com/0xtlt/local-storefront#other-ways-to-install).
+
 ## Guides
 
 One task each, from the first command to the details.
