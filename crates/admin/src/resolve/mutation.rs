@@ -238,6 +238,12 @@ pub fn coded(field: &[&str], message: impl Into<String>, code: &str) -> UserErro
     UserError::new(field, message).code(code)
 }
 
+/// The path of an input field nested under `prefix`: `prefix`, then `rest`
+/// (`["input", "variants", "0"]`, `["price"]`).
+pub fn input_path<'a>(prefix: &[&'a str], rest: &[&'a str]) -> Vec<&'a str> {
+    prefix.iter().chain(rest).copied().collect()
+}
+
 /// A payload: `fields` (an object), with `userErrors` set to `errors`.
 pub fn payload(fields: Value, errors: &[UserError]) -> Value {
     payload_at(fields, "userErrors", errors)

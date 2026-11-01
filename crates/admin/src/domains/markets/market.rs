@@ -37,7 +37,9 @@ use super::{
 };
 use crate::domains::content::market_gid;
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, payload};
+use crate::resolve::{
+    Mutation, Obj, Registry, ShopResolver, UserError, coded, input_path, payload,
+};
 use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -330,10 +332,8 @@ fn regions_input(
         match known_region(state, id) {
             Some(region) => regions.push(region),
             None => {
-                let mut field: Vec<&str> = at.to_vec();
-                field.push("regionIds");
                 let index = index.to_string();
-                field.push(&index);
+                let field = input_path(at, &["regionIds", &index]);
                 // lsf's wording.
                 errors.push(coded(&field, "Region does not exist", "REGION_NOT_FOUND"));
             }
@@ -420,8 +420,7 @@ fn records_condition(
     if text(input, "applicationLevel") == Some("ALL") {
         return json!({"applicationLevel": "ALL", list: []});
     }
-    let mut field: Vec<&str> = at.to_vec();
-    field.push(ids_field);
+    let field = input_path(at, &[ids_field]);
     // lsf's wording.
     let found = records_input(
         state,
@@ -639,8 +638,7 @@ fn catalogs_input(
     let mut found = Vec::new();
     for (index, id) in ids.iter().enumerate() {
         let index = index.to_string();
-        let mut field: Vec<&str> = at.to_vec();
-        field.push(&index);
+        let field = input_path(at, &[&index]);
         match super::catalog_key(state, id) {
             Some(key) if is(state, &key, "MarketCatalog") => found.push(key),
             // lsf's wording.
@@ -682,8 +680,7 @@ fn discounts_input(
             Some(key) => found.push(key),
             None => {
                 let index = index.to_string();
-                let mut field: Vec<&str> = at.to_vec();
-                field.push(&index);
+                let field = input_path(at, &[&index]);
                 // lsf's wording.
                 errors.push(coded(&field, "Discount does not exist", "INVALID"));
             }

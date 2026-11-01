@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 
 use super::{strings, web_presences};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, input_path, payload};
 use crate::state::{ShopState, value};
 
 /// The locales a shop can enable, as `availableLocales` answers them on Shopify (the example
@@ -243,8 +243,7 @@ fn presences(
     for (index, id) in ids.iter().enumerate() {
         if state.type_of(id) != Some("MarketWebPresence") {
             let index = index.to_string();
-            let mut field: Vec<&str> = at.to_vec();
-            field.push(&index);
+            let field = input_path(at, &[&index]);
             errors.push(UserError::new(&field, "Web presence does not exist"));
         }
     }

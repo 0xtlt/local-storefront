@@ -40,7 +40,7 @@ use super::model::{
 };
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, input_path, payload};
 use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -1094,7 +1094,7 @@ fn cycle_draft_concatenate(
         let contract_id = text(input, "contractId").unwrap_or_default().to_string();
         let Some(contract) = contract_arg(state, &contract_id) else {
             errors.push(model::invalid_error(
-                &model::path(&at, &["contractId"]),
+                &input_path(&at, &["contractId"]),
                 "Contract does not exist",
             ));
             continue;
@@ -1105,14 +1105,14 @@ fn cycle_draft_concatenate(
             });
         if already {
             errors.push(draft_error(
-                &model::path(&at, &["contractId"]),
+                &input_path(&at, &["contractId"]),
                 "DUPLICATE_CONCATENATED_CONTRACTS",
             ));
             continue;
         }
         if text(&contract, "customer") != text(&draft, "customer") {
             errors.push(draft_error(
-                &model::path(&at, &["contractId"]),
+                &input_path(&at, &["contractId"]),
                 "CUSTOMER_MISMATCH",
             ));
             continue;
@@ -1120,7 +1120,7 @@ fn cycle_draft_concatenate(
         if text(&contract, "currencyCode") != text(&draft, "currencyCode") {
             // lsf's wording: one order bills the group, in one currency.
             errors.push(model::invalid_error(
-                &model::path(&at, &["contractId"]),
+                &input_path(&at, &["contractId"]),
                 "Currency must be the draft's",
             ));
             continue;
@@ -1129,7 +1129,7 @@ fn cycle_draft_concatenate(
             Ok(cycle) => cycle,
             Err(miss) => {
                 errors.push(draft_error(
-                    &model::path(&at, &["selector"]),
+                    &input_path(&at, &["selector"]),
                     miss.draft_code(),
                 ));
                 continue;

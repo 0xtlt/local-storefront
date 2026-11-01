@@ -48,7 +48,7 @@ use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
 use crate::domains::catalog;
-use crate::resolve::{Registry, UserError, coded};
+use crate::resolve::{Registry, UserError, coded, input_path};
 use crate::state::seed::Seed;
 use crate::state::{Record, ShopState, gid, parse_gid};
 
@@ -434,8 +434,7 @@ fn records_input(
             }
         } else {
             let index = index.to_string();
-            let mut field: Vec<&str> = at.to_vec();
-            field.push(&index);
+            let field = input_path(at, &[&index]);
             errors.push(coded(&field, message, code));
         }
     }

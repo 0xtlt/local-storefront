@@ -293,11 +293,6 @@ fn exemptions_changed(current: Option<&Value>, add: &[Value], remove: &[Value]) 
     json!(list)
 }
 
-/// The path of `field` in an input at `path`: what a user error names.
-pub fn field_path<'a>(path: &[&'a str], field: &'a str) -> Vec<&'a str> {
-    path.iter().copied().chain([field]).collect()
-}
-
 /// A string of an input object: `None` when it is not given, `Some(None)` when it is given as
 /// `null` or blank (to clear the field), `Some(Some(text))` trimmed otherwise.
 pub fn given_text(input: &Map<String, Value>, field: &str) -> Option<Option<String>> {

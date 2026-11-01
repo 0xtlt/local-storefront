@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 use crate::domains::catalog::gids;
 use crate::domains::orders::TAX_RATE_SETTING;
 use crate::domains::orders::model::{cents, parse_cents, share};
-use crate::resolve::{UserError, coded};
+use crate::resolve::{UserError, coded, input_path};
 use crate::state::{Record, ShopState, value};
 
 pub const CONTRACT: &str = "SubscriptionContract";
@@ -80,11 +80,6 @@ pub fn cycle_error(field: &[&str], code: &str) -> UserError {
         described("SubscriptionBillingCycleErrorCode", code),
         code,
     )
-}
-
-/// The path of a nested input field: `prefix`, then `rest`.
-pub fn path<'a>(prefix: &[&'a str], rest: &[&'a str]) -> Vec<&'a str> {
-    prefix.iter().chain(rest).copied().collect()
 }
 
 /// `pointer` for a record, as `Value::pointer` reads a value: `/state/__typename`.
@@ -231,7 +226,7 @@ pub fn check_anchors(anchors: &Value, path: &[&str], errors: &mut Vec<UserError>
         };
         if !valid {
             let index = index.to_string();
-            errors.push(draft_error(&self::path(path, &[&index]), "NOT_IN_RANGE"));
+            errors.push(draft_error(&input_path(path, &[&index]), "NOT_IN_RANGE"));
         }
     }
 }
@@ -339,7 +334,7 @@ pub fn check_policies(
     if let Some(billing) = billing {
         let push = |errors: &mut Vec<UserError>, field: &str, code: &str| {
             errors.push(draft_error(
-                &self::path(path, &["billingPolicy", field]),
+                &input_path(path, &["billingPolicy", field]),
                 code,
             ));
         };
@@ -370,7 +365,7 @@ pub fn check_policies(
         }
         check_anchors(
             &billing["anchors"],
-            &self::path(path, &["billingPolicy", "anchors"]),
+            &input_path(path, &["billingPolicy", "anchors"]),
             errors,
         );
     }
@@ -382,13 +377,13 @@ pub fn check_policies(
             < 1
         {
             errors.push(draft_error(
-                &self::path(path, &["deliveryPolicy", "intervalCount"]),
+                &input_path(path, &["deliveryPolicy", "intervalCount"]),
                 "GREATER_THAN",
             ));
         }
         check_anchors(
             &delivery["anchors"],
-            &self::path(path, &["deliveryPolicy", "anchors"]),
+            &input_path(path, &["deliveryPolicy", "anchors"]),
             errors,
         );
     }
@@ -402,7 +397,7 @@ pub fn check_policies(
             && (billing_span < delivery_span || billing_span % delivery_span != 0)
         {
             errors.push(draft_error(
-                &self::path(path, &["deliveryPolicy"]),
+                &input_path(path, &["deliveryPolicy"]),
                 "DELIVERY_MUST_BE_MULTIPLE_OF_BILLING",
             ));
         }
@@ -479,7 +474,7 @@ pub fn delivery_method(
             .filter(|value| !value.is_null())
         else {
             return Err(vec![draft_error(
-                &self::path(path, &["localDelivery", "localDeliveryOption"]),
+                &input_path(path, &["localDelivery", "localDeliveryOption"]),
                 "MISSING_LOCAL_DELIVERY_OPTIONS",
             )]);
         };
@@ -507,7 +502,7 @@ pub fn delivery_method(
             .unwrap_or_default();
         if state.type_of(location) != Some("Location") {
             return Err(vec![draft_error(
-                &self::path(path, &["pickup", "pickupOption", "locationId"]),
+                &input_path(path, &["pickup", "pickupOption", "locationId"]),
                 "INVALID",
             )]);
         }
@@ -576,7 +571,7 @@ pub fn calculated_delivery_method(
             .unwrap_or_default();
         if state.type_of(location) != Some("Location") {
             return Err(vec![invalid_error(
-                &self::path(path, &["pickup", "locationId"]),
+                &input_path(path, &["pickup", "locationId"]),
                 "Location does not exist",
             )]);
         }
@@ -735,7 +730,7 @@ pub fn check_pricing_policy(input: &Value, path: &[&str], errors: &mut Vec<UserE
             .get("fixedValue")
             .is_some_and(|value| !value.is_null());
         let kind = text(adjustment, "adjustmentType").unwrap_or("PERCENTAGE");
-        let at = self::path(path, &[&index, "adjustmentValue"]);
+        let at = input_path(path, &[&index, "adjustmentValue"]);
         if percentage == fixed {
             errors.push(draft_error(&at, "INVALID_ADJUSTMENT_VALUE"));
         } else if (kind == "PERCENTAGE") != percentage {
@@ -767,29 +762,29 @@ pub fn new_line(
     let fields = variant_fields(state, variant);
     if fields.is_none() {
         errors.push(invalid_error(
-            &self::path(path, &["productVariantId"]),
+            &input_path(path, &["productVariantId"]),
             "Product variant does not exist",
         ));
     }
     let quantity = input.get("quantity").and_then(Value::as_i64).unwrap_or(0);
     if quantity < 1 {
         errors.push(draft_error(
-            &self::path(path, &["quantity"]),
+            &input_path(path, &["quantity"]),
             "GREATER_THAN_OR_EQUAL_TO",
         ));
     }
     let price = decimal_cents(input.get("currentPrice"));
     match price {
         Some(price) if price < 0 => errors.push(draft_error(
-            &self::path(path, &["currentPrice"]),
+            &input_path(path, &["currentPrice"]),
             "GREATER_THAN_OR_EQUAL_TO",
         )),
         Some(price) if !value::money_in_bounds(price.saturating_mul(quantity.max(1))) => errors
             .push(invalid_error(
-                &self::path(path, &["currentPrice"]),
+                &input_path(path, &["currentPrice"]),
                 value::money_too_large("Price"),
             )),
-        None => errors.push(draft_error(&self::path(path, &["currentPrice"]), "BLANK")),
+        None => errors.push(draft_error(&input_path(path, &["currentPrice"]), "BLANK")),
         _ => {}
     }
     let plan = text(input, "sellingPlanId");
@@ -797,7 +792,7 @@ pub fn new_line(
         && state.type_of(plan) != Some("SellingPlan")
     {
         errors.push(invalid_error(
-            &self::path(path, &["sellingPlanId"]),
+            &input_path(path, &["sellingPlanId"]),
             "Selling plan does not exist",
         ));
     }
@@ -807,7 +802,7 @@ pub fn new_line(
     {
         check_pricing_policy(
             policy,
-            &self::path(path, &["pricingPolicy", "cycleDiscounts"]),
+            &input_path(path, &["pricingPolicy", "cycleDiscounts"]),
             &mut errors,
         );
     }
@@ -891,7 +886,7 @@ pub fn update_line(
                 }
             }
             None => errors.push(invalid_error(
-                &self::path(path, &["productVariantId"]),
+                &input_path(path, &["productVariantId"]),
                 "Product variant does not exist",
             )),
         }
@@ -900,7 +895,7 @@ pub fn update_line(
         match quantity.as_i64() {
             Some(quantity) if quantity >= 1 => line["quantity"] = json!(quantity),
             _ => errors.push(draft_error(
-                &self::path(path, &["quantity"]),
+                &input_path(path, &["quantity"]),
                 "GREATER_THAN_OR_EQUAL_TO",
             )),
         }
@@ -914,7 +909,7 @@ pub fn update_line(
                 line["currentPrice"] = money(price, currency);
             }
             _ => errors.push(draft_error(
-                &self::path(path, &["currentPrice"]),
+                &input_path(path, &["currentPrice"]),
                 "GREATER_THAN_OR_EQUAL_TO",
             )),
         }
@@ -924,7 +919,7 @@ pub fn update_line(
             && state.type_of(plan) != Some("SellingPlan")
         {
             errors.push(invalid_error(
-                &self::path(path, &["sellingPlanId"]),
+                &input_path(path, &["sellingPlanId"]),
                 "Selling plan does not exist",
             ));
         }
@@ -943,7 +938,7 @@ pub fn update_line(
         if !policy.is_null() {
             check_pricing_policy(
                 policy,
-                &self::path(path, &["pricingPolicy", "cycleDiscounts"]),
+                &input_path(path, &["pricingPolicy", "cycleDiscounts"]),
                 &mut errors,
             );
         }
@@ -1274,31 +1269,31 @@ pub fn requires_shipping(record: &Record) -> bool {
 pub fn check_committable(record: &Record, path: &[&str], errors: &mut Vec<UserError>) {
     let count = array(record, "lines").len();
     if count == 0 {
-        errors.push(draft_error(&self::path(path, &["lines"]), "INVALID_LINES"));
+        errors.push(draft_error(&input_path(path, &["lines"]), "INVALID_LINES"));
     } else if count > MAX_LINES {
-        errors.push(draft_error(&self::path(path, &["lines"]), "TOO_MANY_LINES"));
+        errors.push(draft_error(&input_path(path, &["lines"]), "TOO_MANY_LINES"));
     }
     if array(record, "discounts").len() > MAX_DISCOUNTS {
         errors.push(draft_error(
-            &self::path(path, &["discounts"]),
+            &input_path(path, &["discounts"]),
             "TOO_MANY_DISCOUNTS",
         ));
     }
     if requires_shipping(record) && record.get("deliveryMethod").is_none_or(Value::is_null) {
         errors.push(draft_error(
-            &self::path(path, &["deliveryMethod"]),
+            &input_path(path, &["deliveryMethod"]),
             "DELIVERY_METHOD_REQUIRED",
         ));
     }
     if record.get("billingPolicy").is_none_or(Value::is_null) {
         errors.push(draft_error(
-            &self::path(path, &["billingPolicy"]),
+            &input_path(path, &["billingPolicy"]),
             "PRESENCE",
         ));
     }
     if record.get("deliveryPolicy").is_none_or(Value::is_null) {
         errors.push(draft_error(
-            &self::path(path, &["deliveryPolicy"]),
+            &input_path(path, &["deliveryPolicy"]),
             "PRESENCE",
         ));
     }
@@ -1308,7 +1303,7 @@ pub fn check_committable(record: &Record, path: &[&str], errors: &mut Vec<UserEr
 pub fn check_note(input: &Map<String, Value>, path: &[&str], errors: &mut Vec<UserError>) {
     if text(input, "note").is_some_and(|note| note.chars().count() > MAX_NOTE) {
         errors.push(draft_error(
-            &self::path(path, &["note"]),
+            &input_path(path, &["note"]),
             "INVALID_NOTE_LENGTH",
         ));
     }
@@ -1386,7 +1381,7 @@ pub fn apply_draft_input(
             match delivery_method(
                 state,
                 &object(Some(method)),
-                &self::path(path, &["deliveryMethod"]),
+                &input_path(path, &["deliveryMethod"]),
             ) {
                 Ok(method) => {
                     record.insert("deliveryMethod".into(), method);
@@ -1404,7 +1399,7 @@ pub fn apply_draft_input(
                 record.insert("deliveryPrice".into(), money(price, &currency));
             }
             _ => errors.push(draft_error(
-                &self::path(path, &["deliveryPrice"]),
+                &input_path(path, &["deliveryPrice"]),
                 "GREATER_THAN_OR_EQUAL_TO",
             )),
         }
@@ -1417,7 +1412,7 @@ pub fn apply_draft_input(
                     state,
                     method,
                     customer.as_deref(),
-                    &self::path(path, &["paymentMethodId"]),
+                    &input_path(path, &["paymentMethodId"]),
                 ) {
                     Some(error) => errors.push(error),
                     None => {
@@ -1449,7 +1444,7 @@ pub fn apply_draft_input(
                 record.insert("nextBillingDate".into(), json!(value::date_time(date)));
             }
             None => errors.push(draft_error(
-                &self::path(path, &["nextBillingDate"]),
+                &input_path(path, &["nextBillingDate"]),
                 "INVALID_BILLING_DATE",
             )),
         }

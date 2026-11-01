@@ -43,7 +43,9 @@ use serde_json::{Map, Value, json};
 use super::{Pointer, is, market_currency, number, objects, shop_currency, strings, text};
 use crate::domains::catalog::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, coded, payload};
+use crate::resolve::{
+    Mutation, Obj, Registry, ShopResolver, UserError, coded, input_path, payload,
+};
 use crate::search::SearchValue;
 use crate::state::{Record, ShopState, value};
 
@@ -849,8 +851,7 @@ fn check_parent(parent: &Map<String, Value>, at: &[&str], errors: &mut Vec<UserE
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
     let decrease = text(adjustment, "type") == Some("PERCENTAGE_DECREASE");
-    let mut field: Vec<&str> = at.to_vec();
-    field.extend(["adjustment", "value"]);
+    let field = input_path(at, &["adjustment", "value"]);
     // lsf's bounds and wording: a decrease of more than 100% would make prices negative;
     // shopify.dev documents the codes only.
     if value < 0.0 {
@@ -1605,8 +1606,7 @@ fn check_rules_against_breaks(
             continue;
         };
         let index = index.to_string();
-        let mut field: Vec<&str> = inputs_at.to_vec();
-        field.push(&index);
+        let field = input_path(inputs_at, &[&index]);
         for minimum in break_minimums(state, list, &rule.variant) {
             // The codes' descriptions in the schema.
             if rule.minimum > minimum {
