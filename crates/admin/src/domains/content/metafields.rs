@@ -44,6 +44,7 @@ use crate::auth::scopes::{self, Root};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::access::denied;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+pub(super) use crate::state::value::str_field_or_empty as text;
 use crate::state::{Record, ShopState, gid_type, parse_gid, value};
 
 pub fn register(registry: &mut Registry) {
@@ -259,13 +260,6 @@ pub fn check_namespace_and_key(
             invalid_code,
         ));
     }
-}
-
-pub(super) fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
 }
 
 /// The metafield of an owner with a namespace (as stored) and a key.

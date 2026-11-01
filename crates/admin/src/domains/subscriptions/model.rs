@@ -16,6 +16,7 @@ use crate::domains::catalog::gids;
 use crate::domains::orders::TAX_RATE_SETTING;
 use crate::domains::orders::model::{cents, parse_cents, share};
 use crate::resolve::UserError;
+pub use crate::state::value::str_field as text;
 use crate::state::{Record, ShopState, value};
 
 pub const CONTRACT: &str = "SubscriptionContract";
@@ -96,11 +97,6 @@ impl Pointer for Map<String, Value> {
             None => self.get(path),
         }
     }
-}
-
-/// A string field of a record or an input.
-pub fn text<'r>(record: &'r Map<String, Value>, field: &str) -> Option<&'r str> {
-    record.get(field).and_then(Value::as_str)
 }
 
 /// An input object (`{}` when absent).

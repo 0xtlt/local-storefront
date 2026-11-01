@@ -42,6 +42,7 @@ use crate::resolve::selection::{Selection, Wording, selection};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, done_job, payload};
 use crate::search::{Query, SearchValue, Searchable};
+use crate::state::value::str_field as text;
 use crate::state::{Record, ShopState, gid, parse_gid, value};
 
 /// The API types of the Functions a discount runs: the Discount API, and the legacy product,
@@ -255,10 +256,6 @@ pub(super) fn inner_mut(record: &mut Record) -> Option<&mut Record> {
         .into_iter()
         .find(|field| record.contains_key(*field))?;
     record.get_mut(field).and_then(Value::as_object_mut)
-}
-
-fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
-    record.get(field).and_then(Value::as_str)
 }
 
 /// A `DateTime` as lsf writes it (`2026-04-29T06:45:06Z`, UTC, as Shopify answers a date given

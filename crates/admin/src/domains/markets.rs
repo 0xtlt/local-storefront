@@ -51,6 +51,7 @@ use crate::domains::catalog;
 use crate::graphql::FieldContext;
 use crate::resolve::{Registry, UserError};
 use crate::state::seed::Seed;
+use crate::state::value::str_field as text;
 use crate::state::{Record, ShopState, gid, parse_gid};
 
 /// The setting that holds the backup region: the code of its country.
@@ -387,11 +388,6 @@ fn input(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default()
-}
-
-/// A string field of an input.
-fn text<'i>(input: &'i Map<String, Value>, field: &str) -> Option<&'i str> {
-    input.get(field).and_then(Value::as_str)
 }
 
 /// The strings of a list field of an input (the GIDs of `marketIds`).

@@ -39,6 +39,7 @@ use serde_json::{Map, Value, json};
 
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::state::value::str_field_or_empty as text;
 use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -70,13 +71,6 @@ pub fn register(registry: &mut Registry) {
         .mutation("storefrontAccessTokenCreate", storefront_token_create)
         .mutation("storefrontAccessTokenDelete", storefront_token_delete)
         .field("Shop", "storefrontAccessTokens", storefront_tokens);
-}
-
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
 }
 
 // ---- script tags -------------------------------------------------------------------------

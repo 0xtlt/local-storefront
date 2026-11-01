@@ -29,7 +29,8 @@ use crate::domains::catalog::gids;
 use crate::domains::content::navigation::set_redirect;
 use crate::graphql::{self, FieldContext, FieldError, Output, Request};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, done_job, payload};
-use crate::state::{Record, value};
+use crate::state::value;
+use crate::state::value::str_field_or_empty as text;
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -40,13 +41,6 @@ pub fn register(registry: &mut Registry) {
         .mutation("urlRedirectImportCreate", import_create)
         .mutation("urlRedirectImportSubmit", import_submit)
         .query("urlRedirectImport", url_redirect_import);
-}
-
-fn text<'r>(record: &'r Record, field: &str) -> &'r str {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
 }
 
 fn delete_all_of(m: &mut Mutation<'_>, ids: &[String], kind: &str) -> Value {

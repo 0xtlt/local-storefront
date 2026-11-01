@@ -9,6 +9,8 @@ use super::{QUANTITY_NAMES, gids, refresh_product};
 use crate::domains::content;
 use crate::graphql::FieldContext;
 use crate::resolve::UserError;
+pub use crate::state::value::str_field as text;
+pub use crate::state::value::str_field as field;
 use crate::state::{Record, ShopState, gid, parse_gid, value};
 
 /// An argument of the field that is an input object (`{}` when it is not given).
@@ -17,11 +19,6 @@ pub fn input(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default()
-}
-
-/// A string field of an input.
-pub fn text<'i>(input: &'i Map<String, Value>, field: &str) -> Option<&'i str> {
-    input.get(field).and_then(Value::as_str)
 }
 
 /// The objects of a list field of an input, in order.
@@ -48,11 +45,6 @@ pub fn arg_objects<'c>(ctx: &FieldContext<'c>, name: &str) -> Vec<&'c Map<String
 /// The strings of a list argument of the field (the GIDs of `productIds`).
 pub fn arg_strings(ctx: &FieldContext<'_>, name: &str) -> Vec<String> {
     gids(ctx.arg(name))
-}
-
-/// A string field of a record.
-pub fn field<'r>(record: &'r Record, name: &str) -> Option<&'r str> {
-    record.get(name).and_then(Value::as_str)
 }
 
 /// The currency of the shop ([`crate::domains::orders::model::currency`]).

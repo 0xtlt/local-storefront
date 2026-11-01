@@ -37,7 +37,8 @@ use serde_json::{Value, json};
 use crate::graphql::FieldContext;
 use crate::resolve::{Mutation, Registry};
 use crate::state::seed::Seed;
-use crate::state::{Record, ShopState, gid, value};
+use crate::state::value::str_field as text;
+use crate::state::{ShopState, gid, value};
 
 /// The record field of a device with the location it is at.
 pub const DEVICE_LOCATION: &str = "lsfLocation";
@@ -177,8 +178,4 @@ fn keys_with<'s>(
     state
         .keys(type_name)
         .filter(move |key| state.get(key).and_then(|record| text(record, field)) == Some(value))
-}
-
-fn text<'r>(record: &'r Record, name: &str) -> Option<&'r str> {
-    record.get(name).and_then(Value::as_str)
 }

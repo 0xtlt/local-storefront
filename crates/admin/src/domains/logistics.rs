@@ -41,6 +41,7 @@ use crate::domains::catalog::{self, gids};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError};
 use crate::state::seed::Seed;
+pub use crate::state::value::str_field as text;
 use crate::state::{Record, ShopState};
 
 /// The custom resolvers and the mutations of the family: see "Writing a resolver or a mutation"
@@ -149,11 +150,6 @@ pub fn is_url(text: &str) -> bool {
         text.strip_prefix(scheme)
             .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
     })
-}
-
-/// The text of a field of a record.
-pub fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
-    record.get(field).and_then(Value::as_str)
 }
 
 /// An integer field of a record, 0 when absent.

@@ -26,6 +26,7 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use crate::domains::{catalog, content, logistics};
+use crate::state::value::non_empty_str_field as text;
 use crate::state::{ChangeKind, Record, ShopState, gid, gid_type, parse_gid};
 
 /// The next instant after now at which the time alone changes what [`overlay`] projects: the
@@ -2400,14 +2401,6 @@ impl<'s> Sync<'s> {
 /// The type of a record: its `__typename`, else the type its GID names.
 fn type_of<'r>(key: &'r str, record: &'r Record) -> Option<&'r str> {
     text(record, "__typename").or_else(|| gid_type(key))
-}
-
-/// A string field of a record, when it is a non-empty string.
-fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .filter(|text| !text.is_empty())
 }
 
 fn string(record: &Record, field: &str) -> Option<String> {

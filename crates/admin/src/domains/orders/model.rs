@@ -27,6 +27,7 @@ use serde_json::{Map, Value, json};
 
 use crate::domains::catalog::{self, gids};
 use crate::domains::customers;
+pub use crate::state::value::str_field as text;
 use crate::state::{Record, ShopState, value};
 
 /// The financial statuses whose money was taken (`captured` in the seed).
@@ -280,11 +281,6 @@ pub fn money_input(value: Option<&Value>) -> Option<(i64, Option<String>)> {
 /// The cents of a field of a record.
 pub fn field_cents(record: &Record, field: &str) -> i64 {
     cents(record.get(field))
-}
-
-/// A string field of a record.
-pub fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
-    record.get(field).and_then(Value::as_str)
 }
 
 /// The number of a GID (`gid://shopify/Order/7` is 7), 0 when it is not one.

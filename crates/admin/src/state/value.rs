@@ -84,6 +84,21 @@ pub fn date_time_of(value: Option<&Value>) -> Option<DateTime<Utc>> {
     value.and_then(Value::as_str).and_then(parse_date_time)
 }
 
+/// A string field of a record or an input: `None` when it is missing or not a string.
+pub fn str_field<'r>(record: &'r Map<String, Value>, field: &str) -> Option<&'r str> {
+    record.get(field).and_then(Value::as_str)
+}
+
+/// [`str_field`], `""` when it is missing or not a string.
+pub fn str_field_or_empty<'r>(record: &'r Map<String, Value>, field: &str) -> &'r str {
+    str_field(record, field).unwrap_or_default()
+}
+
+/// [`str_field`], `None` also when it is empty.
+pub fn non_empty_str_field<'r>(record: &'r Map<String, Value>, field: &str) -> Option<&'r str> {
+    str_field(record, field).filter(|text| !text.is_empty())
+}
+
 /// A string, or `null` when it is empty.
 pub fn text(value: &str) -> Value {
     if value.is_empty() {
@@ -307,6 +322,18 @@ mod tests {
         );
         assert_eq!(date_time_of(Some(&json!(1))), None);
         assert_eq!(date_time_of(None), None);
+    }
+
+    #[test]
+    fn reads_string_fields() {
+        let record = object(json!({"title": "Shirt", "empty": "", "count": 2}));
+        assert_eq!(str_field(&record, "title"), Some("Shirt"));
+        assert_eq!(str_field(&record, "empty"), Some(""));
+        assert_eq!(str_field(&record, "count"), None);
+        assert_eq!(str_field_or_empty(&record, "count"), "");
+        assert_eq!(str_field_or_empty(&record, "missing"), "");
+        assert_eq!(non_empty_str_field(&record, "empty"), None);
+        assert_eq!(non_empty_str_field(&record, "title"), Some("Shirt"));
     }
 
     #[test]
