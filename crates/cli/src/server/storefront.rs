@@ -36,6 +36,11 @@ impl Visit<'_> {
     /// reported to the Admin API, as the storefront's cart fires `carts/create` and
     /// `carts/update` on Shopify.
     pub fn update_session(&self, change: impl FnOnce(&mut Session)) {
+        if self.state.admin.is_none() {
+            self.state
+                .with_session(&self.session_id, |entry| change(&mut entry.session));
+            return;
+        }
         let changed = self.state.with_session(&self.session_id, |entry| {
             let cart = |session: &Session| {
                 (

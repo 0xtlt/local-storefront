@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 use lsf_admin::api::{AdminApi, AdminOptions, HttpRequest, ThrottleSetting};
 use lsf_admin::auth::SecretSource;
+use lsf_admin::domains::checkouts;
+use lsf_admin::state::ShopState;
 use lsf_admin::version::Served;
 use lsf_admin::webhooks::DeliveryOptions;
 use lsf_core::Store;
@@ -151,56 +153,57 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
 /// for a cart that had nothing, `carts/update` after (see `lsf_admin::domains::checkouts`).
 /// Nothing without the Admin API.
 pub fn record_cart(state: &ServerState, token: &str, session: &lsf_core::Session) {
-    let Some(admin) = state.admin.as_ref() else {
+    if state.admin.is_none() {
         return;
-    };
-    let lines: Vec<lsf_admin::domains::checkouts::CartLine> = session
+    }
+    let lines: Vec<checkouts::CartLine> = session
         .cart_lines
         .iter()
-        .map(|line| lsf_admin::domains::checkouts::CartLine {
+        .map(|line| checkouts::CartLine {
             variant_id: line.variant_id,
             quantity: line.quantity,
-            properties: line
-                .properties
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect(),
+            properties: pairs(&line.properties),
             key: lsf_core::drops::cart::line_key(line),
         })
         .collect();
-    let attributes: Vec<(String, String)> = session
-        .cart_attributes
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    let cart = lsf_admin::domains::checkouts::Cart {
+    let attributes = pairs(&session.cart_attributes);
+    let cart = checkouts::Cart {
         token,
         note: &session.cart_note,
         attributes: &attributes,
         lines: &lines,
     };
-    admin.api.change_shop(&admin.api.default_shop(), |shop| {
-        lsf_admin::domains::checkouts::record_cart(shop, &cart)
-    });
+    change_default_shop(state, |shop| checkouts::record_cart(shop, &cart));
 }
 
 /// What the local checkout computed, reported to the default shop of the Admin API:
 /// `checkouts/create` the first time, `checkouts/update` when it changed.
-pub fn record_checkout(state: &ServerState, checkout: &lsf_admin::domains::checkouts::Checkout) {
-    let Some(admin) = state.admin.as_ref() else {
-        return;
-    };
-    admin.api.change_shop(&admin.api.default_shop(), |shop| {
-        lsf_admin::domains::checkouts::record_checkout(shop, checkout)
+pub fn record_checkout(state: &ServerState, checkout: &checkouts::Checkout) {
+    change_default_shop(state, |shop| {
+        checkouts::record_checkout(shop, checkout);
     });
 }
 
 /// The order of a checkout was placed: the checkout is completed (`checkouts/update`).
 pub fn complete_checkout(state: &ServerState, cart_token: &str, generation: u64) {
-    let Some(admin) = state.admin.as_ref() else {
-        return;
-    };
-    admin.api.change_shop(&admin.api.default_shop(), |shop| {
-        lsf_admin::domains::checkouts::complete_checkout(shop, cart_token, generation)
+    change_default_shop(state, |shop| {
+        checkouts::complete_checkout(shop, cart_token, generation)
     });
+}
+
+/// Changes the default shop of the Admin API. Nothing without the Admin API.
+fn change_default_shop(state: &ServerState, change: impl FnOnce(&mut ShopState)) {
+    if let Some(admin) = &state.admin {
+        admin.api.change_shop(&admin.api.default_shop(), change);
+    }
+}
+
+/// The entries of a map of the session (a cart's attributes, a line's properties) as the Admin
+/// API takes them.
+pub(super) fn pairs<'a>(
+    map: impl IntoIterator<Item = (&'a String, &'a String)>,
+) -> Vec<(String, String)> {
+    map.into_iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
 }
