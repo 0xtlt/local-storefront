@@ -45,7 +45,7 @@ use super::CHANGED;
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, gid, parse_gid, value};
+use crate::state::{Record, ShopState, gid, gid_number, parse_gid, value};
 
 /// How long a charge waits for the merchant before it expires (`EXPIRED`: "wasn't approved by
 /// the merchant within two days of being created").
@@ -631,7 +631,7 @@ fn line_item_update(
         record.insert("pendingCappedAmount".into(), money_v2(capped, &currency));
     }
     state.emit(CHANGED, &line);
-    let number = parse_gid(&subscription).map_or(0, |(_, id)| id);
+    let number = gid_number(&subscription);
     Ok(payload(
         json!({
             "appSubscription": subscription,

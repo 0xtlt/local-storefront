@@ -32,7 +32,7 @@ use crate::domains::app::CHANGED;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -402,7 +402,7 @@ pub fn request_link(state: &mut ShopState, order: &str) -> Result<(), String> {
         .and_then(|shop| text(shop, "url"))
         .unwrap_or_default()
         .to_string();
-    let number = model::number(order);
+    let number = gid_number(order);
     let key = value::uuid(&format!("{}/{order}/{}", state.domain(), state.timestamp()));
     outbox::record(
         state,

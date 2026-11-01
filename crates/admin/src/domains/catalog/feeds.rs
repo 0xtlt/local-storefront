@@ -39,7 +39,7 @@ use super::gift_cards::normalize_time;
 use super::records::{self, field, input, text};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{Record, ShopState, gid, parse_gid, value};
+use crate::state::{Record, ShopState, gid, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -140,7 +140,7 @@ fn snapshot(state: &ShopState, feed: &str, product: &str, metadata: Value) -> Re
 
 /// The key of a sync event: the feed's GID with the product and the sync.
 fn event_key(feed: &str, product: &str, sync: &str) -> String {
-    let number = |gid: &str| parse_gid(gid).map_or(0, |(_, id)| id);
+    let number = |gid: &str| gid_number(gid);
     format!(
         "{feed}?product_id={}&sync={}",
         number(product),

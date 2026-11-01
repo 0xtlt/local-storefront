@@ -30,7 +30,7 @@ use super::product_changed;
 use super::records::{self, field, origin, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, parse_gid, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -326,7 +326,7 @@ fn publication_snapshot(
 
 /// The GID of a publication event: the publishable's, with the publication's id.
 fn event_gid(publishable: &str, publication: &str) -> String {
-    let id = parse_gid(publication).map_or(0, |(_, id)| id);
+    let id = gid_number(publication);
     format!("{publishable}?publication_id={id}")
 }
 

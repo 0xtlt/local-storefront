@@ -45,7 +45,7 @@ use super::model::{self, Pointer, cycle_error, date_time, object, text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -667,7 +667,7 @@ pub fn clear_edits(contract: &mut Record, index: i64) {
 pub fn cycle_key(contract: &str, index: i64) -> String {
     format!(
         "gid://shopify/SubscriptionBillingCycle/{}?index={index}",
-        model::number(contract)
+        gid_number(contract)
     )
 }
 

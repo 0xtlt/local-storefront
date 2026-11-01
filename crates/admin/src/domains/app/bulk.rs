@@ -37,7 +37,7 @@ use crate::graphql::ast::{Field, Selection, SelectionSet};
 use crate::graphql::{self, FieldContext, FieldError, OperationKind, Output, Request};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::schema::Schema;
-use crate::state::{Blob, ShopState, parse_gid, value};
+use crate::state::{Blob, ShopState, gid_number, value};
 
 /// The most connections a bulk query may have.
 const MAX_CONNECTIONS: usize = 5;
@@ -102,7 +102,7 @@ fn current_bulk_operation(
                 .and_then(Value::as_str)
                 == Some(kind)
         })
-        .max_by_key(|key| parse_gid(key).map_or(0, |(_, id)| id));
+        .max_by_key(|key| gid_number(key));
     Ok(Output::object_or_null(latest.map(Obj::record)))
 }
 
@@ -383,7 +383,7 @@ fn finish(mutation: &mut Mutation<'_>, kind: &str, query: &str, outcome: Outcome
     let state = mutation.state_mut();
     let now = state.timestamp();
     let id = state.new_gid("BulkOperation");
-    let number = parse_gid(&id).map_or(0, |(_, n)| n);
+    let number = gid_number(&id);
     let mut text = outcome.lines.join("\n");
     if !text.is_empty() {
         text.push('\n');

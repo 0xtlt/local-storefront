@@ -44,11 +44,11 @@
 use lsf_core::util::handleize;
 use serde_json::{Map, Value, json};
 
-use super::{coded, input, number, objects, regions_of, shop_locales, strings, text};
+use super::{coded, input, objects, regions_of, shop_locales, strings, text};
 use crate::domains::catalog::{self, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 /// The record field of a channel's publication that names the channel.
 const CHANNEL_OF: &str = "lsfChannel";
@@ -406,7 +406,7 @@ fn listing_snapshot(
 /// The key of a listing event: the publishable's GID, with the publication's id (it names no
 /// record, so the payload is built from the snapshot).
 fn listing_key(publishable: &str, publication: &str) -> String {
-    format!("{publishable}?publication_id={}", number(publication))
+    format!("{publishable}?publication_id={}", gid_number(publication))
 }
 
 /// Emits a listing event of a channel's publication.

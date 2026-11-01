@@ -27,7 +27,7 @@ use serde_json::{Map, Value, json};
 
 use crate::domains::{catalog, content, logistics};
 use crate::state::value::non_empty_str_field as text;
-use crate::state::{ChangeKind, Record, ShopState, gid, gid_type, parse_gid};
+use crate::state::{ChangeKind, Record, ShopState, gid, gid_number, gid_type, parse_gid};
 
 /// The next instant after now at which the time alone changes what [`overlay`] projects: the
 /// earliest start or end of an app discount still to come (the checkout runs those active by
@@ -2281,7 +2281,7 @@ impl<'s> Sync<'s> {
         let removed = self.removed_of(&["DiscountAutomaticNode", "DiscountCodeNode"]);
         let mut keys: Vec<&'s str> = view.keys("DiscountAutomaticNode", &removed);
         keys.extend(view.keys("DiscountCodeNode", &removed));
-        keys.sort_by_key(|key| parse_gid(key).map_or(0, |(_, id)| id));
+        keys.sort_by_key(|key| gid_number(key));
         keys.into_iter()
             .filter_map(|key| {
                 let details = app_discount(view.get(key)?)?;

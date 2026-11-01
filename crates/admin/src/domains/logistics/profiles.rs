@@ -373,7 +373,7 @@ fn profile_items(
     let items: Vec<Value> = items
         .into_iter()
         .map(|(product, variants)| {
-            let number = crate::state::parse_gid(&product).map_or(0, |(_, n)| n);
+            let number = crate::state::gid_number(&product);
             json!({
                 "__typename": "DeliveryProfileItem",
                 "id": gid("DeliveryProfileItem", number),

@@ -49,7 +49,7 @@ use super::model::{self, array, field_cents, int, text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{ShopState, value};
+use crate::state::{ShopState, gid_number, value};
 use crate::webhooks::payload::FULFILLMENT_ORDER_EVENT;
 
 pub fn register(registry: &mut Registry) {
@@ -156,7 +156,7 @@ fn fulfillment_create(
         let Some(record) = fulfillment_order(state, id) else {
             return failed(vec![UserError::new(
                 &["fulfillment"],
-                format!("Fulfillment order {} does not exist.", model::number(id)),
+                format!("Fulfillment order {} does not exist.", gid_number(id)),
             )]);
         };
         let status = text(&record, "status").unwrap_or("OPEN");
@@ -165,7 +165,7 @@ fn fulfillment_create(
                 &["fulfillment"],
                 format!(
                     "Fulfillment order {} has an unfulfillable status= {}.",
-                    model::number(id),
+                    gid_number(id),
                     status.to_ascii_lowercase()
                 ),
             )]);
@@ -211,8 +211,8 @@ fn fulfillment_create(
                             &["fulfillment"],
                             format!(
                                 "Fulfillment order line item {} does not belong to fulfillment order {}.",
-                                model::number(line),
-                                model::number(id)
+                                gid_number(line),
+                                gid_number(id)
                             ),
                         )]);
                     }
@@ -893,7 +893,7 @@ fn release_hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             &["holdIds"],
             format!(
                 "Fulfillment hold {} does not exist on this fulfillment order.",
-                model::number(unknown)
+                gid_number(unknown)
             ),
         )]);
     }

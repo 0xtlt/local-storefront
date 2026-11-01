@@ -11,7 +11,7 @@ use crate::graphql::FieldContext;
 use crate::resolve::UserError;
 pub use crate::state::value::str_field as text;
 pub use crate::state::value::str_field as field;
-use crate::state::{Record, ShopState, gid, parse_gid, value};
+use crate::state::{Record, ShopState, gid, gid_number, parse_gid, value};
 
 /// An argument of the field that is an input object (`{}` when it is not given).
 pub fn input(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
@@ -63,11 +63,7 @@ pub fn origin(state: &ShopState) -> String {
 
 /// The id of the app, for its reserved metafield namespaces.
 pub fn app_id(state: &ShopState) -> u64 {
-    state
-        .keys("App")
-        .next()
-        .and_then(parse_gid)
-        .map_or(0, |(_, id)| id)
+    state.keys("App").next().map_or(0, gid_number)
 }
 
 /// Whether a record of `type_name` other than `except` has `handle`.
@@ -320,7 +316,7 @@ pub fn new_inventory_item(
 ) -> String {
     let now = state.timestamp();
     let item = state.new_gid("InventoryItem");
-    let item_id = parse_gid(&item).map_or(0, |(_, id)| id);
+    let item_id = gid_number(&item);
     let mut record = value::object(json!({
         "__typename": "InventoryItem",
         "id": item,

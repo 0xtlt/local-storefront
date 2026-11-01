@@ -20,11 +20,11 @@
 
 use serde_json::{Value, json};
 
-use super::model::{self, text};
+use super::model::text;
 use crate::domains::app::CHANGED;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{ShopState, value};
+use crate::state::{ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -34,7 +34,7 @@ pub fn register(registry: &mut Registry) {
 
 /// The key of the app's tax configuration: not a record of a GID (its type has no id).
 fn key(state: &ShopState) -> String {
-    let app = state.keys("App").next().map_or(0, model::number);
+    let app = state.keys("App").next().map_or(0, gid_number);
     format!("TaxAppConfiguration/{app}")
 }
 
@@ -66,7 +66,7 @@ fn set_state(state: &mut ShopState, next: &str) {
         .map(str::to_string)
         .unwrap_or_else(|| format!("https://{}/admin/apps", state.domain()));
     let created = !state.contains(&key);
-    let number = app.as_deref().map_or(0, model::number);
+    let number = app.as_deref().map_or(0, gid_number);
     let record = value::object(json!({
         "__typename": "TaxAppConfiguration",
         "state": next,

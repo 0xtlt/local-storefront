@@ -45,7 +45,7 @@ use super::model::{
 };
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -472,7 +472,7 @@ fn keep(
     options: Option<Vec<Value>>,
     with_customizations: bool,
 ) -> Value {
-    let number = model::number(&state.new_gid("SubscriptionContractCalculation"));
+    let number = gid_number(&state.new_gid("SubscriptionContractCalculation"));
     let id = format!("gid://shopify/SubscriptionContractCalculation/{number}");
     let (kind, contract, index) = match &target {
         Target::Create => ("create", None, None),

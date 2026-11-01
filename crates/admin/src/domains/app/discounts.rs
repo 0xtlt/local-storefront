@@ -43,7 +43,7 @@ use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, done_job, payload};
 use crate::search::{Query, SearchValue, Searchable};
 use crate::state::value::str_field as text;
-use crate::state::{Record, ShopState, gid, parse_gid, value};
+use crate::state::{Record, ShopState, gid, gid_number, parse_gid, value};
 
 /// The API types of the Functions a discount runs: the Discount API, and the legacy product,
 /// order and shipping discount APIs.
@@ -314,7 +314,7 @@ fn discount_node_items(r: &ShopResolver<'_>) -> Vec<Value> {
         .keys("DiscountAutomaticNode")
         .chain(state.keys("DiscountCodeNode"))
         .collect();
-    keys.sort_by_key(|key| parse_gid(key).map_or(0, |(_, id)| id));
+    keys.sort_by_key(|key| gid_number(key));
     keys.into_iter()
         .filter_map(|key| as_discount_node(key, state.get(key)?))
         .map(Value::Object)
@@ -1810,7 +1810,7 @@ pub(super) fn search_nodes(state: &ShopState, search: &str, types: &[&str]) -> V
                 let searched = Searched {
                     state,
                     record,
-                    id: parse_gid(key).map_or(0, |(_, id)| id),
+                    id: gid_number(key),
                 };
                 query.matches(&searched, &options)
             })

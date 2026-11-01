@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{Blob, ShopState, parse_gid};
+use crate::state::{Blob, ShopState, gid_number};
 
 pub fn register(registry: &mut Registry) {
     registry.mutation("stagedUploadsCreate", staged_uploads_create);
@@ -146,7 +146,7 @@ fn staged_uploads_create(
     let origin = mutation.origin().to_string();
     let state = mutation.state();
     let shop = state.domain().to_string();
-    let shop_id = state.shop_gid().and_then(parse_gid).map_or(0, |(_, id)| id);
+    let shop_id = state.shop_gid().map_or(0, gid_number);
     let date = state.now().format("%Y%m%dT%H%M%SZ").to_string();
     let day = state.now().format("%Y%m%d").to_string();
     let bucket = bucket_url(&origin, &shop);

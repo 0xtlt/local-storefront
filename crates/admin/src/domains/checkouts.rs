@@ -53,7 +53,7 @@ use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::search::SearchValue;
 use crate::state::value::{self, money_bag};
-use crate::state::{Record, ShopState, gid};
+use crate::state::{Record, ShopState, gid, gid_number};
 
 /// How long a checkout stays incomplete before it is abandoned (Help Center: "more than ten
 /// minutes").
@@ -564,7 +564,7 @@ pub fn record_checkout(state: &mut ShopState, checkout: &Checkout<'_>) -> Option
         }
         None => {
             let id = state.new_gid("AbandonedCheckout");
-            let number = model::number(&id);
+            let number = gid_number(&id);
             let domain = state
                 .shop()
                 .and_then(|shop| shop.get("primaryDomain"))
@@ -574,7 +574,7 @@ pub fn record_checkout(state: &mut ShopState, checkout: &Checkout<'_>) -> Option
                 .and_then(Value::as_str)
                 .unwrap_or(state.domain())
                 .to_string();
-            let shop_number = state.shop_gid().map_or(0, model::number);
+            let shop_number = state.shop_gid().map_or(0, gid_number);
             let key = value::uuid(&format!("abandoned-checkout-key/{id}")).replace('-', "");
             let mut record = value::object(json!({
                 "__typename": "AbandonedCheckout",

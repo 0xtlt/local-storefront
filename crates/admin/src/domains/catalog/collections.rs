@@ -334,7 +334,7 @@ fn sort_smart(state: &mut ShopState, collection: &str) {
         .unwrap_or("MOST_RELEVANT")
         .to_string();
     let mut products = gids(record.get("products"));
-    let id = |product: &String| crate::state::parse_gid(product).map_or(0, |(_, id)| id);
+    let id = |product: &String| crate::state::gid_number(product);
     let title = |product: &String| {
         state
             .get(product)

@@ -43,7 +43,7 @@ use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::search::SearchValue;
-use crate::state::{Record, ShopState, parse_gid, value};
+use crate::state::{Record, ShopState, gid_number, parse_gid, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -263,7 +263,7 @@ fn insert_shipment(
         .get(transfer)
         .map_or(0, |record| int(record, SHIPMENT_COUNT))
         + 1;
-    let number = parse_gid(transfer).map_or(0, |(_, n)| n);
+    let number = gid_number(transfer);
     let id = state.new_gid("InventoryShipment");
     let now = state.timestamp();
     state.insert(value::object(json!({

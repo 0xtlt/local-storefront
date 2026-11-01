@@ -40,14 +40,12 @@ use std::collections::HashSet;
 
 use serde_json::{Map, Value, json};
 
-use super::{
-    Pointer, coded, input, market_currency, number, objects, shop_currency, strings, text,
-};
+use super::{Pointer, coded, input, market_currency, objects, shop_currency, strings, text};
 use crate::domains::catalog::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::search::SearchValue;
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -1215,7 +1213,7 @@ fn fixed_prices_update(
     state.emit("price_lists/update", &list);
     let variants: Vec<String> = prices.iter().map(|price| price.variant.clone()).collect();
     let mut deleted = to_delete;
-    deleted.sort_by_key(|variant| number(variant));
+    deleted.sort_by_key(|variant| gid_number(variant));
     Ok(payload(
         json!({
             "priceList": list,
@@ -1251,7 +1249,7 @@ fn fixed_prices_delete(
     remove_fixed(state, &list, &ids);
     state.emit("price_lists/update", &list);
     let mut deleted = ids;
-    deleted.sort_by_key(|variant| number(variant));
+    deleted.sort_by_key(|variant| gid_number(variant));
     deleted.dedup();
     Ok(payload(
         json!({"deletedFixedPriceVariantIds": deleted}),

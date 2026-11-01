@@ -39,7 +39,7 @@ use super::{
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{Record, ShopState, parse_gid, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -381,7 +381,7 @@ fn company_create(
 
     let state = mutation.state_mut();
     let company = state.new_gid("Company");
-    let number = parse_gid(&company).map_or(0, |(_, id)| id);
+    let number = gid_number(&company);
     let now = state.timestamp();
     let roles: Vec<String> = CONTACT_ROLES
         .iter()

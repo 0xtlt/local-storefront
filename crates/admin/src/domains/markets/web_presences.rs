@@ -23,10 +23,10 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{coded, input, market_not_found, number, shop_locales, strings, text};
+use super::{coded, input, market_not_found, shop_locales, strings, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{ShopState, value};
+use crate::state::{ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -590,7 +590,7 @@ fn first_market(state: &ShopState, presence: &str) -> Option<String> {
         .map(|record| strings(record.get("markets")))
         .unwrap_or_default()
         .into_iter()
-        .min_by_key(|market| number(market))
+        .min_by_key(|market| gid_number(market))
 }
 
 /// `marketWebPresenceUpdate` (deprecated).

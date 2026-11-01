@@ -846,7 +846,7 @@ fn activity_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     state.emit(crate::domains::app::CHANGED, &activity);
     let redirect = format!(
         "/marketing/activities/{}",
-        crate::state::parse_gid(&activity).map_or(0, |(_, id)| id)
+        crate::state::gid_number(&activity)
     );
     Ok(payload(
         json!({"marketingActivity": activity, "redirectPath": redirect}),

@@ -45,7 +45,7 @@ use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::access::denied;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 pub(super) use crate::state::value::str_field_or_empty as text;
-use crate::state::{Record, ShopState, gid_type, parse_gid, value};
+use crate::state::{Record, ShopState, gid_number, gid_type, parse_gid, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -598,7 +598,7 @@ fn owner_of(state: &ShopState, id: &str) -> Result<Option<(String, &'static str)
     let key = if state.contains(id) {
         Some(id.to_string())
     } else if type_name == "DiscountNode" {
-        let (_, number) = parse_gid(id).unwrap_or_default();
+        let number = gid_number(id);
         ["DiscountAutomaticNode", "DiscountCodeNode"]
             .into_iter()
             .map(|alias| crate::state::gid(alias, number))

@@ -35,6 +35,11 @@ pub fn parse_gid(gid: &str) -> Option<(&str, u64)> {
     Some((type_name, id.parse().ok()?))
 }
 
+/// The number of a GID (`gid://shopify/Order/7` is 7), 0 when it is not one.
+pub fn gid_number(gid: &str) -> u64 {
+    parse_gid(gid).map_or(0, |(_, number)| number)
+}
+
 /// The type a GID names, whatever its id looks like: `Product` for `gid://shopify/Product/1`.
 pub fn gid_type(gid: &str) -> Option<&str> {
     let rest = gid.strip_prefix("gid://shopify/")?;
@@ -1292,6 +1297,13 @@ mod tests {
         );
         assert_eq!(parse_gid("gid://other/Product/7"), None);
         assert_eq!(parse_gid("gid://shopify/Product/x"), None);
+        assert_eq!(gid_number("gid://shopify/Order/7"), 7);
+        assert_eq!(
+            gid_number("gid://shopify/MailingAddress/3?model_name=Address"),
+            3
+        );
+        assert_eq!(gid_number("gid://shopify/Order/x"), 0);
+        assert_eq!(gid_number(""), 0);
         assert_eq!(
             gid_type("gid://shopify/ShopifyFunction/a-b"),
             Some("ShopifyFunction")

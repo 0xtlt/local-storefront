@@ -32,7 +32,7 @@ use super::publish_on;
 use super::records::{field, input, objects, text};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{ShopState, parse_gid};
+use crate::state::{ShopState, gid_number};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -109,7 +109,7 @@ fn channel_of(state: &ShopState, publication: &str) -> Value {
     {
         return json!(channel);
     }
-    let number = parse_gid(publication).map_or(0, |(_, id)| id);
+    let number = gid_number(publication);
     let online_store = publication == online_store_publication_gid();
     json!({
         "__typename": "Channel",

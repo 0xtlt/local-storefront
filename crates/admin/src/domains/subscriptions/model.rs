@@ -17,7 +17,7 @@ use crate::domains::orders::TAX_RATE_SETTING;
 use crate::domains::orders::model::{cents, parse_cents, share};
 use crate::resolve::UserError;
 pub use crate::state::value::str_field as text;
-use crate::state::{Record, ShopState, value};
+use crate::state::{Record, ShopState, gid_number, value};
 
 pub const CONTRACT: &str = "SubscriptionContract";
 pub const DRAFT: &str = "SubscriptionDraft";
@@ -121,11 +121,6 @@ pub fn objects(value: Option<&Value>) -> Vec<Map<String, Value>> {
 /// A `DateTime` input, in UTC.
 pub fn date_time(text: &str) -> Option<DateTime<Utc>> {
     value::parse_date_time(text.trim())
-}
-
-/// The number of a GID (`5` of `gid://shopify/SubscriptionContract/5`), for the ids made of it.
-pub fn number(gid: &str) -> u64 {
-    crate::state::parse_gid(gid).map_or(0, |(_, id)| id)
 }
 
 /// A new id of an object that is not a record, in Shopify's form for it
@@ -404,7 +399,7 @@ pub fn check_policies(
 /// A `MailingAddress` of a contract from a `MailingAddressInput`, with an id of the shop's
 /// address counter.
 pub fn address(state: &mut ShopState, input: &Value) -> Option<Value> {
-    let number = number(&state.new_gid("MailingAddress"));
+    let number = gid_number(&state.new_gid("MailingAddress"));
     crate::domains::orders::model::mailing_address(
         input,
         &format!("gid://shopify/MailingAddress/{number}?model_name=Address"),

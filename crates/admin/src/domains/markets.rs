@@ -472,8 +472,3 @@ fn market_not_found(field: &str) -> UserError {
 fn coded(field: &[&str], message: impl Into<String>, code: &str) -> UserError {
     UserError::new(field, message).code(code)
 }
-
-/// The numeric id of a GID, for sorting a list as Shopify answers it (by id).
-fn number(gid: &str) -> u64 {
-    parse_gid(gid).map_or(0, |(_, id)| id)
-}

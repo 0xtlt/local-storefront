@@ -37,7 +37,7 @@ use super::refunds::{self, RefundLine, RefundSpec};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{Record, ShopState, gid, parse_gid, value};
+use crate::state::{Record, ShopState, gid, gid_number, parse_gid, value};
 use crate::webhooks::payload::{
     EDIT_ADDITIONS, EDIT_COMMITTED_AT, EDIT_NOTIFY_CUSTOMER, EDIT_REMOVALS, EDIT_STAFF_NOTE,
 };
@@ -84,7 +84,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         let ordered = int(item, "quantity").max(1);
         let unit = field_cents(item, "discountedTotalSet") / ordered;
         lines.push(json!({
-            "id": gid("CalculatedLineItem", model::number(&line)),
+            "id": gid("CalculatedLineItem", gid_number(&line)),
             "title": item.get("title"),
             "variantTitle": item.get("variantTitle"),
             "sku": item.get("sku"),
@@ -110,7 +110,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     }
     let state = mutation.state_mut();
     let calculated = state.new_gid("CalculatedOrder");
-    let session = gid("OrderEditSession", model::number(&calculated));
+    let session = gid("OrderEditSession", gid_number(&calculated));
     state.insert(value::object(json!({
         "__typename": "OrderEditSession",
         "id": session,
@@ -181,7 +181,7 @@ pub(super) fn staged(
     let line = line.and_then(|line| calculated_line(state, calculated, line));
     let mut fields = json!({
         "calculatedOrder": calculated,
-        "orderEditSession": gid("OrderEditSession", model::number(calculated)),
+        "orderEditSession": gid("OrderEditSession", gid_number(calculated)),
         "calculatedLineItem": line,
     });
     if let (Value::Object(fields), Value::Object(extra)) = (&mut fields, extra) {

@@ -283,11 +283,6 @@ pub fn field_cents(record: &Record, field: &str) -> i64 {
     cents(record.get(field))
 }
 
-/// The number of a GID (`gid://shopify/Order/7` is 7), 0 when it is not one.
-pub fn number(gid: &str) -> u64 {
-    crate::state::parse_gid(gid).map_or(0, |(_, number)| number)
-}
-
 /// An integer field of a record, 0 when it has none.
 pub fn int(record: &Record, field: &str) -> i64 {
     match record.get(field) {

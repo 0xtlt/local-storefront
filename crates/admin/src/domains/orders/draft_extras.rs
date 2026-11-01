@@ -32,7 +32,7 @@ use crate::domains::catalog::{gids, tags_of};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::selection::{Selection, Wording, selection};
 use crate::resolve::{Mutation, Registry, UserError, done_job, payload};
-use crate::state::{ShopState, value};
+use crate::state::{ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -88,7 +88,7 @@ fn delivery_options(
             if search.as_ref().is_some_and(|search| !name.to_ascii_lowercase().contains(search)) {
                 return None;
             }
-            let handle = format!("pickup-{}", model::number(key));
+            let handle = format!("pickup-{}", gid_number(key));
             Some(json!({
                 "code": handle,
                 "handle": handle,

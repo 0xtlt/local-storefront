@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::payment_methods::vault_session;
 use crate::graphql::{self, Request};
 use crate::resolve::{Registry, ShopResolver};
-use crate::state::{Clock, ShopState, value};
+use crate::state::{Clock, ShopState, gid_number, value};
 
 fn shop() -> ShopState {
     let (store, _) = lsf_core::store::load::load(
@@ -1119,7 +1119,7 @@ fn contracts_are_listed_filtered_and_sorted() {
           byStatus: subscriptionContracts(first: 5, sortKey: STATUS) { nodes { status } }
           customer(id: $customer) { subscriptionContracts(first: 5) { nodes { id } } }
         }"#,
-        json!({"product": format!("product_id:{}", crate::domains::subscriptions::model::number(&product)), "customer": customer}),
+        json!({"product": format!("product_id:{}", gid_number(&product)), "customer": customer}),
     );
     assert_eq!(read["data"]["active"]["nodes"], json!([{"id": first}]));
     assert_eq!(
@@ -1310,7 +1310,7 @@ fn a_cycle_is_skipped_and_unskipped() {
     .unwrap();
     assert_eq!(
         payload,
-        json!({"subscription_contract_id": crate::domains::subscriptions::model::number(&id), "cycle_start_at": "2026-02-15T07:00:00-05:00", "cycle_end_at": "2026-03-15T07:00:00-04:00", "cycle_index": 2, "contract_edit": null, "billing_attempt_expected_date": "2026-03-15T07:00:00-04:00", "skipped": true, "edited": true})
+        json!({"subscription_contract_id": gid_number(&id), "cycle_start_at": "2026-02-15T07:00:00-05:00", "cycle_end_at": "2026-03-15T07:00:00-04:00", "cycle_index": 2, "contract_edit": null, "billing_attempt_expected_date": "2026-03-15T07:00:00-04:00", "skipped": true, "edited": true})
     );
     let errors = refused(
         &mut shop,
@@ -1852,7 +1852,7 @@ fn a_3d_secure_card_is_challenged_until_the_customer_completes_it() {
         .as_str()
         .unwrap()
         .to_string();
-    let number = crate::domains::subscriptions::model::number(&attempt_id);
+    let number = gid_number(&attempt_id);
     assert_eq!(
         attempt["state"]["action"],
         json!({"nextActionUrl": format!("http://127.0.0.1:9292/__lsf/admin/billing-attempts/{number}/challenge?shop=local-supply-co.myshopify.com"), "status": "OFF_SESSION_REJECTED"})

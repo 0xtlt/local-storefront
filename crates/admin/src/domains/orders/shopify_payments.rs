@@ -39,7 +39,7 @@ use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Registry, ShopResolver, UserError, payload};
 use crate::search::SearchValue;
-use crate::state::{Record, ShopState, gid, value};
+use crate::state::{Record, ShopState, gid, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     for field in [
@@ -333,7 +333,7 @@ pub fn record_balance(state: &mut ShopState, transaction: &str) {
     let order = text(&record, "order")
         .and_then(|order| state.get(order))
         .cloned();
-    let number = model::number(transaction);
+    let number = gid_number(transaction);
     let at = record
         .get("processedAt")
         .or_else(|| record.get("createdAt"))
@@ -521,7 +521,7 @@ fn pay_out(state: &mut ShopState, ids: &[String], issued: DateTime<Utc>) -> Stri
         },
     })));
     model::push_key(state, BANK_ACCOUNT, "payouts", &payout);
-    let number = model::number(&payout);
+    let number = gid_number(&payout);
     let transfer = insert_balance(
         state,
         Balance {
@@ -606,7 +606,7 @@ pub fn open_dispute(state: &mut ShopState, dispute: &NewDispute) -> Result<Strin
                 .next()
                 .unwrap_or(Value::Null);
             json!({
-                "id": format!("gid://shopify/ShopifyPaymentsDisputeFulfillment/{}", model::number(text(fulfillment, "id").unwrap_or_default())),
+                "id": format!("gid://shopify/ShopifyPaymentsDisputeFulfillment/{}", gid_number(text(fulfillment, "id").unwrap_or_default())),
                 "shippingCarrier": tracking.get("company"),
                 "shippingTrackingNumber": tracking.get("number"),
                 "shippingDate": text(fulfillment, "createdAt").map(|at| at.chars().take(10).collect::<String>()),
@@ -667,7 +667,7 @@ pub fn open_dispute(state: &mut ShopState, dispute: &NewDispute) -> Result<Strin
         "disputeEvidence": evidence,
     })));
     if dispute.kind == "CHARGEBACK" {
-        let number = model::number(&id);
+        let number = gid_number(&id);
         insert_balance(
             state,
             Balance {
@@ -858,7 +858,7 @@ fn evidence_update(
     {
         let address_id = format!(
             "gid://shopify/MailingAddress/{}?model_name=Address",
-            model::number(&id)
+            gid_number(&id)
         );
         let mut address = address.clone();
         // `country` of the input is a code (the example's "US").
