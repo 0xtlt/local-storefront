@@ -12,7 +12,7 @@ pub mod navigation;
 mod online_store;
 #[cfg(test)]
 mod tests;
-mod translations;
+pub(crate) mod translations;
 pub mod types;
 
 pub use online_store::refresh_blog;

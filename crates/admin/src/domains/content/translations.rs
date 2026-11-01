@@ -27,6 +27,7 @@
 //! store data: the storefront does not show them. Shopify has no webhook topic for them: their
 //! change is the event `translations/update` on the resource, which no subscription can name.
 
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
@@ -98,6 +99,21 @@ pub fn digest(value: &str) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// When a resource last changed (its `updatedAt`): what it is outdated by, an entry registered
+/// for it before (a translation, a market localization).
+pub(crate) fn changed_at(state: &ShopState, resource: &str) -> Option<DateTime<Utc>> {
+    state
+        .get(resource)
+        .and_then(|record| value::date_time_of(record.get("updatedAt")))
+}
+
+/// Whether an entry registered for a resource at `registered` (its `updatedAt`) is outdated: the
+/// resource changed after it ([`changed_at`]).
+pub(crate) fn is_outdated(changed: Option<DateTime<Utc>>, registered: Option<&Value>) -> bool {
+    let registered = value::date_time_of(registered);
+    matches!((changed, registered), (Some(changed), Some(at)) if changed > at)
 }
 
 /// The `LocalizableContentType` of a metafield type.
@@ -216,11 +232,7 @@ fn translations_for(
     market: Option<&str>,
     outdated: Option<bool>,
 ) -> Vec<Value> {
-    let changed = state
-        .get(resource)
-        .and_then(|record| record.get("updatedAt"))
-        .and_then(Value::as_str)
-        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok());
+    let changed = changed_at(state, resource);
     translations_of(state, resource)
         .into_iter()
         .filter(|translation| {
@@ -228,12 +240,7 @@ fn translations_for(
                 && translation.get("market").and_then(Value::as_str) == market
         })
         .map(|mut translation| {
-            let registered = translation
-                .get("updatedAt")
-                .and_then(Value::as_str)
-                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok());
-            let is_outdated =
-                matches!((changed, registered), (Some(changed), Some(at)) if changed > at);
+            let is_outdated = is_outdated(changed, translation.get("updatedAt"));
             translation["outdated"] = json!(is_outdated);
             translation
         })
@@ -251,7 +258,7 @@ fn resource_object(resource: &str) -> Obj {
 }
 
 /// The resource a `TranslatableResource` object is about.
-fn resource_of<'o>(r: &'o ShopResolver<'_>, object: &'o Obj) -> String {
+pub(crate) fn resource_of<'o>(r: &'o ShopResolver<'_>, object: &'o Obj) -> String {
     r.map_of(object)
         .map(|record| text(record, "resourceId").to_string())
         .unwrap_or_default()
