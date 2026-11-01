@@ -57,7 +57,8 @@ impl SecretSource {
     pub fn refusal(self, secret: &str, dotenv: Option<&Path>) -> String {
         match self {
             SecretSource::Default => format!(
-                "lsf signed it with {secret}, its own: give lsf the backend's secret ({})",
+                "lsf signed it with {secret}, its own: give {} the backend's secret ({})",
+                lsf_core::util::command(),
                 match dotenv {
                     Some(_) => "--client-secret, or SHOPIFY_API_SECRET in the app's .env",
                     None => "--client-secret, or --app for the SHOPIFY_API_SECRET of its .env",

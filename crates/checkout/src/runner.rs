@@ -251,8 +251,9 @@ impl Runner {
     fn module(&self, engine: &Engine, wasm: &Path) -> Result<Module, String> {
         let metadata = std::fs::metadata(wasm).map_err(|_| {
             format!(
-                "no Wasm module at {}: build the Function (`lsf app build`, or `--build`)",
-                wasm.display()
+                "no Wasm module at {}: build the Function (`{} app build`, or `--build`)",
+                wasm.display(),
+                lsf_core::util::command()
             )
         })?;
         let modified = metadata.modified().ok();
@@ -337,10 +338,11 @@ fn untrampolined(module: &Module) -> Option<String> {
         .map(|import| {
             format!(
                 "the module calls `{}::{}` directly: it was not processed by \
-                 shopify-function-trampoline, which lsf (`lsf app function build`, `--build`) and \
+                 shopify-function-trampoline, which lsf (`{} app function build`, `--build`) and \
                  `shopify app build` run after compiling a Rust Function",
                 import.module(),
-                import.name()
+                import.name(),
+                lsf_core::util::command()
             )
         })
 }

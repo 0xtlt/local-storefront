@@ -135,6 +135,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
       target: instance.target,
       script,
       source,
+      build: ext.build,
       apiVersion: ext.apiVersion,
       ctx: instance.ctx,
       variant: state.variant,

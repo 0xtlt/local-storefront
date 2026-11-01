@@ -980,6 +980,16 @@ fn localization_follows_the_session_country() {
 }
 
 #[test]
+fn a_shop_in_a_country_the_store_does_not_sell_to_localizes_to_the_first_country() {
+    let mut f = Fixture::new();
+    f.store.shop.address.country_code = "JP".to_string();
+    assert!(f.store.country("JP").is_none());
+    let first = f.store.countries[0].iso_code.clone();
+    let out = f.run("{ localization { country { isoCode } } }");
+    assert_eq!(out["localization"]["country"]["isoCode"], first.as_str());
+}
+
+#[test]
 fn shop_local_time_is_in_the_shop_time_zone() {
     let f = Fixture::new();
     // 23:30 UTC on 14 March 2026 is 19:30 in New York (daylight saving time).

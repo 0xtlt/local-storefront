@@ -5723,6 +5723,40 @@ const TEES: &str = r#"{
     }
 }"#;
 
+const GUEST: &str = r#"{
+    "title": "A guest, nothing entered",
+    "session": {"customer": "none", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}
+}"#;
+
+#[test]
+fn a_guest_without_an_address_is_in_the_shop_country_and_pays_no_shipping_yet() {
+    let data = ScenarioData::new("guest", &[("guest.json", GUEST)]);
+    let state = data.server(&[], true);
+    let reply = get(&state, "/checkout?scenario=guest", "viewer");
+    let id = session_cookie(&reply);
+    let location = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{location}.json"), &id));
+    assert_eq!(json["shippingAddress"], Json::Null);
+    // The extensions read the country and the market the Functions read: the shop's, in Canada.
+    let (_, store) = state.snapshot(&id);
+    assert_eq!(store.shop.address.country_code, "CA");
+    let (market_id, market_handle) = lsf_checkout::input::market_of(&store, "CA");
+    assert_eq!(
+        json["localization"]["country"],
+        json!({"isoCode": "CA", "name": "Canada"})
+    );
+    assert_eq!(
+        json["localization"]["market"],
+        json!({"id": market_id, "handle": market_handle})
+    );
+    // No rate is selected yet, and the shipping is in no total.
+    assert_eq!(json["deliveryGroups"][0]["selected"], Json::Null);
+    assert_eq!(json["cost"]["shipping"]["amount"], 0.0);
+    let amount = |name: &str| json["cost"][name]["amount"].as_f64().unwrap();
+    assert_eq!(amount("total"), amount("subtotal") + amount("tax"));
+    assert_eq!(amount("dueNow"), amount("total"));
+}
+
 #[test]
 fn a_scenario_opens_a_new_checkout_set_up_as_it_says() {
     let data = ScenarioData::new("opens", &[("tees.json", TEES)]);

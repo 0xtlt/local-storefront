@@ -158,8 +158,11 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
         ("GET" | "HEAD", []) if options.standalone => Some(home(state, incoming)),
         _ if options.standalone => Some(Reply::text(
             404,
-            "Not found. This server shows the checkout of an app only: start `lsf serve --app` \
-             to serve a theme with it.",
+            format!(
+                "Not found. This server shows the checkout of an app only: start `{} serve --app` \
+                 to serve a theme with it.",
+                lsf_core::util::command()
+            ),
         )),
         _ => None,
     }?;
@@ -334,13 +337,8 @@ fn start(state: &ServerState, incoming: &Incoming) -> Reply {
             .and_then(|address| address.country_code.as_ref())
             .is_none()
         {
-            let country = entry.session.country.clone().or_else(|| {
-                Some(store.shop.address.country_code.clone()).filter(|code| !code.is_empty())
-            });
-            if let Some(code) = country {
-                address.get_or_insert_with(Default::default).country_code =
-                    Some(code.to_ascii_uppercase());
-            }
+            address.get_or_insert_with(Default::default).country_code =
+                Some(lsf_checkout::input::buyer_country(&store, &entry.session));
         }
     });
     let root = request_root(state, &id, incoming);
@@ -433,7 +431,10 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
             .map(|scenario| scenario.name.as_str())
             .collect();
         let hint = if known.is_empty() {
-            "There are no scenarios: `lsf app init` writes a set in the `checkouts` folder of the store data.".to_string()
+            format!(
+                "There are no scenarios: `{} app init` writes a set in the `checkouts` folder of the store data.",
+                lsf_core::util::command()
+            )
         } else {
             format!("The scenarios are: {}.", known.join(", "))
         };
@@ -869,31 +870,30 @@ fn language_json(language: &Language) -> Json {
 }
 
 /// What the Localization API reads: the language of the buyer (not the primary one of the
-/// store), the country of the shipping address or else the one the visitor selected, the
-/// currency and the market.
+/// store), the country of the shipping address or else the one the Functions read (the one the
+/// visitor selected, else the shop's), the currency and the market of that country, as the
+/// Functions read it.
 pub(super) fn localization_json(
     store: &Store,
     language: &Language,
     session: &Session,
     checkout: &CheckoutState,
 ) -> Json {
-    let country = checkout
-        .shipping_address
-        .as_ref()
-        .and_then(|address| address.country_code.clone())
-        .or_else(|| session.country.clone())
-        .map(|code| code.to_ascii_uppercase());
+    let code = checkout
+        .shipping_country()
+        .map(str::to_ascii_uppercase)
+        .unwrap_or_else(|| lsf_checkout::input::buyer_country(store, session));
+    let (market_id, market_handle) = lsf_checkout::input::market_of(store, &code);
     json!({
         "language": language_json(language),
         // Where the storefront of this language lives: `/fr`, nothing for the primary one.
         "rootUrl": root_of(language),
-        "country": country.map(|code| json!({
+        "country": {
             "isoCode": code,
             "name": store.country(&code).map_or(code.as_str(), |country| country.name.as_str()),
-        })),
+        },
         "currency": {"isoCode": store.shop.currency},
-        // The same market as `localization.market` of the theme.
-        "market": {"id": "gid://shopify/Market/1", "handle": "primary"},
+        "market": {"id": market_id, "handle": market_handle},
     })
 }
 
@@ -920,6 +920,8 @@ pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
                     "handle": extension.handle,
                     "apiVersion": extension.api_version,
                     "script": format!("/__lsf/extensions/{}/{file}", extension.handle),
+                    // What builds it, for the error of a bundle that cannot be loaded.
+                    "build": format!("{} app build {}", lsf_core::util::command(), extension.handle),
                     "targets": targets,
                     "capabilities": extension.capabilities,
                     "settings": setting_values(&extension.settings),

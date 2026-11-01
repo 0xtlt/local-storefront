@@ -1116,6 +1116,14 @@ impl Store {
         self.scenarios.iter().find(|scenario| scenario.name == name)
     }
 
+    /// The country of a buyer who selected none and entered no address: the shop's
+    /// (`shop.address.country_code`), the country of its primary market, when the store sells
+    /// to it; otherwise the first country.
+    pub fn default_country(&self) -> &Country {
+        self.country(&self.shop.address.country_code)
+            .unwrap_or(&self.countries[0])
+    }
+
     pub fn country(&self, iso_code: &str) -> Option<&Country> {
         self.countries
             .iter()

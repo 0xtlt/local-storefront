@@ -13,7 +13,7 @@
 
 import { accountMenu, addressLabel, fullName, initials, otherContactEmail, savedAddressId } from './account.js';
 import { countriesOf, countryName, price, priceOrFree, storefrontLink } from './format.js';
-import { missingFields, placeErrors } from './operations.js';
+import { addressField, missingFields, placeErrors } from './operations.js';
 import { h } from './vdom.js';
 
 // Single-color outline icons that follow the text color (the tokens set it): 1.4px strokes,
@@ -94,7 +94,7 @@ function countryOptions(state, current) {
 
 /** What the buyer sees in a field: what they typed, else what the checkout holds. */
 function addressValue({ state, ui }, name) {
-  return ui.draft?.address?.[name] ?? state.shippingAddress?.[name] ?? '';
+  return addressField(state, ui.draft, name);
 }
 
 /** The messages for each field: the checkout's own errors, the extensions' and, once the
@@ -560,16 +560,12 @@ function costRows(ctx) {
   const { cost } = state;
   const later = dueLater(state);
   const count = state.lines.reduce((sum, line) => sum + line.quantity, 0);
-  // Shipping is known once there is a country to ship to, as the shipping methods show then:
-  // before, the summary says so and leaves it out of the total.
-  const addressKnown = state.status === 'completed' || Boolean(state.shippingAddress?.countryCode);
-  const hasShipping = addressKnown && state.deliveryGroups?.some((group) => group.selected);
-  const shipping = state.status === 'completed' || hasShipping
+  // A rate is selected once there is a country to ship to: before, the summary says so, and the
+  // shipping is in no total of the state.
+  const hasShipping = state.status === 'completed' || (state.deliveryGroups ?? []).some((group) => group.selected);
+  const shipping = hasShipping
     ? priceOrFree(cost.shipping, state.shop)
     : h('span', { class: 'lsf-muted' }, state.lines.some((line) => line.requiresShipping) ? 'Enter shipping address' : 'Free');
-  const withoutShipping = (money) => (hasShipping || state.status === 'completed' || !money
-    ? money
-    : { ...money, amount: Math.round((money.amount - (cost.shipping?.amount ?? 0)) * 100) / 100 });
   return h('dl', { class: 'lsf-costs' },
     h('div', null, h('dt', null, `Subtotal · ${count} item${count === 1 ? '' : 's'}`), h('dd', null, price(cost.subtotal, state.shop))),
     (state.discounts ?? []).map((discount, index) =>
@@ -585,7 +581,7 @@ function costRows(ctx) {
       : null,
     h('div', { class: 'lsf-total', ...(later ? { 'data-due': 'now' } : {}) },
       h('dt', null, later ? 'Due today' : 'Total'),
-      h('dd', null, h('span', { class: 'lsf-muted lsf-currency' }, cost.currencyCode), h('strong', null, price(withoutShipping(dueNow(state)), state.shop)))),
+      h('dd', null, h('span', { class: 'lsf-muted lsf-currency' }, cost.currencyCode), h('strong', null, price(dueNow(state), state.shop)))),
     later && h('div', { class: 'lsf-cost-later', 'data-due': 'later' }, h('dt', null, 'Due later'), h('dd', null, price(later, state.shop))),
   );
 }

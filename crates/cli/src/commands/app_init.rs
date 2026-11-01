@@ -380,6 +380,15 @@ fn discounts(
     json!(entries)
 }
 
+/// What the discount Functions of the `discount-code` scenario do: `x applies as a code
+/// discount`, `x, y apply as code discounts`.
+fn applies_as_code(functions: &[String]) -> String {
+    match functions {
+        [one] => format!("{one} applies as a code discount"),
+        many => format!("{} apply as code discounts", many.join(", ")),
+    }
+}
+
 /// The codes a set of discounts is entered with.
 fn codes_of(discounts: &Json) -> Vec<String> {
     let mut codes: Vec<String> = Vec::new();
@@ -619,9 +628,9 @@ fn plan(store: &Store, app: Option<&ShopifyApp>, app_store: Option<&Store>) -> P
             json!({
                 "title": "A discount code",
                 "description": format!(
-                    "The same cart, with the code {} entered: {} apply as code discounts.",
+                    "The same cart, with the code {} entered: {}.",
                     codes_of(&with_code).join(", "),
-                    kinds.discount.join(", ")
+                    applies_as_code(&kinds.discount)
                 ),
                 "session": {"cart": cart(&picks, &[6, 3, 2])},
                 "entered": {"discount_codes": codes_of(&with_code)},
@@ -792,7 +801,8 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
         .count();
     if store_errors > 0 {
         eprintln!(
-            "warning: the store data has {store_errors} error(s): run `lsf validate`. The scenarios are written for what could be read."
+            "warning: the store data has {store_errors} error(s): run `{} validate`. The scenarios are written for what could be read.",
+            lsf_core::util::command()
         );
     }
 
@@ -840,13 +850,14 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
         "{}: wrote {written} scenario(s), kept {kept} existing one(s), for {target}",
         directory.join("checkouts").display()
     );
+    let lsf = lsf_core::util::command();
     match &app_dir {
         Some(app) => eprintln!(
-            "next: `lsf app dev --app {}` lists them on its home page",
+            "next: `{lsf} app dev --app {}` lists them on its home page",
             app.display()
         ),
         None => eprintln!(
-            "next: `lsf app dev --app <dir>` lists them on its home page. Run `lsf app init --app <dir>` to make them for an app"
+            "next: `{lsf} app dev --app <dir>` lists them on its home page. Run `{lsf} app init --app <dir>` to make them for an app"
         ),
     }
     Ok(ExitCode::SUCCESS)
@@ -961,6 +972,24 @@ fn write_settings(directory: &Path, settings: &[(String, Json, Source)]) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_code_scenario_says_applies_for_one_function_and_apply_for_several() {
+        let names = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            applies_as_code(&names(&["my-js-discount"])),
+            "my-js-discount applies as a code discount"
+        );
+        assert_eq!(
+            applies_as_code(&names(&["a", "b"])),
+            "a, b apply as code discounts"
+        );
+    }
 
     fn fixture_app() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app")

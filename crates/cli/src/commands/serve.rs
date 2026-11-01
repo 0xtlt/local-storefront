@@ -235,7 +235,10 @@ pub fn run(
             ))
         }
         None if standalone => {
-            return Err("`lsf app dev` needs the app: `--app DIR` (or LSF_APP)".to_string());
+            return Err(format!(
+                "`{} app dev` needs the app: `--app DIR` (or LSF_APP)",
+                lsf_core::util::command()
+            ));
         }
         None => None,
     };
@@ -371,7 +374,8 @@ pub fn run(
             let broken = scenarios.iter().filter(|s| !s.problems.is_empty()).count();
             if scenarios.is_empty() {
                 eprintln!(
-                    "scenarios: none (`lsf app init --app {}` writes a set in `checkouts/` of the data)",
+                    "scenarios: none (`{} app init --app {}` writes a set in `checkouts/` of the data)",
+                    lsf_core::util::command(),
                     dir.display()
                 );
             } else if broken > 0 {

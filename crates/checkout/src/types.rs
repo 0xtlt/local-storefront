@@ -43,6 +43,17 @@ pub struct CheckoutState {
     pub scenario: Option<String>,
 }
 
+impl CheckoutState {
+    /// The country of the shipping address, once the buyer entered one. Before, no shipping rate
+    /// is selected.
+    pub fn shipping_country(&self) -> Option<&str> {
+        self.shipping_address
+            .as_ref()
+            .and_then(|address| address.country_code.as_deref())
+            .filter(|code| !code.trim().is_empty())
+    }
+}
+
 /// Where the buyer is when the Functions run: `buyerJourney.step` of the validation input.
 /// A validation Function branches on it, to check a rule only when the order is placed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

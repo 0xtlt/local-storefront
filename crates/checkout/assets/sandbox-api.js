@@ -519,7 +519,9 @@
       }));
       api.cost = {};
       signalProperty(api.cost, 'subtotalAmount', (s) => s.cost.subtotal);
-      signalProperty(api.cost, 'totalShippingAmount', (s) => s.cost.shipping);
+      // Undefined until a rate is selected, which needs an address.
+      signalProperty(api.cost, 'totalShippingAmount', (s) =>
+        (s.deliveryGroups || []).length && !s.deliveryGroups.some((group) => group.selected) ? undefined : s.cost.shipping);
       signalProperty(api.cost, 'totalTaxAmount', (s) => s.cost.tax);
       signalProperty(api.cost, 'totalAmount', (s) => s.cost.total);
       api.buyerIdentity = {};

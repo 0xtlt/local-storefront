@@ -1451,7 +1451,11 @@ pub struct SessionInput {
     /// The content of the cart. Empty when omitted.
     #[serde(default)]
     pub cart: Option<CartInput>,
-    /// ISO code of the selected country. Defaults to the first country.
+    /// ISO code of the selected country. When omitted, the storefront shows the first country.
+    /// The checkout, until an address is entered, is in the shop's country
+    /// (`shop.address.country_code`), the one of its primary market: its Functions, its UI
+    /// extensions and its address form read it. A shop in a country the store does not sell to
+    /// uses the first country.
     #[serde(default)]
     pub country: Option<String>,
     /// For a B2B customer: the name of the company location they buy for. Defaults to the

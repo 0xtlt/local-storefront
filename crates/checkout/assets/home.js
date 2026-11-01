@@ -373,6 +373,7 @@ export function probe(document, window, sandboxUrl, row, timeout = PROBE_TIMEOUT
             target: targets[0],
             script,
             source: text,
+            build: data.build,
             apiVersion: data.api,
             ctx: {},
             ext: { settings: {}, capabilities: {}, translations: {}, defaultLocale: null },

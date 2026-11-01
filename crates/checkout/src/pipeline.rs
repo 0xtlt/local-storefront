@@ -1285,9 +1285,16 @@ impl<'a> Pipeline<'a> {
         self.select_delivery();
     }
 
-    /// The buyer's choice if it is still offered, otherwise the first option.
+    /// The buyer's choice if it is still offered, otherwise the first option. Before an address
+    /// with a country, nothing is selected, as in Shopify: the shipping is in no total, and the
+    /// Functions read no `selectedDeliveryOption`.
     fn select_delivery(&mut self) {
+        let addressed = self.state.shipping_country().is_some();
         for group in &mut self.groups {
+            if !addressed {
+                group.selected = None;
+                continue;
+            }
             let chosen = self
                 .state
                 .selected_delivery
@@ -1892,10 +1899,11 @@ fn variables_hint(function: &FunctionExtension, discount: bool) -> String {
     } else {
         format!("`checkout.functions.{}.metafields`", function.handle)
     };
+    let lsf = lsf_core::util::command();
     format!(
         ". The variables are the keys of the JSON metafield `{field}` (`[extensions.input.variables]`): \
          give it in {place}, e.g. `\"{field}\": {{\"type\": \"json\", \"value\": {{…}}}}`. \
-         `lsf app init --app <dir>` writes it with empty values"
+         `{lsf} app init --app <dir>` writes it with empty values"
     )
 }
 

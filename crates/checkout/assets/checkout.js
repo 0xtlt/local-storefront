@@ -6,7 +6,7 @@
 import { MENU_ITEMS } from './account.js';
 import { ACCOUNT_TARGETS, RENDERED_TARGETS, RUN_TARGETS, createExtensionHost } from './extension-host.js';
 import { withCurrency } from './format.js';
-import { missingFields, op } from './operations.js';
+import { addressField, missingFields, op } from './operations.js';
 import { defaultRunView, functionsRequest, renderPage, requestedView } from './views.js';
 import { h, render } from './vdom.js';
 
@@ -243,7 +243,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
   function addressToSend() {
     const address = {};
     for (const name of ADDRESS_FIELDS) {
-      const value = ui.draft.address[name] ?? state.shippingAddress?.[name] ?? '';
+      const value = addressField(state, ui.draft, name);
       address[name] = value === '' ? null : value;
     }
     return address;
@@ -300,7 +300,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
       const answer = await host.run(SUGGEST, {
         value,
         field: 'address1',
-        selectedCountryCode: ui.draft.address.countryCode ?? state.shippingAddress?.countryCode ?? undefined,
+        selectedCountryCode: addressField(state, ui.draft, 'countryCode') || undefined,
         acceptedAddressInputFields: ACCEPTED_FIELDS,
       });
       // The buyer typed on meanwhile: a later answer will come.

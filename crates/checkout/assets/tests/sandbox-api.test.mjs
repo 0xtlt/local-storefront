@@ -458,6 +458,21 @@ test('a deferred payment is not in the Cost API: shopify has no due-today amount
   assert.equal(line.cost.totalAmount.amount, 49);
 });
 
+test('the shipping is undefined until a rate is selected, and in no total before', () => {
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  const group = { handle: 'group-1', lineIds: [], options: [{ handle: 'standard', title: 'Standard', kind: 'SHIPPING', originalCost: eur(4.9), cost: eur(4.9) }] };
+  const before = structuredClone(checkoutState());
+  before.deliveryGroups = [{ ...group, selected: null }];
+  before.cost = { ...before.cost, shipping: eur(0), total: eur(68), dueNow: eur(68) };
+  const { shopify } = runtime({ state: before });
+  assert.equal(shopify.cost.totalShippingAmount.value, undefined);
+  assert.equal(shopify.cost.totalAmount.value.amount, 68);
+  const chosen = structuredClone(before);
+  chosen.deliveryGroups = [{ ...group, selected: 'standard' }];
+  chosen.cost = { ...chosen.cost, shipping: eur(4.9), total: eur(72.9), dueNow: eur(72.9) };
+  assert.equal(runtime({ state: chosen }).shopify.cost.totalShippingAmount.value.amount, 4.9);
+});
+
 test('the cost of a line adds order discounts up in cents', () => {
   const state = structuredClone(checkoutState());
   const eur = (amount) => ({ amount, currencyCode: 'EUR' });
@@ -533,7 +548,7 @@ test('the Localization API reads the language, country, currency and market of t
   // The visitor selected Canada; the customer ships to their default address, in the US.
   assert.equal(localization.country.value.isoCode, 'US', 'the country of the address the customer ships to');
   assert.equal(localization.currency.value.isoCode, 'EUR', 'the currency of the checkout');
-  assert.deepEqual(plain(localization.market.value), { id: 'gid://shopify/Market/1', handle: 'primary' });
+  assert.deepEqual(plain(localization.market.value), { id: 'gid://shopify/Market/4654684647651', handle: 'united-states' }, 'the market of that country, as the Functions read it');
   // Numbers follow the language of the buyer.
   assert.equal(i18n.formatNumber(1234.5), '1\u202f234,5');
 });

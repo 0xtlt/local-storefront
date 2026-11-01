@@ -291,7 +291,8 @@ fn compute(
         .find(|handle| shopify_app.ui_extension(handle).is_some())
     {
         return Err(format!(
-            "`{handle}` is a UI extension, not a Function: `lsf app function run` runs Functions"
+            "`{handle}` is a UI extension, not a Function: `{} app function run` runs Functions",
+            lsf_core::util::command()
         ));
     }
     checkout::print_app_diagnostics(&shopify_app, &selection);
@@ -443,7 +444,8 @@ fn scenario_to_run<'a>(
         let known: Vec<&str> = store.scenarios.iter().map(|s| s.name.as_str()).collect();
         if known.is_empty() {
             format!(
-                "--scenario {name}: the store data has no scenario (`lsf app init` writes a set in `checkouts/`)"
+                "--scenario {name}: the store data has no scenario (`{} app init` writes a set in `checkouts/`)",
+                lsf_core::util::command()
             )
         } else {
             match lsf_core::util::closest_match(name, known.iter().copied()) {

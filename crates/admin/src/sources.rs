@@ -317,10 +317,13 @@ impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} resolves to {}, {}: Shopify cannot reach it, and lsf does not fetch it (start lsf \
+            "{} resolves to {}, {}: Shopify cannot reach it, and lsf does not fetch it (start {} \
              with --admin-fetch-local to fetch sources from your machine or network, or stub the \
              URL: --admin-source <url>=<file>, or PUT /__lsf/admin/sources?url=)",
-            self.host, self.address, self.why
+            self.host,
+            self.address,
+            self.why,
+            lsf_core::util::command()
         )
     }
 }

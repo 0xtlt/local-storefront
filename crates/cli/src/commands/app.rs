@@ -46,7 +46,7 @@ enum Subcommand {
 enum Format {
     /// One line per problem.
     Text,
-    /// `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, file, problems}], ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `ranInNoScenario` is filled only when every scenario ran.
+    /// `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `ranInNoScenario` is filled only when every scenario ran.
     Json,
 }
 
@@ -125,8 +125,12 @@ fn is_discount(function: &lsf_checkout::app::FunctionExtension) -> bool {
 }
 
 /// What `app check` says of store data without a scenario.
-const NO_SCENARIO: &str =
-    "no scenario to check: `lsf app init` writes a set for the app in `shopify-local/checkouts/`";
+static NO_SCENARIO: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "no scenario to check: `{} app init` writes a set for the app in `shopify-local/checkouts/`",
+        lsf_core::util::command()
+    )
+});
 
 /// `lsf app check`: the check of the home page, from the command line.
 fn check(
@@ -204,7 +208,7 @@ fn check(
             let mut json = report.to_json();
             json["ok"] = serde_json::json!(ok);
             if empty {
-                json["error"] = serde_json::json!(NO_SCENARIO);
+                json["error"] = serde_json::json!(*NO_SCENARIO);
             }
             json["invalid"] = serde_json::json!(invalid
                 .iter()

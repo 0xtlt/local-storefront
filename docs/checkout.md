@@ -157,8 +157,10 @@ module is not built (the page does not run it). A `.graphql` import is an error.
 What is wrong with the app (a missing build, an unknown Function target, a checkout UI target
 the page has no place for, an `owner_type` that is missing or not one of Shopify's) is printed
 when the server starts (`app: …`), and is in the `diagnostics` of the state and on the home
-page. A missing build (``no Wasm module at …: build it with `lsf app build <handle>` ``, `not
-built`): `npx local-storefront app build`, or `--build`.
+page. A missing build (``no Wasm module at …: build it with `npx local-storefront app build
+<handle>` ``, `not built`): `npx local-storefront app build`, or `--build`. With `--build`,
+`app dev`, `serve` and `app function run` build first, then print what is still wrong: a
+module the build wrote is not reported missing.
 
 | Option | What it does |
 |---|---|
@@ -1046,7 +1048,7 @@ Function that fails blocks `complete`.
 | `GET /checkout?scenario=<name>` | Opens a checkout for a [scenario](#scenarios), in a new session. | A redirect to its checkout with a new session cookie, or `404`/`422` and a page that says why |
 | `GET /checkout?customer=<email>` | Logs the session in as a [customer of the data](#log-in-as-a-customer) (`default`, `none` too), then leads to its checkout. With `scenario=`, opens the scenario as them. | A redirect, or `404` and a page that lists the customers |
 | `GET /` (`lsf app dev`) or `GET /__lsf/checkouts` | The [home page](#the-home-page). `?format=json` for what it says, `?check=1` to [run the Functions of the scenarios](#the-functions-that-fail) first. | HTML, or JSON |
-| `GET /__lsf/checkouts/check` | Runs the Functions of every scenario (or takes the last run on the same app and data): [the ones that fail](#the-functions-that-fail). | JSON: `failures` (`handle`, `target`, `error`, `scenarios`), and what the page shows of it |
+| `GET /__lsf/checkouts/check` | Runs the Functions of every scenario (or takes the last run on the same app and data): [the ones that fail](#the-functions-that-fail). | JSON: `failures` (`handle`, `target`, `error`, `logs`, `scenarios`), and what the page shows of it |
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |
 | `POST /checkouts/cn/<token>/update` | Applies `{"operations": [...]}`, in order. | `200` and the state, or `400` `{"error": "…"}` and nothing applied |
@@ -1084,13 +1086,26 @@ logged-in customer has, `customer` (`id`, `email`, `phone`, `firstName`, `lastNa
 and the `location` they buy for, each with `id`, `name` and `externalId`). `localization` is what
 `shopify.localization` reads: `language` and `rootUrl` as above, the `country` (the one of the
 shipping address, otherwise the one the visitor selected on the storefront), the `currency` and
-the `market`. The store has no avatar, no consent to SMS marketing and no store credit for a
-customer, nor a time zone for a buyer (`timezone` is the one of the browser).
+the `market` of that country. The store has no avatar, no consent to SMS marketing and no store
+credit for a customer, nor a time zone for a buyer (`timezone` is the one of the browser).
+
+A buyer with no address and no selected country is in the shop's country
+(`shop.address.country_code`), the one of its primary market, as on Shopify. The Functions read
+it as `localization.country`, the extensions as `shopify.localization.country`, and the
+address form starts on it. Both read the same `market`. A shop in a country the store does not
+sell to uses the first country of the store.
 
 The state has the lines, discounts, discount codes, delivery groups, payment methods, errors and
 cost that the Functions produced, `runs` (a run of a `.fetch` target has its `exchange`, the
 request and the response), the buyer, the address, the note, the attributes and
 the metafields, the `extensions` to load and `diagnostics`. Money is `{"amount": 19.99}`.
+
+No shipping rate is selected until the address has a country, as on Shopify. Until then, the
+page shows "Enter shipping address", and no total has the shipping: `cost.shipping` is 0,
+`cost.total` and `cost.dueNow` leave it out, and so does `shopify.cost.totalAmount`.
+`shopify.cost.totalShippingAmount` is undefined. The Functions read `selectedDeliveryOption:
+null` and a `cart.cost.totalAmount` without shipping. The rates are still offered, so a delivery
+customization runs on them.
 
 ### Operations
 
@@ -1135,7 +1150,9 @@ extensions before checking them.
 ```
 
 `app check` fails on a scenario that does not validate, and on a Function that traps or panics,
-runs past 11 million instructions or answers an output out of its schema. It does not check
+runs past 11 million instructions or answers an output out of its schema. A trap ends with the
+last message the Function logged (`the Function trapped: Error: boom (in b2b)` for a `throw new
+Error("boom")`), and the JSON has the `logs` of each failure. It does not check
 what a Function decides: a discount of the wrong amount passes. Assert that with
 `app function run --format json` (`lines`, `discounts`, `deliveryGroups`, `paymentMethods`,
 `errors`, `cost`, and each run in `runs`), or through the checkout in a test, as above. The

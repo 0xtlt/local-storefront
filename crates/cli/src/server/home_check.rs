@@ -35,8 +35,11 @@ pub const BUDGET: Duration = Duration::from_secs(20);
 pub struct Failure {
     pub handle: String,
     pub target: String,
-    /// Why the run failed, as the first scenario it failed in says.
+    /// Why the run failed, as the first scenario it failed in says. A trap ends with the last
+    /// message the Function logged: `the Function trapped: Error: boom`.
     pub error: String,
+    /// What the Function logged in the first scenario it failed in.
+    pub logs: String,
     pub scenarios: Vec<String>,
 }
 
@@ -77,6 +80,7 @@ impl Report {
                 "handle": failure.handle,
                 "target": failure.target,
                 "error": failure.error,
+                "logs": failure.logs,
                 "scenarios": failure.scenarios,
             })).collect::<Vec<_>>(),
         })
@@ -85,7 +89,10 @@ impl Report {
 
 /// What one scenario came to: the Functions that ran and the runs that failed, or why it could
 /// not run.
-type Outcome = Result<(Vec<String>, Vec<(String, String, String)>), String>;
+type Outcome = Result<(Vec<String>, Vec<FailedRun>), String>;
+
+/// A run that failed: the handle, the target, the error and the logs.
+type FailedRun = (String, String, String, String);
 
 /// Runs the Functions of each scenario of `store` that opens, until `budget` is spent. No
 /// request of a `.fetch` target is sent. The budget is checked before each Function runs: a
@@ -122,7 +129,15 @@ pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> R
                 let failed = result
                     .runs
                     .into_iter()
-                    .filter_map(|run| run.error.map(|error| (run.handle, run.target, error)))
+                    .filter_map(|run| {
+                        let error = run.error?;
+                        Some((
+                            run.handle,
+                            run.target,
+                            with_message(error, &run.logs),
+                            run.logs,
+                        ))
+                    })
                     .collect();
                 (Ok((ran, failed)), complete)
             }
@@ -164,7 +179,7 @@ pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> R
                 report.ran.push(handle);
             }
         }
-        for (handle, target, error) in failed {
+        for (handle, target, error, logs) in failed {
             match report
                 .failures
                 .iter_mut()
@@ -179,6 +194,7 @@ pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> R
                     handle,
                     target,
                     error,
+                    logs,
                     scenarios: vec![name.clone()],
                 }),
             }
@@ -186,6 +202,23 @@ pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> R
     }
     report.elapsed = started.elapsed();
     report
+}
+
+/// A trap says nothing of why: what the Function logged last does (`Error: boom`, the message
+/// of what a JavaScript Function threw, before the lines of its stack).
+fn with_message(error: String, logs: &str) -> String {
+    if error != "the Function trapped" {
+        return error;
+    }
+    let message = logs
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("at "));
+    match message {
+        Some(message) => format!("{error}: {message}"),
+        None => error,
+    }
 }
 
 /// What a check was run on: the very store that was loaded, and the app as its files are.
@@ -279,5 +312,29 @@ impl Cache {
             *self.last.lock().expect("check cache poisoned") = Some((before, report.clone()));
         }
         report
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_message;
+
+    #[test]
+    fn a_trap_ends_with_the_last_message_the_function_logged() {
+        let thrown = "checking\nError: boom\n    at run (function.mjs:3:9)\n    at main (function.mjs:9:2)\n";
+        assert_eq!(
+            with_message("the Function trapped".into(), thrown),
+            "the Function trapped: Error: boom"
+        );
+        // Nothing logged: nothing to add.
+        assert_eq!(
+            with_message("the Function trapped".into(), ""),
+            "the Function trapped"
+        );
+        // Another error says why already.
+        assert_eq!(
+            with_message("module exited with code: 1".into(), thrown),
+            "module exited with code: 1"
+        );
     }
 }

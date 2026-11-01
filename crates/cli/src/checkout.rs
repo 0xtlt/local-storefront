@@ -100,13 +100,17 @@ impl CheckoutOptions {
 }
 
 /// Loads the app and the extensions the options select, and builds the Functions on request.
-/// Problems of the app itself are in `App::diagnostics`; what stops the command is returned.
+/// Problems of the app itself are in `App::diagnostics`, read after the build: a module it wrote
+/// is not missing. What stops the command is returned.
 pub fn open(args: &AppArgs, app_dir: &Path) -> Result<(App, Selection), String> {
     let app = app::load(app_dir)?;
     let selection = Selection::resolve(&app, &args.extensions)?;
-    if args.build {
-        build(&app, &selection)?;
+    if !args.build {
+        return Ok((app, selection));
     }
+    build(&app, &selection)?;
+    let app = app::load(app_dir)?;
+    let selection = Selection::resolve(&app, &args.extensions)?;
     Ok((app, selection))
 }
 
@@ -233,7 +237,7 @@ pub fn app_around(dir: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// The app of a command: `--app`, or the one the current folder is in.
+/// The app of a command (`lsf app check`): `--app`, or the one the current folder is in.
 pub fn app_of(app: Option<&Path>, command: &str) -> Result<PathBuf, String> {
     match app {
         Some(app) => Ok(app.to_path_buf()),
@@ -242,10 +246,20 @@ pub fn app_of(app: Option<&Path>, command: &str) -> Result<PathBuf, String> {
             .and_then(|dir| app_around(&dir))
             .ok_or_else(|| {
                 format!(
-                    "`{command}` needs the app: run it in the app's folder, or give `--app DIR` \
-                     (or LSF_APP)"
+                    "`{}` needs the app: run it in the app's folder, or give `--app DIR` \
+                     (or LSF_APP)",
+                    as_typed(command)
                 )
             }),
+    }
+}
+
+/// A command of lsf (`lsf app check`) as the user types it: [`lsf_core::util::command`] for
+/// `lsf`, `npx local-storefront app check` when installed with npm.
+pub fn as_typed(command: &str) -> String {
+    match command.strip_prefix("lsf ") {
+        Some(rest) => format!("{} {rest}", lsf_core::util::command()),
+        None => command.to_string(),
     }
 }
 
@@ -693,6 +707,63 @@ type = "function"
             }),
         );
         assert_eq!(execution.error, None, "{}", execution.logs);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `--build` then the diagnostics: those of the app as the build left it, so a module the
+    /// build wrote is not reported missing.
+    #[test]
+    fn the_diagnostics_after_a_build_are_those_of_the_built_app() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures");
+        let root = std::env::temp_dir().join(format!("lsf-open-built-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("extensions/limit");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(root.join("shopify.app.toml"), "name = \"App\"\n").unwrap();
+        std::fs::copy(
+            fixtures.join("app/extensions/quantity-limit/src/run.graphql"),
+            dir.join("src/run.graphql"),
+        )
+        .unwrap();
+        let built = fixtures.join("app/extensions/quantity-limit/dist/function.wasm");
+        std::fs::write(
+            dir.join("shopify.extension.toml"),
+            format!(
+                r#"api_version = "2025-07"
+
+[[extensions]]
+name = "Limit"
+handle = "limit"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "purchase.validation.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "mkdir -p dist && cp '{}' dist/function.wasm"
+"#,
+                built.display()
+            ),
+        )
+        .unwrap();
+        let missing = |app: &App| {
+            app.diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.message.starts_with("no Wasm module"))
+                .count()
+        };
+        let args = |build| AppArgs {
+            app: Some(root.clone()),
+            extensions: Vec::new(),
+            build,
+        };
+        let (unbuilt, _) = open(&args(false), &root).unwrap();
+        assert_eq!(missing(&unbuilt), 1, "{:?}", unbuilt.diagnostics);
+        let (built, _) = open(&args(true), &root).unwrap();
+        assert_eq!(missing(&built), 0, "{:?}", built.diagnostics);
+        assert!(built.function("limit").unwrap().built());
         std::fs::remove_dir_all(&root).ok();
     }
 

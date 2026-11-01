@@ -186,6 +186,12 @@ there is no scenario at all (`app init` writes a set). No request of a `.fetch` 
 It builds nothing without `--build`: in a fresh clone, where `dist/` is not committed, give
 `--build` (or run `npx local-storefront app build` first).
 
+A trap ends with the last message the Function logged, such as the one of a `throw`:
+
+```text
+fails    my-discount · cart.lines.discounts.generate.run: the Function trapped: Error: boom (in b2b)
+```
+
 A Function that ran in no scenario, such as a discount Function no scenario's discount names, is
 a warning: nothing checked it, and the exit code stays the same. The last line, the summary,
 counts it too, rather than saying that every Function ran:
@@ -208,7 +214,7 @@ with `app function run --format json`. CI: [checkout](checkout.md#in-ci).
 | `--extension <handle>` | | Only these extensions. Repeat it for several. |
 | `--build` | | Builds the extensions first, as `app build` does. |
 | `--format text` | | Default. One line per problem, then a summary. |
-| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, file, problems}], ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `ranInNoScenario` is filled only when every scenario ran. |
+| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `ranInNoScenario` is filled only when every scenario ran. |
 | `--budget <seconds>` | | How long the Functions may run in all. Default 300. |
 
 ### app function run
@@ -521,7 +527,7 @@ counts the others.
 | `strict_liquid_rejected` | Markup Shopify's strict parser rejects. |
 | `strict_liquid_reinterpreted` | Markup Shopify's strict parser reads differently from today. |
 | `liquid_syntax` | A file that does not parse at all. |
-| `unknown_filter` | A filter local-storefront does not know. Either a typo: Shopify skips an unknown filter, and the value comes out unchanged. Or a filter of Shopify that local-storefront lacks: [report it](https://github.com/0xtlt/local-storefront/issues). |
+| `unknown_filter` | A filter local-storefront does not know. Either a typo: Shopify skips an unknown filter, and the value comes out unchanged. A filter of Shopify one or two letters away, with the same letters, or a name of another template language (`uppercase`) is in the `hint`. Or a filter of Shopify that local-storefront lacks: [report it](https://github.com/0xtlt/local-storefront/issues). |
 | `block_outside_template` | `{% block %}` outside `layout/` and `templates/` (with `--preview liquid-july-26`). |
 | `invalid_json` | A JSON file that does not parse. |
 | `fix_fallback` | A warning: what the code meant could not be written for this file, so only the fixes that keep the output were. |
@@ -541,6 +547,7 @@ The diagnostics of the strict parser have more keys:
 | `fix.left_out` | `{ variables, snippet }`: arguments the fix drops, which the snippet does not read. |
 | `fix.changes_output` | What renders differently with the fix. Absent when the output stays the same. |
 | `no_fix` | Why there is no fix, when there is none. |
+| `hint` | For an `unknown_filter`, the filter of Shopify it is probably a typo of: `did you mean "upcase"?`. Absent when none is close. |
 
 Exits with `1` when a problem is left, whatever the format.
 

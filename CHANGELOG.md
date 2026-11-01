@@ -153,6 +153,27 @@ the same data every run.
 - **A large store loads much faster.** The default product recommendations took a time cubic in
   the number of products: 3,000 products took 5 to 6 s to load, and now take 0.3 s. This speeds
   up startup and `--watch` too.
+- **No shipping in any total before an address.** Without an address with a country, no
+  shipping rate is selected: `cost.shipping` is 0, and `cost.total`, `cost.dueNow` and
+  `shopify.cost.totalAmount` leave it out, as the page does ("Enter shipping address").
+  `shopify.cost.totalShippingAmount` is undefined, and the Functions read
+  `selectedDeliveryOption: null` and a `cart.cost.totalAmount` without shipping, as on Shopify.
+- **One country for a buyer with no address.** With no address and no selected country, the
+  Functions, the checkout UI extensions and the address form all read the shop's country
+  (`shop.address.country_code`), the one of its primary market. The extensions used to read no
+  country, and the market `primary`; they now read the market the Functions read.
+- **`--build` then no "no Wasm module".** `app function run`, `app dev` and `serve` printed
+  the diagnostics of the app as it was before `--build` built it.
+- **`app check` says what a trapped Function threw:** `the Function trapped: Error: boom (in
+  b2b)`, the last message it logged. Each JSON failure has the `logs` of the first scenario it
+  failed in.
+- **The hints say `npx local-storefront` when it was installed with npm**, where `lsf` is not
+  on the PATH: ``build it with `npx local-storefront app build x` ``, the `next:` lines, the home
+  page. The launcher sets `LSF_COMMAND`; the binary of a release says `lsf`.
+- **An unknown filter close to one of Shopify has a hint:** `{{ x | uppercas }}` gives
+  `hint: did you mean "upcase"?`, in the text and the JSON of `check`.
+- **`app init`'s `discount-code` scenario** says that one Function "applies as a code
+  discount".
 
 ## 0.2.0 - 2026-10-30
 

@@ -1581,7 +1581,10 @@ fn problem_html(problem: &Json, dir: &str) -> String {
             more
         ),
         (None, None) if kind == "store" => {
-            "<span class=\"lsf-hp-where lsf-muted\"><code>lsf validate</code></span>".to_string()
+            format!(
+                "<span class=\"lsf-hp-where lsf-muted\"><code>{} validate</code></span>",
+                esc(&lsf_core::util::command())
+            )
         }
         (None, None) => String::new(),
     };
@@ -2209,10 +2212,15 @@ fn extension_row(
     // What the page needs to load the bundle of a checkout UI extension on its own.
     let probe = match extension["script"].as_str() {
         Some(script) => format!(
-            " data-probe=\"{}\" data-api=\"{}\" data-targets=\"{}\"",
+            " data-probe=\"{}\" data-api=\"{}\" data-targets=\"{}\" data-build=\"{}\"",
             esc(script),
             esc(text_of(&extension["apiVersion"])),
-            esc(&targets.join(" "))
+            esc(&targets.join(" ")),
+            esc(&format!(
+                "{} app build {}",
+                lsf_core::util::command(),
+                text_of(&extension["handle"])
+            ))
         ),
         None => String::new(),
     };
@@ -2305,11 +2313,11 @@ fn function_html(function: &Json, dir: &str) -> String {
         body.push_str(&match function["buildCommand"].as_str() {
             Some(_) => format!(
                 "<p class=\"lsf-muted\">Build it with {}, or start with <code>--build</code>.</p>",
-                code(&format!("lsf app build {handle}"))
+                code(&format!("{} app build {handle}", lsf_core::util::command()))
             ),
             None => format!(
                 "<p class=\"lsf-muted\">It has no <code>[extensions.build] command</code> for lsf to build it with: add one, then run {}.</p>",
-                code(&format!("lsf app build {handle}"))
+                code(&format!("{} app build {handle}", lsf_core::util::command()))
             ),
         });
     }
@@ -2594,8 +2602,9 @@ pub fn render(home: &Json, check_now: &str) -> String {
     if scenarios.is_empty() {
         body.push_str(&format!(
             "<div class=\"lsf-h-card\"><p class=\"lsf-muted lsf-h-empty\">None yet. A scenario is a file in {}: a cart, a buyer, what they entered. \
-             <code>lsf app init --app {}</code> writes a set to start from.</p></div>",
+             <code>{} app init --app {}</code> writes a set to start from.</p></div>",
             code(folder),
+            esc(&lsf_core::util::command()),
             esc(text_of(&app["directory"])),
         ));
     } else {
