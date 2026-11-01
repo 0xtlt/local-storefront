@@ -49,7 +49,7 @@ pub struct Claims {
 impl Claims {
     /// The claims of a token App Bridge would give `user` of `shop` (`my-shop.myshopify.com`)
     /// for the app `client_id`, issued at `now` (UNIX seconds). `jti` is the token's unique id:
-    /// [`Claims::random_jti`] gives one.
+    /// [`Claims::uuid`] makes one.
     pub fn new(shop: &str, client_id: &str, user: u64, now: i64, jti: String) -> Claims {
         Claims {
             iss: format!("https://{shop}/admin"),

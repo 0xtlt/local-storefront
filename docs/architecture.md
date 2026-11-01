@@ -159,6 +159,12 @@ mise run prettier:fixtures # download the tests of the plugin, which the formatt
 mise run prettier:compare -- path/to/theme   # list the files `lsf fmt` and Prettier disagree on
 mise run oracle:strict2-fixes                # check the fixes of `lsf check --fix` with the gem
 mise run admin:schema                        # regenerate the Admin API schema of lsf-admin from the pinned @shopify/dev-mcp
+mise run admin:access-scopes                 # regenerate its access scopes and search filters
+mise run admin:topics                        # regenerate its webhook topics
+mise run admin:webhook-examples              # download Shopify's example webhook payloads the payload tests compare with
+mise run admin:version -- 2027-01            # everything a new Admin API version needs, then what is left to do by hand
+mise run admin:e2e                           # run examples/admin-backend (Shopify's libraries) end to end against lsf
+mise run admin:bench -- admin --bin target/release/lsf   # RAM and CPU of a release build, suite by suite (tools/admin/bench.mjs)
 ```
 
 Documentation: user-facing changes go into the guide of their task in `docs/` and into

@@ -165,7 +165,7 @@ fn seed_customer(seed: &mut Seed, customer: &Customer) {
 
 /// Derives what a customer's names, email, phone and consents give, which the seed and every
 /// mutation that changes them share: `displayName` ("based on the values for first_name and
-/// last_name. If [they] are not available, then this falls back to the customer's email address,
+/// last_name. If \[they\] are not available, then this falls back to the customer's email address,
 /// and if that is not available, the customer's phone number", the schema),
 /// `defaultEmailAddress` and `defaultPhoneNumber` (the same consents, in the shapes of the
 /// fields that replace the deprecated ones), and no consent without the email or the phone it is

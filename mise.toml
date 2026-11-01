@@ -55,6 +55,10 @@ run = [
   "npm run e2e",
 ]
 
+[tasks."admin:bench"]
+description = "Measure the RAM and CPU of a release build of lsf, suite by suite (startup, storefront, admin, growth, shops, webhooks, sync): mise run admin:bench -- admin --bin target/release/lsf"
+run = "node tools/admin/bench.mjs"
+
 [tasks."admin:version"]
 description = "Write everything a version of the Admin API needs (crates/admin/schemas/<version>, its test fixtures) from the pinned @shopify/dev-mcp package, or shopify.dev for a version it lacks, and print what is left to do: mise run admin:version -- 2027-01"
 run = "node tools/admin/add_version.mjs"

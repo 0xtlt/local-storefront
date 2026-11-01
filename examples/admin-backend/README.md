@@ -27,7 +27,8 @@ KNOWN     billing: billing.require from a page (exit-iframe)                    
 ```
 
 `E2E_VERBOSE=1` prints the logs of lsf and the backend, `E2E_ONLY=proxy` runs the checks whose
-name has `proxy`, `LSF_BIN=…` runs another lsf binary.
+name has `proxy`, `LSF_BIN=…` runs another lsf binary. Without it, the run takes the lsf that
+`cargo build` made: under `CARGO_TARGET_DIR` when it is set, else `target/debug/lsf`.
 
 ## What is in it
 

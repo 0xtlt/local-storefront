@@ -79,8 +79,8 @@ the same data every run.
   with Shopify's parameters and signature. A Liquid answer is rendered in the theme's layout.
 - **Billing.** `appSubscriptionCreate` and `appPurchaseOneTimeCreate` lead to a local approval
   page. Approving goes to the `returnUrl`, and the charge is active.
-- **Control endpoints under `/__lsf/admin`:** reset the shop, make extra shops for isolated
-  tests, install and uninstall the app, and make session tokens for a test to call the
+- **Control endpoints under `/__lsf/admin`:** reset the shop, make and delete extra shops for
+  isolated tests, install and uninstall the app, and make session tokens for a test to call the
   backend's routes. [Control API](docs/control-api.md).
 - **The shop's clock and its outbox.** `POST /__lsf/admin/clock` moves a shop's time: payment
   schedules come due, store credit expires, payouts are made, scheduled listings go live,
