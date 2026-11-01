@@ -91,13 +91,9 @@ pub fn definition_of(state: &ShopState, kind: &str) -> Option<String> {
 
 fn entry_of(state: &ShopState, kind: &str, handle: &str) -> Option<String> {
     state
-        .keys("Metaobject")
-        .find(|id| {
-            state
-                .get(id)
-                .is_some_and(|entry| text(entry, "type") == kind && text(entry, "handle") == handle)
-        })
-        .map(str::to_string)
+        .with_handle("Metaobject", handle, Some(("type", kind)))
+        .first()
+        .map(|id| id.to_string())
 }
 
 // ---- queries -----------------------------------------------------------------------------
@@ -1069,15 +1065,9 @@ fn handle_of(text: &str) -> String {
 
 /// A free handle of a type made from `base`: itself, else with `-1`, `-2`, … appended.
 fn free_handle(state: &ShopState, kind: &str, base: &str, except: Option<&str>) -> String {
-    let taken =
-        |handle: &str| entry_of(state, kind, handle).is_some_and(|id| Some(id.as_str()) != except);
-    if !taken(base) {
-        return base.to_string();
-    }
-    (1..)
-        .map(|n| format!("{base}-{n}"))
-        .find(|handle| !taken(handle))
-        .unwrap_or_else(|| base.to_string())
+    crate::state::free_handle(base, |handle| {
+        entry_of(state, kind, handle).is_some_and(|id| Some(id.as_str()) != except)
+    })
 }
 
 /// The capabilities of an entry: the input's publishable status (a `DRAFT` by default when the

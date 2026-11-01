@@ -102,7 +102,7 @@ fn collection_duplicate(
             "The collection title or URL handle is too long.",
             "TOO_LONG",
         ))
-    } else if handle.is_empty() || records::handle_taken(state, "Collection", &handle, None) {
+    } else if handle.is_empty() || state.handle_taken("Collection", &handle, None, None) {
         Some((
             "The URL handle generated from the new title is already in use. Please choose a different title.",
             "TAKEN",

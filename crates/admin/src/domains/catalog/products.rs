@@ -90,7 +90,7 @@ pub fn tags_of(value: Option<&Value>) -> Vec<String> {
 
 /// Whether a product other than `except` has `handle`.
 pub fn handle_taken(state: &ShopState, handle: &str, except: Option<&str>) -> bool {
-    records::handle_taken(state, "Product", handle, except)
+    state.handle_taken("Product", handle, None, except)
 }
 
 /// A free handle made from `base`: itself, else with `-1`, `-2`, … appended.

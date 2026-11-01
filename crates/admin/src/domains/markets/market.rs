@@ -515,20 +515,9 @@ fn duplicates(state: &ShopState, market: Option<&str>, countries: &[String]) -> 
 
 /// A unique handle for a market: `handle`, else `handle-1`, `handle-2`, …
 fn unique_handle(state: &ShopState, handle: &str, market: Option<&str>) -> String {
-    let taken = |candidate: &str| {
-        state.keys("Market").any(|other| {
-            Some(other) != market
-                && state.get(other).and_then(|record| record.get("handle"))
-                    == Some(&json!(candidate))
-        })
-    };
-    if !taken(handle) {
-        return handle.to_string();
-    }
-    (1..)
-        .map(|n| format!("{handle}-{n}"))
-        .find(|candidate| !taken(candidate))
-        .unwrap_or_else(|| handle.to_string())
+    crate::state::free_handle(handle, |candidate| {
+        state.handle_taken("Market", candidate, None, market)
+    })
 }
 
 /// The currency settings of a market from a `MarketCurrencySettingsUpdateInput`, over what it

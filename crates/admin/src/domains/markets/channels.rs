@@ -697,14 +697,6 @@ fn coverage(state: &ShopState) -> Vec<String> {
     regions
 }
 
-/// Whether a handle is another channel's.
-fn handle_taken(state: &ShopState, handle: &str, channel: Option<&str>) -> bool {
-    state.keys("Channel").any(|other| {
-        Some(other) != channel
-            && state.get(other).and_then(|record| record.get("handle")) == Some(&json!(handle))
-    })
-}
-
 /// `channelCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = input(ctx, "input");
@@ -744,7 +736,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     let handle = text(&input, "handle")
         .map(handleize)
         .unwrap_or_else(|| handleize(&format!("{specification}-{account_id}")));
-    if handle_taken(state, &handle, None) {
+    if state.handle_taken("Channel", &handle, None, None) {
         errors.push(coded(
             &["input", "handle"],
             "Handle has already been taken",
@@ -840,7 +832,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     }
     let handle = text(&input, "handle").map(handleize);
     if let Some(handle) = &handle
-        && (handle.is_empty() || handle_taken(state, handle, Some(&channel)))
+        && (handle.is_empty() || state.handle_taken("Channel", handle, None, Some(&channel)))
     {
         errors.push(coded(
             &["input", "handle"],
