@@ -40,8 +40,8 @@
 
 use serde_json::{Map, Value, json};
 
-use super::products::{create_options, emit_new_inventory, free_handle};
-use super::records::{self, default_location, field, input, is, objects, text};
+use super::products::{create_options, emit_new_inventory, free_handle, new_record};
+use super::records::{self, error_at, field, input, is, objects, text};
 use super::variants::{self, Choice};
 use super::{cents_of, gids, product_changed};
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -113,15 +113,6 @@ fn is_component(state: &ShopState, variant: &str) -> bool {
         .any(|component| field(component, "productVariant") == Some(variant))
 }
 
-/// Whether a variant's inventory item is tracked.
-fn tracked(state: &ShopState, variant: &str) -> bool {
-    records::item_of(state, variant)
-        .and_then(|item| state.get(&item))
-        .and_then(|item| item.get("tracked"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
 /// The inventory of a bundle variant, from its components: the fewest bundles their quantities
 /// make (an untracked component, or one that sells when out of stock, does not limit it), and
 /// whether it can be sold (every component can). `None` for a variant without components.
@@ -139,7 +130,7 @@ pub fn bundle_inventory(state: &ShopState, variant: &str) -> Option<(Option<i64>
             .and_then(Value::as_i64)
             .unwrap_or(0);
         let continues = field(record, "inventoryPolicy") == Some("CONTINUE");
-        if tracked(state, component) && !continues {
+        if records::tracked(state, component) && !continues {
             let bundles = stock.max(0) / (*per_bundle).max(1);
             quantity = Some(quantity.map_or(bundles, |known| known.min(bundles)));
         }
@@ -393,8 +384,7 @@ fn relationship_error(path: &[String], code: &str) -> UserError {
         }
         _ => "Unexpected error.",
     };
-    let path: Vec<&str> = path.iter().map(String::as_str).collect();
-    UserError::new(&path, message).code(code)
+    error_at(path, message).code(code)
 }
 
 /// The path of an input field of the `index`-th input.
@@ -443,10 +433,8 @@ fn parent_of(
         )),
         _ => {
             // lsf's wording: a product of several variants does not say which is the parent.
-            let path = at(index, &["parentProductId"]);
-            let path: Vec<&str> = path.iter().map(String::as_str).collect();
-            Err(UserError::new(
-                &path,
+            Err(error_at(
+                &at(index, &["parentProductId"]),
                 "The product has more than one variant: name the parent with parentProductVariantId",
             )
             .code("PARENT_REQUIRED"))
@@ -551,10 +539,10 @@ fn planned_components(
 /// Checks the parent variant itself: a bundle can't be a component, a gift card, a product that
 /// requires a selling plan, or in a combined listing.
 fn check_parent(state: &ShopState, parent: &str, index: usize, errors: &mut Vec<UserError>) {
-    let product = state
+    let product_id = state
         .get(parent)
-        .and_then(|record| field(record, "product"))
-        .and_then(|product| state.get(product));
+        .and_then(|record| field(record, "product"));
+    let product = product_id.and_then(|product| state.get(product));
     let flag = |name: &str| {
         product
             .and_then(|product| product.get(name))
@@ -574,10 +562,7 @@ fn check_parent(state: &ShopState, parent: &str, index: usize, errors: &mut Vec<
             &path,
             "PARENT_PRODUCT_VARIANT_CANNOT_REQUIRE_SELLING_PLAN",
         ));
-    } else if product
-        .and_then(|product| product.get("combinedListingRole"))
-        .is_some_and(|role| !role.is_null())
-    {
+    } else if product_id.is_some_and(|product| in_combined_listing(state, product)) {
         errors.push(relationship_error(
             &path,
             "PARENT_PRODUCT_VARIANT_CANNOT_BE_COMBINED_LISTING",
@@ -690,12 +675,6 @@ struct Component {
 struct Plan {
     components: Vec<Component>,
     options: Vec<BundleOption>,
-}
-
-/// A user error at a path of strings.
-fn error_at(path: &[String], message: impl Into<String>) -> UserError {
-    let path: Vec<&str> = path.iter().map(String::as_str).collect();
-    UserError::new(&path, message)
 }
 
 fn below(path: &[String], names: &[&str]) -> Vec<String> {
@@ -1098,9 +1077,7 @@ fn build(state: &mut ShopState, product: &str, plan: &Plan) {
     };
     create_options(state, product, &options);
     let made = variants::options_of(state, product);
-    let stock = default_location(state)
-        .map(|location| vec![(location, 0)])
-        .unwrap_or_default();
+    let stock = variants::default_stock(state);
     let combinations = if plan.options.is_empty() {
         vec![vec![0]]
     } else {
@@ -1245,10 +1222,6 @@ fn build(state: &mut ShopState, product: &str, plan: &Plan) {
 fn clear(state: &mut ShopState, product: &str) {
     let variants = gids(state.get(product).and_then(|record| record.get("variants")));
     for variant in &variants {
-        let components = gids(state.get(variant).and_then(|record| record.get(COMPONENTS)));
-        for component in components {
-            state.remove(&component);
-        }
         variants::remove_variant(state, product, variant);
     }
     let options = gids(state.get(product).and_then(|record| record.get("options")));
@@ -1304,47 +1277,14 @@ fn bundle_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         return Ok(payload(json!({"productBundleOperation": null}), &errors));
     };
     let state = mutation.state_mut();
-    let now = state.timestamp();
-    let vendor = state
-        .shop()
-        .and_then(|shop| field(shop, "name"))
-        .unwrap_or_default()
-        .to_string();
-    let origin = records::origin(state);
     let handle = free_handle(state, &title);
-    let product = state.new_gid("Product");
-    state.insert(value::object(json!({
-        "__typename": "Product",
-        "id": product,
-        "title": title,
-        "handle": handle,
-        "descriptionHtml": "",
-        "bodyHtml": "",
-        "description": "",
-        "vendor": vendor,
-        "productType": "",
-        "tags": [],
-        "status": "ACTIVE",
-        "createdAt": now,
-        "updatedAt": now,
-        "publishedAt": null,
-        "templateSuffix": null,
-        "giftCardTemplateSuffix": null,
-        "isGiftCard": false,
-        "requiresSellingPlan": false,
-        "hasVariantsThatRequiresComponents": true,
-        "options": [],
-        "variants": [],
-        "media": [],
-        "images": [],
-        "seo": {"title": null, "description": null},
-        "onlineStoreUrl": null,
-        "onlineStorePreviewUrl": format!("{origin}/products/{handle}"),
-        "collections": [],
-        "sellingPlanGroups": [],
-        "metafields": [],
-        BUNDLE_INPUT: {"components": input.get("components"), "consolidatedOptions": input.get("consolidatedOptions")},
-    })));
+    let (product, mut record) = new_record(state, &title, &handle);
+    record.insert("hasVariantsThatRequiresComponents".into(), json!(true));
+    record.insert(
+        BUNDLE_INPUT.into(),
+        json!({"components": input.get("components"), "consolidatedOptions": input.get("consolidatedOptions")}),
+    );
+    state.insert(record);
     build(state, &product, &plan);
     product_changed(state, &product);
     state.emit("products/create", &product);
