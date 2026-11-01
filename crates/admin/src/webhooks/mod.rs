@@ -257,18 +257,16 @@ impl Webhooks {
             domain: &event.shop,
         };
         let payload = event_payload(event, &lookup);
+        let occurrence = Occurrence {
+            topic: &event.topic,
+            shop: &event.shop,
+            event_id: &event.id,
+            at: event.at,
+            resource: Some(&event.gid),
+        };
         subscriptions
             .iter()
-            .map(|subscription| {
-                self.deliver(
-                    subscription,
-                    &event.topic,
-                    &event.shop,
-                    &event.id,
-                    event.at,
-                    payload.as_ref(),
-                )
-            })
+            .map(|subscription| self.deliver(subscription, &occurrence, payload.as_ref()))
             .collect()
     }
 
@@ -277,6 +275,16 @@ impl Webhooks {
     /// is no address and no subscription to the topic.
     pub fn trigger(&self, trigger: &Trigger) -> Vec<u64> {
         let event_id = sign::new_id();
+        let occurrence = Occurrence {
+            topic: trigger.topic,
+            shop: trigger.shop,
+            event_id: &event_id,
+            at: trigger.at,
+            resource: trigger
+                .payload
+                .get("admin_graphql_api_id")
+                .and_then(Value::as_str),
+        };
         if let Some(address) = trigger.address {
             let subscription = Subscription {
                 id: String::new(),
@@ -295,48 +303,25 @@ impl Webhooks {
                 created_at: trigger.at,
                 updated_at: trigger.at,
             };
-            return vec![self.deliver_to(
-                &subscription,
-                None,
-                trigger.topic,
-                trigger.shop,
-                &event_id,
-                trigger.at,
-                Ok(trigger.payload),
-            )];
+            return vec![self.deliver_to(&subscription, None, &occurrence, Ok(trigger.payload))];
         }
         self.subscriptions(trigger.shop)
             .iter()
             .filter(|subscription| subscription.topic == trigger.topic)
-            .map(|subscription| {
-                self.deliver(
-                    subscription,
-                    trigger.topic,
-                    trigger.shop,
-                    &event_id,
-                    trigger.at,
-                    Ok(trigger.payload),
-                )
-            })
+            .map(|subscription| self.deliver(subscription, &occurrence, Ok(trigger.payload)))
             .collect()
     }
 
     fn deliver(
         &self,
         subscription: &Subscription,
-        topic: &str,
-        shop: &str,
-        event_id: &str,
-        at: DateTime<Utc>,
+        occurrence: &Occurrence,
         payload: Result<&Value, &String>,
     ) -> u64 {
         self.deliver_to(
             subscription,
             Some(SubscriptionRef::of(subscription)),
-            topic,
-            shop,
-            event_id,
-            at,
+            occurrence,
             payload,
         )
     }
@@ -345,17 +330,20 @@ impl Webhooks {
     /// it from being sent. `reference` is `None` for an address given explicitly (`--address`,
     /// the `address` of a trigger), which is sent where it says; a subscription's goes only to
     /// this machine or to `--app-url` ([`AppUrls::may_send_to`]).
-    #[allow(clippy::too_many_arguments)]
     fn deliver_to(
         &self,
         subscription: &Subscription,
         reference: Option<SubscriptionRef>,
-        topic: &str,
-        shop: &str,
-        event_id: &str,
-        at: DateTime<Utc>,
+        occurrence: &Occurrence,
         payload: Result<&Value, &String>,
     ) -> u64 {
+        let Occurrence {
+            topic,
+            shop,
+            event_id,
+            at,
+            resource,
+        } = *occurrence;
         let mut notes = Vec::new();
         let (version, note) = self.versions.for_webhook(&subscription.api_version);
         notes.extend(note);
@@ -374,6 +362,7 @@ impl Webhooks {
             event_id: event_id.to_string(),
             topic: topic.to_string(),
             shop: shop.to_string(),
+            resource: resource.map(str::to_string),
             subscription: reference.clone(),
             url: url.clone(),
             api_version: version.name().to_string(),
@@ -460,6 +449,19 @@ impl Webhooks {
             | (Destination::Undeliverable { reason }, _) => self.deliveries.not_sent(new, reason),
         }
     }
+}
+
+/// What a delivery is of: an event, or a trigger.
+#[derive(Clone, Copy)]
+struct Occurrence<'a> {
+    topic: &'a str,
+    shop: &'a str,
+    /// `X-Shopify-Event-Id`, shared by the deliveries of one occurrence.
+    event_id: &'a str,
+    /// `X-Shopify-Triggered-At`.
+    at: DateTime<Utc>,
+    /// The GID of the record it is about.
+    resource: Option<&'a str>,
 }
 
 /// The payload of an event, or why there is none.

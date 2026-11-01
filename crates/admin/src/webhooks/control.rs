@@ -1,9 +1,12 @@
 //! `/__lsf/webhooks`: the deliveries, for tests.
 //!
-//! - `GET /__lsf/webhooks`: the deliveries, oldest first. `?topic=orders/create`, `?shop=`,
-//!   `?state=delivered|failed|pending|not_sent` narrow them; `?wait=<n>` waits until n of them are
-//!   done (not pending), `?timeout=<ms>` at most (10 seconds by default), and answers `408` when
-//!   they were not.
+//! - `GET /__lsf/webhooks`: the deliveries, oldest first, and `last`, the id of the newest
+//!   delivery of the log. `?topic=orders/create`, `?shop=` (`test-1` or
+//!   `test-1.myshopify.com`), `?state=delivered|failed|pending|not_sent`, `?since=<id>` (the
+//!   deliveries after that one: pass the `last` of an earlier answer) and `?resource=<gid>` (the
+//!   deliveries of an event about that record) narrow them; `?wait=<n>` waits until n of those
+//!   that match every filter are done (delivered, failed or not sent), `?timeout=<ms>` at most
+//!   (10 seconds by default), and answers `408` when they were not.
 //! - `DELETE /__lsf/webhooks`: forgets them.
 //! - `POST /__lsf/webhooks/trigger`: sends one, as `lsf app webhook trigger` does:
 //!   `{"topic", "id"?, "shop"?, "address"?, "payload"?, "wait"?}`.
@@ -19,6 +22,7 @@ use serde_json::{Value, json};
 use super::delivery::{DeliveryFilter, DeliveryState};
 use super::{Trigger, Webhooks, topics};
 use crate::api::{HttpRequest, HttpResponse};
+use crate::auth::oauth::normalize_shop;
 
 /// How long a wait lasts when the request does not say.
 const DEFAULT_WAIT: Duration = Duration::from_secs(10);
@@ -99,17 +103,45 @@ impl Webhooks {
             },
             None => None,
         };
+        let since = match request.query_param("since") {
+            Some(since) => match since.parse::<u64>() {
+                Ok(since) => Some(since),
+                Err(_) => {
+                    return HttpResponse::error(
+                        422,
+                        format!(
+                            "`since` is the id of a delivery (the `last` of an earlier answer), got `{since}`"
+                        ),
+                    );
+                }
+            },
+            None => None,
+        };
         let filter = DeliveryFilter {
             topic,
-            shop: request.query_param("shop").map(str::to_string),
+            // `test-1` as well as `test-1.myshopify.com`, as `/__lsf/admin/shops/<shop>` takes it.
+            shop: request
+                .query_param("shop")
+                .filter(|shop| !shop.trim().is_empty())
+                .map(normalize_shop),
             state,
+            since,
+            resource: request
+                .query_param("resource")
+                .map(str::trim)
+                .filter(|resource| !resource.is_empty())
+                .map(str::to_string),
             ids: None,
         };
         let Some(wait) = request.query_param("wait") else {
-            let deliveries = self.deliveries().list(&filter);
+            let listing = self.deliveries().listing(&filter);
             return HttpResponse::json(
                 200,
-                &json!({"count": deliveries.len(), "deliveries": deliveries}),
+                &json!({
+                    "count": listing.deliveries.len(),
+                    "deliveries": listing.deliveries,
+                    "last": listing.last,
+                }),
             );
         };
         let Ok(count) = wait.parse::<usize>() else {
@@ -128,6 +160,7 @@ impl Webhooks {
             &json!({
                 "count": waited.deliveries.len(),
                 "deliveries": waited.deliveries,
+                "last": waited.last,
                 "waited": {"for": count, "complete": waited.complete, "timeoutMs": timeout.as_millis() as u64},
             }),
         )

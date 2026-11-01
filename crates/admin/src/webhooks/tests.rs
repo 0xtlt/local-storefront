@@ -1079,6 +1079,116 @@ fn the_control_endpoints_list_wait_trigger_and_forget() {
 }
 
 #[test]
+fn the_log_is_filtered_by_shop_since_and_resource_and_a_wait_counts_what_matches_them_all() {
+    let backend = Backend::start(|_| (200, Duration::ZERO));
+    let webhooks = webhooks(
+        vec![subscription(&["products/update"], "/hooks")],
+        &backend.url,
+        options(),
+    );
+    let get = |query: &[(&str, &str)]| {
+        let response = webhooks
+            .handle(
+                &request("GET", "/__lsf/webhooks", query, Value::Null),
+                &build,
+            )
+            .unwrap();
+        (response.status, body(&response))
+    };
+    let ids = |answer: &Value| -> Vec<u64> {
+        answer["deliveries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|delivery| delivery["id"].as_u64().unwrap())
+            .collect()
+    };
+    let product = |id: u64| format!("gid://shopify/Product/{id}");
+    let trigger = |shop: &str, gid: &str| {
+        webhooks.trigger(&Trigger {
+            topic: "products/update",
+            shop,
+            payload: &json!({"admin_graphql_api_id": gid}),
+            address: None,
+            at: Utc::now(),
+        })
+    };
+    // A test reads `last` before it acts.
+    let (_, empty) = get(&[]);
+    assert_eq!(
+        (empty["count"].clone(), empty["last"].clone()),
+        (json!(0), json!(0))
+    );
+
+    trigger("test-1.myshopify.com", &product(1));
+    trigger(SHOP, &product(2));
+    webhooks.emit(
+        &event("products/update", "gid://shopify/Product/1"),
+        &lookup(),
+    );
+    wait_for(&webhooks, 3);
+
+    // `?shop=` takes the short name as well as the domain.
+    for shop in ["test-1", "test-1.myshopify.com", "TEST-1"] {
+        let (status, answer) = get(&[("shop", shop)]);
+        assert_eq!(status, 200);
+        assert_eq!(ids(&answer), [1], "{shop}");
+    }
+    // `?resource=`: the event's record, the payload's `admin_graphql_api_id`.
+    let (_, about) = get(&[("resource", &product(1))]);
+    assert_eq!(ids(&about), [1, 3]);
+    assert_eq!(about["deliveries"][1]["resource"], product(1));
+    // `?since=`: only what came after.
+    let (_, after) = get(&[("since", "1")]);
+    assert_eq!(ids(&after), [2, 3]);
+    assert_eq!(after["last"], 3);
+
+    // A wait counts only the deliveries that match every filter: those before `since` do not.
+    let (status, late) = get(&[("since", "3"), ("wait", "1"), ("timeout", "50")]);
+    assert_eq!(status, 408);
+    assert_eq!(
+        (late["count"].clone(), late["last"].clone()),
+        (json!(0), json!(3))
+    );
+    trigger(SHOP, &product(1));
+    let (status, mine) = get(&[
+        ("since", "3"),
+        ("resource", &product(1)),
+        ("shop", "my-shop"),
+        ("wait", "1"),
+    ]);
+    assert_eq!(status, 200, "{mine}");
+    assert_eq!(ids(&mine), [4]);
+    assert_eq!(mine["deliveries"][0]["state"], "delivered");
+    assert_eq!(mine["last"], 4);
+    let (status, _) = get(&[("resource", &product(2)), ("wait", "2"), ("timeout", "50")]);
+    assert_eq!(status, 408);
+
+    // Ids are never given twice: `last` outlives a `DELETE`.
+    webhooks
+        .handle(
+            &request("DELETE", "/__lsf/webhooks", &[], Value::Null),
+            &build,
+        )
+        .unwrap();
+    let (_, cleared) = get(&[]);
+    assert_eq!(
+        (cleared["count"].clone(), cleared["last"].clone()),
+        (json!(0), json!(4))
+    );
+
+    let (status, refused) = get(&[("since", "yesterday")]);
+    assert_eq!(status, 422);
+    assert!(
+        refused["error"]
+            .as_str()
+            .unwrap()
+            .contains("`since` is the id of a delivery"),
+        "{refused}"
+    );
+}
+
+#[test]
 fn the_control_endpoints_say_what_is_wrong() {
     let webhooks = webhooks(
         vec![subscription(&["products/update"], "/hooks")],
