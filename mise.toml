@@ -13,7 +13,7 @@ LSF_HORIZON_DIR = "{{config_root}}/themes/horizon"
 
 [tasks.build]
 description = "Build the lsf binary (release)"
-run = "cargo build --release -p lsf"
+run = "cargo build --release -p lsf-cli"
 
 [tasks.install]
 description = "Build lsf and install it into ~/.cargo/bin"
@@ -50,7 +50,7 @@ run = "node tools/checkout/function_schemas.mjs"
 description = "Run examples/admin-backend, an app backend written with Shopify's libraries, end to end against lsf's Admin API"
 dir = "examples/admin-backend"
 run = [
-  "cargo build --manifest-path ../../Cargo.toml -p lsf",
+  "cargo build --manifest-path ../../Cargo.toml -p lsf-cli",
   "npm install --no-audit --no-fund",
   "npm run e2e",
 ]
@@ -102,12 +102,12 @@ run = "node examples/checkout-playground/tools/fake-api.mjs"
 [tasks."playground:checkout"]
 description = "Serve the checkout of the playground app with its scenarios (http://127.0.0.1:9292/)"
 dir = "examples/checkout-playground"
-run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf -- app dev --app ."
+run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf-cli -- app dev --app ."
 
 [tasks."playground:dev"]
 description = "Serve the checkout of the playground in watch mode: a Function builds again when its files change, and the open pages reload (http://127.0.0.1:9292/)"
 dir = "examples/checkout-playground"
-run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf -- app dev --app . --watch"
+run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf-cli -- app dev --app . --watch"
 
 [tasks.fmt]
 description = "Format the code"
@@ -131,7 +131,7 @@ fi
 [tasks."horizon:serve"]
 description = "Serve the Horizon theme with the demo store data"
 depends = ["horizon:install"]
-run = "cargo run --release -p lsf -- serve --theme themes/horizon"
+run = "cargo run --release -p lsf-cli -- serve --theme themes/horizon"
 
 [tasks."oracle:install"]
 description = "Install Shopify's reference liquid gem locally (used to generate golden tests)"

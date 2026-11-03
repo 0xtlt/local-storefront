@@ -119,9 +119,9 @@ jobs:
       - name: Build
         run: |
           if [ -n "$ZIG_TARGET" ]; then
-            cargo zigbuild --profile dist --locked -p lsf --target "$ZIG_TARGET"
+            cargo zigbuild --profile dist --locked -p lsf-cli --target "$ZIG_TARGET"
           else
-            cargo build --profile dist --locked -p lsf --target "$TARGET"
+            cargo build --profile dist --locked -p lsf-cli --target "$TARGET"
           fi
 
       # Only where the runner can execute what it built.

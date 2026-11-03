@@ -170,7 +170,7 @@ runs on a copy of the store data whose network Functions call a closed port (502
 server of the test (its answers):
 
 ```bash
-cargo test -p lsf playground
+cargo test -p lsf-cli playground
 ```
 
 ## Functions and checkout UI extensions together

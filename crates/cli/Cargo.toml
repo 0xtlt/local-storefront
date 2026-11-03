@@ -1,5 +1,5 @@
 [package]
-name = "lsf"
+name = "lsf-cli"
 description = "Serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API"
 version.workspace = true
 edition.workspace = true

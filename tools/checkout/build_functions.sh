@@ -138,7 +138,7 @@ if [ ${#rust[@]} -gt 0 ]; then
 fi
 
 if [ ${#javascript[@]} -gt 0 ]; then
-  cargo run --quiet --release --manifest-path "$root/Cargo.toml" -p lsf -- \
+  cargo run --quiet --release --manifest-path "$root/Cargo.toml" -p lsf-cli -- \
     app function build --app "$app" "${javascript[@]}"
 fi
 

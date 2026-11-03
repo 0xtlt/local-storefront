@@ -2316,7 +2316,40 @@ dependencies = [
 ]
 
 [[package]]
-name = "lsf"
+name = "lsf-app"
+version = "0.2.0"
+dependencies = [
+ "base64 0.23.1",
+ "brotli",
+ "chrono",
+ "chrono-tz",
+ "deterministic-wasi-ctx",
+ "flate2",
+ "form_urlencoded",
+ "graphql-parser",
+ "hmac",
+ "indexmap 2.14.2",
+ "lsf-core",
+ "lsf-theme",
+ "md-5",
+ "oxc",
+ "regex",
+ "rmp-serde",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "shopify_function_trampoline",
+ "toml",
+ "ureq",
+ "wasm-encoder 0.240.0",
+ "wasmparser 0.240.0",
+ "wasmtime",
+ "wasmtime-wasi",
+]
+
+[[package]]
+name = "lsf-cli"
 version = "0.2.0"
 dependencies = [
  "axum",
@@ -2351,39 +2384,6 @@ dependencies = [
  "tokio",
  "ureq",
  "wasmtime",
-]
-
-[[package]]
-name = "lsf-app"
-version = "0.2.0"
-dependencies = [
- "base64 0.23.1",
- "brotli",
- "chrono",
- "chrono-tz",
- "deterministic-wasi-ctx",
- "flate2",
- "form_urlencoded",
- "graphql-parser",
- "hmac",
- "indexmap 2.14.2",
- "lsf-core",
- "lsf-theme",
- "md-5",
- "oxc",
- "regex",
- "rmp-serde",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "shopify_function_trampoline",
- "toml",
- "ureq",
- "wasm-encoder 0.240.0",
- "wasmparser 0.240.0",
- "wasmtime",
- "wasmtime-wasi",
 ]
 
 [[package]]
