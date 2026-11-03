@@ -118,6 +118,16 @@ description = "fmt check + clippy + tests"
 depends = ["lint", "test"]
 run = "cargo fmt --all -- --check"
 
+[tasks."docs:site"]
+description = "Serve the documentation site (the guides of docs/, rendered by VitePress) at http://localhost:5173, reloading as they change"
+dir = "tools/docs-site"
+run = "npm install --silent && npx vitepress dev"
+
+[tasks."docs:site:build"]
+description = "Build the documentation site into tools/docs-site/.vitepress/dist; fails on a link to a page that does not exist"
+dir = "tools/docs-site"
+run = "npm install --silent && npx vitepress build"
+
 [tasks."horizon:install"]
 description = "Clone (or update) Shopify's Horizon theme into themes/horizon"
 run = """
