@@ -7405,6 +7405,30 @@ fn a_scenario_lists_the_discounts_only_when_it_has_its_own() {
 }
 
 #[test]
+fn a_scenario_with_no_country_says_it_opens_in_the_shops() {
+    let data = ScenarioData::new(
+        "home-country",
+        &[(
+            "plain.json",
+            r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}}"#,
+        )],
+    );
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let plain = &json["scenarios"][0];
+    let country = plain["summary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["label"] == "Country, language")
+        .map(|row| row["text"].as_str().unwrap())
+        .unwrap();
+    // The demo shop is in Canada, the first country of its data the United States.
+    assert_eq!(country, "CA by default, English", "{plain}");
+    assert!(!plain["facts"].as_array().unwrap().contains(&json!("CA")));
+}
+
+#[test]
 fn the_home_page_of_an_app_with_nothing_says_so() {
     let root = std::env::temp_dir().join(format!("lsf-home-empty-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

@@ -150,6 +150,11 @@ the same data every run.
   (`2024-05-01 10:00:00 +0200`), a comma before the fraction of a second, and a time alone
   (`10:00`, which took the day 2024-01-01). None of the examples or guides used one. The `date`
   filter of a theme still reads them all.
+- **The storefront opens in the shop's country, like the checkout.** A visitor who selected no
+  country is in the shop's (`shop.address.country_code`), the one of its primary market, or the
+  first country when the store does not sell to it: `localization.country`, `Shopify.country`
+  and the localization form say so. The storefront used to show the first country and the
+  checkout the shop's: the demo store showed the United States, then checked out in Canada.
 - **For contributors, the crates are split along what they need.** `lsf-core` is the store data
   and what the storefront and the app share of it, `lsf-theme` the renderer (the old `lsf-core`),
   `lsf-app` the app (`lsf-checkout` and `lsf-admin` in one crate: `config`, `checkout`, `admin`)
