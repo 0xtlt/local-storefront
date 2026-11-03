@@ -2,10 +2,10 @@
 
 What graphql-codegen writes (`generated/api.ts`, the `typescript` and `typescript-operations`
 plugins, the config of Shopify's CLI) for the schemas and queries of Functions, to compare with
-`crates/checkout/src/javascript/typegen.rs` (the test is in `typegen/tests.rs`).
+`crates/app/src/checkout/javascript/typegen.rs` (the test is in `typegen/tests.rs`).
 
 - `cases.json`: the cases. A case is a schema (`schema`: the name of a Function API of
-  `crates/checkout/schemas/2026-10`, or of a file of `schemas/` here), the documents of the
+  `crates/app/schemas/functions/2026-10`, or of a file of `schemas/` here), the documents of the
   Function (`documents`, files of `documents/`; each is `src/<its name>` in the Function), and
   what changes in its `codegen` section of `package.json` (`codegen`; by default the one of the
   Shopify templates: both plugins, `omitOperationSuffix`). `"full": true` keeps the whole output.
@@ -28,7 +28,7 @@ mkdir /tmp/typegen-oracle && cd /tmp/typegen-oracle
 npm install --save-exact @shopify/shopify_function@2.0.1
 ```
 
-Then, from this folder (`crates/checkout/tests/fixtures/typegen`):
+Then, from this folder (`crates/app/tests/fixtures/typegen`):
 
 ```sh
 node regenerate.mjs /tmp/typegen-oracle            # every case
@@ -46,7 +46,7 @@ npm exec -- graphql-code-generator --config <tmp>/codegen.json
 
 To add a case: a line in `cases.json` (and its documents), then regenerate that case.
 
-`LSF_TYPEGEN_DUMP=<folder> cargo test -p lsf-checkout typegen` writes what the typegen makes for
+`LSF_TYPEGEN_DUMP=<folder> cargo test -p lsf-app typegen` writes what the typegen makes for
 every case to `<folder>/<case>.ts`, to compare with `expected/` (or with the output of the oracle
 of one case) when the SHA-256 of a case differs.
 
@@ -56,8 +56,8 @@ of one case) when the SHA-256 of a case differs.
 the ignored test reads them:
 
 ```sh
-node fuzz.mjs /tmp/typegen-oracle ../../../schemas/2026-10/discount.graphql /tmp/fuzz-discount 300 1
-LSF_TYPEGEN_CORPUS=/tmp/fuzz-discount cargo test -p lsf-checkout typegen -- --ignored
+node fuzz.mjs /tmp/typegen-oracle ../../../schemas/functions/2026-10/discount.graphql /tmp/fuzz-discount 300 1
+LSF_TYPEGEN_CORPUS=/tmp/fuzz-discount cargo test -p lsf-app typegen -- --ignored
 ```
 
 Run it on each schema when graphql-codegen or the schemas change.

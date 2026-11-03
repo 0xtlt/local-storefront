@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the Functions of a Shopify app of this repository into their Wasm modules
 # (`extensions/<handle>/dist/function.wasm`), the way `shopify app build` does. Used for the test
-# app of lsf-checkout (`mise run fixtures:functions`) and the checkout playground
+# app of lsf-app (`mise run fixtures:functions`) and the checkout playground
 # (`mise run playground:functions`). The modules are committed: this is only needed after
 # changing a Function. Needs network access the first time, for the crates and Shopify's
 # trampoline.
@@ -28,7 +28,7 @@ fi
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 app="$(cd "$1" && pwd)"
 shift
-schemas="$root/crates/checkout/schemas"
+schemas="$root/crates/app/schemas/functions"
 
 # The schema of a Function API at a release: the file of the newest release at or before it
 # (`mise run checkout:schemas` writes one only when a release changes the schema). A release older
@@ -43,7 +43,7 @@ schema_of() {
   echo "${found:-$newest}"
 }
 
-# The Function API of a target: the name of its schema in crates/checkout/schemas/<release>.
+# The Function API of a target: the name of its schema in crates/app/schemas/functions/<release>.
 # Empty for the APIs lsf has no schema for (they are listed, not run): such a Function is written
 # without the typegen and needs none.
 api_of() {
@@ -74,7 +74,7 @@ else
 fi
 
 # The schema of each Function is the one of its API version (`api_version` in its
-# shopify.extension.toml) and Function API, from crates/checkout/schemas (`schema_of`). Not
+# shopify.extension.toml) and Function API, from crates/app/schemas/functions (`schema_of`). Not
 # committed with the app: they are copies, git-ignored.
 rust=()
 javascript=()

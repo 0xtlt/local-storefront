@@ -119,7 +119,7 @@ validate, coerce the variables) then `Prepared::requested_cost` and `Prepared::e
 ### Schema
 
 `tools/admin/admin_schema.mjs` (`mise run admin:schema -- --version <v>`) writes
-`schemas/<v>/admin.graphql` from the introspection of the pinned `@shopify/dev-mcp@1.17.0`
+`schemas/admin/<v>/admin.graphql` from the introspection of the pinned `@shopify/dev-mcp@1.17.0`
 (SHA-256 checked; shopify.dev's public proxy for a version it lacks): every
 description, deprecation reason, default value, `@oneOf`, and the six directives the schema
 declares (`@idempotent`, `@oneOf`, `@include`, `@skip`, `@deprecated`, `@specifiedBy`), in the
@@ -144,7 +144,7 @@ refuses a schema that names a type it lacks, so lsf's `possibleTypes` are the ob
 declare the interface. Everything else is Shopify's, which the tests check: graphql-js's
 `getIntrospectionQuery()` (descriptions, `specifiedByURL`, `isOneOf`, `isRepeatable`, input value
 deprecation) is compared with the dev-mcp introspection for a few types, and
-`LSF_ADMIN_INTROSPECTION=<file> cargo test -p lsf-admin --test introspection` compares all 3699
+`LSF_ADMIN_INTROSPECTION=<file> cargo test -p lsf-app --test introspection` compares all 3699
 (`node tools/admin/admin_schema.mjs --introspection <file>` writes the file).
 
 ### Parsing and validation
@@ -245,7 +245,7 @@ static KNOWN: [Entry; COUNT] = [
 
 An entry has its name, its status (`Stable`, `ReleaseCandidate`, `Unstable`, `Unsupported`:
 shopify.dev's labels), its adapters, and its files, embedded by the `version!` macro from
-`schemas/<version>/`:
+`schemas/admin/<version>/`:
 
 | File | What reads it |
 |---|---|
@@ -259,7 +259,7 @@ shopify.dev's labels), its adapters, and its files, embedded by the `version!` m
 `ApiVersion` is a `Copy` handle on an entry (`ApiVersion::get("2027-01")`, `::all()`,
 `::default_version()`, `.name()`, `.status()`, `.since("2027-01")`, `.schema()`). Each module
 parses its part the first time a request of the version needs it, in a `OnceLock` per version
-(`static PARSED: [OnceLock<T>; version::COUNT]`, as `lsf-checkout` keeps the Function schemas):
+(`static PARSED: [OnceLock<T>; version::COUNT]`, as `lsf_app::config::version` keeps the Function schemas):
 a server that serves 2026-10 only never decompresses 2027-01. The free functions that existed
 before versions (`schema::admin()`, `scopes::required_access`, `search::documented_filters`,
 `topics::all`, `topics::written_form`, …) stay, as shims on the default version: code that does
@@ -358,7 +358,7 @@ MERCHANT_READ instead. Removed in API version 2027-01." 2027-01 removes them; it
   ```
 
   The record does not change: 2026-10 reads `PUBLIC_READ`, 2027-01 `MERCHANT_READ`
-  (`tests/versions.rs`, `a_record_written_in_2026_10_reads_through_the_adapter_of_2027_01`).
+  (`tests/admin_versions.rs`, `a_record_written_in_2026_10_reads_through_the_adapter_of_2027_01`).
   Shopify does not say what it answers for such a definition in 2027-01: lsf reads the
   deprecation reason as the mapping.
 
@@ -430,23 +430,23 @@ it is not what an app talks to unless it asks.
    lists: 2026-01 to 2027-01 and `unstable` in 1.17.0; else shopify.dev's public proxy of the
    Admin API, `https://shopify.dev/admin-graphql-direct-proxy/<version>`, which answers
    introspection without a token, `requiredAccess` included; `LSF_ADMIN_SOURCE=shopify.dev`
-   forces it) it writes `schemas/<version>/` (`admin.graphql`, `.br`, `introspection.graphql`,
+   forces it) it writes `schemas/admin/<version>/` (`admin.graphql`, `.br`, `introspection.graphql`,
    `access.json`, `search.json`, `topics.json`), `tests/fixtures/<version>/introspection.json`
    and, from shopify.dev's webhook reference of the version,
    `tests/fixtures/webhooks/examples-<version>.json`. It then prints Shopify's status of the
    version, a newer `OLDEST_ACCESSIBLE` if there is one, and how the schema differs from the
    default version's. Each part has its own task too (`admin:schema`, `admin:access-scopes`,
    `admin:topics`, `admin:webhook-examples`, each with `-- --version <v>`).
-2. `crates/admin/src/version.rs`: a `version!("<version>", <Status>, &[])` line in `KNOWN`, in
+2. `crates/app/src/admin/version.rs`: a `version!("<version>", <Status>, &[])` line in `KNOWN`, in
    date order, and `COUNT` one higher (the array's length checks it).
 3. For each difference the tool listed that reads differently from the records (a removed or
    renamed value, field or input field, a reshaped payload), an `Adapter` in
    `version/adapt.rs`, with a test. What a version only removes or only adds needs none.
-4. `cargo test -p lsf-admin`: the payload test compares every builder with the examples of the
+4. `cargo test -p lsf-app`: the payload test compares every builder with the examples of the
    version (keys and their order; values with the default version's examples, which the samples
    are made from), the introspection test with its fixture, the topics with its enum, and
    `ALL_SCOPES` with what its tables and topics name (add a scope it reports).
-5. A test of what the version changes, in `tests/versions.rs`.
+5. A test of what the version changes, in `tests/admin_versions.rs`.
 6. To make it the default: `DEFAULT`, then the adapters move to the version that now differs from
    the records (the records' shape is the default's); the payload builders follow the new
    version's examples.
@@ -544,15 +544,15 @@ fall forward), and `OLDEST_ACCESSIBLE` moves; its files can go once nothing serv
   (hex, the sorted `name=value` strings concatenated, repeated names joined with commas),
   checked against shopify.dev's published examples.
 - **Access scopes are enforced** (`auth::scopes`): a field or a mutation the token's scopes do not
-  cover answers `ACCESS_DENIED` with Shopify's message ("Access denied for products field.
-  Required access: `read_products` access scope.") and `extensions` (`code`, `documentation`,
+  cover answers `ACCESS_DENIED` with Shopify's message ("Access denied for products field. Required
+  access: `read_products` access scope.") and `extensions` (`code`, `documentation`,
   `requiredAccess`). `write_x` implies `read_x`, `unauthenticated_write_x` implies
-  `unauthenticated_read_x`. The table is not hand-written, and is the request's version's:
-  Shopify's introspection of each version carries the `requiredAccess` text of every type and
-  field, which `mise run admin:access-scopes -- --version <v>` writes into
-  `schemas/<v>/access.json` (`auth::scopes::for_version`); a root field without one requires that
-  of the type it answers (`products` → `Product`). Staff permissions, plans and requirements that depend on
-  the arguments (`metafieldsSet`, `tagsAdd`) are not checked.
+  `unauthenticated_read_x`. The table is not hand-written, and is the request's version's: Shopify's
+  introspection of each version carries the `requiredAccess` text of every type and field, which
+  `mise run admin:access-scopes -- --version <v>` writes into `schemas/admin/<v>/access.json`
+  (`auth::scopes::for_version`); a root field without one requires that of the type it answers
+  (`products` → `Product`). Staff permissions, plans and requirements that depend on the arguments
+  (`metafieldsSet`, `tagsAdd`) are not checked.
 
 ## The state of a shop (`state`)
 
@@ -858,7 +858,7 @@ sale's `startDate`/`endDate`.
 `search` parses a query into a tree (`Query::parse`, never an error: a malformed query is read
 as far as it goes, with warnings, each given once) and matches a record through the `Searchable` trait, which
 each domain implements from the filters its connections document (`documented_filters`, from
-the reference of the request's version: `schemas/<v>/search.json`, `search::for_version(v)`;
+the reference of the request's version: `schemas/admin/<v>/search.json`, `search::for_version(v)`;
 `documented_filters` is the default version's). A value is tokenized text, a keyword,
 a number, a date, a boolean or an id, which says how `:` compares it. **A field the connection
 does not know is ignored**, as shopify.dev says ("If you specify an invalid field, then the query
@@ -1792,7 +1792,7 @@ never written to.**
   generation differs; live reload's token includes it. The CDN serves an asset of the overlay
   as it is (`/cdn/shop/t/1/assets/…`; an image without the CDN's transforms).
 - *What it costs* (release builds of the commit before themes and of this one, the fixture theme
-  of lsf-core, the demo store, the two servers' renders interleaved by batches of 25, 1000 each,
+  of lsf-theme, the demo store, the two servers' renders interleaved by batches of 25, 1000 each,
   medians of `Server-Timing: render`, on 2026-10-31 on a machine loaded with other builds):
   without an overlay, `/` 168 → 166 µs, `/collections/all` 326 → 331 µs, a product 199 → 198 µs,
   a search 128 → 128 µs revalidating; 77 → 77, 366 → 361, 94 → 95, 60 → 60 µs with `--static`:
@@ -1801,7 +1801,7 @@ never written to.**
   most of it the 640 bytes of the script tag's loader.
 - *Which theme the page names*: `Shopify.theme` of `content_for_header`, the `theme` object and
   the asset URLs (`/cdn/shop/t/<id>/…`) name the main theme (`themes::storefront_identity`,
-  `AdminApi::storefront_theme`, given to `lsf_core::theme::Theme::set_identity` by
+  `AdminApi::storefront_theme`, given to `lsf_theme::Theme::set_identity` by
   `sync_theme`): its id and name while another theme is published, the name `themeUpdate` gave
   the local theme. `schema_name` stays the files' `theme_info`. Without either, the directory:
   id 1, the name its files give.
@@ -1848,18 +1848,18 @@ never written to.**
   the shop's redirects made once (`navigation::set_redirect`, which `add_redirect` runs after its
   own lookup): 100,000 rows take about half a second, where a scan per row took longer than a
   quarter of an hour, the shop locked.
-- **App extensions** lsf-checkout lists without reading (`App::other`): the web pixel extension's
-  `[settings.fields]` and the Flow triggers' `[[settings.fields]]` are read from their
+- **App extensions** `lsf_app::config` lists without reading (`App::other`): the web pixel
+  extension's `[settings.fields]` and the Flow triggers' `[[settings.fields]]` are read from their
   `shopify.extension.toml` at seed (`platform::extensions`, `[settings]` of the file when it is
-  below `[[extensions]]`, as Shopify CLI reads it) into settings of the shop
-  (`webPixelExtension`, `flowTriggers`).
+  below `[[extensions]]`, as Shopify CLI reads it) into settings of the shop (`webPixelExtension`,
+  `flowTriggers`).
 - **The outside world**: what Shopify would hand to a service lsf does not run is never sent.
   The state Shopify would show is kept (a server pixel `CONNECTED`, a mobile app), and what
   would have been sent (a Flow trigger) is in the shop's outbox (see "The outbox"). EventBridge
   and Pub/Sub subscriptions' deliveries are in the webhooks' log, `not_sent`. The association
   files of mobile apps are served by the storefront (`/.well-known/…`,
   `AdminApi::association_file`).
-- **Script tags** reach `content_for_header` through `lsf_core::theme::Theme::set_script_tags`,
+- **Script tags** reach `content_for_header` through `lsf_theme::Theme::set_script_tags`,
   set by the server from the default shop (`AdminApi::storefront_scripts`) as the overlay is.
   They are not store data: a script tag is the app's, not the theme's or the data's, and the
   store data has no section for it.
@@ -1928,8 +1928,8 @@ for each subscription of the shop whose topic matches and whose `filter` matches
 
 - **Topics**: the 227 values of the `WebhookSubscriptionTopic` enum of each version with their
   written form, read from the description of each value in its introspection
-  (`tools/admin/webhook_topics.mjs --version <v>` writes `schemas/<v>/topics.json`): the split between
-  resource and action is not mechanical (`CUSTOMERS_EMAIL_MARKETING_CONSENT_UPDATE` is
+  (`tools/admin/webhook_topics.mjs --version <v>` writes `schemas/admin/<v>/topics.json`): the split
+  between resource and action is not mechanical (`CUSTOMERS_EMAIL_MARKETING_CONSENT_UPDATE` is
   `customers_email_marketing_consent/update`, `CUSTOMER_TAGS_ADDED` is `customer.tags_added`).
 - **Subscriptions**: those of `shopify.app.toml` (`[[webhooks.subscriptions]]`, app-wide, one per
   topic, `api_version` of `[webhooks]`), and those the backend creates through the Admin API
@@ -2289,19 +2289,21 @@ yet), `overlay` (`written`: entities by section; `removed`: their keys), `built`
   to 0.06 ms, and a failure that changed a product and its 12 variants and created a product
   rolls back in 0.04 ms (1.2 ms when it also removed a variant: removing one of 198,000 records
   shifts the others, forward and back). `tests/mutation_cost.rs` measures it
-  (`cargo test --release -p lsf-admin --test mutation_cost -- --ignored --nocapture`).
+  (`cargo test --release -p lsf-app --test mutation_cost -- --ignored --nocapture`).
 - Seeding 3,000 products takes 1.7 to 3.4 s, at start and on each reseed, not on a mutation.
 
 ## Crate layout
 
-`lsf-admin` (`crates/admin`) depends on `lsf-core` (the store) and `lsf-checkout` (the app:
-`app::App`, whose `config` is the backend's part of `shopify.app.toml`, and the Functions). It
-serves nothing itself: `lsf` routes the requests to [`api`], as it does for the checkout.
+The Admin API is the `admin` module of `lsf-app` (`crates/app/src/admin`), whose module paths
+below are relative to it. It reads the store of `lsf-core` and the rest of `lsf-app`: the app
+(`config::App`, whose `config` is the backend's part of `shopify.app.toml`) and the checkout's
+Functions and types. It serves nothing itself: `lsf` routes the requests to [`api`], as it does
+for the checkout.
 
 | Module | Role |
 |---|---|
 | `version` | The versions lsf knows (`KNOWN`: each one's status, files and adapters), the ones a server serves (`Served`), which one answers a request; `version::adapt`, how a version reads the records differently. |
-| `schema` | The schema of each version, parsed at its first request from `schemas/<version>/admin.graphql` (generated by `tools/admin/admin_schema.mjs` from the pinned `@shopify/dev-mcp`, with its descriptions, for introspection; embedded Brotli-compressed). |
+| `schema` | The schema of each version, parsed at its first request from `schemas/admin/<version>/admin.graphql` (generated by `tools/admin/admin_schema.mjs` from the pinned `@shopify/dev-mcp`, with its descriptions, for introspection; embedded Brotli-compressed). |
 | `graphql` | Parsing (a parser of its own), validation, variables, execution, introspection, cost: a GraphQL server over a `Resolver`. Knows nothing of Shopify's data. |
 | `state` | Shops, records, ids, the clock, events, the changes since the seed; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
 | `sync` | Store sync: the records changed since the seed, projected to an overlay of the store data. |

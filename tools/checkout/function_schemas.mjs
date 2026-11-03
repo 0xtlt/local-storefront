@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Writes the Function API schemas of lsf-checkout (crates/checkout/schemas/<since>/<api>.graphql).
+// Writes the Function API schemas of lsf-app (crates/app/schemas/functions/<since>/<api>.graphql).
 // A release gets a file for an API only when its schema differs from the release before: the
-// releases that share a schema share its file (its first line lists them), and lsf-checkout parses
-// it once. The files are listed in `SCHEMA_FILES` (crates/checkout/src/version.rs), which a test
+// releases that share a schema share its file (its first line lists them), and lsf-app parses
+// it once. The files are listed in `SCHEMA_FILES` (crates/app/src/config/version.rs), which a test
 // checks against this folder.
 //
 // Source: the npm package @shopify/dev-mcp (ISC, Shopify), pinned in tools/dev_mcp.mjs. It ships
@@ -10,9 +10,9 @@
 // function schema` needs one). The tarball is checked against the pinned SHA-256, so the
 // result is reproducible. Needs network access and `npm`.
 //
-// To add a version: add it to the releases of crates/checkout/assets/api.json, pin a
+// To add a version: add it to the releases of crates/app/assets/api.json, pin a
 // @shopify/dev-mcp release that has it, run `mise run checkout:schemas`, then add the files the
-// run wrote for it (if any) to `SCHEMA_FILES` in crates/checkout/src/version.rs.
+// run wrote for it (if any) to `SCHEMA_FILES` in crates/app/src/config/version.rs.
 //
 // The introspection carries no `@oneOf`, which the Rust Function typegen needs to turn an
 // operation into an enum: an input object whose fields are all optional is a `@oneOf`, but for
@@ -25,11 +25,11 @@ import { gunzipSync } from "node:zlib";
 import { PACKAGE, devMcp } from "../dev_mcp.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-// The releases lsf-checkout runs, oldest first.
-const VERSIONS = JSON.parse(readFileSync(join(root, "crates/checkout/assets/api.json"), "utf8")).releases.map(
+// The releases lsf-app runs, oldest first.
+const VERSIONS = JSON.parse(readFileSync(join(root, "crates/app/assets/api.json"), "utf8")).releases.map(
   (release) => release.version,
 );
-// The file name in the package -> the name in lsf-checkout (`FunctionApi`).
+// The file name in the package -> the name in lsf-app (`FunctionApi`).
 const APIS = {
   cart_checkout_validation: "cart_checkout_validation",
   cart_transform: "cart_transform",
@@ -49,9 +49,9 @@ const NOT_ONE_OF = new Set([
 ]);
 const isFetchResult = (name) => name.endsWith("FetchResult");
 
-const PLACEHOLDER = "_noField"; // also in crates/checkout/src/schema.rs
+const PLACEHOLDER = "_noField"; // also in crates/app/src/checkout/schema.rs
 
-const out = join(root, "crates/checkout/schemas");
+const out = join(root, "crates/app/schemas/functions");
 
 const unpacked = devMcp();
 
@@ -162,7 +162,7 @@ function print(schema) {
         for (const field of type.inputFields) lines.push(`  ${input(field)}`);
         // SDL has no input object without a field. Shopify empties the legacy operations it no
         // longer takes (`DeprecatedOperation` of the delivery customization API): the
-        // placeholder keeps the schema valid, lsf-checkout ignores it.
+        // placeholder keeps the schema valid, lsf-app ignores it.
         if (type.inputFields.length === 0) lines.push(`  ${PLACEHOLDER}: Void`);
         lines.push("}");
         break;

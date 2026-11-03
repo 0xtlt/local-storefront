@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebuilds crates/checkout/providers from the providers of Shopify's function-runner at the tag
+# Rebuilds crates/app/providers from the providers of Shopify's function-runner at the tag
 # below: the Wasm modules a Function's module imports and lsf links when it runs one (Shopify's
 # Javy plugins, the providers of the Function Wasm API). They are 9.7 MB, mostly the same QuickJS
 # again and again: one Brotli stream of all of them, with a 16 MB window, is 1.6 MB.
@@ -10,7 +10,7 @@
 set -euo pipefail
 tag=v9.2.2
 here="$(cd "$(dirname "$0")" && pwd)"
-out="$here/../../crates/checkout/providers"
+out="$here/../../crates/app/providers"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 

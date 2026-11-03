@@ -143,14 +143,15 @@ tools/checkout/build_functions.sh examples/checkout-playground discount-codes  #
 ```
 
 It copies the schema of each Function (its `api_version` and Function API, from
-`crates/checkout/schemas`, not committed here), builds the Cargo workspace of this folder for
-`wasm32-unknown-unknown` and links each module with `shopify-function-trampoline`, as `shopify
-app build` does. `discount-typescript` and `validation-javascript`, which have no build command
-as Shopify's templates, are built by lsf (`lsf app function build`), without Node: their types
+`crates/app/schemas/functions`, not committed here), builds the Cargo workspace of this folder for
+`wasm32-unknown-unknown` and links each module with `shopify-function-trampoline`, as `shopify app
+build` does. `discount-typescript` and `validation-javascript`, which have no build command as
+Shopify's templates, are built by lsf (`lsf app function build`), without Node: their types
 (`generated/api.ts`, not committed), `dist/function.js`, then their module. Their modules do what
-those Shopify's CLI builds do, in as many instructions: `crates/checkout/src/javascript/tests.rs`
-compares them with the CLI's (`crates/checkout/tests/fixtures/shopify-cli`). `lsf app dev --app . --build` runs the same command for each Function.
-`broken-missing-build` has no build command and stays unbuilt.
+those Shopify's CLI builds do, in as many instructions:
+`crates/app/src/checkout/javascript/tests.rs` compares them with the CLI's
+(`crates/app/tests/fixtures/shopify-cli`). `lsf app dev --app . --build` runs the same command for
+each Function. `broken-missing-build` has no build command and stays unbuilt.
 
 To change a Function and see it at once, `mise run playground:dev` (`lsf app dev --app .
 --watch`) serves the committed modules, then builds a Function again when you save it and
@@ -193,9 +194,9 @@ The `mix-*` scenarios run Functions and checkout UI extensions on the same check
 the hooks of `@shopify/ui-extensions/checkout/preact` and a signal) name their sources
 (`module`): lsf bundles them, without Node and without `node_modules`, into their
 `dist/<handle>.js` (`lsf app build ui-preact --app .`, `--build`, or `--watch` when they
-change). The scenario `ui-preact` shows both. `crates/checkout/assets/tests/built-extensions.test.mjs`
+change). The scenario `ui-preact` shows both. `crates/app/assets/tests/built-extensions.test.mjs`
 draws each bundle next to the one Shopify's CLI 5.0.0 builds from the same sources
-(`crates/checkout/tests/fixtures/shopify-cli`), acts on them, and compares.
+(`crates/app/tests/fixtures/shopify-cli`), acts on them, and compares.
 
 ## Customer account UI extensions
 
@@ -278,5 +279,5 @@ The `ui-broken-*` extensions fail on purpose. They are in no scenario but their 
 | `ui-broken-long-text` | 2026-10 | Long unbroken words, URLs and codes in a banner, badge, button, field, link and under each line | `ui-broken-layout` |
 
 A scenario without an `extensions` list runs every extension of the app, the broken ones
-included. `crates/checkout/assets/tests/playground.test.mjs` (`mise run test:js`) checks that
+included. `crates/app/assets/tests/playground.test.mjs` (`mise run test:js`) checks that
 every bundle registers the targets of its toml and that the working ones draw without an error.

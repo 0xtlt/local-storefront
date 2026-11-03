@@ -33,7 +33,7 @@ runs:
         echo '{"private": true}' > package.json
         npm install --save-dev "$GITHUB_WORKSPACE/npm-dist/$launcher" "$GITHUB_WORKSPACE/npm-dist/$binary"
         npx local-storefront --version
-        npx local-storefront --theme "$GITHUB_WORKSPACE/crates/core/tests/fixtures/theme" validate
+        npx local-storefront --theme "$GITHUB_WORKSPACE/crates/theme/tests/fixtures/theme" validate
         # The short name works too once the package is installed.
         npx lsf --version
 

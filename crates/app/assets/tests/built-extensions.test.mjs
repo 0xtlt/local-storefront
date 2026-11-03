@@ -1,7 +1,7 @@
 // The checkout UI extensions of the playground that lsf builds from their sources, without Node
 // (`examples/checkout-playground/extensions/ui-preact*`): the bundle lsf writes draws what the
 // bundle Shopify's CLI 5.0.0 builds from the same sources draws
-// (`crates/checkout/tests/fixtures/shopify-cli/<handle>.js`), asks the page for the same things,
+// (`crates/app/tests/fixtures/shopify-cli/<handle>.js`), asks the page for the same things,
 // and does the same when the buyer acts on it. The two are not the same text: each is minified by
 // its own tool.
 

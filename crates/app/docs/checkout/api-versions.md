@@ -1,9 +1,9 @@
 # API versions of the local checkout: Functions
 
-`lsf-checkout` supports two Shopify API releases: **2026-10** (stable) and **2027-01** (release
+`lsf-app` supports two Shopify API releases: **2026-10** (stable) and **2027-01** (release
 candidate, stable on 2027-01-01). A Function declares its release with `api_version` in
-`shopify.extension.toml` (`ApiVersion`, `crates/checkout/src/version.rs`); any other value, or none,
-is an error diagnostic that names the supported ones, and the Function is not run.
+`shopify.extension.toml` (`ApiVersion`, `crates/app/src/config/version.rs`); any other value, or
+none, is an error diagnostic that names the supported ones, and the Function is not run.
 
 ## What differs between 2026-10 and 2027-01
 
@@ -29,9 +29,9 @@ How this was established (all three agree):
 
 The RC can still change before 2027-01-01. When it does: pin a newer `@shopify/dev-mcp` in
 `tools/checkout/function_schemas.mjs`, run `mise run checkout:schemas`, `mise run
-fixtures:functions`, and look at `git status crates/checkout/schemas`: a schema that changes in
-2027-01 gets its own file in a new folder, `crates/checkout/schemas/2027-01/`. There is none
-today: every schema is the one of `2026-10/` (`since` in `src/version.rs`).
+fixtures:functions`, and look at `git status crates/app/schemas/functions`: a schema that changes in
+2027-01 gets its own file in a new folder, `crates/app/schemas/functions/2027-01/`. There is none
+today: every schema is the one of `2026-10/` (`since` in `src/config/version.rs`).
 
 ### What 2026-10 added to both (against 2026-07)
 
@@ -96,12 +96,12 @@ and the three legacy discount APIs have no `fetch` target.
 ## What is version aware now
 
 - **`ApiVersion`** (`version.rs`): the supported releases (the `releases` of
-  `crates/checkout/assets/api.json`, which the page reads too), and the schema
+  `crates/app/assets/api.json`, which the page reads too), and the schema
   of each Function API (`FunctionApi`) per release, embedded with `include_str!` (`SCHEMA_FILES`).
   Releases that share a schema share its file and its parsed `Schema`. `target_spec` maps a target
   to its API and result type. Adding a release = one entry in `api.json`, plus a `SCHEMA_FILES` line for
   each schema file the generator wrote for it (a test checks the list against the folder).
-- **Schemas** (`crates/checkout/schemas/<since>/<api>.graphql`, SDL, generated, committed): the
+- **Schemas** (`crates/app/schemas/functions/<since>/<api>.graphql`, SDL, generated, committed): the
   schema of an API from release `<since>` on, until a newer file of the same API. A release gets a
   file only when its schema differs from the release before; the first line of a file lists the
   releases that use it. Today every file is in `2026-10/` and serves 2026-10 and 2027-01. From
@@ -127,12 +127,12 @@ and the three legacy discount APIs have no `fetch` target.
 
 - Checkout UI extensions are gated on `api_version` (2026-10 and 2027-01 only, plus the `owner_type`
   rule of 2027-01: see `ui-api-versions.md`), but their API, the `shopify` global of the extension
-  host (`crates/checkout/assets`), has one code path: the two versions have the same surface.
+  host (`crates/app/assets`), has one code path: the two versions have the same surface.
 - The `Customer.createdAt` and delivery option metafield answers are placeholders.
 - `orderReviewAdd` and `paymentTermsSet` (payment) are accepted and not applied.
 - No real "version-only" field exists between the two releases, so the proof of "a field missing in
   one version is rejected" is a pair of small schemas in `schema/tests.rs`, and the rejection of fields
-  no supported version has (`tests/versions.rs`).
+  no supported version has (`tests/function_versions.rs`).
 - `@oneOf` is a heuristic of the generator (see above); a Shopify type that is all-optional and not
   `@oneOf` needs an entry in `NOT_ONE_OF` in `function_schemas.mjs` (the Rust fixtures compile against
   these files, which is how a wrong guess shows up).

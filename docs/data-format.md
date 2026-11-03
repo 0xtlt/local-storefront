@@ -110,8 +110,9 @@ all, and a running server serves them at `/__lsf/schema/<kind>`.
   explicitly only to reproduce a specific Shopify id.
 - **Money** is an integer number of cents (`1999`) or a decimal string (`"19.99"`). A JSON
   float (`19.99`) is rejected, because it is ambiguous. Liquid sees cents, as on Shopify.
-- **Dates** are ISO 8601 strings: `"2024-05-01"` or `"2024-05-01T10:00:00Z"`. Entities without
-  dates get fixed ones, so renders are reproducible.
+- **Dates** are ISO 8601 strings: a day, `"2024-05-01"`, or a day and a time,
+  `"2024-05-01T10:00:00Z"`, with `Z`, an offset (`+02:00`) or neither, for the shop's
+  `timezone`. Entities without dates get fixed ones, so renders are reproducible.
 - **References** between entities use handles (products, collections, pages, blogs), emails
   (customers) and SKUs or ids (variants). A reference to something that does not exist is an
   error, with a suggestion when a close match exists.

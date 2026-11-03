@@ -1,4 +1,4 @@
-# A Shopify app for the tests of lsf-admin: Functions of every kind the checkout runs. They are
+# A Shopify app for the tests of the Admin API: Functions of every kind the checkout runs. They are
 # never run here: the Admin API only lists them and the objects that own them.
 name = "Admin fixtures"
 client_id = "11111111111111111111111111111111"

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Writes the webhook topics of a version of the Admin API (crates/admin/schemas/<version>/topics.json),
-// which `lsf_admin::webhooks::topics` reads: every value of its `WebhookSubscriptionTopic` enum,
-// with the topic as Shopify writes it (`ORDERS_CREATE` is `orders/create`, `CUSTOMER_TAGS_ADDED`
-// is `customer.tags_added`), the access scopes it requires and what it reports.
-// `--version <v>` (default: lsf-admin's default version).
+// Writes the webhook topics of a version of the Admin API
+// (crates/app/schemas/admin/<version>/topics.json), which `lsf_app::admin::webhooks::topics` reads:
+// every value of its `WebhookSubscriptionTopic` enum, with the topic as Shopify writes it
+// (`ORDERS_CREATE` is `orders/create`, `CUSTOMER_TAGS_ADDED` is `customer.tags_added`), the access
+// scopes it requires and what it reports. `--version <v>` (default: lsf-app's default version).
 //
 // The written form is not derived from the enum value: the split between the resource and the
 // action is not mechanical (`CUSTOMERS_EMAIL_MARKETING_CONSENT_UPDATE` is
@@ -19,7 +19,7 @@ import { introspection, isMain, root, versionArg } from "./source.mjs";
 
 /** Writes topics.json of `version` from its introspection. */
 export function generate(version, { schema, source }) {
-  const out = join(root, "crates/admin/schemas", version, "topics.json");
+  const out = join(root, "crates/app/schemas/admin", version, "topics.json");
   const topicType = schema.types.find((type) => type.name === "WebhookSubscriptionTopic");
   if (!topicType) throw new Error(`${version} has no WebhookSubscriptionTopic enum`);
   const rows = topicType.enumValues.map((value) => {

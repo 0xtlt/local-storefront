@@ -4,7 +4,7 @@
 // `cases.json` are what the normal tests run.
 //
 // Usage: node fuzz.mjs <oracle> <schema.graphql> <out> [count] [seed]
-//        LSF_TYPEGEN_CORPUS=<out> cargo test -p lsf-checkout typegen -- --ignored
+//        LSF_TYPEGEN_CORPUS=<out> cargo test -p lsf-app typegen -- --ignored
 //
 // A case is a folder with `schema.graphql`, `src/*.graphql` (random valid documents: aliases,
 // fragments, inline fragments on interfaces and unions, `@include` and `@skip`, arguments),

@@ -1,5 +1,5 @@
-# A Shopify app for the tests of lsf-admin's app platform: a web pixel extension, a Flow trigger,
-# and optional scopes to revoke and downgrade. Nothing here is built or run.
+# A Shopify app for the tests of the Admin API's app platform: a web pixel extension, a Flow
+# trigger, and optional scopes to revoke and downgrade. Nothing here is built or run.
 name = "Platform fixtures"
 client_id = "22222222222222222222222222222222"
 handle = "platform-fixtures"

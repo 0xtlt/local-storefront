@@ -1,6 +1,6 @@
 // A stand-in for the checkout server, enough for a browser to try the page without building
 // the Rust crate: it keeps one checkout in memory, applies the operations the page sends and
-// answers with a state shaped like `CheckoutResult` (see `crates/checkout/src/types.rs`).
+// answers with a state shaped like `CheckoutResult` (see `crates/app/src/checkout/types.rs`).
 // Two discount codes (`SAVE10`: 10 % off the products, `FREESHIP`: free shipping) and one
 // "Function" that refuses a note with the word "forbidden" stand in for the real Functions.
 

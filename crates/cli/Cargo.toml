@@ -34,7 +34,7 @@ oxc_compat.workspace = true
 lightningcss = { version = "1.0.0-alpha.72", default-features = false, features = ["sourcemap"] }
 parcel_sourcemap = "2"
 multer = "3"
-# The requests of the app proxy to the backend of the app, as lsf-admin sends its webhooks.
+# The requests of the app proxy to the backend of the app, as lsf-app sends its webhooks.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 form_urlencoded = "1"
 percent-encoding = "2"

@@ -1,26 +1,27 @@
 #!/usr/bin/env node
-// Writes the schema of the GraphQL Admin API that lsf-admin serves (crates/admin/schemas/<version>/):
+// Writes the schema of the GraphQL Admin API that lsf-app serves
+// (crates/app/schemas/admin/<version>/):
 //
 // - `admin.graphql`: the SDL of the whole schema, with every description (introspection serves
 //   them), deprecation reason, default value, `@oneOf`, and the directives the schema declares,
 //   built-in ones included. Types, fields and values are in the order Shopify's introspection
 //   lists them, which is the order lsf's introspection answers in.
-// - `admin.graphql.br`: the same, compressed with Brotli: what lsf-admin embeds (4 MB of SDL
+// - `admin.graphql.br`: the same, compressed with Brotli: what lsf-app embeds (4 MB of SDL
 //   would be 4 MB of the binary; compressed, it takes 0.4 MB and is read back in 5 ms). A test of
-//   lsf-admin checks that it is `admin.graphql`.
+//   lsf-app checks that it is `admin.graphql`.
 // - `introspection.graphql`: the introspection types (`__Schema`, `__Type`, ...) as Shopify
 //   defines them. They are not valid in an SDL document (names starting with `__` are reserved),
-//   so they have a file of their own, which lsf-admin parses after `admin.graphql`.
+//   so they have a file of their own, which lsf-app parses after `admin.graphql`.
 //
-// It also writes crates/admin/tests/fixtures/<version>/introspection.json: a few types of the
+// It also writes crates/app/tests/fixtures/<version>/introspection.json: a few types of the
 // introspection as Shopify answers it, which the tests compare lsf's introspection with.
 //
 // Source: the introspection of the version (tools/admin/source.mjs): the pinned @shopify/dev-mcp,
 // or shopify.dev's public proxy for a version the package does not ship.
 //
-// `--version <v>` writes the files of another version (default: lsf-admin's default version).
+// `--version <v>` writes the files of another version (default: lsf-app's default version).
 // `--introspection <file>` also writes the whole introspection, in the shape of the fixture, to
-// <file>: `LSF_ADMIN_INTROSPECTION=<file> cargo test -p lsf-admin --test introspection` then
+// <file>: `LSF_ADMIN_INTROSPECTION=<file> cargo test -p lsf-app --test introspection` then
 // compares every type of it with what lsf answers.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -60,8 +61,8 @@ const FIXTURE_FIELDS = {
 
 /** Writes the schema files of `version` from its introspection. */
 export function generate(version, { schema, source, pinned }, introspectionOut = null) {
-  const out = join(root, "crates/admin/schemas", version);
-  const fixtures = join(root, "crates/admin/tests/fixtures", version);
+  const out = join(root, "crates/app/schemas/admin", version);
+  const fixtures = join(root, "crates/app/tests/fixtures", version);
   const origin = pinned ? PACKAGE : source;
   const header = `# Shopify GraphQL Admin API ${version}, from the introspection of ${origin}, by tools/admin/admin_schema.mjs: do not edit.`;
 

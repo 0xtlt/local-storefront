@@ -21,7 +21,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const schemasOfApis = path.join(here, '../../../schemas/2026-10');
+const schemasOfApis = path.join(here, '../../../schemas/functions/2026-10');
 const [oracleArg, ...only] = process.argv.slice(2);
 if (!oracleArg) {
   console.error('usage: node regenerate.mjs <oracle> [case ...]');

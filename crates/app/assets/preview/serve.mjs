@@ -2,7 +2,7 @@
 // the fixture extensions at the paths the real server uses, with `mock-engine.mjs` standing in
 // for the checkout.
 //
-//   node crates/checkout/assets/preview/serve.mjs [--port 9293] [--variant standard|shop]
+//   node crates/app/assets/preview/serve.mjs [--port 9293] [--variant standard|shop]
 //        [--extensions DIR]   # an app's extensions/ directory, default: the test fixtures
 //        [--state FILE]       # the checkout to start from, default: sample-state.json
 //

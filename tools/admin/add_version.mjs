@@ -1,18 +1,18 @@
 #!/usr/bin/env node
-// Writes everything a version of the Admin API needs in lsf-admin (`mise run admin:version --
+// Writes everything a version of the Admin API needs in lsf-app (`mise run admin:version --
 // 2027-01`), from one introspection (tools/admin/source.mjs: the pinned @shopify/dev-mcp, or
 // shopify.dev's public proxy for a version the package does not ship):
 //
-// - crates/admin/schemas/<version>/: admin.graphql, admin.graphql.br, introspection.graphql
+// - crates/app/schemas/admin/<version>/: admin.graphql, admin.graphql.br, introspection.graphql
 //   (admin_schema.mjs), access.json and search.json (access_scopes.mjs), topics.json
 //   (webhook_topics.mjs);
-// - crates/admin/tests/fixtures/<version>/introspection.json (admin_schema.mjs) and
-//   crates/admin/tests/fixtures/webhooks/examples-<version>.json (webhook_examples.mjs, from
+// - crates/app/tests/fixtures/<version>/introspection.json (admin_schema.mjs) and
+//   crates/app/tests/fixtures/webhooks/examples-<version>.json (webhook_examples.mjs, from
 //   shopify.dev's webhook reference of the version).
 //
-// Then it prints what Shopify says of the version (from the package's list of supported
-// versions), how its schema differs from the default version's (what an adapter or a test may
-// need), and the steps left, which are code: see "Add a version" in crates/admin/docs/design.md.
+// Then it prints what Shopify says of the version (from the package's list of supported versions),
+// how its schema differs from the default version's (what an adapter or a test may need), and the
+// steps left, which are code: see "Add a version" in crates/app/docs/admin/design.md.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -42,7 +42,7 @@ const status =
 const dated = listed.filter((item) => /^\d{4}-\d{2}$/.test(item.name) && !item.releaseCandidate);
 const oldest = dated.map((item) => item.name).sort()[0];
 console.log(`\n${version}: ${entry ? JSON.stringify(entry) : "not in the package's list of supported versions"}`);
-const registry = readFileSync(join(root, "crates/admin/src/version.rs"), "utf8");
+const registry = readFileSync(join(root, "crates/app/src/admin/version.rs"), "utf8");
 const current = /pub const OLDEST_ACCESSIBLE: &str = "([^"]+)";/.exec(registry)?.[1];
 if (oldest && current !== oldest) {
   console.log(`The oldest stable version Shopify supports is now ${oldest}: set OLDEST_ACCESSIBLE (it is ${current}).`);
@@ -58,12 +58,12 @@ if (base !== version) {
 }
 
 console.log(`
-Left to do, in code (crates/admin/docs/design.md, "Add a version"):
-  1. crates/admin/src/version.rs: add \`version!("${version}", ${status}, &[])\` to KNOWN, in date order, and raise COUNT.
+Left to do, in code (crates/app/docs/admin/design.md, "Add a version"):
+  1. crates/app/src/admin/version.rs: add \`version!("${version}", ${status}, &[])\` to KNOWN, in date order, and raise COUNT.
   2. For each field, enum value or payload above that ${version} reads differently from the records,
-     an Adapter in crates/admin/src/version/adapt.rs (a removed field or mutation needs none: the schema refuses it).
-  3. Add to ALL_SCOPES (crates/admin/src/auth/scopes.rs) what the test of every scope names.
-  4. cargo test -p lsf-admin: the payload test compares the builders with the examples of ${version}.`);
+     an Adapter in crates/app/src/admin/version/adapt.rs (a removed field or mutation needs none: the schema refuses it).
+  3. Add to ALL_SCOPES (crates/app/src/admin/auth/scopes.rs) what the test of every scope names.
+  4. cargo test -p lsf-app: the payload test compares the builders with the examples of ${version}.`);
 
 /** What differs between two introspections: types, fields, arguments, input fields, enum values. */
 function differences(before, after) {

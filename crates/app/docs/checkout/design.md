@@ -23,7 +23,7 @@ No `--extension`: every extension of the app is enabled. `--build` runs each Fun
 `[extensions.build] command` before starting.
 
 Store data gets a `checkout` section (model in `lsf-core` `store/model.rs`, validated and in
-the JSON Schema) mapped to `lsf_checkout::CheckoutConfig`:
+the JSON Schema) mapped to `lsf_app::checkout::CheckoutConfig`:
 
 ```json
 "checkout": {
@@ -39,7 +39,7 @@ the JSON Schema) mapped to `lsf_checkout::CheckoutConfig`:
 Defaults when absent: one shipping rate "Standard" 5.00, payment methods "Credit card",
 "Cash on Delivery", "Bank Deposit", no tax.
 
-## App layout read by `lsf_checkout::app`
+## App layout read by `lsf_app::config`
 
 - `shopify.app.toml` (or `shopify.app.*.toml`) at the root: `name`, `client_id`, `handle`.
 - `extensions/*/shopify.extension.toml` (also the legacy `[[extensions]]` array form):
@@ -70,7 +70,7 @@ Findings from the implementation:
   of lsf's binary in all. `runner::host` is therefore its `engine::run` ported, with the same
   wasmtime, WASI and MessagePack: the 588 runs of the test suite give the same output, logs and
   instructions. The providers are function-runner's, to the byte, in one Brotli stream
-  (`providers/`, 1.6 MB). `lsf-checkout` keeps `serde_json/arbitrary_precision`.
+  (`providers/`, 1.6 MB). `lsf-app` keeps `serde_json/arbitrary_precision`.
 - It does not stop a Function (fuel is `u64::MAX`, the epoch never moves): `runner` moves the
   engine's epoch after 10 seconds.
 - A Rust Function built for `wasm32-unknown-unknown` (`shopify_function` 2.x, Wasm API) only runs
@@ -162,7 +162,7 @@ the methods still in `PAYMENT_METHOD`.
 The lines start as the cart lines of the session, priced by `lsf_core::cart::resolve_line`:
 the same `ResolvedLine` the storefront cart (`/cart.js`, the `cart` drop) is computed from, so that
 the selling plan, the quantity price breaks and the compare-at price of a line cannot differ
-between the cart and the checkout. `lsf-checkout` reads them from it and keeps no copy of that logic.
+between the cart and the checkout. `lsf-app` reads them from it and keeps no copy of that logic.
 
 Deferred payments: `resolve_line` also gives the checkout charge of a line, so `ResultLine::deferred`
 (the price of the line less its checkout charge, before discounts) comes from the same code as
@@ -194,7 +194,7 @@ too.
   drawn from the JSON that `?format=json` answers: the Functions and UI extensions of the app
   (`placement.rs` says where the page renders each UI target, from the `placements` of
   `assets/api.json`, which `RENDERED_TARGETS` of `extension-host.js` reads too) and the scenarios with a summary.
-- `GET /checkouts/cn/<token>` → HTML shell: `crates/checkout/assets/checkout.html` with
+- `GET /checkouts/cn/<token>` → HTML shell: `crates/app/assets/checkout.html` with
   `<!--LSF_STATE-->` replaced by the state JSON (escaped for a `<script type="application/json"
   id="lsf-checkout-state">`), `<!--LSF_ASSETS-->` by the asset base `/__lsf/checkout/assets`.
   `?variant=shop` picks the Shop skin.
@@ -203,7 +203,7 @@ too.
   (400 + `{"error": "..."}` for a bad operation).
 - `POST /checkouts/cn/<token>/complete` → 200 `{"redirect": ".../thank-you"}` or 422 + state with `errors`.
 - `GET /checkouts/cn/<token>/thank-you` → same shell, `status: "completed"`.
-- `GET /__lsf/checkout/assets/<file>` → files of `crates/checkout/assets/` (embedded).
+- `GET /__lsf/checkout/assets/<file>` → files of `crates/app/assets/` (embedded).
 - `GET /__lsf/extensions/<handle>/<file>` → the built files of a UI extension (`dist/`).
 - `GET /__lsf/checkout?session=<id>` (control API) → state JSON, for e2e tests.
 
@@ -226,7 +226,7 @@ Cart lines, note and attributes live in the session cart (the same one the theme
 
 ## State JSON (server → page)
 
-`CheckoutResult` serialized (see `crates/checkout/src/types.rs`) plus:
+`CheckoutResult` serialized (see `crates/app/src/checkout/types.rs`) plus:
 
 ```json
 {
@@ -245,7 +245,7 @@ Cart lines, note and attributes live in the session cart (the same one the theme
 }
 ```
 
-## Page and extension host (`crates/checkout/assets/`)
+## Page and extension host (`crates/app/assets/`)
 
 - `checkout.html`, `checkout.css`, `tokens.css`, `checkout.js`: renders the page from the state JSON (no
   framework, ES modules, no build step), sends operations, re-renders from the reply.
@@ -276,14 +276,14 @@ Cart lines, note and attributes live in the session cart (the same one the theme
   panel (`targetsPanel`) of every target of every loaded extension: `shown` (a slot exists),
   without a place (not in `RENDERED_TARGETS`), or waiting for something (`whyNotShown`).
 - `api-versions.js`: the API releases the host runs, `2026-10` and the `2027-01` release
-  candidate, from `api.json` (which lsf-checkout reads too, with the owner types and the
+  candidate, from `api.json` (which lsf-app reads too, with the owner types and the
   targets the page renders); an extension on another version, or declaring its metafields against the rules of
   its version, is not loaded and the page shows why. See `ui-api-versions.md`.
 
 ## Contract between `pipeline` and `input`
 
 ```rust
-// crates/checkout/src/input.rs (owned by the input agent; the engine agent stubs it)
+// crates/app/src/checkout/input.rs (owned by the input agent; the engine agent stubs it)
 pub struct InputContext<'a> {
     pub store: &'a lsf_core::Store,
     pub session: &'a lsf_core::Session,          // customer_id, country, cart note/attributes

@@ -2,7 +2,7 @@
 # Downloads Shopify's Liquid reference into .cache/ (gitignored):
 #   .cache/theme-liquid-docs   machine-readable list of objects, filters and tags (MIT)
 #   .cache/shopify-docs        one markdown page per filter/tag/object, with example outputs
-# The pages are the ground truth for the conformance tests in crates/core/tests/conformance.rs.
+# The pages are the ground truth for the conformance tests in crates/theme/tests/conformance.rs.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

@@ -280,7 +280,7 @@ are one bordered box of rows, the chosen row tinted with its accent border; the 
 has 64px thumbnails with the quantity hanging off a corner, the discount field with its Apply
 button inside, and the Total row.
 
-Everything that sets the look is a CSS custom property in `crates/checkout/assets/tokens.css`,
+Everything that sets the look is a CSS custom property in `crates/app/assets/tokens.css`,
 read by the page and by the frame of the extensions, so that an extension looks like the page
 around it. The defaults are those of a store with no branding: system fonts and a 14px base text
 (`--lsf-font`, `--lsf-font-size-base`, `--lsf-font-step`), black on white and a blue accent

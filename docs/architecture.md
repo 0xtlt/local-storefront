@@ -1,17 +1,21 @@
 # Architecture
 
-Three crates, each depending only on the one before it, and two that stand beside them.
+The store data is one crate, and two sides are built on it: the storefront, which renders a
+theme with Liquid, and the app, which runs the Functions, checkout UI extensions and backend of
+a Shopify app. The command line puts them together.
 
 ```text
+crates/core      lsf-core       the store data, and what the storefront and the app both need of it
 crates/liquid    lsf-liquid     the Liquid language: no knowledge of Shopify
-crates/core      lsf-core       Shopify on top of it: store data, objects, filters, tags, rendering
-crates/checkout  lsf-checkout   the Functions and checkout UI extensions of a Shopify app, on the store data
-crates/admin     lsf-admin      the Admin API (GraphQL, 2026-10) and the webhooks of a Shopify app, on the store data
-crates/cli       lsf            the command line and the HTTP server
+crates/theme     lsf-theme      Shopify's storefront on Liquid: objects, filters, tags, rendering
+crates/app       lsf-app        a Shopify app: its checkout, its Admin API (GraphQL, 2026-10) and webhooks
 crates/fmt       lsf-fmt        the formatter of `lsf fmt`: a source in, a source out
+crates/cli       lsf-cli        the command line and the HTTP server: the `lsf` binary
 ```
 
-`lsf-checkout` uses `lsf-core` for the store and the session; `lsf` uses both.
+`lsf-theme` uses `lsf-liquid` and `lsf-core`; `lsf-app` uses `lsf-core` alone, so that neither
+it nor `lsf-core` builds Liquid or the renderer, and `lsf-theme` builds no Wasm runtime.
+`lsf-cli` uses them all.
 
 ## `lsf-liquid`: the language
 
@@ -42,19 +46,32 @@ suite, and fails when fewer pass than its recorded baselines. `tests/strict2_spe
 the strict parser against the liquid-spec specs that run in `strict2` mode, and
 `mise run oracle:strict2-fixes` renders the fixes with the gem.
 
-## `lsf-core`: Shopify
+## `lsf-core`: the store data
+
+What the storefront and the app both read, and nothing that renders Liquid.
 
 | Module | Role |
 |---|---|
 | `store/model` | The input format, as serde types. Their doc comments are the user documentation: the JSON Schema and the field reference are generated from them. |
 | `store/validate` | JSON Schema validation, turned into diagnostics with a code, a JSON pointer and a hint. |
-| `store/load`, `store/build` | Read and merge the data files, then resolve them into a `Store`: defaults, ids, handles, references between entities, with semantic diagnostics. The files of `checkouts/` are not merged: each is a checkout scenario, resolved against the store (`Store::scenarios`) and kept with its errors when it has some. |
-| `theme/` | Access to a theme directory: cached and revalidated files, parsed Liquid, section schemas, JSON templates, locales. |
+| `store/load`, `store/build` | Read and merge the data files, then resolve them into a `Store`: defaults, ids, handles, references between entities, dates (ISO 8601, `store/date`), with semantic diagnostics. The files of `checkouts/` are not merged: each is a checkout scenario, resolved against the store (`Store::scenarios`) and kept with its errors when it has some. |
+| `session`, `cart` | The visitor's state (cart, customer, country), and its cart lines resolved against the store: what a line costs, which the storefront cart and the checkout both show. |
+| `theme` | A theme as files on disk: the directories it is made of, cached and revalidated reads, the files the Admin API writes over them (`FileOverlay`), and which theme of the shop it is. |
+| `color`, `money`, `urls` | Values both sides print: CSS colors, amounts in a shop's money format, percent-encoding and the pieces of CDN URLs. |
+| `util`, `json`, `diagnostics`, `error` | Handles and stable ids, lenient JSON, the diagnostics of the store data, errors. |
+
+Tests: unit tests next to the code, `tests/docs.rs` (the generated reference is current).
+
+## `lsf-theme`: Shopify's storefront
+
+| Module | Role |
+|---|---|
+| `theme/` | A theme directory read through `lsf-core`'s files: parsed Liquid, section schemas, JSON templates, locales. |
 | `drops/` | Shopify's Liquid objects, backed by the `Store`, the session and the request. Properties are computed on demand. |
 | `filters/`, `tags/` | Shopify's filters and tags (`section`, `sections`, `content_for`, `form`, `paginate`, `render` with blocks, ...). |
 | `render/` | URL → template (`routes`), settings resolution, sections and blocks, layouts, the Section Rendering API, the compiled stylesheet and script bundles, and what Shopify injects into pages (`platform`). |
 | `assets/platform/` | The JavaScript counterparts of Shopify's own scripts (`Shopify.actions`, `Shopify.loadFeatures`), embedded in the binary and served from the local CDN, with Shopify's global assets (`themes_support/`, see its README). Tested with Node's test runner (`mise run test:js`). |
-| `images`, `fonts`, `urls` | Image transformations, the format an image is sent in (JPEG, PNG, WebP or AVIF, by what the client accepts) and placeholders, the blank fallback font, local CDN URLs. |
+| `images`, `fonts`, `urls` | Image transformations, the format an image is sent in (JPEG, PNG, WebP or AVIF, by what the client accepts) and placeholders, the blank fallback font, the local CDN URLs of a site. |
 | `site` | What one render sees: theme, store, request, session, clock. |
 
 A render is a pure function of `(theme, store, request, session, now)`: `Renderer::render`
@@ -64,19 +81,27 @@ reading theme files, which is what makes it fast and reproducible.
 Tests: unit tests next to the code, `tests/render.rs` (a fixture theme rendered against the
 demo store, with HTML snapshots), `tests/conformance.rs` (the examples of shopify.dev,
 downloaded by `mise run docs:fetch`; it also fails when Shopify documents a filter or a tag lsf
-lacks), `tests/docs.rs` (the generated reference is current).
+lacks), `tests/overlay.rs` (the files the Admin API writes over the theme).
 
-## `lsf-checkout`: the checkout of an app
+## `lsf-app`: a Shopify app
 
 Reads a Shopify app, runs its Functions against a cart and describes the checkout the buyer
-sees. It does not serve anything: `lsf` does, with `lsf app dev`, `lsf serve --app` and
-`lsf app function run`.
-Its design, and what each supported Shopify API release changes, are in
-`crates/checkout/docs/` (`design.md`, `api-versions.md`, `ui-api-versions.md`).
+sees, and serves the Admin API and the webhooks its backend talks to. It does not serve anything
+itself: `lsf` does, with `lsf app dev`, `lsf serve --app` and `lsf app function run`.
 
 | Module | Role |
 |---|---|
-| `app` | Reads `shopify.app.toml` and `extensions/*/shopify.extension.toml`: Functions, checkout UI extensions, the others listed and ignored. What is wrong with the app (a missing build, an unknown target) is a diagnostic, not an error. `Selection` is the set of extensions in use (`--extension`). |
+| `config` | Reads `shopify.app.toml` and `extensions/*/shopify.extension.toml`: Functions, checkout UI extensions, the others listed and ignored. What is wrong with the app (a missing build, an unknown target) is a diagnostic, not an error. `Selection` is the set of extensions in use (`--extension`). `config::version` holds the API releases and the Function schemas of each (`schemas/functions/`). |
+| `checkout` | The checkout, below. |
+| `admin` | The Admin API, below. |
+
+### `checkout`
+
+Its design, and what each supported Shopify API release changes, are in
+`crates/app/docs/checkout/` (`design.md`, `api-versions.md`, `ui-api-versions.md`).
+
+| Module | Role |
+|---|---|
 | `input` | Builds the input of a Function: runs its GraphQL input query against the cart, the buyer and the store (a small executor over a resolver of the Function input graph). |
 | `runner` | Runs a Wasm module as Shopify's own `function-runner` runs it (`runner::host`, its engine ported, with the providers of `providers/`), runs every Function on one engine (a module is compiled once, whatever the number of runs at once; at most one run per CPU), caches the compiled modules by path, time and size, stops a Function after 10 seconds, and reports logs, instructions and errors. |
 | `pipeline` | `compute`: the Functions in the order Shopify runs them, applying each output, to a `CheckoutResult`. |
@@ -85,10 +110,22 @@ Its design, and what each supported Shopify API release changes, are in
 
 `assets/` holds the checkout page and `extension-host.js`, which runs each extension in a
 sandboxed frame (`sandbox.html`; its scripts are classic scripts, since the frame has an opaque
-origin and cannot load modules). They need no build step. Tests: the unit tests, `tests/` against
-the fixture app (`tests/fixtures/app`: Rust Functions whose `dist/function.wasm` is committed and
-two built UI extensions; `mise run fixtures:functions` rebuilds the Functions), and Node's test
-runner for the scripts (`mise run test:js`).
+origin and cannot load modules). They need no build step.
+
+### `admin`
+
+The GraphQL Admin API of a shop seeded from the store data, in the versions of `admin::version`
+(their schemas in `schemas/admin/`), the OAuth endpoints, the webhooks of the app, and the sync
+that writes what the backend changed back into the store data. It reads the app and the
+checkout's types directly. Its design, and what each module owns, are in
+`crates/app/docs/admin/design.md`.
+
+Tests: the unit tests, and `tests/` against the fixture apps (`tests/fixtures/app`: Rust
+Functions whose `dist/function.wasm` is committed and two built UI extensions,
+`mise run fixtures:functions` rebuilds the Functions; `tests/fixtures/admin-app` and
+`tests/fixtures/platform-app` for the Admin API) and the `rich` store. `tests/sync.rs` renders
+pages with `lsf-theme`, a dev-dependency, to check that what the backend changes shows in the
+storefront. Node's test runner tests the scripts (`mise run test:js`).
 
 ## `lsf-fmt`: the formatter
 
@@ -117,7 +154,7 @@ Tests: unit tests next to the code; `tests/golden.rs` formats the cases of
 `tests/plugin_fixtures.rs` replays the tests of the plugin itself, downloaded by
 `mise run prettier:fixtures`, and fails when fewer pass than its recorded baseline.
 
-## `lsf`: commands and server
+## `lsf-cli`: commands and server
 
 `commands/` holds one file per subcommand (`app.rs` is `lsf app`: `app dev` is `serve` without a theme, `App::open_without_theme`, and `app init` (`app_init.rs`) writes the checkout scenarios for an app; `app function run` runs the pipeline once). `server/` is the HTTP side:
 
@@ -132,9 +169,9 @@ Tests: unit tests next to the code; `tests/golden.rs` formats the cases of
 | `compress` | Brotli or gzip for the responses that gain from it, by what the client accepts. |
 | `control` | The `/__lsf` API. |
 | `home` | `--app`: the home page (`/` of `lsf app dev`, `/__lsf/checkouts`) and the notices that say why a scenario did not open: HTML in the look of the checkout, drawn from the JSON of `?format=json`. |
-| `checkout` | `--app`: the pages at `/checkouts/cn/<token>`, `/checkout?scenario=<name>`, the operations the page sends, the files of the page and of the extensions. What the buyer chose is in the session (`SessionEntry::checkout`), next to the cart they share with the theme. The options, the mapping from the store data to `lsf_checkout::CheckoutConfig` and the build of the Functions are in `src/checkout.rs`. |
-| `app_proxy` | `--app` with an `[app_proxy]`: `/<prefix>/<subpath>` and below (a locale prefix too), routed after `/__lsf` and `/cdn` and before the theme's pages, forwarded with `ureq` to the backend from the blocking thread of the request, the query signed with `lsf_admin::auth::app_proxy_signature` and the client secret of the Admin API, the headers as Shopify forwards and strips them. An answer in `application/liquid` is rendered by `Renderer::render_source` of `lsf-core`, as a Liquid template inside the theme's layout. |
-| `../profile` | Shared by `lsf profile` and `/__lsf/profile`: renders a page several times with the profiler, keeps the render in the middle, and writes it as a tree of text or in the format of speedscope, in time or in points. `lsf-core` adds the frames Liquid does not know (`render`, a JSON template, `section <id>`, `block <key>`) and the costs (`render/cost`): the objects charge for what they load where they are created. |
+| `checkout` | `--app`: the pages at `/checkouts/cn/<token>`, `/checkout?scenario=<name>`, the operations the page sends, the files of the page and of the extensions. What the buyer chose is in the session (`SessionEntry::checkout`), next to the cart they share with the theme. The options, the mapping from the store data to `lsf_app::checkout::CheckoutConfig` and the build of the Functions are in `src/checkout.rs`. |
+| `app_proxy` | `--app` with an `[app_proxy]`: `/<prefix>/<subpath>` and below (a locale prefix too), routed after `/__lsf` and `/cdn` and before the theme's pages, forwarded with `ureq` to the backend from the blocking thread of the request, the query signed with `lsf_app::admin::auth::app_proxy_signature` and the client secret of the Admin API, the headers as Shopify forwards and strips them. An answer in `application/liquid` is rendered by `Renderer::render_source` of `lsf-theme`, as a Liquid template inside the theme's layout. |
+| `../profile` | Shared by `lsf profile` and `/__lsf/profile`: renders a page several times with the profiler, keeps the render in the middle, and writes it as a tree of text or in the format of speedscope, in time or in points. `lsf-theme` adds the frames Liquid does not know (`render`, a JSON template, `section <id>`, `block <key>`) and the costs (`render/cost`): the objects charge for what they load where they are created. |
 | `speedscope` | The viewer of flame graphs, served from the binary for `/__lsf/profile?...&html=1`. Its files are in `assets/speedscope/`, with their licenses. |
 | `timing` | The `Server-Timing` header of each response, and the render times `/__lsf/timings` adds up: a histogram per template, per section and per theme block, so that they take the same room after a million pages. |
 | `live_reload` | `--live-reload`: the WebSocket open pages listen on, and the task that looks at the theme and data directories while a page listens. The script it injects is `assets/live-reload.js`, tested with Node (`mise run test:js`). |
@@ -158,7 +195,7 @@ mise run prettier:golden   # regenerate the golden expectations of the formatter
 mise run prettier:fixtures # download the tests of the plugin, which the formatter's tests replay
 mise run prettier:compare -- path/to/theme   # list the files `lsf fmt` and Prettier disagree on
 mise run oracle:strict2-fixes                # check the fixes of `lsf check --fix` with the gem
-mise run admin:schema                        # regenerate the Admin API schema of lsf-admin from the pinned @shopify/dev-mcp
+mise run admin:schema                        # regenerate the Admin API schema of lsf-app from the pinned @shopify/dev-mcp
 mise run admin:access-scopes                 # regenerate its access scopes and search filters
 mise run admin:topics                        # regenerate its webhook topics
 mise run admin:webhook-examples              # download Shopify's example webhook payloads the payload tests compare with
@@ -242,4 +279,5 @@ builds target glibc 2.17 whatever the runner has. The Rust version comes from `m
 
 After changing the data model, regenerate the field reference with
 `UPDATE_SNAPSHOTS=1 cargo test -p lsf-core --test docs`; after an intentional change of the
-rendered HTML, regenerate the snapshots with `UPDATE_SNAPSHOTS=1 cargo test -p lsf-core --test render`.
+rendered HTML, regenerate the snapshots with
+`UPDATE_SNAPSHOTS=1 cargo test -p lsf-theme --test render`.

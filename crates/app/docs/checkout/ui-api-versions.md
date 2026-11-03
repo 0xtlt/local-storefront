@@ -2,8 +2,8 @@
 
 The local checkout runs checkout UI extensions built for **2026-10** (stable) and **2027-01**
 (release candidate, stable on 2027-01-01). Nothing else: an extension on another `apiVersion` is
-not loaded and the page says why. The list is the `releases` of `crates/checkout/assets/api.json`,
-which the page (`api-versions.js`) and lsf-checkout (`ApiVersion`) both read; adding a release is
+not loaded and the page says why. The list is the `releases` of `crates/app/assets/api.json`,
+which the page (`api-versions.js`) and lsf-app (`ApiVersion`) both read; adding a release is
 one entry there. The same file has the owner types and the targets the page renders.
 
 ## What differs between 2026-10 and 2027-01
@@ -81,11 +81,11 @@ Sources: [owner_type changelog (2026-10-08)](https://shopify.dev/changelog/posts
   sandbox has no version switch: it is one code path.
 - State JSON: `extensions[].metafields` is the list of declarations,
   `[{"namespace", "key", "ownerType"?}]` (`ownerType` is the toml's `owner_type`). Absent means
-  none declared. `crates/checkout/src/app.rs` reads them from `[[extensions.metafields]]` and
+  none declared. `crates/app/src/config.rs` reads them from `[[extensions.metafields]]` and
   reports a missing `owner_type` on 2027-01 as an error diagnostic; an extension whose
   `api_version` is not supported is an error too and is left out of `extensions`.
 
-## Fixtures (`crates/checkout/tests/fixtures/app/extensions/`)
+## Fixtures (`crates/app/tests/fixtures/app/extensions/`)
 
 | Extension | API | Specific to its version |
 | --- | --- | --- |
@@ -98,7 +98,7 @@ Sources: [owner_type changelog (2026-10-08)](https://shopify.dev/changelog/posts
 `EventTarget`"); that is a false positive: Shopify's own `s-number-field` migration example
 fails the same way.
 
-Preview: `node crates/checkout/assets/preview/serve.mjs`, then `/` and `/?variant=shop`. Add
+Preview: `node crates/app/assets/preview/serve.mjs`, then `/` and `/?variant=shop`. Add
 `?apiVersion=order-notice:2025-07` to see the page refuse an extension.
 
 ## Removed

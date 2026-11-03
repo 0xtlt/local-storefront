@@ -37,7 +37,7 @@ the same data every run.
   - the app: billing, discounts and Function settings, bulk operations, staged uploads,
     `appUninstall`, scope revocation, Flow triggers, point of sale.
 
-  A failed mutation changes nothing. `crates/admin/tests/coverage.rs` fails if a mutation of a
+  A failed mutation changes nothing. `crates/app/tests/coverage.rs` fails if a mutation of a
   version lsf serves is not simulated. Guide: [Admin API](docs/admin.md).
 - **API version 2027-01, the release candidate, on demand.** `--admin-versions 2026-10,2027-01`
   serves it next to 2026-10, each at its own `/admin/api/<version>/graphql.json`, with its own
@@ -142,6 +142,20 @@ the same data every run.
   `{"redirect", "order": {"id", "number", "name"}}`, as the Admin API recorded it. Match a
   webhook by `order.id`. The thank-you page keeps the session's number, which can differ
   (`#1004` there, `#1005` in the Admin API when the shop has a `#1004` already).
+- **The dates of the store data are ISO 8601 only:** a day (`2024-05-01`), or a day and a time
+  (`2024-05-01T10:00:00`, or a space for the `T`) with `Z`, an offset or neither, for the shop's
+  `timezone`; `now` too. The other forms that Liquid's `date` filter reads were accepted as well,
+  and are now an `invalid_date` error: `May 1, 2024`, `2024/05/01`, `05/01/2024`, `2024-5-1`,
+  RFC 2822 (`Wed, 01 May 2024 10:00:00 +0000`), an offset after a space
+  (`2024-05-01 10:00:00 +0200`), a comma before the fraction of a second, and a time alone
+  (`10:00`, which took the day 2024-01-01). None of the examples or guides used one. The `date`
+  filter of a theme still reads them all.
+- **For contributors, the crates are split along what they need.** `lsf-core` is the store data
+  and what the storefront and the app share of it, `lsf-theme` the renderer (the old `lsf-core`),
+  `lsf-app` the app (`lsf-checkout` and `lsf-admin` in one crate: `config`, `checkout`, `admin`)
+  and `lsf-cli` the command line: `cargo build -p lsf-cli` builds `lsf`. `lsf-app` and
+  `lsf-core` build without Liquid or the renderer. Nothing else changes for someone who uses
+  `lsf`. [Architecture](docs/architecture.md).
 
 ### Fixed
 

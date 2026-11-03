@@ -41,7 +41,7 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
 
 Every mutation of the versions lsf serves (2026-10, and [2027-01](admin.md#api-versions) when
 asked) is simulated, and every query answered (`GET /__lsf/admin` lists the mutations,
-`mutations`; for contributors, `crates/admin/tests/coverage.rs` fails when a version brings one
+`mutations`; for contributors, `crates/app/tests/coverage.rs` fails when a version brings one
 that is not). Simulated means:
 
 - **Checked as Shopify checks**: the input is validated, and what is wrong answers the
@@ -341,7 +341,7 @@ What lsf chose where Shopify does not say, or where a local tool must differ:
   the total for `PAID`). `fulfillmentCancel` does not put the shipped units back in stock.
 - Messages Shopify does not publish are lsf's, in Shopify's form; those it does publish (in the
   reference's examples, or quoted from real answers) are word for word. For contributors, the
-  sources are in the doc comments of `crates/admin/src/domains/orders/`.
+  sources are in the doc comments of `crates/app/src/admin/domains/orders/`.
 - The `returns/*` payloads list no return line items (Shopify's examples have none, and lsf does
   not know their shape): read them through the API. `returns/update` lists the return line
   items a change removed, as its example does.
