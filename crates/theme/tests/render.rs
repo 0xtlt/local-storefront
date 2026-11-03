@@ -1113,6 +1113,43 @@ fn a_video_file_in_a_metaobject_is_a_video() {
 }
 
 #[test]
+fn an_apps_own_metaobject_type_is_found_by_either_name() {
+    // The store data writes an app's own type `$app:author`. A theme names it with the app's id
+    // (its real one, which lsf does not know), an app's extension with `$app`: both find the
+    // entry, and so does a reference to it.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "$app:author": [{
+                "handle": "jane",
+                "fields": { "name": { "type": "single_line_text_field", "value": "Jane Austen" } }
+            }],
+            "book": [{
+                "handle": "emma",
+                "fields": { "author": { "type": "metaobject_reference", "value": "$app:author/jane" } }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{{ metaobjects['app--123456--author'].jane.name }}|\
+         {% for author in metaobjects['$app:author'].values %}{{ author.name }}{% endfor %}|\
+         {{ metaobjects.book.emma.author.value.name }}",
+    );
+    assert_eq!(output, "Jane Austen|Jane Austen|Jane Austen");
+}
+
+#[test]
 fn metafield_values_are_the_objects_shopify_gives() {
     let overlay = serde_json::json!({
         "metaobjects": {

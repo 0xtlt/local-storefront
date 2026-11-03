@@ -2330,7 +2330,6 @@ dependencies = [
  "hmac",
  "indexmap 2.14.2",
  "lsf-core",
- "lsf-theme",
  "md-5",
  "oxc",
  "regex",

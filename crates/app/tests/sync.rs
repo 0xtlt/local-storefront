@@ -1,11 +1,10 @@
 //! Store sync: records changed the way the mutations change them, projected to an overlay of the
 //! store data, then loaded with it. What the backend changes through the Admin API must show in
-//! the storefront and the checkout, and nothing else may change.
+//! the storefront and the checkout, and nothing else may change. The pages themselves are checked
+//! where the Admin API and the storefront meet, in the server tests of lsf-cli
+//! (`crates/cli/src/server/tests/store_sync.rs`).
 
 mod support;
-
-use std::path::Path;
-use std::sync::Arc;
 
 use lsf_app::admin::domains::{app, catalog, content, customers};
 use lsf_app::admin::graphql::{self, Request};
@@ -162,38 +161,6 @@ fn create_product(
     product
 }
 
-fn renderer() -> lsf_theme::Renderer {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
-    let env = Arc::new(lsf_theme::environment());
-    let theme = lsf_theme::Theme::open(&directory, env, lsf_core::theme::Revalidate::Never)
-        .expect("the fixture theme of lsf-theme");
-    lsf_theme::Renderer::new(Arc::new(theme))
-}
-
-fn page(renderer: &lsf_theme::Renderer, store: &Arc<Store>, path: &str) -> lsf_theme::Rendered {
-    renderer.render(
-        store.clone(),
-        lsf_theme::Request::new("shop.test", path),
-        lsf_core::Session::initial(store),
-        &lsf_theme::render::Target::Page,
-    )
-}
-
-/// Renders a piece of Liquid as part of the page at `path`.
-fn liquid(renderer: &lsf_theme::Renderer, store: &Arc<Store>, path: &str, source: &str) -> String {
-    let site = renderer.site(
-        store.clone(),
-        lsf_theme::Request::new("shop.test", path),
-        lsf_core::Session::initial(store),
-    );
-    let resolved = lsf_theme::render::routes::resolve(&site);
-    let (output, errors) = renderer
-        .render_liquid(&site, resolved, source, &[])
-        .expect("the Liquid parses");
-    assert!(errors.is_empty(), "{errors:?}");
-    output
-}
-
 #[test]
 fn nothing_changed_gives_no_overlay() {
     let (store, mut state) = rich();
@@ -269,28 +236,6 @@ fn a_created_product_is_on_the_storefront() {
             .products
             .iter()
             .any(|index| store.products[*index].handle == "wool-hat")
-    );
-
-    // On the theme's pages: its own, and the collection's.
-    let store = Arc::new(store);
-    let renderer = renderer();
-    let rendered = page(&renderer, &store, "/products/wool-hat");
-    assert_eq!(rendered.status, 200);
-    assert!(
-        rendered.body.contains("<h1>Wool Hat</h1>"),
-        "{}",
-        rendered.body
-    );
-    let rendered = page(&renderer, &store, "/collections/summer");
-    assert!(rendered.body.contains("Wool Hat"), "{}", rendered.body);
-    assert_eq!(
-        liquid(
-            &renderer,
-            &store,
-            "/products/wool-hat",
-            "{{ product.metafields.custom.care.value }}"
-        ),
-        "Hand wash"
     );
 }
 
@@ -443,12 +388,6 @@ fn a_draft_or_unpublished_product_leaves_the_storefront() {
     let zoe = store.customer_by_email("zoe@example.com").unwrap();
     assert_eq!(zoe.orders[0].line_items.len(), 1);
     assert!(zoe.orders[3].line_items.is_empty());
-    // Its page is not found.
-    let store = Arc::new(store);
-    assert_eq!(
-        page(&renderer(), &store, "/products/coffee-subscription").status,
-        404
-    );
 }
 
 #[test]
@@ -704,18 +643,6 @@ fn metafields_reach_liquid_and_the_function_inputs() {
     assert_eq!(market.countries, ["FR", "DE"]);
     assert_eq!(store.countries.len(), base.countries.len());
 
-    // Liquid reads them as it reads those of the files.
-    let store = Arc::new(store);
-    let renderer = renderer();
-    assert_eq!(
-        liquid(
-            &renderer,
-            &store,
-            "/products/preorder-boots",
-            "{{ product.metafields.custom.pairs_with.value.title }}|{{ product.metafields.custom.sizes.value | join: ',' }}|{{ shop.metafields.custom.banner }}"
-        ),
-        "Linen Dress|38,39|Spring sale"
-    );
     // The Function inputs read the metafields of the store.
     let query = r#"query Input { cart { lines { merchandise { ... on ProductVariant { product { metafield(namespace: "custom", key: "pairs_with") { value } } } } } } shop { metafield(namespace: "custom", key: "banner") { value } } }"#;
     let input = function_input(&store, "preorder-boots", query);
@@ -1111,19 +1038,6 @@ fn the_metaobjects_of_an_app_type_reach_the_storefront_and_the_functions() {
     assert_eq!(
         product.metafields["custom"]["author"].value,
         json!("$app:author/jane")
-    );
-    // A theme names the type with the app's id (its real one, which lsf does not know), an
-    // app's extension with `$app`: both find the entry.
-    let store = Arc::new(store);
-    let renderer = renderer();
-    assert_eq!(
-        liquid(
-            &renderer,
-            &store,
-            "/products/linen-dress",
-            "{{ metaobjects['app--123456--author'].jane.name }}|{% for author in metaobjects['$app:author'].values %}{{ author.name }}{% endfor %}|{{ product.metafields.custom.author.value.name }}",
-        ),
-        "Jane Austen|Jane Austen|Jane Austen"
     );
     // A Function's input query names it by `$app:author`.
     let input = function_input(

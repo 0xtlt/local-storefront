@@ -123,9 +123,9 @@ checkout's types directly. Its design, and what each module owns, are in
 Tests: the unit tests, and `tests/` against the fixture apps (`tests/fixtures/app`: Rust
 Functions whose `dist/function.wasm` is committed and two built UI extensions,
 `mise run fixtures:functions` rebuilds the Functions; `tests/fixtures/admin-app` and
-`tests/fixtures/platform-app` for the Admin API) and the `rich` store. `tests/sync.rs` renders
-pages with `lsf-theme`, a dev-dependency, to check that what the backend changes shows in the
-storefront. Node's test runner tests the scripts (`mise run test:js`).
+`tests/fixtures/platform-app` for the Admin API) and the `rich` store. `lsf-app` does not render pages, not
+even in its tests: that what the backend changes shows in the storefront is tested by lsf-cli
+(`crates/cli/src/server/tests/store_sync.rs`). Node's test runner tests the scripts (`mise run test:js`).
 
 ## `lsf-fmt`: the formatter
 

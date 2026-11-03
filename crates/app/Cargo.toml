@@ -61,7 +61,5 @@ md-5 = "0.11"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]
-# The storefront renders what the Admin API changed, in the sync tests (`tests/sync.rs`).
-lsf-theme.workspace = true
 # The modules of the tests, written as text.
 wasmtime = { version = "=39.0.1", default-features = false, features = ["wat"] }
