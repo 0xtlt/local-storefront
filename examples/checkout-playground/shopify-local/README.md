@@ -61,6 +61,21 @@ shopify-local/
   README.md             this document
 ```
 
+**Starting from your own data.** The files of the demo store name each other:
+`collections.json`, `menus.json` and the `selling_plan_groups` of `store.json` name its
+products, `menus.json` names its pages and its blog, and `gift_cards.json` names a product and
+a customer. Replace `products/` and `customers.json` with yours, and edit `collections.json`
+and `menus.json`. Delete what you don't need: `gift_cards.json`, the `selling_plan_groups` of
+`store.json`. Then run `npx local-storefront validate`: each name left over is an error
+(`unknown_product`, `unknown_reference`, `unknown_customer`) with its file and pointer. Keep
+`schema/`, for your editor.
+
+No error points at the rest of the demo content, so replace it too: the shop's name in
+`store.json` (`Local Supply Co.`), the pages of `pages.json` and the articles of `blogs.json`
+(or delete them, with their links in `menus.json`). The demo's automated
+[collections](#collections) pick products by `type` and by the tag `sale`: give yours a `type`
+and `tags`, or these collections stay empty.
+
 Every `*.json` file at the root is a **data file**: an object with any of the keys `shop`,
 `products`, `collections`, `pages`, `blogs`, `menus`, `customers`, `companies`, `gift_cards`,
 `selling_plan_groups`, `locations`, `swatches`, `metaobjects`, `localization`, `files`,
@@ -95,8 +110,9 @@ all, and a running server serves them at `/__lsf/schema/<kind>`.
   explicitly only to reproduce a specific Shopify id.
 - **Money** is an integer number of cents (`1999`) or a decimal string (`"19.99"`). A JSON
   float (`19.99`) is rejected, because it is ambiguous. Liquid sees cents, as on Shopify.
-- **Dates** are ISO 8601 strings: `"2024-05-01"` or `"2024-05-01T10:00:00Z"`. Entities without
-  dates get fixed ones, so renders are reproducible.
+- **Dates** are ISO 8601 strings: a day, `"2024-05-01"`, or a day and a time,
+  `"2024-05-01T10:00:00Z"`, with `Z`, an offset (`+02:00`) or neither, for the shop's
+  `timezone`. Entities without dates get fixed ones, so renders are reproducible.
 - **References** between entities use handles (products, collections, pages, blogs), emails
   (customers) and SKUs or ids (variants). A reference to something that does not exist is an
   error, with a suggestion when a close match exists.
@@ -561,7 +577,7 @@ Each gift card has a page rendered by `templates/gift_card.liquid`. Its URL is l
 ## Checkout
 
 The `checkout` section sets up the local checkout of a Shopify app (`npx local-storefront
-checkout --app <dir>`, see [checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md)). Every field has a default, and the section
+app dev --app <dir>`, see [checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md)). Every field has a default, and the section
 changes nothing for a theme.
 
 ```json
@@ -659,7 +675,9 @@ Every field is optional.
   those of the others.
 - `variant` is the look: `standard` or `shop`. `?variant=` in the URL still wins.
 - `extensions` lists the handles of the extensions (Functions and checkout UI extensions) that
-  run. The others of the app are left out. It narrows what `--extension` allows.
+  run. The others of the app are left out. It narrows what `--extension` allows. A Function you
+  add to the app later is not in the `extensions` of the scenarios written before it: add its
+  handle, or remove the list to run every extension.
 
 A scenario that does not validate is still listed, with its errors, and cannot be opened.
 `validate` reports it with the file `checkouts/<name>.json` and a pointer into it
@@ -826,12 +844,12 @@ find them, whatever the id, since the store data does not know it.
 | `classic_customer_accounts` | A warning: `shop.customer_accounts` or a customer's `password`, which classic customer accounts had. The field is ignored. |
 | `missing_field` | A required field is absent. |
 | `wrong_type` | A value of the wrong JSON type. |
-| `invalid_value`, `invalid_format` | A value outside what the field accepts. |
-| `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. |
+| `invalid_value`, `invalid_format` | A value outside what the field accepts, or not in its format. Money as a JSON float (`19.99`) is an `invalid_value`, and a string that is not an amount (`"19.999"`) an `invalid_format`; the hint says what the field takes. |
+| `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. `invalid_money` is a shipping rate below zero. |
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
 | `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
-| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. |
+| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
@@ -844,6 +862,12 @@ find them, whatever the id, since the store data does not know it.
 | `gift_card_balance` (warning) | A gift card whose balance is above its initial value. |
 
 `path` is always a JSON pointer into `file`, so the value to fix can be located mechanically.
+
+A product or a customer with a value that cannot be read (a `wrong_type`, an `invalid_value`,
+an `invalid_format`, a `missing_field`) is left out, so each reference to it is an error too:
+an `unknown_product`, `unknown_variant`, `unknown_customer` or `unknown_reference` in another
+file. Fix the errors in `products/` and `customers.json` first, and run `validate` again before
+you edit a reference.
 
 ## Field reference
 

@@ -565,6 +565,16 @@
       "description": "A discount backed by a discount Function of the app.",
       "type": "object",
       "properties": {
+        "id": {
+          "description": "The number of the discount's id, which its Function reads\n(`gid://shopify/DiscountAutomaticNode/<id>`, or `DiscountCodeNode` with a code) and the\nAdmin API gives it. Defaults to its position in the list, from 1.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
         "function": {
           "description": "The handle of the discount Function in the app.",
           "type": "string"
