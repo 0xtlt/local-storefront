@@ -547,14 +547,14 @@ fn describe(
         facts.push(country.clone());
     }
     facts.push(language.iso_code.clone());
-    lines.push((
-        "Country, language",
+    // With neither, the store's default: the shop's country, where the storefront opens too.
+    let country = country.unwrap_or_else(|| {
         format!(
-            "{}, {}",
-            country.as_deref().unwrap_or("the store's first country"),
-            language.name
-        ),
-    ));
+            "{} by default",
+            store.default_country().iso_code.to_ascii_uppercase()
+        )
+    });
+    lines.push(("Country, language", format!("{country}, {}", language.name)));
 
     let mut typed = Vec::new();
     if let Some(email) = &entered.email {

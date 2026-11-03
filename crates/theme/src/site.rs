@@ -140,13 +140,14 @@ impl Site {
             .get_or_init(|| self.theme.schema_translations(&self.request.locale))
     }
 
-    /// The country the visitor shops in.
+    /// The country the visitor shops in: the one they selected, else the store's default
+    /// ([`lsf_core::Store::default_country`]), the one the checkout opens in.
     pub fn country(&self) -> &lsf_core::store::Country {
         self.session
             .country
             .as_deref()
             .and_then(|code| self.store.country(code))
-            .unwrap_or(&self.store.countries[0])
+            .unwrap_or_else(|| self.store.default_country())
     }
 
     /// The currency prices are displayed in.

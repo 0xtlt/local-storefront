@@ -699,7 +699,10 @@ store has none: `npx local-storefront app init` writes a set.
 The first language is the primary one, served at `/`. The others are served under
 `/<iso_code>/` (`/fr/products/blue-shirt`) and use the theme's `locales/<iso_code>.json`.
 Names and currencies of countries default to built-in values. The localization form
-(`{% form 'localization' %}`) switches the session's country and language.
+(`{% form 'localization' %}`) switches the session's country and language. A visitor who
+selected no country is in the shop's (`shop.address.country_code`), the one of its primary
+market, on the storefront as at the checkout; in the first country when the store does not sell
+to the shop's.
 
 `markets` groups countries the way Shopify's markets do. The checkout Functions read the
 market of the buyer (`localization.market`) and of an address (`MailingAddress.market`):

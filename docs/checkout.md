@@ -1094,7 +1094,9 @@ A buyer with no address and no selected country is in the shop's country
 (`shop.address.country_code`), the one of its primary market, as on Shopify. The Functions read
 it as `localization.country`, the extensions as `shopify.localization.country`, and the
 address form starts on it. Both read the same `market`. A shop in a country the store does not
-sell to uses the first country of the store.
+sell to uses the first country of the store. The storefront shows the same country to a visitor
+who selected none (Liquid's `localization.country`, `Shopify.country`), so the checkout opens in
+the country they browsed in.
 
 The state has the lines, discounts, discount codes, delivery groups, payment methods, errors and
 cost that the Functions produced, `runs` (a run of a `.fetch` target has its `exchange`, the

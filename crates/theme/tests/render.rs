@@ -258,6 +258,42 @@ fn translations_follow_the_locale() {
 }
 
 #[test]
+fn a_visitor_who_selected_no_country_is_in_the_shops_country() {
+    // The demo shop is in Ottawa, and the United States come first in its countries: the
+    // storefront opens in Canada, the country the checkout opens in.
+    let fixture = fixture();
+    assert_eq!(fixture.store.shop.address.country_code, "CA");
+    assert_eq!(fixture.store.countries[0].iso_code, "US");
+    assert_eq!(fixture.store.default_country().iso_code, "CA");
+    let country = "{{ localization.country.iso_code }}";
+    let output = fixture.liquid("/", Session::initial(&fixture.store), country);
+    assert_eq!(output, "CA");
+    assert!(fixture.page("/").body.contains("Shopify.country = \"CA\";"));
+    // A selected country wins.
+    let mut session = Session::initial(&fixture.store);
+    session.country = Some("FR".to_string());
+    assert_eq!(fixture.liquid("/", session, country), "FR");
+}
+
+#[test]
+fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
+    let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    store.shop.address.country_code = "JP".to_string();
+    assert!(store.country("JP").is_none());
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{{ localization.country.iso_code }}",
+    );
+    assert_eq!(output, "US");
+}
+
+#[test]
 fn forms_show_the_outcome_of_a_submission() {
     let fixture = fixture();
     let mut session = Session::initial(&fixture.store);
