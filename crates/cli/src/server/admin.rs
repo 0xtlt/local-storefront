@@ -1,4 +1,4 @@
-//! The Admin API of the server: `lsf-admin`'s [`AdminApi`], built from the store data and the
+//! The Admin API of the server: lsf-app's [`AdminApi`], built from the store data and the
 //! app of `--app`, and routed before the storefront and the checkout. Its requests (the GraphQL
 //! Admin API, OAuth, `/__lsf/admin`, `/__lsf/webhooks`) are answered here; what the checkout
 //! places is recorded in its default shop. What the backend changes in the default shop shows
@@ -7,12 +7,12 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use lsf_admin::api::{AdminApi, AdminOptions, HttpRequest, ThrottleSetting};
-use lsf_admin::auth::SecretSource;
-use lsf_admin::domains::checkouts;
-use lsf_admin::state::ShopState;
-use lsf_admin::version::Served;
-use lsf_admin::webhooks::DeliveryOptions;
+use lsf_app::admin::api::{AdminApi, AdminOptions, HttpRequest, ThrottleSetting};
+use lsf_app::admin::auth::SecretSource;
+use lsf_app::admin::domains::checkouts;
+use lsf_app::admin::state::ShopState;
+use lsf_app::admin::version::Served;
+use lsf_app::admin::webhooks::DeliveryOptions;
 use lsf_core::Store;
 
 use super::reply::Reply;
@@ -57,9 +57,9 @@ impl Admin {
         app_dir: Option<&Path>,
         theme: &Path,
     ) -> Admin {
-        let app = app_dir.and_then(|dir| lsf_checkout::app::load(dir).ok());
+        let app = app_dir.and_then(|dir| lsf_app::config::load(dir).ok());
         let (secret, secret_source) =
-            lsf_admin::auth::client_secret(settings.client_secret.as_deref(), app_dir);
+            lsf_app::admin::auth::client_secret(settings.client_secret.as_deref(), app_dir);
         let secret_file = app_dir.map(|dir| dir.join(".env"));
         let api = AdminApi::new(
             store,
@@ -77,10 +77,10 @@ impl Admin {
             },
         )
         .with_versions(settings.versions.clone())
-        .with_fetch(lsf_admin::sources::FetchOptions {
+        .with_fetch(lsf_app::admin::sources::FetchOptions {
             allow_local: settings.fetch_local,
         })
-        .with_sources(lsf_admin::sources::Stubs::configured(
+        .with_sources(lsf_app::admin::sources::Stubs::configured(
             settings.sources.iter().cloned(),
         ))
         .with_theme(theme.to_path_buf())
@@ -169,7 +169,7 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
 }
 
 /// Reports a change of a storefront cart to the default shop of the Admin API: `carts/create`
-/// for a cart that had nothing, `carts/update` after (see `lsf_admin::domains::checkouts`).
+/// for a cart that had nothing, `carts/update` after (see `lsf_app::admin::domains::checkouts`).
 /// Nothing without the Admin API.
 pub fn record_cart(state: &ServerState, token: &str, session: &lsf_core::Session) {
     if state.admin.is_none() {

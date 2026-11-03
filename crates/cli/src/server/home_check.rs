@@ -18,9 +18,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use lsf_checkout::app::App;
-use lsf_checkout::fetch::OfflineFetcher;
-use lsf_checkout::pipeline::RunOptions;
+use lsf_app::checkout::fetch::OfflineFetcher;
+use lsf_app::checkout::pipeline::RunOptions;
+use lsf_app::config::App;
 use lsf_core::Store;
 use serde_json::{Value as Json, json};
 

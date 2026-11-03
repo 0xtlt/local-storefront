@@ -66,9 +66,9 @@ const SKIPPED_FEATURES: &[(&str, &str)] = &[
     ),
     ("shopify_resource_limits", "render score limits"),
     ("range_resource_limits", "render score limits"),
-    ("shopify_tags", "Shopify tags live in lsf-core"),
-    ("shopify_objects", "Shopify objects live in lsf-core"),
-    ("shopify_filters", "Shopify filters live in lsf-core"),
+    ("shopify_tags", "Shopify tags live in lsf-theme"),
+    ("shopify_objects", "Shopify objects live in lsf-theme"),
+    ("shopify_filters", "Shopify filters live in lsf-theme"),
 ];
 
 /// A spec that renders for longer than this is reported as a difference.

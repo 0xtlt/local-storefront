@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// A copy of the fixture app of lsf-checkout, in a folder of the test's own.
+/// A copy of the fixture app of lsf-app, in a folder of the test's own.
 struct App(PathBuf);
 
 impl App {
@@ -13,7 +13,7 @@ impl App {
             std::env::temp_dir().join(format!("lsf-app-commands-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         copy(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app"),
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app"),
             &path,
         );
         App(path)

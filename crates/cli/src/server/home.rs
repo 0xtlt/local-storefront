@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 
-use lsf_checkout::app::{App, FunctionExtension, Selection, Severity, TargetKind, UiExtension};
-use lsf_checkout::placement::placement;
+use lsf_app::checkout::placement::placement;
+use lsf_app::config::{App, FunctionExtension, Selection, Severity, TargetKind, UiExtension};
 use lsf_core::diagnostics::Diagnostics;
 use lsf_core::store::model::ScenarioLook;
 use lsf_core::store::{CheckoutScenario, CheckoutSettings};
@@ -158,7 +158,7 @@ fn anchor(prefix: &str, name: &str) -> String {
 fn diagnostics_of<'a>(
     app: &'a App,
     handle: &'a str,
-) -> impl Iterator<Item = &'a lsf_checkout::app::Diagnostic> {
+) -> impl Iterator<Item = &'a lsf_app::config::Diagnostic> {
     app.diagnostics
         .iter()
         .filter(move |diagnostic| diagnostic.extension.as_deref() == Some(handle))
@@ -366,7 +366,7 @@ fn ui_extension_json(
     // Where it renders: `checkout` (the checkout and the thank-you page), `customer-account`.
     let mut surfaces: Vec<&str> = Vec::new();
     for target in &extension.targets {
-        if let Some(surface) = lsf_checkout::placement::surface(&target.target)
+        if let Some(surface) = lsf_app::checkout::placement::surface(&target.target)
             && !surfaces.contains(&surface)
         {
             surfaces.push(surface);

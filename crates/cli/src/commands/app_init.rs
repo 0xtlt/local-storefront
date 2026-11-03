@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use lsf_checkout::app::{App as ShopifyApp, TargetKind};
+use lsf_app::config::{App as ShopifyApp, TargetKind};
 use lsf_core::store::load::{DataSource, LoadOptions, load};
 use lsf_core::store::{CheckoutCharge, CheckoutMetafield, Store};
 use serde_json::{Value as Json, json};
@@ -251,7 +251,7 @@ fn missing_settings(
     let variables = function.input_variables.as_ref()?;
     let mut empty = serde_json::Map::new();
     for target in &function.targets {
-        for (name, value) in lsf_checkout::input::empty_variables(&target.input_query) {
+        for (name, value) in lsf_app::checkout::input::empty_variables(&target.input_query) {
             empty.entry(name).or_insert(value);
         }
     }
@@ -750,7 +750,7 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
     });
     let shopify_app = match &app_dir {
         Some(dir) => {
-            let app = lsf_checkout::app::load(dir)?;
+            let app = lsf_app::config::load(dir)?;
             Some(app)
         }
         None => None,
@@ -1000,7 +1000,7 @@ mod tests {
     }
 
     fn fixture_app() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app")
     }
 
     fn root(label: &str) -> PathBuf {

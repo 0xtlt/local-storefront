@@ -66,16 +66,16 @@ pub fn run(
     };
     let (store, diagnostics) = app.load_store();
     let shopify_app = match &app_dir {
-        Some(dir) => Some(lsf_checkout::app::load(dir)?),
+        Some(dir) => Some(lsf_app::config::load(dir)?),
         None => None,
     };
-    let app_problems: Vec<&lsf_checkout::app::Diagnostic> = shopify_app
+    let app_problems: Vec<&lsf_app::config::Diagnostic> = shopify_app
         .iter()
         .flat_map(|app| &app.diagnostics)
         .collect();
     let app_errors = app_problems
         .iter()
-        .filter(|diagnostic| diagnostic.severity == lsf_checkout::app::Severity::Error)
+        .filter(|diagnostic| diagnostic.severity == lsf_app::config::Severity::Error)
         .count();
     let failed = diagnostics.has_errors() || app_errors > 0;
     match args.format {
@@ -89,7 +89,7 @@ pub fn run(
                 items.extend(app_problems.iter().map(|diagnostic| {
                     serde_json::json!({
                         "severity": match diagnostic.severity {
-                            lsf_checkout::app::Severity::Error => "error",
+                            lsf_app::config::Severity::Error => "error",
                             _ => "warning",
                         },
                         "code": "app",
@@ -114,7 +114,7 @@ pub fn run(
                     "warnings": app_problems.len() - app_errors,
                     "diagnostics": app_problems.iter().map(|diagnostic| serde_json::json!({
                         "severity": match diagnostic.severity {
-                            lsf_checkout::app::Severity::Error => "error",
+                            lsf_app::config::Severity::Error => "error",
                             _ => "warning",
                         },
                         "extension": diagnostic.extension,

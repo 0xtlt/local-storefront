@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use lsf_admin::domains::catalog;
+use lsf_app::admin::domains::catalog;
 use lsf_core::theme::Revalidate;
 use serde_json::{Value as Json, json};
 
@@ -541,7 +541,11 @@ fn what_the_store_data_refuses_of_a_change_is_told_and_the_rest_is_served() {
         Some(loaded.synced.diagnostics.items.len()),
         "{told}"
     );
-    assert_eq!(told[0]["file"], lsf_admin::sync::OVERLAY_NAME, "{told}");
+    assert_eq!(
+        told[0]["file"],
+        lsf_app::admin::sync::OVERLAY_NAME,
+        "{told}"
+    );
     assert_eq!(told[0]["code"], "duplicate_company", "{told}");
     // The store, built from the overlay with the problem told, has both.
     let kept: Vec<String> = loaded

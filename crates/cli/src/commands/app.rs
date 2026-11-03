@@ -110,8 +110,8 @@ pub fn run(
 }
 
 /// Whether a Function is a discount: one runs only for a discount of the checkout that names it.
-fn is_discount(function: &lsf_checkout::app::FunctionExtension) -> bool {
-    use lsf_checkout::app::TargetKind;
+fn is_discount(function: &lsf_app::config::FunctionExtension) -> bool {
+    use lsf_app::config::TargetKind;
     function.targets.iter().any(|target| {
         matches!(
             target.kind,
@@ -195,7 +195,7 @@ fn check(
     let ok = report.failures.is_empty() && invalid.is_empty() && complete && !empty;
     // The Functions no scenario ran: nothing checks them. A warning, not a failure: a Function
     // may be meant for a case the scenarios leave aside. Only known once every scenario ran.
-    let ran_nowhere: Vec<&lsf_checkout::app::FunctionExtension> = if complete && !empty {
+    let ran_nowhere: Vec<&lsf_app::config::FunctionExtension> = if complete && !empty {
         selection
             .functions(&shopify_app)
             .filter(|function| !report.ran.contains(&function.handle))

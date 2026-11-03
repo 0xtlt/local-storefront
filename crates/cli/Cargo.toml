@@ -16,8 +16,7 @@ lsf-core.workspace = true
 lsf-theme.workspace = true
 lsf-fmt.workspace = true
 lsf-liquid.workspace = true
-lsf-checkout.workspace = true
-lsf-admin.workspace = true
+lsf-app.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 serde.workspace = true
 serde_json.workspace = true

@@ -25,8 +25,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use lsf_admin::webhooks::{AppUrls, Destination, resolve_uri};
-use lsf_checkout::app::AppConfig;
+use lsf_app::admin::webhooks::{AppUrls, Destination, resolve_uri};
+use lsf_app::config::AppConfig;
 use lsf_core::Store;
 use lsf_theme::render::Target;
 use lsf_theme::render::page::{Page, Resource};
@@ -127,7 +127,7 @@ impl AppProxy {
     /// The app proxy of the app in `app_dir`, `None` when it has no `[app_proxy]` (or cannot be
     /// read: the checkout says why).
     pub fn of_app(app_dir: &Path, app_url: Option<&str>) -> Option<AppProxy> {
-        let app = lsf_checkout::app::load(app_dir).ok()?;
+        let app = lsf_app::config::load(app_dir).ok()?;
         AppProxy::new(&app.config, app_url)
     }
 
@@ -320,7 +320,7 @@ struct Shopify<'a> {
 /// The query the backend receives: the request's, as given, then `shop`,
 /// `logged_in_customer_id` (empty when no customer is logged in), `path_prefix`, `timestamp`
 /// and `signature`, in the order of shopify.dev's example. The signature is the one of
-/// `lsf_admin::auth::app_proxy_signature`, over every other parameter.
+/// `lsf_app::admin::auth::app_proxy_signature`, over every other parameter.
 fn signed_query(query: &[(String, String)], shopify: &Shopify<'_>) -> Vec<(String, String)> {
     let mut signed = query.to_vec();
     signed.push(("shop".to_string(), shopify.shop.to_string()));
@@ -333,7 +333,8 @@ fn signed_query(query: &[(String, String)], shopify: &Shopify<'_>) -> Vec<(Strin
     ));
     signed.push(("path_prefix".to_string(), shopify.path_prefix.to_string()));
     signed.push(("timestamp".to_string(), shopify.timestamp.to_string()));
-    let signature = lsf_admin::auth::app_proxy_signature(shopify.secret, signed.iter().cloned());
+    let signature =
+        lsf_app::admin::auth::app_proxy_signature(shopify.secret, signed.iter().cloned());
     signed.push(("signature".to_string(), signature));
     signed
 }
@@ -1120,7 +1121,7 @@ mod tests {
     fn the_url_moves_to_the_app_url_as_webhooks_do() {
         let config = |url: &str| AppConfig {
             application_url: Some("https://example.trycloudflare.com".to_string()),
-            app_proxy: Some(lsf_checkout::app::AppProxyConfig {
+            app_proxy: Some(lsf_app::config::AppProxyConfig {
                 url: url.to_string(),
                 subpath: "reviews".to_string(),
                 prefix: "apps".to_string(),

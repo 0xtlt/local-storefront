@@ -2333,8 +2333,7 @@ dependencies = [
  "indexmap 2.14.2",
  "libc",
  "lightningcss",
- "lsf-admin",
- "lsf-checkout",
+ "lsf-app",
  "lsf-core",
  "lsf-fmt",
  "lsf-liquid",
@@ -2355,41 +2354,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "lsf-admin"
+name = "lsf-app"
 version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "brotli",
  "chrono",
  "chrono-tz",
+ "deterministic-wasi-ctx",
  "flate2",
  "form_urlencoded",
  "graphql-parser",
  "hmac",
  "indexmap 2.14.2",
- "lsf-checkout",
  "lsf-core",
  "lsf-theme",
  "md-5",
- "regex",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "toml",
- "ureq",
-]
-
-[[package]]
-name = "lsf-checkout"
-version = "0.2.0"
-dependencies = [
- "brotli",
- "chrono",
- "deterministic-wasi-ctx",
- "graphql-parser",
- "indexmap 2.14.2",
- "lsf-core",
  "oxc",
+ "regex",
  "rmp-serde",
  "rustls",
  "serde",

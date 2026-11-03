@@ -36,7 +36,7 @@ use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
-use lsf_checkout::app::{self, App, Selection};
+use lsf_app::config::{self, App, Selection};
 use serde_json::{Value as Json, json};
 
 use crate::checkout::encoded_handle;
@@ -291,7 +291,7 @@ fn remove_stale(base: &Path) {
 /// engine and settings, and export a function. Says why not. A module cut short (a build still
 /// writing it), one whose sections are not what they say, and an empty one are not.
 pub fn check_module(bytes: &[u8]) -> Result<(), String> {
-    lsf_checkout::runner::check_module(bytes)
+    lsf_app::checkout::runner::check_module(bytes)
 }
 
 /// How the watcher looks at the files and runs the builds.
@@ -708,10 +708,10 @@ pub fn ignored(relative: &Path, outputs: &[PathBuf]) -> bool {
 
 /// What the build of a Function writes, in its folder: `dist/`, the module wherever
 /// `[extensions.build] path` puts it, and for a JavaScript Function, the types of its typegen.
-fn outputs_of(function: &app::FunctionExtension) -> Vec<PathBuf> {
+fn outputs_of(function: &config::FunctionExtension) -> Vec<PathBuf> {
     let mut outputs = vec![PathBuf::from("dist")];
-    if function.build() == Some(app::Build::JavaScript) {
-        outputs.extend(lsf_checkout::javascript::outputs(&function.dir));
+    if function.build() == Some(config::Build::JavaScript) {
+        outputs.extend(lsf_app::checkout::javascript::outputs(&function.dir));
     }
     if let Ok(module) = function.wasm_path.strip_prefix(&function.dir) {
         match module
@@ -761,8 +761,8 @@ fn rules_of(app: &App, selection: &Selection) -> BTreeMap<String, Rules> {
         };
         // A JavaScript Function is built by lsf itself, in a process of its own as any build.
         let command = build.map(|build| match build {
-            app::Build::Command(command) => command.to_string(),
-            app::Build::JavaScript => {
+            config::Build::Command(command) => command.to_string(),
+            config::Build::JavaScript => {
                 crate::checkout::javascript_build_command(&app.root, &function.handle)
             }
         });
@@ -803,7 +803,7 @@ fn rules_of(app: &App, selection: &Selection) -> BTreeMap<String, Rules> {
 
 /// Whether the bundle of a checkout UI extension is missing, or older than a file of its folder
 /// (but `dist/`, `node_modules/` and hidden ones).
-fn stale(extension: &lsf_checkout::app::UiExtension) -> bool {
+fn stale(extension: &lsf_app::config::UiExtension) -> bool {
     let Some(built) = std::fs::metadata(&extension.bundle)
         .and_then(|metadata| metadata.modified())
         .ok()
@@ -1379,7 +1379,7 @@ fn build(
             // As `shopify app build`: a module that calls the Function Wasm API by name is linked
             // to the provider, in place.
             if job.module.is_file()
-                && let Err(error) = lsf_checkout::trampoline::apply(&job.module)
+                && let Err(error) = lsf_app::checkout::trampoline::apply(&job.module)
             {
                 return Outcome::Failed(Failure {
                     reason: error,
@@ -1686,7 +1686,7 @@ impl Coordinator {
         // The checkout UI extensions lsf bundles: those whose bundle is missing or older than
         // their files (all with `--build`), at once.
         let ui: Vec<String> = self.ui_handles().into_iter().collect();
-        if let Ok(app) = app::load(&self.root) {
+        if let Ok(app) = config::load(&self.root) {
             for handle in ui {
                 let stale = app
                     .ui_extension(&handle)
@@ -1780,7 +1780,7 @@ impl Coordinator {
     /// Functions it builds now run their published module; with `adopt`, one that was built
     /// before it is watched is published as it is, when its module is whole.
     fn reload_app(&mut self, adopt: bool) -> bool {
-        let rules = match app::load(&self.root) {
+        let rules = match config::load(&self.root) {
             Ok(app) => rules_of(&app, &self.selection),
             // The app cannot be read: the pages say why. Its folders are watched as they were.
             Err(_) => return false,
@@ -1902,11 +1902,11 @@ impl Coordinator {
     /// the build of a Function does, and has the pages reload.
     fn build_ui(&mut self, handle: &str) {
         let started = Instant::now();
-        let built = app::load(&self.root).and_then(|app| {
+        let built = config::load(&self.root).and_then(|app| {
             let extension = app
                 .ui_extension(handle)
                 .ok_or_else(|| format!("{handle} is not an extension of the app"))?;
-            lsf_checkout::javascript::build_extension(extension, &self.root)
+            lsf_app::checkout::javascript::build_extension(extension, &self.root)
         });
         match built {
             Ok(_) => {

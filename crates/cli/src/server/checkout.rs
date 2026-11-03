@@ -3,16 +3,16 @@
 //!
 //! What the buyer chose lives in the session (`SessionEntry::checkout`), next to the cart, which
 //! the checkout shares with the theme. Every request computes the checkout again, running the
-//! Functions of the app: `lsf_checkout::pipeline::compute`.
+//! Functions of the app: `lsf_app::checkout::pipeline::compute`.
 
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use lsf_checkout::app::{App, Selection};
-use lsf_checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
-use lsf_checkout::{
+use lsf_app::checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
+use lsf_app::checkout::{
     Address, BuyerJourneyStep, CheckoutResult, CheckoutState, Metafield, ResultLine,
 };
+use lsf_app::config::{App, Selection};
 use lsf_core::cart::line_key;
 use lsf_core::store::model::ScenarioLook;
 use lsf_core::store::{CartLine, Customer, Language};
@@ -337,8 +337,9 @@ fn start(state: &ServerState, incoming: &Incoming) -> Reply {
             .and_then(|address| address.country_code.as_ref())
             .is_none()
         {
-            address.get_or_insert_with(Default::default).country_code =
-                Some(lsf_checkout::input::buyer_country(&store, &entry.session));
+            address.get_or_insert_with(Default::default).country_code = Some(
+                lsf_app::checkout::input::buyer_country(&store, &entry.session),
+            );
         }
     });
     let root = request_root(state, &id, incoming);
@@ -681,7 +682,7 @@ fn price_with(
         session,
         checkout,
         &config,
-        &lsf_checkout::input::build,
+        &lsf_app::checkout::input::build,
         runs,
     )
 }
@@ -802,7 +803,7 @@ fn compute(
     let attributes = super::admin::pairs(&session.cart_attributes);
     super::admin::record_checkout(
         state,
-        &lsf_admin::domains::checkouts::Checkout {
+        &lsf_app::admin::domains::checkouts::Checkout {
             cart_token: &session.cart_token,
             generation: basis.placed,
             result: &result,
@@ -882,8 +883,8 @@ pub(super) fn localization_json(
     let code = checkout
         .shipping_country()
         .map(str::to_ascii_uppercase)
-        .unwrap_or_else(|| lsf_checkout::input::buyer_country(store, session));
-    let (market_id, market_handle) = lsf_checkout::input::market_of(store, &code);
+        .unwrap_or_else(|| lsf_app::checkout::input::buyer_country(store, session));
+    let (market_id, market_handle) = lsf_app::checkout::input::market_of(store, &code);
     json!({
         "language": language_json(language),
         // Where the storefront of this language lives: `/fr`, nothing for the primary one.
@@ -1023,7 +1024,7 @@ fn shell(server: &ServerState, json: &Json) -> Reply {
 pub(super) fn shell_of(server: &ServerState, json: &Json, template: &str) -> Reply {
     let mut json = json.clone();
     json["builds"] = server.builds.to_json();
-    let template = lsf_checkout::assets::get(template).expect("the page is embedded");
+    let template = lsf_app::checkout::assets::get(template).expect("the page is embedded");
     let template = String::from_utf8_lossy(template);
     // Inside a script element: nothing in the JSON may close it or open a comment.
     let state = json
@@ -1177,7 +1178,7 @@ fn apply(
     session: &mut Session,
     checkout: &mut CheckoutState,
     store: &Store,
-    config: &lsf_checkout::CheckoutConfig,
+    config: &lsf_app::checkout::CheckoutConfig,
     language: &Language,
 ) -> Result<(), String> {
     let kind = operation
@@ -1807,16 +1808,16 @@ struct Placed {
 /// app. `None` without the Admin API.
 fn record_in_admin(
     state: &ServerState,
-    result: &lsf_checkout::CheckoutResult,
+    result: &lsf_app::checkout::CheckoutResult,
     checkout: &CheckoutState,
     placed: &Placed,
     number: u64,
     processed_at: chrono::DateTime<chrono::Utc>,
-) -> Option<lsf_admin::domains::orders::RecordedOrder> {
+) -> Option<lsf_app::admin::domains::orders::RecordedOrder> {
     let admin = state.admin.as_ref()?;
     admin
         .api
-        .record_order(&lsf_admin::domains::orders::PlacedOrder {
+        .record_order(&lsf_app::admin::domains::orders::PlacedOrder {
             id: None,
             number: Some(number),
             processed_at,
@@ -1844,7 +1845,7 @@ fn payment_name<'a>(checkout: &CheckoutState, result: &'a CheckoutResult) -> Opt
 
 /// A file of the page, from the binary.
 fn asset(file: &str) -> Reply {
-    match lsf_checkout::assets::get(file) {
+    match lsf_app::checkout::assets::get(file) {
         Some(content) => Reply::new(200, content_type(file), content).cached(cache::RENDERED),
         None => Reply::not_found(),
     }
@@ -1939,7 +1940,7 @@ mod tests {
         // What comes from the request does not count, as when the state was compared as JSON.
         let mut from_request = base.clone();
         from_request.language = Some("fr".into());
-        from_request.step = lsf_checkout::BuyerJourneyStep::Completion;
+        from_request.step = lsf_app::checkout::BuyerJourneyStep::Completion;
         from_request.scenario = Some("other".into());
         assert!(same_entered(&base, &from_request));
         assert_eq!(json!(base), json!(from_request));
@@ -1955,7 +1956,7 @@ mod tests {
             |state| state.selected_payment = Some("card".into()),
             |state| state.discount_codes.push("SAVE".into()),
             |state| {
-                state.metafields.push(lsf_checkout::Metafield {
+                state.metafields.push(lsf_app::checkout::Metafield {
                     namespace: "n".into(),
                     key: "k".into(),
                     kind: "single_line_text_field".into(),

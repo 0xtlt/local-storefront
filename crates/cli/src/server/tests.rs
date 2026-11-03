@@ -3021,10 +3021,10 @@ fn a_profile_is_drawn_as_a_flame_graph() {
 // --- The checkout of a Shopify app ---
 
 fn fixture_app() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app")
 }
 
-/// A server whose checkout runs the fixture app of `lsf-checkout`.
+/// A server whose checkout runs the fixture app of `lsf-app`.
 fn checkout_server(extensions: &[&str], standalone: bool) -> ServerState {
     checkout_server_of(fixture_app(), extensions, standalone)
 }
@@ -4015,7 +4015,7 @@ fn a_line_the_cart_transform_merges_in_french_is_changed_in_french() {
 
 /// The part of the state JSON that the Buyer Identity and Localization APIs read, for a
 /// logged-in customer of the demo data buying in French. The sandbox of the extensions reads the
-/// same file (`crates/checkout/assets/tests/sandbox-api.test.mjs`): when the server writes
+/// same file (`crates/app/assets/tests/sandbox-api.test.mjs`): when the server writes
 /// something else, both fail, so the two sides cannot drift apart. Run with `UPDATE_SNAPSHOTS=1`
 /// to write the file again after a change meant to be.
 #[test]
@@ -4055,8 +4055,8 @@ fn the_state_gives_extensions_the_buyer_and_the_localization_of_the_store() {
     }
     let seen = Json::Object(seen);
 
-    let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../checkout/tests/fixtures/server-buyer-state.json");
+    let golden =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/server-buyer-state.json");
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
         std::fs::write(&golden, serde_json::to_string_pretty(&seen).unwrap() + "\n").unwrap();
     }
@@ -4430,10 +4430,10 @@ fn a_merged_line_of_several_bundles_is_scaled_by_bundles() {
 fn partly_merged() -> (
     std::sync::Arc<lsf_core::Store>,
     lsf_core::Session,
-    lsf_checkout::ResultLine,
-    lsf_checkout::ResultLine,
+    lsf_app::checkout::ResultLine,
+    lsf_app::checkout::ResultLine,
 ) {
-    use lsf_checkout::{ResultLine, SourceLine};
+    use lsf_app::checkout::{ResultLine, SourceLine};
     use lsf_core::store::CartLine;
 
     let state = checkout_server(&["bundle-transform"], false);
@@ -5740,7 +5740,7 @@ fn a_guest_without_an_address_is_in_the_shop_country_and_pays_no_shipping_yet() 
     // The extensions read the country and the market the Functions read: the shop's, in Canada.
     let (_, store) = state.snapshot(&id);
     assert_eq!(store.shop.address.country_code, "CA");
-    let (market_id, market_handle) = lsf_checkout::input::market_of(&store, "CA");
+    let (market_id, market_handle) = lsf_app::checkout::input::market_of(&store, "CA");
     assert_eq!(
         json["localization"]["country"],
         json!({"isoCode": "CA", "name": "Canada"})
@@ -7068,7 +7068,7 @@ fn a_check_whose_app_changed_while_it_ran_is_not_kept() {
         )],
     );
     let state = checkout_server_with_data(app_dir.clone(), &[], true, Some(&data.0));
-    let app = lsf_checkout::app::load(&app_dir).unwrap();
+    let app = lsf_app::config::load(&app_dir).unwrap();
     let store = state.loaded().store.clone();
     let wasm = app_dir.join("extensions/broken-wasm/dist/function.wasm");
     let cache = super::home_check::Cache::default();
@@ -7194,7 +7194,7 @@ fn a_check_past_its_budget_says_how_many_scenarios_it_checked() {
         "http://127.0.0.1:9",
     );
     let state = checkout_server_with_data(app_dir.clone(), &[], true, Some(&data));
-    let app = lsf_checkout::app::load(&app_dir).unwrap();
+    let app = lsf_app::config::load(&app_dir).unwrap();
     let store = state.loaded().store.clone();
     let report = super::home_check::run(&state, &app, &store, Duration::ZERO);
     assert_eq!((report.checked, report.total), (0, 3));
@@ -8378,7 +8378,7 @@ fn the_admin_api_serves_the_versions_it_is_told() {
         app,
         ServeOptions {
             admin: Some(super::admin::AdminSettings {
-                versions: lsf_admin::version::Served::parse("2026-10,2027-01").unwrap(),
+                versions: lsf_app::admin::version::Served::parse("2026-10,2027-01").unwrap(),
                 ..Default::default()
             }),
             live_reload: false,
@@ -9100,7 +9100,8 @@ async fn a_body_over_the_limit_is_refused_and_an_upload_takes_more() {
         .unwrap()
         .api
         .with_default_shop(|shop| {
-            lsf_admin::domains::app::uploads::bytes(shop, &resource).map(|blob| blob.bytes.len())
+            lsf_app::admin::domains::app::uploads::bytes(shop, &resource)
+                .map(|blob| blob.bytes.len())
         })
         .flatten();
     assert_eq!(stored, Some(size), "every byte is stored");

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/liquid", "crates/core", "crates/theme", "crates/fmt", "crates/checkout", "crates/admin", "crates/cli"]
+members = ["crates/liquid", "crates/core", "crates/theme", "crates/fmt", "crates/app", "crates/cli"]
 # Third-party code, as its authors wrote it: built, not linted.
 exclude = ["vendor"]
 
@@ -16,8 +16,7 @@ lsf-liquid = { path = "crates/liquid" }
 lsf-core = { path = "crates/core" }
 lsf-theme = { path = "crates/theme" }
 lsf-fmt = { path = "crates/fmt" }
-lsf-checkout = { path = "crates/checkout" }
-lsf-admin = { path = "crates/admin" }
+lsf-app = { path = "crates/app" }
 
 base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }

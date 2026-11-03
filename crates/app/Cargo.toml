@@ -1,0 +1,67 @@
+[package]
+name = "lsf-app"
+description = "A Shopify app run locally against lsf-core's store data: its Functions and checkout UI extensions in a local checkout, and the Admin API (GraphQL, 2026-10) and webhooks its backend talks to"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+lsf-core.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+# `arbitrary_precision`: a number of the input reaches the Function as written, as
+# function-runner passes it.
+serde_json = { workspace = true, features = ["arbitrary_precision"] }
+# `serde`: the dates of the webhook log, in RFC 3339.
+chrono = { workspace = true, features = ["serde"] }
+chrono-tz.workspace = true
+base64.workspace = true
+# The `regex` validation of metafield definitions (Shopify supports RE2, which `regex` follows).
+regex.workspace = true
+toml = "0.9"
+# Parses the input queries of Functions, and the schema of the Admin API (its SDL). The queries
+# of the Admin API have a parser of their own (`admin::graphql::parse`), which keeps what
+# graphql-ruby's errors report: see `docs/admin/design.md`.
+graphql-parser = "0.4"
+# The source a JavaScript Function embeds, compressed as Javy does, and the schema of the Admin
+# API (`schemas/admin/<version>/admin.graphql.br`).
+brotli = { version = "9", default-features = false, features = ["std"] }
+
+# The runner: what Shopify's function-runner v9.2.2 (the engine behind `shopify app function
+# run`) does to run a module (`src/checkout/runner/host.rs`), with the wasmtime, WASI and
+# MessagePack it runs it with. Only what lsf runs Functions with: Cranelift for the machine lsf
+# runs on, and wasmtime's compilation cache.
+wasmtime = { version = "=39.0.1", default-features = false, features = ["runtime", "cranelift", "std", "cache", "parallel-compilation"] }
+wasmtime-wasi = { version = "=39.0.1", default-features = false, features = ["p1"] }
+deterministic-wasi-ctx = "=3.0.4"
+rmp-serde = "1.3"
+# What `shopify app build` does to a Rust Function's module after its build command: Shopify's
+# own shopify-function-trampoline (MIT), as a library, at the version Shopify's CLI runs, on the
+# walrus and wasmparser wasmtime has (`vendor/shopify_function_trampoline`).
+shopify_function_trampoline = { path = "../../vendor/shopify_function_trampoline" }
+wasmparser = "0.240"
+# The build of JavaScript Functions (`checkout::javascript`): the module Javy writes.
+wasm-encoder = "0.240"
+oxc = { workspace = true, features = ["ast_visit", "codegen", "minifier", "semantic", "transformer"] }
+# Network access for Functions: the requests of the `.fetch` targets, and the webhooks of the
+# Admin API. `http://localhost` needs no TLS, an `https` URL `rustls`. `rustls` is named here to
+# tell its errors from other I/O errors.
+rustls = { version = "0.23", default-features = false, features = ["std"] }
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+# The HMACs Shopify signs OAuth redirects, session tokens and webhooks (`X-Shopify-Hmac-Sha256`)
+# with, as the `hmac_sha256` filter of lsf-theme signs.
+hmac = "0.13"
+sha2 = "0.11"
+# The query strings and form bodies of the OAuth endpoints.
+form_urlencoded = "1"
+# `OnlineStoreThemeFile.checksumMd5`, the MD5 of the `md5` filter of lsf-theme.
+md-5 = "0.11"
+# The ZIP archive of a theme (`themeCreate`): its entries are deflated.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[dev-dependencies]
+# The storefront renders what the Admin API changed, in the sync tests (`tests/sync.rs`).
+lsf-theme.workspace = true
+# The modules of the tests, written as text.
+wasmtime = { version = "=39.0.1", default-features = false, features = ["wat"] }

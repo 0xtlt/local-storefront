@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use lsf_admin::api::ThrottleSetting;
+use lsf_app::admin::api::ThrottleSetting;
 use lsf_core::theme::Revalidate;
 
 use crate::app::App;
@@ -217,7 +217,7 @@ pub fn run(
             }
             // An app without extensions is a backend: the `app:` line says so.
             app.diagnostics
-                .retain(|diagnostic| diagnostic.message != lsf_checkout::app::NO_EXTENSIONS);
+                .retain(|diagnostic| diagnostic.message != lsf_app::config::NO_EXTENSIONS);
             checkout::print_app_diagnostics(&app, &selection);
             Some((
                 CheckoutOptions {
@@ -259,7 +259,7 @@ pub fn run(
         throttle: ThrottleSetting::parse(&args.admin_throttle)
             .map_err(|problem| format!("--admin-throttle: {problem}"))?,
         versions: match &args.admin_versions {
-            Some(list) => lsf_admin::version::Served::parse(list)
+            Some(list) => lsf_app::admin::version::Served::parse(list)
                 .map_err(|problem| format!("--admin-versions: {problem}"))?,
             None => Default::default(),
         },
@@ -434,10 +434,10 @@ pub fn run(
 /// `--no-functions`: the UI extensions `selection` has, and no Function; `app` leaves them out
 /// too. A Function named with `--extension` is an error: it would not run.
 fn without_functions(
-    app: &mut lsf_checkout::app::App,
-    selection: lsf_checkout::app::Selection,
+    app: &mut lsf_app::config::App,
+    selection: lsf_app::config::Selection,
     named: &[String],
-) -> Result<lsf_checkout::app::Selection, String> {
+) -> Result<lsf_app::config::Selection, String> {
     if let Some(function) = named.iter().find(|handle| app.function(handle).is_some()) {
         return Err(format!(
             "--extension {function} is a Function, and --no-functions runs none"

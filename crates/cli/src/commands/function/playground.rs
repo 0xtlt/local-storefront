@@ -12,7 +12,7 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use lsf_checkout::{CheckoutResult, FunctionRun};
+use lsf_app::checkout::{CheckoutResult, FunctionRun};
 
 use super::*;
 
@@ -265,7 +265,7 @@ fn the_store_data_and_every_scenario_are_valid() {
 
 #[test]
 fn every_function_is_built_and_in_a_scenario() {
-    let app = lsf_checkout::app::load(&playground()).unwrap();
+    let app = lsf_app::config::load(&playground()).unwrap();
     assert!(
         app.functions.len() >= 25,
         "{} Functions",

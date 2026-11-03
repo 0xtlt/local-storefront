@@ -6,12 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::ValueEnum;
-use lsf_checkout::app::{self, App, Build, Selection};
-use lsf_checkout::pipeline::DELIVERY_GROUP_HANDLE;
-use lsf_checkout::{
+use lsf_app::checkout::pipeline::DELIVERY_GROUP_HANDLE;
+use lsf_app::checkout::{
     Address, CheckoutConfig, CheckoutState, DeliveryKind, DiscountClass, DiscountConfig, Metafield,
     PaymentMethodConfig, PaymentPlacement, ShippingRate,
 };
+use lsf_app::config::{self, App, Build, Selection};
 use lsf_core::diagnostics::Diagnostics;
 use lsf_core::store::model::{
     CheckoutDeliveryKind, CheckoutDiscountClass, CheckoutPaymentPlacement,
@@ -103,13 +103,13 @@ impl CheckoutOptions {
 /// Problems of the app itself are in `App::diagnostics`, read after the build: a module it wrote
 /// is not missing. What stops the command is returned.
 pub fn open(args: &AppArgs, app_dir: &Path) -> Result<(App, Selection), String> {
-    let app = app::load(app_dir)?;
+    let app = config::load(app_dir)?;
     let selection = Selection::resolve(&app, &args.extensions)?;
     if !args.build {
         return Ok((app, selection));
     }
     build(&app, &selection)?;
-    let app = app::load(app_dir)?;
+    let app = config::load(app_dir)?;
     let selection = Selection::resolve(&app, &args.extensions)?;
     Ok((app, selection))
 }
@@ -157,7 +157,7 @@ pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
             }
             Some(Build::JavaScript) => {
                 eprintln!("build:  {}: JavaScript, built by lsf", function.handle);
-                lsf_checkout::javascript::build(function, &app.root)
+                lsf_app::checkout::javascript::build(function, &app.root)
                     .map_err(|error| format!("the build of {} failed: {error}", function.handle))?;
             }
         }
@@ -169,11 +169,11 @@ pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
 /// Function Wasm API by name (a Rust Function's, as `cargo build` writes it) is linked to the
 /// host's provider with Shopify's trampoline. A module the command did not write is left to the
 /// diagnostics that say so.
-pub fn link(function: &app::FunctionExtension) -> Result<(), String> {
+pub fn link(function: &config::FunctionExtension) -> Result<(), String> {
     if !function.wasm_path.is_file() {
         return Ok(());
     }
-    if lsf_checkout::trampoline::apply(&function.wasm_path)
+    if lsf_app::checkout::trampoline::apply(&function.wasm_path)
         .map_err(|error| format!("the build of {} failed: {error}", function.handle))?
     {
         eprintln!(
@@ -193,7 +193,7 @@ pub fn build_ui_extensions(app: &App, selection: &Selection) -> Result<(), Strin
             continue;
         }
         let started = std::time::Instant::now();
-        lsf_checkout::javascript::build_extension(extension, &app.root)
+        lsf_app::checkout::javascript::build_extension(extension, &app.root)
             .map_err(|error| format!("the build of {} failed: {error}", extension.handle))?;
         eprintln!(
             "build:  {}: built by lsf in {}ms",
@@ -207,14 +207,14 @@ pub fn build_ui_extensions(app: &App, selection: &Selection) -> Result<(), Strin
 /// A discount of `checkout.discounts` that runs `function`, for a hint: with its settings, the
 /// metafield its `[extensions.input.variables]` names, or the one of the discount its input
 /// query reads.
-pub fn discount_example(function: &app::FunctionExtension) -> String {
+pub fn discount_example(function: &config::FunctionExtension) -> String {
     let metafield = function
         .input_variables
         .as_ref()
         .map(|variables| (variables.namespace.clone(), variables.key.clone()))
         .or_else(|| {
             function.targets.iter().find_map(|target| {
-                lsf_checkout::input::owner_metafields(&target.input_query)
+                lsf_app::checkout::input::owner_metafields(&target.input_query)
                     .into_iter()
                     .next()
             })
@@ -272,10 +272,10 @@ pub fn run_build(
     build: fn(&App, &Selection) -> Result<(), String>,
 ) -> Result<std::process::ExitCode, String> {
     let app_dir = app_of(app, command)?;
-    let shopify_app = app::load(&app_dir)?;
+    let shopify_app = config::load(&app_dir)?;
     let selection = Selection::resolve(&shopify_app, handles)?;
     build(&shopify_app, &selection)?;
-    let shopify_app = app::load(&app_dir)?;
+    let shopify_app = config::load(&app_dir)?;
     let mut built = 0;
     for function in selection.functions(&shopify_app) {
         if function.built() {
@@ -655,7 +655,7 @@ mod tests {
     /// it to the Function Wasm API, as `shopify app build` does, and it runs.
     #[test]
     fn a_build_links_what_a_build_command_wrote_with_shopify_s_trampoline() {
-        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures");
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures");
         let root = std::env::temp_dir().join(format!("lsf-link-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let dir = root.join("extensions/limit");
@@ -689,7 +689,7 @@ type = "function"
             ),
         )
         .unwrap();
-        let shopify_app = app::load(&root).unwrap();
+        let shopify_app = config::load(&root).unwrap();
         build_functions(&shopify_app, &Selection::all()).unwrap();
         let module = dir.join("dist/function.wasm");
         assert_eq!(
@@ -697,7 +697,7 @@ type = "function"
             std::fs::read(fixtures.join("app/extensions/quantity-limit/dist/function.wasm"))
                 .unwrap()
         );
-        let execution = lsf_checkout::runner::run(
+        let execution = lsf_app::checkout::runner::run(
             &module,
             "run",
             &serde_json::json!({
@@ -714,7 +714,7 @@ type = "function"
     /// build wrote is not reported missing.
     #[test]
     fn the_diagnostics_after_a_build_are_those_of_the_built_app() {
-        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures");
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures");
         let root = std::env::temp_dir().join(format!("lsf-open-built-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let dir = root.join("extensions/limit");
@@ -842,12 +842,12 @@ type = "function"
 
     #[test]
     fn an_app_discount_of_the_admin_api_is_in_the_checkout_configuration() {
-        use lsf_admin::domains::{app as admin_app, content};
-        use lsf_admin::state::{ShopState, value};
+        use lsf_app::admin::domains::{app as admin_app, content};
+        use lsf_app::admin::state::{ShopState, value};
         use lsf_core::store::load::{DataSource, LoadOptions, load, load_with_overlays};
 
-        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../admin/tests/fixtures");
-        let shopify_app = lsf_checkout::app::load(&fixtures.join("app")).unwrap();
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures");
+        let shopify_app = lsf_app::config::load(&fixtures.join("admin-app")).unwrap();
         let source = DataSource::Directory(fixtures.join("rich"));
         let (store, _) = load(&source, &LoadOptions::default());
         let mut state = ShopState::seeded(&store, Some(&shopify_app));
@@ -880,14 +880,14 @@ type = "function"
             "ownerType": "DISCOUNT",
         })));
 
-        let overlay = lsf_admin::sync::overlay(&state, &store).expect("an overlay");
+        let overlay = lsf_app::admin::sync::overlay(&state, &store).expect("an overlay");
         let (synced, diagnostics) =
             load_with_overlays(&source, &LoadOptions::default(), &[overlay]);
         assert!(!diagnostics.has_errors(), "{diagnostics}");
         let config = config_from_store(&synced);
         assert_eq!(config.discounts.len(), 3);
         let created = &config.discounts[2];
-        let number = lsf_admin::state::parse_gid(&id).unwrap().1;
+        let number = lsf_app::admin::state::parse_gid(&id).unwrap().1;
         assert_eq!(created.id, Some(number));
         assert_eq!(
             (created.function.as_str(), created.title.as_str()),

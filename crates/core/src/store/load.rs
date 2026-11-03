@@ -485,7 +485,7 @@ pub const OVERLAY_FILE: &str = "(request body)";
 
 /// Data applied on top of the files: the entities it removes, then the entities it adds or
 /// replaces. The data of a session (`PUT /__lsf/session`) is one, and so are the changes the
-/// Admin API made to the store (`lsf_admin::sync`), which the session's data then goes on top of.
+/// Admin API made to the store (`lsf_app::admin::sync`), which the session's data then goes on top of.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Overlay {
     /// What diagnostics name the overlay instead of a file: [`OVERLAY_FILE`] for a session's

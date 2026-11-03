@@ -1,6 +1,6 @@
 // Copies the npm packages lsf builds extensions with when an app has no node_modules into
-// crates/checkout/javascript-packages/node_modules, and writes the list lsf embeds
-// (crates/checkout/src/javascript/packages.rs). Only the files the entries of a Function or a
+// crates/app/javascript-packages/node_modules, and writes the list lsf embeds
+// (crates/app/src/checkout/javascript/packages.rs). Only the files the entries of a Function or a
 // checkout or customer account UI extension reach are copied, with each package's package.json and license.
 //
 //   node tools/checkout/javascript_packages.mjs        (or: mise run checkout:packages)
@@ -39,7 +39,7 @@ const ENTRIES = [
 ];
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const target = join(root, 'crates', 'checkout', 'javascript-packages', 'node_modules');
+const target = join(root, 'crates', 'app', 'javascript-packages', 'node_modules');
 const scratch = mkdtempSync(join(tmpdir(), 'lsf-packages-'));
 writeFileSync(join(scratch, 'package.json'), JSON.stringify({ name: 'packages', private: true, dependencies: PACKAGES }));
 execFileSync('npm', ['install', '--no-audit', '--no-fund', '--ignore-scripts', '--loglevel=error'], { cwd: scratch, stdio: 'inherit' });
@@ -114,7 +114,7 @@ rmSync(scratch, { recursive: true, force: true });
 
 const rust = `// Written by tools/checkout/javascript_packages.mjs: do not edit.
 //
-// The files of crates/checkout/javascript-packages/node_modules, by path in node_modules.
+// The files of crates/app/javascript-packages/node_modules, by path in node_modules.
 
 /// The versions of the packages.
 pub const VERSIONS: &[(&str, &str)] = &[
@@ -123,8 +123,8 @@ ${Object.entries(PACKAGES).map(([name, version]) => `    (${JSON.stringify(name)
 
 /// Each file, by its path in node_modules.
 pub const FILES: &[(&str, &[u8])] = &[
-${paths.map((path) => `    (${JSON.stringify(path)}, include_bytes!("../../../javascript-packages/node_modules/${path}")),`).join('\n')}
+${paths.map((path) => `    (${JSON.stringify(path)}, include_bytes!("../../../../javascript-packages/node_modules/${path}")),`).join('\n')}
 ];
 `;
-writeFileSync(join(root, 'crates', 'checkout', 'src', 'javascript', 'packages', 'files.rs'), rust);
+writeFileSync(join(root, 'crates', 'app', 'src', 'checkout', 'javascript', 'packages', 'files.rs'), rust);
 console.log(`${paths.length} files in ${relative(root, target)}`);
