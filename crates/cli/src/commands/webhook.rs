@@ -8,12 +8,12 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use chrono::Utc;
-use lsf_admin::api::samples::ShopSamples;
-use lsf_admin::state::ShopState;
-use lsf_admin::version::{ApiVersion, Served};
-use lsf_admin::webhooks::samples::Samples;
-use lsf_admin::webhooks::subscriptions::{is_local_http, off_machine_with};
-use lsf_admin::webhooks::{
+use lsf_app::admin::api::samples::ShopSamples;
+use lsf_app::admin::state::ShopState;
+use lsf_app::admin::version::{ApiVersion, Served};
+use lsf_app::admin::webhooks::samples::Samples;
+use lsf_app::admin::webhooks::subscriptions::{is_local_http, off_machine_with};
+use lsf_app::admin::webhooks::{
     API_VERSION, Delivery, DeliveryFilter, DeliveryOptions, DeliveryState, Trigger, Webhooks,
     topics,
 };
@@ -107,7 +107,7 @@ enum Format {
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
     match args.command {
@@ -122,9 +122,9 @@ pub fn run(
 fn sample_records(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     app_dir: Option<&Path>,
-    app: Option<&lsf_checkout::app::App>,
+    app: Option<&lsf_app::config::App>,
 ) -> Result<ShopSamples, String> {
     let data = crate::app::data_with_app(theme, data, app_dir);
     let local = crate::app::App::open_without_theme(theme, data.as_deref(), previews)?;
@@ -143,7 +143,7 @@ const OFF_MACHINE_ADVICE: &str =
 fn trigger(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: TriggerArgs,
 ) -> Result<ExitCode, String> {
     let version = ApiVersion::get(&args.api_version).ok_or_else(|| {
@@ -177,16 +177,13 @@ fn trigger(
             Err(error) => return Err(format!("{error}; or give `--address URL`")),
         },
     };
-    let app = app_dir
-        .as_deref()
-        .map(lsf_checkout::app::load)
-        .transpose()?;
+    let app = app_dir.as_deref().map(lsf_app::config::load).transpose()?;
     let config = app
         .as_ref()
         .map(|app| app.config.clone())
         .unwrap_or_default();
     let (secret, source) =
-        lsf_admin::auth::client_secret(args.client_secret.as_deref(), app_dir.as_deref());
+        lsf_app::admin::auth::client_secret(args.client_secret.as_deref(), app_dir.as_deref());
     let dotenv = app_dir.as_ref().map(|dir| dir.join(".env"));
     let refusal_hint = source.refusal(&secret, dotenv.as_deref());
     let samples = sample_records(theme, data, previews, app_dir.as_deref(), app.as_ref())?;
@@ -196,7 +193,7 @@ fn trigger(
     else {
         return Err(format!(
             "lsf does not build the payload of `{topic}`: it builds {}",
-            lsf_admin::webhooks::payload::BUILT_TOPICS.join(", ")
+            lsf_app::admin::webhooks::payload::BUILT_TOPICS.join(", ")
         ));
     };
     // As Shopify's: a triggered webhook is not retried. One the backend refuses says which

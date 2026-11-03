@@ -1,9 +1,9 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use lsf_checkout::app::Selection;
-use lsf_checkout::pipeline;
-use lsf_checkout::{BuyerJourneyStep, CheckoutResult};
+use lsf_app::checkout::pipeline;
+use lsf_app::checkout::{BuyerJourneyStep, CheckoutResult};
+use lsf_app::config::Selection;
 use lsf_core::Session;
 use lsf_core::diagnostics::{Diagnostics, Severity};
 use lsf_core::store::load::{OVERLAY_FILE, load_with_overlay};
@@ -136,7 +136,7 @@ fn read_json(what: &str, value: &str) -> Result<Json, String> {
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
     let args = match args.command {
@@ -214,7 +214,7 @@ pub fn run(
 
 /// What a run of the Functions comes to.
 struct Ran {
-    app: lsf_checkout::app::App,
+    app: lsf_app::config::App,
     result: CheckoutResult,
     /// The name and the title of the scenario it ran for.
     scenario: Option<(String, String)>,
@@ -228,15 +228,15 @@ struct Ran {
 /// Why a Function asked for by name did not run: what the app says is wrong with it, a
 /// discount Function no discount names, or targets the local checkout does not run.
 fn why_not_run(
-    app: &lsf_checkout::app::App,
-    function: &lsf_checkout::app::FunctionExtension,
+    app: &lsf_app::config::App,
+    function: &lsf_app::config::FunctionExtension,
     discounted: &[String],
     empty_cart: bool,
 ) -> String {
-    use lsf_checkout::app::TargetKind;
+    use lsf_app::config::TargetKind;
     if let Some(diagnostic) = app.diagnostics.iter().find(|diagnostic| {
         diagnostic.extension.as_deref() == Some(function.handle.as_str())
-            && diagnostic.severity == lsf_checkout::app::Severity::Error
+            && diagnostic.severity == lsf_app::config::Severity::Error
     }) {
         return diagnostic.message.clone();
     }
@@ -274,7 +274,7 @@ fn why_not_run(
 fn compute(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: &RunArgs,
 ) -> Result<Ran, String> {
     // The app the current folder is in when `--app` is not given.
@@ -627,8 +627,9 @@ mod playground;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::Parser;
+
+    use super::*;
 
     #[test]
     fn json_comes_from_the_argument_or_from_a_file() {
@@ -656,7 +657,7 @@ mod tests {
 
     #[test]
     fn the_locale_is_one_of_the_languages_of_the_store() {
-        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app");
         let root = std::env::temp_dir().join(format!("lsf-function-locale-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let data = root.join("data");
@@ -693,7 +694,7 @@ mod tests {
 
     #[test]
     fn the_step_is_what_a_validation_function_reads() {
-        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app");
         let root = std::env::temp_dir().join(format!("lsf-function-step-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let data = root.join("data");
@@ -769,10 +770,10 @@ mod tests {
         assert!(matches!(step(&["--step", "completion"]), Step::Completion));
     }
 
-    /// Runs `lsf app function run` on the fixture app of lsf-checkout, for a store with one product
+    /// Runs `lsf app function run` on the fixture app of lsf-app, for a store with one product
     /// (4 at 32.00 in the cart) and the given discount, and says whether it exits with 1.
     fn run_fails(discount: Json, handle: &str, function_settings: Option<Json>) -> bool {
-        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app");
         run_fails_in(app, discount, handle, function_settings)
     }
 
@@ -875,7 +876,7 @@ mod tests {
         let extension = root.join("extensions/spin");
         std::fs::create_dir_all(extension.join("src")).unwrap();
         std::fs::create_dir_all(extension.join("dist")).unwrap();
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app");
         std::fs::copy(
             fixture.join("shopify.app.toml"),
             root.join("shopify.app.toml"),
@@ -928,7 +929,7 @@ mod tests {
     fn run_args(handles: &[&str], scenario: Option<&str>) -> RunArgs {
         RunArgs {
             handles: handles.iter().map(|handle| handle.to_string()).collect(),
-            app: Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app")),
+            app: Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app")),
             build: false,
             session: None,
             scenario: scenario.map(str::to_string),

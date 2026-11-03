@@ -26,7 +26,7 @@ fn server() -> ServerState {
 fn fixture_server(
     admin: Option<super::admin::AdminSettings>,
 ) -> (ServerState, lsf_core::diagnostics::Diagnostics) {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     ServerState::new(
         app,
@@ -773,7 +773,7 @@ fn pages_carry_the_scripts_shopify_injects() {
     );
     assert!(text(&actions).contains("Object.defineProperty(window.Shopify, 'actions'"));
     // The feature loader is where the page says, at a URL that carries a hash of its content.
-    let loader_path = format!("/cdn/{}", lsf_core::render::platform::load_features_path());
+    let loader_path = format!("/cdn/{}", lsf_theme::render::platform::load_features_path());
     assert!(
         loader_path.starts_with("/cdn/shopifycloud/storefront/assets/storefront/load_feature-")
             && loader_path.ends_with(".js"),
@@ -793,7 +793,7 @@ fn pages_carry_the_scripts_shopify_injects() {
 
 /// A server whose options were given on the command line.
 fn server_with_throttle(rules: &str) -> ServerState {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
@@ -1111,7 +1111,7 @@ fn b2b_customers_buy_for_a_company_location() {
 
 #[test]
 fn the_server_can_start_logged_in() {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
@@ -1774,7 +1774,7 @@ fn a_theme_with_partials_gets_their_runtime_with_the_preview() {
         "{% partial 'count' %}<p>1</p>{% endpartial %}",
     )
     .unwrap();
-    let serve = |previews: &[lsf_core::Preview]| {
+    let serve = |previews: &[lsf_theme::Preview]| {
         let app = App::open(&root, None, Revalidate::Never, previews).unwrap();
         ServerState::new(
             app,
@@ -1799,7 +1799,7 @@ fn a_theme_with_partials_gets_their_runtime_with_the_preview() {
     assert!(live.contains("Unknown tag 'partial'"), "{live}");
     assert!(!live.contains("importmap"), "{live}");
 
-    let state = serve(&[lsf_core::Preview::LiquidJuly26]);
+    let state = serve(&[lsf_theme::Preview::LiquidJuly26]);
     let page = text(&get(&state, "/", "partials"));
     let module = page
         .split("\"@shopify/partial-rendering\":\"//")
@@ -2293,7 +2293,7 @@ fn head_value<'a>(head: &'a str, name: &str) -> Option<&'a str> {
 }
 
 async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
@@ -2535,7 +2535,7 @@ fn responses_say_how_long_to_keep_them_as_shopify_does() {
     assert_eq!(
         policy(&format!(
             "/cdn/{}",
-            lsf_core::render::platform::load_features_path()
+            lsf_theme::render::platform::load_features_path()
         ))
         .as_deref(),
         Some("public, max-age=31536000")
@@ -2593,7 +2593,7 @@ fn what_is_rendered_says_how_long_it_took() {
     // With `--timings`, every section in the order they were rendered: the template's, then
     // the layout's. Each one by its type and its id on the page, and followed by its theme
     // blocks: a dash for each level, the type, then the key when it is another word.
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (naming, _) = ServerState::new(
         app,
@@ -2610,8 +2610,8 @@ fn what_is_rendered_says_how_long_it_took() {
             checkout: None,
         },
     );
-    let of_template = |key: &str| lsf_core::render::template_section_id("index", key);
-    let of_group = lsf_core::tags::group_id_prefix("header-group");
+    let of_template = |key: &str| lsf_theme::render::template_section_id("index", key);
+    let of_group = lsf_theme::tags::group_id_prefix("header-group");
     assert_eq!(
         entries(&naming, "/"),
         [
@@ -2670,7 +2670,7 @@ fn the_control_api_adds_up_what_was_rendered() {
     let hero = find(
         "sections",
         "id",
-        &lsf_core::render::template_section_id("index", "hero"),
+        &lsf_theme::render::template_section_id("index", "hero"),
     );
     assert_eq!((&hero["type"], &hero["count"]), (&json!("hero"), &json!(2)));
     assert_eq!(find("sections", "id", "footer")["count"], 5);
@@ -2799,7 +2799,7 @@ fn the_control_api_profiles_a_page() {
         .take_while(|line| !line.is_empty())
         .map(|line| line.split_at(26).1)
         .collect();
-    let hero = lsf_core::render::template_section_id("index", "hero");
+    let hero = lsf_theme::render::template_section_id("index", "hero");
     // The slowest first under each row: the template or the layout, whichever took longer.
     assert_eq!(names[0], "render", "{report}");
     assert!(names.contains(&"  templates/index.json"), "{report}");
@@ -3021,10 +3021,10 @@ fn a_profile_is_drawn_as_a_flame_graph() {
 // --- The checkout of a Shopify app ---
 
 fn fixture_app() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app")
 }
 
-/// A server whose checkout runs the fixture app of `lsf-checkout`.
+/// A server whose checkout runs the fixture app of `lsf-app`.
 fn checkout_server(extensions: &[&str], standalone: bool) -> ServerState {
     checkout_server_of(fixture_app(), extensions, standalone)
 }
@@ -3084,7 +3084,7 @@ fn checkout_server_with(
     if standalone {
         options(App::open_without_theme(Path::new("."), data, &[]).expect("no theme"))
     } else {
-        let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+        let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
         options(App::open(&theme, data, Revalidate::Never, &[]).expect("fixture theme"))
     }
 }
@@ -4015,7 +4015,7 @@ fn a_line_the_cart_transform_merges_in_french_is_changed_in_french() {
 
 /// The part of the state JSON that the Buyer Identity and Localization APIs read, for a
 /// logged-in customer of the demo data buying in French. The sandbox of the extensions reads the
-/// same file (`crates/checkout/assets/tests/sandbox-api.test.mjs`): when the server writes
+/// same file (`crates/app/assets/tests/sandbox-api.test.mjs`): when the server writes
 /// something else, both fail, so the two sides cannot drift apart. Run with `UPDATE_SNAPSHOTS=1`
 /// to write the file again after a change meant to be.
 #[test]
@@ -4055,8 +4055,8 @@ fn the_state_gives_extensions_the_buyer_and_the_localization_of_the_store() {
     }
     let seen = Json::Object(seen);
 
-    let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../checkout/tests/fixtures/server-buyer-state.json");
+    let golden =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/server-buyer-state.json");
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
         std::fs::write(&golden, serde_json::to_string_pretty(&seen).unwrap() + "\n").unwrap();
     }
@@ -4430,10 +4430,10 @@ fn a_merged_line_of_several_bundles_is_scaled_by_bundles() {
 fn partly_merged() -> (
     std::sync::Arc<lsf_core::Store>,
     lsf_core::Session,
-    lsf_checkout::ResultLine,
-    lsf_checkout::ResultLine,
+    lsf_app::checkout::ResultLine,
+    lsf_app::checkout::ResultLine,
 ) {
-    use lsf_checkout::{ResultLine, SourceLine};
+    use lsf_app::checkout::{ResultLine, SourceLine};
     use lsf_core::store::CartLine;
 
     let state = checkout_server(&["bundle-transform"], false);
@@ -5740,7 +5740,7 @@ fn a_guest_without_an_address_is_in_the_shop_country_and_pays_no_shipping_yet() 
     // The extensions read the country and the market the Functions read: the shop's, in Canada.
     let (_, store) = state.snapshot(&id);
     assert_eq!(store.shop.address.country_code, "CA");
-    let (market_id, market_handle) = lsf_checkout::input::market_of(&store, "CA");
+    let (market_id, market_handle) = lsf_app::checkout::input::market_of(&store, "CA");
     assert_eq!(
         json["localization"]["country"],
         json!({"isoCode": "CA", "name": "Canada"})
@@ -7068,7 +7068,7 @@ fn a_check_whose_app_changed_while_it_ran_is_not_kept() {
         )],
     );
     let state = checkout_server_with_data(app_dir.clone(), &[], true, Some(&data.0));
-    let app = lsf_checkout::app::load(&app_dir).unwrap();
+    let app = lsf_app::config::load(&app_dir).unwrap();
     let store = state.loaded().store.clone();
     let wasm = app_dir.join("extensions/broken-wasm/dist/function.wasm");
     let cache = super::home_check::Cache::default();
@@ -7194,7 +7194,7 @@ fn a_check_past_its_budget_says_how_many_scenarios_it_checked() {
         "http://127.0.0.1:9",
     );
     let state = checkout_server_with_data(app_dir.clone(), &[], true, Some(&data));
-    let app = lsf_checkout::app::load(&app_dir).unwrap();
+    let app = lsf_app::config::load(&app_dir).unwrap();
     let store = state.loaded().store.clone();
     let report = super::home_check::run(&state, &app, &store, Duration::ZERO);
     assert_eq!((report.checked, report.total), (0, 3));
@@ -8372,13 +8372,13 @@ fn admin_server() -> ServerState {
 
 #[test]
 fn the_admin_api_serves_the_versions_it_is_told() {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
             admin: Some(super::admin::AdminSettings {
-                versions: lsf_admin::version::Served::parse("2026-10,2027-01").unwrap(),
+                versions: lsf_app::admin::version::Served::parse("2026-10,2027-01").unwrap(),
                 ..Default::default()
             }),
             live_reload: false,
@@ -9100,7 +9100,8 @@ async fn a_body_over_the_limit_is_refused_and_an_upload_takes_more() {
         .unwrap()
         .api
         .with_default_shop(|shop| {
-            lsf_admin::domains::app::uploads::bytes(shop, &resource).map(|blob| blob.bytes.len())
+            lsf_app::admin::domains::app::uploads::bytes(shop, &resource)
+                .map(|blob| blob.bytes.len())
         })
         .flatten();
     assert_eq!(stored, Some(size), "every byte is stored");

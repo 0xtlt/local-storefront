@@ -6,7 +6,7 @@ and the buyer, checks every answer, prints a table, and stops both. Nothing here
 Shopify, and nothing is deployed.
 
 ```bash
-cargo build -p lsf                       # once, and after changing lsf
+cargo build -p lsf-cli   # once, and after changing lsf
 cd examples/admin-backend
 npm install
 npm run e2e

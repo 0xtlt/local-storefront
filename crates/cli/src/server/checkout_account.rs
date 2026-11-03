@@ -12,7 +12,7 @@
 //! customer of a session (the page, `/__lsf/login`, the control API, the login form of the
 //! theme), the checkout catches up the next time it is read: see [`prepare`].
 
-use lsf_checkout::{Address, CheckoutState};
+use lsf_app::checkout::{Address, CheckoutState};
 use lsf_core::store::{Address as StoreAddress, Customer};
 use lsf_core::{Session, Store};
 use serde_json::{Value as Json, json};

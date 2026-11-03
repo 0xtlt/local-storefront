@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use lsf_core::render::{Rendered, Target, Timings};
+use lsf_theme::render::{Rendered, Target, Timings};
 use serde_json::{Value as Json, json};
 
 use super::reply::Reply;
@@ -337,7 +337,7 @@ impl Totals {
 
 #[cfg(test)]
 mod tests {
-    use lsf_core::render::{BlockTiming, SectionTiming};
+    use lsf_theme::render::{BlockTiming, SectionTiming};
 
     use super::*;
 

@@ -284,7 +284,7 @@ type = "ui_extension"
 
     /// The app as the checkout reads it with these builds.
     fn load(&self, builds: &Builds) -> App {
-        let mut app = app::load(&self.root()).unwrap();
+        let mut app = config::load(&self.root()).unwrap();
         builds.apply(&mut app);
         app
     }
@@ -459,7 +459,7 @@ type = "function"
   "generates": { "./generated/api.ts": { "plugins": ["typescript", "typescript-operations"] } } } }"#,
     );
     app.write("extensions/bulk/src/index.ts", "export function run() {}\n");
-    let shopify_app = app::load(&app.root()).unwrap();
+    let shopify_app = config::load(&app.root()).unwrap();
     let rules = rules_of(&shopify_app, &Selection::all());
     let rules = &rules["bulk"];
     let job = rules.build.as_ref().expect("a build");
@@ -1096,7 +1096,7 @@ fn a_change_to_an_extension_without_a_build_reloads_the_pages_at_once() {
 #[test]
 fn what_a_build_command_wrote_is_linked_to_the_function_wasm_api_before_it_runs() {
     let raw = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../checkout/tests/fixtures/trampoline/quantity-limit.raw.wasm");
+        .join("../app/tests/fixtures/trampoline/quantity-limit.raw.wasm");
     let app = TempApp::new("link");
     // A Rust Function's build: the module `cargo build` writes.
     app.function_with(
@@ -1106,7 +1106,7 @@ fn what_a_build_command_wrote_is_linked_to_the_function_wasm_api_before_it_runs(
     let watching = Watching::start(&app, |options| options.build_first = true);
     let published = std::fs::read(watching.builds.module_path("rust").unwrap()).unwrap();
     assert_eq!(
-        lsf_checkout::trampoline::unlinked(&published),
+        lsf_app::checkout::trampoline::unlinked(&published),
         None,
         "{}",
         watching.said()
@@ -1114,9 +1114,8 @@ fn what_a_build_command_wrote_is_linked_to_the_function_wasm_api_before_it_runs(
     assert_eq!(
         published,
         std::fs::read(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join(
-                "../checkout/tests/fixtures/app/extensions/quantity-limit/dist/function.wasm"
-            )
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../app/tests/fixtures/app/extensions/quantity-limit/dist/function.wasm")
         )
         .unwrap()
     );

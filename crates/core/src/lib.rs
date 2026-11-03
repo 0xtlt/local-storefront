@@ -1,29 +1,24 @@
-//! Renders Shopify themes locally, without calling Shopify.
+//! The store data of a local Shopify store, and what the storefront and the app around it both
+//! need of it: lsf-theme renders a theme with it, lsf-app runs an app against it. Nothing here
+//! renders Liquid.
 //!
-//! - [`theme`] loads a theme directory (Liquid files, JSON templates, settings, locales).
 //! - [`store`] loads and validates the store data (products, collections, customers, ...).
-//! - [`drops`], [`filters`] and [`tags`] implement Shopify's Liquid objects, filters and tags.
-//! - [`render`] ties it together: a request goes in, a page comes out.
+//! - [`session`] is a visitor's state, and [`cart`] resolves its cart lines against the store.
+//! - [`theme`] is a theme as files on disk, which the storefront serves and the Admin API edits.
+//! - [`color`], [`money`] and [`urls`] are the values both sides print.
 
+pub mod cart;
+pub mod color;
 pub mod diagnostics;
-pub mod drops;
 pub mod error;
-pub mod filters;
-pub mod fonts;
-pub mod images;
 pub mod json;
-pub mod previews;
-pub mod render;
-pub mod site;
+pub mod money;
+pub mod session;
 pub mod store;
-pub mod tags;
 pub mod theme;
 pub mod urls;
 pub mod util;
 
 pub use error::{Error, Result};
-pub use previews::Preview;
-pub use render::{Rendered, Renderer, Target, environment, environment_with};
-pub use site::{FormResult, Request, Session, Site};
+pub use session::Session;
 pub use store::Store;
-pub use theme::Theme;

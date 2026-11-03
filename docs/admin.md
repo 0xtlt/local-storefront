@@ -947,7 +947,7 @@ What the backend changes through the Admin API is what the storefront and the
 | Shop: name, email, description, policies | Domains, currency, time zone, plan; turning a Function off (its settings go, it still runs) |
 
 Each family of the [reference](admin-reference.md#what-lsf-simulates) says what of it syncs.
-For contributors, the full list, field by field, is in `crates/admin/docs/design.md` ("Store
+For contributors, the full list, field by field, is in `crates/app/docs/admin/design.md` ("Store
 sync").
 
 - **Only the default shop syncs.** The shops of `POST /__lsf/admin/shops` exist to isolate tests:
@@ -1027,7 +1027,7 @@ admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
 
 For contributors: adding another version is a data drop and a line of code,
 `mise run admin:version -- <version>` writes its files from Shopify's introspection and says what
-is left (`crates/admin/docs/design.md`, "Add a version").
+is left (`crates/app/docs/admin/design.md`, "Add a version").
 
 ## Reference
 

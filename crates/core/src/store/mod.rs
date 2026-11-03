@@ -2,6 +2,7 @@
 //! into a form that is cheap to query while rendering.
 
 pub mod build;
+mod date;
 pub mod demo;
 pub mod docs;
 pub mod load;
@@ -298,6 +299,17 @@ pub struct Variant {
     /// it is in stock there)`.
     pub store_availabilities: Vec<(usize, bool)>,
     pub metafields: Metafields,
+}
+
+/// The weight of a variant expressed in its display unit.
+pub fn weight_in_unit(grams: u64, unit: &str) -> f64 {
+    let grams = grams as f64;
+    match unit {
+        "g" => grams,
+        "oz" => grams / 28.349_523_125,
+        "lb" => grams / 453.592_37,
+        _ => grams / 1000.0,
+    }
 }
 
 #[derive(Clone, Debug)]

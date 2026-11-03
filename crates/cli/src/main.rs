@@ -49,7 +49,7 @@ struct Cli {
         value_name = "NAME",
         value_parser = parse_preview
     )]
-    previews: Vec<lsf_core::Preview>,
+    previews: Vec<lsf_theme::Preview>,
 
     #[command(subcommand)]
     command: Command,
@@ -87,9 +87,9 @@ enum Command {
     Docs(commands::docs::Args),
 }
 
-fn parse_preview(name: &str) -> Result<lsf_core::Preview, String> {
-    lsf_core::Preview::from_name(name).ok_or_else(|| {
-        let known: Vec<&str> = lsf_core::Preview::ALL
+fn parse_preview(name: &str) -> Result<lsf_theme::Preview, String> {
+    lsf_theme::Preview::from_name(name).ok_or_else(|| {
+        let known: Vec<&str> = lsf_theme::Preview::ALL
             .iter()
             .map(|preview| preview.name())
             .collect();
@@ -132,8 +132,9 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::CommandFactory;
+
+    use super::*;
 
     #[test]
     fn the_command_line_is_consistent() {

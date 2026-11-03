@@ -26,7 +26,7 @@ fn mutate(state: &ServerState, query: &str, variables: Json) -> Json {
 fn fixture_file(path: &str) -> Vec<u8> {
     std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../core/tests/fixtures/theme")
+            .join("../theme/tests/fixtures/theme")
             .join(path),
     )
     .unwrap()

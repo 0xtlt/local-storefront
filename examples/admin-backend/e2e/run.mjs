@@ -1,7 +1,7 @@
 // The end-to-end run: starts lsf (with the app, a small theme and the demo store) and the
 // backend, plays the merchant and the buyer (the admin's launch, OAuth's browser, the charge
 // page, the storefront, the checkout), checks what the backend and lsf answered, prints a table,
-// and stops both. Run it with `npm run e2e` (after `cargo build -p lsf`).
+// and stops both. Run it with `npm run e2e` (after `cargo build -p lsf-cli`).
 //
 // Options (environment): LSF_BIN (default: debug/lsf of `CARGO_TARGET_DIR`, where `cargo build`
 // put it, else target/debug/lsf of the repository), E2E_VERBOSE=1
@@ -82,7 +82,7 @@ function assert(condition, message, details) {
 
 async function main() {
   if (!existsSync(lsfBin)) {
-    console.error(`lsf is not built: ${lsfBin}\nRun \`cargo build -p lsf\` first, or set LSF_BIN.`);
+    console.error(`lsf is not built: ${lsfBin}\nRun \`cargo build -p lsf-cli\` first, or set LSF_BIN.`);
     process.exit(2);
   }
   const backendPort = await freePort();

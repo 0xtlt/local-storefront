@@ -13,7 +13,7 @@
 //! that follows it; a page rendered meanwhile sees the store before or after, never half of it.
 //! Pages served without a mutation in between pay one atomic read.
 //!
-//! See "Store sync" in `crates/admin/docs/design.md`, and "What the storefront and the checkout
+//! See "Store sync" in `crates/app/docs/admin/design.md`, and "What the storefront and the checkout
 //! see" in `docs/admin.md`.
 
 use std::collections::HashSet;
@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-use lsf_admin::api::Synced;
+use lsf_app::admin::api::Synced;
 use lsf_core::Store;
 use lsf_core::diagnostics::Diagnostics;
 use lsf_core::store::load::{OVERLAY_FILE, Overlay};
@@ -81,11 +81,11 @@ impl ServerState {
 
     /// What the Admin API changed of the theme the storefront serves: the files written over
     /// the theme directory or deleted from it, or the whole of another theme it published
-    /// (`lsf_admin::domains::themes`), the script tags `content_for_header` loads, and which
+    /// (`lsf_app::admin::domains::themes`), the script tags `content_for_header` loads, and which
     /// theme `Shopify.theme` names (its id, its name). The directory is never written to.
     /// Applied when they changed, while `rebuilding` is held: after a change of the default
     /// shop, and after a reseed (`ServerState::reload`).
-    pub(super) fn sync_theme(&self, api: &lsf_admin::api::AdminApi) {
+    pub(super) fn sync_theme(&self, api: &lsf_app::admin::api::AdminApi) {
         let files = self.app.theme.files();
         // Made only when it changed, from the one served: a change of the shop that is not one
         // of its theme copies nothing.
@@ -203,7 +203,8 @@ fn new_problems(all: Diagnostics, files: &Diagnostics) -> Diagnostics {
             .items
             .into_iter()
             .filter(|item| {
-                item.file == lsf_admin::sync::OVERLAY_NAME || !known.contains(&item.to_string())
+                item.file == lsf_app::admin::sync::OVERLAY_NAME
+                    || !known.contains(&item.to_string())
             })
             .collect(),
     }

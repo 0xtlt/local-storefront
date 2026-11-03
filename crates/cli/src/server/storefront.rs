@@ -2,12 +2,13 @@
 
 use std::sync::Arc;
 
-use lsf_core::drops::collection::CollectionDrop;
-use lsf_core::drops::product::ProductDrop;
-use lsf_core::drops::search::{predictive_search_value, recommendations_value};
-use lsf_core::render::page::{Page, Resource};
-use lsf_core::render::{Rendered, Target, seo};
-use lsf_core::{Request, Session, Site, Store};
+use lsf_core::{Session, Store};
+use lsf_theme::drops::collection::CollectionDrop;
+use lsf_theme::drops::product::ProductDrop;
+use lsf_theme::drops::search::{predictive_search_value, recommendations_value};
+use lsf_theme::render::page::{Page, Resource};
+use lsf_theme::render::{Rendered, Target, seo};
+use lsf_theme::{Request, Site};
 use serde_json::{Value as Json, json};
 
 use super::reply::{Reply, cache};
@@ -103,7 +104,7 @@ impl Visit<'_> {
                     .unwrap_or_else(|| "/".to_string()),
             ),
         };
-        let page = lsf_core::render::routes::resolve(&site);
+        let page = lsf_theme::render::routes::resolve(&site);
         let target = Target::Sections(ids.to_vec());
         let rendered = self.state.app.renderer.render_page(&site, page, &target);
         self.state.timings.add(&rendered, &target);

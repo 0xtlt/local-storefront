@@ -17,7 +17,7 @@
 //! addresses), so that the page and the sandbox read it the same way; shipments come from its
 //! `fulfillment_status`, returns from its `returns`.
 
-use lsf_checkout::app::Selection;
+use lsf_app::config::Selection;
 use lsf_core::store::{Customer, Order, Store};
 use serde_json::{Value as Json, json};
 
@@ -207,7 +207,7 @@ fn state_json(
             &store,
             language,
             &session,
-            &lsf_checkout::CheckoutState::default(),
+            &lsf_app::checkout::CheckoutState::default(),
         ),
         "profiles": profiles,
         // The checkout's extensions have nothing to show here.
@@ -330,7 +330,8 @@ fn order_json(store: &Store, order: &Order) -> Json {
         .enumerate()
         .filter_map(|(index, item)| {
             let variant = &store.products[item.variant.0].variants[item.variant.1];
-            let mut line = lsf_checkout::pipeline::order_line(store, variant.id, item.quantity)?;
+            let mut line =
+                lsf_app::checkout::pipeline::order_line(store, variant.id, item.quantity)?;
             line.id = format!("gid://shopify/LineItem/{}{:02}", order.id, index + 1);
             serde_json::to_value(line).ok()
         })

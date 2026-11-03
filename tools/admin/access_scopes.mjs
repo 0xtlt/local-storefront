@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Writes the access scopes a version of the Admin API requires
-// (crates/admin/schemas/<version>/access.json), which `lsf_admin::auth::scopes` enforces, and the
-// search filters each connection documents (crates/admin/schemas/<version>/search.json), which
-// `lsf_admin::search` knows. `--version <v>` (default: lsf-admin's default version).
+// (crates/app/schemas/admin/<version>/access.json), which `lsf_app::admin::auth::scopes` enforces, and the
+// search filters each connection documents (crates/app/schemas/admin/<version>/search.json), which
+// `lsf_app::admin::search` knows. `--version <v>` (default: lsf-app's default version).
 //
 // Source: the introspection of the version (tools/admin/source.mjs: the pinned @shopify/dev-mcp,
 // or shopify.dev's public proxy). It carries, for each type and each field, the `requiredAccess`
@@ -29,8 +29,8 @@ import { introspection, isMain, root, versionArg } from "./source.mjs";
 
 /** Writes access.json and search.json of `version` from its introspection. */
 export function generate(version, { schema, source }) {
-  const out = join(root, "crates/admin/schemas", version, "access.json");
-  const searchOut = join(root, "crates/admin/schemas", version, "search.json");
+  const out = join(root, "crates/app/schemas/admin", version, "access.json");
+  const searchOut = join(root, "crates/app/schemas/admin", version, "search.json");
   const types = new Map(schema.types.map((type) => [type.name, type]));
 
   const typeTexts = {};

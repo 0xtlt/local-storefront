@@ -26,7 +26,7 @@ pub fn app_url(text: &str) -> Result<String, String> {
     }
 }
 
-/// A value of `--admin-source`: `<url>=<file>`, the URL ([`lsf_admin::sources::stub_key`]) and
+/// A value of `--admin-source`: `<url>=<file>`, the URL ([`lsf_app::admin::sources::stub_key`]) and
 /// the file, which must be there when lsf starts; its path made absolute, so that it is the
 /// same file wherever lsf runs from. The URL is what comes before the last `=`, so that its
 /// query may have some.
@@ -36,7 +36,7 @@ pub fn admin_source(text: &str) -> Result<(String, std::path::PathBuf), String> 
             "`{text}` is not <url>=<file>, like https://cdn.example.com/theme.zip=./fixtures/theme.zip"
         ));
     };
-    let url = lsf_admin::sources::stub_key(url)?;
+    let url = lsf_app::admin::sources::stub_key(url)?;
     let path = std::path::Path::new(file.trim());
     match std::fs::metadata(path) {
         Ok(meta) if meta.is_file() => {}

@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use lsf_admin::domains::catalog;
+use lsf_app::admin::domains::catalog;
 use lsf_core::theme::Revalidate;
 use serde_json::{Value as Json, json};
 
@@ -206,7 +206,7 @@ impl MetafieldTheme {
         let directory = std::env::temp_dir().join(format!("lsf-sync-theme-{}", std::process::id()));
         std::fs::remove_dir_all(&directory).ok();
         copy_directory(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme"),
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme"),
             &directory,
         );
         std::fs::write(
@@ -425,7 +425,7 @@ fn open_pages_reload_when_the_backend_changes_the_store() {
 fn a_change_of_the_files_and_a_reset_bring_the_files_back() {
     // `--watch` over a data directory of the demo store.
     let data = ScenarioData::new("sync-watch", &[]);
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, Some(&data.0), Revalidate::Never, &[]).expect("the theme");
     let (state, _) = ServerState::new(
         app,
@@ -541,7 +541,11 @@ fn what_the_store_data_refuses_of_a_change_is_told_and_the_rest_is_served() {
         Some(loaded.synced.diagnostics.items.len()),
         "{told}"
     );
-    assert_eq!(told[0]["file"], lsf_admin::sync::OVERLAY_NAME, "{told}");
+    assert_eq!(
+        told[0]["file"],
+        lsf_app::admin::sync::OVERLAY_NAME,
+        "{told}"
+    );
     assert_eq!(told[0]["code"], "duplicate_company", "{told}");
     // The store, built from the overlay with the problem told, has both.
     let kept: Vec<String> = loaded

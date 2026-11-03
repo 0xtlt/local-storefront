@@ -4,9 +4,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use lsf_core::filters::html_payment_icon;
-use lsf_core::images::{Accepted, Transform, placeholder, served_as_is, transform_file};
-use lsf_core::render::platform::PLACEHOLDER_SVG;
+use lsf_theme::filters::html_payment_icon;
+use lsf_theme::images::{Accepted, Transform, placeholder, served_as_is, transform_file};
+use lsf_theme::render::platform::PLACEHOLDER_SVG;
 
 use super::minify::{self, Minified};
 use super::reply::{Reply, cache, content_type};
@@ -30,7 +30,7 @@ fn extension(path: &str) -> String {
 pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
     let path = incoming.path.as_str();
     // The scripts of the platform: the local counterparts of what Shopify's CDN serves.
-    if let Some(script) = lsf_core::render::platform::asset(path.trim_start_matches("/cdn/")) {
+    if let Some(script) = lsf_theme::render::platform::asset(path.trim_start_matches("/cdn/")) {
         return Reply::new(200, "text/javascript; charset=utf-8", script.content).cached(
             if script.versioned {
                 cache::PLATFORM
@@ -102,7 +102,7 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
 /// A global asset of Shopify (`{{ 'vendor/qrcode.js' | shopify_asset_url }}`): the local copy or
 /// stand-in, or a 404 that the log names.
 fn global_asset(state: &ServerState, name: &str) -> Reply {
-    match lsf_core::render::platform::global_asset(name) {
+    match lsf_theme::render::platform::global_asset(name) {
         Some(asset) => {
             let reply =
                 Reply::new(200, asset.content_type, asset.content).cached(cache::PLATFORM_FIXED);
@@ -138,7 +138,7 @@ fn font(state: &ServerState, name: &str) -> Reply {
         .and_then(|path| std::fs::read(path).ok());
     match local {
         Some(bytes) => Reply::new(200, content_type(name), bytes).cached(cache::IMMUTABLE),
-        None => Reply::new(200, "font/ttf", lsf_core::fonts::blank_font())
+        None => Reply::new(200, "font/ttf", lsf_theme::fonts::blank_font())
             .cached(cache::IMMUTABLE)
             .header("x-lsf-placeholder", "1"),
     }

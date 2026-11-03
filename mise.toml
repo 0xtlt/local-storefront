@@ -13,7 +13,7 @@ LSF_HORIZON_DIR = "{{config_root}}/themes/horizon"
 
 [tasks.build]
 description = "Build the lsf binary (release)"
-run = "cargo build --release -p lsf"
+run = "cargo build --release -p lsf-cli"
 
 [tasks.install]
 description = "Build lsf and install it into ~/.cargo/bin"
@@ -36,21 +36,21 @@ run = "cargo test --workspace"
 
 [tasks."test:js"]
 description = "Test the scripts lsf injects into pages (Shopify.actions, Shopify.loadFeatures, live reload) and the checkout page and its extension host"
-run = "node --test crates/core/assets/platform/tests/*.test.mjs crates/cli/assets/tests/*.test.mjs crates/checkout/assets/tests/*.test.mjs"
+run = "node --test crates/theme/assets/platform/tests/*.test.mjs crates/cli/assets/tests/*.test.mjs crates/app/assets/tests/*.test.mjs"
 
 [tasks.lint]
 description = "Clippy on the whole workspace, warnings are errors"
 run = "cargo clippy --workspace --all-targets -- -D warnings"
 
 [tasks."checkout:schemas"]
-description = "Regenerate the Function API schemas of lsf-checkout (crates/checkout/schemas) from the pinned @shopify/dev-mcp package"
+description = "Regenerate the Function API schemas of lsf-app (crates/app/schemas/functions) from the pinned @shopify/dev-mcp package"
 run = "node tools/checkout/function_schemas.mjs"
 
 [tasks."admin:e2e"]
 description = "Run examples/admin-backend, an app backend written with Shopify's libraries, end to end against lsf's Admin API"
 dir = "examples/admin-backend"
 run = [
-  "cargo build --manifest-path ../../Cargo.toml -p lsf",
+  "cargo build --manifest-path ../../Cargo.toml -p lsf-cli",
   "npm install --no-audit --no-fund",
   "npm run e2e",
 ]
@@ -60,35 +60,35 @@ description = "Measure the RAM and CPU of a release build of lsf, suite by suite
 run = "node tools/admin/bench.mjs"
 
 [tasks."admin:version"]
-description = "Write everything a version of the Admin API needs (crates/admin/schemas/<version>, its test fixtures) from the pinned @shopify/dev-mcp package, or shopify.dev for a version it lacks, and print what is left to do: mise run admin:version -- 2027-01"
+description = "Write everything a version of the Admin API needs (crates/app/schemas/admin/<version>, its test fixtures) from the pinned @shopify/dev-mcp package, or shopify.dev for a version it lacks, and print what is left to do: mise run admin:version -- 2027-01"
 run = "node tools/admin/add_version.mjs"
 
 [tasks."admin:schema"]
-description = "Regenerate the schema of a version of the GraphQL Admin API of lsf-admin (crates/admin/schemas/<version>) from the pinned @shopify/dev-mcp package: mise run admin:schema [-- --version 2027-01]"
+description = "Regenerate the schema of a version of the GraphQL Admin API of lsf-app (crates/app/schemas/admin/<version>) from the pinned @shopify/dev-mcp package: mise run admin:schema [-- --version 2027-01]"
 run = "node tools/admin/admin_schema.mjs"
 
 [tasks."admin:access-scopes"]
-description = "Regenerate the access scopes and the search filters of a version of the Admin API (crates/admin/schemas/<version>/access.json, search.json) from the pinned @shopify/dev-mcp package: mise run admin:access-scopes [-- --version 2027-01]"
+description = "Regenerate the access scopes and the search filters of a version of the Admin API (crates/app/schemas/admin/<version>/access.json, search.json) from the pinned @shopify/dev-mcp package: mise run admin:access-scopes [-- --version 2027-01]"
 run = "node tools/admin/access_scopes.mjs"
 
 [tasks."admin:topics"]
-description = "Regenerate the webhook topics of a version of the Admin API (crates/admin/schemas/<version>/topics.json) from the pinned @shopify/dev-mcp package: mise run admin:topics [-- --version 2027-01]"
+description = "Regenerate the webhook topics of a version of the Admin API (crates/app/schemas/admin/<version>/topics.json) from the pinned @shopify/dev-mcp package: mise run admin:topics [-- --version 2027-01]"
 run = "node tools/admin/webhook_topics.mjs"
 
 [tasks."admin:webhook-examples"]
-description = "Download Shopify's example webhook payloads of a version (crates/admin/tests/fixtures/webhooks/examples-<version>.json), which the payload tests compare with: mise run admin:webhook-examples [-- --version 2027-01]"
+description = "Download Shopify's example webhook payloads of a version (crates/app/tests/fixtures/webhooks/examples-<version>.json), which the payload tests compare with: mise run admin:webhook-examples [-- --version 2027-01]"
 run = "node tools/admin/webhook_examples.mjs"
 
 [tasks."checkout:packages"]
-description = "Copy the npm packages lsf builds extensions with when an app has no node_modules (crates/checkout/javascript-packages), at the versions of tools/checkout/javascript_packages.mjs"
+description = "Copy the npm packages lsf builds extensions with when an app has no node_modules (crates/app/javascript-packages), at the versions of tools/checkout/javascript_packages.mjs"
 run = "node tools/checkout/javascript_packages.mjs"
 
 [tasks."checkout:providers"]
-description = "Rebuild the providers lsf links Functions with (crates/checkout/providers) from those of Shopify's function-runner, at the tag of tools/checkout/providers.sh"
+description = "Rebuild the providers lsf links Functions with (crates/app/providers) from those of Shopify's function-runner, at the tag of tools/checkout/providers.sh"
 run = "tools/checkout/providers.sh"
 
 [tasks."fixtures:functions"]
-description = "Rebuild the Wasm Functions of the lsf-checkout test app (crates/checkout/tests/fixtures/app); the built modules are committed"
+description = "Rebuild the Wasm Functions of the lsf-app test app (crates/app/tests/fixtures/app); the built modules are committed"
 run = "tools/checkout/build_function_fixtures.sh"
 
 [tasks."playground:functions"]
@@ -102,12 +102,12 @@ run = "node examples/checkout-playground/tools/fake-api.mjs"
 [tasks."playground:checkout"]
 description = "Serve the checkout of the playground app with its scenarios (http://127.0.0.1:9292/)"
 dir = "examples/checkout-playground"
-run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf -- app dev --app ."
+run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf-cli -- app dev --app ."
 
 [tasks."playground:dev"]
 description = "Serve the checkout of the playground in watch mode: a Function builds again when its files change, and the open pages reload (http://127.0.0.1:9292/)"
 dir = "examples/checkout-playground"
-run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf -- app dev --app . --watch"
+run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf-cli -- app dev --app . --watch"
 
 [tasks.fmt]
 description = "Format the code"
@@ -131,7 +131,7 @@ fi
 [tasks."horizon:serve"]
 description = "Serve the Horizon theme with the demo store data"
 depends = ["horizon:install"]
-run = "cargo run --release -p lsf -- serve --theme themes/horizon"
+run = "cargo run --release -p lsf-cli -- serve --theme themes/horizon"
 
 [tasks."oracle:install"]
 description = "Install Shopify's reference liquid gem locally (used to generate golden tests)"
@@ -177,7 +177,7 @@ run = "tools/docs/fetch.sh"
 [tasks."docs:coverage"]
 description = "Check lsf against Shopify's Liquid reference: fails on a missing filter or tag, lists object properties to look at (run docs:fetch first)"
 run = [
-  "cargo test -q -p lsf-core --test conformance every_documented_filter_and_tag_exists",
+  "cargo test -q -p lsf-theme --test conformance every_documented_filter_and_tag_exists",
   "ruby tools/docs/coverage.rb",
 ]
 

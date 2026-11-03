@@ -2316,7 +2316,39 @@ dependencies = [
 ]
 
 [[package]]
-name = "lsf"
+name = "lsf-app"
+version = "0.2.0"
+dependencies = [
+ "base64 0.23.1",
+ "brotli",
+ "chrono",
+ "chrono-tz",
+ "deterministic-wasi-ctx",
+ "flate2",
+ "form_urlencoded",
+ "graphql-parser",
+ "hmac",
+ "indexmap 2.14.2",
+ "lsf-core",
+ "md-5",
+ "oxc",
+ "regex",
+ "rmp-serde",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "shopify_function_trampoline",
+ "toml",
+ "ureq",
+ "wasm-encoder 0.240.0",
+ "wasmparser 0.240.0",
+ "wasmtime",
+ "wasmtime-wasi",
+]
+
+[[package]]
+name = "lsf-cli"
 version = "0.2.0"
 dependencies = [
  "axum",
@@ -2333,11 +2365,11 @@ dependencies = [
  "indexmap 2.14.2",
  "libc",
  "lightningcss",
- "lsf-admin",
- "lsf-checkout",
+ "lsf-app",
  "lsf-core",
  "lsf-fmt",
  "lsf-liquid",
+ "lsf-theme",
  "mimalloc",
  "multer",
  "notify",
@@ -2354,73 +2386,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "lsf-admin"
-version = "0.2.0"
-dependencies = [
- "base64 0.23.1",
- "brotli",
- "chrono",
- "chrono-tz",
- "flate2",
- "form_urlencoded",
- "graphql-parser",
- "hmac",
- "indexmap 2.14.2",
- "lsf-checkout",
- "lsf-core",
- "md-5",
- "regex",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "toml",
- "ureq",
-]
-
-[[package]]
-name = "lsf-checkout"
-version = "0.2.0"
-dependencies = [
- "brotli",
- "chrono",
- "deterministic-wasi-ctx",
- "graphql-parser",
- "indexmap 2.14.2",
- "lsf-core",
- "oxc",
- "rmp-serde",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "shopify_function_trampoline",
- "toml",
- "ureq",
- "wasm-encoder 0.240.0",
- "wasmparser 0.240.0",
- "wasmtime",
- "wasmtime-wasi",
-]
-
-[[package]]
 name = "lsf-core"
 version = "0.2.0"
 dependencies = [
- "blake3",
  "chrono",
  "chrono-tz",
- "hmac",
  "image",
  "indexmap 2.14.2",
  "jsonschema",
- "libwebp-sys",
- "lsf-liquid",
- "md-5",
  "schemars",
  "serde",
  "serde_json",
- "sha1 0.11.0",
- "sha2 0.11.1",
 ]
 
 [[package]]
@@ -2444,6 +2420,24 @@ dependencies = [
  "regex",
  "rust_decimal",
  "serde_json",
+]
+
+[[package]]
+name = "lsf-theme"
+version = "0.2.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "hmac",
+ "image",
+ "indexmap 2.14.2",
+ "libwebp-sys",
+ "lsf-core",
+ "lsf-liquid",
+ "md-5",
+ "serde_json",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
 ]
 
 [[package]]

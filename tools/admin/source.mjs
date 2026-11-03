@@ -1,8 +1,8 @@
 // What the generators of tools/admin read: the introspection of the GraphQL Admin API of one
 // version, and which version that is.
 //
-// - `--version <v>` names the version (`2027-01`); without it, the default version of lsf-admin,
-//   read from `pub const DEFAULT` in crates/admin/src/version.rs, so that the scripts and the
+// - `--version <v>` names the version (`2027-01`); without it, the default version of lsf-app,
+//   read from `pub const DEFAULT` in crates/app/src/admin/version.rs, so that the scripts and the
 //   crate have one default.
 // - The introspection comes from the npm package @shopify/dev-mcp (ISC, Shopify), pinned and
 //   checked against its SHA-256 in tools/dev_mcp.mjs, which ships the introspection of each
@@ -29,11 +29,11 @@ const PROXY = "https://shopify.dev/admin-graphql-direct-proxy";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
-/** The default version of lsf-admin: `pub const DEFAULT` of crates/admin/src/version.rs. */
+/** The default version of lsf-app: `pub const DEFAULT` of crates/app/src/admin/version.rs. */
 export function defaultVersion() {
-  const source = readFileSync(join(root, "crates/admin/src/version.rs"), "utf8");
+  const source = readFileSync(join(root, "crates/app/src/admin/version.rs"), "utf8");
   const found = /pub const DEFAULT: &str = "([^"]+)";/.exec(source);
-  if (!found) throw new Error("crates/admin/src/version.rs has no `pub const DEFAULT`");
+  if (!found) throw new Error("crates/app/src/admin/version.rs has no `pub const DEFAULT`");
   return found[1];
 }
 

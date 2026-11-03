@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // Writes the example payloads of Shopify's webhook reference for a version of the Admin API, for
-// the topics lsf-admin builds (crates/admin/tests/fixtures/webhooks/examples-<version>.json): the
+// the topics lsf-app builds (crates/app/tests/fixtures/webhooks/examples-<version>.json): the
 // tests of the payload builders compare what they build with them. `--version <v>` (default:
-// lsf-admin's default version).
+// lsf-app's default version).
 //
 // Source: https://shopify.dev/docs/api/webhooks/<version>.md, the reference as Markdown, where
 // each topic has a "Sample Payload". The topics are those of `BUILT_TOPICS`
-// (crates/admin/src/webhooks/payload/mod.rs). Needs network access.
+// (crates/app/src/admin/webhooks/payload/mod.rs). Needs network access.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -55,8 +55,8 @@ const DOCUMENTED_EMPTY = [
 /** Writes examples-<version>.json from shopify.dev's webhook reference of `version`. */
 export async function generate(version) {
   const source = `https://shopify.dev/docs/api/webhooks/${version}.md`;
-  const out = join(root, `crates/admin/tests/fixtures/webhooks/examples-${version}.json`);
-  const builders = readFileSync(join(root, "crates/admin/src/webhooks/payload/mod.rs"), "utf8");
+  const out = join(root, `crates/app/tests/fixtures/webhooks/examples-${version}.json`);
+  const builders = readFileSync(join(root, "crates/app/src/admin/webhooks/payload/mod.rs"), "utf8");
   const list = /pub const BUILT_TOPICS: &\[&str\] = &\[([^\]]*)\];/.exec(builders);
   if (!list) throw new Error("BUILT_TOPICS not found");
   const built = [...list[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);

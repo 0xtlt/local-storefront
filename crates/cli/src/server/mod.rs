@@ -41,7 +41,8 @@ use axum::http::{HeaderName, HeaderValue, Request as HttpRequest, Response, Stat
 use lsf_core::diagnostics::Diagnostics;
 use lsf_core::store::load::{LoadOptions, SourceData};
 use lsf_core::theme::THEME_DIRECTORIES;
-use lsf_core::{Request, Session, Store};
+use lsf_core::{Session, Store};
+use lsf_theme::Request;
 use serde_json::Value as Json;
 
 use self::reply::Reply;
@@ -130,7 +131,7 @@ pub struct ServerState {
     /// Held while the store is built: from the files (`reload`), or with what the Admin API
     /// changed (`store_sync`). One build at a time, each swapped into `loaded` whole.
     rebuilding: Mutex<()>,
-    /// The count of the Admin API's changes ([`lsf_admin::api::AdminApi::store_changes`]) the
+    /// The count of the Admin API's changes ([`lsf_app::admin::api::AdminApi::store_changes`]) the
     /// store was last brought up to date with.
     admin_changes: AtomicU64,
     last_check: Mutex<Instant>,
@@ -312,8 +313,8 @@ impl ServerState {
     /// Reads the app of the checkout. With `--watch`, the Functions it builds run the copy of
     /// their last module that built, never what a build is writing; with `--no-functions`, it
     /// has none.
-    pub(crate) fn load_app(&self, dir: &Path) -> Result<lsf_checkout::app::App, String> {
-        let mut app = lsf_checkout::app::load(dir)?;
+    pub(crate) fn load_app(&self, dir: &Path) -> Result<lsf_app::config::App, String> {
+        let mut app = lsf_app::config::load(dir)?;
         self.builds.apply(&mut app);
         if self
             .options
@@ -760,10 +761,10 @@ pub const UPLOAD_BODY_LIMIT: usize = (1 << 30) + (1 << 20);
 
 /// The largest body of `PUT /__lsf/admin/sources`: room for a source over 50 MB, for a test of
 /// `ZIP_TOO_LARGE`.
-pub const SOURCE_BODY_LIMIT: usize = lsf_admin::sources::MAX_SOURCE_BYTES + (1 << 20);
+pub const SOURCE_BODY_LIMIT: usize = lsf_app::admin::sources::MAX_SOURCE_BYTES + (1 << 20);
 
 fn body_limit(path: &str) -> usize {
-    if path.starts_with(lsf_admin::domains::app::uploads::UPLOADS_PATH) {
+    if path.starts_with(lsf_app::admin::domains::app::uploads::UPLOADS_PATH) {
         UPLOAD_BODY_LIMIT
     } else if path == "/__lsf/admin/sources" {
         SOURCE_BODY_LIMIT
