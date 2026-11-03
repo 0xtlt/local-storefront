@@ -280,4 +280,6 @@ builds target glibc 2.17 whatever the runner has. The Rust version comes from `m
 After changing the data model, regenerate the field reference with
 `UPDATE_SNAPSHOTS=1 cargo test -p lsf-core --test docs`; after an intentional change of the
 rendered HTML, regenerate the snapshots with
-`UPDATE_SNAPSHOTS=1 cargo test -p lsf-theme --test render`.
+`UPDATE_SNAPSHOTS=1 cargo test -p lsf-theme --test render`; after a change of the guide or of the
+schemas, write the copies of `examples/checkout-playground/shopify-local` again with
+`UPDATE_SNAPSHOTS=1 cargo test -p lsf-cli the_example_data`.

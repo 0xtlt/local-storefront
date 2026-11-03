@@ -81,3 +81,82 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
     );
     Ok(ExitCode::SUCCESS)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The guide's links to the docs of a version (`/blob/v0.2.0/docs/`) as `/blob/v*/docs/`: a
+    /// copy an earlier version wrote is current as long as the rest is the same.
+    fn any_version(guide: &str) -> String {
+        const MARK: &str = "/blob/v";
+        let mut out = String::with_capacity(guide.len());
+        let mut rest = guide;
+        while let Some(at) = rest.find(MARK) {
+            out.push_str(&rest[..at + MARK.len()]);
+            out.push('*');
+            rest = &rest[at + MARK.len()..];
+            rest = &rest[rest.find('/').unwrap_or(rest.len())..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    fn file_names(directory: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(directory)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    /// The store data of `examples/checkout-playground` keeps the guide and the schemas
+    /// `lsf init` writes, for the readers of the example and their editors.
+    /// `UPDATE_SNAPSHOTS=1 cargo test -p lsf-cli the_example_data` writes them again.
+    #[test]
+    fn the_example_data_has_the_guide_and_the_schemas_init_writes() {
+        let example = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/checkout-playground/shopify-local");
+        if std::env::var("UPDATE_SNAPSHOTS").is_ok() {
+            write_file(&example, "README.md", &docs::guide(), true).expect("write the guide");
+            let _ = std::fs::remove_dir_all(example.join("schema"));
+            schema::write_all(&example.join("schema")).expect("write the schemas");
+            return;
+        }
+        let stale = "is not what `lsf init` writes: run \
+            `UPDATE_SNAPSHOTS=1 cargo test -p lsf-cli the_example_data`";
+        let readme = std::fs::read_to_string(example.join("README.md")).unwrap_or_default();
+        assert!(
+            any_version(&readme) == any_version(&docs::guide()),
+            "examples/checkout-playground/shopify-local/README.md {stale}"
+        );
+        let fresh = std::env::temp_dir().join(format!("lsf-init-schemas-{}", std::process::id()));
+        schema::write_all(&fresh).expect("write the schemas");
+        assert_eq!(
+            file_names(&example.join("schema")),
+            file_names(&fresh),
+            "examples/checkout-playground/shopify-local/schema/ {stale}"
+        );
+        for name in file_names(&fresh) {
+            let read = |directory: &Path| std::fs::read_to_string(directory.join(&name)).ok();
+            assert!(
+                read(&example.join("schema")) == read(&fresh),
+                "examples/checkout-playground/shopify-local/schema/{name} {stale}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&fresh);
+    }
+
+    #[test]
+    fn any_version_leaves_the_rest_of_a_link() {
+        assert_eq!(
+            any_version("[a](https://github.com/o/r/blob/v0.2.0/docs/a.md#x) [b](b.md)"),
+            "[a](https://github.com/o/r/blob/v*/docs/a.md#x) [b](b.md)"
+        );
+    }
+}
