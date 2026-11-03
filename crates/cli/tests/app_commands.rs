@@ -611,7 +611,7 @@ fn a_missing_build_says_to_run_lsf_app_build() {
 
 #[test]
 fn render_strict_fails_on_a_page_that_is_not_there() {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let theme = theme.to_str().unwrap();
     let output = lsf(
         Path::new("/"),
@@ -715,7 +715,7 @@ fn check_says_the_pages_of_classic_customer_accounts_are_not_rendered() {
 
 #[test]
 fn every_path_routes_lists_renders_with_render_strict() {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let theme = theme.to_str().unwrap();
     // The demo store: the fixture theme has no data of its own.
     let output = lsf(Path::new("/"), &["--theme", theme, "routes"]);

@@ -14,7 +14,7 @@ use crate::app::App;
 /// A server over a copy of the demo store's files, with the Admin API, that does not watch
 /// them: what `lsf app dev --static --data <dir>` serves.
 fn static_server(data: &Path) -> ServerState {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, Some(data), Revalidate::Never, &[]).expect("the theme");
     ServerState::new(
         app,

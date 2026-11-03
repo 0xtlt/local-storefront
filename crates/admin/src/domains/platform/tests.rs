@@ -504,7 +504,7 @@ fn every_field(type_name: &str, depth: usize) -> String {
 fn the_queries_of_the_platform_answer_every_main_field_without_a_default() {
     let mut shop = shop();
     let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     crate::domains::themes::attach(&mut shop, &root);
     for mutation in [
         "mutation { scriptTagCreate(input: {src: \"https://js.example.org/a.js\"}) { userErrors { message } } }",

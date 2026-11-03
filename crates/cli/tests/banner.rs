@@ -182,7 +182,7 @@ impl Drop for Server {
 
 fn theme() -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../core/tests/fixtures/theme")
+        .join("../theme/tests/fixtures/theme")
         .to_str()
         .unwrap()
         .to_string()

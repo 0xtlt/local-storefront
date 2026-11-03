@@ -26,7 +26,7 @@ fn server() -> ServerState {
 fn fixture_server(
     admin: Option<super::admin::AdminSettings>,
 ) -> (ServerState, lsf_core::diagnostics::Diagnostics) {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     ServerState::new(
         app,
@@ -793,7 +793,7 @@ fn pages_carry_the_scripts_shopify_injects() {
 
 /// A server whose options were given on the command line.
 fn server_with_throttle(rules: &str) -> ServerState {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
@@ -1111,7 +1111,7 @@ fn b2b_customers_buy_for_a_company_location() {
 
 #[test]
 fn the_server_can_start_logged_in() {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
@@ -2293,7 +2293,7 @@ fn head_value<'a>(head: &'a str, name: &str) -> Option<&'a str> {
 }
 
 async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
@@ -2593,7 +2593,7 @@ fn what_is_rendered_says_how_long_it_took() {
     // With `--timings`, every section in the order they were rendered: the template's, then
     // the layout's. Each one by its type and its id on the page, and followed by its theme
     // blocks: a dash for each level, the type, then the key when it is another word.
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (naming, _) = ServerState::new(
         app,
@@ -3084,7 +3084,7 @@ fn checkout_server_with(
     if standalone {
         options(App::open_without_theme(Path::new("."), data, &[]).expect("no theme"))
     } else {
-        let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+        let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
         options(App::open(&theme, data, Revalidate::Never, &[]).expect("fixture theme"))
     }
 }
@@ -8372,7 +8372,7 @@ fn admin_server() -> ServerState {
 
 #[test]
 fn the_admin_api_serves_the_versions_it_is_told() {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,

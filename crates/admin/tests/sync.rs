@@ -163,7 +163,7 @@ fn create_product(
 }
 
 fn renderer() -> lsf_core::Renderer {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let env = Arc::new(lsf_core::environment());
     let theme = lsf_core::Theme::open(&directory, env, lsf_core::theme::Revalidate::Never)
         .expect("the fixture theme of lsf-core");

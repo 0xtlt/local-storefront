@@ -1,5 +1,5 @@
 [package]
-name = "lsf-core"
+name = "lsf-theme"
 description = "Renders Shopify themes locally: theme loading, store fixtures, Shopify's Liquid objects, filters and tags"
 version.workspace = true
 edition.workspace = true

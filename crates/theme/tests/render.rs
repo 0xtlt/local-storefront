@@ -1,18 +1,18 @@
 //! End-to-end rendering of a small fixture theme against the demo store.
 //!
 //! The expected HTML lives in `tests/snapshots/`. After an intentional change, regenerate the
-//! snapshots with `UPDATE_SNAPSHOTS=1 cargo test -p lsf-core --test render` and review the diff.
+//! snapshots with `UPDATE_SNAPSHOTS=1 cargo test -p lsf-theme --test render` and review the diff.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use lsf_core::render::cost::Costs;
-use lsf_core::render::page::{Page, Resource};
-use lsf_core::render::{ProfileOptions, Target};
-use lsf_core::store::load::{DataSource, LoadOptions, load};
-use lsf_core::store::{CartLine, Store};
-use lsf_core::theme::Revalidate;
-use lsf_core::{FormResult, Rendered, Renderer, Request, Session, Theme};
+use lsf_theme::render::cost::Costs;
+use lsf_theme::render::page::{Page, Resource};
+use lsf_theme::render::{ProfileOptions, Target};
+use lsf_theme::store::load::{DataSource, LoadOptions, load};
+use lsf_theme::store::{CartLine, Store};
+use lsf_theme::theme::Revalidate;
+use lsf_theme::{FormResult, Rendered, Renderer, Request, Session, Theme};
 
 struct Fixture {
     renderer: Renderer,
@@ -21,7 +21,7 @@ struct Fixture {
 
 fn fixture() -> Fixture {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/theme");
-    let env = Arc::new(lsf_core::environment());
+    let env = Arc::new(lsf_theme::environment());
     let theme = Arc::new(Theme::open(&directory, env, Revalidate::Never).expect("fixture theme"));
     let options = LoadOptions {
         theme_locales: vec!["en".to_string(), "fr".to_string()],
@@ -68,7 +68,7 @@ impl Fixture {
         let site = self
             .renderer
             .site(self.store.clone(), request(path), session);
-        let page = lsf_core::render::routes::resolve(&site);
+        let page = lsf_theme::render::routes::resolve(&site);
         let (output, errors) = self
             .renderer
             .render_liquid(&site, page, source, &[])
@@ -666,8 +666,8 @@ fn cart_lines_are_priced_by_their_selling_plan() {
         },
     ];
     assert_ne!(
-        lsf_core::drops::cart::line_key(&session.cart_lines[0]),
-        lsf_core::drops::cart::line_key(&session.cart_lines[1])
+        lsf_theme::drops::cart::line_key(&session.cart_lines[0]),
+        lsf_theme::drops::cart::line_key(&session.cart_lines[1])
     );
     assert_eq!(
         fixture.liquid(
@@ -774,7 +774,7 @@ fn a_liquid_asset_gets_a_new_url_when_the_settings_change() {
     };
     let overlay = serde_json::json!({"theme_settings": {"page_size": 3}});
     let (other, diagnostics) =
-        lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+        lsf_theme::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
     assert!(diagnostics.is_empty(), "{diagnostics}");
     let (other_colors, other_base) = url(Arc::new(other));
     assert_ne!(other_colors, colors);
@@ -802,7 +802,7 @@ fn a_render_says_how_long_its_parts_took() {
     );
     assert_eq!(
         timings.sections[0].id,
-        lsf_core::render::template_section_id("index", "hero")
+        lsf_theme::render::template_section_id("index", "hero")
     );
     assert_eq!(timings.sections[3].id, "footer");
     let (template, layout) = (timings.template.unwrap(), timings.layout.unwrap());
@@ -904,7 +904,7 @@ fn a_profile_records_what_rendered_what() {
         request("/"),
         Session::initial(&fixture.store),
     );
-    let page = || lsf_core::render::routes::resolve(&site);
+    let page = || lsf_theme::render::routes::resolve(&site);
     let plain = fixture.renderer.render_page(&site, page(), &Target::Page);
     let (rendered, profile) =
         fixture
@@ -914,9 +914,9 @@ fn a_profile_records_what_rendered_what() {
     assert_eq!(rendered.body, plain.body);
     assert!(rendered.errors.is_empty(), "{:?}", rendered.errors);
 
-    let hero = lsf_core::render::template_section_id("index", "hero");
-    let second = lsf_core::render::template_section_id("index", "second");
-    let group = lsf_core::tags::group_id_prefix("header-group");
+    let hero = lsf_theme::render::template_section_id("index", "hero");
+    let second = lsf_theme::render::template_section_id("index", "second");
+    let group = lsf_theme::tags::group_id_prefix("header-group");
     // The template, then the layout: under each one its sections, under a section its file,
     // and under a file the blocks and the snippets it renders.
     assert_eq!(
@@ -992,7 +992,7 @@ fn a_profile_counts_what_a_page_loads() {
             request(path),
             Session::initial(&fixture.store),
         );
-        let page = lsf_core::render::routes::resolve(&site);
+        let page = lsf_theme::render::routes::resolve(&site);
         let (_, profile) = fixture
             .renderer
             .profile_page(&site, page, &Target::Page, options);
@@ -1039,7 +1039,7 @@ fn a_profile_counts_what_a_page_loads() {
     // the home page are inside the section that asks for them.
     let hero = format!(
         "section {}",
-        lsf_core::render::template_section_id("index", "hero")
+        lsf_theme::render::template_section_id("index", "hero")
     );
     let frame = home
         .frames
@@ -1079,7 +1079,7 @@ fn a_video_file_in_a_metaobject_is_a_video() {
             }]
         }
     });
-    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+    let (store, diagnostics) = lsf_theme::store::load::load_with_overlay(
         &DataSource::Demo,
         &LoadOptions::default(),
         Some(&overlay),
@@ -1129,7 +1129,7 @@ fn metafield_values_are_the_objects_shopify_gives() {
             }]
         }
     });
-    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+    let (store, diagnostics) = lsf_theme::store::load::load_with_overlay(
         &DataSource::Demo,
         &LoadOptions::default(),
         Some(&overlay),
@@ -1204,7 +1204,7 @@ fn what_is_loaded_is_charged_once() {
         theme_locales: vec!["en".to_string(), "fr".to_string()],
     };
     let (store, diagnostics) =
-        lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+        lsf_theme::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
     assert!(diagnostics.is_empty(), "{diagnostics}");
     let fixture = Fixture {
         store: Arc::new(store),
@@ -1284,7 +1284,7 @@ fn what_is_loaded_is_charged_once() {
 
 /// A fixture of a theme written in a temporary directory, `files` being `(path, content)`,
 /// rendered with the given feature previews.
-fn theme_of(name: &str, previews: &[lsf_core::Preview], files: &[(&str, &str)]) -> Fixture {
+fn theme_of(name: &str, previews: &[lsf_theme::Preview], files: &[(&str, &str)]) -> Fixture {
     let directory = std::env::temp_dir().join(format!("lsf-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&directory);
     for (path, content) in files {
@@ -1292,7 +1292,7 @@ fn theme_of(name: &str, previews: &[lsf_core::Preview], files: &[(&str, &str)]) 
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, content).unwrap();
     }
-    let env = Arc::new(lsf_core::environment_with(previews));
+    let env = Arc::new(lsf_theme::environment_with(previews));
     let theme = Arc::new(Theme::open(&directory, env, Revalidate::Never).expect("theme"));
     Fixture {
         renderer: Renderer::new(theme),
@@ -1304,7 +1304,7 @@ fn theme_of(name: &str, previews: &[lsf_core::Preview], files: &[(&str, &str)]) 
 fn a_template_composes_its_page_from_blocks() {
     let fixture = theme_of(
         "block-tag",
-        &[lsf_core::Preview::LiquidJuly26],
+        &[lsf_theme::Preview::LiquidJuly26],
         &[
             (
                 "layout/theme.liquid",
@@ -1354,7 +1354,7 @@ fn a_template_composes_its_page_from_blocks() {
 fn a_partial_marks_a_region_and_brings_its_runtime() {
     let fixture = theme_of(
         "partial-tag",
-        &[lsf_core::Preview::LiquidJuly26],
+        &[lsf_theme::Preview::LiquidJuly26],
         &[
             (
                 "layout/theme.liquid",
@@ -1381,8 +1381,8 @@ fn a_partial_marks_a_region_and_brings_its_runtime() {
         head.starts_with("<script type=\"importmap\">{\"imports\":{\"@shopify/partial-rendering\":\"//shop.test/cdn/shopifycloud/storefront/assets/partial-rendering-"),
         "{head}"
     );
-    let path = lsf_core::render::platform::partial_rendering_path();
-    let script = lsf_core::render::platform::asset(path).expect("the runtime is served");
+    let path = lsf_theme::render::platform::partial_rendering_path();
+    let script = lsf_theme::render::platform::asset(path).expect("the runtime is served");
     assert!(script.content.contains("export const partials"));
 }
 
@@ -1448,7 +1448,7 @@ fn a_video_setting_is_the_video_of_its_file() {
 
 #[test]
 fn a_called_block_takes_its_parameters_when_the_tag_opens() {
-    let liquid_july = [lsf_core::Preview::LiquidJuly26];
+    let liquid_july = [lsf_theme::Preview::LiquidJuly26];
     let layout = (
         "layout/theme.liquid",
         "<html><body>{{ content_for_layout }}</body></html>",
@@ -1500,7 +1500,7 @@ fn a_called_block_takes_its_parameters_when_the_tag_opens() {
     );
     let (_, profile) = nested.renderer.profile_page(
         &site,
-        lsf_core::render::routes::resolve(&site),
+        lsf_theme::render::routes::resolve(&site),
         &Target::Page,
         &ProfileOptions::default(),
     );
@@ -1512,7 +1512,7 @@ fn a_called_block_takes_its_parameters_when_the_tag_opens() {
 
 #[test]
 fn a_called_block_is_refused_where_shopify_refuses_it() {
-    let liquid_july = [lsf_core::Preview::LiquidJuly26];
+    let liquid_july = [lsf_theme::Preview::LiquidJuly26];
     let fixture = theme_of(
         "called-block-errors",
         &liquid_july,
@@ -1546,7 +1546,7 @@ fn a_called_block_is_refused_where_shopify_refuses_it() {
         rendered.body
     );
     // An array written in place is a value, not the start of a lookup.
-    let env = Arc::new(lsf_core::environment_with(&liquid_july));
+    let env = Arc::new(lsf_theme::environment_with(&liquid_july));
     let Err(error) =
         lsf_liquid::Template::parse(&env, "{% block 'x', a: ['b'].first %}{% endblock %}")
     else {
@@ -1580,7 +1580,7 @@ fn an_article_handle_that_two_blogs_have_names_neither() {
             }]
         }
     });
-    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+    let (store, diagnostics) = lsf_theme::store::load::load_with_overlay(
         &DataSource::Demo,
         &LoadOptions::default(),
         Some(&overlay),
@@ -1602,7 +1602,7 @@ fn an_article_handle_that_two_blogs_have_names_neither() {
 fn a_block_cannot_be_called_from_the_liquid_of_a_setting() {
     let fixture = theme_of(
         "called-block-setting",
-        &[lsf_core::Preview::LiquidJuly26],
+        &[lsf_theme::Preview::LiquidJuly26],
         &[
             (
                 "layout/theme.liquid",
@@ -1637,7 +1637,7 @@ fn a_block_cannot_be_called_from_the_liquid_of_a_setting() {
 /// A theme in a temporary directory rendered against the demo store plus `overlay` (store data).
 fn theme_with_data(name: &str, overlay: &serde_json::Value, files: &[(&str, &str)]) -> Fixture {
     let fixture = theme_of(name, &[], files);
-    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+    let (store, diagnostics) = lsf_theme::store::load::load_with_overlay(
         &DataSource::Demo,
         &LoadOptions::default(),
         Some(overlay),
@@ -1664,7 +1664,7 @@ fn metaobject_settings_are_metaobjects() {
     });
     let gid = format!(
         "gid://shopify/Metaobject/{}",
-        lsf_core::util::stable_id("metaobject", "recipe/waffles")
+        lsf_theme::util::stable_id("metaobject", "recipe/waffles")
     );
     let template = serde_json::json!({
         "sections": { "main": { "type": "recipes", "blocks": {

@@ -601,7 +601,7 @@ mod tests {
         let app = if standalone {
             App::open_without_theme(Path::new("."), None, &[]).expect("no theme")
         } else {
-            let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+            let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
             App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme")
         };
         ServerState::new(

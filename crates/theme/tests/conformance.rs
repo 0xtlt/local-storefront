@@ -9,16 +9,16 @@
 //! next to each example. Examples that depend on more than that data cannot pass and are
 //! listed in the report as such, so the number to watch is the pass count: it must not go down.
 //!
-//! Run with `cargo test -p lsf-core --test conformance -- --nocapture` to see the report. The
+//! Run with `cargo test -p lsf-theme --test conformance -- --nocapture` to see the report. The
 //! test is skipped when the pages have not been downloaded.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use lsf_core::render::page::{Page, Resource};
-use lsf_core::store::load::{DataSource, LoadOptions, load_with_overlay};
-use lsf_core::theme::Revalidate;
-use lsf_core::{Renderer, Request, Session, Theme};
+use lsf_theme::render::page::{Page, Resource};
+use lsf_theme::store::load::{DataSource, LoadOptions, load_with_overlay};
+use lsf_theme::theme::Revalidate;
+use lsf_theme::{Renderer, Request, Session, Theme};
 use lsf_liquid::Value;
 
 /// The number of examples that must pass. Raise it when more pass; never lower it.
@@ -142,7 +142,7 @@ fn every_documented_filter_and_tag_exists() {
     };
     // What a live store has, and what Shopify's feature previews add: the reference documents
     // both.
-    let env = lsf_core::environment_with(&lsf_core::Preview::ALL);
+    let env = lsf_theme::environment_with(&lsf_theme::Preview::ALL);
     let missing_filters: Vec<&String> = filters
         .iter()
         .filter(|name| env.filter(name).is_none())
@@ -192,7 +192,7 @@ fn matches_shopify_documentation_examples() {
     )
     .unwrap();
 
-    let env = Arc::new(lsf_core::environment());
+    let env = Arc::new(lsf_theme::environment());
     let theme = Arc::new(Theme::open(&theme_dir, env, Revalidate::Never).unwrap());
     let renderer = Renderer::new(theme);
     // The shop the documentation's examples were rendered on.

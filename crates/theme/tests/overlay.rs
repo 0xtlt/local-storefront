@@ -5,14 +5,14 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use lsf_core::render::Target;
-use lsf_core::store::load::{DataSource, LoadOptions, load};
-use lsf_core::theme::{FileOverlay, OverlayFile, Revalidate};
-use lsf_core::{Renderer, Request, Session, Theme};
+use lsf_theme::render::Target;
+use lsf_theme::store::load::{DataSource, LoadOptions, load};
+use lsf_theme::theme::{FileOverlay, OverlayFile, Revalidate};
+use lsf_theme::{Renderer, Request, Session, Theme};
 
 fn theme() -> Arc<Theme> {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/theme");
-    let env = Arc::new(lsf_core::environment());
+    let env = Arc::new(lsf_theme::environment());
     Arc::new(Theme::open(&directory, env, Revalidate::Never).expect("fixture theme"))
 }
 

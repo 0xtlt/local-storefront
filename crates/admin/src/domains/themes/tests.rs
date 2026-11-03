@@ -12,7 +12,7 @@ use crate::state::{Blob, ShopState};
 /// A copy of lsf-core's fixture theme in a directory of the test's, so that a test that
 /// would write to it (none should) cannot change the fixture.
 fn theme_directory(name: &str) -> PathBuf {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let target = std::env::temp_dir().join(format!("lsf-themes-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&target);
     copy(&source, &target);
