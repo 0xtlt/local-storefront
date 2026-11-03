@@ -2,6 +2,7 @@
 
 use std::any::Any;
 
+use lsf_core::store::{Customer, Order};
 use lsf_liquid::{Object, Value};
 
 use super::company::{CompanyDrop, CompanyLocationDrop, available_locations};
@@ -9,7 +10,6 @@ use super::metafield::MetafieldsDrop;
 use super::product::{ProductDrop, VariantDrop, product_url};
 use super::shop::AddressDrop;
 use super::{Memo, PaginatedList, SiteRef, hash, strings, time_value};
-use crate::store::{Customer, Order};
 
 pub struct CustomerDrop {
     site: SiteRef,
@@ -52,7 +52,7 @@ fn order_total(site: &SiteRef, order: &Order) -> (i64, i64) {
 }
 
 fn label(status: &str) -> String {
-    crate::util::humanize(status)
+    lsf_core::util::humanize(status)
 }
 
 fn order_value(site: &SiteRef, customer: &Customer, order: &Order) -> Value {
@@ -114,7 +114,7 @@ fn order_value(site: &SiteRef, customer: &Customer, order: &Order) -> Value {
         .iter()
         .map(|line| i64::from(line.quantity))
         .sum();
-    let address = |address: &Option<crate::store::Address>| {
+    let address = |address: &Option<lsf_core::store::Address>| {
         address.as_ref().map_or(Value::Nil, |address| {
             AddressDrop::value(site, address, false)
         })

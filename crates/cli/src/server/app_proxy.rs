@@ -28,8 +28,8 @@ use std::time::{Duration, SystemTime};
 use lsf_admin::webhooks::{AppUrls, Destination, resolve_uri};
 use lsf_checkout::app::AppConfig;
 use lsf_core::Store;
-use lsf_core::render::Target;
-use lsf_core::render::page::{Page, Resource};
+use lsf_theme::render::Target;
+use lsf_theme::render::page::{Page, Resource};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
 use super::reply::{Reply, cache};

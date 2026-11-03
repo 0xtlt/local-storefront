@@ -6,10 +6,11 @@ use std::any::Any;
 use lsf_liquid::{Hash, Object, Value};
 use serde_json::{Value as Json, json};
 
-use super::{SiteRef, hash};
-use crate::store::{
+use lsf_core::store::{
     Allocation, CheckoutCharge, Product, SellingPlan, SellingPlanGroup, Store, Variant,
 };
+
+use super::{SiteRef, hash};
 
 /// An object with fixed properties, whose JSON is not the list of those properties: the
 /// `json` filter prints selling plans as `/products/<handle>.js` does.

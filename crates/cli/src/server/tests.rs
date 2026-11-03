@@ -773,7 +773,7 @@ fn pages_carry_the_scripts_shopify_injects() {
     );
     assert!(text(&actions).contains("Object.defineProperty(window.Shopify, 'actions'"));
     // The feature loader is where the page says, at a URL that carries a hash of its content.
-    let loader_path = format!("/cdn/{}", lsf_core::render::platform::load_features_path());
+    let loader_path = format!("/cdn/{}", lsf_theme::render::platform::load_features_path());
     assert!(
         loader_path.starts_with("/cdn/shopifycloud/storefront/assets/storefront/load_feature-")
             && loader_path.ends_with(".js"),
@@ -1774,7 +1774,7 @@ fn a_theme_with_partials_gets_their_runtime_with_the_preview() {
         "{% partial 'count' %}<p>1</p>{% endpartial %}",
     )
     .unwrap();
-    let serve = |previews: &[lsf_core::Preview]| {
+    let serve = |previews: &[lsf_theme::Preview]| {
         let app = App::open(&root, None, Revalidate::Never, previews).unwrap();
         ServerState::new(
             app,
@@ -1799,7 +1799,7 @@ fn a_theme_with_partials_gets_their_runtime_with_the_preview() {
     assert!(live.contains("Unknown tag 'partial'"), "{live}");
     assert!(!live.contains("importmap"), "{live}");
 
-    let state = serve(&[lsf_core::Preview::LiquidJuly26]);
+    let state = serve(&[lsf_theme::Preview::LiquidJuly26]);
     let page = text(&get(&state, "/", "partials"));
     let module = page
         .split("\"@shopify/partial-rendering\":\"//")
@@ -2535,7 +2535,7 @@ fn responses_say_how_long_to_keep_them_as_shopify_does() {
     assert_eq!(
         policy(&format!(
             "/cdn/{}",
-            lsf_core::render::platform::load_features_path()
+            lsf_theme::render::platform::load_features_path()
         ))
         .as_deref(),
         Some("public, max-age=31536000")
@@ -2610,8 +2610,8 @@ fn what_is_rendered_says_how_long_it_took() {
             checkout: None,
         },
     );
-    let of_template = |key: &str| lsf_core::render::template_section_id("index", key);
-    let of_group = lsf_core::tags::group_id_prefix("header-group");
+    let of_template = |key: &str| lsf_theme::render::template_section_id("index", key);
+    let of_group = lsf_theme::tags::group_id_prefix("header-group");
     assert_eq!(
         entries(&naming, "/"),
         [
@@ -2670,7 +2670,7 @@ fn the_control_api_adds_up_what_was_rendered() {
     let hero = find(
         "sections",
         "id",
-        &lsf_core::render::template_section_id("index", "hero"),
+        &lsf_theme::render::template_section_id("index", "hero"),
     );
     assert_eq!((&hero["type"], &hero["count"]), (&json!("hero"), &json!(2)));
     assert_eq!(find("sections", "id", "footer")["count"], 5);
@@ -2799,7 +2799,7 @@ fn the_control_api_profiles_a_page() {
         .take_while(|line| !line.is_empty())
         .map(|line| line.split_at(26).1)
         .collect();
-    let hero = lsf_core::render::template_section_id("index", "hero");
+    let hero = lsf_theme::render::template_section_id("index", "hero");
     // The slowest first under each row: the template or the layout, whichever took longer.
     assert_eq!(names[0], "render", "{report}");
     assert!(names.contains(&"  templates/index.json"), "{report}");

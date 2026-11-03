@@ -159,7 +159,7 @@ show them).
 operation takes the placements it names off the method, and `CheckoutResult::payment_methods` lists
 the methods still in `PAYMENT_METHOD`.
 
-The lines start as the cart lines of the session, priced by `lsf_core::drops::cart::resolve_line`:
+The lines start as the cart lines of the session, priced by `lsf_core::cart::resolve_line`:
 the same `ResolvedLine` the storefront cart (`/cart.js`, the `cart` drop) is computed from, so that
 the selling plan, the quantity price breaks and the compare-at price of a line cannot differ
 between the cart and the checkout. `lsf-checkout` reads them from it and keeps no copy of that logic.

@@ -13,7 +13,7 @@ use lsf_checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
 use lsf_checkout::{
     Address, BuyerJourneyStep, CheckoutResult, CheckoutState, Metafield, ResultLine,
 };
-use lsf_core::drops::cart::line_key;
+use lsf_core::cart::line_key;
 use lsf_core::store::model::ScenarioLook;
 use lsf_core::store::{CartLine, Customer, Language};
 use lsf_core::{Session, Store};

@@ -1,5 +1,6 @@
 //! `{% section 'name' %}` and `{% sections 'group' %}`.
 
+use lsf_core::util::stable_id;
 use lsf_liquid::lexer::{MarkupParser, TokenKind};
 use lsf_liquid::strict2::{self, Issue, Style};
 use lsf_liquid::{Context, Error, Expr, Parser, Result, Tag, TagToken};
@@ -8,7 +9,6 @@ use serde_json::Value as Json;
 use crate::render::section::{Placement, render_section};
 use crate::render::state::RenderState;
 use crate::theme::{BlockInstance, SectionInstance};
-use crate::util::stable_id;
 
 fn quoted_name(token: &TagToken<'_>) -> Result<String> {
     Expr::parse(token.markup)

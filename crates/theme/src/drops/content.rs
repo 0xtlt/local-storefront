@@ -2,6 +2,8 @@
 
 use std::any::Any;
 
+use lsf_core::store::{Article, Blog, Page};
+use lsf_core::util::handleize;
 use lsf_liquid::{Object, Value};
 use serde_json::{Value as Json, json};
 
@@ -10,8 +12,6 @@ use super::metafield::MetafieldsDrop;
 use super::product::iso;
 use super::{Memo, PaginatedList, SiteRef, hash, strings, time_value};
 use crate::render::cost;
-use crate::store::{Article, Blog, Page};
-use crate::util::handleize;
 
 pub struct PageDrop {
     site: SiteRef,

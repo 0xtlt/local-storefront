@@ -1,7 +1,6 @@
 //! A theme on disk: Liquid files, JSON templates, settings and locales, parsed on demand and
 //! cached until the files change.
 
-mod files;
 pub mod liquid_settings;
 pub mod locales;
 pub mod schema;
@@ -11,16 +10,15 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 
+use lsf_core::error::{Error, Result};
+use lsf_core::json::parse_lenient;
+use lsf_core::theme::{Revalidate, ThemeFiles, ThemeIdentity};
 use lsf_liquid::{Environment, Template};
 use serde_json::Value as Json;
 
-pub use files::{FileOverlay, OverlayFile, Revalidate, ThemeFiles, resolve_in};
 pub use locales::Translations;
 pub use schema::{Schema, SettingDef, Wrapper};
 pub use template_json::{BlockInstance, Layout, SectionInstance, TemplateJson};
-
-use crate::error::{Error, Result};
-use crate::json::parse_lenient;
 
 /// A parsed Liquid file.
 pub struct LiquidFile {
@@ -95,31 +93,6 @@ pub struct Theme {
     identity: RwLock<Option<Arc<ThemeIdentity>>>,
 }
 
-/// The theme of the shop the storefront serves, as `Shopify.theme`, the `theme` object and the
-/// asset URLs (`/cdn/shop/t/<id>/…`) name it: the shop's main theme. Without one, the theme
-/// directory: [`crate::urls::THEME_ID`], the name of its `config/settings_schema.json`, `main`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ThemeIdentity {
-    /// The number of its `OnlineStoreTheme` GID.
-    pub id: u64,
-    /// Its name in the admin; `None` for the name of the files' `theme_info`.
-    pub name: Option<String>,
-    /// `main`, as `Shopify.theme.role` writes it.
-    pub role: String,
-}
-
-/// The directories a theme is made of.
-pub const THEME_DIRECTORIES: [&str; 8] = [
-    "assets",
-    "blocks",
-    "config",
-    "layout",
-    "locales",
-    "sections",
-    "snippets",
-    "templates",
-];
-
 impl Theme {
     pub fn open(
         root: impl AsRef<Path>,
@@ -183,7 +156,7 @@ impl Theme {
     /// The id of the theme served: the id of its `OnlineStoreTheme`, in `/cdn/shop/t/<id>/…`.
     pub fn id(&self) -> u64 {
         self.identity()
-            .map_or(crate::urls::THEME_ID, |identity| identity.id)
+            .map_or(lsf_core::urls::THEME_ID, |identity| identity.id)
     }
 
     /// Memoizes a value derived from the theme's files for as long as the files are not
@@ -252,7 +225,7 @@ impl Theme {
                 Template::parse_named(&self.env, source, Some(name)).map(|template| {
                     let schema = schema::extract_block(source, "schema")
                         .and_then(|body| {
-                            serde_json::from_str::<Json>(&crate::json::strip_comments(body)).ok()
+                            serde_json::from_str::<Json>(&lsf_core::json::strip_comments(body)).ok()
                         })
                         .map(Schema::from_json)
                         .unwrap_or_default();

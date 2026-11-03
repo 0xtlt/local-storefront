@@ -3,6 +3,9 @@
 use std::any::Any;
 use std::collections::BTreeMap;
 
+use lsf_core::store::{Collection, Product, SortOrder, Swatch};
+use lsf_core::urls::encode_component;
+use lsf_core::util::handleize;
 use lsf_liquid::{Object, Value};
 use serde_json::{Value as Json, json};
 
@@ -12,9 +15,6 @@ use super::product::{ProductDrop, swatch_value};
 use super::{Memo, PaginatedList, SiteRef, hash, strings, time_value};
 use crate::render::cost;
 use crate::site::Request;
-use crate::store::{Collection, Product, SortOrder, Swatch};
-use crate::urls::encode_component;
-use crate::util::handleize;
 
 /// The sort orders offered on collection pages: `(value, label)`.
 pub const SORT_OPTIONS: [(&str, &str); 8] = [

@@ -3,12 +3,12 @@
 use std::any::Any;
 use std::borrow::Cow;
 
+use lsf_core::store::{Image, Media, MediaKind, MediaSource, VideoHost};
 use lsf_liquid::number::float_to_s;
 use lsf_liquid::{Object, Value};
 use serde_json::json;
 
 use super::{Memo, SiteRef, hash};
-use crate::store::{Image, Media, MediaKind, MediaSource, VideoHost};
 use crate::urls;
 
 /// The path Shopify prints for an image: relative to the CDN's shop directory.

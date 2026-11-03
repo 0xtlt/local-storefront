@@ -182,7 +182,7 @@ pub fn record_cart(state: &ServerState, token: &str, session: &lsf_core::Session
             variant_id: line.variant_id,
             quantity: line.quantity,
             properties: pairs(&line.properties),
-            key: lsf_core::drops::cart::line_key(line),
+            key: lsf_core::cart::line_key(line),
         })
         .collect();
     let attributes = pairs(&session.cart_attributes);

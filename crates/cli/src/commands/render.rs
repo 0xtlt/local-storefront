@@ -2,9 +2,10 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use lsf_core::render::Target;
 use lsf_core::theme::Revalidate;
-use lsf_core::{Request, Session, Store};
+use lsf_core::{Session, Store};
+use lsf_theme::Request;
+use lsf_theme::render::Target;
 
 use crate::app::App;
 use crate::output::{count, print_diagnostics};
@@ -67,7 +68,7 @@ pub(super) fn request_for(store: &Store, host: String, path_and_query: &str) -> 
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
     let app = App::open(theme, data, Revalidate::Never, previews)?;

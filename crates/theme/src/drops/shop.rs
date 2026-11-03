@@ -2,13 +2,13 @@
 
 use std::any::Any;
 
+use lsf_core::store::{Address, Policy};
 use lsf_liquid::{Object, Value};
 
 use super::localization::{currency_value, language_value};
 use super::media::ImageDrop;
 use super::metafield::MetafieldsDrop;
 use super::{Memo, SiteRef, hash, strings};
-use crate::store::{Address, Policy};
 
 pub struct ShopDrop {
     pub site: SiteRef,
@@ -28,7 +28,7 @@ pub fn policy_value(site: &SiteRef, policy: &Policy) -> Value {
     hash([
         (
             "id",
-            Value::Int(crate::util::stable_id("policy", &policy.handle) as i64),
+            Value::Int(lsf_core::util::stable_id("policy", &policy.handle) as i64),
         ),
         ("title", Value::from(&policy.title)),
         ("body", Value::from(&policy.body)),

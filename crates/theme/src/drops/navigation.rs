@@ -3,11 +3,11 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use lsf_core::store::{Link, LinkTarget, Menu};
 use lsf_liquid::{Object, Value};
 
 use super::SiteRef;
 use crate::render::cost;
-use crate::store::{Link, LinkTarget, Menu};
 
 /// The global `linklists`: menus by handle.
 pub struct LinkListsDrop {

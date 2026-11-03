@@ -1,12 +1,12 @@
 //! Filters that generate HTML tags and snippets.
 
+use lsf_core::store::reference;
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 
 use super::{html_attributes, site};
 use crate::drops::shop::AddressDrop;
 use crate::render::state::RenderState;
-use crate::store::reference;
 use crate::tags::FormDrop;
 
 fn stylesheet_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
@@ -158,7 +158,7 @@ fn payment_type_name(handle: &str) -> String {
         "google_pay" => "Google Pay".to_string(),
         "paypal" => "PayPal".to_string(),
         "jcb" => "JCB".to_string(),
-        other => crate::util::humanize(other),
+        other => lsf_core::util::humanize(other),
     }
 }
 

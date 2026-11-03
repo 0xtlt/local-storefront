@@ -1,7 +1,7 @@
 //! Keeps `docs/data-reference.md` in sync with the data format.
 //!
 //! After changing `store/model.rs`, regenerate it with
-//! `UPDATE_SNAPSHOTS=1 cargo test -p lsf-theme --test docs`.
+//! `UPDATE_SNAPSHOTS=1 cargo test -p lsf-core --test docs`.
 
 use std::path::Path;
 
@@ -15,7 +15,7 @@ fn the_reference_is_up_to_date() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/data-reference.md");
     let expected = format!(
         "{HEADER}{}",
-        lsf_theme::store::docs::reference()
+        lsf_core::store::docs::reference()
             .replace("\n### ", "\n## ")
             .replacen("### ", "## ", 1)
     );
@@ -26,6 +26,6 @@ fn the_reference_is_up_to_date() {
     let actual = std::fs::read_to_string(&path).unwrap_or_default();
     assert!(
         actual == expected,
-        "docs/data-reference.md is stale: run `UPDATE_SNAPSHOTS=1 cargo test -p lsf-theme --test docs`"
+        "docs/data-reference.md is stale: run `UPDATE_SNAPSHOTS=1 cargo test -p lsf-core --test docs`"
     );
 }

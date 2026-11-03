@@ -91,7 +91,7 @@ pub struct BuildArgs {
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
     match args.command {
@@ -136,7 +136,7 @@ static NO_SCENARIO: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
 fn check(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: CheckArgs,
 ) -> Result<ExitCode, String> {
     use crate::app::App;

@@ -1,5 +1,6 @@
 //! Filters that build URLs and links.
 
+use lsf_core::util::handleize;
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 
@@ -8,7 +9,6 @@ use crate::drops::collection::CollectionDrop;
 use crate::render::page::Resource;
 use crate::render::state::RenderState;
 use crate::urls;
-use crate::util::handleize;
 
 /// Percent-encodes everything but unreserved characters, with `%20` for spaces.
 fn encode_query_value(input: &str) -> String {
@@ -36,7 +36,7 @@ fn size_argument(args: &FilterArgs) -> String {
 
 fn asset_img_url(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let url = urls::asset_url(site(ctx)?, &input.to_str());
-    Ok(Value::from(urls::with_size_suffix(
+    Ok(Value::from(lsf_core::urls::with_size_suffix(
         &url,
         &size_argument(args),
     )))
@@ -48,7 +48,7 @@ fn file_url(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<Value> {
 
 fn file_img_url(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let url = urls::file_url(site(ctx)?, &input.to_str());
-    Ok(Value::from(urls::with_size_suffix(
+    Ok(Value::from(lsf_core::urls::with_size_suffix(
         &url,
         &size_argument(args),
     )))

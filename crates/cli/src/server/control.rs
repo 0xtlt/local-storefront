@@ -4,13 +4,13 @@
 use std::sync::Arc;
 
 use lsf_core::diagnostics::Diagnostics;
-use lsf_core::render::cost::Costs;
-use lsf_core::render::{ProfileOptions, Target};
 use lsf_core::store::load::OVERLAY_FILE;
 use lsf_core::store::model::SessionInput;
 use lsf_core::store::validate::{FileKind, schema, validate};
 use lsf_core::{Session, Store};
 use lsf_liquid::filters::escape_html;
+use lsf_theme::render::cost::Costs;
+use lsf_theme::render::{ProfileOptions, Target};
 use serde_json::{Value as Json, json};
 
 use super::reply::Reply;
@@ -162,7 +162,7 @@ pub fn routes(state: &ServerState) -> Vec<String> {
             .metaobjects
             .iter()
             .filter(|entry| {
-                lsf_core::render::routes::has_metaobject_page(&state.app.theme, &entry.kind)
+                lsf_theme::render::routes::has_metaobject_page(&state.app.theme, &entry.kind)
             })
             .map(|entry| format!("/pages/{}/{}", entry.kind, entry.handle)),
     );

@@ -1,0 +1,19 @@
+[package]
+name = "lsf-core"
+description = "The store data of a local Shopify store, and what a storefront and an app share of it: loading and validation, sessions and cart lines, a theme as files"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars = { version = "1", features = ["indexmap2"] }
+jsonschema = { version = "0.59", default-features = false }
+# The size of the images of the data's `files/`, read from their headers. lsf-theme, which
+# encodes images, enables the rest of `image`.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }

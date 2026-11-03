@@ -2,7 +2,7 @@
 //! reachable from it, answered from the checkout context.
 
 use chrono::{DateTime, NaiveDateTime, NaiveTime, Utc};
-use lsf_core::drops::cart::{ResolvedLine, resolve_line};
+use lsf_core::cart::{ResolvedLine, resolve_line};
 use lsf_core::store::{
     Company, CompanyLocation, Customer, Market, Metafields, Metaobject, Product, SellingPlan,
     Variant,
@@ -785,7 +785,7 @@ impl<'c> FunctionInput<'c> {
             ),
             "requiresShipping" => leaf(line.requires_shipping),
             "weight" => leaf(found.map_or(0.0, |(_, variant)| {
-                lsf_core::drops::product::weight_in_unit(variant.weight, &variant.weight_unit)
+                lsf_core::store::weight_in_unit(variant.weight, &variant.weight_unit)
             })),
             "weightUnit" => leaf(
                 match found.map(|(_, variant)| variant.weight_unit.as_str()) {

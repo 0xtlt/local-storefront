@@ -5,17 +5,18 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
+use lsf_core::color::Color;
+use lsf_core::store::{Image, Media, MediaKind, MediaSource, Metafield, Metafields, Metaobject};
+use lsf_core::util::stable_id;
 use lsf_liquid::time::Time;
 use lsf_liquid::{Object, Value};
 use serde_json::Value as Json;
 
-use super::color::{Color, ColorDrop};
+use super::color::ColorDrop;
 use super::localization::currency_value;
 use super::media::{ImageDrop, MediaDrop};
 use super::{SiteRef, hash};
 use crate::render::cost;
-use crate::store::{Image, Media, MediaKind, MediaSource, Metafield, Metafields, Metaobject};
-use crate::util::stable_id;
 
 /// `resource.metafields`: namespaces of metafields.
 pub struct MetafieldsDrop {
@@ -352,7 +353,7 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
                     .get("amount")
                     .and_then(|amount| match amount {
                         Json::String(text) => {
-                            crate::store::model::Money::Decimal(text.clone()).cents()
+                            lsf_core::store::model::Money::Decimal(text.clone()).cents()
                         }
                         Json::Number(number) => number
                             .as_f64()

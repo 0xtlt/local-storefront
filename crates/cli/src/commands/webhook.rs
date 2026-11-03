@@ -107,7 +107,7 @@ enum Format {
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
     match args.command {
@@ -122,7 +122,7 @@ pub fn run(
 fn sample_records(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     app_dir: Option<&Path>,
     app: Option<&lsf_checkout::app::App>,
 ) -> Result<ShopSamples, String> {
@@ -143,7 +143,7 @@ const OFF_MACHINE_ADVICE: &str =
 fn trigger(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: TriggerArgs,
 ) -> Result<ExitCode, String> {
     let version = ApiVersion::get(&args.api_version).ok_or_else(|| {

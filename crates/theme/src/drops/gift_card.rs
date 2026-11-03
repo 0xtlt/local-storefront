@@ -2,12 +2,12 @@
 
 use std::any::Any;
 
+use lsf_core::store::GiftCard;
 use lsf_liquid::{Object, Value};
 
 use super::customer::CustomerDrop;
 use super::product::ProductDrop;
 use super::{SiteRef, hash, time_value};
-use crate::store::GiftCard;
 
 pub struct GiftCardDrop {
     site: SiteRef,

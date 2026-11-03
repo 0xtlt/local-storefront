@@ -373,7 +373,7 @@ fn line_draft(seed: &Seed, product: &Product, variant: &Variant, quantity: u32) 
         image,
         weight: Some(json!({
             "unit": catalog::weight_unit(&variant.weight_unit),
-            "value": lsf_core::drops::product::weight_in_unit(variant.weight, &variant.weight_unit),
+            "value": lsf_core::store::weight_in_unit(variant.weight, &variant.weight_unit),
         })),
         grams: variant.weight,
         attributes: Vec::new(),

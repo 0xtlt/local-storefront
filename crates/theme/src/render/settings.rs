@@ -6,12 +6,13 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use lsf_core::color::Color;
 use lsf_liquid::{Context, Hash, Object, Template, Value, Variable};
 use serde_json::{Map, Value as Json};
 
 use super::state::RenderState;
 use crate::drops::collection::CollectionDrop;
-use crate::drops::color::{Color, ColorDrop};
+use crate::drops::color::ColorDrop;
 use crate::drops::content::{ArticleDrop, BlogDrop, PageDrop};
 use crate::drops::font::{Font, FontDrop};
 use crate::drops::media::{ImageDrop, MediaDrop};

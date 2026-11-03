@@ -1583,7 +1583,7 @@ fn a_deposit_is_due_now_and_the_balance_is_due_later() {
         .1
         .cart_lines
         .iter()
-        .filter_map(|line| lsf_core::drops::cart::resolve_line(&session_lines.0, line))
+        .filter_map(|line| lsf_core::cart::resolve_line(&session_lines.0, line))
         .map(|line| line.checkout_charge())
         .sum();
     assert_eq!(cost.checkout_charge_amount, cart);

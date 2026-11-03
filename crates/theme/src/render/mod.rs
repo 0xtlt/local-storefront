@@ -16,6 +16,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
+use lsf_core::session::Session;
+use lsf_core::store::Store;
+use lsf_core::util::stable_id;
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::{Context, Environment, PartialLoader, Profile, Profiler, Template, Value};
 
@@ -24,10 +27,8 @@ use self::globals::Globals;
 use self::page::{Page, Resource};
 use self::section::{Placement, render_section};
 use self::state::RenderState;
-use crate::site::{Request, Session, Site};
-use crate::store::Store;
+use crate::site::{Request, Site};
 use crate::theme::{Layout, SectionInstance, TemplateJson, Theme};
-use crate::util::stable_id;
 
 /// The Liquid environment themes are parsed with: standard Liquid plus Shopify's tags and
 /// filters, trimming whitespace the way storefronts do. What a live store has: no preview.
@@ -768,7 +769,7 @@ pub fn compiled_version(theme: &Theme) -> u64 {
             compiled(theme, "stylesheet", str::to_string),
             compiled(theme, "javascript", str::to_string)
         );
-        crate::urls::version_of(&bundles)
+        lsf_core::urls::version_of(&bundles)
     })
 }
 

@@ -162,31 +162,31 @@ fn create_product(
     product
 }
 
-fn renderer() -> lsf_core::Renderer {
+fn renderer() -> lsf_theme::Renderer {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
-    let env = Arc::new(lsf_core::environment());
-    let theme = lsf_core::Theme::open(&directory, env, lsf_core::theme::Revalidate::Never)
+    let env = Arc::new(lsf_theme::environment());
+    let theme = lsf_theme::Theme::open(&directory, env, lsf_core::theme::Revalidate::Never)
         .expect("the fixture theme of lsf-core");
-    lsf_core::Renderer::new(Arc::new(theme))
+    lsf_theme::Renderer::new(Arc::new(theme))
 }
 
-fn page(renderer: &lsf_core::Renderer, store: &Arc<Store>, path: &str) -> lsf_core::Rendered {
+fn page(renderer: &lsf_theme::Renderer, store: &Arc<Store>, path: &str) -> lsf_theme::Rendered {
     renderer.render(
         store.clone(),
-        lsf_core::Request::new("shop.test", path),
+        lsf_theme::Request::new("shop.test", path),
         lsf_core::Session::initial(store),
-        &lsf_core::render::Target::Page,
+        &lsf_theme::render::Target::Page,
     )
 }
 
 /// Renders a piece of Liquid as part of the page at `path`.
-fn liquid(renderer: &lsf_core::Renderer, store: &Arc<Store>, path: &str, source: &str) -> String {
+fn liquid(renderer: &lsf_theme::Renderer, store: &Arc<Store>, path: &str, source: &str) -> String {
     let site = renderer.site(
         store.clone(),
-        lsf_core::Request::new("shop.test", path),
+        lsf_theme::Request::new("shop.test", path),
         lsf_core::Session::initial(store),
     );
-    let resolved = lsf_core::render::routes::resolve(&site);
+    let resolved = lsf_theme::render::routes::resolve(&site);
     let (output, errors) = renderer
         .render_liquid(&site, resolved, source, &[])
         .expect("the Liquid parses");

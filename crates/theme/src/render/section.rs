@@ -6,12 +6,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use indexmap::IndexMap;
+use lsf_core::util::short_hash;
 use lsf_liquid::{BlockBody, Context, Error, Hash, Object, Result, Value};
 
 use super::settings;
 use super::state::RenderState;
 use crate::theme::{BlockInstance, Schema, SectionInstance, Wrapper};
-use crate::util::short_hash;
 
 /// The context variable holding the [`Container`] `content_for` renders blocks from. The name
 /// cannot be written in Liquid, so templates cannot see or shadow it.

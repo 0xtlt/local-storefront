@@ -144,7 +144,7 @@ impl Globals {
                 Value::from(country_options(&names))
             }
             "all_country_option_tags" => {
-                Value::from(country_options(&crate::store::reference::country_names()))
+                Value::from(country_options(&lsf_core::store::reference::country_names()))
             }
             "additional_checkout_buttons" => Value::Bool(false),
             "scripts" => Value::Nil,

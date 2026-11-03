@@ -1,5 +1,6 @@
 //! `metafield_tag` and `metafield_text`.
 
+use lsf_core::money::format_money;
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::number::float_to_s;
 use lsf_liquid::time::strftime;
@@ -8,7 +9,7 @@ use serde_json::Value as Json;
 
 use super::media::video_html;
 use super::misc::to_script_safe_json;
-use super::money::{format_money, money_formats};
+use super::money::money_formats;
 use super::site;
 use crate::drops::media::{ImageDrop, MediaDrop, image_base_url};
 use crate::drops::metafield::{MetafieldDrop, MoneyDrop, is_measurement};

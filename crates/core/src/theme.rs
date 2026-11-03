@@ -1,10 +1,36 @@
-//! Cached access to the files of a theme directory.
+//! A theme as files on disk: the directories it is made of, cached access to its files, the
+//! files the Admin API writes over them, and which theme of the shop it is.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime};
+
+/// The theme of the shop the storefront serves, as `Shopify.theme`, the `theme` object and the
+/// asset URLs (`/cdn/shop/t/<id>/…`) name it: the shop's main theme. Without one, the theme
+/// directory: [`crate::urls::THEME_ID`], the name of its `config/settings_schema.json`, `main`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThemeIdentity {
+    /// The number of its `OnlineStoreTheme` GID.
+    pub id: u64,
+    /// Its name in the admin; `None` for the name of the files' `theme_info`.
+    pub name: Option<String>,
+    /// `main`, as `Shopify.theme.role` writes it.
+    pub role: String,
+}
+
+/// The directories a theme is made of.
+pub const THEME_DIRECTORIES: [&str; 8] = [
+    "assets",
+    "blocks",
+    "config",
+    "layout",
+    "locales",
+    "sections",
+    "snippets",
+    "templates",
+];
 
 /// How often what is cached about a file (its content, whether it exists, its directory's
 /// listing) is checked against the file system.

@@ -136,7 +136,7 @@ fn read_json(what: &str, value: &str) -> Result<Json, String> {
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
     let args = match args.command {
@@ -274,7 +274,7 @@ fn why_not_run(
 fn compute(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: &RunArgs,
 ) -> Result<Ran, String> {
     // The app the current folder is in when `--app` is not given.
@@ -627,8 +627,9 @@ mod playground;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::Parser;
+
+    use super::*;
 
     #[test]
     fn json_comes_from_the_argument_or_from_a_file() {

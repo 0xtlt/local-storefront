@@ -3,6 +3,8 @@
 use std::any::Any;
 use std::borrow::Cow;
 
+use lsf_core::store::{Image, MediaKind, VideoHost};
+use lsf_core::urls;
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::number::to_integer;
 use lsf_liquid::{Context, Environment, Error, FilterArgs, Object, Result, Value};
@@ -12,8 +14,6 @@ use crate::drops::media::{ImageDrop, MediaDrop, focal_point_css, image_base_url,
 use crate::drops::metafield::image_from_src;
 use crate::render::state::RenderState;
 use crate::site::Site;
-use crate::store::{Image, MediaKind, VideoHost};
-use crate::urls;
 
 /// The widths Shopify puts in a default `srcset`.
 const DEFAULT_SRCSET_WIDTHS: [u32; 4] = [352, 832, 1200, 1920];

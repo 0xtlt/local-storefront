@@ -3,6 +3,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
+use lsf_admin::api::ThrottleSetting;
 use lsf_core::theme::Revalidate;
 
 use crate::app::App;
@@ -12,7 +13,6 @@ use crate::server::admin::AdminSettings;
 use crate::server::throttle::Throttle;
 use crate::server::{ServeOptions, ServerState, run as run_server};
 use crate::watch::{self, Watcher};
-use lsf_admin::api::ThrottleSetting;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -185,7 +185,7 @@ async fn listen(
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
     standalone: bool,
 ) -> Result<ExitCode, String> {

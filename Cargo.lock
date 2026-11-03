@@ -2335,6 +2335,7 @@ dependencies = [
  "lightningcss",
  "lsf-admin",
  "lsf-checkout",
+ "lsf-core",
  "lsf-fmt",
  "lsf-liquid",
  "lsf-theme",
@@ -2367,6 +2368,7 @@ dependencies = [
  "hmac",
  "indexmap 2.14.2",
  "lsf-checkout",
+ "lsf-core",
  "lsf-theme",
  "md-5",
  "regex",
@@ -2386,7 +2388,7 @@ dependencies = [
  "deterministic-wasi-ctx",
  "graphql-parser",
  "indexmap 2.14.2",
- "lsf-theme",
+ "lsf-core",
  "oxc",
  "rmp-serde",
  "rustls",
@@ -2400,6 +2402,20 @@ dependencies = [
  "wasmparser 0.240.0",
  "wasmtime",
  "wasmtime-wasi",
+]
+
+[[package]]
+name = "lsf-core"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "image",
+ "indexmap 2.14.2",
+ "jsonschema",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2431,16 +2447,13 @@ version = "0.2.0"
 dependencies = [
  "blake3",
  "chrono",
- "chrono-tz",
  "hmac",
  "image",
  "indexmap 2.14.2",
- "jsonschema",
  "libwebp-sys",
+ "lsf-core",
  "lsf-liquid",
  "md-5",
- "schemars",
- "serde",
  "serde_json",
  "sha1 0.11.0",
  "sha2 0.11.1",

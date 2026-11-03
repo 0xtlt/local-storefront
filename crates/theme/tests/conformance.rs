@@ -15,11 +15,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use lsf_theme::render::page::{Page, Resource};
-use lsf_theme::store::load::{DataSource, LoadOptions, load_with_overlay};
-use lsf_theme::theme::Revalidate;
-use lsf_theme::{Renderer, Request, Session, Theme};
+use lsf_core::Session;
+use lsf_core::store::load::{DataSource, LoadOptions, load_with_overlay};
+use lsf_core::theme::Revalidate;
 use lsf_liquid::Value;
+use lsf_theme::render::page::{Page, Resource};
+use lsf_theme::{Renderer, Request, Theme};
 
 /// The number of examples that must pass. Raise it when more pass; never lower it.
 const BASELINE: usize = 196;

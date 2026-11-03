@@ -2,12 +2,12 @@
 
 use std::any::Any;
 
+use lsf_core::store::{Address, Company, CompanyLocation, Customer};
 use lsf_liquid::{Object, Value};
 
 use super::metafield::MetafieldsDrop;
 use super::shop::CountryName;
 use super::{Memo, PaginatedList, SiteRef, hash};
-use crate::store::{Address, Company, CompanyLocation, Customer};
 
 /// The locations of their company a customer can buy for.
 pub fn available_locations(site: &SiteRef, customer: &Customer) -> Value {

@@ -1,8 +1,9 @@
 //! The Cart AJAX API: `/cart/add.js`, `/cart/change.js`, `/cart/update.js`, `/cart/clear.js`.
 
 use indexmap::IndexMap;
-use lsf_core::drops::cart::{cart_json, line_json, line_key, resolve_lines};
+use lsf_core::cart::line_key;
 use lsf_core::store::{CartLine, InventoryPolicy};
+use lsf_theme::drops::cart::{cart_json, line_json, resolve_lines};
 use serde_json::{Value as Json, json};
 
 use super::params::{integer, text};

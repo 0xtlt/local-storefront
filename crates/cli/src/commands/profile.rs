@@ -3,9 +3,9 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use lsf_core::Session;
-use lsf_core::render::cost::Costs;
-use lsf_core::render::{ProfileOptions, Target};
 use lsf_core::theme::Revalidate;
+use lsf_theme::render::cost::Costs;
+use lsf_theme::render::{ProfileOptions, Target};
 
 use crate::app::App;
 use crate::output::print_diagnostics;
@@ -60,7 +60,7 @@ pub struct Args {
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
     let app = App::open(theme, data, Revalidate::Never, previews)?;

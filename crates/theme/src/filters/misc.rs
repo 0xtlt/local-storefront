@@ -1,6 +1,8 @@
 //! JSON, hashing and string helpers specific to Shopify.
 
 use hmac::{Hmac, KeyInit, Mac};
+use lsf_core::cart::line_key;
+use lsf_core::util;
 use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 use md5::Md5;
 use serde_json::{Value as Json, json};
@@ -8,11 +10,10 @@ use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
 use super::site;
-use crate::drops::cart::{CartDrop, cart_token, line_key, resolve_lines};
+use crate::drops::cart::{CartDrop, cart_token, resolve_lines};
 use crate::drops::collection::CollectionDrop;
 use crate::drops::content::ArticleDrop;
 use crate::drops::product::ProductDrop;
-use crate::util;
 
 /// Serializes JSON the way Shopify's `json` filter does: compact, with the characters that are
 /// unsafe inside a `<script>` element escaped.
@@ -117,7 +118,7 @@ fn structured_data(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<V
                 crate::drops::media::image_base_url(site, image)
             )
         });
-        let offer = |variant: &crate::store::Variant| {
+        let offer = |variant: &lsf_core::store::Variant| {
             json!({
                 "@id": format!("{url}?variant={}#offer", variant.id),
                 "@type": "Offer",
@@ -229,7 +230,7 @@ fn standard_event_data(input: &Value, args: &FilterArgs, ctx: &Context) -> Resul
         let selected = drop
             .selected_variant()
             .map(|index| &product.variants[index]);
-        let options_of = |variant: &crate::store::Variant| -> Vec<Json> {
+        let options_of = |variant: &lsf_core::store::Variant| -> Vec<Json> {
             product
                 .options
                 .iter()

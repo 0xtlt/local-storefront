@@ -139,8 +139,8 @@ impl Builder<'_> {
         let Some(text) = input else {
             return default;
         };
-        match lsf_liquid::time::parse_time(&text.to_lowercase(), self.timezone, epoch()) {
-            Some(date) => date.with_timezone(&Utc),
+        match super::date::parse(text, self.timezone) {
+            Some(date) => date,
             None => {
                 self.error("invalid_date", origin, format!("\"{text}\" is not a date"))
                     .hint("use ISO 8601, e.g. \"2024-05-01\" or \"2024-05-01T10:00:00Z\"");
@@ -207,7 +207,7 @@ impl Builder<'_> {
             ),
         };
         let color = color.filter(|color| {
-            let valid = crate::drops::color::Color::parse(color).is_some();
+            let valid = crate::color::Color::parse(color).is_some();
             if !valid {
                 self.error(
                     "invalid_color",

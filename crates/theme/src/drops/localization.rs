@@ -4,8 +4,9 @@ use std::any::Any;
 
 use lsf_liquid::{Object, Value};
 
+use lsf_core::store::{Country, Language, reference};
+
 use super::{SiteRef, hash};
-use crate::store::{Country, Language, reference};
 
 pub fn currency_value(code: &str) -> Value {
     hash([

@@ -4,10 +4,13 @@
 use std::any::Any;
 use std::borrow::Cow;
 
+use lsf_core::color::Color;
+use lsf_core::store::{InventoryPolicy, Location, MediaKind, Product, Swatch, Variant};
+use lsf_core::util::stable_id;
 use lsf_liquid::{Object, Value};
 use serde_json::{Value as Json, json};
 
-use super::color::{Color, ColorDrop};
+use super::color::ColorDrop;
 use super::media::{ImageDrop, MediaDrop, image_base_url, image_media_json};
 use super::metafield::MetafieldsDrop;
 use super::selling_plan::{
@@ -17,8 +20,6 @@ use super::selling_plan::{
 use super::shop::AddressDrop;
 use super::{Memo, SiteRef, hash, strings, time_value};
 use crate::render::cost;
-use crate::store::{InventoryPolicy, Location, MediaKind, Product, Swatch, Variant};
-use crate::util::stable_id;
 
 pub struct ProductDrop {
     pub site: SiteRef,
@@ -551,17 +552,6 @@ impl VariantDrop {
     }
 }
 
-/// The weight of a variant expressed in its display unit.
-pub fn weight_in_unit(grams: u64, unit: &str) -> f64 {
-    let grams = grams as f64;
-    match unit {
-        "g" => grams,
-        "oz" => grams / 28.349_523_125,
-        "lb" => grams / 453.592_37,
-        _ => grams / 1000.0,
-    }
-}
-
 impl Object for VariantDrop {
     fn type_name(&self) -> &str {
         "variant"
@@ -607,7 +597,10 @@ impl Object for VariantDrop {
                 .get("product", || ProductDrop::value(site, self.product)),
             "weight" => Value::Int(variant.weight as i64),
             "weight_unit" => Value::from(&variant.weight_unit),
-            "weight_in_unit" => Value::Float(weight_in_unit(variant.weight, &variant.weight_unit)),
+            "weight_in_unit" => Value::Float(lsf_core::store::weight_in_unit(
+                variant.weight,
+                &variant.weight_unit,
+            )),
             "inventory_quantity" => Value::Int(variant.inventory_quantity),
             "inventory_management" => {
                 if variant.inventory_tracked {

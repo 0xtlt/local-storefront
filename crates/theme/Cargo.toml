@@ -1,20 +1,17 @@
 [package]
 name = "lsf-theme"
-description = "Renders Shopify themes locally: theme loading, store fixtures, Shopify's Liquid objects, filters and tags"
+description = "Renders Shopify themes locally from lsf-core's store data: theme loading, Shopify's Liquid objects, filters and tags"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+lsf-core.workspace = true
 lsf-liquid.workspace = true
 chrono.workspace = true
-chrono-tz.workspace = true
 indexmap.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-schemars = { version = "1", features = ["indexmap2"] }
-jsonschema = { version = "0.59", default-features = false }
 # `avif` encodes with rav1e, in Rust; `rayon` lets it use every core.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "avif", "rayon"] }
 # The encoder of lossy WebP: `image` only writes lossless WebP. It builds libwebp from its sources.

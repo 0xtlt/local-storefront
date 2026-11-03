@@ -2,6 +2,7 @@
 
 use std::any::Any;
 
+use lsf_core::session::FormResult;
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::lexer::{MarkupParser, TokenKind};
 use lsf_liquid::strict2::{self, Issue, Style};
@@ -13,7 +14,6 @@ use crate::drops::content::ArticleDrop;
 use crate::drops::product::ProductDrop;
 use crate::drops::shop::AddressDrop;
 use crate::render::state::RenderState;
-use crate::site::FormResult;
 
 struct Form {
     form_type: Expr,
@@ -88,7 +88,7 @@ impl Object for FormErrors {
         Some(match key {
             "messages" => by_field(&|(_, message)| Value::from(message)),
             "translated_fields" => {
-                by_field(&|(field, _)| Value::from(crate::util::humanize(field)))
+                by_field(&|(field, _)| Value::from(lsf_core::util::humanize(field)))
             }
             _ => return None,
         })

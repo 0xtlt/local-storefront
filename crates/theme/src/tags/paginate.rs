@@ -1,5 +1,6 @@
 //! `{% paginate collection.products by 12 %}`.
 
+use lsf_core::urls::encode_component;
 use lsf_liquid::lexer::{MarkupParser, TokenKind};
 use lsf_liquid::number::to_integer;
 use lsf_liquid::strict2::{self, Issue, Style};
@@ -9,7 +10,6 @@ use crate::drops::PaginatedList;
 use crate::drops::lists::Lookup;
 use crate::render::state::RenderState;
 use crate::site::Request;
-use crate::urls::encode_component;
 
 struct Paginate {
     collection: Expr,

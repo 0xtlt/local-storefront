@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use std::time::Instant;
 
 use chrono::{DateTime, FixedOffset, Utc};
-use lsf_core::drops::cart::resolve_line;
+use lsf_core::cart::resolve_line;
 use lsf_core::store::CartLine;
 use serde_json::Value;
 
@@ -2744,8 +2744,9 @@ fn id_matches(id: &str, handle: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn line(id: u64, variant: u64, price: Cents, quantity: u32) -> ResultLine {
         let mut line = ResultLine {

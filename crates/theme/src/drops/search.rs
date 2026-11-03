@@ -1,5 +1,6 @@
 //! Storefront search over the store data: `search`, `predictive_search`, `recommendations`.
 
+use lsf_core::store::SortOrder;
 use lsf_liquid::Value;
 
 use super::collection::{CollectionDrop, options_value, sort_products};
@@ -7,7 +8,6 @@ use super::content::{ArticleDrop, PageDrop};
 use super::product::ProductDrop;
 use super::{PaginatedList, SiteRef, hash, strings};
 use crate::render::cost;
-use crate::store::SortOrder;
 
 /// The resource types a search covers.
 #[derive(Clone, Copy, PartialEq, Eq)]

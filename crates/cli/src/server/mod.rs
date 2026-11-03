@@ -41,7 +41,8 @@ use axum::http::{HeaderName, HeaderValue, Request as HttpRequest, Response, Stat
 use lsf_core::diagnostics::Diagnostics;
 use lsf_core::store::load::{LoadOptions, SourceData};
 use lsf_core::theme::THEME_DIRECTORIES;
-use lsf_core::{Request, Session, Store};
+use lsf_core::{Session, Store};
+use lsf_theme::Request;
 use serde_json::Value as Json;
 
 use self::reply::Reply;

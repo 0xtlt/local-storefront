@@ -6,13 +6,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use lsf_core::session::{FormResult, Session};
+use lsf_core::store::load::{DataSource, LoadOptions, load};
+use lsf_core::store::{CartLine, Store};
+use lsf_core::theme::Revalidate;
 use lsf_theme::render::cost::Costs;
 use lsf_theme::render::page::{Page, Resource};
 use lsf_theme::render::{ProfileOptions, Target};
-use lsf_theme::store::load::{DataSource, LoadOptions, load};
-use lsf_theme::store::{CartLine, Store};
-use lsf_theme::theme::Revalidate;
-use lsf_theme::{FormResult, Rendered, Renderer, Request, Session, Theme};
+use lsf_theme::{Rendered, Renderer, Request, Theme};
 
 struct Fixture {
     renderer: Renderer,
@@ -666,8 +667,8 @@ fn cart_lines_are_priced_by_their_selling_plan() {
         },
     ];
     assert_ne!(
-        lsf_theme::drops::cart::line_key(&session.cart_lines[0]),
-        lsf_theme::drops::cart::line_key(&session.cart_lines[1])
+        lsf_core::cart::line_key(&session.cart_lines[0]),
+        lsf_core::cart::line_key(&session.cart_lines[1])
     );
     assert_eq!(
         fixture.liquid(
@@ -774,7 +775,7 @@ fn a_liquid_asset_gets_a_new_url_when_the_settings_change() {
     };
     let overlay = serde_json::json!({"theme_settings": {"page_size": 3}});
     let (other, diagnostics) =
-        lsf_theme::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+        lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
     assert!(diagnostics.is_empty(), "{diagnostics}");
     let (other_colors, other_base) = url(Arc::new(other));
     assert_ne!(other_colors, colors);
@@ -1079,7 +1080,7 @@ fn a_video_file_in_a_metaobject_is_a_video() {
             }]
         }
     });
-    let (store, diagnostics) = lsf_theme::store::load::load_with_overlay(
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
         &DataSource::Demo,
         &LoadOptions::default(),
         Some(&overlay),
@@ -1129,7 +1130,7 @@ fn metafield_values_are_the_objects_shopify_gives() {
             }]
         }
     });
-    let (store, diagnostics) = lsf_theme::store::load::load_with_overlay(
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
         &DataSource::Demo,
         &LoadOptions::default(),
         Some(&overlay),
@@ -1204,7 +1205,7 @@ fn what_is_loaded_is_charged_once() {
         theme_locales: vec!["en".to_string(), "fr".to_string()],
     };
     let (store, diagnostics) =
-        lsf_theme::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+        lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
     assert!(diagnostics.is_empty(), "{diagnostics}");
     let fixture = Fixture {
         store: Arc::new(store),
@@ -1580,7 +1581,7 @@ fn an_article_handle_that_two_blogs_have_names_neither() {
             }]
         }
     });
-    let (store, diagnostics) = lsf_theme::store::load::load_with_overlay(
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
         &DataSource::Demo,
         &LoadOptions::default(),
         Some(&overlay),
@@ -1637,7 +1638,7 @@ fn a_block_cannot_be_called_from_the_liquid_of_a_setting() {
 /// A theme in a temporary directory rendered against the demo store plus `overlay` (store data).
 fn theme_with_data(name: &str, overlay: &serde_json::Value, files: &[(&str, &str)]) -> Fixture {
     let fixture = theme_of(name, &[], files);
-    let (store, diagnostics) = lsf_theme::store::load::load_with_overlay(
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
         &DataSource::Demo,
         &LoadOptions::default(),
         Some(overlay),
@@ -1664,7 +1665,7 @@ fn metaobject_settings_are_metaobjects() {
     });
     let gid = format!(
         "gid://shopify/Metaobject/{}",
-        lsf_theme::util::stable_id("metaobject", "recipe/waffles")
+        lsf_core::util::stable_id("metaobject", "recipe/waffles")
     );
     let template = serde_json::json!({
         "sections": { "main": { "type": "recipes", "blocks": {

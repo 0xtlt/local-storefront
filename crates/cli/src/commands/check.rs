@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use lsf_core::Theme;
 use lsf_core::theme::Revalidate;
-use lsf_core::theme::liquid_settings::{holds_settings, string_literal, string_span};
 use lsf_liquid::strict2::{self, BROKEN_TODAY, Finding, IssueKind};
+use lsf_theme::Theme;
+use lsf_theme::theme::liquid_settings::{holds_settings, string_literal, string_span};
 use serde::Serialize;
 
 use crate::output::count;
@@ -237,7 +237,7 @@ fn preview_hint(error: &str) -> String {
     else {
         return String::new();
     };
-    match lsf_core::Preview::of_tag(tag) {
+    match lsf_theme::Preview::of_tag(tag) {
         Some(preview) => format!(
             " (`{tag}` is part of Shopify's \"{}\" feature preview: run with `--preview {}`)",
             preview.title(),
@@ -751,7 +751,7 @@ fn json_report(files: usize, tally: &Tally) -> serde_json::Value {
 
 pub fn run(
     theme_dir: &Path,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
     let (files, tally) = check_theme(theme_dir, previews, &args)?;
@@ -800,10 +800,10 @@ pub fn run(
 /// Checks the theme: how many files were read, and what was found.
 fn check_theme(
     theme_dir: &Path,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: &Args,
 ) -> Result<(usize, Tally), String> {
-    let env = Arc::new(lsf_core::environment_with(previews));
+    let env = Arc::new(lsf_theme::environment_with(previews));
     let theme = Theme::open(theme_dir, env.clone(), Revalidate::Never)
         .map_err(|error| error.to_string())?;
     let mut files = 0;
@@ -925,7 +925,7 @@ mod tests {
 
     #[test]
     fn an_unknown_filter_close_to_one_of_shopify_says_which() {
-        let env = lsf_core::environment_with(&[]);
+        let env = lsf_theme::environment_with(&[]);
         let meant = |name: &str| meant_filter(&env, name);
         // One letter off, two, the same letters, a name of another language.
         assert_eq!(meant("upcse").as_deref(), Some("upcase"));

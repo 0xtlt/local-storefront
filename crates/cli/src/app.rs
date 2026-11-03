@@ -3,10 +3,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use lsf_core::Store;
 use lsf_core::diagnostics::Diagnostics;
 use lsf_core::store::load::{DataSource, LoadOptions, SourceData, load};
 use lsf_core::theme::Revalidate;
-use lsf_core::{Preview, Renderer, Store, Theme};
+use lsf_theme::{Preview, Renderer, Theme};
 
 /// The data directory looked for inside the theme when `--data` is not given.
 pub const DEFAULT_DATA_DIRECTORY: &str = "shopify-local";
@@ -90,7 +91,7 @@ impl App {
         revalidate: Revalidate,
         previews: &[Preview],
     ) -> Result<App, String> {
-        let env = Arc::new(lsf_core::environment_with(previews));
+        let env = Arc::new(lsf_theme::environment_with(previews));
         let theme =
             Arc::new(Theme::open(theme_dir, env, revalidate).map_err(|error| error.to_string())?);
         let source = data_source(theme_dir, data_dir)?;
@@ -122,7 +123,7 @@ impl App {
         std::fs::create_dir_all(scratch.join("layout"))
             .map_err(|error| format!("cannot create {}: {error}", scratch.display()))?;
         let scratch = Scratch(scratch);
-        let env = Arc::new(lsf_core::environment_with(previews));
+        let env = Arc::new(lsf_theme::environment_with(previews));
         let theme = Arc::new(
             Theme::open(&scratch.0, env, Revalidate::Never).map_err(|error| error.to_string())?,
         );

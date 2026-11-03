@@ -236,7 +236,7 @@ fn listing_variant(
         "title": text(variant, "title"),
         "option_values": option_values,
         "price": price(field(variant, "price")),
-        "formatted_price": lsf_core::filters::money::format_money(price_cents, format),
+        "formatted_price": lsf_core::money::format_money(price_cents, format),
         "compare_at_price": price(field(variant, "compareAtPrice")),
         "grams": grams(&weight),
         "requires_shipping": boolean(&item, "requiresShipping", true),

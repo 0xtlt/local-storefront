@@ -3,7 +3,9 @@
 use lsf_liquid::number::{float_to_s, to_number};
 use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 
-use crate::drops::color::{Color, ColorDrop, Notation};
+use lsf_core::color::{Color, Notation};
+
+use crate::drops::color::ColorDrop;
 
 fn parse(input: &Value) -> Option<Color> {
     match input.downcast::<ColorDrop>() {

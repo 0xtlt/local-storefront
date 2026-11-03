@@ -10,6 +10,7 @@
 use std::sync::OnceLock;
 
 use chrono::Offset;
+use lsf_core::util::short_hash;
 use serde_json::{Value as Json, json};
 
 use super::page::{Page, Resource};
@@ -17,7 +18,6 @@ use crate::filters::misc_json;
 use crate::site::Site;
 use crate::theme::Theme;
 use crate::urls;
-use crate::util::short_hash;
 
 const LOAD_FEATURES: &str = include_str!("../../assets/platform/load-features.js");
 const STANDARD_ACTIONS: &str = include_str!("../../assets/platform/standard-actions.js");
@@ -185,7 +185,7 @@ pub fn served_theme(theme: &Theme) -> (u64, String, String) {
         .unwrap_or_else(|| theme_info(theme).0);
     match identity {
         Some(identity) => (identity.id, name, identity.role.clone()),
-        None => (urls::THEME_ID, name, "main".to_string()),
+        None => (lsf_core::urls::THEME_ID, name, "main".to_string()),
     }
 }
 
@@ -457,7 +457,7 @@ pub fn content_for_header(site: &Site, page: &Page) -> String {
                 let separator = if src.contains('?') { '&' } else { '?' };
                 format!(
                     "{src}{separator}shop={}",
-                    urls::encode_component(&shop.permanent_domain)
+                    lsf_core::urls::encode_component(&shop.permanent_domain)
                 )
             })
             .collect();

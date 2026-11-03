@@ -1,12 +1,12 @@
 //! Translations (`t`), locale-aware dates and unit formatting.
 
+use lsf_core::money::format_money;
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::number::float_to_s;
 use lsf_liquid::time::{strftime, to_time};
 use lsf_liquid::{Context, Environment, Error, FilterArgs, Result, Value};
 use serde_json::Value as Json;
 
-use super::money::format_money;
 use super::site;
 use crate::site::Site;
 use crate::theme::locales::{plural_category, system_translation};

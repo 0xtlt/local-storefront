@@ -35,7 +35,7 @@ fn looks_like_a_theme(directory: &Path) -> bool {
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
     // The app: `--app`, else the one the current folder is in.

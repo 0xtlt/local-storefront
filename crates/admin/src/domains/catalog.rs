@@ -643,7 +643,7 @@ fn seed_variant(
 
     let weight = json!({
         "unit": weight_unit(&variant.weight_unit),
-        "value": lsf_core::drops::product::weight_in_unit(variant.weight, &variant.weight_unit),
+        "value": lsf_core::store::weight_in_unit(variant.weight, &variant.weight_unit),
     });
     seed.insert(json!({
         "__typename": "InventoryItem",

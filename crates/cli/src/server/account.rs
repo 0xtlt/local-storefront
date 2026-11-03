@@ -4,11 +4,11 @@
 //! them can be rendered locally. `/account` stands in for them with a page of lsf's own, which
 //! shows who is logged in and lets the visitor become anyone in the store data.
 
-use lsf_core::drops::company::location_switch_path;
-use lsf_core::filters::money::format_money;
+use lsf_core::money::format_money;
 use lsf_core::store::{Customer, Store};
 use lsf_core::urls::encode_component;
 use lsf_liquid::filters::escape_html;
+use lsf_theme::drops::company::location_switch_path;
 
 use super::reply::Reply;
 use super::storefront::Visit;

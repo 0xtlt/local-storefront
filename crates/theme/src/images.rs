@@ -10,8 +10,8 @@ use image::codecs::avif::AvifEncoder;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
+use lsf_core::color::Color;
 
-use crate::drops::color::Color;
 use crate::filters::media::legacy_size;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -507,7 +507,7 @@ pub fn placeholder(
         None => declared,
     };
     let (width, height, _) = output_size(source, transform);
-    let hash = u64::from_str_radix(&crate::util::short_hash(src)[..8], 16).unwrap_or(0);
+    let hash = u64::from_str_radix(&lsf_core::util::short_hash(src)[..8], 16).unwrap_or(0);
     let hue = (hash % 360) as f64;
     let top = Color::from_hsl(hue, 0.32, 0.86, 1.0);
     let bottom = Color::from_hsl(hue + 24.0, 0.36, 0.72, 1.0);
