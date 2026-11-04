@@ -144,6 +144,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
         capabilities: ext.capabilities ?? {},
         translations: ext.translations ?? {},
         defaultLocale: ext.defaultLocale ?? null,
+        metafields: ext.metafields ?? [],
       },
       state: stateForExtensions(state),
     });

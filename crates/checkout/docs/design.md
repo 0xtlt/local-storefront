@@ -231,16 +231,21 @@ Cart lines, note and attributes live in the session cart (the same one the theme
 ```json
 {
   "token": "…", "variant": "standard"|"shop", "status": "open"|"completed", "orderGeneration": 0,
-  "shop": {"name": "…", "currencyCode": "EUR", "moneyFormat": "€{{amount}}", "locale": "en", "storefrontUrl": "http://127.0.0.1:9292"},
+  "shop": {"id": "gid://shopify/Shop/1", "name": "…", "currencyCode": "EUR", "moneyFormat": "€{{amount}}", "locale": "en", "storefrontUrl": "http://127.0.0.1:9292"},
   "buyer": {"email": "…", "phone": "…", "customer": {"id": "gid://shopify/Customer/1", "email": "…", "firstName": "…", "lastName": "…"} | null},
   "shippingAddress": {…} | null,
   "note": "…" | null, "attributes": [{"key": "…", "value": "…"}],
-  "metafields": [{"namespace","key","type","value"}],
+  "metafields": [{"namespace","key","type","value"}],   // the cart's, which extensions write
+  // The metafields the extensions declare of the shop, the products and variants of the lines,
+  // the customer, their company and location: each frame keeps its own and adds the cart's.
+  "appMetafields": [{"target": {"type": "shop", "id": "gid://shopify/Shop/1"},
+                     "metafield": {"namespace": "$app", "key": "…", "type": "json", "value": "…"}}],
   "lines": […], "discounts": […], "discountCodes": […], "deliveryGroups": […],
   "paymentMethods": […], "selectedPayment": "card" | null, "errors": […], "cost": {…}, "runs": […],
   "extensions": [{"handle": "…", "apiVersion": "2026-10", "script": "/__lsf/extensions/<handle>/<handle>.js",
                   "targets": ["purchase.checkout.block.render", …], "capabilities": {…},
-                  "settings": {…}, "metafields": [{"namespace": "…", "key": "…", "ownerType": "CART"}]}],
+                  "settings": {…}, "metafields": [{"namespace": "…", "key": "…", "ownerType": "CART"},
+                                                   {"namespace": "…", "key": "…", "target": "purchase.checkout.block.render"}]}],
   "diagnostics": ["…"]   // app problems: missing builds, unknown targets
 }
 ```

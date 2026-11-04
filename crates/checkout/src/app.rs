@@ -212,7 +212,8 @@ pub struct UiExtension {
     /// diagnostic says so): the extension is then not offered to the page.
     pub version: Option<ApiVersion>,
     pub targets: Vec<UiTarget>,
-    /// `[[extensions.metafields]]`: the metafields the extension declares it reads.
+    /// `[[extensions.metafields]]` and `[[extensions.targeting.metafields]]`: the metafields the
+    /// extension declares it reads.
     pub metafields: Vec<MetafieldDeclaration>,
     /// `[extensions.capabilities]` as JSON.
     pub capabilities: Value,
@@ -246,13 +247,17 @@ impl UiExtension {
     }
 }
 
-/// A metafield a checkout UI extension declares: `[[extensions.metafields]]`.
+/// A metafield a checkout UI extension declares: `[[extensions.metafields]]`, or
+/// `[[extensions.targeting.metafields]]` for one target.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MetafieldDeclaration {
     pub namespace: String,
     pub key: String,
     /// `owner_type`: the resource the metafield is read from. Required from API version 2027-01.
     pub owner_type: Option<String>,
+    /// The target that reads it, for a declaration of `[[extensions.targeting.metafields]]`;
+    /// `None` for every target of the extension.
+    pub target: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -797,7 +802,7 @@ fn load_ui_extension(
             None
         }
     };
-    let metafields = load_metafield_declarations(app, handle, version, entry);
+    let mut metafields = load_metafield_declarations(app, handle, version, entry, None);
 
     let mut targets = Vec::new();
     // `[[extensions.targeting]]`, and `extension_points = [...]`, the older way to list targets.
@@ -815,6 +820,13 @@ fn load_ui_extension(
             );
             continue;
         };
+        metafields.extend(load_metafield_declarations(
+            app,
+            handle,
+            version,
+            target,
+            Some(target_name),
+        ));
         targets.push(UiTarget {
             target: target_name.to_string(),
             module: target
@@ -897,15 +909,17 @@ pub fn owner_types() -> &'static [String] {
     &crate::metadata::get().owner_types
 }
 
-/// `[[extensions.metafields]]`. An entry without `namespace` or `key` is an error and left out;
-/// one without `owner_type` is an error when the API version requires it, and one whose
-/// `owner_type` is not a resource of [`owner_types`] always is (the declaration is kept: the page
-/// says why the extension is refused).
+/// The `metafields` of `[[extensions]]`, or of one of its `[[extensions.targeting]]` (`target`).
+/// An entry without `namespace` or `key` is an error and left out; one without `owner_type` is
+/// an error when the API version requires it, and one whose `owner_type` is not a resource of
+/// [`owner_types`] always is (the declaration is kept: the page says why the extension is
+/// refused).
 fn load_metafield_declarations(
     app: &mut App,
     handle: &str,
     version: Option<ApiVersion>,
     entry: &toml::Table,
+    target: Option<&str>,
 ) -> Vec<MetafieldDeclaration> {
     let mut declarations = Vec::new();
     for declared in entry
@@ -952,6 +966,7 @@ fn load_metafield_declarations(
             namespace: namespace.to_string(),
             key: key.to_string(),
             owner_type,
+            target: target.map(str::to_string),
         });
     }
     declarations
@@ -1426,6 +1441,72 @@ handle = "{handle}"
         };
         assert_eq!(messages("old"), [incomplete]);
         assert_eq!(messages("new"), [missing, incomplete]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_target_declares_metafields_of_its_own() {
+        let root = temp_app("ui-target-metafields");
+        write(
+            &root,
+            "extensions/reader/shopify.extension.toml",
+            r#"
+api_version = "2027-01"
+
+[[extensions]]
+type = "ui_extension"
+handle = "reader"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+    [[extensions.targeting.metafields]]
+    namespace = "$app"
+    key = "gift-codes"
+    owner_type = "SHOP"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.footer.render-after"
+
+    [[extensions.targeting.metafields]]
+    namespace = "custom"
+    key = "note"
+
+  [[extensions.metafields]]
+  namespace = "$app:gift"
+  key = "wrapped"
+  owner_type = "CART"
+"#,
+        );
+        let app = load(&root).unwrap();
+        let declared: Vec<(&str, Option<&str>)> = app
+            .ui_extension("reader")
+            .unwrap()
+            .metafields
+            .iter()
+            .map(|declared| (declared.key.as_str(), declared.target.as_deref()))
+            .collect();
+        assert_eq!(
+            declared,
+            [
+                ("wrapped", None),
+                ("gift-codes", Some("purchase.checkout.block.render")),
+                ("note", Some("purchase.checkout.footer.render-after")),
+            ]
+        );
+        // A target's own are checked as the others: 2027-01 requires `owner_type`.
+        let errors: Vec<&str> = app
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(
+            errors,
+            [
+                "API version 2027-01 requires `owner_type` on every metafield declaration: `custom.note` has none"
+            ]
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

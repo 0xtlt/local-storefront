@@ -4,9 +4,10 @@
 // script, like the other files of the sandbox.
 //
 // The page sends the state of the account (`customer-account.js`): `buyer`, `order` (the order
-// of the page, written like the state of a checkout), and in `ctx` what the slot is for:
-// `lineId`, `orderId`, `fulfillmentId`, `returnId`, `locationId`, and `handle` and `path` for a
-// full page.
+// of the page, written like the state of a checkout), `appMetafields` (the metafields the
+// extensions declare of the shop, the order's products and the buyer), and in `ctx` what the
+// slot is for: `lineId`, `orderId`, `fulfillmentId`, `returnId`, `locationId`, and `handle` and
+// `path` for a full page.
 (function (global) {
   'use strict';
   const Sandbox = (global.LsfSandbox = global.LsfSandbox || {});
@@ -108,7 +109,11 @@
     signalProperty(api, 'discountAllocations', (s) =>
       (order(s).discounts || []).filter((entry) => entry.class === 'ORDER').map(map.allocation));
     signalProperty(api, 'appliedGiftCards', () => []);
-    signalProperty(api, 'appMetafields', () => []);
+    // Those of the order's cart are the metafields of the order placed in the local checkout.
+    signalProperty(api, 'appMetafields', (s) => {
+      const cart = (order(s).metafields || []).map((m) => map.mapMetafield(m, order(s).token));
+      return map.declaredMetafields(s.appMetafields, cart, init.ext.metafields, target);
+    });
     signalProperty(api, 'checkoutToken', () => undefined);
     signalProperty(api, 'checkoutSettings', () => ({ orderSubmission: 'ORDER', shippingAddress: { isEditable: false } }));
     signalProperty(api, 'shippingAddress', (s) => map.mapAddress(order(s).shippingAddress));

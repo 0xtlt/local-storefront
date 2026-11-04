@@ -8063,6 +8063,204 @@ fn an_order_of_the_store_data_has_its_returns_and_its_shipments() {
     std::fs::remove_dir_all(&app).ok();
 }
 
+/// An app with one UI extension of the checkout and the customer account (`metafield-reader`)
+/// that declares a metafield of each owner: the shop's `$app.gift-codes`, which the session data
+/// sets, and the demo store's own of the product, the customer, the company and its location.
+fn app_with_metafield_reader(label: &str) -> std::path::PathBuf {
+    let root =
+        std::env::temp_dir().join(format!("lsf-metafields-app-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let directory = root.join("extensions").join("metafield-reader");
+    std::fs::create_dir_all(directory.join("dist")).unwrap();
+    std::fs::write(
+        directory.join("shopify.extension.toml"),
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Metafield reader"
+handle = "metafield-reader"
+type = "ui_extension"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+    [[extensions.targeting.metafields]]
+    namespace = "$app:gift"
+    key = "wrapped"
+    owner_type = "CART"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.block.render"
+
+  [[extensions.metafields]]
+  namespace = "$app"
+  key = "gift-codes"
+
+  [[extensions.metafields]]
+  namespace = "custom"
+  key = "care"
+  owner_type = "PRODUCT"
+
+  [[extensions.metafields]]
+  namespace = "custom"
+  key = "job_title"
+  owner_type = "CUSTOMER"
+
+  [[extensions.metafields]]
+  namespace = "custom"
+  key = "payment_terms"
+  owner_type = "COMPANY"
+
+  [[extensions.metafields]]
+  namespace = "custom"
+  key = "delivery_notes"
+  owner_type = "COMPANY_LOCATION"
+
+  # The shop has one, the products do not.
+  [[extensions.metafields]]
+  namespace = "custom"
+  key = "announcement"
+  owner_type = "PRODUCT"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("dist").join("metafield-reader.js"),
+        "// built",
+    )
+    .unwrap();
+    root
+}
+
+#[test]
+fn app_metafields_are_the_declared_ones_of_the_shop_the_lines_and_the_buyer() {
+    let app = app_with_metafield_reader("checkout");
+    let state = checkout_server_of(app.clone(), &[], true);
+    let session = "co-app-metafields";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "customer": "alex.morgan@example.com",
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]},
+            "data": {"shop": {"metafields": {"$app": {
+                "gift-codes": {"type": "json", "value": ["GIFT-1", "GIFT-2"]}
+            }}}}
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let path = header(&get(&state, "/checkout", session), "location")
+        .expect("a checkout")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+
+    let buyer = &json["buyer"];
+    let company = &buyer["purchasingCompany"];
+    let entry = |kind: &str, id: &Json, namespace: &str, key: &str, value: &str| {
+        json!({
+            "target": {"type": kind, "id": id},
+            "metafield": {"namespace": namespace, "key": key, "type": if key == "gift-codes" { "json" } else { "single_line_text_field" }, "value": value}
+        })
+    };
+    let product = json!(format!(
+        "gid://shopify/Product/{}",
+        json["lines"][0]["productId"]
+    ));
+    assert!(
+        json["shop"]["id"]
+            .as_str()
+            .unwrap()
+            .starts_with("gid://shopify/Shop/")
+    );
+    let expected = json!([
+        entry(
+            "shop",
+            &json["shop"]["id"],
+            "$app",
+            "gift-codes",
+            r#"["GIFT-1","GIFT-2"]"#
+        ),
+        entry(
+            "product",
+            &product,
+            "custom",
+            "care",
+            "Machine wash cold. Tumble dry low."
+        ),
+        entry(
+            "customer",
+            &buyer["customer"]["id"],
+            "custom",
+            "job_title",
+            "Purchasing manager"
+        ),
+        entry(
+            "company",
+            &company["company"]["id"],
+            "custom",
+            "payment_terms",
+            "Net 30"
+        ),
+        entry(
+            "companyLocation",
+            &company["location"]["id"],
+            "custom",
+            "delivery_notes",
+            "Loading dock B, weekdays 8am to 4pm"
+        ),
+    ]);
+    assert_eq!(json["appMetafields"], expected);
+    // The page hands each frame the declarations, with the target of a target's own.
+    let declared = json["extensions"][0]["metafields"].as_array().unwrap();
+    assert_eq!(
+        declared[0],
+        json!({"namespace": "$app", "key": "gift-codes"})
+    );
+    assert_eq!(
+        declared.last().unwrap(),
+        &json!({
+            "namespace": "$app:gift", "key": "wrapped", "ownerType": "CART",
+            "target": "purchase.checkout.block.render"
+        })
+    );
+
+    // The cart's are the checkout's `metafields`: the frames add them as they change.
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "metafield", "change": {
+            "type": "updateCartMetafield", "namespace": "$app:gift", "key": "wrapped",
+            "valueType": "boolean", "value": "true"
+        }}]),
+    );
+    let json = body_json(&reply);
+    assert_eq!(json["metafields"][0]["key"], "wrapped");
+    assert_eq!(json["appMetafields"], expected);
+
+    // The order status page of the order reads the same, and the order keeps its cart's.
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let orders = account_state(&get(&state, "/account", session));
+    let placed = &orders["orders"][0];
+    let order = account_state(&get(
+        &state,
+        &format!("/account/orders/{}", placed["legacyId"]),
+        session,
+    ));
+    assert_eq!(order["shop"]["id"], json["shop"]["id"]);
+    assert_eq!(order["appMetafields"], expected);
+    assert_eq!(order["order"]["metafields"][0]["key"], "wrapped");
+    assert_eq!(order["order"]["token"], json["token"]);
+    // Another session has neither this customer nor the shop's metafield of this session's data.
+    let guest = account_state(&get(&state, "/account", "ca-guest"));
+    assert_eq!(guest["appMetafields"], json!([]));
+    std::fs::remove_dir_all(&app).ok();
+}
+
 #[test]
 fn the_home_page_lists_the_customer_account_ui_extensions_apart() {
     let app = app_with_account("home");

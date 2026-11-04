@@ -152,6 +152,7 @@ test('answers a frame that is ready with everything it needs', async () => {
   assert.deepEqual(init.ext.capabilities, { api_access: true, block_progress: true });
   assert.equal(init.ext.translations.en.total, 'Order total: {{amount}}');
   assert.equal(init.ext.defaultLocale, 'en', 'the default locale of the extension reaches the frame');
+  assert.deepEqual(init.ext.metafields, [{ namespace: '$app:gift', key: 'wrapped' }], 'what it declares, which `appMetafields` keeps');
   assert.equal(init.variant, 'standard');
   assert.equal(init.state.token, 'preview');
   assert.equal('runs' in init.state, false, 'what Functions saw is not for extensions');

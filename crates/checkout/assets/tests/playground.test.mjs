@@ -123,7 +123,7 @@ async function boot(handle, target, ctx, state = checkoutState()) {
     clearTimeout,
     atob,
   });
-  const ext = { capabilities: {}, translations: {} };
+  const ext = { capabilities: {}, translations: {}, metafields: manifest(handle).metafields };
   const locales = join(extensions, handle, 'locales');
   if (existsSync(locales)) {
     for (const file of readdirSync(locales)) {

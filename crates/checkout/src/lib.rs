@@ -5,6 +5,7 @@
 //! ([`input`]), runs it ([`runner`]) and applies its output to the checkout.
 
 pub mod app;
+pub mod app_metafields;
 pub mod assets;
 pub mod fetch;
 pub mod input;

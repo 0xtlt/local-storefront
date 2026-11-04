@@ -902,6 +902,38 @@ An extension needs a supported `api_version`, or it is reported as an error and 
 2027-01, each `[[extensions.metafields]]` entry needs an `owner_type` (`CART`, `CUSTOMER`, ...),
 or the loader reports an error and the page says why it does not load the extension.
 
+`shopify.appMetafields` has the metafields the extension declares: those of
+`[[extensions.metafields]]`, and those of `[[extensions.targeting.metafields]]` at the target
+they are declared for. Each entry is a metafield with the resource it belongs to, its `target`:
+a `type` (`shop`, `product`, `variant`, `customer`, `company`, `companyLocation` or `cart`) and
+the `id` of the resource, a GID. They are read from the store data: the shop's, those of the
+products and variants of the lines, of the customer logged in and of the company and location
+they buy for, and the cart's, which the extensions write with `applyMetafieldChange`. A
+declaration with an `owner_type` reads that resource only, one without reads every resource that
+has the metafield. The app's own namespace is written `$app` (or `$app:<name>`) in the toml, in
+the store data and in what the extension reads; Shopify's `app--<id>--<name>` in the data is the
+same namespace.
+
+```toml
+[[extensions.metafields]]
+namespace = "$app"
+key = "gift-codes"
+owner_type = "SHOP"
+```
+
+```json
+{ "shop": { "metafields": { "$app": { "gift-codes": { "type": "json", "value": ["GIFT-1"] } } } } }
+```
+
+```js
+// [{target: {type: 'shop', id: 'gid://shopify/Shop/…'},
+//   metafield: {namespace: '$app', key: 'gift-codes', value: '["GIFT-1"]', type: 'json', valueType: 'json_string'}}]
+shopify.appMetafields.value;
+```
+
+On the order status page of the customer account, the products and variants are those of the
+order, and the cart is the one of the order placed in the local checkout.
+
 ## Run a Function without a server
 
 ```bash
@@ -1010,7 +1042,9 @@ customer, nor a time zone for a buyer (`timezone` is the one of the browser).
 The state has the lines, discounts, discount codes, delivery groups, payment methods, errors and
 cost that the Functions produced, `runs` (a run of a `.fetch` target has its `exchange`, the
 request and the response), the buyer, the address, the note, the attributes and
-the metafields, the `extensions` to load and `diagnostics`. Money is `{"amount": 19.99}`.
+the metafields (the cart's), `appMetafields` (the metafields the extensions declare of the shop,
+the products and variants of the lines and the buyer), the `extensions` to load and
+`diagnostics`. Money is `{"amount": 19.99}`.
 
 ### Operations
 
@@ -1051,6 +1085,8 @@ an order that was placed already leads to the same thank-you page, never to a se
   `shopify.settings.value` is empty.
 - No Storefront API: `query` in an extension rejects. No Customer Account API either: a customer
   account extension reads the account through its `shopify` global only.
+- `shopify.appMetafields` has no `shopUser` entries (the store data has no staff accounts), and
+  on the order status page no `order` ones (the orders of the store data have no metafields).
 - The customer account shows; it changes nothing (no address to edit, no order to cancel or
   return), and its intents (`shopify.intents.invoke`) are closed at once.
 - Some fields of the Function input hold what the store data says and nothing more. The orders of

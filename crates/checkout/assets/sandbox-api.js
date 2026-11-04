@@ -222,9 +222,10 @@
 
   const METAFIELD_TYPES = { number_integer: 'integer', number_decimal: 'float', boolean: 'boolean', json: 'json_string' };
 
-  function mapMetafield(metafield, token) {
+  /** An entry of `appMetafields`: the resource (`target`) and its metafield. */
+  function appMetafield(target, metafield) {
     return {
-      target: { type: 'cart', id: 'gid://shopify/Cart/' + token },
+      target: { type: target.type, id: target.id },
       metafield: {
         namespace: metafield.namespace,
         key: metafield.key,
@@ -235,7 +236,38 @@
     };
   }
 
-  Sandbox.mappers = { allocation, mapLine, mapAddress, mapOption, mapCustomer, mapPurchasingCompany, mapMetafield };
+  /** A metafield of the cart (`applyMetafieldChange`) as an entry of `appMetafields`. */
+  function mapMetafield(metafield, token) {
+    return appMetafield({ type: 'cart', id: 'gid://shopify/Cart/' + token }, metafield);
+  }
+
+  /** The `target.type` of the entries each `owner_type` of a declaration names. */
+  const OWNER_TARGETS = {
+    CART: 'cart',
+    COMPANY: 'company',
+    COMPANY_LOCATION: 'companyLocation',
+    CUSTOMER: 'customer',
+    PRODUCT: 'product',
+    PRODUCTVARIANT: 'variant',
+    SHOP: 'shop',
+  };
+
+  /**
+   * `appMetafields`: the entries the extension declares for `target` (`[[extensions.metafields]]`,
+   * and `[[extensions.targeting.metafields]]` of that target), the same namespace and key, of the
+   * owner `owner_type` names, of any owner without one. `owned` are the entries the server read
+   * from the store data (the shop, products, variants, customer, company and location), `cart`
+   * the cart's.
+   */
+  function declaredMetafields(owned, cart, declarations, target) {
+    const wanted = (declarations || []).filter((entry) => !entry.target || entry.target === target);
+    const declares = (entry) => wanted.some((declared) =>
+      declared.namespace === entry.metafield.namespace && declared.key === entry.metafield.key
+      && (!declared.ownerType || OWNER_TARGETS[declared.ownerType] === entry.target.type));
+    return (owned || []).map((entry) => appMetafield(entry.target, entry.metafield)).concat(cart).filter(declares);
+  }
+
+  Sandbox.mappers = { allocation, mapLine, mapAddress, mapOption, mapCustomer, mapPurchasingCompany, mapMetafield, declaredMetafields };
 
   /** The names of the capabilities an extension was granted: `[extensions.capabilities]`. */
   function capabilityNames(capabilities) {
@@ -432,7 +464,7 @@
     api.i18n = createI18n(locale, currency, ext.translations, ext.defaultLocale);
     const extensionLanguage = (pickStrings(ext.translations, locale, ext.defaultLocale)[0] || {}).language;
     api.shop = {
-      id: 'gid://shopify/Shop/1',
+      id: (state.shop && state.shop.id) || 'gid://shopify/Shop/1',
       name: (state.shop && state.shop.name) || '',
       storefrontUrl: state.shop && state.shop.storefrontUrl,
       myshopifyDomain: (state.shop && state.shop.myshopifyDomain) || myshopifyDomainOf(state.shop && state.shop.name),
@@ -480,6 +512,12 @@
       checkoutApi();
     }
 
+    /** What the extension declares of the metafields of the checkout and of its cart. */
+    function appMetafields(s) {
+      const cart = (s.metafields || []).map((m) => mapMetafield(m, s.token));
+      return declaredMetafields(s.appMetafields, cart, ext.metafields, target);
+    }
+
     /** What the targets of the checkout and the thank-you page read and change. */
     function checkoutApi() {
       // --- Checkout state, on every target
@@ -499,7 +537,7 @@
       signalProperty(api, 'checkoutToken', (s) => s.token);
       signalProperty(api, 'metafields', (s) =>
         (s.metafields || []).map((m) => ({ namespace: m.namespace, key: m.key, value: m.value, valueType: m.type })));
-      signalProperty(api, 'appMetafields', (s) => (s.metafields || []).map((m) => mapMetafield(m, s.token)));
+      signalProperty(api, 'appMetafields', appMetafields);
       signalProperty(api, 'localizedFields', () => []);
       signalProperty(api, 'checkoutSettings', () => ({ orderSubmission: 'ORDER', shippingAddress: { isEditable: true } }));
       signalProperty(api, 'customerPrivacy', () => ({
@@ -641,7 +679,7 @@
       const plain = {
         settings: () => ext.settings || {},
         attributes: (s) => s.attributes || [],
-        appMetafields: (s) => (s.metafields || []).map((m) => mapMetafield(m, s.token)),
+        appMetafields,
         shippingAddress: (s) => mapAddress(s.shippingAddress),
         billingAddress: (s) => mapAddress(s.shippingAddress),
         checkoutToken: (s) => s.token,

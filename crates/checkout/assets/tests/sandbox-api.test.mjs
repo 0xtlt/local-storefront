@@ -127,12 +127,73 @@ test('discount codes, allocations and cart metafields', () => {
     { type: 'discountCode', action: 'add', code: 'SAVE10' },
     { type: 'metafield', change: { type: 'updateCartMetafield', namespace: 'n', key: 'k', valueType: 'boolean', value: 'true' } },
   );
-  const { shopify } = runtime({ state });
+  const { shopify } = runtime({ state, ext: { metafields: [{ namespace: 'n', key: 'k' }] } });
   assert.deepEqual(plain(shopify.discountCodes.value), [{ code: 'SAVE10' }]);
   const [line] = shopify.lines.value;
   assert.deepEqual(plain(line.discountAllocations), [{ type: 'code', code: 'SAVE10', discountedAmount: { amount: 4.9, currencyCode: 'EUR' } }]);
   assert.equal(next({ type: 'discountCode', action: 'add', code: 'SAVE10' }).lines[0].discountAllocations[0].class, 'PRODUCT', 'the state tells the class of each allocation');
-  assert.deepEqual(plain(shopify.appMetafields.value)[0].metafield, { namespace: 'n', key: 'k', value: 'true', type: 'boolean', valueType: 'boolean' });
+  assert.deepEqual(plain(shopify.appMetafields.value), [{
+    target: { type: 'cart', id: 'gid://shopify/Cart/preview' },
+    metafield: { namespace: 'n', key: 'k', value: 'true', type: 'boolean', valueType: 'boolean' },
+  }]);
+  assert.deepEqual(plain(shopify.metafields.value), [{ namespace: 'n', key: 'k', value: 'true', valueType: 'boolean' }]);
+  // `appMetafields` has the declared ones only; `metafields` (the cart's) has them all.
+  const undeclared = runtime({ state }).shopify;
+  assert.deepEqual(plain(undeclared.appMetafields.value), []);
+  assert.equal(undeclared.metafields.value.length, 1);
+});
+
+/** Metafields of the store data, as the server reads them for the declarations (`appMetafields`). */
+const gid = (kind, id) => `gid://shopify/${kind}/${id}`;
+const entry = (type, id, namespace, key, metafieldType, value) => ({ target: { type, id }, metafield: { namespace, key, type: metafieldType, value } });
+const OWNED = [
+  entry('shop', gid('Shop', 9), '$app', 'gift-codes', 'json', '["GIFT-1","GIFT-2"]'),
+  entry('product', gid('Product', 11), '$app', 'energy', 'single_line_text_field', 'A'),
+  entry('variant', gid('ProductVariant', 101), '$app', 'energy', 'single_line_text_field', 'A+'),
+  entry('customer', gid('Customer', 7), 'custom', 'tier', 'number_integer', '2'),
+  entry('company', gid('Company', 1), 'custom', 'terms', 'single_line_text_field', 'Net 30'),
+  entry('companyLocation', gid('CompanyLocation', 2), 'custom', 'dock', 'boolean', 'true'),
+];
+
+test('appMetafields has the declared metafields of the shop, the products, the buyer and the cart', () => {
+  const gift = { type: 'metafield', change: { type: 'updateCartMetafield', namespace: '$app:gift', key: 'wrapped', valueType: 'boolean', value: 'true' } };
+  const base = next(gift);
+  const state = { ...base, shop: { ...base.shop, id: gid('Shop', 9) }, appMetafields: OWNED };
+  const metafields = [
+    { namespace: '$app', key: 'gift-codes' },
+    // `owner_type` keeps one owner: the product has the same metafield.
+    { namespace: '$app', key: 'energy', ownerType: 'PRODUCTVARIANT' },
+    { namespace: 'custom', key: 'tier', ownerType: 'CUSTOMER' },
+    { namespace: 'custom', key: 'terms', ownerType: 'COMPANY' },
+    { namespace: 'custom', key: 'dock', ownerType: 'COMPANY_LOCATION' },
+    // `[[extensions.targeting.metafields]]`: for that target only.
+    { namespace: '$app:gift', key: 'wrapped', ownerType: 'CART', target: 'purchase.checkout.block.render' },
+  ];
+  const { shopify } = runtime({ state, ext: { metafields } });
+  const entries = plain(shopify.appMetafields.value);
+  assert.deepEqual(entries.map(({ target, metafield }) => [target.type, target.id, `${metafield.namespace}.${metafield.key}`]), [
+    ['shop', 'gid://shopify/Shop/9', '$app.gift-codes'],
+    ['variant', 'gid://shopify/ProductVariant/101', '$app.energy'],
+    ['customer', 'gid://shopify/Customer/7', 'custom.tier'],
+    ['company', 'gid://shopify/Company/1', 'custom.terms'],
+    ['companyLocation', 'gid://shopify/CompanyLocation/2', 'custom.dock'],
+    ['cart', 'gid://shopify/Cart/preview', '$app:gift.wrapped'],
+  ]);
+  assert.deepEqual(entries[0], {
+    target: { type: 'shop', id: 'gid://shopify/Shop/9' },
+    metafield: { namespace: '$app', key: 'gift-codes', value: '["GIFT-1","GIFT-2"]', type: 'json', valueType: 'json_string' },
+  });
+  assert.deepEqual(entries.map((each) => each.metafield.valueType), ['json_string', 'string', 'integer', 'string', 'boolean', 'boolean']);
+  assert.equal(shopify.shop.id, entries[0].target.id, 'the shop of the Shop API is the one of its entries');
+
+  // Another target of the extension does not have the cart's, declared for the block only.
+  const footer = runtime({ state, target: 'purchase.checkout.footer.render-after', ext: { metafields } }).shopify;
+  assert.deepEqual(plain(footer.appMetafields.value).map((each) => each.target.type), ['shop', 'variant', 'customer', 'company', 'companyLocation']);
+  // An extension that declares nothing reads nothing.
+  assert.deepEqual(plain(runtime({ state }).shopify.appMetafields.value), []);
+  // The address autocomplete reads them as a plain property.
+  const autocomplete = runtime({ state, target: 'purchase.address-autocomplete.suggest', ext: { metafields } }).shopify;
+  assert.deepEqual(plain(autocomplete.appMetafields).map((each) => each.target.type), ['shop', 'variant', 'customer', 'company', 'companyLocation']);
 });
 
 test('calls of the API become messages to the page and resolve with the answer', async () => {
@@ -619,8 +680,9 @@ const ORDER = {
   discounts: [],
 };
 
-function account(target, { order = ORDER, ctx = {} } = {}) {
+function account(target, { order = ORDER, ctx = {}, ext = {}, appMetafields } = {}) {
   const state = {
+    appMetafields,
     surface: 'customer-account',
     shop: checkoutState().shop,
     localization: checkoutState().localization,
@@ -632,7 +694,7 @@ function account(target, { order = ORDER, ctx = {} } = {}) {
   };
   const win = sandboxWindow({ scripts: ['sandbox-api.js', 'sandbox-account-api.js'] });
   const posted = [];
-  const created = win.context.LsfSandbox.createRuntime({ post: (message) => posted.push(plain(message)), init: init({ handle: 'ca', target, state, ctx }) });
+  const created = win.context.LsfSandbox.createRuntime({ post: (message) => posted.push(plain(message)), init: init({ handle: 'ca', target, state, ctx, ext }) });
   return { ...created, posted, win };
 }
 
@@ -670,6 +732,30 @@ test('an order status target reads the order as the Order Status API', () => {
   assert.equal(shopify.buyerIdentity.customer.value.email, 'jane@example.com');
   assert.equal(shopify.authenticationState.value, 'fully_authenticated');
   assert.equal(shopify.orderId, ORDER.id);
+  assert.deepEqual(plain(shopify.appMetafields.value), [], 'nothing declared');
+});
+
+test('an order status target reads the metafields it declares of the shop, the products, the buyer and the cart', () => {
+  // An order placed in the local checkout keeps the metafields of its cart.
+  const placed = { ...ORDER, token: 'c1-abc', metafields: [{ namespace: '$app:gift', key: 'wrapped', type: 'boolean', value: 'true' }] };
+  const metafields = [
+    { namespace: '$app', key: 'gift-codes', ownerType: 'SHOP' },
+    { namespace: '$app', key: 'energy' },
+    { namespace: 'custom', key: 'terms' },
+    { namespace: '$app:gift', key: 'wrapped', ownerType: 'CART' },
+  ];
+  const target = 'customer-account.order-status.block.render';
+  const { shopify } = account(target, { order: placed, ext: { metafields }, appMetafields: OWNED });
+  assert.deepEqual(plain(shopify.appMetafields.value).map(({ target, metafield }) => [target.type, target.id, metafield.key]), [
+    ['shop', 'gid://shopify/Shop/9', 'gift-codes'],
+    ['product', 'gid://shopify/Product/11', 'energy'],
+    ['variant', 'gid://shopify/ProductVariant/101', 'energy'],
+    ['company', 'gid://shopify/Company/1', 'terms'],
+    ['cart', 'gid://shopify/Cart/c1-abc', 'wrapped'],
+  ]);
+  // An order of the store data has no cart.
+  const stored = account(target, { ext: { metafields }, appMetafields: OWNED }).shopify;
+  assert.equal(plain(stored.appMetafields.value).some((each) => each.target.type === 'cart'), false);
 });
 
 test('what a slot of the customer account is for comes with the target', () => {

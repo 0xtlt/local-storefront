@@ -164,6 +164,21 @@ fn state_json(
         _ => None,
     };
 
+    // What the order status targets read as `appMetafields`: the products and variants are the
+    // ones of the order; the cart's metafields are the order's own (`metafields`).
+    let variants: Vec<u64> = order
+        .iter()
+        .flat_map(|order| order["lines"].as_array().into_iter().flatten())
+        .filter_map(|line| line["variantId"].as_u64())
+        .collect();
+    let app_metafields = checkout::app_metafields_json(
+        &app,
+        &selection,
+        &store,
+        customer,
+        session.company_location,
+        &variants,
+    );
     let company = customer.and_then(|customer| company_json(&store, customer, identity.location));
     let profiles: Vec<Json> = store
         .customers
@@ -183,6 +198,7 @@ fn state_json(
         "extensionPage": extension_page,
         "home": checkout::home_path(state, root),
         "shop": {
+            "id": format!("gid://shopify/Shop/{}", store.shop.id),
             "name": store.shop.name,
             "currencyCode": store.shop.currency,
             "moneyFormat": store.shop.money_format,
@@ -203,6 +219,7 @@ fn state_json(
         "company": company,
         "orders": orders,
         "order": order,
+        "appMetafields": app_metafields,
         "localization": checkout::localization_json(
             &store,
             language,

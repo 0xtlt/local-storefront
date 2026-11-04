@@ -3,6 +3,21 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Fixed
+
+- **`shopify.appMetafields` has the metafields an extension declares, of every resource.** As on
+  Shopify, it holds the metafields of `[[extensions.metafields]]` (and of
+  `[[extensions.targeting.metafields]]` at their target): those of the shop, of the products and
+  variants of the lines, of the customer logged in, of the company and location they buy for and
+  of the cart, each with its `target` (`shop`, `product`, `variant`, …) and the GID of the
+  resource, read from the store data. An `owner_type` keeps one resource. It held only the cart's,
+  each one whether declared or not: an extension now reads a metafield of the cart only if it
+  declares it. The order status page of the customer account reads them too (it had none), and
+  `shopify.shop.id` is the id of the shop of the store data
+  ([#25](https://github.com/0xtlt/local-storefront/issues/25)).
+
 ## 0.2.0 - 2026-10-30
 
 lsf now runs the checkout and the customer account of a Shopify app: its Functions and its UI

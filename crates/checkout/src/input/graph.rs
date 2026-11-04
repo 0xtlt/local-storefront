@@ -1316,13 +1316,7 @@ impl Source<'_> {
         let wanted = canonical_namespace(namespace);
         match self {
             Source::Core(None) => None,
-            Source::Core(Some(metafields)) => {
-                let (_, entries) = metafields
-                    .iter()
-                    .find(|(candidate, _)| canonical_namespace(candidate) == wanted)?;
-                let metafield = entries.get(key)?;
-                Some((metafield.kind.clone(), source_text(&metafield.value)))
-            }
+            Source::Core(Some(metafields)) => store_metafield(metafields, namespace, key),
             Source::Owned(metafields) => metafields
                 .iter()
                 .find(|metafield| {
@@ -1333,7 +1327,24 @@ impl Source<'_> {
     }
 }
 
-fn canonical_namespace(namespace: &str) -> String {
+/// The `(type, value)` of a metafield of the store data, whichever way its namespace is written
+/// (see [`Source::find`]).
+pub(crate) fn store_metafield(
+    metafields: &Metafields,
+    namespace: &str,
+    key: &str,
+) -> Option<(String, String)> {
+    let wanted = canonical_namespace(namespace);
+    let (_, entries) = metafields
+        .iter()
+        .find(|(candidate, _)| canonical_namespace(candidate) == wanted)?;
+    let metafield = entries.get(key)?;
+    Some((metafield.kind.clone(), source_text(&metafield.value)))
+}
+
+/// The namespace as the queries and the store data write it: `app--<id>--config` is
+/// `$app:config`, `app--<id>` is `$app`.
+pub(crate) fn canonical_namespace(namespace: &str) -> String {
     if let Some(rest) = namespace.strip_prefix("app--") {
         let digits =
             |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());

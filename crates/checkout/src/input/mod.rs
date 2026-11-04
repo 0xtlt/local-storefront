@@ -15,6 +15,8 @@ mod graph;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use graph::{canonical_namespace, store_metafield};
+
 use serde_json::Value as Json;
 
 use crate::version::{ApiVersion, FunctionApi};
