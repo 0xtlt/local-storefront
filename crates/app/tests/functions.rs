@@ -3583,3 +3583,217 @@ fn candidates_that_differ_only_by_their_quantities_stack_in_any_order() {
     assert_allocations_add_up(&forward);
     assert_allocations_add_up(&reversed);
 }
+
+/// The buyer, with an address, entered the code of each of `answers`: a discount of `class` whose
+/// Function answers its output at `export`, whatever the input, on [`CART`].
+fn codes_answered(
+    class: DiscountClass,
+    export: &str,
+    answers: &[(&str, serde_json::Value)],
+) -> lsf_app::checkout::CheckoutResult {
+    static COPIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let copy = AppCopy::new(&format!(
+        "codes-{}",
+        COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(
+        copy.file("volume-discount", "dist/function.wasm"),
+        answering_module(export, 0),
+    )
+    .unwrap();
+    let store = store();
+    let session = session(&store, &CART);
+    let mut config = config();
+    config.discounts = answers
+        .iter()
+        .map(|(code, _)| discount("volume-discount", code, Some(code), &[class], json!({})))
+        .collect();
+    let state = CheckoutState {
+        discount_codes: answers
+            .iter()
+            .map(|(code, _)| code.to_lowercase())
+            .collect(),
+        ..addressed()
+    };
+    compute_with(
+        &copy.load(),
+        &Selection::only(["volume-discount"]),
+        &store,
+        &session,
+        &state,
+        &config,
+        &|_, _, ctx| {
+            let code = ctx.triggering_code.unwrap_or_default();
+            Ok(answers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(code))
+                .map_or(json!({"operations": []}), |(_, output)| output.clone()))
+        },
+    )
+}
+
+/// `(code, applicable)` of each code the buyer entered.
+fn applicable(result: &lsf_app::checkout::CheckoutResult) -> Vec<(&str, bool)> {
+    result
+        .discount_codes
+        .iter()
+        .map(|code| (code.code.as_str(), code.applicable))
+        .collect()
+}
+
+/// `(code, amount)` of each allocation of a line.
+fn allocations(line: &lsf_app::checkout::ResultLine) -> Vec<(Option<&str>, i64)> {
+    line.discount_allocations
+        .iter()
+        .map(|allocation| (allocation.code.as_deref(), allocation.amount))
+        .collect()
+}
+
+/// A product discount of `percentage` off line 1, as a Function that accepts a code before the
+/// gift line it stands for reaches the cart answers it with 0.
+fn off_line_1(percentage: u32) -> serde_json::Value {
+    json!({"operations": [{"productDiscountsAdd": {
+        "selectionStrategy": "FIRST",
+        "candidates": [{
+            "targets": [{"cartLine": {"id": LINE_1}}],
+            "value": {"percentage": {"value": percentage}},
+        }],
+    }}]})
+}
+
+#[test]
+fn a_code_whose_only_candidate_is_0_percent_is_applied_at_0() {
+    let result = codes_answered(
+        Product,
+        "cart_lines_discounts_generate_run",
+        &[("GIFT", off_line_1(0))],
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(applicable(&result), [("gift", true)]);
+    assert_eq!(result.discounts.len(), 1);
+    let discount = &result.discounts[0];
+    assert_eq!(
+        (discount.class, discount.amount, discount.code.as_deref()),
+        (Product, 0, Some("GIFT"))
+    );
+    // On the line it targets, at 0; nothing else changes.
+    assert_eq!(allocations(&result.lines[0]), [(Some("GIFT"), 0)]);
+    assert_eq!(allocations(&result.lines[1]), []);
+    assert_eq!(result.lines[0].total, result.lines[0].subtotal);
+    assert_eq!(result.cost.discounts, 0);
+    assert_eq!(
+        result.cost.total,
+        result.cost.subtotal + result.cost.shipping
+    );
+    // As the page, the extensions and `app check` read it.
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["discounts"][0]["amount"]["amount"], 0.0);
+    assert_eq!(
+        json["lines"][0]["discountAllocations"][0]["amount"]["amount"],
+        0.0
+    );
+    assert_eq!(json["discountCodes"][0]["applicable"], true);
+
+    // Next to a discount that takes something off the same line, both apply.
+    let result = codes_answered(
+        Product,
+        "cart_lines_discounts_generate_run",
+        &[("GIFT", off_line_1(0)), ("SAVE", off_line_1(10))],
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(applicable(&result), [("gift", true), ("save", true)]);
+    // Two tees at 32.00: 10 % is 6.40.
+    assert_eq!(
+        allocations(&result.lines[0]),
+        [(Some("SAVE"), 640), (Some("GIFT"), 0)]
+    );
+    assert_eq!(result.lines[0].total, result.lines[0].subtotal - 640);
+    assert_eq!(result.cost.discounts, 640);
+
+    // A candidate of more than 0 that finds nothing left to take off is still not applied.
+    let result = codes_answered(
+        Product,
+        "cart_lines_discounts_generate_run",
+        &[("ALL", off_line_1(100)), ("MORE", off_line_1(10))],
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(applicable(&result), [("all", true), ("more", false)]);
+    assert_eq!(allocations(&result.lines[0]), [(Some("ALL"), 6400)]);
+}
+
+#[test]
+fn an_order_or_a_shipping_candidate_of_0_is_applied_at_0_too() {
+    let order = codes_answered(
+        Order,
+        "cart_lines_discounts_generate_run",
+        &[(
+            "GIFT",
+            json!({"operations": [{"orderDiscountsAdd": {
+                "selectionStrategy": "FIRST",
+                "candidates": [{
+                    "targets": [{"orderSubtotal": {"excludedCartLineIds": []}}],
+                    "value": {"fixedAmount": {"amount": "0.00"}},
+                }],
+            }}]}),
+        )],
+    );
+    assert!(order.errors.is_empty(), "{:?}", order.errors);
+    assert_eq!(applicable(&order), [("gift", true)]);
+    assert_eq!(
+        (order.discounts[0].class, order.discounts[0].amount),
+        (Order, 0)
+    );
+    for line in &order.lines {
+        assert_eq!(allocations(line), [(Some("GIFT"), 0)]);
+        assert_eq!(line.total, line.subtotal);
+    }
+    assert_eq!(order.cost.discounts, 0);
+
+    let free = |percentage: u32| {
+        json!({"operations": [{"deliveryDiscountsAdd": {
+            "selectionStrategy": "ALL",
+            "candidates": [{
+                "targets": [{"deliveryGroup": {"id": "gid://shopify/CartDeliveryGroup/group-1"}}],
+                "value": {"percentage": {"value": percentage}},
+            }],
+        }}]})
+    };
+    let shipping = codes_answered(
+        Shipping,
+        "cart_delivery_options_discounts_generate_run",
+        &[("GIFT", free(0))],
+    );
+    assert!(shipping.errors.is_empty(), "{:?}", shipping.errors);
+    assert_eq!(applicable(&shipping), [("gift", true)]);
+    assert_eq!(
+        (shipping.discounts[0].class, shipping.discounts[0].amount),
+        (Shipping, 0)
+    );
+    let group = &shipping.delivery_groups[0];
+    assert_eq!(group.discount_allocations.len(), 1);
+    assert_eq!(group.discount_allocations[0].amount, 0);
+    assert_eq!(group.discount_allocations[0].code.as_deref(), Some("GIFT"));
+    assert_eq!(shipping.cost.shipping, 490);
+
+    // One shipping discount applies per order: the one that takes something off wins.
+    let both = codes_answered(
+        Shipping,
+        "cart_delivery_options_discounts_generate_run",
+        &[("GIFT", free(0)), ("FREESHIP", free(100))],
+    );
+    assert!(both.errors.is_empty(), "{:?}", both.errors);
+    assert_eq!(applicable(&both), [("gift", false), ("freeship", true)]);
+    assert_eq!(both.discounts.len(), 1);
+    assert_eq!(both.discounts[0].code.as_deref(), Some("FREESHIP"));
+    assert_eq!(both.cost.shipping, 0);
+    assert_eq!(both.skipped_discounts.len(), 1);
+    let skipped = &both.skipped_discounts[0];
+    assert_eq!((skipped.code.as_deref(), skipped.amount), (Some("GIFT"), 0));
+    assert!(
+        skipped
+            .reason
+            .starts_with("only one shipping discount applies per order, the best one"),
+        "{}",
+        skipped.reason
+    );
+}

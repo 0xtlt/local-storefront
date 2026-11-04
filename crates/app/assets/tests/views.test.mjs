@@ -115,6 +115,27 @@ test('shows discount codes, what they took off and an ignored code', () => {
   assert.match(text(byClass(tree, 'lsf-line')[0]), /SAVE10 \(−€4\.90\)/);
 });
 
+test('a code whose discount takes 0 off is applied, and shows at 0', () => {
+  // As the server writes a Function's candidate of 0 % on the first line.
+  const base = checkoutState();
+  const zero = { amount: 0 };
+  const state = {
+    ...base,
+    lines: [{ ...base.lines[0], discountAllocations: [{ title: 'Gift', code: 'GIFT', amount: zero, class: 'PRODUCT', discount: 0 }] }, base.lines[1]],
+    discounts: [{ title: 'Gift', code: 'GIFT', class: 'PRODUCT', amount: zero, function: 'gift-code' }],
+    discountCodes: [{ code: 'GIFT', applicable: true }],
+  };
+  const tree = page(state);
+  const [code] = byClass(tree, 'lsf-code');
+  assert.equal(has(code, 'is-ignored'), false);
+  assert.doesNotMatch(text(code), /Not applied/);
+  assert.match(text(byClass(tree, 'lsf-line')[0]), /GIFT \(−€0\.00\)/);
+  assert.match(text(byClass(tree, 'lsf-cost-discount')[0]), /GIFT.*−€0\.00/);
+  // Nothing is struck through: the line costs what it did.
+  assert.equal(findAll(byClass(tree, 'lsf-line')[0], (node) => node.tag === 's').length, 0);
+  assert.equal(text(byClass(tree, 'lsf-total')[0]), text(byClass(page(base), 'lsf-total')[0]));
+});
+
 test('the pay button says what paying will do', () => {
   assert.equal(text(byClass(page(after({ type: 'paymentMethod', handle: 'card' })), 'lsf-pay')[0]), 'Pay now');
   assert.equal(text(byClass(page(after({ type: 'paymentMethod', handle: 'cod' })), 'lsf-pay')[0]), 'Complete order');

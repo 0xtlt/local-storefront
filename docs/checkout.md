@@ -848,6 +848,15 @@ discounts on the subtotal they left, then shipping. Within a class:
   one discount: they all apply, one after the other. A tie (the same amount) goes to the
   discount that comes first by Function, title, message and code, not by its place in the
   configuration.
+- **A discount of 0.** A candidate whose value is 0 (a `percentage` of 0, a `fixedAmount` of
+  0.00) takes nothing off and still applies: its code is accepted (`applicable` in
+  `discountCodes`), and it shows at 0 on the lines or the delivery group it targets, in
+  `discounts` and `discountAllocations`, in the page and in `lsf app function run`. A Function
+  answers one to accept a code before the line it stands for (a gift) reaches the cart. A
+  shipping discount of 0 applies to the rate the buyer selected (none is before an address with a
+  country) when no other one takes something off the shipping, and is listed as not applied
+  otherwise. A candidate of more than 0 that finds nothing left to take
+  off (a line another discount made free) is not applied.
 
 An amount is shared between the lines in proportion to what they cost, to the cent, and the
 allocations of the lines (`discountAllocations`, in the page and for the Functions that run
@@ -879,7 +888,8 @@ cannot combine, "the best discount for the customer's cart is always applied". I
 how the best shipping discount is measured, what happens to a tie, whether the rule holds for
 each delivery group of a split order (this checkout has one group), nor what to show about the
 others: measuring by the selected option, breaking ties as above and listing the others are
-this checkout's choices.
+this checkout's choices. Shopify's checkout applies a code whose product discount is 0 and shows
+it at 0; that an order or a shipping discount of 0 does the same is this checkout's choice.
 
 ### Network access
 
