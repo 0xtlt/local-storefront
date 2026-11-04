@@ -154,7 +154,9 @@ share gives the rest to the others. Shopify applies one shipping discount per or
 the cart: `apply_best_shipping` compares what each discount takes off the selected option (then off
 all the options) on the same groups, applies the best one, and puts the others in
 `CheckoutResult::skipped_discounts` with the reason (the Functions dialog and `lsf app function run`
-show them).
+show them). A candidate whose value is 0 (`Amount::is_zero`) still applies to what it covers: 0
+allocations on its lines (`allocate`) or its delivery groups (`apply_shipping`, where it is an offer
+of 0 that any other one beats), so its code is applicable.
 `PaymentMethod::placements` is what `PaymentCustomizationPaymentMethod.placements` reads; a hide
 operation takes the placements it names off the method, and `CheckoutResult::payment_methods` lists
 the methods still in `PAYMENT_METHOD`.

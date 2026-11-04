@@ -17,6 +17,14 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   declares it. The order status page of the customer account reads them too (it had none), and
   `shopify.shop.id` is the id of the shop of the store data
   ([#25](https://github.com/0xtlt/local-storefront/issues/25)).
+- **A code whose discount Function answers a candidate of 0 is applied, at 0.** A candidate of
+  0 % (or a fixed 0.00), which a Function answers to accept a code before the gift it stands for
+  reaches the cart, made the code "not applicable". As on Shopify, the code is now accepted and
+  its discount shows at 0 on the lines it targets: in the page, `discounts`, `discountCodes`,
+  the extensions' `discountAllocations` and the output of `lsf app function run` and
+  `lsf app check`. An order or a shipping candidate of 0 applies the same way; a shipping one
+  gives way to a shipping discount that takes something off
+  ([#26](https://github.com/0xtlt/local-storefront/issues/26)).
 
 ## 0.2.0 - 2026-10-30
 

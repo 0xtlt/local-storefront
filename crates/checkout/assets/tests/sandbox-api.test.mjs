@@ -143,6 +143,23 @@ test('discount codes, allocations and cart metafields', () => {
   assert.equal(undeclared.metafields.value.length, 1);
 });
 
+test('a code whose discount takes 0 off reads as an applied code, with its allocation of 0', () => {
+  const base = checkoutState();
+  const zero = { amount: 0, currencyCode: 'EUR' };
+  const state = {
+    ...base,
+    lines: [{ ...base.lines[0], discountAllocations: [{ title: 'Gift', code: 'GIFT', amount: zero, class: 'PRODUCT', discount: 0 }] }, base.lines[1]],
+    discounts: [{ title: 'Gift', code: 'GIFT', class: 'PRODUCT', amount: zero, function: 'gift-code' }],
+    discountCodes: [{ code: 'GIFT', applicable: true }],
+  };
+  const { shopify } = runtime({ state });
+  assert.deepEqual(plain(shopify.discountCodes.value), [{ code: 'GIFT' }]);
+  const [line] = shopify.lines.value;
+  assert.deepEqual(plain(line.discountAllocations), [{ type: 'code', code: 'GIFT', discountedAmount: zero }]);
+  assert.equal(line.cost.totalAmount.amount, 49, 'the line costs what it did');
+  assert.equal(shopify.cost.totalAmount.value.amount, 73);
+});
+
 /** Metafields of the store data, as the server reads them for the declarations (`appMetafields`). */
 const gid = (kind, id) => `gid://shopify/${kind}/${id}`;
 const entry = (type, id, namespace, key, metafieldType, value) => ({ target: { type, id }, metafield: { namespace, key, type: metafieldType, value } });
