@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use indexmap::IndexMap;
+use lsf_app::checkout::app_metafields::app_metafields;
 use lsf_app::checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
 use lsf_app::checkout::{
     Address, BuyerJourneyStep, CheckoutResult, CheckoutState, Metafield, ResultLine,
@@ -722,6 +723,7 @@ fn compute(
     object.insert(
         "shop".into(),
         json!({
+            "id": format!("gid://shopify/Shop/{}", store.shop.id),
             "name": store.shop.name,
             "currencyCode": store.shop.currency,
             "moneyFormat": store.shop.money_format,
@@ -772,6 +774,19 @@ fn compute(
         ),
     );
     object.insert("metafields".into(), json!(checkout.metafields));
+    // What the extensions read as `appMetafields` besides the metafields of the cart.
+    let variants: Vec<u64> = result.lines.iter().map(|line| line.variant_id).collect();
+    object.insert(
+        "appMetafields".into(),
+        app_metafields_json(
+            &app,
+            &selection,
+            &store,
+            customer,
+            session.company_location,
+            &variants,
+        ),
+    );
     // A method a Function hid is not selected any more.
     let selected = checkout.selected_payment.as_ref().filter(|handle| {
         result
@@ -898,6 +913,31 @@ pub(super) fn localization_json(
     })
 }
 
+/// The metafields the selected extensions declare, of the shop, of the products and variants
+/// in `variants`, of the customer and of the company and location they buy for. The frame of
+/// each extension keeps the ones it declares for its target, and adds the cart's
+/// (`assets/sandbox-api.js`).
+pub(super) fn app_metafields_json(
+    app: &App,
+    selection: &Selection,
+    store: &Store,
+    customer: Option<&Customer>,
+    company_location: Option<u64>,
+    variants: &[u64],
+) -> Json {
+    let declared: Vec<_> = selection
+        .ui_extensions(app)
+        .flat_map(|extension| &extension.metafields)
+        .collect();
+    json!(app_metafields(
+        store,
+        &declared,
+        customer,
+        company_location,
+        variants
+    ))
+}
+
 /// The checkout UI extensions to load: the built ones on a supported API version.
 pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
     Json::Array(
@@ -930,6 +970,10 @@ pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
                         let mut entry = json!({"namespace": declared.namespace, "key": declared.key});
                         if let Some(owner_type) = &declared.owner_type {
                             entry["ownerType"] = json!(owner_type);
+                        }
+                        // A declaration of `[[extensions.targeting.metafields]]`.
+                        if let Some(target) = &declared.target {
+                            entry["target"] = json!(target);
                         }
                         entry
                     }).collect::<Vec<_>>(),

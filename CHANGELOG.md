@@ -196,6 +196,25 @@ the same data every run.
 - **One is in the singular, everywhere lsf counts:** `1 Liquid error · 0 warnings` (`render`),
   `wrote 1 file, kept 15 existing ones` (`init`, `app init`), `1 file formatted` (`fmt`),
   `validate`, `check`, the banner, the store data's errors and the status page. No more `(s)`.
+- **`shopify.appMetafields` has the metafields an extension declares, of every resource.** As on
+  Shopify, it holds the metafields of `[[extensions.metafields]]` (and of
+  `[[extensions.targeting.metafields]]` at their target): those of the shop, of the products and
+  variants of the lines, of the customer logged in, of the company and location they buy for and
+  of the cart, each with its `target` (`shop`, `product`, `variant`, …) and the GID of the
+  resource, read from the store data and what the backend sets through the Admin API. An
+  `owner_type` keeps one resource. It held only the cart's, each one whether declared or not: an
+  extension now reads a metafield of the cart only if it declares it. The order status page of
+  the customer account reads them too (it had none), and `shopify.shop.id` is the id of the shop
+  of the store data
+  ([#25](https://github.com/0xtlt/local-storefront/issues/25)).
+- **A code whose discount Function answers a candidate of 0 is applied, at 0.** A candidate of
+  0 % (or a fixed 0.00), which a Function answers to accept a code before the gift it stands for
+  reaches the cart, made the code "not applicable". As on Shopify, the code is now accepted and
+  its discount shows at 0 on the lines it targets: in the page, `discounts`, `discountCodes`,
+  the extensions' `discountAllocations` and the output of `lsf app function run` and
+  `lsf app check`. An order or a shipping candidate of 0 applies the same way; a shipping one
+  gives way to a shipping discount that takes something off
+  ([#26](https://github.com/0xtlt/local-storefront/issues/26)).
 
 ## 0.2.0 - 2026-10-30
 

@@ -848,6 +848,15 @@ discounts on the subtotal they left, then shipping. Within a class:
   one discount: they all apply, one after the other. A tie (the same amount) goes to the
   discount that comes first by Function, title, message and code, not by its place in the
   configuration.
+- **A discount of 0.** A candidate whose value is 0 (a `percentage` of 0, a `fixedAmount` of
+  0.00) takes nothing off and still applies: its code is accepted (`applicable` in
+  `discountCodes`), and it shows at 0 on the lines or the delivery group it targets, in
+  `discounts` and `discountAllocations`, in the page and in `lsf app function run`. A Function
+  answers one to accept a code before the line it stands for (a gift) reaches the cart. A
+  shipping discount of 0 applies to the rate the buyer selected (none is before an address with a
+  country) when no other one takes something off the shipping, and is listed as not applied
+  otherwise. A candidate of more than 0 that finds nothing left to take
+  off (a line another discount made free) is not applied.
 
 An amount is shared between the lines in proportion to what they cost, to the cent, and the
 allocations of the lines (`discountAllocations`, in the page and for the Functions that run
@@ -879,7 +888,8 @@ cannot combine, "the best discount for the customer's cart is always applied". I
 how the best shipping discount is measured, what happens to a tie, whether the rule holds for
 each delivery group of a split order (this checkout has one group), nor what to show about the
 others: measuring by the selected option, breaking ties as above and listing the others are
-this checkout's choices.
+this checkout's choices. Shopify's checkout applies a code whose product discount is 0 and shows
+it at 0; that an order or a shipping discount of 0 does the same is this checkout's choice.
 
 ### Network access
 
@@ -960,6 +970,39 @@ bundles without CORS, so another site cannot read them.
 An extension needs a supported `api_version`, or it is reported as an error and not shown. From
 2027-01, each `[[extensions.metafields]]` entry needs an `owner_type` (`CART`, `CUSTOMER`, ...),
 or the loader reports an error and the page says why it does not load the extension.
+
+`shopify.appMetafields` has the metafields the extension declares: those of
+`[[extensions.metafields]]`, and those of `[[extensions.targeting.metafields]]` at the target
+they are declared for. Each entry is a metafield with the resource it belongs to, its `target`:
+a `type` (`shop`, `product`, `variant`, `customer`, `company`, `companyLocation` or `cart`) and
+the `id` of the resource, a GID. They are read from the store data, with what the backend of the
+app sets through the [Admin API](admin.md) (`metafieldsSet`): the shop's, those of the products
+and variants of the lines, of the customer logged in and of the company and location they buy
+for, and the cart's, which the extensions write with `applyMetafieldChange`. A declaration with
+an `owner_type` reads that resource only, one without reads every resource that has the
+metafield. The app's own namespace is written `$app` (or `$app:<name>`) in the toml, in the
+store data and in what the extension reads; Shopify's `app--<id>--<name>`, which the Admin API
+writes, is the same namespace.
+
+```toml
+[[extensions.metafields]]
+namespace = "$app"
+key = "gift-codes"
+owner_type = "SHOP"
+```
+
+```json
+{ "shop": { "metafields": { "$app": { "gift-codes": { "type": "json", "value": ["GIFT-1"] } } } } }
+```
+
+```js
+// [{target: {type: 'shop', id: 'gid://shopify/Shop/…'},
+//   metafield: {namespace: '$app', key: 'gift-codes', value: '["GIFT-1"]', type: 'json', valueType: 'json_string'}}]
+shopify.appMetafields.value;
+```
+
+On the order status page of the customer account, the products and variants are those of the
+order, and the cart is the one of the order placed in the local checkout.
 
 ## Run a Function without a server
 
@@ -1101,7 +1144,9 @@ the country they browsed in.
 The state has the lines, discounts, discount codes, delivery groups, payment methods, errors and
 cost that the Functions produced, `runs` (a run of a `.fetch` target has its `exchange`, the
 request and the response), the buyer, the address, the note, the attributes and
-the metafields, the `extensions` to load and `diagnostics`. Money is `{"amount": 19.99}`.
+the metafields (the cart's), `appMetafields` (the metafields the extensions declare of the shop,
+the products and variants of the lines and the buyer), the `extensions` to load and
+`diagnostics`. Money is `{"amount": 19.99}`.
 
 No shipping rate is selected until the address has a country, as on Shopify. Until then, the
 page shows "Enter shipping address", and no total has the shipping: `cost.shipping` is 0,
@@ -1178,6 +1223,8 @@ browser tests of a theme in CI: [testing](testing.md#in-ci).
   `shopify.settings.value` is empty.
 - No Storefront API: `query` in an extension rejects. No Customer Account API either: a customer
   account extension reads the account through its `shopify` global only.
+- `shopify.appMetafields` has no `shopUser` entries (the store data has no staff accounts), and
+  on the order status page no `order` ones (the orders of the store data have no metafields).
 - The customer account shows; it changes nothing (no address to edit, no order to cancel or
   return), and its intents (`shopify.intents.invoke`) are closed at once.
 - Some fields of the Function input hold what the store data says and nothing more. The orders of

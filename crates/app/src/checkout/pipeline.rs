@@ -1221,11 +1221,15 @@ impl<'a> Pipeline<'a> {
             .code
             .clone()
             .or_else(|| context.code.map(str::to_string));
+        // A candidate of 0 takes nothing off the lines it covers and still applies to them, as
+        // on Shopify: its code is accepted, and shows on each line at 0.
+        let zero = candidate.value.is_zero();
         let mut total = 0;
+        let mut allocated = false;
         for (index, cents) in plan {
             let line = &mut self.lines[index];
             let cents = cents.min(line.total);
-            if cents <= 0 {
+            if cents < 0 || (cents == 0 && !zero) {
                 continue;
             }
             line.total -= cents;
@@ -1237,8 +1241,9 @@ impl<'a> Pipeline<'a> {
                 discount,
             });
             total += cents;
+            allocated = true;
         }
-        if total > 0 {
+        if allocated {
             self.discounts.push(AppliedDiscount {
                 title,
                 code,
@@ -1536,6 +1541,11 @@ impl<'a> Pipeline<'a> {
                 (contender, gain)
             })
             .collect();
+        // One that takes nothing off is no offer, unless its value is 0: it then applies at 0,
+        // as a product or order discount of 0 does.
+        offers.retain(|((_, candidates), gain)| {
+            *gain != (0, 0) || applies_at_zero(&self.groups, candidates)
+        });
         // The first of the best: stable, so that discounts that tell nothing apart keep the
         // order of the configuration.
         offers.sort_by_cached_key(|((context, candidates), gain)| {
@@ -1550,12 +1560,9 @@ impl<'a> Pipeline<'a> {
         let Some(((context, candidates), best)) = offers.next() else {
             return;
         };
-        if best == (0, 0) {
-            return;
-        }
         let winner = shipping_name(&context, &candidates).0;
         self.apply_shipping(&context, candidates);
-        for ((context, candidates), gain) in offers.filter(|(_, gain)| *gain != (0, 0)) {
+        for ((context, candidates), gain) in offers {
             let (title, code) = shipping_name(&context, &candidates);
             let reason = if gain == best {
                 format!(
@@ -1583,8 +1590,10 @@ impl<'a> Pipeline<'a> {
     fn apply_shipping(&mut self, context: &DiscountContext, candidates: Vec<Candidate>) {
         for candidate in candidates {
             let cuts = reduce_shipping(&mut self.groups, &candidate);
-            let reduced: Cents = cuts.iter().sum();
-            if reduced > 0 {
+            let reduced: Cents = cuts.iter().flatten().sum();
+            // A candidate of 0 applies, at 0, to the groups whose selected option it targets.
+            let zero = candidate.value.is_zero();
+            if reduced > 0 || (zero && cuts.iter().any(Option::is_some)) {
                 let title = candidate
                     .message
                     .clone()
@@ -1595,7 +1604,7 @@ impl<'a> Pipeline<'a> {
                     .or_else(|| context.code.map(str::to_string));
                 let discount = self.discounts.len();
                 for (group, cut) in self.groups.iter_mut().zip(cuts) {
-                    if cut > 0 {
+                    if let Some(cut) = cut.filter(|cut| *cut > 0 || zero) {
                         group.discount_allocations.push(DiscountAllocation {
                             title: title.clone(),
                             code: code.clone(),
@@ -2160,6 +2169,18 @@ enum Amount {
     None,
 }
 
+impl Amount {
+    /// A value of 0: a `percentage` of 0, a `fixedAmount` of 0.00. A candidate without a value
+    /// is not one.
+    fn is_zero(self) -> bool {
+        match self {
+            Amount::Percentage(percentage) => percentage == 0.0,
+            Amount::Fixed { cents, .. } => cents == 0,
+            Amount::None => false,
+        }
+    }
+}
+
 /// A target of a discount candidate: a cart line, a product variant, the order, a delivery group
 /// or option. Ids and quantities have to be valid, a target is never dropped.
 fn target_of(target: &Value) -> Result<Target, String> {
@@ -2557,7 +2578,12 @@ fn shipping_gain(groups: &[DeliveryGroup], candidates: &[Candidate]) -> (Cents, 
     let mut after = groups.to_vec();
     let selected = candidates
         .iter()
-        .map(|candidate| reduce_shipping(&mut after, candidate).iter().sum::<Cents>())
+        .map(|candidate| {
+            reduce_shipping(&mut after, candidate)
+                .iter()
+                .flatten()
+                .sum::<Cents>()
+        })
         .sum();
     (selected, cost(groups) - cost(&after))
 }
@@ -2579,10 +2605,21 @@ fn money_text(cents: Cents, currency: &str) -> String {
     format!("{}.{:02} {currency}", cents / 100, cents % 100)
 }
 
+/// Whether one of the shipping candidates has a value of 0 and targets the option the buyer
+/// selected in a group: it applies there, at 0.
+fn applies_at_zero(groups: &[DeliveryGroup], candidates: &[Candidate]) -> bool {
+    candidates.iter().any(|candidate| {
+        candidate.value.is_zero()
+            && reduce_shipping(&mut groups.to_vec(), candidate)
+                .iter()
+                .any(Option::is_some)
+    })
+}
+
 /// Lowers the cost of the options a shipping candidate targets. Returns, for each group, what
-/// the option the buyer selected got cheaper by.
-fn reduce_shipping(groups: &mut [DeliveryGroup], candidate: &Candidate) -> Vec<Cents> {
-    let mut reduced = vec![0; groups.len()];
+/// the option the buyer selected got cheaper by, `None` when the candidate does not target it.
+fn reduce_shipping(groups: &mut [DeliveryGroup], candidate: &Candidate) -> Vec<Option<Cents>> {
+    let mut reduced = vec![None; groups.len()];
     for (group, reduced) in groups.iter_mut().zip(&mut reduced) {
         let group_targeted = candidate.targets.iter().any(|target| match target {
             Target::DeliveryGroup(id) => id_matches(id, &group.handle),
@@ -2607,7 +2644,7 @@ fn reduce_shipping(groups: &mut [DeliveryGroup], candidate: &Candidate) -> Vec<C
             .clamp(0, option.cost);
             option.cost -= cut;
             if group.selected.as_ref() == Some(&option.handle) {
-                *reduced += cut;
+                *reduced = Some(reduced.unwrap_or(0) + cut);
             }
         }
     }
@@ -3219,7 +3256,7 @@ mod tests {
             "targets": [{"deliveryGroup": {"id": "gid://shopify/CartDeliveryGroup/group-1"}}],
             "value": {"percentage": {"value": "100"}},
         }));
-        assert_eq!(reduce_shipping(&mut groups, &candidate), vec![490]);
+        assert_eq!(reduce_shipping(&mut groups, &candidate), vec![Some(490)]);
         assert_eq!(groups[0].options[0].cost, 0);
         assert_eq!(groups[0].options[1].cost, 0);
         assert_eq!(groups[0].options[1].original_cost, 1290);

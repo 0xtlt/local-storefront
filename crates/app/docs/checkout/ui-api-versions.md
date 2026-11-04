@@ -111,7 +111,6 @@ no call back at once).
 
 ## Gaps
 
-- `[[extensions.targeting.metafields]]` (per target) is not modelled: only the extension-wide
-  declarations are checked.
-- `shopify.appMetafields` returns every cart metafield, not only the declared ones, and no
-  customer, product or other owner data (the local checkout has none).
+- `shopify.appMetafields` has no `shopUser` entries (the store data has no staff accounts), and
+  on the order status page of the customer account no `order` ones (the orders of the store data
+  have no metafields).
