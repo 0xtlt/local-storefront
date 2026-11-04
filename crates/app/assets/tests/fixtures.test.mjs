@@ -148,8 +148,13 @@ test('gift-message thanks the buyer on the thank-you page', async () => {
 });
 
 /** Boots order-notice, a Preact bundle, and waits for Preact to draw. */
+// The page hands the frame the metafields the extension declares, as `appMetafields` keeps them.
 const notice = (target, options = {}) =>
-  boot('order-notice', target, { apiVersion: '2027-01', ...options, ext: { capabilities: { api_access: true }, ...options.ext } });
+  boot('order-notice', target, {
+    apiVersion: '2027-01',
+    ...options,
+    ext: { capabilities: { api_access: true }, metafields: metafieldsOf(toml('order-notice')), ...options.ext },
+  });
 
 test('order-notice draws with Preact and follows the checkout through signals', async () => {
   const win = await notice('purchase.checkout.reductions.render-after', { ext: { settings: { threshold: 100, code: 'FREESHIP' } } });
@@ -206,6 +211,9 @@ test('order-notice reads the cart metafield it declares with an owner_type, and 
   const other = { ...stored, change: { ...stored.change, key: 'other' } };
   const again = await notice('purchase.checkout.reductions.render-after', { state: next(other) });
   assert.equal(again.document.body.childNodes.length, 1);
+  // Nor does its own, if the toml did not declare it: `appMetafields` only has what it declares.
+  const undeclared = await notice('purchase.checkout.reductions.render-after', { state: next(stored), ext: { metafields: [] } });
+  assert.equal(undeclared.document.body.childNodes.length, 1);
 });
 
 test('order-notice reads and writes the note from the shipping step', async () => {

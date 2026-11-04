@@ -4,6 +4,7 @@
 //! The flow: [`config::load`](crate::config::load) reads the app, [`pipeline::compute`] builds
 //! each Function's input ([`input`]), runs it ([`runner`]) and applies its output to the checkout.
 
+pub mod app_metafields;
 pub mod assets;
 pub mod fetch;
 pub mod input;
