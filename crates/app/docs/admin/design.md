@@ -1403,6 +1403,16 @@ records, so both are the same shape.
   `order_transactions/create` for the payment and, when paid in full, `orders/paid`. It commits
   no stock: the local checkout keeps the stock of the data *(chosen: test purchases never sell a
   product out)*. `lsf`'s `place_order` calls it through `AdminApi::record_order`.
+- **Cart metafields copied onto the order**: before `orders/create`, `copy_cart_metafields` sets
+  on the order each metafield of the cart (`PlacedOrder::metafields`, what the checkout UI
+  extensions wrote) whose namespace (as stored: `$app:x` is `app--<app id>--x`) and key an ORDER
+  definition has with `capabilities.cartToOrderCopyable.enabled`, as Shopify does from 2026-04
+  ("Use metafield capabilities"); nothing without such a definition. It is set with
+  `content::metafields::set` (linked to its definition), of the definition's type, the value
+  checked against the type and the definition's validations: a value they refuse is not copied
+  *(chosen: shopify.dev does not say what Shopify does with it)*. The server's order status page
+  reads the order's metafields (`content::metafields::of_owner`) as `order` entries of
+  `appMetafields`, for this order and for those of the store data.
 
 What the mutations of the family (`domains/orders/`, see "Orders, fulfillments and draft
 orders" in `docs/admin.md`) make and keep:
@@ -1616,8 +1626,20 @@ module's header has the rules and the sources):
   `supportedValidations`, …), `validations: []`, `access` (public in the admin and on the
   storefront *(chosen: the theme reads them)*), `capabilities` (none enabled), `metafields`,
   `metafieldsCount`. None for the app's reserved namespaces: their definitions come from the
-  app's configuration, which lsf does not read. Being definitions, they check what
-  `metafieldsSet` writes to the same owner type, namespace and key (the type must be theirs).
+  app's configuration, of which lsf reads the order ones only (below). Being definitions, they
+  check what `metafieldsSet` writes to the same owner type, namespace and key (the type must be
+  theirs).
+- **`MetafieldDefinition`**, declared: the order definitions of `shopify.app.toml`
+  (`[order.metafields.<namespace>.<key>]`, `config::AppConfig::order_metafields`;
+  `content::seed_declared_definitions`), seeded before the inferred ones with the id the seed
+  gives (`metafield_definition_gid`): `app` is the app's reserved namespace, another namespace
+  stays as written (shopify.dev's TOML reference allows `app` only, its page on capabilities
+  writes `custom`: both are read *(chosen)*); `type`, `name` (else the key, humanized),
+  `description` and `capabilities.cart_to_order_copyable` are read, not `validations` nor
+  `access` (an app-owned definition's defaults). A declaration without `type` is left out with
+  a warning of the loader. The definitions of other owner types are not read: only the order
+  ones change what lsf does (the copy of the cart's metafields). Shopify keeps declared
+  definitions read-only through the Admin API; lsf does not *(gap)*.
 - **`Metaobject`**: `type` (an app's own type, `$app:author` in the store data, is
   `app--<app id>--author`, as Shopify writes it; store sync writes it back as `$app:author`),
   `handle`, `displayName` (its `name` or `title` field, else the handle humanized), `definition`, `fields` (inline `MetaobjectField`s: `key`, `type`, `value`,

@@ -142,6 +142,19 @@ the same data every run.
 - **The docs ship in the npm package.** `node_modules/local-storefront/` has the `llms.txt`,
   `docs/` and `CHANGELOG.md` of the version you installed, for a tool or an agent to read
   offline.
+- **Order metafields on the order status page of the customer account.** A customer account UI
+  extension declares them with `owner_type = "ORDER"`, which lsf refused as an unknown owner
+  type. `shopify.appMetafields` of the order status targets now has them as `order` entries
+  (`target: {type: 'order', id: 'gid://shopify/Order/…'}`), read from the order in the Admin
+  API: what the backend sets with `metafieldsSet`, on an order placed in the local checkout or
+  on one of the store data, and the cart metafields copied onto an order placed here. As on
+  Shopify since 2026-04, a cart metafield is copied when the order is placed if an ORDER
+  definition with its namespace and key has `cartToOrderCopyable` enabled, made with
+  `metafieldDefinitionCreate` or declared in `shopify.app.toml`
+  (`[order.metafields.app.gift_message]` with `capabilities.cart_to_order_copyable = true`,
+  which lsf now reads). The checkout and its thank-you page have no `order` entry, as on
+  Shopify: an `ORDER` declaration reads nothing there. [Checkout](docs/checkout.md),
+  [Admin API](docs/admin.md#what-the-storefront-and-the-checkout-see).
 - **`examples/admin-backend`:** a backend written with Shopify's libraries
   (`@shopify/shopify-app-react-router`, `@shopify/shopify-api`), with a script that runs it
   against lsf end to end (`mise run admin:e2e`).

@@ -644,8 +644,9 @@ extension's `order.action.menu-item.render` opens its `order.action.render` in a
   a toast at the bottom of the page; `intents.invoke`, which answers `closed`. The order status
   targets and the full page of an order have the Order Status API (`order`, `lines`, `cost`,
   `shippingAddress`, `billingAddress`, `buyerIdentity`, `discountCodes`, `authenticationState`,
-  …), the line, shipment, return, location and order targets their `target`, `fulfillmentId`,
-  `returnId`, `locationId` and `orderId`.
+  …) and `appMetafields`, with the order's own metafields (`owner_type = "ORDER"`, see
+  `shopify.appMetafields` below), the line, shipment, return, location and order targets their
+  `target`, `fulfillmentId`, `returnId`, `locationId` and `orderId`.
 - **Navigation**: `shopify:customer-account/orders`, `…/orders/<id>` and `…/profile` lead to the
   pages; `extension://<handle>` (or `extension:<handle>/<path>`) to the full page of another
   extension; `extension://<route>` and `/<route>`, on a full page, to a route of its own. The page
@@ -972,14 +973,15 @@ URL of its own: the browser does not hide those errors ("Script error."), and ls
 bundles without CORS, so another site cannot read them.
 
 An extension needs a supported `api_version`, or it is reported as an error and not shown. From
-2027-01, each `[[extensions.metafields]]` entry needs an `owner_type` (`CART`, `CUSTOMER`, ...),
-or the loader reports an error and the page says why it does not load the extension.
+2027-01, each `[[extensions.metafields]]` entry needs an `owner_type` (`CART`, `CUSTOMER`,
+`ORDER`, ...), or the loader reports an error and the page says why it does not load the
+extension.
 
 `shopify.appMetafields` has the metafields the extension declares: those of
 `[[extensions.metafields]]`, and those of `[[extensions.targeting.metafields]]` at the target
 they are declared for. Each entry is a metafield with the resource it belongs to, its `target`:
-a `type` (`shop`, `product`, `variant`, `customer`, `company`, `companyLocation` or `cart`) and
-the `id` of the resource, a GID. They are read from the store data, with what the backend of the
+a `type` (`shop`, `product`, `variant`, `customer`, `company`, `companyLocation`, `cart`, and
+`order` on the order status page) and the `id` of the resource, a GID. They are read from the store data, with what the backend of the
 app sets through the [Admin API](admin.md) (`metafieldsSet`): the shop's, those of the products
 and variants of the lines (and of the components of a bundle a cart transform made), of the
 customer logged in and of the company and location they buy for, and the cart's, which the
@@ -1013,6 +1015,33 @@ now; an order of the store data records none, and reads the customer's first loc
 cart is the one of the order placed in the local checkout. As in Shopify's types, a `value` there
 is typed by its `valueType` (`true`, `2`, `1.5`; a JSON value stays serialized), where the
 checkout's is the text whatever the type (`"true"`).
+
+The order's own metafields are `order` entries (`target: {type: 'order', id: 'gid://shopify/Order/…'}`),
+for a declaration of `owner_type = "ORDER"` or of no owner. They are read from the order in the
+[Admin API](admin.md#what-the-storefront-and-the-checkout-see): what the backend sets on the
+order (`metafieldsSet`), on an order placed in the local checkout or on one of the store data,
+and the cart metafields copied onto an order placed here. As on
+Shopify, a cart metafield is copied when the order is placed if an ORDER definition has its
+namespace and key with `cartToOrderCopyable` enabled, made by the backend or declared in
+`shopify.app.toml`; without one, it stays the cart's only:
+
+```toml
+# shopify.app.toml
+[order.metafields.app.gift_message]
+type = "single_line_text_field"
+capabilities.cart_to_order_copyable = true
+
+# shopify.extension.toml
+[[extensions.metafields]]
+namespace = "$app"
+key = "gift_message"
+owner_type = "ORDER"
+```
+
+The checkout and the thank-you page have no `order` entry (Shopify's `AppMetafieldEntryTarget`
+of checkout UI extensions has no such type): an `ORDER` declaration reads nothing there, without
+a warning. Shopify lists `CART` as an owner type of checkout UI extensions only and `ORDER` of
+customer account UI extensions only; lsf takes both on either, as one extension can target both.
 
 ## Run a Function without a server
 

@@ -777,7 +777,12 @@ shop, the app's installation).
 namespaces and for reference types with metafields), `metafieldDefinitionPin`,
 `metafieldDefinitionUnpin`; `metafieldDefinitions(ownerType:, namespace:, key:, pinnedStatus:,
 sortKey:)` and `metafieldDefinition(identifier:)`. A definition created where metafields exist
-takes them and checks them (`validationStatus`).
+takes them and checks them (`validationStatus`). `capabilities` are kept as given; of their
+effects, only `cartToOrderCopyable` of an ORDER definition is simulated: it copies a cart
+metafield onto the order placed from the cart ([admin](admin.md#what-the-storefront-and-the-checkout-see)).
+The order definitions `shopify.app.toml` declares (`[order.metafields.app.<key>]`) are
+definitions of the shop from the start; those of other owner types are not read. Unlike
+Shopify's, which are read-only through the Admin API, the mutations may change them.
 
 **Metaobjects.** `metaobjectDefinitionCreate`, `metaobjectDefinitionUpdate` (field definitions
 created, updated and deleted; the entries follow), `metaobjectDefinitionDelete` (with its

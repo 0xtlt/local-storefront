@@ -240,6 +240,8 @@ Cart lines, note and attributes live in the session cart (the same one the theme
   "metafields": [{"namespace","key","type","value"}],   // the cart's, which extensions write
   // The metafields the extensions declare of the shop, the products and variants of the lines,
   // the customer, their company and location: each frame keeps its own and adds the cart's.
+  // The order status page of the customer account adds the order's (`order` entries, read
+  // from its record in the Admin API); the checkout and the thank-you page have none.
   "appMetafields": [{"target": {"type": "shop", "id": "gid://shopify/Shop/1"},
                      "metafield": {"namespace": "$app", "key": "…", "type": "json", "value": "…"}}],
   "lines": […], "discounts": […], "discountCodes": […], "deliveryGroups": […],

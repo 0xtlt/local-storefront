@@ -26,8 +26,9 @@
 //! their owners, as `metafieldsDelete` does.
 //!
 //! Not simulated: `constraints` (definitions of a product category), `access` beyond keeping
-//! what is given, the effects of `capabilities` (kept as given), the asynchronous
-//! `validationJob` (the validation is done at once).
+//! what is given, the effects of `capabilities` (kept as given) but `cartToOrderCopyable` of an
+//! ORDER definition (`orders::copy_cart_metafields`), the asynchronous `validationJob` (the
+//! validation is done at once).
 
 use serde_json::{Map, Value, json};
 

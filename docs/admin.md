@@ -1062,7 +1062,8 @@ What the backend changes through the Admin API is what the storefront and the
 - a customer it creates can log in, at `/__lsf/login?customer=<email>` and at the checkout;
 - a metafield it sets is read by Liquid (`product.metafields.custom.care`, `shop.metafields…`)
   and by the Function inputs: the `$app:config` settings of a discount, a validation, a
-  customization or a cart transform;
+  customization or a cart transform; one it sets on an order is read by the customer account UI
+  extensions on the order status page (`appMetafields`, `owner_type = "ORDER"`);
 - an app discount it creates (`discountAutomaticAppCreate`, `discountCodeAppCreate`) runs its
   Function at the checkout, with the metafields it was given, while it is active;
 - the shipping rates of the general delivery profile it changes are the checkout's delivery
@@ -1107,6 +1108,16 @@ sync").
   `orderCreate`); `complete` answers the Admin API's number. A
   guest whose email is a customer's places the order as that customer, as on Shopify: the
   customer's `numberOfOrders` and `amountSpent` count it.
+- **The cart's metafields** (those the checkout UI extensions wrote) are copied onto the order,
+  as Shopify does since 2026-04, when an ORDER definition has the same namespace and key with
+  `cartToOrderCopyable` enabled; without one, nothing is copied. The definition comes from
+  `metafieldDefinitionCreate` (`ownerType: ORDER`, `capabilities: {cartToOrderCopyable:
+  {enabled: true}}`) or from `shopify.app.toml`, which lsf reads for this
+  (`[order.metafields.app.gift_message]`, `type`, `capabilities.cart_to_order_copyable = true`;
+  `app` is the app's `$app`). The order's metafield has the definition's type; a value the
+  definition refuses (its type, its validations) is not copied. `order { metafield(namespace:
+  "$app", key: "gift_message") }` reads it, and so does `appMetafields` on the order status
+  page ([checkout](checkout.md#customer-account)).
 - **When the store data refuses a change** (an email it does not take, two variants with the
   same options, two companies of one name, which Shopify allows), the storefront shows the rest,
   the terminal says what was refused (once), and so does `GET /__lsf/admin`
