@@ -15,6 +15,7 @@ mod tests;
 pub(crate) mod translations;
 pub mod types;
 
+pub use metafield_definitions::seed_declared_definitions;
 pub use online_store::refresh_blog;
 
 use chrono::Offset;
@@ -1091,8 +1092,8 @@ fn seed_metafield(
 
 /// Gives every metafield a definition, inferred from the metafields that exist: one per owner
 /// type, namespace and key, with the type of the first metafield. The reserved namespaces of
-/// the app (`app--…`) get none: their definitions come from the app's configuration, which lsf
-/// does not read.
+/// the app (`app--…`) get none: their definitions come from the app's configuration, of which
+/// lsf reads the order ones only ([`seed_declared_definitions`]).
 pub fn infer_metafield_definitions(state: &mut ShopState) {
     let metafields: Vec<String> = state.keys("Metafield").map(str::to_string).collect();
     for metafield in metafields {

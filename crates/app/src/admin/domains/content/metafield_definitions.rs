@@ -40,6 +40,7 @@ use crate::admin::domains::catalog::gids;
 use crate::admin::graphql::{FieldContext, FieldError, Output};
 use crate::admin::resolve::sort::SortValue;
 use crate::admin::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::admin::state::seed::Seed;
 use crate::admin::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -64,6 +65,52 @@ pub fn register(registry: &mut Registry) {
 
 /// The most definitions pinned per owner type.
 const PINNED_LIMIT: usize = 20;
+
+/// The definitions `shopify.app.toml` declares (`[order.metafields.<namespace>.<key>]`): Shopify
+/// creates them in every shop of the app, so the seed does. `app` is the app's reserved
+/// namespace; `type`, `name`, `description` and `capabilities.cart_to_order_copyable` are read,
+/// not `validations` nor `access` (the defaults of an app-owned definition). Unlike Shopify,
+/// which keeps a declared definition read-only through the Admin API, the mutations may change
+/// it.
+pub fn seed_declared_definitions(seed: &mut Seed) {
+    let Some(app) = seed.app else {
+        return;
+    };
+    for declared in &app.config.order_metafields {
+        let namespace = super::admin_namespace(seed.app_id, &declared.namespace);
+        let state = &mut seed.state;
+        if find_definition(state, "ORDER", &namespace, &declared.key).is_some()
+            || !types::is_type(&declared.kind)
+        {
+            continue;
+        }
+        let id = super::metafield_definition_gid("ORDER", &namespace, &declared.key);
+        let app_owned = namespace.starts_with("app--");
+        state.insert(value::object(json!({
+            "__typename": "MetafieldDefinition",
+            "id": id,
+            "namespace": namespace,
+            "key": declared.key,
+            "name": declared.name.clone().unwrap_or_else(|| value::humanize(&declared.key)),
+            "description": declared.description,
+            "ownerType": "ORDER",
+            "type": types::definition_type(&declared.kind),
+            "validations": [],
+            "validationStatus": "ALL_VALID",
+            "pinnedPosition": null,
+            "useAsCollectionCondition": false,
+            "access": access_of(None, app_owned, None),
+            "capabilities": capabilities_of(
+                Some(&json!({"cartToOrderCopyable": {"enabled": declared.cart_to_order_copyable}})),
+                None,
+            ),
+            "constraints": null,
+            "standardTemplate": null,
+            "metafields": [],
+            "metafieldsCount": 0,
+        })));
+    }
+}
 
 /// `metafieldDefinitions(ownerType:, namespace:, key:, pinnedStatus:, query:, sortKey:)`.
 fn metafield_definitions(

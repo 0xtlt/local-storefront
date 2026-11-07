@@ -33,6 +33,7 @@ pub fn seed(store: &Store, app: Option<&App>) -> ShopState {
     staff::seed(&mut seed);
     pos::seed(&mut seed);
     content::seed_files(&mut seed);
+    content::seed_declared_definitions(&mut seed);
     content::infer_metafield_definitions(&mut seed.state);
     // From here on, a change is one the Admin API made: what the store sync projects.
     seed.state.track_changes();

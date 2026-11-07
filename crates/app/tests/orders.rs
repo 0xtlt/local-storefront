@@ -436,6 +436,106 @@ fn the_cart_metafields_an_order_definition_copies_are_the_orders() {
 }
 
 #[test]
+fn the_order_definitions_of_the_app_toml_copy_the_cart_metafields() {
+    // `[order.metafields.app.gift_message]` with `capabilities.cart_to_order_copyable = true`,
+    // and `[order.metafields.custom.wrap]` without.
+    let mut app = support::fixture_app();
+    let declared = |namespace: &str, key: &str, kind: &str, copyable: bool| {
+        lsf_app::config::DeclaredMetafieldDefinition {
+            namespace: namespace.into(),
+            key: key.into(),
+            kind: kind.into(),
+            name: None,
+            description: None,
+            cart_to_order_copyable: copyable,
+        }
+    };
+    app.config.order_metafields = vec![
+        declared("$app", "gift_message", "single_line_text_field", true),
+        declared("custom", "wrap", "boolean", false),
+    ];
+    let shop = AdminApi::new(
+        &support::demo_store(),
+        AdminOptions {
+            app: Some(app),
+            client_secret: SECRET.to_string(),
+            app_url: None,
+            throttle: ThrottleSetting::Store,
+            delivery: DeliveryOptions::default(),
+            token_seed: Some(7),
+        },
+    );
+    let answer = graphql(
+        &shop,
+        "{ metafieldDefinitions(first: 10, ownerType: ORDER) { nodes { namespace key name type { name } capabilities { cartToOrderCopyable { enabled } } } } }",
+        json!({}),
+    );
+    let nodes = answer["data"]["metafieldDefinitions"]["nodes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{answer}"));
+    let summary: Vec<(String, &str, bool)> = nodes
+        .iter()
+        .map(|node| {
+            (
+                format!(
+                    "{}.{}",
+                    node["namespace"].as_str().unwrap(),
+                    node["key"].as_str().unwrap()
+                ),
+                node["type"]["name"].as_str().unwrap(),
+                node["capabilities"]["cartToOrderCopyable"]["enabled"]
+                    .as_bool()
+                    .unwrap(),
+            )
+        })
+        .collect();
+    let app_id = answer_app_id(&shop);
+    assert_eq!(
+        summary,
+        [
+            (
+                format!("app--{app_id}.gift_message"),
+                "single_line_text_field",
+                true
+            ),
+            ("custom.wrap".to_string(), "boolean", false),
+        ]
+    );
+    assert_eq!(nodes[0]["name"], "Gift message", "the key, humanized");
+
+    let cart = [
+        cart_metafield(
+            "$app",
+            "gift_message",
+            "single_line_text_field",
+            "Happy birthday",
+        ),
+        cart_metafield("custom", "wrap", "boolean", "true"),
+    ];
+    let order = place_order_with(&shop, 1004, &cart).expect("the order is recorded");
+    let answer = graphql(
+        &shop,
+        r#"query($id: ID!) { order(id: $id) { metafields(first: 10) { nodes { namespace key value } } } }"#,
+        json!({"id": order}),
+    );
+    assert_eq!(
+        answer["data"]["order"]["metafields"]["nodes"],
+        json!([{"namespace": format!("app--{app_id}"), "key": "gift_message", "value": "Happy birthday"}]),
+        "{answer}"
+    );
+}
+
+/// The number of the app's GID: what its reserved namespace is made of (`app--<id>`).
+fn answer_app_id(api: &AdminApi) -> String {
+    let answer = graphql(api, "{ app { id } }", json!({}));
+    answer["data"]["app"]["id"]
+        .as_str()
+        .and_then(|id| id.rsplit('/').next())
+        .unwrap_or_else(|| panic!("{answer}"))
+        .to_string()
+}
+
+#[test]
 fn a_checkout_order_keeps_its_discounts_and_its_gateway() {
     use lsf_app::checkout::{
         AllocationMethod, AppliedDiscount, DiscountAllocation, DiscountClass, DiscountDetails,

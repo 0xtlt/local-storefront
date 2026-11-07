@@ -104,6 +104,25 @@ pub struct AppConfig {
     pub webhook_subscriptions: Vec<WebhookSubscriptionConfig>,
     /// `[app_proxy]`: `url`, `subpath`, `prefix`.
     pub app_proxy: Option<AppProxyConfig>,
+    /// The order metafield definitions it declares (`[order.metafields.<namespace>.<key>]`), in
+    /// the order of the file: what copies a cart metafield onto the order placed from the cart.
+    /// The definitions of the other owner types are not read.
+    pub order_metafields: Vec<DeclaredMetafieldDefinition>,
+}
+
+/// A metafield definition `shopify.app.toml` declares: `[order.metafields.app.gift_message]`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DeclaredMetafieldDefinition {
+    /// `$app` for `app` (the app's reserved namespace, as shopify.dev's TOML reference writes
+    /// it), else as written (`custom`, as its page on capabilities does).
+    pub namespace: String,
+    pub key: String,
+    /// `type`.
+    pub kind: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// `capabilities.cart_to_order_copyable`.
+    pub cart_to_order_copyable: bool,
 }
 
 /// One `[[webhooks.subscriptions]]` of `shopify.app.toml`.
@@ -641,6 +660,56 @@ fn load_app_config(app: &mut App) {
     app.client_id = text("client_id");
     app.handle = text("handle");
     app.config = app_config(&table);
+    app.config.order_metafields = declared_definitions(app, &table, "order");
+}
+
+/// The metafield definitions `shopify.app.toml` declares for an owner type
+/// (`[<owner>.metafields.<namespace>.<key>]`). One without a `type` is left out, with a warning.
+fn declared_definitions(
+    app: &mut App,
+    table: &toml::Table,
+    owner: &str,
+) -> Vec<DeclaredMetafieldDefinition> {
+    let mut definitions = Vec::new();
+    let namespaces = table
+        .get(owner)
+        .and_then(|owner| owner.get("metafields"))
+        .and_then(|metafields| metafields.as_table());
+    for (namespace, keys) in namespaces.into_iter().flatten() {
+        for (key, entry) in keys.as_table().into_iter().flatten() {
+            let Some(entry) = entry.as_table() else {
+                continue;
+            };
+            let text = |name: &str| entry.get(name).and_then(|v| v.as_str()).map(str::to_string);
+            let Some(kind) = text("type") else {
+                app.warn(
+                    None,
+                    format!(
+                        "shopify.app.toml: `[{owner}.metafields.{namespace}.{key}]` has no `type`: \
+                         the definition is left out"
+                    ),
+                );
+                continue;
+            };
+            definitions.push(DeclaredMetafieldDefinition {
+                namespace: if namespace == "app" {
+                    "$app".to_string()
+                } else {
+                    namespace.clone()
+                },
+                key: key.clone(),
+                kind,
+                name: text("name"),
+                description: text("description"),
+                cart_to_order_copyable: entry
+                    .get("capabilities")
+                    .and_then(|capabilities| capabilities.get("cart_to_order_copyable"))
+                    .and_then(|enabled| enabled.as_bool())
+                    .unwrap_or(false),
+            });
+        }
+    }
+    definitions
 }
 
 /// The strings of an array, or of a comma-separated string (`scopes = "read_products,write_orders"`).
@@ -704,6 +773,7 @@ fn app_config(table: &toml::Table) -> AppConfig {
         webhooks_api_version: text_in(webhooks, "api_version"),
         webhook_subscriptions,
         app_proxy,
+        order_metafields: Vec::new(),
     }
 }
 
@@ -1177,6 +1247,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn reads_the_order_metafield_definitions_of_the_app() {
+        let root = temp_app("order-metafields");
+        write(
+            &root,
+            "shopify.app.toml",
+            r#"
+client_id = "abc"
+
+[order.metafields.app.gift_message]
+name = "Gift message"
+type = "single_line_text_field"
+capabilities.cart_to_order_copyable = true
+
+[order.metafields.custom.wrap]
+type = "boolean"
+
+[order.metafields.custom.untyped]
+name = "No type"
+
+# Another owner type: not read.
+[product.metafields.app.care]
+type = "multi_line_text_field"
+"#,
+        );
+        let app = load(&root).unwrap();
+        assert_eq!(
+            app.config.order_metafields,
+            [
+                DeclaredMetafieldDefinition {
+                    namespace: "$app".into(),
+                    key: "gift_message".into(),
+                    kind: "single_line_text_field".into(),
+                    name: Some("Gift message".into()),
+                    description: None,
+                    cart_to_order_copyable: true,
+                },
+                DeclaredMetafieldDefinition {
+                    namespace: "custom".into(),
+                    key: "wrap".into(),
+                    kind: "boolean".into(),
+                    name: None,
+                    description: None,
+                    cart_to_order_copyable: false,
+                },
+            ]
+        );
+        let said: Vec<String> = app.diagnostics.iter().map(|d| d.to_string()).collect();
+        assert!(
+            said.iter().any(|line| line.contains(
+                "`[order.metafields.custom.untyped]` has no `type`: the definition is left out"
+            )),
+            "{said:?}"
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
