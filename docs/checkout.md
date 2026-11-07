@@ -1005,7 +1005,9 @@ shopify.appMetafields.value;
 ```
 
 On the order status page of the customer account, the products and variants are those of the
-order, and the cart is the one of the order placed in the local checkout.
+order, the company location is the one the order was placed for (whichever the buyer buys for
+now; an order of the store data records none, and reads the customer's first location), and the
+cart is the one of the order placed in the local checkout.
 
 ## Run a Function without a server
 

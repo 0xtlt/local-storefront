@@ -170,14 +170,13 @@ fn state_json(
     let variants = order
         .as_ref()
         .map_or_else(Vec::new, |order| line_variants(&order["lines"]));
-    let app_metafields = checkout::app_metafields_json(
-        &app,
-        &selection,
-        &store,
-        customer,
-        session.company_location,
-        &variants,
-    );
+    // The company location is the one the order was placed for, whichever the buyer buys for now.
+    let location = match &order {
+        Some(order) => order_location(order),
+        None => session.company_location,
+    };
+    let app_metafields =
+        checkout::app_metafields_json(&app, &selection, &store, customer, location, &variants);
     let company = customer.and_then(|customer| company_json(&store, customer, identity.location));
     let profiles: Vec<Json> = store
         .customers
@@ -261,6 +260,17 @@ fn has_account_target(extension: &Json) -> bool {
 }
 
 /// Whether an order the session placed is the customer's: the checkout was logged in as them.
+/// The id of the company location an order was placed for: the one the local checkout recorded
+/// in its buyer (`buyer.purchasingCompany`). An order of the store data records none: the
+/// customer's first location stands for it.
+fn order_location(order: &Json) -> Option<u64> {
+    order["buyer"]["purchasingCompany"]["location"]["id"]
+        .as_str()?
+        .strip_prefix("gid://shopify/CompanyLocation/")?
+        .parse()
+        .ok()
+}
+
 /// The variants of the lines of an order (`lines`), and of the components of its bundles.
 fn line_variants(lines: &Json) -> Vec<u64> {
     lines

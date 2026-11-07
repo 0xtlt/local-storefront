@@ -8517,6 +8517,72 @@ fn app_metafields_have_the_products_of_the_components_of_a_bundle() {
 }
 
 #[test]
+fn the_order_status_page_reads_the_location_the_order_was_placed_for() {
+    let app = app_with_metafield_reader("order-location");
+    let state = checkout_server_of(app.clone(), &[], false);
+    let session = "co-app-metafields-location";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "customer": "alex.morgan@example.com",
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]},
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let path = header(&get(&state, "/checkout", session), "location")
+        .expect("a checkout")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    let locations = json["account"]["locations"].as_array().unwrap();
+    assert_eq!(locations[0]["current"], true, "Portland, the first");
+    let portland = json["buyer"]["purchasingCompany"]["location"]["id"].clone();
+    let notes = vec![(
+        portland.as_str().unwrap().to_string(),
+        "custom.delivery_notes".to_string(),
+        "Loading dock B, weekdays 8am to 4pm".to_string(),
+    )];
+    assert_eq!(app_metafields_of(&json, "companyLocation"), notes);
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+
+    // The buyer now buys for Seattle, which has no delivery notes.
+    let seattle = locations[1]["id"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_string();
+    let reply = get(
+        &state,
+        &format!("/company_location/update?location_id={seattle}&return_to=/account"),
+        session,
+    );
+    assert_eq!(reply.status, 302, "{}", text(&reply));
+    let account = account_state(&get(&state, "/account", session));
+    assert_eq!(
+        account["buyer"]["purchasingCompany"]["location"]["name"],
+        "Northwind Seattle"
+    );
+    // The order placed for Portland still reads Portland's.
+    let order = account_state(&get(
+        &state,
+        &format!("/account/orders/{}", account["orders"][0]["legacyId"]),
+        session,
+    ));
+    assert_eq!(
+        order["order"]["buyer"]["purchasingCompany"]["location"]["id"],
+        portland
+    );
+    assert_eq!(app_metafields_of(&order, "companyLocation"), notes);
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
 fn the_home_page_lists_the_customer_account_ui_extensions_apart() {
     let app = app_with_account("home");
     let state = checkout_server_of(app.clone(), &[], true);
