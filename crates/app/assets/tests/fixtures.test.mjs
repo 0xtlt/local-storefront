@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { FakeEvent } from './fake-dom.mjs';
 import { refusalOf } from '../api-versions.js';
-import { bundle, engineCheckout, fixtures, init, pageState, plain, sandboxWindow, settle } from './harness.mjs';
+import { bundle, declaration, engineCheckout, fixtures, init, pageState, plain, sandboxWindow, settle } from './harness.mjs';
 import { update } from '../preview/mock-engine.mjs';
 
 const SANDBOX = ['sandbox-api.js', 'sandbox-components.js', 'sandbox.js'];
@@ -153,7 +153,7 @@ const notice = (target, options = {}) =>
   boot('order-notice', target, {
     apiVersion: '2027-01',
     ...options,
-    ext: { capabilities: { api_access: true }, metafields: metafieldsOf(toml('order-notice')), ...options.ext },
+    ext: { capabilities: { api_access: true }, metafields: metafieldsOf(toml('order-notice')).map(declaration), ...options.ext },
   });
 
 test('order-notice draws with Preact and follows the checkout through signals', async () => {

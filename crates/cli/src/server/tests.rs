@@ -3454,7 +3454,8 @@ fn the_state_describes_the_checkout() {
     // The manifest declares the settings; nothing sets them.
     assert_eq!(extensions[0]["settings"], json!({}));
     assert_eq!(extensions[0]["capabilities"]["block_progress"], true);
-    // The metafields they declare: `owner_type` is `ownerType`, absent when not written.
+    // The metafields they declare: `owner_type` is `ownerType`, absent when not written, with
+    // the `target.type` of the entries it reads (`targetType`).
     assert_eq!(extensions[0]["apiVersion"], "2026-10");
     assert_eq!(
         extensions[0]["metafields"],
@@ -3463,7 +3464,7 @@ fn the_state_describes_the_checkout() {
     assert_eq!(extensions[1]["apiVersion"], "2027-01");
     assert_eq!(
         extensions[1]["metafields"],
-        json!([{"namespace": "$app:notice", "key": "dismissed", "ownerType": "CART"}])
+        json!([{"namespace": "$app:notice", "key": "dismissed", "ownerType": "CART", "targetType": "cart"}])
     );
     // The fixture keeps one legacy target on purpose: it still runs, with a warning.
     assert_eq!(
@@ -8375,8 +8376,16 @@ fn app_metafields_are_the_declared_ones_of_the_shop_the_lines_and_the_buyer() {
     assert_eq!(
         declared.last().unwrap(),
         &json!({
-            "namespace": "$app:gift", "key": "wrapped", "ownerType": "CART",
+            "namespace": "$app:gift", "key": "wrapped", "ownerType": "CART", "targetType": "cart",
             "target": "purchase.checkout.block.render"
+        })
+    );
+    // With an `owner_type`, the `target.type` of the entries it reads, which the page compares.
+    assert_eq!(
+        declared[3],
+        json!({
+            "namespace": "custom", "key": "payment_terms", "ownerType": "COMPANY",
+            "targetType": "company"
         })
     );
 

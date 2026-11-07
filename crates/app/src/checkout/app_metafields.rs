@@ -31,8 +31,9 @@ pub struct AppMetafieldTarget {
     pub id: String,
 }
 
-/// The `target.type` of the entries a declaration's `owner_type` names.
-fn target_type(owner_type: &str) -> Option<&'static str> {
+/// The `target.type` of the entries a declaration's `owner_type` names. The page reads it from
+/// each declaration (`targetType` in the state's `extensions`), not from a copy of this list.
+pub fn target_type(owner_type: &str) -> Option<&'static str> {
     Some(match owner_type {
         "CART" => "cart",
         "COMPANY" => "company",

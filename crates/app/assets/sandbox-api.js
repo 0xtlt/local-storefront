@@ -242,21 +242,11 @@
     };
   }
 
-  /** The `target.type` of the entries each `owner_type` of a declaration names. */
-  const OWNER_TARGETS = {
-    CART: 'cart',
-    COMPANY: 'company',
-    COMPANY_LOCATION: 'companyLocation',
-    CUSTOMER: 'customer',
-    PRODUCT: 'product',
-    PRODUCTVARIANT: 'variant',
-    SHOP: 'shop',
-  };
-
   /**
    * `appMetafields`: the entries the extension declares for `target` (`[[extensions.metafields]]`,
    * and `[[extensions.targeting.metafields]]` of that target), the same namespace and key, of the
-   * owner `owner_type` names, of any owner without one. `owned` are the entries the server read
+   * owner `owner_type` names (the server gives its `target.type`: `targetType`), of any owner
+   * without one. `owned` are the entries the server read
    * from the store data (the shop, products, variants, customer, company and location), `cart`
    * the cart's (`{namespace, key, type, value}` and the cart's token). `typed`: the values the
    * customer account's `AppMetafield` has (see `appMetafield`).
@@ -265,7 +255,7 @@
     const wanted = (declarations || []).filter((entry) => !entry.target || entry.target === target);
     const declares = (entry) => wanted.some((declared) =>
       declared.namespace === entry.metafield.namespace && declared.key === entry.metafield.key
-      && (!declared.ownerType || OWNER_TARGETS[declared.ownerType] === entry.target.type));
+      && (!declared.ownerType || declared.targetType === entry.target.type));
     const cartTarget = { type: 'cart', id: 'gid://shopify/Cart/' + cart.token };
     return (owned || []).map((entry) => appMetafield(entry.target, entry.metafield, typed))
       .concat((cart.metafields || []).map((metafield) => appMetafield(cartTarget, metafield, typed)))

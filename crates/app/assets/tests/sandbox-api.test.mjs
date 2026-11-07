@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assets, checkoutState, engineCheckout, init, pageState, plain, sandboxWindow, settle } from './harness.mjs';
+import { assets, checkoutState, declaration, engineCheckout, init, pageState, plain, sandboxWindow, settle } from './harness.mjs';
 import { update } from '../preview/mock-engine.mjs';
 
 function runtime(options = {}) {
@@ -185,7 +185,7 @@ test('appMetafields has the declared metafields of the shop, the products, the b
     { namespace: 'custom', key: 'dock', ownerType: 'COMPANY_LOCATION' },
     // `[[extensions.targeting.metafields]]`: for that target only.
     { namespace: '$app:gift', key: 'wrapped', ownerType: 'CART', target: 'purchase.checkout.block.render' },
-  ];
+  ].map(declaration);
   const { shopify } = runtime({ state, ext: { metafields } });
   const entries = plain(shopify.appMetafields.value);
   assert.deepEqual(entries.map(({ target, metafield }) => [target.type, target.id, `${metafield.namespace}.${metafield.key}`]), [
@@ -775,7 +775,7 @@ test('an order status target reads the metafields it declares of the shop, the p
     { namespace: '$app', key: 'energy' },
     { namespace: 'custom', key: 'terms' },
     { namespace: '$app:gift', key: 'wrapped', ownerType: 'CART' },
-  ];
+  ].map(declaration);
   const target = 'customer-account.order-status.block.render';
   const { shopify } = account(target, { order: placed, ext: { metafields }, appMetafields: OWNED });
   assert.deepEqual(plain(shopify.appMetafields.value).map(({ target, metafield }) => [target.type, target.id, metafield.key]), [

@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use lsf_app::checkout::app_metafields::app_metafields;
+use lsf_app::checkout::app_metafields::{app_metafields, target_type};
 use lsf_app::checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
 use lsf_app::checkout::{
     Address, BuyerJourneyStep, CheckoutResult, CheckoutState, Metafield, ResultLine,
@@ -979,6 +979,9 @@ pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
                         let mut entry = json!({"namespace": declared.namespace, "key": declared.key});
                         if let Some(owner_type) = &declared.owner_type {
                             entry["ownerType"] = json!(owner_type);
+                            // The `target.type` of the entries it reads, which the page
+                            // compares (null for an `owner_type` that names no resource).
+                            entry["targetType"] = json!(target_type(owner_type));
                         }
                         // A declaration of `[[extensions.targeting.metafields]]`.
                         if let Some(target) = &declared.target {

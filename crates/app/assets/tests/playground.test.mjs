@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { refusalOf } from '../api-versions.js';
 import { ACCOUNT_TARGETS, RENDERED_TARGETS, RUN_TARGETS } from '../extension-host.js';
-import { assets, checkoutState, init, plain, sandboxWindow, settle } from './harness.mjs';
+import { assets, checkoutState, declaration, init, plain, sandboxWindow, settle } from './harness.mjs';
 
 const SANDBOX = ['sandbox-api.js', 'sandbox-account-api.js', 'sandbox-components.js', 'sandbox.js'];
 const extensions = join(assets, '..', '..', '..', 'examples', 'checkout-playground', 'extensions');
@@ -123,7 +123,7 @@ async function boot(handle, target, ctx, state = checkoutState()) {
     clearTimeout,
     atob,
   });
-  const ext = { capabilities: {}, translations: {}, metafields: manifest(handle).metafields };
+  const ext = { capabilities: {}, translations: {}, metafields: manifest(handle).metafields.map(declaration) };
   const locales = join(extensions, handle, 'locales');
   if (existsSync(locales)) {
     for (const file of readdirSync(locales)) {
