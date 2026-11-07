@@ -8416,6 +8416,106 @@ fn app_metafields_are_the_declared_ones_of_the_shop_the_lines_and_the_buyer() {
     std::fs::remove_dir_all(&app).ok();
 }
 
+/// The `appMetafields` entries of `json` (a checkout, thank-you or account state) whose target
+/// is of `kind`: `(id, namespace.key, value)`.
+fn app_metafields_of(json: &Json, kind: &str) -> Vec<(String, String, String)> {
+    json["appMetafields"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no appMetafields: {json}"))
+        .iter()
+        .filter(|entry| entry["target"]["type"] == kind)
+        .map(|entry| {
+            let metafield = &entry["metafield"];
+            (
+                entry["target"]["id"].as_str().unwrap().to_string(),
+                format!(
+                    "{}.{}",
+                    metafield["namespace"].as_str().unwrap(),
+                    metafield["key"].as_str().unwrap()
+                ),
+                metafield["value"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn app_metafields_have_the_products_of_the_components_of_a_bundle() {
+    // The metafield reader, and the cart transform of the fixture app, which merges the tee and
+    // the tote into a bundle whose parent is the mug.
+    let app = app_with_metafield_reader("bundle");
+    copy_directory(
+        &fixture_app().join("extensions/bundle-transform"),
+        &app.join("extensions/bundle-transform"),
+    );
+    let state = checkout_server_of(app.clone(), &[], true);
+    let session = "co-app-metafields-bundle";
+    let mug = variant_id(&state, "MUG-OAT");
+    let tee_product = {
+        let loaded = state.loaded();
+        let tee = variant_id(&state, "TEE-BLK-M");
+        loaded.store.variant(tee).unwrap().0.id
+    };
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "customer": "alex.morgan@example.com",
+            "cart": {"items": [
+                {"variant": "TEE-BLK-M", "quantity": 1},
+                {"variant": "TOTE-NAT", "quantity": 1}
+            ]},
+            "data": {"checkout": {"functions": {"bundle-transform": {"metafields": {
+                "$app:config.settings": {"type": "json", "value": {"operations": [
+                    {"type": "merge", "lines": [1, 2], "parentVariant": mug, "title": "Set"}
+                ]}}
+            }}}}}
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let path = header(&get(&state, "/checkout", session), "location")
+        .expect("a checkout")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    let lines = json["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), 1, "{json}");
+    assert_eq!(lines[0]["transformedBy"], "merge");
+    // The tee is a component of the bundle only: its product's care instructions are read.
+    let care = vec![(
+        format!("gid://shopify/Product/{tee_product}"),
+        "custom.care".to_string(),
+        "Machine wash cold. Tumble dry low.".to_string(),
+    )];
+    assert_eq!(app_metafields_of(&json, "product"), care, "the checkout");
+
+    // The thank-you page, and the order status page of the order.
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let thanks = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(thanks["status"], "completed");
+    assert_eq!(
+        app_metafields_of(&thanks, "product"),
+        care,
+        "the thank-you page"
+    );
+    let orders = account_state(&get(&state, "/account", session));
+    let order = account_state(&get(
+        &state,
+        &format!("/account/orders/{}", orders["orders"][0]["legacyId"]),
+        session,
+    ));
+    assert_eq!(order["order"]["lines"][0]["transformedBy"], "merge");
+    assert_eq!(
+        app_metafields_of(&order, "product"),
+        care,
+        "the order status page"
+    );
+    std::fs::remove_dir_all(&app).ok();
+}
+
 #[test]
 fn the_home_page_lists_the_customer_account_ui_extensions_apart() {
     let app = app_with_account("home");

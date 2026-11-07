@@ -978,13 +978,14 @@ they are declared for. Each entry is a metafield with the resource it belongs to
 a `type` (`shop`, `product`, `variant`, `customer`, `company`, `companyLocation` or `cart`) and
 the `id` of the resource, a GID. They are read from the store data, with what the backend of the
 app sets through the [Admin API](admin.md) (`metafieldsSet`): the shop's, those of the products
-and variants of the lines, of the customer logged in and of the company and location they buy
-for, and the cart's, which the extensions write with `applyMetafieldChange`. A declaration with
-an `owner_type` reads that resource only, one without reads every resource that has the
-metafield. The app's own namespace is written `$app` (or `$app:<name>`) in the toml, in the
-store data and in what the extension reads; Shopify's `app--<id>--<name>`, which the Admin API
-writes, is the same namespace. The toml takes `$app` only, as on Shopify: a declaration written
-`app--<id>--<name>` reads nothing, and the loader warns with the spelling to use.
+and variants of the lines (and of the components of a bundle a cart transform made), of the
+customer logged in and of the company and location they buy for, and the cart's, which the
+extensions write with `applyMetafieldChange`. A declaration with an `owner_type` reads that
+resource only, one without reads every resource that has the metafield. The app's own namespace
+is written `$app` (or `$app:<name>`) in the toml, in the store data and in what the extension
+reads; Shopify's `app--<id>--<name>`, which the Admin API writes, is the same namespace. The toml
+takes `$app` only, as on Shopify: a declaration written `app--<id>--<name>` reads nothing, and the
+loader warns with the spelling to use.
 
 ```toml
 [[extensions.metafields]]

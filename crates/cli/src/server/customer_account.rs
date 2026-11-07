@@ -165,12 +165,11 @@ fn state_json(
     };
 
     // What the order status targets read as `appMetafields`: the products and variants are the
-    // ones of the order; the cart's metafields are the order's own (`metafields`).
-    let variants: Vec<u64> = order
-        .iter()
-        .flat_map(|order| order["lines"].as_array().into_iter().flatten())
-        .filter_map(|line| line["variantId"].as_u64())
-        .collect();
+    // ones of the order, with the components of its bundles; the cart's metafields are the
+    // order's own (`metafields`).
+    let variants = order
+        .as_ref()
+        .map_or_else(Vec::new, |order| line_variants(&order["lines"]));
     let app_metafields = checkout::app_metafields_json(
         &app,
         &selection,
@@ -262,6 +261,21 @@ fn has_account_target(extension: &Json) -> bool {
 }
 
 /// Whether an order the session placed is the customer's: the checkout was logged in as them.
+/// The variants of the lines of an order (`lines`), and of the components of its bundles.
+fn line_variants(lines: &Json) -> Vec<u64> {
+    lines
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|line| {
+            line["variantId"]
+                .as_u64()
+                .into_iter()
+                .chain(line_variants(&line["components"]))
+        })
+        .collect()
+}
+
 fn belongs_to(order: &Json, customer: Option<&Customer>) -> bool {
     let Some(customer) = customer else {
         return false;

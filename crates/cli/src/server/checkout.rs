@@ -775,7 +775,7 @@ fn compute(
     );
     object.insert("metafields".into(), json!(checkout.metafields));
     // What the extensions read as `appMetafields` besides the metafields of the cart.
-    let variants: Vec<u64> = result.lines.iter().map(|line| line.variant_id).collect();
+    let variants = line_variants(&result.lines);
     object.insert(
         "appMetafields".into(),
         app_metafields_json(
@@ -911,6 +911,15 @@ pub(super) fn localization_json(
         "currency": {"isoCode": store.shop.currency},
         "market": {"id": market_id, "handle": market_handle},
     })
+}
+
+/// The variants of `lines`, and of the components of their bundles (a line a cart transform
+/// merged or expanded), whose products and variants `appMetafields` reads.
+pub(super) fn line_variants(lines: &[ResultLine]) -> Vec<u64> {
+    lines
+        .iter()
+        .flat_map(|line| std::iter::once(line.variant_id).chain(line_variants(&line.components)))
+        .collect()
 }
 
 /// The metafields the selected extensions declare, of the shop, of the products and variants
