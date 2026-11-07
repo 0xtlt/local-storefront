@@ -10,7 +10,10 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { refusalOf } from '../api-versions.js';
 import { ACCOUNT_TARGETS, RENDERED_TARGETS, RUN_TARGETS } from '../extension-host.js';
-import { assets, checkoutState, declaration, init, plain, sandboxWindow, settle } from './harness.mjs';
+import { FakeEvent } from './fake-dom.mjs';
+import { assets, checkoutState, declaration, engineCheckout, init, pageState, plain, sandboxWindow, settle } from './harness.mjs';
+import { operationsForChange } from '../operations.js';
+import { update } from '../preview/mock-engine.mjs';
 
 const SANDBOX = ['sandbox-api.js', 'sandbox-account-api.js', 'sandbox-components.js', 'sandbox.js'];
 const extensions = join(assets, '..', '..', '..', 'examples', 'checkout-playground', 'extensions');
@@ -184,6 +187,41 @@ test('the broken extensions fail the way their case says', async () => {
     const errors = win.posts('error').map((post) => post.message).join(' | ');
     assert.match(errors, message, handle);
   }
+});
+
+test('ui-preact keeps its box ticked: the cart metafield it writes comes back, declared', async () => {
+  // Shopify's template reads `$app.requestedFreeGift` of the cart through `appMetafields`, which
+  // only has the metafields an extension declares: its toml declares it.
+  assert.deepEqual(manifest('ui-preact').metafields, [{ namespace: '$app', key: 'requestedFreeGift', ownerType: 'CART' }]);
+  const target = 'purchase.checkout.block.render';
+  const win = await boot('ui-preact', target, {});
+  assert.deepEqual(win.posts('error'), []);
+  // Preact writes `checked` as a property once it is one (the buyer ticked it), as an attribute
+  // before: the test window does not upgrade `s-checkbox`.
+  const ticked = (element) => element.checked === true || (element.checked === undefined && element.hasAttribute('checked'));
+  const checkbox = win.document.body.querySelector('s-checkbox');
+  assert.ok(checkbox, 'a checkbox');
+  assert.equal(ticked(checkbox), false, 'not ticked at first');
+
+  // The buyer ticks it: the extension writes the cart metafield, the page applies it.
+  checkbox.checked = true;
+  checkbox.dispatchEvent(new FakeEvent('change', { bubbles: true }));
+  for (let i = 0; i < 4; i++) await settle();
+  const [asked] = win.posts('change');
+  assert.equal(asked.method, 'applyMetafieldChange');
+  const { operations } = operationsForChange(asked.method, asked.change, checkoutState());
+  const state = pageState(update(engineCheckout(), operations).state);
+  assert.deepEqual(plain(state.metafields), [{ namespace: '$app', key: 'requestedFreeGift', type: 'boolean', value: 'true' }]);
+  win.receive({ type: 'result', id: asked.id, result: { type: 'success' } });
+  // The checkout comes back with it: Preact draws again, and the box stays ticked.
+  win.receive({ type: 'state', state });
+  for (let i = 0; i < 6; i++) await settle();
+  assert.deepEqual(win.posts('error'), []);
+  assert.equal(win.document.body.querySelector('s-checkbox'), checkbox, 'the same checkbox');
+  assert.equal(ticked(checkbox), true, 'still ticked');
+  // As on a page loaded again.
+  const again = await boot('ui-preact', target, {}, state);
+  assert.equal(ticked(again.document.body.querySelector('s-checkbox')), true, 'ticked from the start');
 });
 
 test('the interceptors block the order the way their scenarios say', async () => {

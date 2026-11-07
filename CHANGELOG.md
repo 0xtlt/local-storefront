@@ -176,6 +176,12 @@ the same data every run.
   and `lsf-cli` the command line: `cargo build -p lsf-cli` builds `lsf`. `lsf-app` and
   `lsf-core` build without Liquid or the renderer. Nothing else changes for someone who uses
   `lsf`. [Architecture](docs/architecture.md).
+- **An extension must declare the metafields it reads through `shopify.appMetafields`.** As on
+  Shopify, `appMetafields` has only what `[[extensions.metafields]]` declares, the cart's too: an
+  extension that writes a cart metafield with `applyMetafieldChange` and reads it back declares it
+  (`owner_type = "CART"`). Shopify's checkout UI template in Preact reads
+  `$app.requestedFreeGift` without declaring it: its checkbox does not stay ticked until the
+  declaration is added, as the playground's `ui-preact` now does.
 
 ### Fixed
 
