@@ -127,6 +127,35 @@ impl Admin {
         lines
     }
 
+    /// The path of lsf's admin with the app open (`/admin/apps/<handle>`), when the server runs
+    /// an embedded app: the client id names it when the app has no handle. `None` without an
+    /// app, or for an app whose `shopify.app.toml` says `embedded = false`.
+    pub fn embedded_path(&self) -> Option<String> {
+        let app = self.api.app()?;
+        if app.config.embedded == Some(false) {
+            return None;
+        }
+        let key = app
+            .handle
+            .clone()
+            .unwrap_or_else(|| self.api.client_id().to_string());
+        Some(format!("/admin/apps/{key}"))
+    }
+
+    /// What the server prints of lsf's admin when it starts with an embedded app: where the app
+    /// opens in it, and the App Bridge its pages load; or what is missing to open it.
+    pub fn embedded_banner(&self, origin: &str) -> Option<String> {
+        let path = self.embedded_path()?;
+        Some(match self.api.app_url() {
+            Some(_) => format!(
+                "embedded: {origin}{path}   (the app in lsf's admin; its pages load {origin}/__lsf/admin/app-bridge.js)"
+            ),
+            None => format!(
+                "embedded: {origin}{path} opens the app once lsf knows its URL: give --app-url (where the backend listens)"
+            ),
+        })
+    }
+
     /// Where the client secret came from: the value only when it is lsf's own, which is no
     /// secret, so that a webhook the backend refuses has a first place to look.
     fn secret_line(&self) -> String {

@@ -399,6 +399,13 @@ pub fn run(
             if let Some(proxy) = &state.app_proxy {
                 eprintln!("{}", proxy.banner(&format!("http://{local}")));
             }
+            if let Some(line) = state
+                .admin
+                .as_ref()
+                .and_then(|admin| admin.embedded_banner(&format!("http://{local}")))
+            {
+                eprintln!("{line}");
+            }
         }
         if standalone {
             eprintln!(

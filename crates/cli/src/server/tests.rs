@@ -9426,3 +9426,81 @@ async fn a_stopped_server_does_not_wait_for_a_request_that_does_not_end() {
     );
     waiting.abort();
 }
+
+#[test]
+fn the_admin_opens_the_embedded_app_serves_its_app_bridge_and_is_linked_from_home() {
+    let state = checkout_server_with(
+        fixture_app(),
+        &[],
+        false,
+        None,
+        Some(super::admin::AdminSettings {
+            app_url: Some("http://localhost:3000".to_string()),
+            ..Default::default()
+        }),
+    );
+    let admin = state.admin.as_ref().expect("the Admin API");
+    assert_eq!(
+        admin.embedded_path().as_deref(),
+        Some("/admin/apps/checkout-fixtures")
+    );
+    assert_eq!(
+        admin.embedded_banner("http://127.0.0.1:9292").as_deref(),
+        Some(
+            "embedded: http://127.0.0.1:9292/admin/apps/checkout-fixtures   (the app in lsf's admin; its pages load http://127.0.0.1:9292/__lsf/admin/app-bridge.js)"
+        )
+    );
+
+    let page = get(
+        &state,
+        "/admin/apps/checkout-fixtures/app?tab=1",
+        "embedded",
+    );
+    assert_eq!(page.status, 200, "{}", text(&page));
+    let html = text(&page);
+    assert!(html.contains("class=\"lsf-frame\""), "{html}");
+    assert!(
+        html.contains("src=\"http://localhost:3000/app?embedded=1&amp;"),
+        "{html}"
+    );
+    assert!(html.contains("tab=1"));
+
+    let script = get(&state, "/__lsf/admin/app-bridge.js", "embedded");
+    assert_eq!(script.status, 200);
+    assert!(text(&script).contains("lsf's App Bridge"));
+
+    // A page of the admin lsf does not have is said so, before the storefront's 404.
+    let products = get(&state, "/admin/products", "embedded");
+    assert_eq!(products.status, 404);
+    assert!(text(&products).contains("lsf has no page here"));
+
+    let home = text(&get(&state, "/__lsf/checkouts", "embedded"));
+    assert!(
+        home.contains("href=\"/admin/apps/checkout-fixtures\" data-link=\"admin\""),
+        "{home}"
+    );
+}
+
+#[test]
+fn an_app_that_is_not_embedded_has_no_admin_to_open() {
+    let directory = std::env::temp_dir().join(format!("lsf-not-embedded-{}", std::process::id()));
+    std::fs::remove_dir_all(&directory).ok();
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("shopify.app.toml"),
+        "name = \"Standalone\"\nclient_id = \"22222222222222222222222222222222\"\nhandle = \"standalone\"\napplication_url = \"https://example.com\"\nembedded = false\n",
+    )
+    .unwrap();
+    let state = checkout_server_with(
+        directory.clone(),
+        &[],
+        false,
+        None,
+        Some(super::admin::AdminSettings::default()),
+    );
+    let admin = state.admin.as_ref().expect("the Admin API");
+    assert_eq!(admin.embedded_path(), None);
+    assert_eq!(admin.embedded_banner("http://127.0.0.1:9292"), None);
+    assert!(!text(&get(&state, "/__lsf/checkouts", "standalone")).contains("data-link=\"admin\""));
+    std::fs::remove_dir_all(&directory).ok();
+}
