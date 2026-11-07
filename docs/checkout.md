@@ -854,9 +854,10 @@ discounts on the subtotal they left, then shipping. Within a class:
   `discounts` and `discountAllocations`, in the page and in `lsf app function run`. A Function
   answers one to accept a code before the line it stands for (a gift) reaches the cart. A
   shipping discount of 0 applies to the rate the buyer selected (none is before an address with a
-  country) when no other one takes something off the shipping, and is listed as not applied
-  otherwise. A candidate of more than 0 that finds nothing left to take
-  off (a line another discount made free) is not applied.
+  country) when no other one takes something off that rate, and is listed as not applied
+  otherwise: it beats one that only cuts the rates the buyer did not select, which would apply
+  nothing. A candidate of more than 0 that finds nothing left to take off (a line another
+  discount made free) is not applied.
 
 An amount is shared between the lines in proportion to what they cost, to the cent, and the
 allocations of the lines (`discountAllocations`, in the page and for the Functions that run
