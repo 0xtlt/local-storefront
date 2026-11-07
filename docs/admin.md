@@ -13,8 +13,12 @@ see](#what-the-storefront-and-the-checkout-see)); an order placed in the [local
 checkout](checkout.md) is an order the Admin API lists, and its `orders/create` webhook reaches
 the backend.
 
-This guide starts lsf for a backend, points Shopify's libraries at it, and tests the backend
-with it. What each mutation does, family by family, is in the [Admin API
+The embedded app's own pages open in [lsf's admin](#preview-the-embedded-app): an admin around
+the app, with a local App Bridge, so that its session tokens, title bar, navigation, save bar,
+toasts and resource picker work offline too.
+
+This guide starts lsf for a backend, points Shopify's libraries at it, previews the embedded app,
+and tests the backend with it. What each mutation does, family by family, is in the [Admin API
 reference](admin-reference.md).
 
 ## Start
@@ -28,6 +32,7 @@ admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
         X-Shopify-Access-Token: shpat_4f…   (shop: local-supply-co.myshopify.com)
         client secret: from SHOPIFY_API_SECRET of ../my-app/.env
 webhooks: 3 subscriptions of shopify.app.toml → http://localhost:3000
+embedded: http://127.0.0.1:9292/admin/apps/my-app   (the app in lsf's admin; its pages load http://127.0.0.1:9292/__lsf/admin/app-bridge.js)
 ready:  http://127.0.0.1:9292/   (extensions and checkout scenarios; …)
 ```
 
@@ -162,10 +167,11 @@ Then open the app as the admin would: `http://127.0.0.1:9292/__lsf/admin/launch?
 redirects to `http://localhost:3000/app` with `embedded=1`, `shop`, `host`, `hmac` and a session
 token in `id_token`, valid for a minute: follow the redirect at once. The template's
 `authenticate.admin` reads the session token, exchanges it for an access token at lsf, and the
-loader's `admin.graphql(…)` queries lsf. The App Bridge script of the page needs the real admin
-around it; what the server does is all there. A route the front end calls with `fetch` is
-authenticated with `Authorization: Bearer <session token>`: mint one with
-`POST /__lsf/admin/session-token`, one per request. And `authenticate.admin` answers `410 Gone`
+loader's `admin.graphql(…)` queries lsf. To see the page as the merchant does, with its App
+Bridge working (the session token of `fetch()`, the title bar, the navigation), open it in
+[lsf's admin](#preview-the-embedded-app). A test calls a route the front end fetches with
+`Authorization: Bearer <session token>`: mint one with `POST /__lsf/admin/session-token`, one
+per request. And `authenticate.admin` answers `410 Gone`
 to a client whose `User-Agent` looks like a bot (the `isbot` package): curl's and Node's
 `fetch`'s do; send a browser's.
 
@@ -297,6 +303,138 @@ curl -s http://127.0.0.1:9292/admin/api/2026-10/graphql.json \
 ```
 
 `application/graphql` bodies (the query alone) and `GET ?query=` work too, as on Shopify.
+
+## Preview the embedded app
+
+`http://127.0.0.1:9292/admin/apps/<handle>` is lsf's admin with the app open: the shop's name and
+the app's navigation on the left, the app's title bar, and the app in a frame, at the app's URL
+(`--app-url` on the path of `application_url`) with the query the admin signs. Each load is a
+new launch: a new `hmac`, a new session token in `id_token`. The page's path follows the app's:
+`/admin/apps/my-app/app/settings` opens the app at `/app/settings`, and reloading it opens the
+app there again. The `serve` and `app dev` banners print its URL (`embedded:`), and the home
+page of the app has an **Admin** button to it.
+
+| Query | What it does |
+|---|---|
+| `shop` | The shop: `test-1` or `test-1.myshopify.com` ([a shop per test](#a-shop-per-test)). The store data's by default. |
+| `user` | The staff member the session token is for: `1`, the account owner, by default. |
+| `locale` | The `locale` the app is opened with: the shop's primary locale by default. |
+
+The other parameters go to the app. `<handle>` is `handle` of `shopify.app.toml`, or the client
+id; `/admin` and `/admin/apps` redirect there. An app with `embedded = false` gets a page that
+links to its launch instead, as Shopify opens it in a tab of its own.
+
+### Load lsf's App Bridge
+
+The app's page runs App Bridge, Shopify's script, which talks to Shopify's admin only. lsf
+serves its own, `/__lsf/admin/app-bridge.js`, which talks to lsf's admin: load it first in the
+page's `<head>`, before any other script.
+
+```html
+<script src="http://127.0.0.1:9292/__lsf/admin/app-bridge.js"></script>
+<script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="…"></script>
+```
+
+Shopify's script, when it loads after it, finds `shopify.ready` and does nothing (its first line
+returns when App Bridge is already there): the page keeps its tag, and loads nothing else of
+Shopify's. Offline, the tag does not load, and lsf's App Bridge is all there is. lsf's reads its
+configuration where Shopify's does (`data-api-key` of the CDN tag, `<meta name="shopify-api-key">`,
+`<script type="shopify/config">`, the page's `shop`, `host` and `locale`, then
+`sessionStorage`), and takes the admin's origin from its own `src`: open the admin on the host
+name the page loads it from (`127.0.0.1` and `localhost` are two origins).
+
+In the React Router template (`@shopify/shopify-app-react-router` 4.0.0), `AppProvider`
+writes Shopify's tag, with no option to change it. Three changes, all behind `APP_BRIDGE_URL`,
+which is unset on Shopify:
+
+1. **The environment**: `APP_BRIDGE_URL=http://127.0.0.1:9292/__lsf/admin/app-bridge.js`. The
+   pages the library writes itself (the bounce page `/auth/session-token`, the exit-iframe page)
+   load the App Bridge of `APP_BRIDGE_URL`: `@shopify/shopify-app-react-router/adapters/node`
+   reads it when it is imported, as `app/shopify.server.ts` does.
+2. **`app/routes/app.tsx`**: lsf's script right before `AppProvider`, whose tag comes next.
+
+   ```tsx
+   export const loader = async ({ request }: LoaderFunctionArgs) => {
+     await authenticate.admin(request);
+     return { apiKey: process.env.SHOPIFY_API_KEY || "", appBridgeUrl: process.env.APP_BRIDGE_URL };
+   };
+
+   export default function App() {
+     const { apiKey, appBridgeUrl } = useLoaderData<typeof loader>();
+     return (
+       <>
+         {appBridgeUrl && <script src={appBridgeUrl} />}
+         <AppProvider apiKey={apiKey}>
+           {/* … */}
+         </AppProvider>
+       </>
+     );
+   }
+   ```
+
+3. **`app/entry.server.tsx`**: `addDocumentResponseHeaders` lets only Shopify's admin frame the
+   app (`Content-Security-Policy: frame-ancestors https://<shop> https://admin.shopify.com …`),
+   and a browser then shows nothing in lsf's frame. After it, let lsf's admin frame it:
+
+   ```ts
+   addDocumentResponseHeaders(request, responseHeaders);
+   if (process.env.APP_BRIDGE_URL) {
+     responseHeaders.set("Content-Security-Policy", `frame-ancestors ${new URL(process.env.APP_BRIDGE_URL).origin};`);
+   }
+   ```
+
+Then run the backend with `APP_BRIDGE_URL` next to the variables of
+[the React Router app](#javascript-the-react-router-app-and-shopifyshopify-api), and open
+`http://127.0.0.1:9292/admin/apps/<handle>`. A page that is not React (Rails, Laravel, plain
+HTML) loads the script the same way, and sends the same `Content-Security-Policy`.
+[`examples/admin-backend`](https://github.com/0xtlt/local-storefront/tree/main/examples/admin-backend)
+does both by hand (`server/embedded.mjs`, `documentHeaders` in `server/index.mjs`).
+
+When the app's page runs Shopify's App Bridge instead, lsf's admin sees what it posts and says
+so in a banner, with the line to add; when no App Bridge answers (the backend is down, the page
+failed, the frame was refused), it says that. Inside lsf's frame, Shopify's script redirects
+nothing (it sends the page to Shopify's admin only when it is not in a frame), but it listens to
+Shopify's admin only: `shopify.idToken()` and every authenticated `fetch()` wait, for a minute
+and for ever.
+
+Outside an admin (the page opened alone, as `/__lsf/admin/launch` does), lsf's App Bridge sends
+the page to lsf's admin, as Shopify's sends it to Shopify's, unless `shopify.config` has
+`disabledFeatures: ["auto-redirect"]`.
+
+### What App Bridge does in lsf's admin
+
+lsf's App Bridge has every name of `@shopify/app-bridge-types` 0.7.4 (the types of the CDN
+script). In lsf's admin:
+
+| API | What it does |
+|---|---|
+| `shopify.idToken()` | A session token of the admin's shop and user, minted by lsf and signed with the client secret, valid a minute. |
+| `fetch()` | Adds `Authorization: Bearer <session token>`, `X-Requested-With: XMLHttpRequest` and `Accept-Language` to the requests to the page's host (on any port) or its subdomains, over the page's protocol, and to `appOrigins`; not to others, nor when the request has an `Authorization` already. Asks a new token once when the answer has `X-Shopify-Retry-Invalid-Session-Request`, and sends the admin to `X-Shopify-API-Request-Failure-Reauthorize-Url` when there is one. `disabledFeatures: ["fetch"]` leaves `fetch` alone. As the CDN script 0.41.4 does. |
+| `shopify.config`, `shopify.origin`, `shopify.ready`, `shopify.environment` | The configuration as the page gives it; lsf's admin's origin; ready once the admin answered; `{embedded: true, mobile: false, pos: false, intent: false}`. |
+| `shopify.user()` | `{id, name, email, accountAccess, locale}` of the admin's user: `"Account owner"` for user 1, `"Full access"` for another. |
+| `shopify.toast.show()`, `.hide()` | Toasts at the bottom of the admin, five seconds by default, `isError`, an `action` that calls `onAction`; `onDismiss` when the toast goes. |
+| `shopify.loading()` | The loading bar at the top of the admin. |
+| Title bar | The admin's title bar: `<ui-title-bar title>` and its buttons and links (`variant="primary"`, `"breadcrumb"`, `tone="critical"`, `<section label>` menus), else `<s-page heading>` and its slots (`primary-action`, `secondary-actions` with an `s-menu` by `commandFor`, `breadcrumb-actions`, `accessory`), else `document.title`. A click in the admin clicks the page's element. |
+| Navigation | The admin's navigation, under the app's name: the links of `<s-app-nav>` or `<ui-nav-menu>` (`a`, `s-link`), relative, `app:` or of the page's origin; `rel="home"` is the app's name. A click in the admin clicks the page's link, so that the app's router follows it. The admin's URL follows the app's path (`history.pushState`, `replaceState`). |
+| Save bar | `<form data-save-bar>` shows the admin's save bar while a field differs from what it was (Save submits the form, Discard resets it; `data-discard-confirmation` asks first); `<ui-save-bar id>` with `shopify.saveBar.show()`, `.hide()`, `.toggle()` (its `variant="primary"` button is Save, the other Discard; `discardConfirmation`). While it shows, a link or a nav item asks the merchant first, and `shopify.saveBar.leaveConfirmation()` resolves when they leave. |
+| `shopify.resourcePicker()` | A picker of the shop's products (with their variants), variants or collections, as the Admin API has them: `action`, `multiple` (a number is a maximum), `query`, `filter` (`query`, `variants`, `draft`, `archived`, `hidden`), `selectionIds`. Answers `Product[]`, `ProductVariant[]` or `Collection[]` of `@shopify/app-bridge-types`, a product's `variants` the ones picked; `undefined` when cancelled. |
+| `shopify.picker()` | A picker of the app's own items: `heading`, `items`, `headers`, `multiple`; `selected` resolves with their ids. |
+| `shopify.scopes.query()` | `granted` (the scopes installed on the shop), `required` and `optional` (those of `shopify.app.toml`). |
+| Modals | `<ui-modal>` (its children, or `src`; its `<ui-title-bar>` is its title and buttons), `<s-app-window src>`, and `<s-modal>` while Polaris is not there (offline): drawn over the app, in its frame, the admin around dimmed. `shopify.modal.show(id)`, `.hide()`, `.toggle()`; Polaris's `s-modal` opens itself. A page of a modal's `src` shares the frame's App Bridge. |
+| Links | `shopify:admin/products` (and `shopify://admin/…`, `window.open`) goes to lsf's page of it, which says lsf has no admin page there. `app:/path` is a path of the app. `target="_top"` leaves the admin. A plain `<a>` the app's router does not follow reloads the frame without the session token, on Shopify too: the console says so. Without Polaris, an `s-link`, `s-button` or `s-clickable` with `href` dispatches `shopify:navigate`, as Polaris does, for `AppProvider` to route. |
+| The bounce page | `?shopify-reload=<url>` (the library's `/auth/session-token`) loads `<url>` again with a new `id_token`. |
+
+What lsf does not simulate rejects with, or warns, `lsf does not simulate shopify.<name>`, and
+the admin lists it in a banner: `shopify.scanner`, `shopify.pos`, `shopify.intents.invoke` and
+`.register`, `shopify.webVitals`, `shopify.support`, `shopify.reviews`, `shopify.scopes.request`
+and `.revoke`, `shopify.app.extensions()`, `shopify.shopifyQL`, `shopify.sidekick`,
+`shopify.tools`, `fetch()` of `shopify:admin/api/…` (Direct API access), and `extension:` links.
+`shopify.intents.request.value` is `null`: the page never runs as an intent.
+
+Polaris web components (`s-page`, `s-button`, `s-text-field`, …) come from Shopify's CDN
+(`polaris-2.js`), which lsf does not serve: offline, they do not load, and they show as plain
+elements with their text. lsf's App Bridge reads what it needs of them all the same (the title
+bar of `s-page`, the links of `s-app-nav`). Online, they load and work as on Shopify.
 
 ## Tokens
 

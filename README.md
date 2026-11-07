@@ -110,7 +110,10 @@ same data every run, and what it changes shows on the storefront and in the chec
 `npx local-storefront app webhook trigger --topic app/uninstalled --app ../my-app --app-url http://localhost:3000`
 sends one webhook on demand, of a topic the app's `shopify.app.toml` subscribes to (the React
 Router template's subscribes to `app/uninstalled`). Webhooks go to this machine, to `--app-url`
-or to the `--address` you give, and nowhere else. Guide: [Admin API](docs/admin.md).
+or to the `--address` you give, and nowhere else. The app's embedded pages open in a local
+admin, `http://127.0.0.1:9292/admin/apps/<handle>`, with a local App Bridge: session tokens,
+title bar, navigation, save bar, toasts and the resource picker work offline
+([preview the embedded app](docs/admin.md#preview-the-embedded-app)). Guide: [Admin API](docs/admin.md).
 
 ### Get ready for Shopify's strict Liquid parser
 

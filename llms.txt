@@ -19,7 +19,7 @@ The links below are relative to this file. Read the docs of the version you run 
 - [Formatting](docs/formatting.md): `npx local-storefront fmt` and its options
 - [Performance](docs/performance.md): `npx local-storefront profile`, points, Server-Timing
 - [Checkout](docs/checkout.md): `npx local-storefront app dev --app`, `app init` (scenarios) and `app function run`: the Functions and checkout UI extensions of a Shopify app
-- [Admin API](docs/admin.md): the local GraphQL Admin API (2026-10), OAuth, token exchange, webhooks and the app proxy, for the backend of a Shopify app
+- [Admin API](docs/admin.md): the local GraphQL Admin API (2026-10), OAuth, token exchange, webhooks and the app proxy, for the backend of a Shopify app; a local admin and App Bridge to preview its embedded pages
 - [Storefront](docs/storefront.md): accounts, password page, images, feature previews
 
 ## Reference

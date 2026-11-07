@@ -18,7 +18,9 @@ lists and the `orders/create` webhook reports.
 
 Not a goal: the REST Admin API (deprecated by Shopify; `/admin/api/<v>/*.json` other than
 `graphql.json` answers that it is not served), the Storefront API, the Customer Account API,
-the versions lsf has no data for (adding one is a data drop: "Add a version"), the admin web UI.
+the versions lsf has no data for (adding one is a data drop: "Add a version"), the admin web UI
+itself. lsf draws the admin around an embedded app only, with a local App Bridge: "The admin of
+an embedded app".
 
 ## User-facing surface
 
@@ -938,6 +940,7 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 | `/__lsf/admin/card-sessions`, `/__lsf/admin/subscriptions`, `/__lsf/admin/billing-attempts/<n>/challenge[/complete\|/fail]`, `/__lsf/admin/payment-methods/<token>/update` | `api::subscriptions`: lsf's card vault, the log of the emails and charges, the customer's 3D Secure and card update pages; no token. |
 | `/__lsf/admin/clock`, `/__lsf/admin/outbox`, `/__lsf/admin/emails`, `/__lsf/admin/disputes[/<n>/won\|lost\|accepted]`, `/__lsf/admin/orders/protect`, `/__lsf/admin/orders/link-request`, `/__lsf/admin/tax-app/activate` | `api::simulate`: the world outside the shop, which a test drives (see "The outbox", and "Payments, store credit, disputes and the clock" under "Orders"). No token. |
 | `/__lsf/webhooks*` | `Webhooks::handle`, the payload of a trigger built from the record named, else the first record of the topic's type (`api::samples`), else lsf's sample of the topic. |
+| `GET /admin`, `/admin/apps/<app>/*`, other `GET /admin/*` pages, `/__lsf/admin/app-bridge.js`, `/__lsf/admin/assets/*`, `/__lsf/admin/resources` | `api::embedded`: the admin of an embedded app (below). |
 
 `lsf` builds one in `ServerState` (`crates/cli/src/server/admin.rs`), routes its paths before the
 storefront, the checkout and the control API, records the orders `place_order` places
@@ -947,6 +950,122 @@ what the Admin API changed is dropped and the terminal says so; the subscription
 stay, as the app's setup of the shop). It turns store sync on (`AdminApi::sync_store`): see
 "Server wiring" under "Store sync". `lsf app webhook trigger` builds its payloads with
 `api::samples::ShopSamples` over the shop seeded from the store data.
+
+## The admin of an embedded app (`api::embedded`, `assets/admin`)
+
+An embedded app's front end runs App Bridge, Shopify's script (`cdn.shopify.com/shopifycloud/app-bridge.js`),
+which talks to Shopify's admin around the app's frame: it gets the session tokens from it, and
+the admin draws the title bar, the navigation, the save bar, toasts and the resource picker. lsf
+serves both halves, so that a developer previews the app offline:
+
+- **The admin**: `GET /admin/apps/<app>/<path>` (`<app>` the handle, or the client id). A page of
+  lsf's origin (`assets/admin/admin.html`, `admin.css`, `admin.js`): a top bar, the navigation
+  (the shop's name, sections of the admin that lsf does not have, the app and its items), the
+  app's title bar, and the app in an `<iframe>` at `oauth::launch_url` of `<path>`, minted when
+  the page is rendered: a new `hmac` and `id_token` on every load. `shop`, `user` and `locale` of
+  the query are the admin's; the others go to the app, the launch's own parameters dropped.
+- **App Bridge**: `GET /__lsf/admin/app-bridge.js` (`assets/admin/app-bridge.js`), a classic
+  script the app's page loads first, in place of Shopify's.
+
+Why these paths: `AppInstallation.launchUrl` and `App.launchUrl` already answer
+`https://<shop>/admin/apps/<handle>`, Shopify's `<shop>/admin/apps/<handle>` (`admin.shopify.com/store/<name>/apps/<handle>`
+today) has the app's path after it, and `/admin/*` is the Admin API's prefix that the server
+already routes to `AdminApi::handle` before the storefront: the links lsf writes now open a page,
+and an app path is a path of the admin's URL. `/__lsf/admin` itself stays the JSON control API.
+`GET /admin` and `/admin/apps` redirect to the app; `GET /admin/<other>` (where
+`shopify:admin/products` goes) is a page that says lsf has no such page, `404`. `/admin/api/*`
+and `/admin/oauth/*` are the Admin API's and OAuth's, as before.
+
+### The protocol
+
+The app's frame is on the app's origin, the admin on lsf's. They talk with `postMessage`, each
+side checking the other: the admin takes the messages of its frame's window
+(`event.source === iframe.contentWindow`) from the origin of the launch URL; App Bridge takes those
+of `window.parent` from the origin of its own `src`, the admin's (an admin on another host name,
+`localhost` for `127.0.0.1`, is told so in the console and in a banner). Each message is tagged
+(`lsf: "app-bridge"` from the frame, `lsf: "admin"` from the admin):
+
+| From the frame | What the admin does |
+|---|---|
+| `hello` (`apiKey`, `scriptOrigin`), posted to `*` every 200 ms for 10 s until welcomed: it says nothing secret | `welcome` to the app's origin: the shop, the locale, the client id, the user, the scopes. What the frame posts before it waits for it. |
+| `request` `{id, method, params}`: `idToken`, `resourcePicker`, `picker`, `leaveConfirmation` | `response` `{id, ok, value \| error}`. `idToken` is `POST /__lsf/admin/session-token` for the admin's shop and user. |
+| `title`, `nav`, `saveBar` (sent when they change: a `MutationObserver` of the page, the form events), `loading`, `toast`, `toast-hide`, `modal`, `history` (the app's path), `navigate` (`shopify:` links, `_top`, a reauthorization), `unsupported`, `unload` | Drawn, or followed: the admin's URL follows `history` with `replaceState` (the frame's own history is the browser's); `shopify:/admin/…` goes to lsf's page of it. |
+
+| From the admin | What App Bridge does |
+|---|---|
+| `event` `title.action` `{index}`, `navigate` `{path \| home}`, `saveBar.save`, `saveBar.discard`, `toast.action`, `toast.dismiss` | Clicks the page's element (a title bar button, a nav link, the save bar's buttons), submits or resets the `data-save-bar` forms, calls the toast's callbacks. |
+
+### App Bridge
+
+`app-bridge.js` defines `window.shopify` with every name of `@shopify/app-bridge-types` 0.7.4
+(whose build downloads `cdn.shopify.com/shopifycloud/app-bridge.d.ts`), and the behaviour
+of the CDN script 0.41.4 where shopify.dev leaves it open:
+
+- **Before Shopify's**: the CDN script's first statement is `if ("then" in (self.shopify?.ready || {})) return;`.
+  lsf's defines `shopify.ready` first, so a page that keeps AppProvider's tag runs on lsf's.
+  Loaded after Shopify's, lsf's leaves it and says so.
+- **Configuration** as the CDN script reads it, later wins: `sessionStorage["app-bridge-config"]`,
+  a `shopify.config` set before, the `data-*` and query of App Bridge's `<script>` tags (Shopify's
+  and lsf's, `/app-?bridge[/.-]/`) and `<script type="shopify/config">`, `<meta name="shopify-*">`,
+  the page's `shop`, `host`, `locale`. Read again at `DOMContentLoaded`, since lsf's script runs
+  before AppProvider's tag (which has `data-api-key`) is parsed.
+- **`fetch`**: the rule of the CDN script (`Ft`): the page's protocol and host or a subdomain
+  (the port is not compared), or `appOrigins`; the ID token unless `Authorization` is set,
+  `X-Requested-With`, `Accept-Language`; one retry on `X-Shopify-Retry-Invalid-Session-Request`;
+  `X-Shopify-API-Request-Failure-Reauthorize-Url` sends the admin there and never answers.
+- **Navigation** (the CDN script's click handler, `history` and `open` patches): `shopify:` links
+  (`/admin/*` only, else the same error), `app:` paths, `target="_top"`; while the save bar
+  shows, a link asks the admin first. A plain `<a>` the app's router does not take reloads the
+  frame without the session token: Shopify's breaks the same way, so lsf does not mend it, it
+  says so in the console. Without Polaris (offline), `s-link[href]` and its kin dispatch
+  `shopify:navigate` as Polaris does (`AppProvider` routes on it), and navigate when nothing read
+  the event's `href`.
+- **Outside a frame**, the page goes to lsf's admin (`/admin/apps/<apiKey>/<path>`), as Shopify's
+  goes to Shopify's, unless `auto-redirect` is disabled. **`?shopify-reload=`** (the bounce page
+  of Shopify's libraries) comes back with a new `id_token` in the URL; the CDN script fetches it
+  with the token in a header and writes the document instead.
+- **Elements**: `ui-modal`, `s-app-window`, `ui-save-bar` are custom elements with the methods
+  and events of the types; `ui-title-bar`, `ui-nav-menu`, `s-app-nav` are read, not drawn (a
+  style hides them and `s-page`'s title bar slots, as the CDN script's does).
+
+The parts the admin draws, in the admin page: toasts, the loading bar, the title bar, the nav
+items, the save bar (in place of the top bar, as Shopify's), the resource picker and the picker
+(`<dialog>`s), the confirmations (leave, discard). **Modals are drawn in the app's frame**, over
+the app, from a shadow root on the element (its children stay where the app put them, React
+keeps them, their handlers work); the admin dims what is around the frame. Shopify draws them
+over the whole admin, in a frame of its own whose document the app's frame fills; lsf's are as
+large as the app's frame. A modal's `src` is an `<iframe name="lsf-modal:<n>">` on the app's
+origin, whose page takes the opener's `shopify`.
+
+The resource picker reads `GET /__lsf/admin/resources`: one query of the shop
+(`products` with their `variants` and `media`, or `collections`) run with every scope and no cost
+limit (`graphql::prepare` and `execute`, not `graphql::run`), then written in the shape of the
+types, with the names App Bridge kept from the older Admin API (`images[].originalSrc`,
+`totalVariants`, `availablePublicationCount`, `inventoryManagement`, a variant's `weight`). The
+picker's search box, `query` and `filter` (`draft`, `archived`, `hidden`) are one search in
+Shopify's syntax; `selectionIds` are fetched by id (`id:`, `variant_id:`).
+
+### What it says goes wrong
+
+- Shopify's App Bridge in the frame: it posts `dispatch`, `getState`, `subscribe` to `*` before
+  it knows its admin (`source` is its config), which the admin recognizes, and says what to add.
+  Inside a frame it redirects nothing; it listens to Shopify's admin origins only (and
+  `localhost`), so its `idToken()` fails after a minute and its `fetch()` waits.
+- No `hello` 4 s after the frame loaded: the backend is down, the page failed (the library
+  answers `410` to a bot's user agent, `401` to a revoked token), the frame was refused (the
+  template's `Content-Security-Policy: frame-ancestors`), or the page loads no App Bridge.
+- A call of what lsf does not simulate: listed in a banner.
+
+### What is not simulated
+
+The admin itself (its pages, its search, its other apps); Polaris (`polaris-2.js` is Shopify's
+CDN's); `shopify.scanner`, `pos`, `intents` (`invoke`, `register`), `webVitals`, `support`,
+`reviews`, `scopes.request` and `revoke`, `app.extensions`, `shopifyQL`, `sidekick`, `tools`
+(they reject or warn with "lsf does not simulate shopify.<name>"); Direct API access
+(`fetch("shopify:admin/api/…")`); `extension:` links; the mobile and POS environments; modals
+over the whole admin; the admin's keyboard shortcuts; `?shopify-reload=` by `fetch` and
+`document.write`. `shopify.user()` has `accountAccess` `"Account owner"` or `"Full access"`,
+lsf's choice: shopify.dev's example says `"full"`, and the CDN script leaves it to the admin.
 
 ## Records
 
@@ -2314,4 +2433,5 @@ for the checkout.
 | `webhooks` | Topics, subscriptions and their registry, payloads (by family), signing, the delivery worker and its log, the `/__lsf/webhooks` endpoints, the sample records of `lsf app webhook trigger`. |
 | `outbox` | What lsf records instead of sending it to the outside world, in a memo of the shop (see "The outbox"). |
 | `throttle` | The cost bucket of each shop and app. |
-| `api` | One HTTP request in, one answer out: the Admin API endpoints, OAuth, and the `/__lsf/admin` and `/__lsf/webhooks` control endpoints. `api::sync`: store sync as a server runs it (the count of changes, the overlay made when asked). `api::simulate`: the clock, the outbox, and what buyers, banks and Shopify do. |
+| `api` | One HTTP request in, one answer out: the Admin API endpoints, OAuth, and the `/__lsf/admin` and `/__lsf/webhooks` control endpoints. `api::sync`: store sync as a server runs it (the count of changes, the overlay made when asked). `api::simulate`: the clock, the outbox, and what buyers, banks and Shopify do. `api::embedded`: the admin of an embedded app and its resource picker's list. |
+| `assets` | The files of the admin of an embedded app and lsf's App Bridge (`assets/admin/`), embedded in the binary. Their tests: `assets/tests/admin.test.mjs`, `app-bridge.test.mjs`. |

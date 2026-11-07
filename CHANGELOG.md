@@ -62,6 +62,21 @@ the same data every run.
 
   Tokens have the scopes of `shopify.app.toml`. The guide says what Shopify's libraries need to
   reach lsf.
+- **An admin to preview the embedded app in, with a local App Bridge.**
+  `http://127.0.0.1:9292/admin/apps/<handle>` shows the app in a frame, at a new launch URL on
+  every load, with the shop's name, the app's navigation and its title bar around it; `serve`
+  and `app dev` print its URL, and the home page links to it. The app's pages load lsf's App
+  Bridge (`/__lsf/admin/app-bridge.js`) before Shopify's, which then does nothing:
+  - `shopify.idToken()` and `fetch()` with the session token, as App Bridge v4 adds it;
+  - the title bar (`ui-title-bar`, `s-page`), the navigation (`s-app-nav`, `ui-nav-menu`), the
+    save bar (`ui-save-bar`, `data-save-bar` forms), toasts, the loading bar, `shopify.user()`;
+  - the resource picker, with the shop's products, variants and collections;
+  - modals (`ui-modal`, `s-app-window`), `shopify:admin/…` links.
+
+  What lsf does not simulate (the scanner, POS, Sidekick, …) rejects or warns and says so. The
+  admin says when the app runs Shopify's App Bridge instead. In the React Router template, three
+  lines behind `APP_BRIDGE_URL` switch to lsf's. [Preview the embedded
+  app](docs/admin.md#preview-the-embedded-app).
 - **Webhooks, signed as Shopify signs them.** The subscriptions of `shopify.app.toml` and those
   the backend makes with `webhookSubscriptionCreate` are delivered to the backend:
   - with Shopify's headers and HMAC;
