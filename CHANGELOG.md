@@ -220,13 +220,16 @@ the same data every run.
 - **`shopify.appMetafields` has the metafields an extension declares, of every resource.** As on
   Shopify, it holds the metafields of `[[extensions.metafields]]` (and of
   `[[extensions.targeting.metafields]]` at their target): those of the shop, of the products and
-  variants of the lines, of the customer logged in, of the company and location they buy for and
-  of the cart, each with its `target` (`shop`, `product`, `variant`, …) and the GID of the
-  resource, read from the store data and what the backend sets through the Admin API. An
-  `owner_type` keeps one resource. It held only the cart's, each one whether declared or not: an
-  extension now reads a metafield of the cart only if it declares it. The order status page of
-  the customer account reads them too (it had none), and `shopify.shop.id` is the id of the shop
-  of the store data
+  variants of the lines (and of the components of a bundle), of the customer logged in, of the
+  company and location they buy for and of the cart, each with its `target` (`shop`, `product`,
+  `variant`, …) and the GID of the resource, read from the store data and what the backend sets
+  through the Admin API. An `owner_type` keeps one resource. It held only the cart's, each one
+  whether declared or not: an extension now reads a metafield of the cart only if it declares it.
+  The order status page of the customer account reads them too (it had none), with the company
+  location the order was placed for and the values typed as its `AppMetafield` types them
+  (`false`, `2`). A namespace written `app--<id>--<name>` in the toml reads nothing, as on
+  Shopify, and the loader warns with the `$app:<name>` to write. `shopify.shop.id` is the id of
+  the shop of the store data
   ([#25](https://github.com/0xtlt/local-storefront/issues/25)).
 - **A code whose discount Function answers a candidate of 0 is applied, at 0.** A candidate of
   0 % (or a fixed 0.00), which a Function answers to accept a code before the gift it stands for
