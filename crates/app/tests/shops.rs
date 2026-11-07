@@ -172,6 +172,7 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             note: Some("Gift wrap"),
             attributes: &[("gift".to_string(), "yes".to_string())],
             payment: Some("Credit card"),
+            metafields: &[],
         },
     );
     assert_eq!(
@@ -256,6 +257,7 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             note: None,
             attributes: &[],
             payment: None,
+            metafields: &[],
         },
     );
     assert_ne!(again.id, order);
@@ -279,6 +281,7 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             note: None,
             attributes: &[],
             payment: None,
+            metafields: &[],
         },
     );
     assert_eq!(next.number, 1006);
@@ -348,6 +351,7 @@ fn an_order_placed_for_a_company_location_counts_in_its_counters() {
             note: None,
             attributes: &[],
             payment: None,
+            metafields: &[],
         },
     );
     let total = state.get(&order.id).unwrap()["totalPriceSet"]["shopMoney"]["amount"]
@@ -439,6 +443,7 @@ fn a_guest_order_with_a_customer_s_email_is_that_customer_s() {
             note: None,
             attributes: &[],
             payment: None,
+            metafields: &[],
         },
     );
     assert_eq!(state.get(&order.id).unwrap()["customer"], json!(customer));
@@ -463,6 +468,7 @@ fn a_guest_order_with_a_customer_s_email_is_that_customer_s() {
             note: None,
             attributes: &[],
             payment: None,
+            metafields: &[],
         },
     );
     assert_eq!(state.get(&guest.id).unwrap()["customer"], Value::Null);

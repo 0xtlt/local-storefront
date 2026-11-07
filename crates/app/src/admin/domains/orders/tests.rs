@@ -2148,6 +2148,7 @@ fn a_checkout_order_names_the_inventory_item_of_its_variant() {
             note: None,
             attributes: &[],
             payment: None,
+            metafields: &[],
         },
     );
     let answer = run(

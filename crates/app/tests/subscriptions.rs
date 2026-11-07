@@ -236,6 +236,7 @@ fn a_subscription_is_bought_billed_skipped_paused_changed_and_cancelled() {
             note: None,
             attributes: &[],
             payment: Some("Credit card"),
+            metafields: &[],
         })
         .unwrap();
     let delivered = receiver.expect(&[

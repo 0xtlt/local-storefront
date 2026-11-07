@@ -10,7 +10,9 @@ use std::time::Duration;
 use lsf_app::admin::api::{AdminApi, AdminOptions, HttpRequest, ThrottleSetting};
 use lsf_app::admin::domains::orders::PlacedOrder;
 use lsf_app::admin::webhooks::DeliveryOptions;
-use lsf_app::checkout::{Address, CheckoutResult, Cost, DeliveryGroup, DeliveryOption, ResultLine};
+use lsf_app::checkout::{
+    Address, CheckoutResult, Cost, DeliveryGroup, DeliveryOption, Metafield, ResultLine,
+};
 use serde_json::{Value, json};
 use support::receiver::Receiver;
 
@@ -66,6 +68,11 @@ fn place_order(api: &AdminApi) -> String {
 
 /// [`place_order`] as the order `number`; `None` when the Admin API did not record it.
 fn place_order_numbered(api: &AdminApi, number: u64) -> Option<String> {
+    place_order_with(api, number, &[])
+}
+
+/// [`place_order_numbered`] from a cart with `metafields`.
+fn place_order_with(api: &AdminApi, number: u64, metafields: &[Metafield]) -> Option<String> {
     let store = support::demo_store();
     let jane = store.customer_by_email("jane.doe@example.com").unwrap();
     let mug = store.product_by_handle("ceramic-mug").unwrap();
@@ -135,6 +142,7 @@ fn place_order_numbered(api: &AdminApi, number: u64) -> Option<String> {
         note: None,
         attributes: &[],
         payment: Some("Credit card"),
+        metafields,
     })
     .map(|recorded| recorded.id)
 }
@@ -297,6 +305,136 @@ fn a_checkout_order_is_delivered_then_fulfilled_refunded_and_edited() {
     assert_eq!(delivered[1].1["line_items"].as_array().unwrap().len(), 2);
 }
 
+/// Creates a definition of `owner_type`, `cartToOrderCopyable` as `copyable` says.
+fn define(
+    api: &AdminApi,
+    owner_type: &str,
+    namespace: &str,
+    key: &str,
+    kind: &str,
+    copyable: bool,
+) {
+    let answer = graphql(
+        api,
+        "mutation($definition: MetafieldDefinitionInput!) { metafieldDefinitionCreate(definition: $definition) { createdDefinition { id } userErrors { message } } }",
+        json!({"definition": {
+            "name": key, "namespace": namespace, "key": key, "type": kind, "ownerType": owner_type,
+            "capabilities": {"cartToOrderCopyable": {"enabled": copyable}},
+            "validations": if kind == "number_integer" { json!([{"name": "max", "value": "5"}]) } else { json!([]) },
+        }}),
+    );
+    assert_eq!(
+        answer["data"]["metafieldDefinitionCreate"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+}
+
+fn cart_metafield(namespace: &str, key: &str, kind: &str, value: &str) -> Metafield {
+    Metafield {
+        namespace: namespace.into(),
+        key: key.into(),
+        kind: kind.into(),
+        value: value.into(),
+    }
+}
+
+#[test]
+fn the_cart_metafields_an_order_definition_copies_are_the_orders() {
+    let shop = api();
+    // Copied: the app's namespace, as the extension writes it, and a merchant's one.
+    define(
+        &shop,
+        "ORDER",
+        "$app:gift",
+        "message",
+        "single_line_text_field",
+        true,
+    );
+    define(&shop, "ORDER", "custom", "count", "number_integer", true);
+    define(&shop, "ORDER", "custom", "too_many", "number_integer", true);
+    // Not copied: the capability is off, the definition is of another owner type, there is no
+    // definition.
+    define(&shop, "ORDER", "custom", "wrap", "boolean", false);
+    define(
+        &shop,
+        "PRODUCT",
+        "custom",
+        "engraving",
+        "single_line_text_field",
+        true,
+    );
+    let cart = [
+        cart_metafield(
+            "$app:gift",
+            "message",
+            "single_line_text_field",
+            "Happy birthday",
+        ),
+        // The cart's type is not the definition's: the order's is the definition's.
+        cart_metafield("custom", "count", "single_line_text_field", "3"),
+        // Over the definition's `max`.
+        cart_metafield("custom", "too_many", "number_integer", "9"),
+        cart_metafield("custom", "wrap", "boolean", "true"),
+        cart_metafield("custom", "engraving", "single_line_text_field", "J.D."),
+        cart_metafield(
+            "custom",
+            "undefined",
+            "single_line_text_field",
+            "kept on the cart",
+        ),
+    ];
+    let order = place_order_with(&shop, 1004, &cart).expect("the order is recorded");
+    let answer = graphql(
+        &shop,
+        r#"query($id: ID!) { order(id: $id) {
+            message: metafield(namespace: "$app:gift", key: "message") { namespace value type definition { key } }
+            count: metafield(namespace: "custom", key: "count") { value type }
+            metafields(first: 10) { nodes { namespace key } }
+        } }"#,
+        json!({"id": order}),
+    );
+    let order = &answer["data"]["order"];
+    let message = &order["message"];
+    assert!(
+        message["namespace"].as_str().is_some_and(
+            |namespace| namespace.starts_with("app--") && namespace.ends_with("--gift")
+        ),
+        "{answer}"
+    );
+    assert_eq!(message["value"], "Happy birthday", "{answer}");
+    assert_eq!(message["type"], "single_line_text_field");
+    assert_eq!(
+        message["definition"]["key"], "message",
+        "linked to its definition"
+    );
+    assert_eq!(
+        order["count"],
+        json!({"value": "3", "type": "number_integer"})
+    );
+    let keys: Vec<&str> = order["metafields"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|node| node["key"].as_str())
+        .collect();
+    assert_eq!(keys, ["message", "count"], "{answer}");
+
+    // Without a definition, nothing is copied.
+    let bare = api();
+    let order = place_order_with(&bare, 1004, &cart).expect("the order is recorded");
+    let answer = graphql(
+        &bare,
+        "query($id: ID!) { order(id: $id) { metafields(first: 10) { nodes { key } } } }",
+        json!({"id": order}),
+    );
+    assert_eq!(
+        answer["data"]["order"]["metafields"]["nodes"],
+        json!([]),
+        "{answer}"
+    );
+}
+
 #[test]
 fn a_checkout_order_keeps_its_discounts_and_its_gateway() {
     use lsf_app::checkout::{
@@ -410,6 +548,7 @@ fn a_checkout_order_keeps_its_discounts_and_its_gateway() {
             note: None,
             attributes: &[],
             payment: Some("Credit card"),
+            metafields: &[],
         })
         .expect("the order is recorded")
         .id;

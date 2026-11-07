@@ -986,6 +986,9 @@ pub struct PlacedOrder<'a> {
     pub attributes: &'a [(String, String)],
     /// The name of the payment method chosen: the gateway of the transaction.
     pub payment: Option<&'a str>,
+    /// The metafields of the cart (those the checkout UI extensions wrote): the ones an ORDER
+    /// definition copies become the order's ([`copy_cart_metafields`]).
+    pub metafields: &'a [crate::checkout::Metafield],
 }
 
 /// What the shop recorded of an order placed in the local checkout: its GID and its number,
@@ -1155,6 +1158,7 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
     };
     let order = insert_order(state, &draft);
     record_discounts(state, &order, result);
+    copy_cart_metafields(state, &order, placed.metafields);
     let location = placed
         .company_location_id
         .map(|id| gid("CompanyLocation", id))
@@ -1207,6 +1211,52 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
         payments::vault_checkout_card(state, &order, &name);
     }
     RecordedOrder { id: order, number }
+}
+
+/// Copies the metafields of a cart onto the order placed from it, as Shopify does from 2026-04
+/// ("Use metafield capabilities" on shopify.dev): a cart metafield is copied when an ORDER
+/// definition has its namespace and key, with `cartToOrderCopyable` enabled; without such a
+/// definition, nothing is. The definition comes from `metafieldDefinitionCreate`, or from
+/// `[order.metafields…]` of `shopify.app.toml` (`content::metafield_definitions::seed_declared`).
+/// The app's namespace (`$app`, `$app:<name>`, as the extensions write it) is its reserved one
+/// (`app--<app id>`). The order's metafield has the definition's type; a value its type or its
+/// validations refuse is not copied (shopify.dev does not say what Shopify does with one).
+fn copy_cart_metafields(
+    state: &mut ShopState,
+    order: &str,
+    metafields: &[crate::checkout::Metafield],
+) {
+    use super::content::metafields::{
+        definition_kind, find_definition, set, shop_currency, stored_namespace, validations_of,
+    };
+    use super::content::types::{Context, check};
+    for metafield in metafields {
+        let namespace = stored_namespace(state, Some(&metafield.namespace));
+        let Some(definition) = find_definition(state, "ORDER", &namespace, &metafield.key) else {
+            continue;
+        };
+        let copyable = state
+            .get(&definition)
+            .and_then(|record| record.get("capabilities"))
+            .and_then(|capabilities| capabilities.get("cartToOrderCopyable"))
+            .and_then(|capability| capability.get("enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let Some(kind) = definition_kind(state, &definition).filter(|_| copyable) else {
+            continue;
+        };
+        let validations = validations_of(state, Some(&definition));
+        let currency = shop_currency(state);
+        let cx = Context {
+            state,
+            currency: &currency,
+            validations: &validations,
+        };
+        let Ok(checked) = check(&kind, &metafield.value, &cx) else {
+            continue;
+        };
+        set(state, order, &namespace, &metafield.key, &kind, &checked);
+    }
 }
 
 /// The discounts of a checkout as its order keeps them: a `DiscountApplication` for each, in the

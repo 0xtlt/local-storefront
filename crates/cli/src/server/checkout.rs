@@ -1886,6 +1886,7 @@ fn record_in_admin(
             note: Some(placed.note.as_str()).filter(|note| !note.is_empty()),
             attributes: &placed.attributes,
             payment: payment_name(checkout, result),
+            metafields: &checkout.metafields,
         })
 }
 
