@@ -1007,7 +1007,9 @@ shopify.appMetafields.value;
 On the order status page of the customer account, the products and variants are those of the
 order, the company location is the one the order was placed for (whichever the buyer buys for
 now; an order of the store data records none, and reads the customer's first location), and the
-cart is the one of the order placed in the local checkout.
+cart is the one of the order placed in the local checkout. As in Shopify's types, a `value` there
+is typed by its `valueType` (`true`, `2`, `1.5`; a JSON value stays serialized), where the
+checkout's is the text whatever the type (`"true"`).
 
 ## Run a Function without a server
 

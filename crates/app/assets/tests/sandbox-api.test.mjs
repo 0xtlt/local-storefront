@@ -790,6 +790,46 @@ test('an order status target reads the metafields it declares of the shop, the p
   assert.equal(plain(stored.appMetafields.value).some((each) => each.target.type === 'cart'), false);
 });
 
+test('the order status page types the values of appMetafields, the checkout keeps their text', () => {
+  // Shopify's `AppMetafield`: in the customer account, `value` is a boolean, a number or text by
+  // its `valueType`; in the checkout, it is the text whatever the type.
+  const owned = [
+    entry('shop', gid('Shop', 9), 'custom', 'closed', 'boolean', 'false'),
+    entry('shop', gid('Shop', 9), 'custom', 'open', 'boolean', 'true'),
+    entry('shop', gid('Shop', 9), 'custom', 'count', 'number_integer', '2'),
+    entry('shop', gid('Shop', 9), 'custom', 'ratio', 'number_decimal', '1.50'),
+    entry('shop', gid('Shop', 9), 'custom', 'config', 'json', '{"a":1}'),
+    entry('shop', gid('Shop', 9), 'custom', 'title', 'single_line_text_field', 'Hello'),
+  ];
+  const placed = { ...ORDER, token: 'c1-abc', metafields: [{ namespace: '$app:gift', key: 'wrapped', type: 'boolean', value: 'false' }] };
+  const metafields = ['closed', 'open', 'count', 'ratio', 'config', 'title'].map((key) => ({ namespace: 'custom', key }))
+    .concat([{ namespace: '$app:gift', key: 'wrapped' }]);
+  const target = 'customer-account.order-status.block.render';
+  const values = (shopify) => plain(shopify.appMetafields.value).map(({ metafield }) => [metafield.key, metafield.value, metafield.valueType]);
+  const { shopify } = account(target, { order: placed, ext: { metafields }, appMetafields: owned });
+  assert.deepEqual(values(shopify), [
+    ['closed', false, 'boolean'],
+    ['open', true, 'boolean'],
+    ['count', 2, 'integer'],
+    ['ratio', 1.5, 'float'],
+    ['config', '{"a":1}', 'json_string'],
+    ['title', 'Hello', 'string'],
+    ['wrapped', false, 'boolean'],
+  ]);
+  assert.equal(plain(shopify.appMetafields.value)[0].metafield.type, 'boolean', 'the type of the metafield stays');
+
+  // The checkout keeps the text.
+  const checkout = runtime({ state: { ...checkoutState(), appMetafields: owned }, ext: { metafields } }).shopify;
+  assert.deepEqual(values(checkout), [
+    ['closed', 'false', 'boolean'],
+    ['open', 'true', 'boolean'],
+    ['count', '2', 'integer'],
+    ['ratio', '1.50', 'float'],
+    ['config', '{"a":1}', 'json_string'],
+    ['title', 'Hello', 'string'],
+  ]);
+});
+
 test('what a slot of the customer account is for comes with the target', () => {
   const line = account('customer-account.order-status.cart-line-item.render-after', { ctx: { lineId: 'gid://shopify/CartLine/2' } }).shopify;
   assert.equal(line.target.value.id, 'gid://shopify/CartLine/2');
