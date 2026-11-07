@@ -8526,6 +8526,92 @@ fn app_metafields_have_the_products_of_the_components_of_a_bundle() {
 }
 
 #[test]
+fn app_metafields_have_what_the_backend_sets_through_the_admin_api() {
+    // The store data writes a metafield of the app's namespace on the shop, `$app`; the backend
+    // sets another key of it through the Admin API (which keeps it as `app--<id>`, and the store
+    // gives back as `$app`), and one of the tee. The extension declares the backend's key: it
+    // reads the shop's and the product's, next to the data's own.
+    let data =
+        std::env::temp_dir().join(format!("lsf-metafields-admin-data-{}", std::process::id()));
+    std::fs::remove_dir_all(&data).ok();
+    crate::checkout::write_demo_scenarios(&data, &[]);
+    let store_file = data.join("store.json");
+    let mut store_json: Json =
+        serde_json::from_str(&std::fs::read_to_string(&store_file).unwrap()).unwrap();
+    store_json["shop"]["metafields"]["$app"] = json!({"note": "from the store data"});
+    std::fs::write(&store_file, store_json.to_string()).unwrap();
+    let app = app_with_metafield_reader("admin-api");
+    let state = checkout_server_with(
+        app.clone(),
+        &[],
+        true,
+        Some(&data),
+        Some(Default::default()),
+    );
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "write_products"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let shop = admin_query(&state, "{ shop { id } }")["data"]["shop"]["id"].clone();
+    let tee = admin_query(
+        &state,
+        r#"{ productVariants(first: 1, query: "sku:TEE-BLK-M") { nodes { product { id } } } }"#,
+    )["data"]["productVariants"]["nodes"][0]["product"]["id"]
+        .clone();
+    let set = admin_query(
+        &state,
+        &format!(
+            r#"mutation {{ metafieldsSet(metafields: [
+                {{ownerId: {shop}, namespace: "$app", key: "gift-codes", type: "json", value: "[\"ADMIN-1\"]"}},
+                {{ownerId: {tee}, namespace: "$app", key: "gift-codes", type: "json", value: "[\"TEE-1\"]"}}
+            ]) {{ metafields {{ namespace }} userErrors {{ message }} }} }}"#
+        ),
+    );
+    let set = &set["data"]["metafieldsSet"];
+    assert_eq!(set["userErrors"], json!([]), "{set}");
+    assert!(
+        set["metafields"][0]["namespace"]
+            .as_str()
+            .unwrap()
+            .starts_with("app--"),
+        "{set}"
+    );
+
+    let session = "co-app-metafields-admin";
+    let path = start_checkout(
+        &state,
+        session,
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(
+        app_metafields_of(&json, "shop"),
+        [(
+            shop.as_str().unwrap().to_string(),
+            "$app.gift-codes".to_string(),
+            r#"["ADMIN-1"]"#.to_string()
+        )]
+    );
+    assert_eq!(
+        app_metafields_of(&json, "product")
+            .into_iter()
+            .filter(|(_, name, _)| name == "$app.gift-codes")
+            .collect::<Vec<_>>(),
+        [(
+            tee.as_str().unwrap().to_string(),
+            "$app.gift-codes".to_string(),
+            r#"["TEE-1"]"#.to_string()
+        )]
+    );
+    std::fs::remove_dir_all(&app).ok();
+    std::fs::remove_dir_all(&data).ok();
+}
+
+#[test]
 fn the_order_status_page_reads_the_location_the_order_was_placed_for() {
     let app = app_with_metafield_reader("order-location");
     let state = checkout_server_of(app.clone(), &[], false);
