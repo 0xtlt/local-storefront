@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>{{PAGE_TITLE}}</title>
+<link rel="stylesheet" href="{{ASSETS}}/admin.css">
+<script type="application/json" id="lsf-admin-config">{{CONFIG}}</script>
+<script type="module" src="{{ASSETS}}/admin.js"></script>
+</head>
+<body>
+<div class="lsf-admin">
+  <div class="lsf-progress" hidden></div>
+  <header class="lsf-topbar">
+    <div class="lsf-topbar-main">
+      <a class="lsf-brand" href="{{APP_HOME}}"><span class="lsf-mark">lsf</span><span class="lsf-brand-name">Local admin</span></a>
+      <span class="lsf-topbar-shop">{{SHOP_DOMAIN}}</span>
+      <span class="lsf-topbar-user">{{USER}}</span>
+    </div>
+    <div class="lsf-savebar" hidden>
+      <span class="lsf-savebar-message">Unsaved changes</span>
+      <span class="lsf-savebar-actions">
+        <button class="lsf-button lsf-savebar-discard" type="button">Discard</button>
+        <button class="lsf-button lsf-button-primary lsf-savebar-save" type="button">Save</button>
+      </span>
+    </div>
+  </header>
+  <nav class="lsf-nav" aria-label="Admin">
+    <div class="lsf-nav-shop">{{SHOP_NAME}}</div>
+    <ul class="lsf-nav-sections">{{SECTIONS}}</ul>
+    <div class="lsf-nav-heading">Apps</div>
+    <ul class="lsf-nav-apps">
+      <li>
+        <a class="lsf-nav-app" href="{{APP_HOME}}"><span class="lsf-app-icon">{{APP_INITIAL}}</span><span>{{APP_NAME}}</span></a>
+        <ul class="lsf-nav-items"></ul>
+      </li>
+    </ul>
+  </nav>
+  <main class="lsf-main">
+    <div class="lsf-titlebar">
+      <span class="lsf-titlebar-breadcrumb"></span>
+      <h1 class="lsf-titlebar-title">{{TITLE}}</h1>
+      <span class="lsf-titlebar-accessory"></span>
+      <span class="lsf-titlebar-actions"></span>
+    </div>
+    <div class="lsf-banners"></div>
+    <div class="lsf-content">{{MAIN}}</div>
+  </main>
+  <div class="lsf-dim" hidden></div>
+  <div class="lsf-toasts" role="status" aria-live="polite"></div>
+</div>
+</body>
+</html>

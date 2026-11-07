@@ -153,6 +153,9 @@ export class FakeElement extends Node {
   getAttribute(name) {
     return this.attributes.get(name.toLowerCase()) ?? null;
   }
+  getAttributeNames() {
+    return [...this.attributes.keys()];
+  }
   hasAttribute(name) {
     return this.attributes.has(name.toLowerCase());
   }
@@ -181,6 +184,7 @@ export class FakeElement extends Node {
         this.setAttribute('class', (on ? [...new Set([...names, name])] : names.filter((entry) => entry !== name)).join(' '));
       },
       contains: (name) => this.className.split(/\s+/).includes(name),
+      remove: (name) => this.setAttribute('class', this.className.split(/\s+/).filter((entry) => entry && entry !== name).join(' ')),
     };
   }
   get id() {

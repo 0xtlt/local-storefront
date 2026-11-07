@@ -7,6 +7,7 @@
 mod admin;
 mod app;
 mod audit;
+mod embedded;
 pub mod samples;
 mod simulate;
 mod subscriptions;

@@ -6,6 +6,7 @@
 //! The design, and what each module owns: `crates/app/docs/admin/design.md`.
 
 pub mod api;
+pub mod assets;
 pub mod auth;
 pub mod domains;
 pub mod graphql;

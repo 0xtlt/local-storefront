@@ -367,6 +367,56 @@ impl AdminApi {
         &self.auth.client_id
     }
 
+    /// The app of `--app`, when the server has one.
+    pub fn app(&self) -> Option<&App> {
+        self.app.as_ref()
+    }
+
+    /// Where the admin opens the app: `--app-url` on the path of `application_url`, else
+    /// `application_url`; `None` when neither is known.
+    pub fn app_url(&self) -> Option<String> {
+        self.auth.app_url()
+    }
+
+    /// Whether lsf has the shop `domain`.
+    pub fn has_shop(&self, domain: &str) -> bool {
+        self.shop(domain).is_some()
+    }
+
+    /// The locale the admin of `shop` opens the app with: its primary locale.
+    pub fn admin_locale(&self, shop: &str) -> String {
+        oauth::Shops::locale(&ShopNames(self), shop)
+    }
+
+    /// The user `id` of `shop`, `None` when it has no such user.
+    pub fn admin_user(
+        &self,
+        shop: &str,
+        id: u64,
+    ) -> Option<crate::admin::auth::tokens::AssociatedUser> {
+        oauth::Shops::user(&ShopNames(self), shop, id)
+    }
+
+    /// The scopes the app is installed with on `shop`; `None` when it is not installed there.
+    pub fn installed_scopes(&self, shop: &str) -> Option<Vec<String>> {
+        lock(&self.tokens)
+            .installed_scopes(shop, &self.auth.client_id)
+            .map(<[String]>::to_vec)
+    }
+
+    /// The URL the admin opens the app at for `user` of `shop`, at `path` of the app, with a new
+    /// session token: [`oauth::launch_url`]. `None` without an app URL.
+    pub fn launch_url(&self, shop: &str, path: &str, user: u64, locale: &str) -> Option<String> {
+        let names = ShopNames(self);
+        let cx = oauth::Context {
+            app: &self.auth,
+            shops: &names,
+            now: Utc::now(),
+        };
+        let mut tokens = lock(&self.tokens);
+        oauth::launch_url(&cx, &mut tokens, shop, path, user, locale)
+    }
+
     /// The token the app is installed with on `shop`: [`crate::admin::auth::default_token`].
     pub fn token(&self, shop: &str) -> String {
         crate::admin::auth::default_token(shop, &self.auth.client_id)
@@ -714,6 +764,7 @@ impl AdminApi {
     /// | `/admin/api/<version>/graphql.json` | the GraphQL Admin API of a version it serves; one Shopify no longer serves falls forward; another is a `404` |
     /// | `/admin/api/<version>/<other>.json` | `404`: the REST Admin API is not served |
     /// | `/admin/oauth/*`, `/__lsf/admin/session-token`, `/__lsf/admin/launch` | [`oauth::handle`] |
+    /// | `/admin`, `/admin/apps/<app>/*` and the other pages of `/admin`, `/__lsf/admin/app-bridge.js`, `/__lsf/admin/assets/*`, `/__lsf/admin/resources` | the admin an embedded app is previewed in (`embedded`) |
     /// | `/__lsf/admin`, `/__lsf/admin/shops`, `/__lsf/admin/install`, `/__lsf/admin/uninstall` | the control endpoints |
     /// | `/__lsf/webhooks`, `/__lsf/webhooks/trigger` | [`Webhooks::handle`] |
     pub fn handle(&self, request: &HttpRequest) -> Option<HttpResponse> {
@@ -782,6 +833,9 @@ impl AdminApi {
                 }
             }
             return response;
+        }
+        if let Some(response) = super::embedded::handle(self, request) {
+            return Some(response);
         }
         let trimmed = path.trim_end_matches('/');
         if trimmed == "/__lsf/admin" || trimmed.starts_with("/__lsf/admin/") {
