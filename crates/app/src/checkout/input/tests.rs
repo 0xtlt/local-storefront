@@ -1132,6 +1132,34 @@ fn the_reserved_app_namespace_has_three_spellings() {
 }
 
 #[test]
+fn a_key_of_the_store_data_is_found_under_any_spelling_of_the_app_namespace() {
+    // The data writes the app's namespace both ways: each key is under one of them.
+    let mut metafields = lsf_core::store::Metafields::new();
+    for (namespace, key, value) in [
+        ("$app:config", "mode", "strict"),
+        ("app--4242--config", "limit", "3"),
+    ] {
+        metafields.entry(namespace.to_string()).or_default().insert(
+            key.to_string(),
+            StoreMetafield {
+                kind: "single_line_text_field".to_string(),
+                value: json!(value),
+            },
+        );
+    }
+    for namespace in ["$app:config", "app--4242--config"] {
+        for (key, value) in [("mode", "strict"), ("limit", "3")] {
+            assert_eq!(
+                store_metafield(&metafields, namespace, key),
+                Some(("single_line_text_field".to_string(), value.to_string())),
+                "{namespace}.{key}"
+            );
+        }
+        assert_eq!(store_metafield(&metafields, namespace, "nope"), None);
+    }
+}
+
+#[test]
 fn metafield_json_values_follow_the_type() {
     let mut f = Fixture::new();
     for (key, kind, value) in [
