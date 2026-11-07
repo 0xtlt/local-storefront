@@ -31,8 +31,9 @@ pub struct AppMetafieldTarget {
     pub id: String,
 }
 
-/// The `target.type` of the entries a declaration's `owner_type` names.
-fn target_type(owner_type: &str) -> Option<&'static str> {
+/// The `target.type` of the entries a declaration's `owner_type` names. The page reads it from
+/// each declaration (`targetType` in the state's `extensions`), not from a copy of this list.
+pub fn target_type(owner_type: &str) -> Option<&'static str> {
     Some(match owner_type {
         "CART" => "cart",
         "COMPANY" => "company",
@@ -95,6 +96,11 @@ pub fn app_metafields(
             if owner.is_some_and(|owner| target_type(owner) != Some(kind)) {
                 continue;
             }
+            // The app's namespace as the admin writes it (`app--<id>--<name>`) reads nothing on
+            // Shopify, as in the page (the loader warns about it).
+            if canonical_namespace(&declaration.namespace) != declaration.namespace {
+                continue;
+            }
             let Some((type_name, value)) =
                 store_metafield(metafields, &declaration.namespace, &declaration.key)
             else {
@@ -106,7 +112,7 @@ pub fn app_metafields(
                     id: id.clone(),
                 },
                 metafield: Metafield {
-                    namespace: canonical_namespace(&declaration.namespace),
+                    namespace: declaration.namespace.clone(),
                     key: declaration.key.clone(),
                     kind: type_name,
                     value,
@@ -218,6 +224,10 @@ mod tests {
         );
         // The shop's other metafields (the demo's `custom.announcement`) are not declared.
         assert!(app_metafields(&store, &[], None, None, &[]).is_empty());
+        // A declaration that writes the app's namespace as the admin does reads nothing, as on
+        // Shopify (the loader warns about it).
+        let admin_spelling = declaration("app--4242--config", "mode", None);
+        assert!(app_metafields(&store, &[&admin_spelling], None, None, &[]).is_empty());
     }
 
     #[test]

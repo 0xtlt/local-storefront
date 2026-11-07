@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use lsf_app::checkout::app_metafields::app_metafields;
+use lsf_app::checkout::app_metafields::{app_metafields, target_type};
 use lsf_app::checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
 use lsf_app::checkout::{
     Address, BuyerJourneyStep, CheckoutResult, CheckoutState, Metafield, ResultLine,
@@ -775,7 +775,7 @@ fn compute(
     );
     object.insert("metafields".into(), json!(checkout.metafields));
     // What the extensions read as `appMetafields` besides the metafields of the cart.
-    let variants: Vec<u64> = result.lines.iter().map(|line| line.variant_id).collect();
+    let variants = line_variants(&result.lines);
     object.insert(
         "appMetafields".into(),
         app_metafields_json(
@@ -913,6 +913,15 @@ pub(super) fn localization_json(
     })
 }
 
+/// The variants of `lines`, and of the components of their bundles (a line a cart transform
+/// merged or expanded), whose products and variants `appMetafields` reads.
+pub(super) fn line_variants(lines: &[ResultLine]) -> Vec<u64> {
+    lines
+        .iter()
+        .flat_map(|line| std::iter::once(line.variant_id).chain(line_variants(&line.components)))
+        .collect()
+}
+
 /// The metafields the selected extensions declare, of the shop, of the products and variants
 /// in `variants`, of the customer and of the company and location they buy for. The frame of
 /// each extension keeps the ones it declares for its target, and adds the cart's
@@ -970,6 +979,9 @@ pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
                         let mut entry = json!({"namespace": declared.namespace, "key": declared.key});
                         if let Some(owner_type) = &declared.owner_type {
                             entry["ownerType"] = json!(owner_type);
+                            // The `target.type` of the entries it reads, which the page
+                            // compares (null for an `owner_type` that names no resource).
+                            entry["targetType"] = json!(target_type(owner_type));
                         }
                         // A declaration of `[[extensions.targeting.metafields]]`.
                         if let Some(target) = &declared.target {

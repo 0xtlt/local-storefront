@@ -246,7 +246,7 @@ Cart lines, note and attributes live in the session cart (the same one the theme
   "paymentMethods": […], "selectedPayment": "card" | null, "errors": […], "cost": {…}, "runs": […],
   "extensions": [{"handle": "…", "apiVersion": "2026-10", "script": "/__lsf/extensions/<handle>/<handle>.js",
                   "targets": ["purchase.checkout.block.render", …], "capabilities": {…},
-                  "settings": {…}, "metafields": [{"namespace": "…", "key": "…", "ownerType": "CART"},
+                  "settings": {…}, "metafields": [{"namespace": "…", "key": "…", "ownerType": "CART", "targetType": "cart"},
                                                    {"namespace": "…", "key": "…", "target": "purchase.checkout.block.render"}]}],
   "diagnostics": ["…"]   // app problems: missing builds, unknown targets
 }

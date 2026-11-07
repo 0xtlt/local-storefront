@@ -110,10 +110,9 @@
       (order(s).discounts || []).filter((entry) => entry.class === 'ORDER').map(map.allocation));
     signalProperty(api, 'appliedGiftCards', () => []);
     // Those of the order's cart are the metafields of the order placed in the local checkout.
-    signalProperty(api, 'appMetafields', (s) => {
-      const cart = (order(s).metafields || []).map((m) => map.mapMetafield(m, order(s).token));
-      return map.declaredMetafields(s.appMetafields, cart, init.ext.metafields, target);
-    });
+    // The customer account's `AppMetafield` types the values (`typed`), the checkout's does not.
+    signalProperty(api, 'appMetafields', (s) =>
+      map.declaredMetafields(s.appMetafields, { metafields: order(s).metafields, token: order(s).token }, init.ext.metafields, target, true));
     signalProperty(api, 'checkoutToken', () => undefined);
     signalProperty(api, 'checkoutSettings', () => ({ orderSubmission: 'ORDER', shippingAddress: { isEditable: false } }));
     signalProperty(api, 'shippingAddress', (s) => map.mapAddress(order(s).shippingAddress));

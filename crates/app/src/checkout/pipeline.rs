@@ -1525,7 +1525,9 @@ impl<'a> Pipeline<'a> {
     /// Shopify applies one shipping discount per order, and when discounts cannot combine, the
     /// best one for the customer's cart
     /// (https://help.shopify.com/en/manual/discounts/discount-combinations). The best is the one
-    /// that takes the most off the delivery option the buyer selected, then off all the options.
+    /// that takes the most off the delivery option the buyer selected; between those that take
+    /// as much, one of 0 that applies to that option, then the one that takes the most off all
+    /// the options.
     /// A tie goes to the discount that comes first by Function, title, message and code, not by
     /// its place in the configuration, so that the order of the discounts changes nothing.
     /// The others are not applied: they are in `skipped_discounts`, with why.
@@ -1534,23 +1536,26 @@ impl<'a> Pipeline<'a> {
     /// would take; the choice is made here, on the delivery groups the customizations left.
     /// All of them are compared on the same groups: only the winner is applied.
     fn apply_best_shipping(&mut self, contenders: Vec<Contender>) {
-        let mut offers: Vec<(Contender, (Cents, Cents))> = contenders
+        // What each one takes off the selected option, whether it applies there at 0 (a value of
+        // 0 on the option the buyer selected), and what it takes off all the options.
+        let mut offers: Vec<(Contender, (Cents, bool, Cents))> = contenders
             .into_iter()
             .map(|contender| {
-                let gain = shipping_gain(&self.groups, &contender.1);
-                (contender, gain)
+                let (selected, all) = shipping_gain(&self.groups, &contender.1);
+                let zero = applies_at_zero(&self.groups, &contender.1);
+                (contender, (selected, zero, all))
             })
             .collect();
         // One that takes nothing off is no offer, unless its value is 0: it then applies at 0,
         // as a product or order discount of 0 does.
-        offers.retain(|((_, candidates), gain)| {
-            *gain != (0, 0) || applies_at_zero(&self.groups, candidates)
-        });
+        offers.retain(|(_, rank)| *rank != (0, false, 0));
         // The first of the best: stable, so that discounts that tell nothing apart keep the
-        // order of the configuration.
-        offers.sort_by_cached_key(|((context, candidates), gain)| {
+        // order of the configuration. What it takes off the selected option comes first; then
+        // one of 0 that applies there beats one that only cuts options the buyer did not
+        // select, which would apply nothing.
+        offers.sort_by_cached_key(|((context, candidates), rank)| {
             (
-                std::cmp::Reverse(*gain),
+                std::cmp::Reverse(*rank),
                 context.function.to_string(),
                 context.title.to_string(),
                 shipping_name(context, candidates),
@@ -1562,25 +1567,30 @@ impl<'a> Pipeline<'a> {
         };
         let winner = shipping_name(&context, &candidates).0;
         self.apply_shipping(&context, candidates);
-        for ((context, candidates), gain) in offers {
+        for ((context, candidates), rank) in offers {
             let (title, code) = shipping_name(&context, &candidates);
-            let reason = if gain == best {
+            let reason = if rank == best {
                 format!(
                     "only one shipping discount applies per order: \"{winner}\" takes as much off the shipping ({}) and comes first",
                     money_text(best.0, &self.currency)
+                )
+            } else if rank.0 == 0 && best.0 == 0 && best.1 && !rank.1 {
+                format!(
+                    "only one shipping discount applies per order: \"{winner}\" applies to the delivery option the buyer selected, at {}, and this one takes nothing off it",
+                    money_text(0, &self.currency)
                 )
             } else {
                 format!(
                     "only one shipping discount applies per order, the best one: \"{winner}\" takes {} off the shipping, this one {}",
                     money_text(best.0, &self.currency),
-                    money_text(gain.0, &self.currency)
+                    money_text(rank.0, &self.currency)
                 )
             };
             self.skipped_discounts.push(SkippedDiscount {
                 title,
                 code: code.filter(|code| !code.is_empty()),
                 class: DiscountClass::Shipping,
-                amount: gain.0,
+                amount: rank.0,
                 function: context.function.to_string(),
                 reason,
             });

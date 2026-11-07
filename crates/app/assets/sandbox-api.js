@@ -222,52 +222,47 @@
 
   const METAFIELD_TYPES = { number_integer: 'integer', number_decimal: 'float', boolean: 'boolean', json: 'json_string' };
 
-  /** An entry of `appMetafields`: the resource (`target`) and its metafield. */
-  function appMetafield(target, metafield) {
+  /**
+   * An entry of `appMetafields`: the resource (`target`) and its metafield. The checkout's
+   * `AppMetafield` has the text of the value whatever its type; with `typed`, the value is the
+   * one the customer account's has: a boolean for `boolean`, a number for `integer` and `float`,
+   * the text otherwise (a JSON value stays serialized).
+   */
+  function appMetafield(target, metafield, typed) {
+    const valueType = METAFIELD_TYPES[metafield.type] || 'string';
+    let value = metafield.value;
+    if (typed && valueType === 'boolean') {
+      value = value === true || value === 'true';
+    } else if (typed && (valueType === 'integer' || valueType === 'float') && value !== '' && Number.isFinite(Number(value))) {
+      value = Number(value);
+    }
     return {
       target: { type: target.type, id: target.id },
-      metafield: {
-        namespace: metafield.namespace,
-        key: metafield.key,
-        value: metafield.value,
-        type: metafield.type,
-        valueType: METAFIELD_TYPES[metafield.type] || 'string',
-      },
+      metafield: { namespace: metafield.namespace, key: metafield.key, value, type: metafield.type, valueType },
     };
   }
-
-  /** A metafield of the cart (`applyMetafieldChange`) as an entry of `appMetafields`. */
-  function mapMetafield(metafield, token) {
-    return appMetafield({ type: 'cart', id: 'gid://shopify/Cart/' + token }, metafield);
-  }
-
-  /** The `target.type` of the entries each `owner_type` of a declaration names. */
-  const OWNER_TARGETS = {
-    CART: 'cart',
-    COMPANY: 'company',
-    COMPANY_LOCATION: 'companyLocation',
-    CUSTOMER: 'customer',
-    PRODUCT: 'product',
-    PRODUCTVARIANT: 'variant',
-    SHOP: 'shop',
-  };
 
   /**
    * `appMetafields`: the entries the extension declares for `target` (`[[extensions.metafields]]`,
    * and `[[extensions.targeting.metafields]]` of that target), the same namespace and key, of the
-   * owner `owner_type` names, of any owner without one. `owned` are the entries the server read
+   * owner `owner_type` names (the server gives its `target.type`: `targetType`), of any owner
+   * without one. `owned` are the entries the server read
    * from the store data (the shop, products, variants, customer, company and location), `cart`
-   * the cart's.
+   * the cart's (`{namespace, key, type, value}` and the cart's token). `typed`: the values the
+   * customer account's `AppMetafield` has (see `appMetafield`).
    */
-  function declaredMetafields(owned, cart, declarations, target) {
+  function declaredMetafields(owned, cart, declarations, target, typed) {
     const wanted = (declarations || []).filter((entry) => !entry.target || entry.target === target);
     const declares = (entry) => wanted.some((declared) =>
       declared.namespace === entry.metafield.namespace && declared.key === entry.metafield.key
-      && (!declared.ownerType || OWNER_TARGETS[declared.ownerType] === entry.target.type));
-    return (owned || []).map((entry) => appMetafield(entry.target, entry.metafield)).concat(cart).filter(declares);
+      && (!declared.ownerType || declared.targetType === entry.target.type));
+    const cartTarget = { type: 'cart', id: 'gid://shopify/Cart/' + cart.token };
+    return (owned || []).map((entry) => appMetafield(entry.target, entry.metafield, typed))
+      .concat((cart.metafields || []).map((metafield) => appMetafield(cartTarget, metafield, typed)))
+      .filter(declares);
   }
 
-  Sandbox.mappers = { allocation, mapLine, mapAddress, mapOption, mapCustomer, mapPurchasingCompany, mapMetafield, declaredMetafields };
+  Sandbox.mappers = { allocation, mapLine, mapAddress, mapOption, mapCustomer, mapPurchasingCompany, declaredMetafields };
 
   /** The names of the capabilities an extension was granted: `[extensions.capabilities]`. */
   function capabilityNames(capabilities) {
@@ -514,8 +509,7 @@
 
     /** What the extension declares of the metafields of the checkout and of its cart. */
     function appMetafields(s) {
-      const cart = (s.metafields || []).map((m) => mapMetafield(m, s.token));
-      return declaredMetafields(s.appMetafields, cart, ext.metafields, target);
+      return declaredMetafields(s.appMetafields, { metafields: s.metafields, token: s.token }, ext.metafields, target);
     }
 
     /** What the targets of the checkout and the thank-you page read and change. */

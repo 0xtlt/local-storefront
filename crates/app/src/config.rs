@@ -1094,6 +1094,19 @@ fn load_metafield_declarations(
             );
             continue;
         };
+        // Shopify takes the app's own namespace as `$app` (`$app:<name>`) only, not as the
+        // admin writes it (`app--<id>--<name>`): such a declaration reads nothing.
+        let canonical = crate::checkout::input::canonical_namespace(namespace);
+        if canonical != namespace {
+            app.warn(
+                Some(handle),
+                format!(
+                    "`{namespace}.{key}`: write the app's namespace `{canonical}` in the toml; \
+                     Shopify does not support `{namespace}` there, and the extension reads \
+                     nothing of it"
+                ),
+            );
+        }
         let owner_type = text("owner_type").map(str::to_string);
         if owner_type.is_none()
             && let Some(version) = version
@@ -1766,6 +1779,61 @@ handle = "{handle}"
         };
         assert_eq!(messages("old"), [incomplete]);
         assert_eq!(messages("new"), [missing, incomplete]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_app_namespace_spelled_as_in_the_admin_is_a_warning_that_names_the_toml_spelling() {
+        let root = temp_app("ui-reserved-namespace");
+        write(
+            &root,
+            "extensions/reader/shopify.extension.toml",
+            r#"
+api_version = "2026-10"
+
+[[extensions]]
+type = "ui_extension"
+handle = "reader"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+    [[extensions.targeting.metafields]]
+    namespace = "app--4242"
+    key = "tier"
+
+  [[extensions.metafields]]
+  namespace = "app--4242--config"
+  key = "mode"
+
+  [[extensions.metafields]]
+  namespace = "$app:config"
+  key = "limit"
+"#,
+        );
+        let app = load(&root).unwrap();
+        let warnings: Vec<&str> = app
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Warning && d.message.contains("write the app"))
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(
+            warnings,
+            [
+                "`app--4242--config.mode`: write the app's namespace `$app:config` in the toml; \
+                 Shopify does not support `app--4242--config` there, and the extension reads \
+                 nothing of it",
+                "`app--4242.tier`: write the app's namespace `$app` in the toml; Shopify does not \
+                 support `app--4242` there, and the extension reads nothing of it",
+            ]
+        );
+        assert!(
+            app.diagnostics
+                .iter()
+                .all(|d| d.severity != Severity::Error),
+            "the extension still loads"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

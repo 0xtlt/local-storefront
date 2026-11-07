@@ -190,13 +190,18 @@ The `mix-*` scenarios run Functions and checkout UI extensions on the same check
 
 ## Checkout UI extensions built from their sources
 
-`ui-preact` (Shopify's template in Preact, as it comes: JSX) and `ui-preact-typescript` (TSX,
-the hooks of `@shopify/ui-extensions/checkout/preact` and a signal) name their sources
-(`module`): lsf bundles them, without Node and without `node_modules`, into their
+`ui-preact` (Shopify's template in Preact, its sources as they come: JSX) and
+`ui-preact-typescript` (TSX, the hooks of `@shopify/ui-extensions/checkout/preact` and a signal)
+name their sources (`module`): lsf bundles them, without Node and without `node_modules`, into their
 `dist/<handle>.js` (`lsf app build ui-preact --app .`, `--build`, or `--watch` when they
 change). The scenario `ui-preact` shows both. `crates/app/assets/tests/built-extensions.test.mjs`
 draws each bundle next to the one Shopify's CLI 5.0.0 builds from the same sources
 (`crates/app/tests/fixtures/shopify-cli`), acts on them, and compares.
+
+An extension reads through `shopify.appMetafields` only the metafields it declares, as on
+Shopify, the cart's too. The template's checkbox reads the cart metafield `$app.requestedFreeGift`
+it writes, which the template does not declare: the toml of `ui-preact` adds the
+`[[extensions.metafields]]` (`owner_type = "CART"`) that keeps the box ticked.
 
 ## Customer account UI extensions
 

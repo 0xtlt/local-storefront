@@ -1311,17 +1311,18 @@ impl Source<'_> {
 }
 
 /// The `(type, value)` of a metafield of the store data, whichever way its namespace is written
-/// (see [`Source::find`]).
+/// (see [`Source::find`]). The data can write the app's namespace both ways, a key under each:
+/// every spelling is looked through.
 pub(crate) fn store_metafield(
     metafields: &Metafields,
     namespace: &str,
     key: &str,
 ) -> Option<(String, String)> {
     let wanted = canonical_namespace(namespace);
-    let (_, entries) = metafields
+    let metafield = metafields
         .iter()
-        .find(|(candidate, _)| canonical_namespace(candidate) == wanted)?;
-    let metafield = entries.get(key)?;
+        .filter(|(candidate, _)| canonical_namespace(candidate) == wanted)
+        .find_map(|(_, entries)| entries.get(key))?;
     Some((metafield.kind.clone(), source_text(&metafield.value)))
 }
 

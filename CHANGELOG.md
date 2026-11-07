@@ -176,6 +176,12 @@ the same data every run.
   and `lsf-cli` the command line: `cargo build -p lsf-cli` builds `lsf`. `lsf-app` and
   `lsf-core` build without Liquid or the renderer. Nothing else changes for someone who uses
   `lsf`. [Architecture](docs/architecture.md).
+- **An extension must declare the metafields it reads through `shopify.appMetafields`.** As on
+  Shopify, `appMetafields` has only what `[[extensions.metafields]]` declares, the cart's too: an
+  extension that writes a cart metafield with `applyMetafieldChange` and reads it back declares it
+  (`owner_type = "CART"`). Shopify's checkout UI template in Preact reads
+  `$app.requestedFreeGift` without declaring it: its checkbox does not stay ticked until the
+  declaration is added, as the playground's `ui-preact` now does.
 
 ### Fixed
 
@@ -214,21 +220,25 @@ the same data every run.
 - **`shopify.appMetafields` has the metafields an extension declares, of every resource.** As on
   Shopify, it holds the metafields of `[[extensions.metafields]]` (and of
   `[[extensions.targeting.metafields]]` at their target): those of the shop, of the products and
-  variants of the lines, of the customer logged in, of the company and location they buy for and
-  of the cart, each with its `target` (`shop`, `product`, `variant`, …) and the GID of the
-  resource, read from the store data and what the backend sets through the Admin API. An
-  `owner_type` keeps one resource. It held only the cart's, each one whether declared or not: an
-  extension now reads a metafield of the cart only if it declares it. The order status page of
-  the customer account reads them too (it had none), and `shopify.shop.id` is the id of the shop
-  of the store data
+  variants of the lines (and of the components of a bundle), of the customer logged in, of the
+  company and location they buy for and of the cart, each with its `target` (`shop`, `product`,
+  `variant`, …) and the GID of the resource, read from the store data and what the backend sets
+  through the Admin API. An `owner_type` keeps one resource. It held only the cart's, each one
+  whether declared or not: an extension now reads a metafield of the cart only if it declares it.
+  The order status page of the customer account reads them too (it had none), with the company
+  location the order was placed for and the values typed as its `AppMetafield` types them
+  (`false`, `2`). A namespace written `app--<id>--<name>` in the toml reads nothing, as on
+  Shopify, and the loader warns with the `$app:<name>` to write. `shopify.shop.id` is the id of
+  the shop of the store data
   ([#25](https://github.com/0xtlt/local-storefront/issues/25)).
 - **A code whose discount Function answers a candidate of 0 is applied, at 0.** A candidate of
   0 % (or a fixed 0.00), which a Function answers to accept a code before the gift it stands for
   reaches the cart, made the code "not applicable". As on Shopify, the code is now accepted and
   its discount shows at 0 on the lines it targets: in the page, `discounts`, `discountCodes`,
-  the extensions' `discountAllocations` and the output of `lsf app function run` and
-  `lsf app check`. An order or a shipping candidate of 0 applies the same way; a shipping one
-  gives way to a shipping discount that takes something off
+  the extensions' `discountAllocations` and the output of `lsf app function run`. An order or a
+  shipping candidate of 0 applies the same way; a shipping one gives way to a shipping discount
+  that takes something off the option the buyer selected. An automatic discount of 0 shows too,
+  at 0 (a Function that reads its percentage from settings that are not set)
   ([#26](https://github.com/0xtlt/local-storefront/issues/26)).
 
 ## 0.2.0 - 2026-10-30

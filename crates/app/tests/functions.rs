@@ -3797,3 +3797,79 @@ fn an_order_or_a_shipping_candidate_of_0_is_applied_at_0_too() {
         skipped.reason
     );
 }
+
+#[test]
+fn a_shipping_code_of_0_beats_one_that_only_cuts_an_option_not_selected() {
+    // GIFT: 0 % off the group, where the buyer selected Standard. EXPRESS: Express free, which
+    // the buyer did not select: it takes nothing off what they pay.
+    let gift = json!({"operations": [{"deliveryDiscountsAdd": {
+        "selectionStrategy": "ALL",
+        "candidates": [{
+            "targets": [{"deliveryGroup": {"id": "gid://shopify/CartDeliveryGroup/group-1"}}],
+            "value": {"percentage": {"value": 0}},
+        }],
+    }}]});
+    let express = shipping_answer(&["express"], percentage("100"));
+    for answers in [
+        [("GIFT", gift.clone()), ("EXPRESS", express.clone())],
+        [("EXPRESS", express.clone()), ("GIFT", gift.clone())],
+    ] {
+        let result = codes_answered(
+            Shipping,
+            "cart_delivery_options_discounts_generate_run",
+            &answers,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let mut codes = applicable(&result);
+        codes.sort();
+        assert_eq!(codes, [("express", false), ("gift", true)]);
+        assert_eq!(
+            result
+                .discounts
+                .iter()
+                .map(|d| (d.code.as_deref(), d.amount))
+                .collect::<Vec<_>>(),
+            [(Some("GIFT"), 0)]
+        );
+        let group = &result.delivery_groups[0];
+        assert_eq!(group.discount_allocations.len(), 1);
+        assert_eq!(group.discount_allocations[0].code.as_deref(), Some("GIFT"));
+        assert_eq!(group.options[1].cost, 1290, "Express keeps its price");
+        assert_eq!(result.cost.shipping, 490);
+        assert_eq!(result.skipped_discounts.len(), 1);
+        let skipped = &result.skipped_discounts[0];
+        assert_eq!(
+            (skipped.code.as_deref(), skipped.amount),
+            (Some("EXPRESS"), 0)
+        );
+        assert_eq!(
+            skipped.reason,
+            "only one shipping discount applies per order: \"GIFT\" applies to the delivery \
+             option the buyer selected, at 0.00 USD, and this one takes nothing off it"
+        );
+    }
+}
+
+#[test]
+fn an_automatic_discount_of_0_applies_at_0_too() {
+    // A discount without a code whose Function answers 0 % (its settings not set): it applies
+    // at 0 and shows as a discount of 0, as a code of 0 does.
+    let result = answer_discounts(
+        "cart_lines_discounts_generate_run",
+        &CART,
+        &[Product],
+        &[("VIP", off_line_1(0))],
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(
+        result
+            .discounts
+            .iter()
+            .map(|d| (d.title.as_str(), d.code.as_deref(), d.amount))
+            .collect::<Vec<_>>(),
+        [("VIP", None, 0)]
+    );
+    assert_eq!(allocations(&result.lines[0]), [(None, 0)]);
+    assert_eq!(result.lines[0].total, result.lines[0].subtotal);
+    assert_eq!(result.cost.discounts, 0);
+}

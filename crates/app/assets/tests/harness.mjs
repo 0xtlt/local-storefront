@@ -213,6 +213,25 @@ export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, cust
   };
 }
 
+/** The `target.type` of the entries each `owner_type` reads, as the server gives it. */
+const TARGET_TYPES = {
+  CART: 'cart',
+  COMPANY: 'company',
+  COMPANY_LOCATION: 'companyLocation',
+  CUSTOMER: 'customer',
+  PRODUCT: 'product',
+  PRODUCTVARIANT: 'variant',
+  SHOP: 'shop',
+};
+
+/**
+ * A metafield declaration as the state's `extensions` writes it: one with an `ownerType` gets
+ * the `targetType` the server adds (`lsf_checkout::app_metafields::target_type`, which this
+ * stands in for), which `appMetafields` compares.
+ */
+export const declaration = (declared) =>
+  declared.ownerType ? { ...declared, targetType: TARGET_TYPES[declared.ownerType] ?? null } : declared;
+
 /** The `init` message of the page for an extension on a target. */
 export function init({ handle, target, apiVersion = '2026-10', state = checkoutState(), ctx = {}, ext = {} }) {
   return {

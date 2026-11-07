@@ -3454,7 +3454,8 @@ fn the_state_describes_the_checkout() {
     // The manifest declares the settings; nothing sets them.
     assert_eq!(extensions[0]["settings"], json!({}));
     assert_eq!(extensions[0]["capabilities"]["block_progress"], true);
-    // The metafields they declare: `owner_type` is `ownerType`, absent when not written.
+    // The metafields they declare: `owner_type` is `ownerType`, absent when not written, with
+    // the `target.type` of the entries it reads (`targetType`).
     assert_eq!(extensions[0]["apiVersion"], "2026-10");
     assert_eq!(
         extensions[0]["metafields"],
@@ -3463,7 +3464,7 @@ fn the_state_describes_the_checkout() {
     assert_eq!(extensions[1]["apiVersion"], "2027-01");
     assert_eq!(
         extensions[1]["metafields"],
-        json!([{"namespace": "$app:notice", "key": "dismissed", "ownerType": "CART"}])
+        json!([{"namespace": "$app:notice", "key": "dismissed", "ownerType": "CART", "targetType": "cart"}])
     );
     // The fixture keeps one legacy target on purpose: it still runs, with a warning.
     assert_eq!(
@@ -8375,8 +8376,16 @@ fn app_metafields_are_the_declared_ones_of_the_shop_the_lines_and_the_buyer() {
     assert_eq!(
         declared.last().unwrap(),
         &json!({
-            "namespace": "$app:gift", "key": "wrapped", "ownerType": "CART",
+            "namespace": "$app:gift", "key": "wrapped", "ownerType": "CART", "targetType": "cart",
             "target": "purchase.checkout.block.render"
+        })
+    );
+    // With an `owner_type`, the `target.type` of the entries it reads, which the page compares.
+    assert_eq!(
+        declared[3],
+        json!({
+            "namespace": "custom", "key": "payment_terms", "ownerType": "COMPANY",
+            "targetType": "company"
         })
     );
 
@@ -8413,6 +8422,258 @@ fn app_metafields_are_the_declared_ones_of_the_shop_the_lines_and_the_buyer() {
     // Another session has neither this customer nor the shop's metafield of this session's data.
     let guest = account_state(&get(&state, "/account", "ca-guest"));
     assert_eq!(guest["appMetafields"], json!([]));
+    std::fs::remove_dir_all(&app).ok();
+}
+
+/// The `appMetafields` entries of `json` (a checkout, thank-you or account state) whose target
+/// is of `kind`: `(id, namespace.key, value)`.
+fn app_metafields_of(json: &Json, kind: &str) -> Vec<(String, String, String)> {
+    json["appMetafields"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no appMetafields: {json}"))
+        .iter()
+        .filter(|entry| entry["target"]["type"] == kind)
+        .map(|entry| {
+            let metafield = &entry["metafield"];
+            (
+                entry["target"]["id"].as_str().unwrap().to_string(),
+                format!(
+                    "{}.{}",
+                    metafield["namespace"].as_str().unwrap(),
+                    metafield["key"].as_str().unwrap()
+                ),
+                metafield["value"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn app_metafields_have_the_products_of_the_components_of_a_bundle() {
+    // The metafield reader, and the cart transform of the fixture app, which merges the tee and
+    // the tote into a bundle whose parent is the mug.
+    let app = app_with_metafield_reader("bundle");
+    copy_directory(
+        &fixture_app().join("extensions/bundle-transform"),
+        &app.join("extensions/bundle-transform"),
+    );
+    let state = checkout_server_of(app.clone(), &[], true);
+    let session = "co-app-metafields-bundle";
+    let mug = variant_id(&state, "MUG-OAT");
+    let tee_product = {
+        let loaded = state.loaded();
+        let tee = variant_id(&state, "TEE-BLK-M");
+        loaded.store.variant(tee).unwrap().0.id
+    };
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "customer": "alex.morgan@example.com",
+            "cart": {"items": [
+                {"variant": "TEE-BLK-M", "quantity": 1},
+                {"variant": "TOTE-NAT", "quantity": 1}
+            ]},
+            "data": {"checkout": {"functions": {"bundle-transform": {"metafields": {
+                "$app:config.settings": {"type": "json", "value": {"operations": [
+                    {"type": "merge", "lines": [1, 2], "parentVariant": mug, "title": "Set"}
+                ]}}
+            }}}}}
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let path = header(&get(&state, "/checkout", session), "location")
+        .expect("a checkout")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    let lines = json["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), 1, "{json}");
+    assert_eq!(lines[0]["transformedBy"], "merge");
+    // The tee is a component of the bundle only: its product's care instructions are read.
+    let care = vec![(
+        format!("gid://shopify/Product/{tee_product}"),
+        "custom.care".to_string(),
+        "Machine wash cold. Tumble dry low.".to_string(),
+    )];
+    assert_eq!(app_metafields_of(&json, "product"), care, "the checkout");
+
+    // The thank-you page, and the order status page of the order.
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let thanks = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(thanks["status"], "completed");
+    assert_eq!(
+        app_metafields_of(&thanks, "product"),
+        care,
+        "the thank-you page"
+    );
+    let orders = account_state(&get(&state, "/account", session));
+    let order = account_state(&get(
+        &state,
+        &format!("/account/orders/{}", orders["orders"][0]["legacyId"]),
+        session,
+    ));
+    assert_eq!(order["order"]["lines"][0]["transformedBy"], "merge");
+    assert_eq!(
+        app_metafields_of(&order, "product"),
+        care,
+        "the order status page"
+    );
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn app_metafields_have_what_the_backend_sets_through_the_admin_api() {
+    // The store data writes a metafield of the app's namespace on the shop, `$app`; the backend
+    // sets another key of it through the Admin API (which keeps it as `app--<id>`, and the store
+    // gives back as `$app`), and one of the tee. The extension declares the backend's key: it
+    // reads the shop's and the product's, next to the data's own.
+    let data =
+        std::env::temp_dir().join(format!("lsf-metafields-admin-data-{}", std::process::id()));
+    std::fs::remove_dir_all(&data).ok();
+    crate::checkout::write_demo_scenarios(&data, &[]);
+    let store_file = data.join("store.json");
+    let mut store_json: Json =
+        serde_json::from_str(&std::fs::read_to_string(&store_file).unwrap()).unwrap();
+    store_json["shop"]["metafields"]["$app"] = json!({"note": "from the store data"});
+    std::fs::write(&store_file, store_json.to_string()).unwrap();
+    let app = app_with_metafield_reader("admin-api");
+    let state = checkout_server_with(
+        app.clone(),
+        &[],
+        true,
+        Some(&data),
+        Some(Default::default()),
+    );
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "write_products"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let shop = admin_query(&state, "{ shop { id } }")["data"]["shop"]["id"].clone();
+    let tee = admin_query(
+        &state,
+        r#"{ productVariants(first: 1, query: "sku:TEE-BLK-M") { nodes { product { id } } } }"#,
+    )["data"]["productVariants"]["nodes"][0]["product"]["id"]
+        .clone();
+    let set = admin_query(
+        &state,
+        &format!(
+            r#"mutation {{ metafieldsSet(metafields: [
+                {{ownerId: {shop}, namespace: "$app", key: "gift-codes", type: "json", value: "[\"ADMIN-1\"]"}},
+                {{ownerId: {tee}, namespace: "$app", key: "gift-codes", type: "json", value: "[\"TEE-1\"]"}}
+            ]) {{ metafields {{ namespace }} userErrors {{ message }} }} }}"#
+        ),
+    );
+    let set = &set["data"]["metafieldsSet"];
+    assert_eq!(set["userErrors"], json!([]), "{set}");
+    assert!(
+        set["metafields"][0]["namespace"]
+            .as_str()
+            .unwrap()
+            .starts_with("app--"),
+        "{set}"
+    );
+
+    let session = "co-app-metafields-admin";
+    let path = start_checkout(
+        &state,
+        session,
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(
+        app_metafields_of(&json, "shop"),
+        [(
+            shop.as_str().unwrap().to_string(),
+            "$app.gift-codes".to_string(),
+            r#"["ADMIN-1"]"#.to_string()
+        )]
+    );
+    assert_eq!(
+        app_metafields_of(&json, "product")
+            .into_iter()
+            .filter(|(_, name, _)| name == "$app.gift-codes")
+            .collect::<Vec<_>>(),
+        [(
+            tee.as_str().unwrap().to_string(),
+            "$app.gift-codes".to_string(),
+            r#"["TEE-1"]"#.to_string()
+        )]
+    );
+    std::fs::remove_dir_all(&app).ok();
+    std::fs::remove_dir_all(&data).ok();
+}
+
+#[test]
+fn the_order_status_page_reads_the_location_the_order_was_placed_for() {
+    let app = app_with_metafield_reader("order-location");
+    let state = checkout_server_of(app.clone(), &[], false);
+    let session = "co-app-metafields-location";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "customer": "alex.morgan@example.com",
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]},
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let path = header(&get(&state, "/checkout", session), "location")
+        .expect("a checkout")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    let locations = json["account"]["locations"].as_array().unwrap();
+    assert_eq!(locations[0]["current"], true, "Portland, the first");
+    let portland = json["buyer"]["purchasingCompany"]["location"]["id"].clone();
+    let notes = vec![(
+        portland.as_str().unwrap().to_string(),
+        "custom.delivery_notes".to_string(),
+        "Loading dock B, weekdays 8am to 4pm".to_string(),
+    )];
+    assert_eq!(app_metafields_of(&json, "companyLocation"), notes);
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+
+    // The buyer now buys for Seattle, which has no delivery notes.
+    let seattle = locations[1]["id"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_string();
+    let reply = get(
+        &state,
+        &format!("/company_location/update?location_id={seattle}&return_to=/account"),
+        session,
+    );
+    assert_eq!(reply.status, 302, "{}", text(&reply));
+    let account = account_state(&get(&state, "/account", session));
+    assert_eq!(
+        account["buyer"]["purchasingCompany"]["location"]["name"],
+        "Northwind Seattle"
+    );
+    // The order placed for Portland still reads Portland's.
+    let order = account_state(&get(
+        &state,
+        &format!("/account/orders/{}", account["orders"][0]["legacyId"]),
+        session,
+    ));
+    assert_eq!(
+        order["order"]["buyer"]["purchasingCompany"]["location"]["id"],
+        portland
+    );
+    assert_eq!(app_metafields_of(&order, "companyLocation"), notes);
     std::fs::remove_dir_all(&app).ok();
 }
 

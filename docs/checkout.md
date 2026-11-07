@@ -854,9 +854,12 @@ discounts on the subtotal they left, then shipping. Within a class:
   `discounts` and `discountAllocations`, in the page and in `lsf app function run`. A Function
   answers one to accept a code before the line it stands for (a gift) reaches the cart. A
   shipping discount of 0 applies to the rate the buyer selected (none is before an address with a
-  country) when no other one takes something off the shipping, and is listed as not applied
-  otherwise. A candidate of more than 0 that finds nothing left to take
-  off (a line another discount made free) is not applied.
+  country) when no other one takes something off that rate, and is listed as not applied
+  otherwise: it beats one that only cuts the rates the buyer did not select, which would apply
+  nothing. An automatic discount (one without a code) of 0 applies the same way and shows at 0:
+  the playground's `discount-vip-customer`, whose percentage comes from settings, shows "VIP: 0%
+  off −€0.00" while its settings are not set. A candidate of more than 0 that finds nothing left
+  to take off (a line another discount made free) is not applied.
 
 An amount is shared between the lines in proportion to what they cost, to the cent, and the
 allocations of the lines (`discountAllocations`, in the page and for the Functions that run
@@ -889,7 +892,8 @@ how the best shipping discount is measured, what happens to a tie, whether the r
 each delivery group of a split order (this checkout has one group), nor what to show about the
 others: measuring by the selected option, breaking ties as above and listing the others are
 this checkout's choices. Shopify's checkout applies a code whose product discount is 0 and shows
-it at 0; that an order or a shipping discount of 0 does the same is this checkout's choice.
+it at 0; that an order or a shipping discount of 0 does the same, and that an automatic discount
+of 0 shows, are this checkout's choices: Shopify does not say what its checkout shows for them.
 
 ### Network access
 
@@ -977,12 +981,14 @@ they are declared for. Each entry is a metafield with the resource it belongs to
 a `type` (`shop`, `product`, `variant`, `customer`, `company`, `companyLocation` or `cart`) and
 the `id` of the resource, a GID. They are read from the store data, with what the backend of the
 app sets through the [Admin API](admin.md) (`metafieldsSet`): the shop's, those of the products
-and variants of the lines, of the customer logged in and of the company and location they buy
-for, and the cart's, which the extensions write with `applyMetafieldChange`. A declaration with
-an `owner_type` reads that resource only, one without reads every resource that has the
-metafield. The app's own namespace is written `$app` (or `$app:<name>`) in the toml, in the
-store data and in what the extension reads; Shopify's `app--<id>--<name>`, which the Admin API
-writes, is the same namespace.
+and variants of the lines (and of the components of a bundle a cart transform made), of the
+customer logged in and of the company and location they buy for, and the cart's, which the
+extensions write with `applyMetafieldChange`. A declaration with an `owner_type` reads that
+resource only, one without reads every resource that has the metafield. The app's own namespace
+is written `$app` (or `$app:<name>`) in the toml, in the store data and in what the extension
+reads; Shopify's `app--<id>--<name>`, which the Admin API writes, is the same namespace. The toml
+takes `$app` only, as on Shopify: a declaration written `app--<id>--<name>` reads nothing, and the
+loader warns with the spelling to use.
 
 ```toml
 [[extensions.metafields]]
@@ -1002,7 +1008,11 @@ shopify.appMetafields.value;
 ```
 
 On the order status page of the customer account, the products and variants are those of the
-order, and the cart is the one of the order placed in the local checkout.
+order, the company location is the one the order was placed for (whichever the buyer buys for
+now; an order of the store data records none, and reads the customer's first location), and the
+cart is the one of the order placed in the local checkout. As in Shopify's types, a `value` there
+is typed by its `valueType` (`true`, `2`, `1.5`; a JSON value stays serialized), where the
+checkout's is the text whatever the type (`"true"`).
 
 ## Run a Function without a server
 
