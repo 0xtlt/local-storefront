@@ -114,10 +114,11 @@ async function main() {
       "backend",
       process.execPath,
       ["server/index.mjs"],
-      { cwd: appRoot, env: { ...process.env, PORT: String(backendPort), LSF_URL: lsf, SHOPIFY_APP_URL: appUrl } },
+      // APP_BRIDGE_URL: the embedded page, and the library's own pages, load lsf's App Bridge.
+      { cwd: appRoot, env: { ...process.env, PORT: String(backendPort), LSF_URL: lsf, SHOPIFY_APP_URL: appUrl, APP_BRIDGE_URL: `${lsf}/__lsf/admin/app-bridge.js` } },
       (text) => text.includes("backend: "),
     );
-    const results = await runChecks({ lsf, appUrl, token });
+    const results = await runChecks({ lsf, appUrl, token, lsfLog: lsfProcess.log });
     const failed = report(results);
     if (failed && !verbose) {
       console.log("\nThe last lines of the backend's log:\n" + backendProcess.log.join("").split("\n").slice(-25).join("\n"));
@@ -129,7 +130,7 @@ async function main() {
 }
 
 // The checks, in order: later ones use what earlier ones made (`ctx`).
-async function runChecks({ lsf, appUrl, token }) {
+async function runChecks({ lsf, appUrl, token, lsfLog }) {
   const browser = new Browser();
   const ctx = {};
   const results = [];
@@ -338,6 +339,70 @@ async function runChecks({ lsf, appUrl, token }) {
     assert(home.includes(`/products/${handle}`), "not in collections.all");
     return `page: "${read("product-title")}" ${read("product-price")}, ${read("product-inventory")} left; in collections.all`;
   });
+  // The embedded app in lsf's admin, with lsf's App Bridge. What the script does in a browser is
+  // tested by crates/app/assets/tests/app-bridge.test.mjs; here, what the servers answer.
+  await check("embedded", "embedded: lsf prints where the app opens in its admin", async () => {
+    const line = lsfLog.join("").match(/^embedded: (\S+)/m);
+    assert(line?.[1] === `${lsf}/admin/apps/admin-backend`, "no embedded: line before ready:", lsfLog.join("").slice(0, 600));
+    return line[0];
+  });
+  await check("embedded", "embedded: lsf's admin → the app's frame (new launch) → the page with lsf's App Bridge", async () => {
+    const admin = await browser.fetch(`${lsf}/admin/apps/admin-backend/app/settings`);
+    const html = await admin.text();
+    assert(admin.status === 200 && html.includes('class="lsf-frame"'), `the admin answered ${admin.status}`, html.slice(0, 300));
+    const frameOf = (text) => text.match(/class="lsf-frame"[^>]* src="([^"]+)"/)[1].replaceAll("&amp;", "&");
+    const src = frameOf(html);
+    const token = new URL(src).searchParams.get("id_token");
+    assert(src.startsWith(`${appUrl}/app/settings?`) && token, "the frame is not a launch of the app", src);
+    const again = new URL(frameOf(await (await browser.fetch(`${lsf}/admin/apps/admin-backend/app/settings`)).text())).searchParams.get("id_token");
+    assert(again && again !== token, "the same session token on two loads");
+    const page = await browser.fetch(src);
+    const body = await page.text();
+    assert(page.status === 200, `the app's page answered ${page.status}`, body.slice(0, 300));
+    const csp = page.headers.get("content-security-policy");
+    assert(csp === `frame-ancestors ${lsf};`, "the page does not let lsf's admin frame it", csp);
+    const scripts = [...body.matchAll(/<script src="([^"]+)"/g)].map((match) => match[1]);
+    assert(scripts[0] === `${lsf}/__lsf/admin/app-bridge.js` && scripts[1] === "https://cdn.shopify.com/shopifycloud/app-bridge.js", "lsf's App Bridge is not the first script", scripts);
+    for (const part of ["<s-app-nav>", "<ui-title-bar", "data-save-bar", "<ui-modal", 'href="shopify://admin/products"']) {
+      assert(body.includes(part), `the page has no ${part}`);
+    }
+    const script = await fetch(`${lsf}/__lsf/admin/app-bridge.js`);
+    assert(script.status === 200 && (await script.text()).includes("lsf's App Bridge"), `app-bridge.js answered ${script.status}`);
+    return "admin 200, frame at a new launch, CSP frame-ancestors lsf, lsf's App Bridge before Shopify's";
+  });
+  await check("embedded", "embedded: fetch() with App Bridge's session token → authenticate.admin", async () => {
+    const before = await appOk("GET", "/api/settings");
+    const saved = await appOk("POST", "/api/settings", { threshold: before.threshold + 4, notify: true });
+    assert(saved.threshold === before.threshold + 4 && saved.notify === true, "not saved", saved);
+    const seen = (await backendState()).settings.at(-1);
+    assert(seen?.threshold === saved.threshold, "the backend did not keep it", seen);
+    return `GET and POST /api/settings: threshold ${before.threshold} → ${saved.threshold}`;
+  });
+  await check("embedded", "embedded: the resource picker lists the shop's new product", async () => {
+    const answer = await fetch(`${lsf}/__lsf/admin/resources?type=product&query=${encodeURIComponent("tag:e2e-sale")}`);
+    const { resources } = await answer.json();
+    const product = resources?.find((resource) => resource.id === ctx.product.product.id);
+    assert(product, "not listed", resources);
+    assert(product.variants[0].price === "25.00" && product.totalVariants === 1 && product.variants[0].product.id === product.id, "not in the picker's shape", product);
+    return `${product.title}: ${product.variants.length} variant at ${product.variants[0].price}`;
+  });
+  await check("embedded", "embedded: the library's bounce page loads lsf's App Bridge (APP_BRIDGE_URL)", async () => {
+    const host = Buffer.from(`admin.shopify.com/store/${SHOP.replace(".myshopify.com", "")}`).toString("base64").replace(/=+$/, "");
+    const document = await browser.fetch(`${appUrl}/app/products?embedded=1&shop=${SHOP}&host=${host}`);
+    assert(document.status === 302, `a launch without id_token answered ${document.status}`);
+    const bounce = new URL(document.headers.get("location"), appUrl);
+    assert(bounce.pathname === "/auth/session-token" && bounce.searchParams.get("shopify-reload"), "not the bounce page", bounce.href);
+    const html = await (await browser.fetch(bounce)).text();
+    assert(html.includes(`src="${lsf}/__lsf/admin/app-bridge.js"`), "the bounce page loads another App Bridge", html.slice(0, 300));
+    return `${bounce.pathname}?shopify-reload=… loads lsf's App Bridge`;
+  });
+  await check("embedded", "embedded: shopify:admin/products lands on lsf's page, which says it has none", async () => {
+    const page = await fetch(`${lsf}/admin/products`);
+    const html = await page.text();
+    assert(page.status === 404 && html.includes("lsf has no page here") && html.includes("Back to Admin backend"), `answered ${page.status}`, html.slice(0, 300));
+    return "404, says so, links back to the app";
+  });
+
   await check("webhooks", "webhooks: registerWebhooks (afterAuth) → products/delete", async () => {
     const { data } = await admin(`query { webhookSubscriptions(first: 10) { nodes { topic uri } } }`);
     const registered = data.webhookSubscriptions.nodes.find((s) => s.topic === "PRODUCTS_DELETE");

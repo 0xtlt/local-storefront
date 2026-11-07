@@ -36,6 +36,10 @@ export const config = {
   port,
   // Where lsf listens, when the backend runs against it (unset: Shopify).
   lsfUrl: env.LSF_URL,
+  // lsf's App Bridge (http://127.0.0.1:9292/__lsf/admin/app-bridge.js), for the embedded page to
+  // run in lsf's admin; unset: Shopify's alone. The library's own pages (the bounce page, the
+  // exit-iframe page) read the same variable.
+  appBridgeUrl: env.APP_BRIDGE_URL,
   toml,
 };
 

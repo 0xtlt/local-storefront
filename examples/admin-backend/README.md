@@ -23,7 +23,7 @@ PASS      auth: OAuth authorize → callback → access token                   
 …
 KNOWN     billing: billing.require from a page (exit-iframe)                          the template's exit-iframe page only redirects to https admin URLs, …
 
-36 passed, 0 failed, 1 known gaps
+42 passed, 0 failed, 1 known gaps
 ```
 
 `E2E_VERBOSE=1` prints the logs of lsf and the backend, `E2E_ONLY=proxy` runs the checks whose
@@ -36,7 +36,7 @@ name has `proxy`, `LSF_BIN=…` runs another lsf binary. Without it, the run tak
 |---|---|
 | `shopify.app.toml` | The app: client id, scopes, `[webhooks]` subscriptions (relative and absolute `uri`s, the compliance topics), `[app_proxy]`. |
 | `.env` | `SHOPIFY_API_SECRET`, the client secret, where `shopify app dev` writes it: lsf reads it there, and so does the backend. A local secret, for this app that is never deployed. |
-| `server/` | The backend. `shopify.mjs` makes the Shopify objects as the React Router template's `app/shopify.server.ts` does; `index.mjs` has the routes; `api.mjs` the Admin API calls, family by family; `lsf.mjs` points the libraries at lsf. |
+| `server/` | The backend. `shopify.mjs` makes the Shopify objects as the React Router template's `app/shopify.server.ts` does; `index.mjs` has the routes; `api.mjs` the Admin API calls, family by family; `lsf.mjs` points the libraries at lsf; `embedded.mjs` is the embedded page, what the template's `app/routes/app.tsx` renders with `AppProvider`. |
 | `e2e/run.mjs` | The run: the checks, in order, and the table. `e2e/browser.mjs` keeps cookies and says it is Chrome. |
 | `theme/` | A theme of five templates, for the checks of the storefront: what the Admin API changed, on the product page; the app proxy's Liquid inside `layout/theme.liquid`. |
 | `extensions/discount-tag-percentage` | A discount Function (a copy of the checkout playground's, module included), which the backend configures with `discountAutomaticAppCreate`. |
@@ -78,6 +78,14 @@ throttling checks use `@shopify/admin-api-client` directly.
   template does) and of `webhookSubscriptionCreate`, each verified by `authenticate.webhook`; a
   forged HMAC (`401`); `lsf app webhook trigger` for the three compliance topics;
   `POST /__lsf/webhooks/trigger`; uninstall and install again.
+- **Embedded page**: lsf prints where the app opens in its admin; `/admin/apps/admin-backend`
+  opens the app in a frame at a new launch; the page lets lsf's admin frame it (CSP
+  `frame-ancestors`) and loads lsf's App Bridge before Shopify's; `fetch()` to `/api/settings`
+  with App Bridge's session token; the resource picker's list has the new product; the
+  library's bounce page loads lsf's App Bridge (`APP_BRIDGE_URL`); `shopify:admin/products`
+  lands on lsf's page, which says it has none. What the page does in a browser (the title bar,
+  the navigation, toasts, the picker, the save bar, the modal) is tested on lsf's App Bridge
+  itself (`crates/app/assets/tests/app-bridge.test.mjs`).
 - **App proxy**: `/apps/reviews/*` through the storefront, verified by
   `authenticate.public.appProxy`, answered with `liquid(…)` in the theme, the logged-in customer;
   a form `POST` through the proxy, then its redirect; a forged signature (`400`).
@@ -86,9 +94,16 @@ throttling checks use `@shopify/admin-api-client` directly.
 
 ```bash
 ../../target/debug/lsf app dev --app . --app-url http://localhost:3000     # or `serve --theme theme --app .` for the storefront
-LSF_URL=http://127.0.0.1:9292 npm start
-open http://127.0.0.1:9292/__lsf/admin/launch                              # the app's home, through token exchange
+LSF_URL=http://127.0.0.1:9292 APP_BRIDGE_URL=http://127.0.0.1:9292/__lsf/admin/app-bridge.js npm start
+open http://127.0.0.1:9292/admin/apps/admin-backend                        # the embedded page, in lsf's admin
 ```
+
+In lsf's admin, the page's title bar and navigation are the admin's; "Show a toast", "Pick
+products" (the resource picker, with the shop's products), "About this app" (a `ui-modal`),
+Products (a `fetch()` behind `authenticate.admin`) and Settings (a `data-save-bar` form: change
+it, and the admin shows its save bar) use lsf's App Bridge. `http://127.0.0.1:9292/__lsf/admin/launch`
+opens the app's page alone, through token exchange; its App Bridge then sends it to the admin, as
+Shopify's does.
 
 The backend reads its client id and scopes from `shopify.app.toml` and its secret from `.env`, as
 lsf does; `SHOPIFY_API_KEY`, `SCOPES`, `SHOPIFY_APP_URL` and `PORT` (what `shopify app dev` sets)
@@ -109,6 +124,12 @@ What it took to point a backend written with these libraries at lsf, also in
    The run says it is Chrome.
 5. **Billing from a page** does not work (below): the backend requests it from a route the front
    end fetches.
+6. **The embedded page in lsf's admin** needs lsf's App Bridge, loaded before Shopify's
+   (`APP_BRIDGE_URL`, which the library's bounce and exit-iframe pages read too), and a
+   `Content-Security-Policy` that lets lsf's admin frame the app: `addDocumentResponseHeaders`
+   allows Shopify's admin only. `server/index.mjs` (`documentHeaders`) and `server/embedded.mjs`
+   do both, as the three lines of [docs/admin.md](../../docs/admin.md#preview-the-embedded-app)
+   do in the template.
 
 ## What does not work yet
 

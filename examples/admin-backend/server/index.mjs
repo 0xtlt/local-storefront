@@ -8,9 +8,26 @@ import { config } from "./config.mjs";
 import { RequestedTokenType } from "@shopify/shopify-api";
 import { PLAN, oauthApi, sessionStorage, shopify } from "./shopify.mjs";
 import * as api from "./api.mjs";
+import { embeddedPage } from "./embedded.mjs";
 
 // What the backend saw, for the end-to-end runner (GET /debug/state). A real app has none.
-const seen = { webhooks: [], rejectedWebhooks: [], billingReturns: [], proxied: [], oauth: [] };
+const seen = { webhooks: [], rejectedWebhooks: [], billingReturns: [], proxied: [], oauth: [], settings: [] };
+
+// The settings of the embedded page's form, kept in memory.
+const settings = { threshold: 5, notify: false };
+
+// The headers of a page of the embedded app, as the template's app/entry.server.tsx sets them:
+// `addDocumentResponseHeaders` lets only Shopify's admin frame the app
+// (`Content-Security-Policy: frame-ancestors https://<shop> https://admin.shopify.com …`). With
+// lsf's App Bridge (APP_BRIDGE_URL), lsf's admin frames it: the line after says so.
+function documentHeaders(request) {
+  const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
+  shopify.addDocumentResponseHeaders(request, headers);
+  if (config.appBridgeUrl) {
+    headers.set("Content-Security-Policy", `frame-ancestors ${new URL(config.appBridgeUrl).origin};`);
+  }
+  return headers;
+}
 
 const json = (value, init = {}) =>
   new Response(JSON.stringify(value), {
@@ -28,17 +45,30 @@ const adminApi = (call) => async (request) => {
 const adminApiWithBody = (call) => adminApi(async (admin, request) => call(admin, await request.json()));
 
 const routes = [
-  // The embedded app's home, as the admin opens it: authenticate.admin reads the session token of
-  // the URL and exchanges it for an access token.
-  ["GET", /^\/(app)?$/, async (request) => {
-    const { admin, session } = await shopify.authenticate.admin(request);
+  // The embedded app's pages, as the admin opens them: authenticate.admin reads the session token
+  // of the URL and exchanges it for an access token. One page for every route: the browser
+  // switches between them, as a router does (server/embedded.mjs).
+  ["GET", /^\/(app(\/(products|settings))?)?$/, async (request) => {
+    const { admin } = await shopify.authenticate.admin(request);
     const { shop } = await api.gql(admin, `#graphql
       query { shop { name myshopifyDomain } }`);
-    return new Response(`<!doctype html><h1 data-shop="${shop.myshopifyDomain}">${shop.name}</h1>
-      <p>Session ${session.id}, scopes ${session.scope}</p>`, {
-      headers: { "Content-Type": "text/html" },
+    const html = embeddedPage({
+      apiKey: config.apiKey,
+      shop: shop.myshopifyDomain,
+      shopName: shop.name,
+      appBridgeUrl: config.appBridgeUrl,
+      settings,
     });
+    return new Response(html, { headers: documentHeaders(request) });
   }],
+  // The settings of the embedded page: the front end's fetch() sends the session token.
+  ["GET", /^\/api\/settings$/, adminApi(async () => settings)],
+  ["POST", /^\/api\/settings$/, adminApiWithBody(async (_admin, body) => {
+    settings.threshold = Number(body.threshold ?? settings.threshold);
+    settings.notify = Boolean(body.notify);
+    seen.settings.push({ ...settings });
+    return settings;
+  })],
   // The template's auth paths: the bounce page and the exit-iframe page.
   ["GET", /^\/auth\/(session-token|exit-iframe)$/, (request) => shopify.authenticate.admin(request)],
 
