@@ -983,7 +983,8 @@ for, and the cart's, which the extensions write with `applyMetafieldChange`. A d
 an `owner_type` reads that resource only, one without reads every resource that has the
 metafield. The app's own namespace is written `$app` (or `$app:<name>`) in the toml, in the
 store data and in what the extension reads; Shopify's `app--<id>--<name>`, which the Admin API
-writes, is the same namespace.
+writes, is the same namespace. The toml takes `$app` only, as on Shopify: a declaration written
+`app--<id>--<name>` reads nothing, and the loader warns with the spelling to use.
 
 ```toml
 [[extensions.metafields]]
