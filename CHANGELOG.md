@@ -234,7 +234,8 @@ the same data every run.
   its discount shows at 0 on the lines it targets: in the page, `discounts`, `discountCodes`,
   the extensions' `discountAllocations` and the output of `lsf app function run`. An order or a
   shipping candidate of 0 applies the same way; a shipping one gives way to a shipping discount
-  that takes something off
+  that takes something off the option the buyer selected. An automatic discount of 0 shows too,
+  at 0 (a Function that reads its percentage from settings that are not set)
   ([#26](https://github.com/0xtlt/local-storefront/issues/26)).
 
 ## 0.2.0 - 2026-10-30

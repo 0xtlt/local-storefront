@@ -3849,3 +3849,27 @@ fn a_shipping_code_of_0_beats_one_that_only_cuts_an_option_not_selected() {
         );
     }
 }
+
+#[test]
+fn an_automatic_discount_of_0_applies_at_0_too() {
+    // A discount without a code whose Function answers 0 % (its settings not set): it applies
+    // at 0 and shows as a discount of 0, as a code of 0 does.
+    let result = answer_discounts(
+        "cart_lines_discounts_generate_run",
+        &CART,
+        &[Product],
+        &[("VIP", off_line_1(0))],
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(
+        result
+            .discounts
+            .iter()
+            .map(|d| (d.title.as_str(), d.code.as_deref(), d.amount))
+            .collect::<Vec<_>>(),
+        [("VIP", None, 0)]
+    );
+    assert_eq!(allocations(&result.lines[0]), [(None, 0)]);
+    assert_eq!(result.lines[0].total, result.lines[0].subtotal);
+    assert_eq!(result.cost.discounts, 0);
+}
