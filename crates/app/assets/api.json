@@ -3,7 +3,7 @@
     { "version": "2026-10", "metafieldOwnerType": "optional" },
     { "version": "2027-01", "metafieldOwnerType": "required" }
   ],
-  "ownerTypes": ["CART", "COMPANY", "COMPANY_LOCATION", "CUSTOMER", "PRODUCT", "PRODUCTVARIANT", "SHOP"],
+  "ownerTypes": ["CART", "COMPANY", "COMPANY_LOCATION", "CUSTOMER", "ORDER", "PRODUCT", "PRODUCTVARIANT", "SHOP"],
   "placements": [
     { "target": "purchase.checkout.header.render-after", "place": "Checkout: at the top, above the contact step", "surface": "checkout" },
     { "target": "purchase.checkout.contact.render-after", "place": "Checkout: under the contact field", "surface": "checkout" },

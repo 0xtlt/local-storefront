@@ -24,7 +24,7 @@ pub struct AppMetafieldEntry {
 /// The resource a metafield belongs to.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct AppMetafieldTarget {
-    /// `shop`, `product`, `variant`, `customer`, `company` or `companyLocation`.
+    /// `shop`, `product`, `variant`, `customer`, `company`, `companyLocation` or `order`.
     #[serde(rename = "type")]
     pub kind: &'static str,
     /// The GID of the resource: `gid://shopify/Product/42`.
@@ -33,12 +33,16 @@ pub struct AppMetafieldTarget {
 
 /// The `target.type` of the entries a declaration's `owner_type` names. The page reads it from
 /// each declaration (`targetType` in the state's `extensions`), not from a copy of this list.
+/// `ORDER` is the order of the order status page of the customer account; the checkout and its
+/// thank-you page have no `order` entry (their `AppMetafieldEntryTarget` has no such type), so
+/// such a declaration reads nothing there.
 pub fn target_type(owner_type: &str) -> Option<&'static str> {
     Some(match owner_type {
         "CART" => "cart",
         "COMPANY" => "company",
         "COMPANY_LOCATION" => "companyLocation",
         "CUSTOMER" => "customer",
+        "ORDER" => "order",
         "PRODUCT" => "product",
         "PRODUCTVARIANT" => "variant",
         "SHOP" => "shop",
@@ -328,5 +332,10 @@ mod tests {
         let entries = app_metafields(&store, &[&variant_only], None, None, &[variant]);
         let kinds: Vec<&str> = entries.iter().map(|entry| entry.target.kind).collect();
         assert_eq!(kinds, ["variant"]);
+        // `owner_type = "ORDER"` names the order of the order status page: without one (the
+        // checkout), it reads nothing, whatever the other owners have.
+        assert_eq!(target_type("ORDER"), Some("order"));
+        let order_only = declaration("$app", "tier", Some("ORDER"));
+        assert!(app_metafields(&store, &[&order_only], Some(&alex), None, &[variant]).is_empty());
     }
 }

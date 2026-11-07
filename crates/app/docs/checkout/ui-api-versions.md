@@ -21,9 +21,13 @@ Researched on 2026-10-26 with the `shopify-dev` MCP (`learn_shopify_api`, `searc
 | Deprecations | none | none |
 
 `owner_type` names the resource the metafield is read from: `CART`, `COMPANY`, `COMPANY_LOCATION`,
-`CUSTOMER`, `PRODUCT`, `PRODUCTVARIANT` or `SHOP`. If the same `namespace` and `key` are needed on
-several resources, declare it once for each. Extensions without a metafield declaration are not
-affected.
+`CUSTOMER`, `ORDER`, `PRODUCT`, `PRODUCTVARIANT` or `SHOP`. If the same `namespace` and `key` are
+needed on several resources, declare it once for each. Extensions without a metafield declaration
+are not affected. Shopify lists the owner types per surface: checkout UI extensions take `CART`,
+not `ORDER`; customer account UI extensions take `ORDER` (the order being viewed), not `CART`.
+lsf takes the eight on both, as one extension can target both surfaces: a declaration reads
+nothing where its resource is not (`ORDER` in the checkout and on the thank-you page, whose
+`AppMetafieldEntryTarget` has no `order` type), without a warning.
 
 `Merchandise` follows the 2026-10 reference of the Cart Lines API, which is the same in both
 releases: `title` is "the display title of the product variant, such as "Small" or "Red / Large".
@@ -65,13 +69,14 @@ Sources: [owner_type changelog (2026-10-08)](https://shopify.dev/changelog/posts
 [2026-10 release notes](https://shopify.dev/changelog/release-notes/2026-10),
 [2027-01 release notes](https://shopify.dev/changelog/release-notes/2027-01),
 [metafields in checkout](https://shopify.dev/docs/apps/build/checkout/metafields),
-[checkout UI extensions 2026-10](https://shopify.dev/docs/api/checkout-ui-extensions/2026-10).
+[checkout UI extensions 2026-10](https://shopify.dev/docs/api/checkout-ui-extensions/2026-10),
+[customer account UI extensions 2026-10](https://shopify.dev/docs/api/customer-account-ui-extensions/2026-10).
 
 ## What the host does with the version
 
 - `refusalOf(ext)` (`api-versions.js`) gives the reason an extension is not loaded, or `null`:
   1. `apiVersion` is not `2026-10` or `2027-01`;
-  2. a declared metafield has an `owner_type` that is not one of the seven;
+  2. a declared metafield has an `owner_type` that is not one of the eight;
   3. the version requires `owner_type` (2027-01) and a declared metafield has none.
 - `createExtensionHost` leaves those extensions out (no slot, no iframe) and lists them in
   `host.refusals()`. The page shows each as a warning banner, "`handle`: not loaded. `reason`",

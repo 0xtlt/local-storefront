@@ -790,6 +790,41 @@ test('an order status target reads the metafields it declares of the shop, the p
   assert.equal(plain(stored.appMetafields.value).some((each) => each.target.type === 'cart'), false);
 });
 
+test('owner_type ORDER reads the order of the order status page, not its cart, and nothing in the checkout', () => {
+  // The order has the cart's `$app:gift.message` (copied by its definition) and one its backend
+  // set; its cart has the same key.
+  const order = gid('Order', 4501);
+  const owned = OWNED.concat([
+    entry('order', order, '$app:gift', 'message', 'single_line_text_field', 'Happy birthday'),
+    entry('order', order, '$app', 'delivery-promise', 'number_integer', '3'),
+  ]);
+  const placed = { ...ORDER, id: order, token: 'c1-abc', metafields: [{ namespace: '$app:gift', key: 'message', type: 'single_line_text_field', value: 'Happy birthday' }] };
+  const metafields = [
+    { namespace: '$app:gift', key: 'message', ownerType: 'ORDER' },
+    { namespace: '$app', key: 'delivery-promise' },
+  ].map(declaration);
+  assert.equal(metafields[0].targetType, 'order');
+  const target = 'customer-account.order-status.block.render';
+  const { shopify } = account(target, { order: placed, ext: { metafields }, appMetafields: owned });
+  const read = (shopify) => plain(shopify.appMetafields.value).map(({ target, metafield }) => [target.type, target.id, metafield.key, metafield.value]);
+  assert.deepEqual(read(shopify), [
+    ['order', order, 'message', 'Happy birthday'],
+    // Without `owner_type`, every owner: typed as on the order status page.
+    ['order', order, 'delivery-promise', 3],
+  ]);
+  // Without `owner_type`, the cart's is read too.
+  const any = [{ namespace: '$app:gift', key: 'message' }].map(declaration);
+  assert.deepEqual(read(account(target, { order: placed, ext: { metafields: any }, appMetafields: owned }).shopify), [
+    ['order', order, 'message', 'Happy birthday'],
+    ['cart', 'gid://shopify/Cart/c1-abc', 'message', 'Happy birthday'],
+  ]);
+
+  // The checkout has no order: the declaration reads nothing, not the cart's.
+  const gift = { type: 'metafield', change: { type: 'updateCartMetafield', namespace: '$app:gift', key: 'message', valueType: 'single_line_text_field', value: 'Hi' } };
+  const checkout = runtime({ state: { ...next(gift), appMetafields: OWNED }, ext: { metafields } }).shopify;
+  assert.deepEqual(plain(checkout.appMetafields.value), []);
+});
+
 test('the order status page types the values of appMetafields, the checkout keeps their text', () => {
   // Shopify's `AppMetafield`: in the customer account, `value` is a boolean, a number or text by
   // its `valueType`; in the checkout, it is the text whatever the type.

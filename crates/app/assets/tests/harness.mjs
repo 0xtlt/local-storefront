@@ -219,6 +219,7 @@ const TARGET_TYPES = {
   COMPANY: 'company',
   COMPANY_LOCATION: 'companyLocation',
   CUSTOMER: 'customer',
+  ORDER: 'order',
   PRODUCT: 'product',
   PRODUCTVARIANT: 'variant',
   SHOP: 'shop',

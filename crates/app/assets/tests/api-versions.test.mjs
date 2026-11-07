@@ -30,7 +30,9 @@ test('owner_type is optional on 2026-10 and required on 2027-01', () => {
 });
 
 test('an owner_type must name a resource, on both versions', () => {
-  assert.deepEqual(OWNER_TYPES, ['CART', 'COMPANY', 'COMPANY_LOCATION', 'CUSTOMER', 'PRODUCT', 'PRODUCTVARIANT', 'SHOP']);
+  // Those of checkout UI extensions (CART) and of customer account UI extensions (ORDER).
+  assert.deepEqual(OWNER_TYPES, ['CART', 'COMPANY', 'COMPANY_LOCATION', 'CUSTOMER', 'ORDER', 'PRODUCT', 'PRODUCTVARIANT', 'SHOP']);
+  assert.equal(refusalOf(ext('2027-01', [{ namespace: 'custom', key: 'o', ownerType: 'ORDER' }])), null);
   const declared = [{ namespace: 'custom', key: 'a', ownerType: 'PRODUCT_VARIANT' }];
   for (const version of ['2026-10', '2027-01']) {
     assert.match(refusalOf(ext(version, declared)), /owner_type of custom\.a must be one of CART, COMPANY/);

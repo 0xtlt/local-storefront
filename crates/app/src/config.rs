@@ -1695,6 +1695,12 @@ handle = "odd"
   [[extensions.metafields]]
   namespace = "$app:odd"
   key = "kept"
+  owner_type = "COLLECTION"
+
+  # The order of the order status page: an owner type, which the checkout reads nothing of.
+  [[extensions.metafields]]
+  namespace = "$app:odd"
+  key = "order"
   owner_type = "ORDER"
 "#,
         );
@@ -1707,7 +1713,7 @@ handle = "odd"
             .collect();
         assert!(
             said.contains(
-                &"Error: `owner_type` of `$app:odd.kept` is `ORDER`, which is not one of CART, COMPANY, COMPANY_LOCATION, CUSTOMER, PRODUCT, PRODUCTVARIANT, SHOP: the checkout does not load the extension"
+                &"Error: `owner_type` of `$app:odd.kept` is `COLLECTION`, which is not one of CART, COMPANY, COMPANY_LOCATION, CUSTOMER, ORDER, PRODUCT, PRODUCTVARIANT, SHOP: the checkout does not load the extension"
                     .to_string()
             ),
             "{said:?}"
@@ -1722,6 +1728,10 @@ handle = "odd"
         // A target the page places, and a known owner type, say nothing.
         assert!(
             !said.iter().any(|line| line.contains("block.render")),
+            "{said:?}"
+        );
+        assert!(
+            !said.iter().any(|line| line.contains("odd.order")),
             "{said:?}"
         );
         let _ = std::fs::remove_dir_all(root);

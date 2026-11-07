@@ -279,7 +279,7 @@ The `ui-broken-*` extensions fail on purpose. They are in no scenario but their 
 | `ui-broken-no-api-version` | none | No `api_version` | `ui-broken-loader` |
 | `ui-broken-not-built` | 2026-10 | No `dist/` bundle | `ui-broken-loader` |
 | `ui-broken-missing-owner-type` | 2027-01 | A metafield without the `owner_type` 2027-01 requires | `ui-broken-loader` |
-| `ui-broken-bad-owner-type` | 2027-01 | `owner_type = "ORDER"`, not one of the seven | `ui-broken-loader` |
+| `ui-broken-bad-owner-type` | 2027-01 | `owner_type = "COLLECTION"`, not one of the eight | `ui-broken-loader` |
 | `ui-broken-tall` | 2026-10 | 150 rows, far taller than the window | `ui-broken-layout` |
 | `ui-broken-long-text` | 2026-10 | Long unbroken words, URLs and codes in a banner, badge, button, field, link and under each line | `ui-broken-layout` |
 
