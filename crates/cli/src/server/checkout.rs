@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use lsf_app::checkout::app_metafields::{app_metafields, target_type};
+use lsf_app::checkout::app_metafields::{OrderOwner, app_metafields, target_type};
 use lsf_app::checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
 use lsf_app::checkout::{
     Address, BuyerJourneyStep, CheckoutResult, CheckoutState, Metafield, ResultLine,
@@ -785,6 +785,7 @@ fn compute(
             customer,
             session.company_location,
             &variants,
+            None,
         ),
     );
     // A method a Function hid is not selected any more.
@@ -923,9 +924,9 @@ pub(super) fn line_variants(lines: &[ResultLine]) -> Vec<u64> {
 }
 
 /// The metafields the selected extensions declare, of the shop, of the products and variants
-/// in `variants`, of the customer and of the company and location they buy for. The frame of
-/// each extension keeps the ones it declares for its target, and adds the cart's
-/// (`assets/sandbox-api.js`).
+/// in `variants`, of the customer and of the company and location they buy for, and of the
+/// order of the order status page (`order`; the checkout has none). The frame of each extension
+/// keeps the ones it declares for its target, and adds the cart's (`assets/sandbox-api.js`).
 pub(super) fn app_metafields_json(
     app: &App,
     selection: &Selection,
@@ -933,6 +934,7 @@ pub(super) fn app_metafields_json(
     customer: Option<&Customer>,
     company_location: Option<u64>,
     variants: &[u64],
+    order: Option<OrderOwner<'_>>,
 ) -> Json {
     let declared: Vec<_> = selection
         .ui_extensions(app)
@@ -943,7 +945,8 @@ pub(super) fn app_metafields_json(
         &declared,
         customer,
         company_location,
-        variants
+        variants,
+        order
     ))
 }
 

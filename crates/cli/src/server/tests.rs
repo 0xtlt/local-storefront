@@ -8612,6 +8612,193 @@ fn app_metafields_have_what_the_backend_sets_through_the_admin_api() {
 }
 
 #[test]
+fn the_order_status_page_reads_the_metafields_of_the_order() {
+    // The extension declares `$app:gift.message` of the order, and `$app:gift.note` of any
+    // owner. The backend defines `$app:gift.message` on orders, copied from the cart.
+    let app = app_with_metafield_reader("order");
+    let manifest = app.join("extensions/metafield-reader/shopify.extension.toml");
+    let mut toml = std::fs::read_to_string(&manifest).unwrap();
+    toml.push_str(
+        r#"
+  [[extensions.metafields]]
+  namespace = "$app:gift"
+  key = "message"
+  owner_type = "ORDER"
+
+  [[extensions.metafields]]
+  namespace = "$app:gift"
+  key = "note"
+"#,
+    );
+    std::fs::write(&manifest, toml).unwrap();
+    let state = checkout_server_with(app.clone(), &[], true, None, Some(Default::default()));
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "write_orders,write_products"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let defined = admin_query(
+        &state,
+        r#"mutation { metafieldDefinitionCreate(definition: {
+            name: "Gift message", ownerType: ORDER, namespace: "$app:gift", key: "message",
+            type: "single_line_text_field", capabilities: {cartToOrderCopyable: {enabled: true}}
+        }) { createdDefinition { id } userErrors { message } } }"#,
+    );
+    assert_eq!(
+        defined["data"]["metafieldDefinitionCreate"]["userErrors"],
+        json!([]),
+        "{defined}"
+    );
+
+    // Jane checks out with a gift message on her cart.
+    let session = "ca-order-metafields";
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"customer": "jane.doe@example.com", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let path = header(&get(&state, "/checkout", session), "location")
+        .expect("a checkout")
+        .to_string();
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "metafield", "change": {
+            "type": "updateCartMetafield", "namespace": "$app:gift", "key": "message",
+            "valueType": "single_line_text_field", "value": "Happy birthday"
+        }}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    // The checkout has no order: no `order` entry.
+    assert_eq!(
+        app_metafields_of(&body_json(&reply), "order"),
+        Vec::<(String, String, String)>::new()
+    );
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    // Nor has the thank-you page.
+    let thanks = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(thanks["status"], "completed");
+    assert_eq!(
+        app_metafields_of(&thanks, "order"),
+        Vec::<(String, String, String)>::new()
+    );
+
+    // The order status page of the order has its metafield, copied from the cart.
+    let orders = account_state(&get(&state, "/account", session));
+    let placed = orders["orders"][0].clone();
+    assert_eq!(placed["placedHere"], true);
+    let order_id = placed["id"].as_str().unwrap().to_string();
+    let page = format!("/account/orders/{}", placed["legacyId"]);
+    let order = account_state(&get(&state, &page, session));
+    let message = |value: &str| {
+        (
+            order_id.clone(),
+            "$app:gift.message".to_string(),
+            value.to_string(),
+        )
+    };
+    assert_eq!(
+        app_metafields_of(&order, "order"),
+        [message("Happy birthday")]
+    );
+    // The cart's is there too, for a declaration without `owner_type`.
+    assert_eq!(order["order"]["metafields"][0]["key"], "message");
+    // The Admin API reads it on the order.
+    let read = admin_query(
+        &state,
+        &format!(
+            r#"{{ order(id: "{order_id}") {{ metafield(namespace: "$app:gift", key: "message") {{ value }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        read["data"]["order"]["metafield"]["value"], "Happy birthday",
+        "{read}"
+    );
+
+    // The backend changes it, and sets another: the page reads both.
+    let set = admin_query(
+        &state,
+        &format!(
+            r#"mutation {{ metafieldsSet(metafields: [
+                {{ownerId: "{order_id}", namespace: "$app:gift", key: "message", value: "Happy 30th"}},
+                {{ownerId: "{order_id}", namespace: "$app:gift", key: "note", type: "number_integer", value: "3"}}
+            ]) {{ userErrors {{ message }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        set["data"]["metafieldsSet"]["userErrors"],
+        json!([]),
+        "{set}"
+    );
+    let order = account_state(&get(&state, &page, session));
+    assert_eq!(
+        app_metafields_of(&order, "order"),
+        [
+            message("Happy 30th"),
+            (
+                order_id.clone(),
+                "$app:gift.note".to_string(),
+                "3".to_string()
+            ),
+        ]
+    );
+    assert_eq!(
+        order["appMetafields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["metafield"]["key"] == "note")
+            .unwrap()["metafield"]["type"],
+        "number_integer"
+    );
+
+    // An order of the store data is a record of the Admin API too, under its GID.
+    let stored = orders["orders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|order| order["placedHere"].is_null())
+        .expect("Jane has orders in the demo store")
+        .clone();
+    let stored_id = stored["id"].as_str().unwrap();
+    let set = admin_query(
+        &state,
+        &format!(
+            r#"mutation {{ metafieldsSet(metafields: [
+                {{ownerId: "{stored_id}", namespace: "$app:gift", key: "message", type: "single_line_text_field", value: "Old order"}}
+            ]) {{ userErrors {{ message }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        set["data"]["metafieldsSet"]["userErrors"],
+        json!([]),
+        "{set}"
+    );
+    let order = account_state(&get(
+        &state,
+        &format!("/account/orders/{}", stored["legacyId"]),
+        session,
+    ));
+    assert_eq!(
+        app_metafields_of(&order, "order"),
+        [(
+            stored_id.to_string(),
+            "$app:gift.message".to_string(),
+            "Old order".to_string()
+        )]
+    );
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
 fn the_order_status_page_reads_the_location_the_order_was_placed_for() {
     let app = app_with_metafield_reader("order-location");
     let state = checkout_server_of(app.clone(), &[], false);

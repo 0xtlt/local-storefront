@@ -279,6 +279,35 @@ pub fn find(state: &ShopState, owner: &str, namespace: &str, key: &str) -> Optio
         .map(str::to_string)
 }
 
+/// The metafields of an owner as the store data writes them: namespace (as stored, `app--<id>`
+/// for the app's) → key → type and value, the value being the text the Admin API returns. What
+/// `appMetafields` reads of a resource the store data does not have metafields of (an order).
+pub fn of_owner(state: &ShopState, owner: &str) -> lsf_core::store::Metafields {
+    let mut metafields = lsf_core::store::Metafields::new();
+    let ids = state
+        .get(owner)
+        .and_then(|record| record.get("metafields"))
+        .and_then(Value::as_array);
+    for record in ids
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(|id| state.get(id))
+    {
+        metafields
+            .entry(text(record, "namespace").to_string())
+            .or_default()
+            .insert(
+                text(record, "key").to_string(),
+                lsf_core::store::Metafield {
+                    kind: text(record, "type").to_string(),
+                    value: json!(text(record, "value")),
+                },
+            );
+    }
+    metafields
+}
+
 /// The definition of an owner type, namespace (as stored) and key.
 pub fn find_definition(
     state: &ShopState,

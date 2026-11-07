@@ -17,8 +17,9 @@
 //! addresses), so that the page and the sandbox read it the same way; shipments come from its
 //! `fulfillment_status`, returns from its `returns`.
 
+use lsf_app::checkout::app_metafields::OrderOwner;
 use lsf_app::config::Selection;
-use lsf_core::store::{Customer, Order, Store};
+use lsf_core::store::{Customer, Metafields, Order, Store};
 use serde_json::{Value as Json, json};
 
 use super::checkout::{self, origin_of};
@@ -166,7 +167,7 @@ fn state_json(
 
     // What the order status targets read as `appMetafields`: the products and variants are the
     // ones of the order, with the components of its bundles; the cart's metafields are the
-    // order's own (`metafields`).
+    // order's own (`metafields`), and the order's are those of its record in the Admin API.
     let variants = order
         .as_ref()
         .map_or_else(Vec::new, |order| line_variants(&order["lines"]));
@@ -175,8 +176,20 @@ fn state_json(
         Some(order) => order_location(order),
         None => session.company_location,
     };
-    let app_metafields =
-        checkout::app_metafields_json(&app, &selection, &store, customer, location, &variants);
+    let order_id = order.as_ref().and_then(|order| order["id"].as_str());
+    let order_metafields = order_id.and_then(|id| admin_order_metafields(state, id));
+    let order_owner = order_id
+        .zip(order_metafields.as_ref())
+        .map(|(id, metafields)| OrderOwner { id, metafields });
+    let app_metafields = checkout::app_metafields_json(
+        &app,
+        &selection,
+        &store,
+        customer,
+        location,
+        &variants,
+        order_owner,
+    );
     let company = customer.and_then(|customer| company_json(&store, customer, identity.location));
     let profiles: Vec<Json> = store
         .customers
@@ -246,6 +259,21 @@ fn state_json(
     });
     json["builds"] = state.builds.to_json();
     Ok(json)
+}
+
+/// The metafields of an order as the default shop of the Admin API keeps them: those the
+/// definitions of the shop copied from its cart when it was placed here, and those the backend
+/// set (`metafieldsSet`). The orders of the store data are records of the shop too, under the
+/// same GID. `None` without the Admin API, or for an order it has no record of.
+fn admin_order_metafields(state: &ServerState, order: &str) -> Option<Metafields> {
+    let admin = state.admin.as_ref()?;
+    admin
+        .api
+        .with_default_shop(|shop| {
+            shop.contains(order)
+                .then(|| lsf_app::admin::domains::content::metafields::of_owner(shop, order))
+        })
+        .flatten()
 }
 
 /// Whether an extension of the state has a target of the customer account.

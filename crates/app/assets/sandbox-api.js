@@ -247,7 +247,8 @@
    * and `[[extensions.targeting.metafields]]` of that target), the same namespace and key, of the
    * owner `owner_type` names (the server gives its `target.type`: `targetType`), of any owner
    * without one. `owned` are the entries the server read
-   * from the store data (the shop, products, variants, customer, company and location), `cart`
+   * from the store data (the shop, products, variants, customer, company and location) and, on
+   * the order status page, from the order's record in the Admin API (`order`), `cart`
    * the cart's (`{namespace, key, type, value}` and the cart's token). `typed`: the values the
    * customer account's `AppMetafield` has (see `appMetafield`).
    */

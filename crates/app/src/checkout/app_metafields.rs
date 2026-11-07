@@ -1,9 +1,9 @@
 //! What `appMetafields` of checkout and customer account UI extensions reads besides the cart:
 //! the metafields the extensions declare (`[[extensions.metafields]]`), of the shop, of the
 //! products and variants bought, of the customer and of the company and location they buy for,
-//! read from the store data. The page keeps, for each extension, the entries it declares for its
-//! target, and adds the ones of the cart, which change as extensions write them
-//! (`assets/sandbox-api.js`).
+//! read from the store data, and on the order status page those of the order, read from the
+//! Admin API. The page keeps, for each extension, the entries it declares for its target, and
+//! adds the ones of the cart, which change as extensions write them (`assets/sandbox-api.js`).
 
 use lsf_core::Store;
 use lsf_core::store::{Customer, Metafields};
@@ -50,18 +50,27 @@ pub fn target_type(owner_type: &str) -> Option<&'static str> {
     })
 }
 
+/// The order of the order status page, an owner of `appMetafields`: its GID and its metafields,
+/// as the Admin API keeps them (the store data has none of an order).
+#[derive(Clone, Copy, Debug)]
+pub struct OrderOwner<'a> {
+    pub id: &'a str,
+    pub metafields: &'a Metafields,
+}
+
 /// The entries of the store's metafields that one of `declared` names: the same namespace (the
 /// app's own in any of its spellings) and key, of the owner its `owner_type` names, or of any
 /// owner without one. The owners are the shop, the product and the variant of each of
-/// `variants`, the customer, and the company they buy for with its location
-/// (`company_location`, else their first one), in that order. A metafield comes once, however
-/// many declarations name it.
+/// `variants`, the customer, the company they buy for with its location (`company_location`,
+/// else their first one), and the order of the order status page, in that order. A metafield
+/// comes once, however many declarations name it.
 pub fn app_metafields(
     store: &Store,
     declared: &[&MetafieldDeclaration],
     customer: Option<&Customer>,
     company_location: Option<u64>,
     variants: &[u64],
+    order: Option<OrderOwner<'_>>,
 ) -> Vec<AppMetafieldEntry> {
     let gid = |kind: &str, id: u64| format!("gid://shopify/{kind}/{id}");
     let mut owners: Vec<(&'static str, String, &Metafields)> =
@@ -91,6 +100,9 @@ pub fn app_metafields(
                 ));
             }
         }
+    }
+    if let Some(order) = order {
+        owners.push(("order", order.id.to_string(), order.metafields));
     }
 
     let mut entries: Vec<AppMetafieldEntry> = Vec::new();
@@ -193,7 +205,7 @@ mod tests {
         let gift = declaration("$app", "gift-codes", None);
         let mode = declaration("$app:config", "mode", Some("SHOP"));
         let undeclared = declaration("$app", "nothing", None);
-        let entries = app_metafields(&store, &[&gift, &mode, &undeclared], None, None, &[]);
+        let entries = app_metafields(&store, &[&gift, &mode, &undeclared], None, None, &[], None);
         let shop = format!("gid://shopify/Shop/{}", store.shop.id);
         assert_eq!(
             summary(&entries),
@@ -227,11 +239,11 @@ mod tests {
             })
         );
         // The shop's other metafields (the demo's `custom.announcement`) are not declared.
-        assert!(app_metafields(&store, &[], None, None, &[]).is_empty());
+        assert!(app_metafields(&store, &[], None, None, &[], None).is_empty());
         // A declaration that writes the app's namespace as the admin does reads nothing, as on
         // Shopify (the loader warns about it).
         let admin_spelling = declaration("app--4242--config", "mode", None);
-        assert!(app_metafields(&store, &[&admin_spelling], None, None, &[]).is_empty());
+        assert!(app_metafields(&store, &[&admin_spelling], None, None, &[], None).is_empty());
     }
 
     #[test]
@@ -279,7 +291,14 @@ mod tests {
         ];
         let declared: Vec<&MetafieldDeclaration> = declared.iter().collect();
         // The same variant on two lines is read once.
-        let entries = app_metafields(&store, &declared, Some(&alex), None, &[variant, variant]);
+        let entries = app_metafields(
+            &store,
+            &declared,
+            Some(&alex),
+            None,
+            &[variant, variant],
+            None,
+        );
         let gid = |kind: &str, id: u64| format!("gid://shopify/{kind}/{id}");
         let portland = gid("CompanyLocation", company.locations[0].id);
         let expected = [
@@ -317,25 +336,59 @@ mod tests {
         assert_eq!(summary(&entries), expected);
 
         // The location the customer chose; Seattle has no delivery notes.
-        let entries = app_metafields(&store, &declared, Some(&alex), Some(seattle), &[]);
+        let entries = app_metafields(&store, &declared, Some(&alex), Some(seattle), &[], None);
         assert!(
             entries
                 .iter()
                 .all(|entry| entry.target.kind != "companyLocation")
         );
         // Without a customer, no customer, company or location.
-        let entries = app_metafields(&store, &declared, None, None, &[variant]);
+        let entries = app_metafields(&store, &declared, None, None, &[variant], None);
         let kinds: Vec<&str> = entries.iter().map(|entry| entry.target.kind).collect();
         assert_eq!(kinds, ["shop", "product", "variant"]);
         // `owner_type = "PRODUCTVARIANT"` reads the variant only.
         let variant_only = declaration("$app", "tier", Some("PRODUCTVARIANT"));
-        let entries = app_metafields(&store, &[&variant_only], None, None, &[variant]);
+        let entries = app_metafields(&store, &[&variant_only], None, None, &[variant], None);
         let kinds: Vec<&str> = entries.iter().map(|entry| entry.target.kind).collect();
         assert_eq!(kinds, ["variant"]);
         // `owner_type = "ORDER"` names the order of the order status page: without one (the
         // checkout), it reads nothing, whatever the other owners have.
         assert_eq!(target_type("ORDER"), Some("order"));
         let order_only = declaration("$app", "tier", Some("ORDER"));
-        assert!(app_metafields(&store, &[&order_only], Some(&alex), None, &[variant]).is_empty());
+        assert!(
+            app_metafields(&store, &[&order_only], Some(&alex), None, &[variant], None).is_empty()
+        );
+
+        // The order's, as the Admin API keeps them: the app's namespace as it stores it.
+        let mut order_metafields = Metafields::new();
+        set(
+            &mut order_metafields,
+            "app--4242",
+            "tier",
+            "single_line_text_field",
+            json!("order tier"),
+        );
+        let order = OrderOwner {
+            id: "gid://shopify/Order/4501",
+            metafields: &order_metafields,
+        };
+        let entries = app_metafields(&store, &[&order_only], None, None, &[variant], Some(order));
+        assert_eq!(
+            summary(&entries),
+            [(
+                "order",
+                "gid://shopify/Order/4501",
+                "$app.tier".to_string(),
+                "order tier"
+            )]
+        );
+        // Without `owner_type`, the order comes after the other owners.
+        let any = declaration("$app", "tier", None);
+        let entries = app_metafields(&store, &[&any], None, None, &[variant], Some(order));
+        let kinds: Vec<&str> = entries.iter().map(|entry| entry.target.kind).collect();
+        assert_eq!(kinds, ["shop", "product", "variant", "order"]);
+        // Another owner type does not read the order's.
+        let entries = app_metafields(&store, &[&variant_only], None, None, &[], Some(order));
+        assert!(entries.is_empty());
     }
 }

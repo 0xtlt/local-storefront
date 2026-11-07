@@ -5,9 +5,9 @@
 //
 // The page sends the state of the account (`customer-account.js`): `buyer`, `order` (the order
 // of the page, written like the state of a checkout), `appMetafields` (the metafields the
-// extensions declare of the shop, the order's products and the buyer), and in `ctx` what the
-// slot is for: `lineId`, `orderId`, `fulfillmentId`, `returnId`, `locationId`, and `handle` and
-// `path` for a full page.
+// extensions declare of the shop, the order's products, the buyer and the order), and in `ctx`
+// what the slot is for: `lineId`, `orderId`, `fulfillmentId`, `returnId`, `locationId`, and
+// `handle` and `path` for a full page.
 (function (global) {
   'use strict';
   const Sandbox = (global.LsfSandbox = global.LsfSandbox || {});
@@ -109,7 +109,8 @@
     signalProperty(api, 'discountAllocations', (s) =>
       (order(s).discounts || []).filter((entry) => entry.class === 'ORDER').map(map.allocation));
     signalProperty(api, 'appliedGiftCards', () => []);
-    // Those of the order's cart are the metafields of the order placed in the local checkout.
+    // Those of the order's cart are the metafields of the order placed in the local checkout;
+    // the order's own (`order` entries) come with the others in `appMetafields`.
     // The customer account's `AppMetafield` types the values (`typed`), the checkout's does not.
     signalProperty(api, 'appMetafields', (s) =>
       map.declaredMetafields(s.appMetafields, { metafields: order(s).metafields, token: order(s).token }, init.ext.metafields, target, true));
