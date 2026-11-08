@@ -174,6 +174,9 @@ pub struct ShopResolver<'a> {
     /// Whether the request is the query of a bulk operation: its connections take every item
     /// when they are given neither `first` nor `last`, and no limit of 250.
     bulk: bool,
+    /// Whether the app is on managed pricing (it declared plans): the Billing API creates no
+    /// charge ([`crate::admin::domains::app::pricing`]).
+    managed_pricing: bool,
     report: RefCell<Report>,
 }
 
@@ -195,6 +198,7 @@ impl<'a> ShopResolver<'a> {
             origin: DEFAULT_ORIGIN,
             fetched: None,
             bulk: false,
+            managed_pricing: false,
             report: RefCell::new(Report::default()),
         }
     }
@@ -222,6 +226,13 @@ impl<'a> ShopResolver<'a> {
     /// item, and neither is limited to 250 (shopify.dev, "Perform bulk operations").
     pub fn with_bulk(mut self) -> ShopResolver<'a> {
         self.bulk = true;
+        self
+    }
+
+    /// Says the app is on managed pricing: the Billing API's charge mutations answer
+    /// [`crate::admin::domains::app::pricing::BILLING_API_REFUSED`].
+    pub fn with_managed_pricing(mut self, managed: bool) -> ShopResolver<'a> {
+        self.managed_pricing = managed;
         self
     }
 

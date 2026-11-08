@@ -72,6 +72,15 @@ throttling checks use `@shopify/admin-api-client` directly.
   refunded, and the stock it took on the product page.
 - **Billing**: `billing.request` → the approval page → Approve → the return URL →
   `billing.check`.
+- **Managed pricing**: plans set by `PUT /__lsf/admin/pricing-plans`, for these checks only (the
+  Billing API above is closed while they are declared); in Chromium, the app's
+  `shopify://admin/charges/admin-backend/pricing_plans` link → lsf's plan selection page → Pro →
+  Approve → the welcome link with `charge_id` and `plan_handle`, which the page's loader reads;
+  `currentAppInstallation.activeSubscriptions` has Pro and `app_subscriptions/update` its
+  `plan_handle`. Then `/app/plans`, whose loader calls the template's
+  `redirect("shopify://admin/charges/…", { target: "_top" })`: App Bridge opens
+  `https://admin.shopify.com/store/…/pricing_plans`, which lsf's admin opens as its own page;
+  down to Free, Pro is cancelled, and both webhooks arrive.
 - **Bulk operations and files**: `bulkOperationRunQuery` → poll → the JSONL; a staged JSONL →
   `bulkOperationRunMutation`; `stagedUploadsCreate` → multipart `POST` → `fileCreate` → the bytes
   back.

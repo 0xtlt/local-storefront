@@ -866,6 +866,83 @@ The subscription is then `ACTIVE`, and `app_subscriptions/update` is delivered i
 subscribes to it. `/decline` declines it. Billing from the loader of a page does not work
 ([billing from a page](#javascript-the-react-router-app-and-shopifyshopify-api)).
 
+### Managed pricing
+
+An app on managed pricing (Shopify now calls it Shopify App Pricing) has no billing code: its
+plans are in the Partner Dashboard, Shopify hosts the page where the merchant picks one, and the
+app sends the merchant there:
+
+```js
+// The template's loader, or `open("shopify://admin/charges/my-app/pricing_plans", "_top")` in the page.
+return redirect(`shopify://admin/charges/${appHandle}/pricing_plans`, { target: "_top" });
+```
+
+lsf has no Partner Dashboard: declare the plans in a file and start lsf with
+`--pricing-plans pricing.toml` (or `LSF_PRICING_PLANS`; JSON for a `.json` file):
+
+```toml
+# pricing.toml: the plans of the Partner Dashboard.
+[[plans]]
+handle = "free"            # plan_handle: in the subscription, the webhook and the welcome link
+name = "Free"              # the subscription's name
+price = 0                  # 0 (or free = true): a free plan
+features = ["One market"]
+
+[[plans]]
+handle = "pro"
+name = "Pro"
+price = 4.99               # USD unless `currency` says otherwise
+interval = "monthly"       # or "annual"
+trial_days = 7
+features = ["Every market", "Rules by customer tag"]
+welcome_link = "/welcome"  # a path of the app, or a full URL; the app's home without it
+```
+
+A test sets them while lsf runs: `PUT /__lsf/admin/pricing-plans` with
+`{"plans": [{"handle": "pro", "name": "Pro", "price": 4.99, "trial_days": 7}]}` (the same fields),
+`DELETE` puts back those of the file. lsf prints the page at start (`pricing: 2 plans …`).
+
+The page is at `/admin/charges/<app handle>/pricing_plans` of [lsf's admin](#preview-the-embedded-app).
+A `shopify:admin/charges/…` link of the app, and Shopify's own URL of the page
+(`https://admin.shopify.com/store/<store>/charges/<app handle>/pricing_plans`, which the
+template's `redirect` opens), land there. The merchant chooses a plan and approves it, as on
+Shopify:
+
+- the shop gets a new `ACTIVE` subscription named after the plan, `test: true` (lsf's shops are
+  development stores), with the plan's trial and one `AppRecurringPricing` line
+  (`price`, `interval`, `planHandle`). `currentAppInstallation.activeSubscriptions` lists it;
+- the plan it replaces is `CANCELLED` at once: a shop has one subscription. Down to a free plan,
+  the new one keeps the paid plan's `currentPeriodEnd`;
+- `app_subscriptions/update` is delivered for each (`plan_handle` in the payload);
+- the browser goes to the plan's welcome link with `charge_id` (the subscription's number) and
+  `plan_handle`: a path is the app's page in lsf's admin
+  (`/admin/apps/<handle>/welcome?shop=…&charge_id=3&plan_handle=pro`), a full URL gets `shop`
+  too.
+
+While plans are declared, `appSubscriptionCreate` and `appPurchaseOneTimeCreate` answer the user
+error Shopify gives an app on managed pricing: "Managed Pricing Apps cannot use the Billing API
+(to create charges)." `appSubscriptionCancel` and uninstalling the app still cancel the
+subscription. A test chooses a plan without the page:
+
+```js
+await fetch(`${LSF}/__lsf/admin/pricing-plans/pro/select`, { method: "POST", body: JSON.stringify({ shop }) });
+// → { ok, subscription: { id, chargeId, name, status, … }, replaced: [...], redirect }
+```
+
+**Shopify changed this in April 2026.** Its page now says that for the apps enrolled since,
+and for every app after April 28, 2026, the welcome link gets `plan_handle` alone, no
+`app_subscriptions/update` is sent, and the app reads its plan from the Partner API's
+`activeSubscription`. Its "legacy features" section still lists `charge_id`, the webhook and test
+subscriptions for the apps enrolled before. lsf does what those apps get, unless the declaration
+says `legacy = false`: then `plan_handle` alone, no webhook, `test: false`. lsf still records the
+subscription in the Admin API either way: it does not simulate the Partner API.
+
+lsf does not simulate: the Partner API (`activeSubscription`, the history of events) and the App
+Events API (usage meters), usage charges, private plans and their stores, the eight-plan limit,
+prices in local currencies, plans that toggle between monthly and yearly (declare two), proration
+and deferred billing (every change is at once, no money moves), and the 180-day memory of a trial
+used before (each plan's trial applies every time).
+
 ### Reset between runs
 
 ```bash

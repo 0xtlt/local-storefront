@@ -18,7 +18,7 @@ redirect_urls = ["https://admin-backend.example.com/auth/callback"]
 api_version = "2026-10"
 
   [[webhooks.subscriptions]]
-  topics = ["app/uninstalled", "app/scopes_update"]
+  topics = ["app/uninstalled", "app/scopes_update", "app_subscriptions/update"]
   uri = "/webhooks/app"
 
   [[webhooks.subscriptions]]

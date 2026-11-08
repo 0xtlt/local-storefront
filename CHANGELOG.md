@@ -121,6 +121,14 @@ the same data every run.
   with Shopify's parameters and signature. A Liquid answer is rendered in the theme's layout.
 - **Billing.** `appSubscriptionCreate` and `appPurchaseOneTimeCreate` lead to a local approval
   page. Approving goes to the `returnUrl`, and the charge is active.
+- **Managed pricing (Shopify App Pricing).** Declare the app's plans in a file
+  (`--pricing-plans pricing.toml`) or through `PUT /__lsf/admin/pricing-plans`. lsf's admin shows
+  them at `/admin/charges/<app handle>/pricing_plans`, where a `shopify:admin/charges/…` link
+  and the template's `redirect(…, { target: "_top" })` land. The merchant picks a plan: a test
+  subscription with the plan's `planHandle` replaces the current one, `app_subscriptions/update`
+  is delivered, and the browser goes to the plan's welcome link with `charge_id` and
+  `plan_handle`. The Billing API then refuses to create charges, as Shopify does.
+  [Managed pricing](docs/admin.md#managed-pricing).
 - **Control endpoints under `/__lsf/admin`:** reset the shop, make and delete extra shops for
   isolated tests, install and uninstall the app, and make session tokens for a test to call the
   backend's routes. [Control API](docs/control-api.md).

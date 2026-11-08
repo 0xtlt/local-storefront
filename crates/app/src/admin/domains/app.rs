@@ -13,6 +13,7 @@ mod discount_tags;
 pub mod discounts;
 pub mod functions;
 pub mod metafields;
+pub mod pricing;
 mod staged_targets;
 pub mod uploads;
 

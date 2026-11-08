@@ -111,7 +111,7 @@ fn active_subscriptions(
 
 // ---- values -------------------------------------------------------------------------------
 
-fn status<'s>(state: &'s ShopState, key: &str) -> Option<&'s str> {
+pub(super) fn status<'s>(state: &'s ShopState, key: &str) -> Option<&'s str> {
     state
         .get(key)
         .and_then(|record| record.get("status"))
@@ -131,7 +131,7 @@ fn money_of(input: Option<&Value>) -> Option<(f64, String)> {
 }
 
 /// A `MoneyV2` of an amount: `{"amount": "10.0", "currencyCode": "USD"}`.
-fn money_v2(amount: f64, currency: &str) -> Value {
+pub(super) fn money_v2(amount: f64, currency: &str) -> Value {
     value::money_v2((amount * 100.0).round() as i64, currency)
 }
 
@@ -155,7 +155,7 @@ fn currency_of(money: Option<&Value>) -> String {
 }
 
 /// The next number of a charge: subscriptions and one-time purchases share them.
-fn next_charge(state: &ShopState) -> u64 {
+pub(super) fn next_charge(state: &ShopState) -> u64 {
     state
         .keys("AppSubscription")
         .chain(state.keys("AppPurchaseOneTime"))
@@ -216,7 +216,7 @@ pub fn expire_stale(state: &mut ShopState) {
     }
 }
 
-fn set_status(state: &mut ShopState, key: &str, status: &str) {
+pub(super) fn set_status(state: &mut ShopState, key: &str, status: &str) {
     let now = state.timestamp();
     if let Some(record) = state.get_mut(key) {
         record.insert("status".into(), json!(status));
@@ -380,6 +380,10 @@ fn subscription_create(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let failed = json!({"appSubscription": null, "confirmationUrl": null});
+    if mutation.managed_pricing() {
+        let error = UserError::new(&[], super::pricing::BILLING_API_REFUSED);
+        return Ok(payload(failed, &[error]));
+    }
     let name = ctx.arg_str("name").unwrap_or_default().trim().to_string();
     let return_url = ctx.arg_str("returnUrl").unwrap_or_default().to_string();
     let lines: Vec<Value> = ctx
@@ -757,6 +761,10 @@ fn purchase_create(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let failed = json!({"appPurchaseOneTime": null, "confirmationUrl": null});
+    if mutation.managed_pricing() {
+        let error = UserError::new(&[], super::pricing::BILLING_API_REFUSED);
+        return Ok(payload(failed, &[error]));
+    }
     let name = ctx.arg_str("name").unwrap_or_default().trim().to_string();
     let return_url = ctx.arg_str("returnUrl").unwrap_or_default().to_string();
     let mut errors = Vec::new();
@@ -1024,7 +1032,7 @@ pub fn decide(
 }
 
 /// Activates an approved subscription: its trial starts now, and its period.
-fn activate(state: &mut ShopState, id: &str) {
+pub(super) fn activate(state: &mut ShopState, id: &str) {
     let now = state.now();
     let annual = state
         .get(id)

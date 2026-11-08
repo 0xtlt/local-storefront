@@ -231,6 +231,27 @@ test('follows shopify:admin links to lsf\'s page of them, and other links out of
   assert.deepEqual(plain(page.opened), [{ url: '/admin/orders?shop=other.myshopify.com', target: '_blank' }]);
 });
 
+test("follows a URL of Shopify's admin to lsf's page of it, for its shop: the plans of managed pricing", async () => {
+  const page = await connected({ config: adminConfig({ query: { shop: 'other.myshopify.com', user: '2' } }) });
+  // What `redirect('shopify://admin/charges/…', { target: '_top' })` of the React Router template opens.
+  page.bridge({ type: 'navigate', url: 'https://admin.shopify.com/store/local-supply-co/charges/my-app/pricing_plans', target: '_top' });
+  page.bridge({ type: 'navigate', url: 'https://admin.shopify.com/store/Other/apps/my-app/welcome?x=1#top', target: '_top' });
+  page.bridge({ type: 'navigate', url: 'https://admin.shopify.com/store/local-supply-co', target: '_blank' });
+  // The older admin URL of a shop.
+  page.bridge({ type: 'navigate', url: 'https://local-supply-co.myshopify.com/admin/charges/my-app/pricing_plans', target: '_top' });
+  // Not the admin: left alone.
+  page.bridge({ type: 'navigate', url: 'https://local-supply-co.myshopify.com/products/mug', target: '_top' });
+  page.bridge({ type: 'navigate', url: 'http://admin.shopify.com/store/local-supply-co/orders', target: '_top' });
+  assert.deepEqual(page.location.assigned, [
+    '/admin/charges/my-app/pricing_plans?shop=local-supply-co.myshopify.com&user=2',
+    '/admin/apps/my-app/welcome?x=1&shop=other.myshopify.com&user=2#top',
+    '/admin/charges/my-app/pricing_plans?shop=local-supply-co.myshopify.com&user=2',
+    'https://local-supply-co.myshopify.com/products/mug',
+    'http://admin.shopify.com/store/local-supply-co/orders',
+  ]);
+  assert.deepEqual(plain(page.opened), [{ url: '/admin?shop=local-supply-co.myshopify.com&user=2', target: '_blank' }]);
+});
+
 test('lists what lsf does not simulate that the page called', async () => {
   const page = await connected();
   page.bridge({ type: 'unsupported', name: 'shopify.scanner.capture' });

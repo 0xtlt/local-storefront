@@ -626,6 +626,89 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
     assert(exit.status === 200 && html.includes("/__lsf/admin/charges/"), `exit-iframe answered ${exit.status}`, html.slice(0, 200));
     return "exit-iframe page opens the charge page";
   });
+
+  // Managed pricing (Shopify App Pricing): the plans are the Partner Dashboard's on Shopify, the
+  // control API's here, for these checks only (the app above bills with the Billing API, which
+  // managed pricing closes). In Chromium: the merchant goes from the app to the plan selection
+  // page of lsf's admin, approves a plan, and comes back to the app's welcome link.
+  const PLANS = [
+    { handle: "free", name: "Free", price: 0, features: ["One market"] },
+    { handle: "pro", name: "Pro", price: 4.99, trial_days: 7, features: ["Every market"], welcome_link: "/app" },
+    { handle: "pro-annual", name: "Pro (annual)", price: 49, interval: "annual" },
+  ];
+  const pricingPlans = async (method, body) =>
+    (await fetch(`${lsf}/__lsf/admin/pricing-plans`, { method, body: body && JSON.stringify(body) })).json();
+  // The app's frame in lsf's admin, once its page (at `path`) has lsf's App Bridge.
+  const appFrame = async (page, path) => {
+    const deadline = Date.now() + 15_000;
+    let frame;
+    while (!(frame = page.frames().find((candidate) => candidate.url().startsWith(`${appUrl}${path}`))) && Date.now() < deadline) await sleep(50);
+    assert(frame, `the app's frame did not open at ${path}`, page.frames().map((candidate) => candidate.url()));
+    await frame.waitForFunction(() => typeof window.shopify === "object" && document.querySelector("#plans"), null, { timeout: 15_000 });
+    return frame;
+  };
+  const activePlan = async () => {
+    const [subscription, ...others] = await appOk("GET", "/api/billing/subscriptions");
+    assert(subscription && !others.length, "not one active subscription", [subscription, ...others]);
+    return { ...subscription, planHandle: subscription.lineItems[0]?.plan.pricingDetails.planHandle };
+  };
+  await check("pricing", "pricing: shopify:admin/charges/…/pricing_plans → lsf's plans → Approve → welcome link; the backend sees the plan and app_subscriptions/update", async () => {
+    const declared = await pricingPlans("PUT", { plans: PLANS });
+    assert(declared.ok && declared.managedPricing && declared.page === "/admin/charges/admin-backend/pricing_plans", "PUT /__lsf/admin/pricing-plans", declared);
+    return withChromium(async ({ context }) => {
+      const page = await context.newPage();
+      await page.goto(`${lsf}/admin/apps/admin-backend/app`);
+      const frame = await appFrame(page, "/app");
+      await Promise.all([page.waitForURL(/\/admin\/charges\/admin-backend\/pricing_plans$/), frame.click("#plans")]);
+      const cards = await page.locator(".lsf-plan").evaluateAll((cards) => cards.map((card) => card.dataset.plan));
+      assert(cards.join() === "free,pro,pro-annual", "not the plans", cards);
+      await Promise.all([page.waitForURL(/\/pricing_plans\/pro$/), page.click('[data-plan="pro"] .lsf-plan-choose')]);
+      await Promise.all([page.waitForURL(/\/admin\/apps\/admin-backend\/app\?/), page.click(".lsf-plan-actions button[type=submit]")]);
+      const welcome = new URL(page.url()).searchParams;
+      const chargeId = welcome.get("charge_id");
+      assert(welcome.get("plan_handle") === "pro" && chargeId, "the welcome link has no plan_handle or charge_id", page.url());
+      await appFrame(page, "/app?");
+      const deadline = Date.now() + 8000;
+      let seen;
+      while (!(seen = (await backendState()).welcomes.find((w) => w.charge_id === chargeId)) && Date.now() < deadline) await sleep(100);
+      assert(seen?.plan_handle === "pro" && seen.path === "/app", "the backend's page did not get the welcome link's parameters", seen);
+      const plan = await activePlan();
+      assert(plan.id === `gid://shopify/AppSubscription/${chargeId}`, "charge_id is not the active subscription", plan);
+      assert(plan.name === "Pro" && plan.status === "ACTIVE" && plan.test === true && plan.trialDays === 7 && plan.planHandle === "pro", "not the plan", plan);
+      const webhook = await received("APP_SUBSCRIPTIONS_UPDATE", (w) => w.id === plan.id && w.subscription?.status === "ACTIVE");
+      assert(webhook.subscription.plan_handle === "pro", "the webhook has no plan_handle", webhook);
+      return `charge_id=${chargeId} plan_handle=pro → ${plan.name} ${plan.status} (test, ${plan.trialDays}-day trial); app_subscriptions/update with plan_handle ${webhook.subscription.plan_handle}`;
+    });
+  });
+  await check("pricing", "pricing: the template's redirect(shopify://admin/charges/…, _top) → admin.shopify.com → lsf's plans; down to Free, Pro cancelled", async () => {
+    return withChromium(async ({ context }) => {
+      const page = await context.newPage();
+      await page.goto(`${lsf}/admin/apps/admin-backend/app`);
+      const frame = await appFrame(page, "/app");
+      const before = await activePlan();
+      // The loader of /app/plans throws App Bridge's page, which opens Shopify's URL of the plans
+      // in the top window: lsf's admin opens its own.
+      await Promise.all([
+        page.waitForURL(/\/admin\/charges\/admin-backend\/pricing_plans\?shop=local-supply-co\.myshopify\.com$/),
+        frame.evaluate(() => location.assign(`/app/plans${location.search}`)),
+      ]);
+      const current = await page.locator(".lsf-plan-current").getAttribute("data-plan");
+      assert(current === "pro", "the page does not mark the plan", current);
+      await Promise.all([page.waitForURL(/\/pricing_plans\/free\?/), page.click('[data-plan="free"] .lsf-plan-choose')]);
+      await Promise.all([page.waitForURL(/\/admin\/apps\/admin-backend\?/), page.click(".lsf-plan-actions button[type=submit]")]);
+      assert(new URL(page.url()).searchParams.get("plan_handle") === "free", "the welcome link", page.url());
+      const plan = await activePlan();
+      assert(plan.name === "Free" && plan.planHandle === "free" && plan.lineItems[0].plan.pricingDetails.price.amount === "0.0", "not the free plan", plan);
+      await received("APP_SUBSCRIPTIONS_UPDATE", (w) => w.id === before.id && w.subscription?.status === "CANCELLED");
+      await received("APP_SUBSCRIPTIONS_UPDATE", (w) => w.id === plan.id && w.subscription?.status === "ACTIVE");
+      const after = await pricingPlans("DELETE");
+      assert(after.ok && !after.managedPricing && after.current?.plan === "free", "DELETE /__lsf/admin/pricing-plans", after);
+      return `admin.shopify.com/store/local-supply-co/charges/admin-backend/pricing_plans → lsf's page; Pro CANCELLED, Free ACTIVE, both delivered`;
+    });
+  });
+  // Whatever happened above, the app bills with the Billing API again.
+  if (!only || "pricing".includes(only)) await pricingPlans("DELETE");
+
   await check("bulk", "bulk: bulkOperationRunQuery → poll → JSONL", async () => {
     const answer = await appOk("POST", "/api/bulk");
     assert(answer.operation.status === "COMPLETED" && answer.lines === Number(answer.operation.objectCount), "not complete", answer);

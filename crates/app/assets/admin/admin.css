@@ -228,6 +228,38 @@ body { background: var(--lsf-bg); }
 .lsf-notice p { margin: 8px 0; color: var(--lsf-muted); overflow-wrap: anywhere; }
 .lsf-link { color: var(--lsf-accent); }
 
+/* The plan selection page of managed pricing, and the page that approves a plan. */
+.lsf-plans { flex: 1; overflow: auto; }
+.lsf-plans-intro { margin: 0 0 16px; }
+.lsf-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+.lsf-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 20px;
+  border-radius: var(--lsf-radius);
+  background: var(--lsf-surface);
+  box-shadow: 0 0 0 1px var(--lsf-border);
+}
+.lsf-plan-current { box-shadow: 0 0 0 2px var(--lsf-success); }
+.lsf-plan-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lsf-plan h2 { margin: 0; font-size: 16px; }
+.lsf-plan p { margin: 0; }
+.lsf-plan-price strong { font-size: 20px; margin-right: 4px; }
+.lsf-plan-trial { color: var(--lsf-success); font-weight: 550; }
+.lsf-plan-features { margin: 4px 0 0; padding-left: 18px; color: var(--lsf-muted); flex: 1; }
+.lsf-plan-choose { margin-top: 8px; justify-content: center; text-decoration: none; }
+.lsf-plan-choose[aria-disabled="true"] { opacity: 0.6; cursor: default; }
+.lsf-plans-note { margin: 16px 0 0; color: var(--lsf-muted); }
+.lsf-plan-confirm h1 { display: flex; align-items: center; gap: 8px; }
+.lsf-plan-confirm .lsf-plan-price { color: var(--lsf-text); }
+.lsf-plan-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 16px 0 8px; }
+.lsf-plan-actions .lsf-button { text-decoration: none; }
+
 /* While the app shows a modal, the admin around it is dimmed. */
 .lsf-modal-open .lsf-nav,
 .lsf-modal-open .lsf-topbar,

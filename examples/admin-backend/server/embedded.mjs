@@ -56,6 +56,7 @@ export function embeddedPage({ apiKey, shop, shopName, appBridgeUrl, polarisUrl 
         <button id="about-open" type="button">About this app</button>
         <ul id="picked"></ul>
         <p><a href="shopify://admin/products" target="_top">The shop's products in the admin</a></p>
+        <p><a id="plans" href="shopify://admin/charges/admin-backend/pricing_plans" target="_top">Choose a plan</a> (managed pricing: the plan selection page of the admin)</p>
       </div>
       <s-section heading="Polaris" id="polaris">
         <s-stack direction="inline" gap="base" alignItems="center">

@@ -70,6 +70,7 @@ impl Server {
             .env_remove("SHOPIFY_API_SECRET")
             .env_remove("LSF_THEME")
             .env_remove("LSF_DATA")
+            .env_remove("LSF_PRICING_PLANS")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
@@ -537,4 +538,82 @@ fn polaris_offline_is_said_before_ready_and_set_by_the_option_or_its_variable() 
             server.address
         )));
     }
+}
+
+#[test]
+fn pricing_plans_are_read_from_the_file_of_the_option_or_its_variable_and_said_before_ready() {
+    let theme = theme();
+    let dir = std::env::temp_dir().join(format!("lsf-banner-pricing-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("pricing.toml");
+    std::fs::write(
+        &file,
+        "[[plans]]\nhandle = \"free\"\nname = \"Free\"\nprice = 0\n\n\
+         [[plans]]\nhandle = \"pro\"\nname = \"Pro\"\nprice = 4.99\ntrial_days = 7\n",
+    )
+    .unwrap();
+    let path = file.to_str().unwrap();
+    // Without the option: no plans, nothing said.
+    let server = Server::start(&["--theme", &theme, "serve"], &[]);
+    assert!(
+        !server
+            .said()
+            .iter()
+            .any(|line| line.starts_with("pricing:"))
+    );
+    drop(server);
+
+    for (args, env) in [
+        (
+            vec!["--theme", &theme, "serve", "--pricing-plans", path],
+            vec![],
+        ),
+        (
+            vec!["--theme", &theme, "serve"],
+            vec![("LSF_PRICING_PLANS", path)],
+        ),
+    ] {
+        let server = Server::start(&args, &env);
+        let line = server
+            .before_ready
+            .iter()
+            .find(|line| line.starts_with("pricing:"))
+            .unwrap_or_else(|| panic!("no pricing: line:\n{}", server.before_ready.join("\n")));
+        assert_eq!(
+            line,
+            &format!(
+                "pricing: 2 plans ({path}): http://{}/admin/charges/lsf-local-client-id/pricing_plans   (managed pricing: the Billing API creates no charge)",
+                server.address
+            )
+        );
+        let status: serde_json::Value =
+            serde_json::from_str(&server.get("/__lsf/admin/pricing-plans")).unwrap();
+        assert_eq!(status["source"], serde_json::json!(path));
+        assert_eq!(status["plans"][1]["trial_days"], serde_json::json!(7));
+    }
+
+    // A wrong file stops the start, and says why.
+    std::fs::write(&file, "[[plans]]\nhandle = \"pro\"\nname = \"Pro\"\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_lsf"))
+        .args([
+            "--theme",
+            &theme,
+            "serve",
+            "--pricing-plans",
+            path,
+            "--port",
+            "0",
+        ])
+        .env_remove("LSF_PRICING_PLANS")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "--pricing-plans: {path}: plans[0] (pro): price is required (0, or free = true, for a free plan)"
+        )),
+        "{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
