@@ -403,13 +403,32 @@ pub const FUNCTION_OWNER_TYPES: [&str; 5] = [
     "FulfillmentConstraintRule",
 ];
 
+/// What uninstalling the app removed from the shop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Uninstalled {
+    /// The objects that ran its Functions ([`remove_function_owners`]).
+    pub function_owners: usize,
+    /// Its script tags, which the storefront loaded.
+    pub script_tags: usize,
+    /// Its web pixel: 0 or 1.
+    pub web_pixels: usize,
+}
+
 /// What uninstalling the app does to the records of the shop, whether the merchant uninstalls it
 /// (`POST /__lsf/admin/uninstall`) or the app itself (`appUninstall`): its subscriptions are
-/// cancelled ([`billing::cancel_on_uninstall`]), and its Functions go with every object that runs
-/// them ([`remove_function_owners`]). Answers how many of those objects were removed.
-pub fn uninstall(state: &mut ShopState) -> usize {
+/// cancelled ([`billing::cancel_on_uninstall`]), its Functions go with every object that runs
+/// them ([`remove_function_owners`]), and its script tags and web pixel go too
+/// ([`super::storefront::remove_on_uninstall`]). Its UI extensions are not records: the pages
+/// stop rendering them while the app is not installed (`crate::config::NOT_INSTALLED`).
+pub fn uninstall(state: &mut ShopState) -> Uninstalled {
     billing::cancel_on_uninstall(state);
-    remove_function_owners(state)
+    let function_owners = remove_function_owners(state);
+    let (script_tags, web_pixels) = super::storefront::remove_on_uninstall(state);
+    Uninstalled {
+        function_owners,
+        script_tags,
+        web_pixels,
+    }
 }
 
 /// Removes every object that runs a Function of the app, with its metafields, as uninstalling the

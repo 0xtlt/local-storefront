@@ -919,3 +919,133 @@ fn uninstalling_the_app_stops_its_functions_and_a_reinstall_finds_no_owner() {
     customize(&state);
     assert!(!bank(&checkout(&state, "co-un-3")));
 }
+
+/// The handles of the UI extensions a page's state loads, and of those it holds back because the
+/// app is not installed on the shop.
+fn extension_handles(state: &Json) -> (Vec<String>, Vec<String>) {
+    let handles = |list: &Json| -> Vec<String> {
+        list.as_array()
+            .into_iter()
+            .flatten()
+            .map(|extension| extension["handle"].as_str().unwrap().to_string())
+            .collect()
+    };
+    (
+        handles(&state["extensions"]),
+        handles(&state["uninstalled"]["extensions"]),
+    )
+}
+
+/// Uninstalling the app removes its UI extensions from the checkout and the thank-you page, as
+/// Shopify removes an uninstalled app's extensions: the state says why, the home page too, and
+/// a reinstall brings them back (Shopify restores the checkout's active ones within 24 hours; lsf
+/// has no checkout editor, so always).
+#[test]
+fn uninstalling_the_app_hides_its_ui_extensions_until_it_is_installed_again() {
+    let state = checkout_admin_server();
+    let both = vec!["gift-message".to_string(), "order-notice".to_string()];
+    let open = |state: &ServerState, session: &str| -> (String, Json) {
+        let path = cart_checkout(
+            state,
+            session,
+            json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        );
+        let json = body_json(&get(state, &format!("{path}.json"), session));
+        (path, json)
+    };
+    let (_, installed) = open(&state, "ui-un-0");
+    assert_eq!(extension_handles(&installed), (both.clone(), vec![]));
+    assert_eq!(installed["uninstalled"], Json::Null);
+    // An order placed while the app is installed: its thank-you page follows the app.
+    let (placed, _) = open(&state, "ui-un-placed");
+    assert_eq!(
+        operations(&state, &placed, "ui-un-placed", buyer_details()).status,
+        200
+    );
+    let completed = post(
+        &state,
+        &format!("{placed}/complete"),
+        json!({}),
+        "ui-un-placed",
+    );
+    assert_eq!(completed.status, 200, "{}", text(&completed));
+    let thanks =
+        |state: &ServerState| body_json(&get(state, &format!("{placed}.json"), "ui-un-placed"));
+    assert_eq!(thanks(&state)["status"], "completed");
+    assert_eq!(extension_handles(&thanks(&state)).0, both);
+
+    let uninstalled = admin_request(&state, "POST", "/__lsf/admin/uninstall", "{}");
+    assert_eq!(uninstalled.status, 200, "{}", text(&uninstalled));
+    let (path, gone) = open(&state, "ui-un-1");
+    assert_eq!(extension_handles(&gone), (vec![], both.clone()));
+    let reason = gone["uninstalled"]["reason"].as_str().unwrap();
+    assert!(
+        reason.starts_with(
+            "the app is not installed on the shop: uninstalling it removed its UI extensions"
+        ),
+        "{reason}"
+    );
+    // The page itself holds the same state.
+    let page = text(&get(&state, &path, "ui-un-1"));
+    assert!(page.contains("\"extensions\":[]"), "{page}");
+    assert!(
+        page.contains("the app is not installed on the shop"),
+        "{page}"
+    );
+    let thanked = thanks(&state);
+    assert_eq!(extension_handles(&thanked), (vec![], both.clone()));
+    let thank_you_page = text(&get(&state, &format!("{placed}/thank-you"), "ui-un-placed"));
+    assert!(
+        thank_you_page.contains("\"extensions\":[]"),
+        "{thank_you_page}"
+    );
+
+    // The home page says it, and marks each extension.
+    let home = body_json(&get(&state, "/__lsf/checkouts?format=json", "ui-un-home"));
+    assert_eq!(home["installed"], false, "{home}");
+    assert!(
+        home["uninstalled"]
+            .as_str()
+            .unwrap()
+            .starts_with("the app is not installed on the shop")
+    );
+    assert!(
+        home["problems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|problem| problem["kind"] == "app"
+                && problem["message"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("the app is not installed on the shop")),
+        "{}",
+        home["problems"]
+    );
+    for extension in home["uiExtensions"].as_array().unwrap() {
+        assert_eq!(extension["installed"], false, "{extension}");
+        assert_eq!(extension["status"], "off", "{extension}");
+    }
+    let html = text(&get(&state, "/__lsf/checkouts", "ui-un-home"));
+    assert!(html.contains("data-banner=\"uninstalled\""), "{html}");
+    assert!(
+        html.contains("The app is not installed on the shop"),
+        "{html}"
+    );
+    assert!(html.contains("app not installed"), "{html}");
+
+    // Installed again: they render again, the thank-you page's too.
+    let installed = admin_request(&state, "POST", "/__lsf/admin/install", "{}");
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let (_, back) = open(&state, "ui-un-2");
+    assert_eq!(extension_handles(&back), (both.clone(), vec![]));
+    assert_eq!(back["uninstalled"], Json::Null);
+    assert_eq!(extension_handles(&thanks(&state)), (both, vec![]));
+    let home = body_json(&get(&state, "/__lsf/checkouts?format=json", "ui-un-home"));
+    assert_eq!(home["installed"], true);
+    assert_eq!(home["uninstalled"], Json::Null);
+    assert!(
+        !text(&get(&state, "/__lsf/checkouts", "ui-un-home"))
+            .contains("data-banner=\"uninstalled\"")
+    );
+}

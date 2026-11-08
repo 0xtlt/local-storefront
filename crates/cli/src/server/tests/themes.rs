@@ -150,6 +150,33 @@ fn script_tags_are_loaded_by_the_storefront_once_created() {
     assert!(!text(&get(&state, "/", "visitor")).contains("asyncLoad"));
 }
 
+/// Uninstalling the app removes its script tags, as Shopify does: the storefront stops loading
+/// them at once, and a reinstall does not bring them back (the app creates them again).
+#[test]
+fn uninstalling_the_app_removes_its_script_tags_from_the_storefront() {
+    let state = admin_server();
+    mutate(
+        &state,
+        "mutation { scriptTagCreate(input: {src: \"https://js.example.org/bar.js\", displayScope: ONLINE_STORE}) { scriptTag { id } userErrors { message } } }",
+        json!({}),
+    );
+    assert!(text(&get(&state, "/", "visitor")).contains("asyncLoad"));
+
+    let uninstalled = admin_request(&state, "POST", "/__lsf/admin/uninstall", "{}");
+    assert_eq!(uninstalled.status, 200, "{}", text(&uninstalled));
+    let answer = body_json(&uninstalled);
+    assert_eq!(answer["removedScriptTags"], 1, "{answer}");
+    assert_eq!(answer["removedWebPixels"], 0, "{answer}");
+    let home = text(&get(&state, "/", "visitor"));
+    assert!(!home.contains("asyncLoad"), "{home}");
+
+    let installed = admin_request(&state, "POST", "/__lsf/admin/install", "{}");
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    assert!(!text(&get(&state, "/", "visitor")).contains("asyncLoad"));
+    let tags = admin_query(&state, "{ scriptTags(first: 5) { nodes { id } } }");
+    assert_eq!(tags["data"]["scriptTags"]["nodes"], json!([]), "{tags}");
+}
+
 #[test]
 fn the_storefront_serves_the_association_files_of_the_shops_mobile_apps() {
     let state = admin_server();

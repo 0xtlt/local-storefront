@@ -8,7 +8,7 @@
 //   slot     `slot(target, instance)` → the node where extensions of that target render, or null
 
 import { initials } from './account.js';
-import { countriesOf, countryName, price } from './format.js';
+import { countriesOf, countryName, price, sentence, uninstalledNotice } from './format.js';
 import { h } from './vdom.js';
 
 const FULL_PAGE = 'customer-account.page.render';
@@ -98,6 +98,8 @@ function diagnostics({ state, refusals = [] }) {
   const messages = [
     ...(state.diagnostics ?? []),
     ...refusals.map((refusal) => `${refusal.handle}: not loaded. ${refusal.reason}`),
+    // The app is not installed on the shop: none of its extensions is loaded.
+    ...[uninstalledNotice(state)].filter(Boolean),
   ];
   return messages.length > 0
     ? h('div', { class: 'lsf-diagnostics' }, messages.map((message) => h('div', { class: 'lsf-banner is-warning', role: 'status' }, h('p', null, message))))
@@ -358,7 +360,7 @@ function targetsPanel(ctx) {
   }));
   return h('section', { class: 'lsf-preview', 'data-section': 'targets' },
     h('h2', null, 'Every customer account target'),
-    rows.length === 0 ? h('p', { class: 'lsf-muted' }, 'No customer account UI extension is loaded.') : h('ul', { class: 'lsf-preview-targets' }, rows));
+    rows.length === 0 ? h('p', { class: 'lsf-muted' }, state.uninstalled ? sentence(state.uninstalled.reason) : 'No customer account UI extension is loaded.') : h('ul', { class: 'lsf-preview-targets' }, rows));
 }
 
 /** The whole page. */

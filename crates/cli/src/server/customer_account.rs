@@ -160,6 +160,16 @@ fn state_json(
                     format!("No extension of the app has a full page named {handle}."),
                 ));
             }
+            // An uninstalled app's pages go with it, as its other extensions do.
+            if state.app_uninstalled() {
+                return Err(Reply::text(
+                    404,
+                    format!(
+                        "The full page of {handle} is not there: {}.",
+                        lsf_app::config::uninstalled_extensions_reason()
+                    ),
+                ));
+            }
             Some(json!({"handle": handle, "path": rest}))
         }
         _ => None,
@@ -257,6 +267,8 @@ fn state_json(
             .map(|diagnostic| json!(diagnostic.to_string()))
             .collect::<Vec<_>>(),
     });
+    // None renders while the app is not installed on the shop.
+    checkout::place_extensions(&mut json, state.app_uninstalled());
     json["builds"] = state.builds.to_json();
     Ok(json)
 }

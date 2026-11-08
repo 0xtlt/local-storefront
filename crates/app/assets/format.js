@@ -89,3 +89,15 @@ export const languageOf = (state) => state?.localization?.language?.isoCode ?? s
 /** A link to the storefront, in the language of the buyer: `/fr/cart` for a buyer in French. */
 export const storefrontLink = (state, path = '') =>
   `${state?.shop?.storefrontUrl ?? ''}${state?.localization?.rootUrl ?? ''}${path}`;
+
+/** `text` as a sentence: its first letter upper-case, a full stop at the end. */
+export const sentence = (text) => `${text.charAt(0).toUpperCase()}${text.slice(1)}${text.endsWith('.') ? '' : '.'}`;
+
+/** What a page says while the app is not installed on the shop (`state.uninstalled`, which the
+ * server sets after `POST /__lsf/admin/uninstall`): its UI extensions are not loaded, and why.
+ * Null while the app is installed, or when it has no UI extension for the page. */
+export function uninstalledNotice(state) {
+  const withheld = state?.uninstalled?.extensions ?? [];
+  if (withheld.length === 0) return null;
+  return `${withheld.map((ext) => ext.handle).join(', ')}: not loaded. ${sentence(state.uninstalled.reason)}`;
+}

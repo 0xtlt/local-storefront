@@ -816,9 +816,41 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
       return `exit 0 → ${webhook.path}, HMAC checked`;
     });
   }
+  await check("uninstall", "uninstall: the checkout runs none of the app's Functions and loads none of its extensions, and says why; a reinstall clears it", async () => {
+    const buyer = new Browser();
+    const variantId = Number(ctx.product.product.variants.nodes[0].id.split("/").pop());
+    const added = await buyer.fetch(`${lsf}/cart/add.js`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: [{ id: variantId, quantity: 2 }] }),
+    });
+    assert(added.status === 200, `cart/add.js answered ${added.status}`);
+    const before = Date.now();
+    const uninstalled = await (await fetch(`${lsf}/__lsf/admin/uninstall`, { method: "POST", body: "{}" })).json();
+    assert(uninstalled.removedFunctionOwners >= 1, "the app discount stayed", uninstalled);
+    // The backend drops its sessions on app/uninstalled: wait for it before the next exchange.
+    await received("APP_UNINSTALLED", (w) => w.at >= before);
+    const checkout = await buyer.fetch(`${lsf}/checkout`);
+    const path = new URL(checkout.headers.get("location"), lsf).pathname;
+    const state = await (await buyer.fetch(`${lsf}${path}.json`)).json();
+    const notInstalled = (text) => typeof text === "string" && text.startsWith("the app is not installed on the shop");
+    assert(notInstalled(state.uninstalled?.reason) && state.extensions.length === 0, "the checkout does not say the app is not installed", state.uninstalled);
+    assert((state.cost?.discounts?.amount ?? 0) === 0, "the app discount still applies", state.cost);
+    const idle = state.idle?.find((entry) => entry.handle === "discount-tag-percentage");
+    assert(notInstalled(idle?.reason), "the Function is not said idle", state.idle);
+    const home = await (await fetch(`${lsf}/__lsf/checkouts?format=json`)).json();
+    assert(home.installed === false && notInstalled(home.uninstalled), "the home page does not say it", { installed: home.installed, uninstalled: home.uninstalled });
+    await fetch(`${lsf}/__lsf/admin/install`, { method: "POST", body: "{}" });
+    const after = await (await fetch(`${lsf}/__lsf/checkouts?format=json`)).json();
+    assert(after.installed === true && after.uninstalled === null, "the home page still says it after the reinstall", after.uninstalled);
+    const again = await app("GET", "/api/cost");
+    assert(again.status === 200, `after reinstall: ${again.status}`, again.body);
+    return `removed ${uninstalled.removedFunctionOwners} discount; checkout: no discount, ${idle.handle} idle, 0 extensions, "${state.uninstalled.reason.slice(0, 38)}…"; home installed=false, then true`;
+  });
   await check("webhooks", "webhooks: uninstall → app/uninstalled, reinstall", async () => {
+    const before = Date.now();
     await fetch(`${lsf}/__lsf/admin/uninstall`, { method: "POST", body: "{}" });
-    await received("APP_UNINSTALLED", (w) => w.at > Date.now() - 10_000);
+    await received("APP_UNINSTALLED", (w) => w.at >= before);
     const revoked = await admin(`query { shop { name } }`);
     assert(revoked.errors, "the default token still works", revoked);
     const sessions = await (await fetch(`${appUrl}/debug/sessions?shop=${SHOP}`)).json();

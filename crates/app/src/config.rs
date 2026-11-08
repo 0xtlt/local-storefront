@@ -434,6 +434,36 @@ impl fmt::Display for Diagnostic {
 /// What [`load`] warns of an app without an `extensions` directory.
 pub const NO_EXTENSIONS: &str = "the app has no `extensions` directory";
 
+/// What every page and message says of the app's extensions while the app is not installed on
+/// the shop: uninstalled by `POST /__lsf/admin/uninstall` or `appUninstall`, as a merchant
+/// uninstalls it on Shopify.
+pub const NOT_INSTALLED: &str = "the app is not installed on the shop";
+
+/// How the app is installed again, as the messages say it.
+pub const INSTALL_AGAIN: &str =
+    "`POST /__lsf/admin/install`, OAuth or a token exchange installs it again";
+
+/// What the app is while it is not installed on the shop, as the home page and the terminal
+/// say it.
+pub fn uninstalled_app_reason() -> String {
+    format!(
+        "{NOT_INSTALLED}: its UI extensions do not render and its Functions do not run until it \
+         is installed again ({INSTALL_AGAIN})"
+    )
+}
+
+/// Why no UI extension of the app renders while it is not installed on the shop: Shopify
+/// removes an uninstalled app's extensions, and a reinstall brings back the checkout and
+/// customer account ones that were active (within 24 hours on Shopify; lsf has no checkout
+/// editor, so always).
+pub fn uninstalled_extensions_reason() -> String {
+    format!(
+        "{NOT_INSTALLED}: uninstalling it removed its UI extensions from the checkout, the \
+         thank-you page and the customer account, which render again once it is installed \
+         ({INSTALL_AGAIN})"
+    )
+}
+
 /// The extensions the checkout uses. Every extension unless the user named some.
 #[derive(Clone, Debug, Default)]
 pub struct Selection {

@@ -12,7 +12,7 @@
 //   extensionErrors what the extensions threw, `[{handle, target, message, stack}]`
 
 import { accountMenu, addressLabel, fullName, initials, otherContactEmail, savedAddressId } from './account.js';
-import { countriesOf, countryName, price, priceOrFree, storefrontLink } from './format.js';
+import { countriesOf, countryName, price, priceOrFree, sentence, storefrontLink, uninstalledNotice } from './format.js';
 import { addressField, missingFields, placeErrors } from './operations.js';
 import { h } from './vdom.js';
 
@@ -706,6 +706,8 @@ function diagnostics({ state, refusals = [] }) {
   const messages = [
     ...(state.diagnostics ?? []),
     ...refusals.map((refusal) => `${refusal.handle}: not loaded. ${refusal.reason}`),
+    // The app is not installed on the shop: none of its extensions is loaded.
+    ...[uninstalledNotice(state)].filter(Boolean),
   ];
   return messages.length > 0 || builds.length > 0
     ? h('div', { class: 'lsf-diagnostics' },
@@ -1021,9 +1023,11 @@ function functionsOverview(ctx) {
   // so when none of them names it.
   const focus = ctx.ui?.functionsFocus?.handle ?? null;
   const focused = (handle) => (focus !== null && handle === focus ? 'is-focus' : null);
+  const withheld = state.uninstalled?.extensions ?? [];
   const named = focus !== null && ((state.errors ?? []).some((error) => error.function === focus)
     || (state.idle ?? []).some((idle) => idle.handle === focus)
-    || (state.extensions ?? []).some((ext) => ext.handle === focus));
+    || (state.extensions ?? []).some((ext) => ext.handle === focus)
+    || withheld.some((ext) => ext.handle === focus));
   const ran = focus !== null && (state.runs ?? []).some((entry) => entry.handle === focus);
   const target = ctx.ui?.functionsFocus?.target;
   const other = isShop(state) ? 'standard' : 'shop';
@@ -1054,7 +1058,11 @@ function functionsOverview(ctx) {
         h('strong', null, error.handle), h('code', null, error.target), ` ${error.message}`,
         error.stack && h('details', null, h('summary', null, 'Stack'), h('pre', { class: 'lsf-fn-stack' }, error.stack)))))),
     extensions.length > 0 && h('div', null, h('h4', null, 'Extensions'),
-      h('ul', null, extensions.map((ext) => h('li', { key: ext.handle, class: focused(ext.handle) }, h('strong', null, ext.handle), h('span', { class: 'lsf-muted' }, ` ${ext.apiVersion} · `), refused.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'not loaded'), failed.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'error'), (ext.targets ?? []).map((target) => h('code', null, target)))))));
+      h('ul', null, extensions.map((ext) => h('li', { key: ext.handle, class: focused(ext.handle) }, h('strong', null, ext.handle), h('span', { class: 'lsf-muted' }, ` ${ext.apiVersion} · `), refused.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'not loaded'), failed.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'error'), (ext.targets ?? []).map((target) => h('code', null, target)))))),
+    // The app is not installed on the shop: its extensions are not loaded, and say why.
+    state.uninstalled && h('div', { 'data-test': 'uninstalled-extensions' }, h('h4', null, 'Extensions not loaded'),
+      h('p', null, sentence(state.uninstalled.reason)),
+      withheld.length > 0 && h('ul', null, withheld.map((ext) => h('li', { key: ext.handle, class: focused(ext.handle) }, h('strong', null, ext.handle), h('span', { class: 'lsf-chip is-error' }, 'not installed'), (ext.targets ?? []).map((target) => h('code', null, target)))))));
 }
 
 /**
@@ -1126,7 +1134,7 @@ function targetsPanel({ state, preview, refusals = [] }) {
     h('p', { class: 'lsf-muted' },
       'Each extension renders at every target it declares. The steps of a cart that ships are shown whatever the cart, and the thank-you page is shown under the checkout with the same cart: no order is placed. ',
       state.home && h('a', { class: 'lsf-link', href: state.home }, 'All checkouts and extensions')),
-    rows.length === 0 ? h('p', { class: 'lsf-muted' }, 'No checkout UI extension is loaded.') : h('ul', { class: 'lsf-preview-targets' }, rows));
+    rows.length === 0 ? h('p', { class: 'lsf-muted' }, state.uninstalled ? sentence(state.uninstalled.reason) : 'No checkout UI extension is loaded.') : h('ul', { class: 'lsf-preview-targets' }, rows));
 }
 
 /** The thank-you page of the checkout as it is, for the targets it has. */

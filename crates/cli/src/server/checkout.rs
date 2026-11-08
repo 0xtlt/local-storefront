@@ -813,6 +813,9 @@ fn compute(
     });
     object.insert("selectedPayment".into(), json!(selected));
     object.insert("extensions".into(), extensions_json(&app, &selection));
+    // None renders while the app is not installed on the shop.
+    place_extensions(&mut json, state.app_uninstalled());
+    let object = json.as_object_mut().expect("a result is an object");
     // The Functions whose last build of `--watch` failed: they run their last module.
     object.insert("builds".into(), state.builds.to_json());
     object.insert(
@@ -966,6 +969,41 @@ pub(super) fn app_metafields_json(
     ))
 }
 
+/// Puts the UI extensions of a page's state where the page reads them, as the app is installed
+/// on the shop now or not: in `extensions`, which the page loads, while it is installed; in
+/// `uninstalled.extensions`, with why none renders (`uninstalled.reason`), while the Admin API
+/// has it uninstalled ([`ServerState::app_uninstalled`]), as Shopify removes an uninstalled app's
+/// extensions. `uninstalled` is `null` while it is installed. Done again on each read of an order
+/// placed earlier, so that its thank-you page follows the installation as it is now.
+pub(super) fn place_extensions(json: &mut Json, uninstalled: bool) {
+    let Some(object) = json.as_object_mut() else {
+        return;
+    };
+    let take = |value: Option<&mut Json>| match value.map(Json::take) {
+        Some(Json::Array(items)) => items,
+        _ => Vec::new(),
+    };
+    let mut extensions = take(object.get_mut("extensions"));
+    extensions.extend(take(
+        object
+            .get_mut("uninstalled")
+            .and_then(|uninstalled| uninstalled.get_mut("extensions")),
+    ));
+    if uninstalled {
+        object.insert("extensions".into(), json!([]));
+        object.insert(
+            "uninstalled".into(),
+            json!({
+                "reason": lsf_app::config::uninstalled_extensions_reason(),
+                "extensions": extensions,
+            }),
+        );
+    } else {
+        object.insert("extensions".into(), Json::Array(extensions));
+        object.insert("uninstalled".into(), Json::Null);
+    }
+}
+
 /// The checkout UI extensions to load: the built ones on a supported API version.
 pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
     Json::Array(
@@ -1050,7 +1088,8 @@ fn current(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
 }
 
 /// An order that was placed, read in the language of the request: the order is the one that was
-/// placed, the language it is read in is not the one it was placed in.
+/// placed, the language it is read in is not the one it was placed in. Its thank-you page shows
+/// the app's UI extensions only while the app is installed now ([`place_extensions`]).
 fn in_request_language(
     state: &ServerState,
     session_id: &str,
@@ -1061,6 +1100,7 @@ fn in_request_language(
     let language = language_of(state, &store, incoming);
     completed["localization"]["language"] = language_json(language);
     completed["localization"]["rootUrl"] = json!(root_of(language));
+    place_extensions(&mut completed, state.app_uninstalled());
     completed
 }
 

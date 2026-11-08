@@ -682,6 +682,9 @@ extension's `order.action.menu-item.render` opens its `order.action.render` in a
   `s-button-group`, `s-customer-account-action`, `s-image-group`, `s-menu`, `s-page`.
 - `?targets=all` adds a panel that lists the customer account targets of each extension, and where
   each one renders.
+- **An uninstalled app** (`POST /__lsf/admin/uninstall`) renders no customer account extension: a
+  banner and the panel say "the app is not installed on the shop", and a full page answers `404`
+  with that reason. They render again once it is installed ([uninstall](admin.md#tokens)).
 
 ## Set up the checkout
 
@@ -893,7 +896,11 @@ owner of the app's Functions, those of the store data and the app discounts incl
 app is not installed, the shop's checkout runs none of its Functions, whatever a scenario
 declares or names in its `extensions`, and lists each as not run because "the app is not
 installed on the shop". Installing it again brings no owner back: the app creates them, as after
-a first install ([uninstall](admin.md#tokens)).
+a first install ([uninstall](admin.md#tokens)). Nor does the checkout load any of the app's UI
+extensions while it is not installed, the thank-you page of an order placed before included: a
+banner, the Functions dialog ("Extensions not loaded") and `?targets=all` say why, and the state
+has `"extensions": []` with `"uninstalled": {"reason", "extensions"}`. They render again once
+the app is installed again.
 
 **Trying a Function alone** does not need an owner. A [scenario](#scenarios) that names it in
 `extensions` runs it, and so does `lsf app function run <handle>`, with the metafields of

@@ -1171,13 +1171,15 @@ parameter needs no stub: give it a staged upload of lsf
 `scriptTags(src:, query:)`. A script tag shown on the online store (`ONLINE_STORE`, or the
 deprecated `ALL`) is loaded by the storefront's `content_for_header` as Shopify loads it, once
 the page has loaded, with `shop=<domain>` added to its URL. `cache` is kept (lsf serves the
-script from its `src` either way).
+script from its `src` either way). Uninstalling the app deletes its script tags, as Shopify does,
+and the storefront stops loading them ([uninstall](admin.md#tokens)).
 
 **Pixels.** `webPixelCreate`, `webPixelUpdate`, `webPixelDelete`, `webPixel`: one per app, its
 `settings` checked against the `[settings]` of the app's web pixel extension
 (`type = "web_pixel_extension"` in `extensions/*/shopify.extension.toml`): every field given
 ("Missing keys: accountID"), no other, each value as its type and validations say. Without such
-an extension: `NO_EXTENSION`. The storefront does not run web pixels. `serverPixelCreate`,
+an extension: `NO_EXTENSION`. The storefront does not run web pixels. Uninstalling the app
+deletes its web pixel: a reinstalled app creates it again. `serverPixelCreate`,
 `serverPixelDelete`, `eventBridgeServerPixelUpdate`, `pubSubServerPixelUpdate`, `serverPixel`:
 one per app, `CONNECTED` once it has an endpoint; nothing is sent to it.
 
@@ -1211,7 +1213,8 @@ errors (lsf's files are `READY` at once, so only a file made `FAILED` otherwise 
 ### The app's installation and Shopify's other services
 
 **Access.** `appUninstall` uninstalls the app as `POST /__lsf/admin/uninstall` does
-([Uninstall](admin.md#tokens)): its Functions go with every object that runs them.
+([Uninstall](admin.md#tokens)): its Functions go with every object that runs them, its script
+tags and web pixel are deleted, and its UI extensions stop rendering until it is installed again.
 `appRevokeAccessScopes` revokes optional scopes the installation was granted (not the
 `scopes` of `shopify.app.toml`: `CANNOT_REVOKE_REQUIRED_SCOPES`; not an undeclared one; not a
 `read_x` its `write_x` implies): every token of the installation loses them at once, and

@@ -140,6 +140,19 @@ test('logged out, the page lists the customers to log in as, and renders no exte
   ]);
 });
 
+test('an uninstalled app loads no extension: a banner and the panel of every target say why', () => {
+  const reason = 'the app is not installed on the shop: uninstalling it removed its UI extensions';
+  const state = accountState({ uninstalled: { reason, extensions: [{ handle: 'ca-test', targets: ['customer-account.order-index.block.render'] }] } });
+  const { tree } = render(state, { preview: { all: true } });
+  const banners = findAll(tree, (node) => (node.props.class ?? '').includes('lsf-banner'));
+  assert.deepEqual(banners.map(text), ['ca-test: not loaded. The app is not installed on the shop: uninstalling it removed its UI extensions.']);
+  assert.match(text(section(tree, 'targets')[0]), /Every customer account targetThe app is not installed on the shop/);
+  // Installed, no banner.
+  const installed = render(accountState({ uninstalled: null }), { preview: { all: true } });
+  assert.equal(findAll(installed.tree, (node) => (node.props.class ?? '').includes('lsf-banner')).length, 0);
+  assert.match(text(section(installed.tree, 'targets')[0]), /No customer account UI extension is loaded\./);
+});
+
 test('the dialog of an order action holds the action of the extension whose menu item was pressed', () => {
   const { asked } = render(accountState(), { ui: { action: { handle: 'ask', orderId: ORDER.id } } });
   assert.deepEqual(asked.at(-1), ['customer-account.order.action.render', { key: `action:ask:${ORDER.id}`, handle: 'ask', orderId: ORDER.id }]);

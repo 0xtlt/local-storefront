@@ -36,7 +36,9 @@ use crate::checkout::{
     PaymentPlacement, ResultLine, SelectedOption, SkippedDiscount, SourceLine, TargetSelection,
 };
 use crate::config::version::ApiVersion;
-use crate::config::{App, FunctionExtension, FunctionTarget, Selection, TargetKind};
+use crate::config::{
+    App, FunctionExtension, FunctionTarget, INSTALL_AGAIN, NOT_INSTALLED, Selection, TargetKind,
+};
 
 /// The handle of the delivery group: one group holds every line that needs shipping.
 pub const DELIVERY_GROUP_HANDLE: &str = "group-1";
@@ -234,11 +236,10 @@ fn uninstalled(app: &App, enabled: &Selection) -> Vec<IdleFunction> {
                 handle: function.handle.clone(),
                 owner,
                 enabled: None,
-                reason: "the app is not installed on the shop: uninstalling it removed its \
-                         Functions and every object that ran them (`POST /__lsf/admin/install`, \
-                         OAuth or a token exchange installs it again, without them: the app \
-                         creates them again)"
-                    .to_string(),
+                reason: format!(
+                    "{NOT_INSTALLED}: uninstalling it removed its Functions and every object \
+                     that ran them ({INSTALL_AGAIN}, without them: the app creates them again)"
+                ),
             })
         })
         .collect()

@@ -146,6 +146,9 @@ pub struct AdminApi {
     stubs: crate::admin::sources::Stubs,
     /// Where what the server should print goes ([`AdminApi::with_log`]): nowhere by default.
     log: Option<Log>,
+    /// Where what the server says of a change of the app's installation goes
+    /// ([`AdminApi::with_notices`]): nowhere by default.
+    notices: Option<Log>,
     /// The plans of managed pricing, every shop's: those of `--pricing-plans`, or those a request
     /// set. Kept when the shops are reset.
     pricing: RwLock<PricingPlans>,
@@ -275,6 +278,7 @@ impl AdminApi {
             fetch: crate::admin::sources::FetchOptions::default(),
             stubs: crate::admin::sources::Stubs::default(),
             log: None,
+            notices: None,
             pricing: RwLock::new(PricingPlans::default()),
             #[cfg(test)]
             test_hooks: Mutex::new(Default::default()),
@@ -335,6 +339,30 @@ impl AdminApi {
     pub fn with_log(mut self, log: Log) -> AdminApi {
         self.log = Some(log);
         self
+    }
+
+    /// Prints with `notices` what the server's terminal says when the app is uninstalled from a
+    /// shop or installed on it again, a line each: what stops and what comes back
+    /// (`crate::config::NOT_INSTALLED`). The server leaves it out with `--quiet`.
+    pub fn with_notices(mut self, notices: Log) -> AdminApi {
+        self.notices = Some(notices);
+        self
+    }
+
+    /// Says what the change of the app's installation on `shop` does, when the server prints it.
+    fn notice_installation(&self, shop: &str, installed: bool) {
+        let Some(notices) = &self.notices else {
+            return;
+        };
+        notices(&if installed {
+            format!(
+                "{shop}: the app is installed again: its UI extensions render again, and the \
+                 objects that ran its Functions, its script tags and its web pixel are gone, for \
+                 the app to create again"
+            )
+        } else {
+            format!("{shop}: {}", crate::config::uninstalled_app_reason())
+        });
     }
 
     /// `--admin-source <url>=<file>`.
@@ -825,14 +853,21 @@ impl AdminApi {
     /// subscriptions of `shopify.app.toml` deliver for them again. Called with the tokens locked,
     /// which come before the registry of the webhooks.
     fn note_installs(&self, tokens: &Tokens) {
-        let mut registry = self.webhooks.registry();
-        for shop in registry.uninstalled_shops() {
-            if tokens
-                .installed_scopes(&shop, &self.auth.client_id)
-                .is_some()
-            {
-                registry.set_installed(&shop, true);
+        let mut installed = Vec::new();
+        {
+            let mut registry = self.webhooks.registry();
+            for shop in registry.uninstalled_shops() {
+                if tokens
+                    .installed_scopes(&shop, &self.auth.client_id)
+                    .is_some()
+                {
+                    registry.set_installed(&shop, true);
+                    installed.push(shop);
+                }
             }
+        }
+        for shop in installed {
+            self.notice_installation(&shop, true);
         }
     }
 
@@ -1415,12 +1450,13 @@ impl AdminApi {
         let installed = lock(&self.tokens)
             .installed_scopes(&domain, &self.auth.client_id)
             .is_some();
-        let mut removed = 0;
-        let (revoked, deleted) = self.finish_uninstall(&domain, || {
+        let mut removed = app_domain::Uninstalled::default();
+        let (revoked, deleted) = self.finish_uninstall(&domain, installed, || {
             if installed {
                 self.change_shop(&domain, |state| {
-                    // Shopify cancels the app's subscription when it is uninstalled, and removes
-                    // its Functions with every object that runs them.
+                    // Shopify cancels the app's subscription when it is uninstalled, removes its
+                    // Functions with every object that runs them, its script tags and its web
+                    // pixel.
                     removed = app_domain::uninstall(state);
                     if let Some(shop) = state.shop_gid().map(str::to_string) {
                         state.emit("app/uninstalled", &shop);
@@ -1435,7 +1471,9 @@ impl AdminApi {
                 "shop": domain,
                 "revoked": revoked,
                 "deletedSubscriptions": deleted,
-                "removedFunctionOwners": removed,
+                "removedFunctionOwners": removed.function_owners,
+                "removedScriptTags": removed.script_tags,
+                "removedWebPixels": removed.web_pixels,
             }),
         )
     }
@@ -1443,9 +1481,15 @@ impl AdminApi {
     /// The uninstall of the app from a shop, whether the control endpoint or `appUninstall` asked
     /// for it: its tokens revoked, then `delivered` (what delivers `app/uninstalled` through the
     /// subscriptions the shop had, if it was not delivered already), then nothing more is
-    /// delivered for the shop and the subscriptions it made are deleted. Answers how many tokens
-    /// were revoked and subscriptions deleted.
-    fn finish_uninstall(&self, domain: &str, delivered: impl FnOnce()) -> (usize, usize) {
+    /// delivered for the shop and the subscriptions it made are deleted. An app that was
+    /// `installed` until now says so in the terminal ([`AdminApi::with_notices`]). Answers how many
+    /// tokens were revoked and subscriptions deleted.
+    fn finish_uninstall(
+        &self,
+        domain: &str,
+        installed: bool,
+        delivered: impl FnOnce(),
+    ) -> (usize, usize) {
         let revoked = lock(&self.tokens).uninstall(domain, &self.auth.client_id);
         self.auth_changed(domain);
         // From now on only `app/uninstalled` is delivered for the shop, through the
@@ -1453,6 +1497,9 @@ impl AdminApi {
         self.webhooks.registry().set_installed(domain, false);
         delivered();
         let deleted = self.webhooks.registry().clear(domain);
+        if installed {
+            self.notice_installation(domain, false);
+        }
         (revoked, deleted)
     }
 
@@ -1464,7 +1511,7 @@ impl AdminApi {
             match effect {
                 AuthEffect::Uninstall => {
                     // `appUninstall` delivered `app/uninstalled` with the request's events.
-                    self.finish_uninstall(shop, || {});
+                    self.finish_uninstall(shop, true, || {});
                 }
                 AuthEffect::Scopes(scopes) => {
                     lock(&self.tokens).set_scopes(shop, &self.auth.client_id, scopes);

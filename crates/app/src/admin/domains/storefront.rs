@@ -395,6 +395,30 @@ fn web_pixel(
     Ok(found.map_or(Output::Null, Output::Object))
 }
 
+/// Removes the app's script tags and its web pixel, as uninstalling the app does. Answers how
+/// many of each were removed.
+///
+/// As Shopify does: "Script tags are scoped to the app that created them. When an app is
+/// uninstalled from a shop, all of the script tags that it created are automatically removed
+/// along with it" (shopify.dev, `ScriptTag`); "all associated data and extensions, including web
+/// pixel extensions, should be removed automatically" (community.shopify.com, "Should my app
+/// delete the web pixel that it installed if the app is uninstalled?"), and a reinstalled app
+/// creates its web pixel again (`webPixelCreate`). The storefront stops loading the script tags
+/// at once: store sync gives the theme the script tags of the default shop.
+pub fn remove_on_uninstall(state: &mut ShopState) -> (usize, usize) {
+    let mut removed = (0, 0);
+    for (type_name, count) in [("ScriptTag", &mut removed.0), ("WebPixel", &mut removed.1)] {
+        let keys: Vec<String> = state.keys(type_name).map(str::to_string).collect();
+        for key in keys {
+            // No webhook: the app's subscriptions go with it.
+            state.emit(super::app::CHANGED, &key);
+            state.remove(&key);
+            *count += 1;
+        }
+    }
+    removed
+}
+
 // ---- server pixel ------------------------------------------------------------------------
 
 fn server_pixel_key(state: &ShopState) -> Option<String> {

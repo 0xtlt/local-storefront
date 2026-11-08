@@ -297,7 +297,13 @@ impl ServerState {
                 .checkout
                 .as_ref()
                 .map(|checkout| checkout.app_dir.as_path());
-            admin::Admin::new(&files.base, settings, app_dir, app.theme.files().root())
+            admin::Admin::new(
+                &files.base,
+                settings,
+                app_dir,
+                app.theme.files().root(),
+                options.quiet,
+            )
         });
         let app_proxy = options.admin.as_ref().and_then(|settings| {
             let app_dir = options.checkout.as_ref()?.app_dir.as_path();

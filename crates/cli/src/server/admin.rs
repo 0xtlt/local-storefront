@@ -56,12 +56,14 @@ impl Admin {
     /// The Admin API of the store data, for the app in `app_dir` when there is one, with store
     /// sync on: what the backend changes in the default shop is projected onto `store`, the
     /// store of the files.
-    /// The theme the server serves is the shops' main theme: its directory is `theme`.
+    /// The theme the server serves is the shops' main theme: its directory is `theme`. Unless
+    /// `quiet`, the terminal says when the app is uninstalled from a shop or installed again.
     pub fn new(
         store: &Arc<Store>,
         settings: &AdminSettings,
         app_dir: Option<&Path>,
         theme: &Path,
+        quiet: bool,
     ) -> Admin {
         let app = app_dir.and_then(|dir| lsf_app::config::load(dir).ok());
         let (secret, secret_source) =
@@ -96,6 +98,12 @@ impl Admin {
         let api = match &settings.pricing {
             Some((pricing, path)) => api.with_pricing(pricing.clone(), path.display().to_string()),
             None => api,
+        };
+        // What an uninstall stops and a reinstall brings back: the app's extensions and Functions.
+        let api = if quiet {
+            api
+        } else {
+            api.with_notices(Arc::new(|line: &str| eprintln!("admin:  {line}")))
         };
         // A webhook the backend refuses (`401`, `403`): said once per delivery, `--quiet` or
         // not, since every webhook fails until the two secrets agree.

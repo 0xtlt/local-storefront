@@ -256,6 +256,20 @@ the same data every run.
   `extensions`, and the Functions dialog says "the app is not installed on the shop". A reinstall
   finds none of them, as on Shopify: the app creates them again.
   [Uninstall](docs/admin.md#tokens).
+- **An uninstalled app's extensions no longer render.** After an uninstall, the checkout, the
+  thank-you page and the customer account still loaded the app's UI extensions, and the
+  storefront still loaded its script tags. As Shopify removes an uninstalled app's extensions,
+  lsf now renders none of its UI extensions while the app is not installed on the shop, the
+  thank-you page of an order placed before included, and an extension's full page answers `404`.
+  Each place says why, "the app is not installed on the shop": a banner on the checkout and the
+  customer account, the Functions dialog ("Extensions not loaded"), `?targets=all`, the home page
+  (a banner, a problem, `app not installed` on each extension, `"installed": false` in its
+  JSON) and the terminal, which also says when the app is installed again. The uninstall
+  deletes its script tags and web pixel too (`removedScriptTags`, `removedWebPixels`), as
+  Shopify does. A reinstall renders the UI extensions again (Shopify restores the active ones
+  within 24 hours; lsf has no checkout editor); the app creates its script tags and pixel again.
+  Theme app blocks and embeds render nothing in lsf, installed or not.
+  [Uninstall](docs/admin.md#tokens).
 - **Adding a checkout scenario no longer throws away what the backend set up.** Without
   `--static`, a file added or changed in `checkouts/` re-seeded the shops of the Admin API,
   dropping the app's subscription, customizations and other writes. Scenarios are checkout

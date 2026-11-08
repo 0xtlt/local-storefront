@@ -624,6 +624,40 @@ fn an_uninstall_removes_the_owners_of_the_functions_for_good() {
     assert_eq!(owners(&api), 6);
 }
 
+/// The terminal says when the app is uninstalled from a shop and installed on it again: what
+/// stops (its UI extensions, its Functions) and what comes back. An uninstall of an app that is
+/// not installed says nothing.
+#[test]
+fn an_uninstall_and_a_reinstall_are_said_in_the_terminal() {
+    let store = support::fixture_store("rich");
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = lines.clone();
+    let api = AdminApi::new(&store, options(Some(support::fixture_app()), None)).with_notices(
+        std::sync::Arc::new(move |line: &str| sink.lock().unwrap().push(line.to_string())),
+    );
+    let shop = api.default_shop();
+    send(&api, "POST", "/__lsf/admin/uninstall", Value::Null);
+    send(&api, "POST", "/__lsf/admin/uninstall", Value::Null);
+    send(&api, "POST", "/__lsf/admin/install", Value::Null);
+    let lines = lines.lock().unwrap().clone();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(
+        lines[0],
+        format!(
+            "{shop}: the app is not installed on the shop: its UI extensions do not render and its \
+             Functions do not run until it is installed again (`POST /__lsf/admin/install`, OAuth \
+             or a token exchange installs it again)"
+        )
+    );
+    assert!(
+        lines[1].starts_with(&format!(
+            "{shop}: the app is installed again: its UI extensions render again"
+        )),
+        "{}",
+        lines[1]
+    );
+}
+
 #[test]
 fn refuses_requests_without_a_valid_token() {
     let api = demo_api();

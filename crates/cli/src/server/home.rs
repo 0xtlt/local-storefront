@@ -1040,6 +1040,16 @@ fn problem_list(
             );
         }
     }
+    if state.app_uninstalled() {
+        add(
+            &mut list,
+            Level::Warning,
+            "app",
+            None,
+            lsf_app::config::uninstalled_app_reason(),
+            None,
+        );
+    }
     for diagnostic in app
         .diagnostics
         .iter()
@@ -1290,6 +1300,18 @@ fn build(
             extension
         })
         .collect();
+    // While the app is not installed on the shop, none of its extensions renders or runs: each
+    // says so, and one with no problem of its own is off.
+    let uninstalled = state.app_uninstalled();
+    let mark = |mut extension: Json| {
+        extension["installed"] = json!(!uninstalled);
+        if uninstalled && extension["status"] == "ok" {
+            extension["status"] = json!("off");
+        }
+        extension
+    };
+    let functions: Vec<Json> = functions.into_iter().map(mark).collect();
+    let ui_extensions: Vec<Json> = ui_extensions.into_iter().map(mark).collect();
     // What a scenario reads of the extensions it uses: their own problems, not the runs that
     // fail (those are the scenario's own), nor what is the store's rather than the scenario's (a
     // discount Function no discount names).
@@ -1336,6 +1358,10 @@ fn build(
             "clientId": app.client_id,
             "directory": app.root.display().to_string(),
         },
+        // Whether the app is installed on the shop (`POST /__lsf/admin/uninstall` uninstalls it):
+        // while it is not, none of its extensions renders or runs, and `uninstalled` says why.
+        "installed": !uninstalled,
+        "uninstalled": uninstalled.then(lsf_app::config::uninstalled_app_reason),
         "data": state.app.describe_source(),
         "dataFolder": state.app.data_dir().map(|dir| dir.join("checkouts").display().to_string()),
         "storeDataProblems": state.loaded().diagnostics.error_count(),
@@ -2335,6 +2361,9 @@ fn function_html(function: &Json, dir: &str) -> String {
     if function["selected"] != true {
         meta.push("left out by --extension".to_string());
     }
+    if function["installed"] == false {
+        meta.push("app not installed".to_string());
+    }
     meta.push(used_by(function));
     let targets_list = function["targets"].as_array().cloned().unwrap_or_default();
     let targets: Vec<&str> = targets_list
@@ -2393,6 +2422,9 @@ fn ui_extension_html(extension: &Json, dir: &str) -> String {
     }
     if extension["selected"] != true {
         meta.push("left out by --extension".to_string());
+    }
+    if extension["installed"] == false {
+        meta.push("app not installed".to_string());
     }
     if only_in_account(extension) {
         meta.push("in the customer account".to_string());
@@ -2657,6 +2689,12 @@ pub fn render(home: &Json, check_now: &str) -> String {
         ),
     );
     body.push_str("<main class=\"lsf-home-main\">");
+    if let Some(reason) = home["uninstalled"].as_str() {
+        body.push_str(&format!(
+            "<div class=\"lsf-banner is-warning\" role=\"status\" data-banner=\"uninstalled\"><div><p>{}</p></div></div>",
+            message_html(&capitalized(reason), dir)
+        ));
+    }
 
     // Scenarios: the groups on the left, the scenarios on the right.
     body.push_str(
@@ -2796,9 +2834,14 @@ pub fn render(home: &Json, check_now: &str) -> String {
                 .collect();
             body.push_str(&format!(
                 "<div class=\"lsf-h-others\" data-section=\"other\"><h3>Other extensions <span class=\"lsf-h-n\">{}</span></h3>\
-                 <p class=\"lsf-muted lsf-h-note\">Not part of the checkout or the customer account, so not used here.</p>\
+                 <p class=\"lsf-muted lsf-h-note\">Not part of the checkout or the customer account, so not used here.{}</p>\
                  <ul class=\"lsf-h-plain\">{items}</ul></div>",
-                others.len()
+                others.len(),
+                if home["installed"] == false {
+                    " The app is not installed on the shop: on Shopify, they are gone with it."
+                } else {
+                    ""
+                }
             ));
         }
         body.push_str("</div></section>");

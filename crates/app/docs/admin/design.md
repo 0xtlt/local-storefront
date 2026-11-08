@@ -1744,7 +1744,16 @@ changed.
   them again from those shops). The store sync then writes `checkout.discounts: []` and every
   Function without an owner; the server's checkout also runs none of the app's Functions while
   the default shop has the app uninstalled (`CheckoutConfig::uninstalled`, which covers a
-  scenario's own owners and `extensions`).
+  scenario's own owners and `extensions`). `domains::storefront::remove_on_uninstall` deletes the
+  app's script tags ("all of the script tags that it created are automatically removed",
+  shopify.dev, `ScriptTag`) and its web pixel (a reinstalled app calls `webPixelCreate` again),
+  emitting `CHANGED`: the next sync gives the theme no script tag. `uninstall` answers what it
+  removed (`Uninstalled`: `removedFunctionOwners`, `removedScriptTags`, `removedWebPixels` of the
+  control endpoint). The UI extensions are not records: the server hides them while the default
+  shop has the app uninstalled (`place_extensions` in lsf-cli's `server/checkout.rs`), and
+  `AdminApi::with_notices` lets the terminal say when an app is uninstalled from a shop
+  (`finish_uninstall`) or installed again (`note_installs`). The words are
+  `lsf_app::config::NOT_INSTALLED` and the reasons next to it.
 
 What the app family's mutations make (`domains/app/`: `billing`, `discounts`, `functions`,
 `bulk`, `uploads`, `metafields`), in the same shapes, so that the store sync reads them as it

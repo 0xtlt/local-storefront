@@ -368,3 +368,63 @@ fn storefront_access_tokens_have_the_apps_unauthenticated_scopes() {
     );
     assert_eq!(shop.count("StorefrontAccessToken"), 0);
 }
+
+/// Uninstalling the app removes its script tags, which the storefront then stops loading, and its
+/// web pixel, as Shopify does; a reinstalled app creates them again. No webhook: the app's
+/// subscriptions go with it.
+#[test]
+fn uninstalling_the_app_removes_its_script_tags_and_its_web_pixel() {
+    let mut shop = shop();
+    for src in ["https://js.example.org/a.js", "https://js.example.org/b.js"] {
+        let created = run(&mut shop, CREATE_TAG, json!({"input": {"src": src}}));
+        assert_eq!(
+            created["data"]["scriptTagCreate"]["userErrors"],
+            json!([]),
+            "{created}"
+        );
+    }
+    let pixel = run(
+        &mut shop,
+        CREATE_PIXEL,
+        json!({"settings": {"accountID": "123"}}),
+    );
+    assert_eq!(
+        pixel["data"]["webPixelCreate"]["userErrors"],
+        json!([]),
+        "{pixel}"
+    );
+    shop.take_events();
+
+    let answer = run(
+        &mut shop,
+        "mutation { appUninstall { app { id } userErrors { code } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        answer["data"]["appUninstall"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+    assert_eq!(shop.count("ScriptTag"), 0);
+    assert_eq!(shop.count("WebPixel"), 0);
+    assert!(super::storefront_scripts(&shop).is_empty());
+    let topics: Vec<String> = topics(&mut shop)
+        .into_iter()
+        .filter(|topic| !topic.starts_with("lsf/"))
+        .collect();
+    assert_eq!(topics, ["app/uninstalled"]);
+    // Nothing left to remove: the counts say so.
+    assert_eq!(super::remove_on_uninstall(&mut shop), (0, 0));
+
+    // Installed again (by the records alone here): the app creates its web pixel again.
+    let again = run(
+        &mut shop,
+        CREATE_PIXEL,
+        json!({"settings": {"accountID": "123"}}),
+    );
+    assert_eq!(
+        again["data"]["webPixelCreate"]["userErrors"],
+        json!([]),
+        "{again}"
+    );
+}

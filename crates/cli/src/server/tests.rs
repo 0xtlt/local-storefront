@@ -8125,6 +8125,72 @@ fn the_customer_account_shows_the_orders_of_the_customer_logged_in() {
     std::fs::remove_dir_all(&app).ok();
 }
 
+/// Uninstalling the app removes its customer account UI extensions, as Shopify removes an
+/// uninstalled app's extensions: the pages load none and say why, its full page is not there,
+/// and a reinstall brings them back.
+#[test]
+fn an_uninstalled_app_renders_no_customer_account_extension() {
+    let app = app_with_account("uninstalled");
+    let state = checkout_server_with(app.clone(), &[], true, None, Some(Default::default()));
+    get(
+        &state,
+        "/__lsf/login?customer=jane.doe@example.com&return_to=/account",
+        "ca-un",
+    );
+    let handles = |list: &Json| -> Vec<String> {
+        list.as_array()
+            .into_iter()
+            .flatten()
+            .map(|extension| extension["handle"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let orders = account_state(&get(&state, "/account", "ca-un"));
+    assert_eq!(handles(&orders["extensions"]), ["ca-test"]);
+    assert_eq!(orders["uninstalled"], Json::Null);
+    assert_eq!(get(&state, "/account/pages/ca-test", "ca-un").status, 200);
+
+    let uninstalled = admin_request(&state, "POST", "/__lsf/admin/uninstall", "{}");
+    assert_eq!(uninstalled.status, 200, "{}", text(&uninstalled));
+    let id = orders["orders"][0]["legacyId"].to_string();
+    for path in [
+        "/account".to_string(),
+        format!("/account/orders/{id}"),
+        "/account/profile".to_string(),
+    ] {
+        let page = account_state(&get(&state, &path, "ca-un"));
+        assert_eq!(page["extensions"], json!([]), "{path}");
+        assert_eq!(
+            handles(&page["uninstalled"]["extensions"]),
+            ["ca-test"],
+            "{path}"
+        );
+        assert!(
+            page["uninstalled"]["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("the app is not installed on the shop"),
+            "{path}"
+        );
+    }
+    let full = get(&state, "/account/pages/ca-test", "ca-un");
+    assert_eq!(full.status, 404);
+    assert!(
+        text(&full).contains(
+            "The full page of ca-test is not there: the app is not installed on the shop"
+        ),
+        "{}",
+        text(&full)
+    );
+
+    let installed = admin_request(&state, "POST", "/__lsf/admin/install", "{}");
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let back = account_state(&get(&state, "/account", "ca-un"));
+    assert_eq!(handles(&back["extensions"]), ["ca-test"]);
+    assert_eq!(back["uninstalled"], Json::Null);
+    assert_eq!(get(&state, "/account/pages/ca-test", "ca-un").status, 200);
+    let _ = std::fs::remove_dir_all(app);
+}
+
 #[test]
 fn a_full_page_of_the_customer_account_is_the_page_of_an_extension() {
     let app = app_with_account("pages");

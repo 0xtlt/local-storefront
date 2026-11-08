@@ -542,7 +542,8 @@ and OAuth alike, and `app/scopes_update` is delivered).
 
 **Uninstall.** `POST /__lsf/admin/uninstall` does what Shopify does when a merchant uninstalls
 the app: it revokes the app's tokens on the shop, cancels its subscription, removes its
-Functions with every object that runs them (below), delivers `app/uninstalled` (through the
+Functions with every object that runs them, its script tags and its web pixel, stops rendering
+its UI extensions (below), delivers `app/uninstalled` (through the
 subscriptions the shop had), then deletes the subscriptions the backend made with
 `webhookSubscriptionCreate` ("Shopify automatically performs cleanup tasks, such as deleting
 WebhookSubscription objects", [`appUninstall`](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/appUninstall)).
@@ -571,6 +572,32 @@ after the uninstall ("the job that deletes the price rules and their associated 
 asynchronously", Shopify's staff on [community.shopify.dev](https://community.shopify.dev/t/discountredeemcodebulkadd-phantom-redemption-codes/32591));
 lsf removes them at once. The app's metafields on the shop's other resources stay, as Shopify
 keeps them a while for a reinstall.
+
+**The app's extensions go with it too.** While the app is not installed on the default shop, lsf
+renders none of its extensions, as Shopify removes an uninstalled app's extensions:
+
+| Extension | On Shopify | In lsf while uninstalled | After a reinstall |
+|---|---|---|---|
+| Checkout UI extensions, thank-you and order status targets | They stop rendering; a reinstall within 24 hours restores the active ones with their settings ([staff on community.shopify.dev](https://community.shopify.dev/t/activated-checkout-extensions-do-not-deactivate-after-app-uninstall/35571)); later, the merchant places them again in the checkout editor | The checkout and its thank-you page load none, an order placed before the uninstall included | They render again: lsf has no checkout editor, so it always restores them |
+| Customer account UI extensions | Placed in the same checkout and accounts editor | The customer account loads none; an extension's full page (`/account/pages/<handle>`) answers `404` with the reason | They render again |
+| Theme app extensions (app blocks, app embeds) | "Blocks associated with the apps are automatically and entirely removed from online store themes" ([UX guidelines](https://shopify.dev/docs/apps/build/online-store/theme-app-extensions/ux)); app embeds are off after an install until the merchant turns them on | lsf renders no app block or app embed, installed or not ([compatibility](compatibility.md)), and never writes the theme directory | Nothing changes |
+| Web pixel | Removed with the app; a reinstalled app calls `webPixelCreate` again | The uninstall deletes the `WebPixel` record (`removedWebPixels`); the storefront runs no web pixel anyway | The app creates it again |
+| Script tags | "When an app is uninstalled from a shop, all of the script tags that it created are automatically removed" ([`ScriptTag`](https://shopify.dev/docs/api/admin-graphql/2026-10/objects/ScriptTag)) | The uninstall deletes them (`removedScriptTags`): `content_for_header` stops loading them at once | The app creates them again |
+| Admin UI extensions, admin links | Admin links are deleted ([`appUninstall`](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/appUninstall)) | lsf's admin renders neither | - |
+
+Each place that shows extensions says why they are gone, "the app is not installed on the shop":
+
+- the checkout: a banner (`gift-message, order-notice: not loaded. …`), the "Extensions not
+  loaded" list of the Functions dialog, and the panel of `?targets=all`; its state has
+  `"extensions": []` and `"uninstalled": {"reason", "extensions"}` (`null` while installed);
+- the customer account: the same banner and panel;
+- the home page (`/` with `--app` and no theme, `/__lsf/checkouts` otherwise): a banner, a line in
+  Problems, and `app not installed` on each Function and UI extension; its JSON has
+  `"installed": false` and `"uninstalled"`;
+- the terminal, unless `--quiet`: `admin:  local-supply-co.myshopify.com: the app is not installed
+  on the shop: its UI extensions do not render and its Functions do not run until it is installed
+  again (…)`, and `… the app is installed again: its UI extensions render again, …` after a
+  reinstall.
 
 ## Webhooks
 

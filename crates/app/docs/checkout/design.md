@@ -135,7 +135,11 @@ discounts only (the sync writes those whose dates hold). `config.uninstalled` (t
 while the Admin API has the app uninstalled from the default shop) comes before all of that: no
 Function runs, whatever `enabled`, `owners` and `discounts` say, since Shopify removed the app's
 Functions with their owners; each Function of `enabled` the checkout would run is in `idle`
-(owner `DiscountNode` for a discount Function), saying the app is not installed.
+(owner `DiscountNode` for a discount Function), saying the app is not installed. The UI
+extensions are the pages' business, not the pipeline's: lsf-cli moves them from `extensions` to
+`uninstalled.extensions` of the page's state (`config::uninstalled_extensions_reason` says why),
+for the checkout, the thank-you page of an order placed earlier (on each read) and the customer
+account, whose full pages answer `404`; the views say why (`format.js`, `uninstalledNotice`).
 
 Network access (`fetch`): `cart.lines.discounts.generate`, `cart.delivery-options.discounts.generate`
 and `cart.validations.generate` may have a `.fetch` target (`TargetKind::*Fetch`). Right before its

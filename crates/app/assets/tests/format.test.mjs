@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { countryName, formatMoney, price, priceOrFree, withCurrency } from '../format.js';
+import { countryName, formatMoney, price, priceOrFree, sentence, uninstalledNotice, withCurrency } from '../format.js';
 
 test('formats money like the money formats of a shop', () => {
   assert.equal(formatMoney(1234.5, '€{{amount}}'), '€1,234.50');
@@ -37,4 +37,14 @@ test('writes the currency of the checkout into every amount', () => {
 test('names countries', () => {
   assert.equal(countryName('FR'), 'France');
   assert.equal(countryName('ZZ'), 'ZZ');
+});
+
+test('says which extensions an uninstalled app does not load, and why', () => {
+  assert.equal(sentence('the app is not installed'), 'The app is not installed.');
+  assert.equal(sentence('Done.'), 'Done.');
+  const uninstalled = { reason: 'the app is not installed on the shop', extensions: [{ handle: 'a' }, { handle: 'b' }] };
+  assert.equal(uninstalledNotice({ uninstalled }), 'a, b: not loaded. The app is not installed on the shop.');
+  assert.equal(uninstalledNotice({ uninstalled: { ...uninstalled, extensions: [] } }), null);
+  assert.equal(uninstalledNotice({ uninstalled: null }), null);
+  assert.equal(uninstalledNotice(undefined), null);
 });

@@ -436,6 +436,34 @@ test('the overview says which Functions the shop\'s owners leave out, and why', 
   assert.doesNotMatch(text(byClass(none, 'lsf-fn-overview')[0]), /Functions not run/);
 });
 
+test('an uninstalled app loads no extension: the page, the dialog and every target say why', () => {
+  const reason = 'the app is not installed on the shop: uninstalling it removed its UI extensions';
+  const uninstalled = { reason, extensions: [{ handle: 'gift-message', targets: ['purchase.checkout.block.render'] }] };
+  const state = { ...checkoutState(), runs: [], extensions: [], uninstalled };
+  // A banner, as for an extension the host does not load.
+  const tree = page(state);
+  assert.match(text(byClass(tree, 'lsf-diagnostics')[0]), /^gift-message: not loaded\. The app is not installed on the shop: uninstalling it removed its UI extensions\.$/);
+  // The dialog lists them, with the reason.
+  const open = page(state, { functionsOpen: true, functionsView: 'overview' });
+  const [section] = findAll(open, (node) => node.props['data-test'] === 'uninstalled-extensions');
+  assert.match(text(section), /^Extensions not loadedThe app is not installed on the shop: uninstalling it removed its UI extensions\.gift-messagenot installedpurchase\.checkout\.block\.render$/);
+  assert.match(text(byClass(open, 'lsf-fn-overview')[0]), /0 checkout UI extensions/);
+  // Asked for by `?functions=`, it is named: no note that it did not load.
+  const focused = page(state, { functionsOpen: true, functionsView: 'overview', functionsFocus: { handle: 'gift-message' } });
+  assert.equal(findAll(focused, (node) => node.props['data-focus'] === 'gift-message').length, 0);
+  // Every target: none, and why.
+  const all = renderPage({ state, ui: { draft: { address: {} } }, slot: () => null, actions: new Proxy({}, { get: () => () => {} }), preview: { all: true, rendered: [] }, location: 'http://localhost/checkouts/cn/preview' });
+  const [panel] = findAll(all, (node) => node.props['data-section'] === 'targets');
+  assert.match(text(panel), /The app is not installed on the shop: uninstalling it removed its UI extensions\./);
+  // Without UI extensions, the dialog still says why; the page has no banner.
+  const bare = { ...state, uninstalled: { reason, extensions: [] } };
+  assert.equal(byClass(page(bare), 'lsf-diagnostics').length, 0);
+  assert.equal(findAll(page(bare, { functionsOpen: true, functionsView: 'overview' }), (node) => node.props['data-test'] === 'uninstalled-extensions').length, 1);
+  // Installed: nothing is said.
+  const installed = page({ ...checkoutState(), runs: [], uninstalled: null }, { functionsOpen: true, functionsView: 'overview' });
+  assert.equal(findAll(installed, (node) => node.props['data-test'] === 'uninstalled-extensions').length, 0);
+});
+
 test('the run shown is found again by its handle and target after an update, else the default', () => {
   const target = 'cart.lines.discounts.generate.run';
   const before = withRuns([{ handle: 'a', target }, { handle: 'b', target }, { handle: 'b', target }]);
