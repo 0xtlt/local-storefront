@@ -637,3 +637,58 @@ test('a page of a modal with src shares the App Bridge of the frame that opened 
   const shared = appFrame({ window: { name: 'lsf-modal:2', parent: { shopify: opener.shopify, postMessage() {} } } });
   assert.equal(shared.shopify, opener.shopify);
 });
+
+test('Polaris from the CDN that did not load is replaced by lsf\'s copy, when lsf serves it offline', async () => {
+  /** A frame whose fetch answers lsf's Polaris mode, and the scripts of the page. */
+  const page = ({ mode = 'offline', defined = false } = {}) => {
+    const { fetch, requests } = recordingFetch(() => new Response(JSON.stringify({ mode, default: 'online' })));
+    const frame = connected({ fetch });
+    if (defined) frame.window.customElements.define('s-page', class extends frame.window.HTMLElement {});
+    const script = (src) => {
+      const tag = element(frame.document, 'script', { src });
+      tag.src = src;
+      frame.document.head.append(tag);
+      return tag;
+    };
+    const failed = (tag) => frame.fire('error', { target: tag, type: 'error' });
+    const copies = () => frame.document.head.childNodes.filter((node) => node.localName === 'script' && node.getAttribute('data-lsf-polaris') !== null);
+    return { frame, requests, script, failed, copies };
+  };
+
+  // The template's script (`polarisUrl`'s default), offline: lsf's copy at the same path, once.
+  const offline = page();
+  offline.failed(offline.script('https://cdn.shopify.com/shopifycloud/polaris-2.js'));
+  await settle();
+  assert.deepEqual(offline.requests.map(String), [`${ADMIN}/__lsf/polaris`]);
+  assert.deepEqual(offline.copies().map((copy) => copy.src), [`${ADMIN}/__lsf/cdn/shopifycloud/polaris-2.js`]);
+  assert.match(offline.frame.warnings.join('\n'), /polaris-2\.js did not load: lsf's copy of Polaris runs the page/);
+  offline.failed(offline.script('https://cdn.shopify.com/shopifycloud/polaris.js'));
+  await settle();
+  assert.equal(offline.copies().length, 1, 'never two copies');
+  assert.equal(offline.requests.length, 1);
+
+  // A pinned version, with a query.
+  const pinned = page();
+  pinned.failed(pinned.script('https://cdn.shopify.com/shopifycloud/polaris-1.1.js?v=2'));
+  await settle();
+  assert.deepEqual(pinned.copies().map((copy) => copy.src), [`${ADMIN}/__lsf/cdn/shopifycloud/polaris-1.1.js`]);
+
+  // Online, lsf's route is the CDN again: nothing is added.
+  const online = page({ mode: 'online' });
+  online.failed(online.script('https://cdn.shopify.com/shopifycloud/polaris-2.js'));
+  await settle();
+  assert.equal(online.requests.length, 1);
+  assert.deepEqual(online.copies(), []);
+
+  // Polaris already runs the page, or the script that failed is not Polaris from the CDN: nothing.
+  const defined = page({ defined: true });
+  defined.failed(defined.script('https://cdn.shopify.com/shopifycloud/polaris-2.js'));
+  const others = page();
+  for (const src of ['https://cdn.shopify.com/shopifycloud/app-bridge.js', `${ADMIN}/__lsf/cdn/shopifycloud/polaris-3.js`, `${APP}/polaris.js`, 'https://example.com/shopifycloud/polaris.js']) {
+    others.failed(others.script(src));
+  }
+  others.failed(others.frame.document.createElement('img'));
+  await settle();
+  assert.deepEqual([defined.requests.length, others.requests.length], [0, 0]);
+  assert.deepEqual([...defined.copies(), ...others.copies()], []);
+});

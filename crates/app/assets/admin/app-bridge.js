@@ -985,6 +985,38 @@
     };
   }
 
+  // ---- Polaris without the internet -------------------------------------------------------------
+
+  // The page's Polaris from Shopify's CDN did not load (the machine is offline): lsf's copy, at the
+  // same path under `/__lsf/cdn/`, when lsf serves it (its Polaris mode is `offline`: `--polaris
+  // offline`, `PUT /__lsf/polaris`). Once, and never when Polaris is already defined. The
+  // components defined late upgrade the elements already in the page.
+  const CDN_POLARIS = /^https:\/\/cdn\.shopify\.com\/(shopifycloud\/polaris(?:-[0-9.]+)?\.js)(?:[?#]|$)/;
+  let polarisReplaced = false;
+  win.addEventListener(
+    'error',
+    (event) => {
+      const failed = event && event.target;
+      if (polarisReplaced || !lsfOrigin || !failed || failed.localName !== 'script') return;
+      const match = CDN_POLARIS.exec(String(failed.src || ''));
+      if (!match || polarisDefines('s-page') || typeof nativeFetch !== 'function') return;
+      polarisReplaced = true;
+      nativeFetch
+        .call(win, lsfOrigin + '/__lsf/polaris')
+        .then((response) => response.json())
+        .then((polaris) => {
+          if (!polaris || polaris.mode !== 'offline' || polarisDefines('s-page')) return;
+          const copy = document.createElement('script');
+          copy.src = lsfOrigin + '/__lsf/cdn/' + match[1];
+          copy.setAttribute('data-lsf-polaris', '');
+          (document.head || document.documentElement).appendChild(copy);
+          console.warn("lsf App Bridge: " + failed.src + " did not load: lsf's copy of Polaris runs the page (" + copy.src + ').');
+        })
+        .catch(() => {});
+    },
+    true,
+  );
+
   // ---- modals and app windows: drawn over the app, in its frame -------------------------------
 
   const SIZES = { small: '380px', base: '620px', large: '980px' };
