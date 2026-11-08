@@ -762,6 +762,29 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
       return `admin.shopify.com/store/local-supply-co/charges/admin-backend/pricing_plans → lsf's page; Pro CANCELLED, Free ACTIVE, both delivered`;
     });
   });
+  // The plan ends without the app (Shopify's page has no button for it: lsf's stand-in), under
+  // Shopify App Pricing: no webhook, the backend finds out by asking.
+  await check("pricing", "pricing: the plan ends without the app (POST /__lsf/admin/pricing-plans/cancel, legacy = false) → no active subscription for the backend, no webhook", async () => {
+    const declared = await pricingPlans("PUT", { plans: PLANS, legacy: false });
+    assert(declared.ok && declared.legacy === false, "PUT /__lsf/admin/pricing-plans", declared);
+    if (!declared.current) await fetch(`${lsf}/__lsf/admin/pricing-plans/free/select`, { method: "POST" });
+    const before = await activePlan();
+    const cancel = () => fetch(`${lsf}/__lsf/admin/pricing-plans/cancel`, { method: "POST" });
+    const answer = await cancel();
+    const ended = await answer.json();
+    assert(answer.status === 200 && ended.subscription?.id === before.id && ended.subscription.status === "CANCELLED" && ended.webhook === null, "POST /__lsf/admin/pricing-plans/cancel", ended);
+    const left = await appOk("GET", "/api/billing/subscriptions");
+    assert(left.length === 0, "the backend still finds an active subscription", left);
+    assert((await cancel()).status === 409, "a second cancel is not a 409");
+    // The legacy features back, a plan chosen: its webhook arrives, and none came for the end.
+    await pricingPlans("PUT", { plans: PLANS });
+    await fetch(`${lsf}/__lsf/admin/pricing-plans/pro/select`, { method: "POST" });
+    const pro = await activePlan();
+    await received("APP_SUBSCRIPTIONS_UPDATE", (w) => w.id === pro.id && w.subscription?.status === "ACTIVE");
+    const sent = (await backendState()).webhooks.filter((w) => w.id === before.id && w.subscription?.status === "CANCELLED");
+    assert(sent.length === 0, "a webhook came for the plan that ended under Shopify App Pricing", sent);
+    return `${before.name} (${before.id}) CANCELLED, webhook null; the backend's activeSubscriptions []; again → 409`;
+  });
   // Whatever happened above, the app bills with the Billing API again.
   if (!only || "pricing".includes(only)) await pricingPlans("DELETE");
 

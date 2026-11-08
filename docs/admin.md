@@ -1005,6 +1005,28 @@ await fetch(`${LSF}/__lsf/admin/pricing-plans/pro/select`, { method: "POST", bod
 // → { ok, subscription: { id, chargeId, name, status, … }, replaced: [...], redirect }
 ```
 
+A test ends the shop's plan the same way, as if it ended outside the app (the app's
+`appSubscriptionCancel` needs its token; this does not):
+
+```js
+await fetch(`${LSF}/__lsf/admin/pricing-plans/cancel`, { method: "POST", body: JSON.stringify({ shop }) });
+// → { ok, plan, subscription: { id, status: "CANCELLED", … }, webhook: "app_subscriptions/update" }
+```
+
+The shop's active subscription is `CANCELLED` at once, `currentAppInstallation.activeSubscriptions`
+is empty, and `app_subscriptions/update` (`CANCELLED`, the plan's `plan_handle`) is delivered,
+none with `legacy = false` (`webhook: null`): the case of an app that has to notice by itself that
+the merchant has no plan. A `409` when the shop has no active subscription. Shopify has no exact
+equivalent. Its plan page has no button to end a plan: the merchant chooses another plan
+(a free one, if the app has it) or uninstalls the app, and Shopify's help center says that "app
+plan changes are managed within the app itself or through the app developer's website, not from
+Settings > Apps". The route stands for a plan that ends while the app stays installed (Shopify's
+support, a store closed), which Shopify App Pricing counts among the "cancellations, freezes, or
+plan expirations" it sends no webhook for. The status is `CANCELLED`, which the Admin API gives
+to every subscription that ends ("the app being uninstalled, a new app subscription being
+activated, or a direct cancellation by the app"); `EXPIRED` is for a charge never approved. No
+button on lsf's page either.
+
 **Shopify changed this in April 2026.** Its page now says that for the apps enrolled since,
 and for every app after April 28, 2026, the welcome link gets `plan_handle` alone, no
 `app_subscriptions/update` is sent, and the app reads its plan from the Partner API's
@@ -1023,7 +1045,8 @@ Partner API.
 lsf does not simulate: the Partner API (`activeSubscription`, the history of events) and the App
 Events API (usage meters), usage charges, private plans and their stores, the eight-plan limit,
 prices in local currencies, plans that toggle between monthly and yearly (declare two), proration
-and deferred billing (every change is at once, no money moves), and the 180-day memory of a trial
+and deferred billing (every change is at once, no money moves, and a plan ended is ended at once:
+no `cancelAtEndOfCycle`), and the 180-day memory of a trial
 used before (each plan's trial applies every time).
 
 ### Reset between runs

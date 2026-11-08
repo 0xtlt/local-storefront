@@ -9,7 +9,7 @@
 //! | `PUT /__lsf/admin/uploads/<shop>/<key>` | A `PUT` target: the body is the file. `200`. |
 //! | `GET /__lsf/admin/uploads/<shop>/<key>` | What was uploaded there. |
 //! | `GET /__lsf/admin/bulk/<shop>/<n>.jsonl` | The result of a bulk operation. |
-//! | `/__lsf/admin/pricing-plans[/<plan>/select]` | The plans of managed pricing, and the merchant's choice of one (`api::pricing`). |
+//! | `/__lsf/admin/pricing-plans[/<plan>/select, /cancel]` | The plans of managed pricing, the merchant's choice of one, and the end of the shop's plan (`api::pricing`). |
 //!
 //! None of these needs a token, as Shopify's signed URLs and its admin page need none from the
 //! app: they are for the merchant's browser and the client's uploads on this machine.

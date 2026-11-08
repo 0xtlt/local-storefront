@@ -131,6 +131,12 @@ the same data every run.
   `legacy = false` (Shopify App Pricing since April 2026), no change of the subscription sends a
   webhook, `appSubscriptionCancel` from the app included.
   [Managed pricing](docs/admin.md#managed-pricing).
+- **A test ends the merchant's plan: `POST /__lsf/admin/pricing-plans/cancel`.** The shop's
+  subscription of managed pricing is `CANCELLED` at once, without the app's token, and
+  `app_subscriptions/update` is delivered, none with `legacy = false`: the case of an app that has
+  to notice by itself that the plan ended. Shopify's plan page has no button for it (the merchant
+  chooses another plan or uninstalls), so lsf's page has none either: the route stands for a plan
+  that ends while the app stays installed. [Managed pricing](docs/admin.md#managed-pricing).
 - **Control endpoints under `/__lsf/admin`:** reset the shop, make and delete extra shops for
   isolated tests, install and uninstall the app, and make session tokens for a test to call the
   backend's routes. [Control API](docs/control-api.md).

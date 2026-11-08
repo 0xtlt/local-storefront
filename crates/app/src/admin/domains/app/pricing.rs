@@ -19,6 +19,12 @@
 //!   `CANCELLED`, the new one `ACTIVE`, as developers saw it on test stores. A downgrade to a free
 //!   plan keeps the paid plan's `currentPeriodEnd` (staff: "a downgrade doesn't start a new
 //!   billing cycle").
+//! - The page has no way to end a plan: the merchant chooses another, or uninstalls the app. The
+//!   help center: "App plan changes are managed within the app itself or through the app
+//!   developer's website, not from Settings > Apps". A plan that ends outside the app while it
+//!   stays installed is, for Shopify App Pricing, one of the "cancellations, freezes, or plan
+//!   expirations" it tells the app of by no webhook: [`cancel`] (`POST
+//!   /__lsf/admin/pricing-plans/cancel`) is a test's stand-in for it, `CANCELLED` at once.
 //! - The features Shopify keeps for the apps enrolled before April 2026 ([`Pricing::legacy`],
 //!   lsf's default): `charge_id` appended to the welcome link, `app_subscriptions/update` (with
 //!   `plan_handle`) on every change, and test subscriptions on development stores, which lsf's
@@ -577,6 +583,45 @@ pub fn select(
         number,
         replaced,
         redirect: return_url,
+    })
+}
+
+/// What ending the shop's plan did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ended {
+    /// The subscription, now `CANCELLED`.
+    pub subscription: String,
+    /// Its number: the `charge_id` of its welcome link.
+    pub number: u64,
+    /// The handle of its plan (`None` for a subscription the Billing API made).
+    pub plan: Option<String>,
+    /// The webhook it sent: `app_subscriptions/update`, or `None` under Shopify App Pricing.
+    pub webhook: Option<&'static str>,
+}
+
+/// The shop's plan ends without the app doing it: its active subscription is `CANCELLED`, with
+/// `app_subscriptions/update` when [`Pricing::legacy`] and no webhook otherwise, as any change of
+/// it. `None` when the shop has no active subscription.
+///
+/// Shopify's plan selection page has no way to end a plan: the merchant chooses another one, or
+/// uninstalls the app ("When an app is uninstalled, Shopify automatically cancels the
+/// subscription"), and the help center sends them to the app or its developer for the rest. What
+/// this stands for is a plan that ends outside the app while it stays installed (Shopify's
+/// support, a store closed): Shopify App Pricing names those "cancellations, freezes, or plan
+/// expirations" and sends no webhook for them. `CANCELLED` is the status: `EXPIRED` is a charge
+/// never approved. lsf has no deferred cancellation (`cancelAtEndOfCycle`): the plan ends at once.
+pub fn cancel(state: &mut ShopState, pricing: &Pricing) -> Option<Ended> {
+    billing::expire_stale(state);
+    let current = current(state)?;
+    let number = parse_gid(&current.id).map_or(0, |(_, number)| number);
+    let topic = Billing::of(Some(pricing)).subscription_topic();
+    billing::set_status(state, &current.id, "CANCELLED");
+    state.emit(topic, &current.id);
+    Some(Ended {
+        subscription: current.id,
+        number,
+        plan: current.plan,
+        webhook: (topic != CHANGED).then_some(topic),
     })
 }
 

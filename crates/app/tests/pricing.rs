@@ -366,6 +366,67 @@ fn without_the_legacy_features_cancelling_a_subscription_sends_no_webhook() {
     );
 }
 
+/// The merchant's plan ends without the app doing it (lsf's stand-in: Shopify's page has no such
+/// button): `CANCELLED` at once, `app_subscriptions/update` with the legacy features, nothing
+/// without them.
+#[test]
+fn the_plan_ended_outside_the_app_is_cancelled_with_a_webhook_only_with_the_legacy_features() {
+    let mut shop = shop();
+    let pricing = plans();
+    assert_eq!(pricing::cancel(&mut shop, &pricing), None, "no plan yet");
+    let selected = choose(&mut shop, &pricing, "pro").unwrap();
+    shop.take_events();
+    let ended = pricing::cancel(&mut shop, &pricing).unwrap();
+    assert_eq!(
+        ended,
+        pricing::Ended {
+            subscription: selected.subscription.clone(),
+            number: selected.number,
+            plan: Some("pro".to_string()),
+            webhook: Some("app_subscriptions/update"),
+        }
+    );
+    assert_eq!(
+        events(&mut shop),
+        [(
+            "app_subscriptions/update".to_string(),
+            selected.subscription.clone()
+        )]
+    );
+    assert!(active(&mut shop).is_empty());
+    assert_eq!(pricing::current(&shop), None);
+    let record = shop.get(&selected.subscription).unwrap();
+    assert_eq!(
+        (&record["status"], &record["currentPeriodEnd"]),
+        (&json!("CANCELLED"), &Value::Null)
+    );
+    assert_eq!(pricing::cancel(&mut shop, &pricing), None, "ended already");
+
+    // Without the legacy features: no webhook, as for every change of the subscription.
+    let mut app_pricing = plans();
+    app_pricing.legacy = false;
+    let again = choose(&mut shop, &app_pricing, "free").unwrap();
+    shop.take_events();
+    let ended = pricing::cancel(&mut shop, &app_pricing).unwrap();
+    assert_eq!(
+        (
+            ended.subscription.as_str(),
+            ended.plan.as_deref(),
+            ended.webhook
+        ),
+        (again.subscription.as_str(), Some("free"), None)
+    );
+    let topics: Vec<String> = events(&mut shop)
+        .into_iter()
+        .map(|(topic, _)| topic)
+        .collect();
+    assert_eq!(topics, [lsf_app::admin::domains::app::CHANGED]);
+    assert!(active(&mut shop).is_empty());
+
+    // A new plan can be chosen after: the one just ended is not the current one.
+    assert!(choose(&mut shop, &pricing, "free").is_ok());
+}
+
 // ---- through `AdminApi::handle` ---------------------------------------------------------------
 
 fn api() -> AdminApi {
@@ -826,5 +887,165 @@ fn a_wrong_declaration_is_refused_and_the_plans_of_the_file_come_back_after_a_re
         )
         .status,
         405
+    );
+}
+
+/// `POST /__lsf/admin/pricing-plans/cancel`: the plan ends for a test, the backend hears of it
+/// with the legacy features and not without them, and the shop has no plan after.
+#[test]
+fn the_control_api_ends_the_shops_plan_as_if_it_ended_outside_the_app() {
+    let receiver = Receiver::start(SECRET);
+    let api = api();
+    subscribe(&api, &receiver);
+    let shop = api.default_shop();
+    let body = json!({"shop": shop}).to_string();
+    let cancel = |api: &AdminApi| {
+        send(
+            api,
+            "POST",
+            "/__lsf/admin/pricing-plans/cancel",
+            &[],
+            body.as_bytes(),
+        )
+    };
+
+    // Without plans: managed pricing is off, nothing to end.
+    let none = cancel(&api);
+    assert_eq!(none.status, 404);
+    assert!(text(&none).contains("--pricing-plans"));
+
+    let set = send(
+        &api,
+        "PUT",
+        "/__lsf/admin/pricing-plans",
+        &[],
+        plans_json().to_string().as_bytes(),
+    );
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let nothing = cancel(&api);
+    assert_eq!(nothing.status, 409);
+    assert!(text(&nothing).contains("has no active subscription"));
+    assert_eq!(
+        get(&api, "/__lsf/admin/pricing-plans/cancel").status,
+        405,
+        "POST only"
+    );
+
+    // With the legacy features: the backend hears of it.
+    let pro = send(
+        &api,
+        "POST",
+        "/__lsf/admin/pricing-plans/pro/select",
+        &[],
+        body.as_bytes(),
+    );
+    assert_eq!(pro.status, 200, "{}", text(&pro));
+    assert_eq!(
+        receiver.next().1["app_subscription"]["status"],
+        json!("ACTIVE")
+    );
+    let ended = cancel(&api);
+    assert_eq!(ended.status, 200, "{}", text(&ended));
+    let ended = json_of(&ended);
+    assert_eq!(
+        (
+            &ended["ok"],
+            &ended["shop"],
+            &ended["plan"]["handle"],
+            &ended["webhook"]
+        ),
+        (
+            &json!(true),
+            &json!(shop),
+            &json!("pro"),
+            &json!("app_subscriptions/update")
+        )
+    );
+    assert_eq!(
+        (
+            &ended["subscription"]["id"],
+            &ended["subscription"]["chargeId"],
+            &ended["subscription"]["name"],
+            &ended["subscription"]["status"],
+            &ended["subscription"]["currentPeriodEnd"],
+        ),
+        (
+            &json!("gid://shopify/AppSubscription/1"),
+            &json!(1),
+            &json!("Pro"),
+            &json!("CANCELLED"),
+            &Value::Null
+        )
+    );
+    let delivered = receiver.next().1["app_subscription"].clone();
+    assert_eq!(
+        (&delivered["plan_handle"], &delivered["status"]),
+        (&json!("pro"), &json!("CANCELLED"))
+    );
+    assert_eq!(
+        json_of(&get(&api, "/__lsf/admin/pricing-plans"))["current"],
+        Value::Null
+    );
+    let active = graphql(
+        &api,
+        "{ currentAppInstallation { activeSubscriptions { id } } }",
+        json!({}),
+    );
+    assert_eq!(
+        active["data"]["currentAppInstallation"]["activeSubscriptions"],
+        json!([])
+    );
+    assert_eq!(cancel(&api).status, 409, "ended already");
+
+    // Without them (`legacy = false`): no webhook. The next one the backend hears of is the plan
+    // chosen once they are back.
+    let mut plans = plans_json();
+    plans["legacy"] = json!(false);
+    let set = send(
+        &api,
+        "PUT",
+        "/__lsf/admin/pricing-plans",
+        &[],
+        plans.to_string().as_bytes(),
+    );
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let free = send(
+        &api,
+        "POST",
+        "/__lsf/admin/pricing-plans/free/select",
+        &[],
+        body.as_bytes(),
+    );
+    assert_eq!(free.status, 200, "{}", text(&free));
+    let ended = json_of(&cancel(&api));
+    assert_eq!(
+        (
+            &ended["subscription"]["name"],
+            &ended["subscription"]["status"],
+            &ended["webhook"]
+        ),
+        (&json!("Free"), &json!("CANCELLED"), &Value::Null)
+    );
+    let set = send(
+        &api,
+        "PUT",
+        "/__lsf/admin/pricing-plans",
+        &[],
+        plans_json().to_string().as_bytes(),
+    );
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let pro = send(
+        &api,
+        "POST",
+        "/__lsf/admin/pricing-plans/pro/select",
+        &[],
+        body.as_bytes(),
+    );
+    assert_eq!(pro.status, 200, "{}", text(&pro));
+    let next = receiver.next().1["app_subscription"].clone();
+    assert_eq!(
+        (&next["plan_handle"], &next["status"]),
+        (&json!("pro"), &json!("ACTIVE")),
+        "the plan ended under Shopify App Pricing sent something: {next}"
     );
 }

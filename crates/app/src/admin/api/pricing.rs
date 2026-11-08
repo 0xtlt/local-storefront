@@ -10,6 +10,7 @@
 //! | `PUT /__lsf/admin/pricing-plans` (`POST` too) | Declares the plans: `{"plans": [...], "legacy"?}`, as `--pricing-plans` does. `422` for a wrong declaration. |
 //! | `DELETE /__lsf/admin/pricing-plans` | Back to the plans of `--pricing-plans`, or none. |
 //! | `POST /__lsf/admin/pricing-plans/<plan>/select` (`?shop=`, or `{"shop"}`) | The merchant chooses the plan: from the page's form, a `303` to its welcome link, as Shopify redirects; otherwise JSON `{ok, shop, plan, subscription, replaced, redirect}`. `404` for no such plan, `409` when the shop is on it already. |
+//! | `POST /__lsf/admin/pricing-plans/cancel` (`?shop=`, or `{"shop"}`) | The shop's plan ends without the app doing it: its active subscription `CANCELLED`, `app_subscriptions/update` unless `legacy` is `false`. JSON `{ok, shop, plan, subscription, webhook}`. `409` when the shop has no active subscription. Shopify's page has no such button: a test's stand-in for a plan ended outside the app. |
 //!
 //! The page lives at Shopify's path in lsf's admin: a `shopify:admin/charges/<app>/pricing_plans`
 //! link of the app comes here, and so does Shopify's own URL of it
@@ -346,8 +347,9 @@ pub(super) fn control(api: &AdminApi, request: &HttpRequest, rest: &str) -> Http
             answer["ok"] = json!(true);
             HttpResponse::json(200, &answer)
         }
+        ("POST", ["cancel"]) => cancel(api, request),
         ("POST", [plan, "select"]) => select(api, request, plan),
-        (_, [] | [_, "select"]) => HttpResponse::not_allowed(&method),
+        (_, [] | ["cancel"] | [_, "select"]) => HttpResponse::not_allowed(&method),
         _ => HttpResponse::error(404, format!("no control endpoint at {CONTROL}/{rest}")),
     }
 }
@@ -390,6 +392,41 @@ fn subscription_json(state: &ShopState, id: &str, number: u64) -> Value {
         "trialEndsAt": field("trialEndsAt"),
         "currentPeriodEnd": field("currentPeriodEnd"),
     })
+}
+
+/// `POST /__lsf/admin/pricing-plans/cancel`: the shop's plan ends without the app doing it
+/// ([`pricing::cancel`]).
+fn cancel(api: &AdminApi, request: &HttpRequest) -> HttpResponse {
+    let shop = shop_of(api, request);
+    let Some((pricing, _)) = api
+        .pricing()
+        .filter(|(pricing, _)| !pricing.plans.is_empty())
+    else {
+        return HttpResponse::error(404, how_to_declare().join(" "));
+    };
+    let ended = api.change_shop(&shop, |state| {
+        pricing::cancel(state, &pricing).map(|ended| {
+            let subscription = subscription_json(state, &ended.subscription, ended.number);
+            (ended, subscription)
+        })
+    });
+    match ended {
+        None => HttpResponse::error(404, format!("there is no shop {shop}")),
+        Some(None) => HttpResponse::error(
+            409,
+            format!("{shop} has no active subscription: no plan to end"),
+        ),
+        Some(Some((ended, subscription))) => HttpResponse::json(
+            200,
+            &json!({
+                "ok": true,
+                "shop": shop,
+                "plan": ended.plan.as_deref().and_then(|handle| pricing.plan(handle)).map(Plan::to_json),
+                "subscription": subscription,
+                "webhook": ended.webhook,
+            }),
+        ),
+    }
 }
 
 /// `POST /__lsf/admin/pricing-plans/<plan>/select`: the merchant chooses a plan.
