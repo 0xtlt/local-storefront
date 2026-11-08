@@ -451,6 +451,174 @@ fn app_check_names_the_functions_no_scenario_ran() {
     );
 }
 
+/// A scenario in which every Function of the fixture app changes the checkout: the payment
+/// customization hides Cash on Delivery and renames the card, the delivery customization hides
+/// express, renames standard and moves pickup first, the cart transform reprices the mug, the
+/// discount takes 10 % off the tees, and the validation refuses more than 2 of an item when the
+/// order is placed.
+fn every_function(expect: serde_json::Value) -> String {
+    let settings = |value: serde_json::Value| serde_json::json!({"metafields": {"$app:config.settings": {"type": "json", "value": value}}});
+    serde_json::json!({
+        "session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 3}, {"variant": "MUG-OAT", "quantity": 1}]}},
+        "entered": {
+            "email": "ada@example.com",
+            "shipping_address": {"last_name": "Lovelace", "address1": "1 Main St", "city": "Portland", "country_code": "US", "province_code": "OR", "zip": "97201"}
+        },
+        "checkout": {
+            "shipping_rates": [
+                {"handle": "standard", "title": "Standard", "price": "5.00"},
+                {"handle": "express", "title": "Express", "price": "15.00"},
+                {"handle": "pickup", "title": "Pick up in store", "price": 0, "kind": "pick_up"}
+            ],
+            "payment_methods": [
+                {"handle": "card", "name": "Credit card"},
+                {"handle": "cod", "name": "Cash on Delivery"},
+                {"handle": "paypal", "name": "PayPal", "placements": ["PAYMENT_METHOD", "ACCELERATED_CHECKOUT"]},
+                {"handle": "shop_pay", "name": "Shop Pay", "placements": ["ACCELERATED_CHECKOUT"]}
+            ],
+            "discounts": [{"function": "volume-discount", "title": "Volume", "classes": ["PRODUCT"],
+                "metafields": {"$app:config.settings": {"type": "json", "value": {"minimumQuantity": 3, "percentage": 10}}}}],
+            "functions": {
+                "payment-rules": settings(serde_json::json!({"hideName": "Cash on Delivery", "hideAbove": 50, "rename": {"Credit card": "Card (secure)"}})),
+                "delivery-rules": settings(serde_json::json!({"hide": ["express"], "rename": {"standard": "Standard (3-5 days)"}, "first": "pickup"})),
+                "bundle-transform": settings(serde_json::json!({"operations": [{"type": "update", "line": 2, "title": "Member mug", "price": "7.50"}]})),
+                "quantity-limit": settings(serde_json::json!({"maxQuantity": 2, "onlyAtCompletion": true}))
+            },
+            "tax_rate": 10
+        },
+        "extensions": ["payment-rules", "delivery-rules", "bundle-transform", "quantity-limit", "volume-discount"],
+        "expect": expect
+    })
+    .to_string()
+}
+
+#[test]
+fn app_check_checks_what_the_functions_decide() {
+    let app = App::new("expect");
+    assert!(lsf(&app.0, &["init"]).status.success());
+    // What every Function decided, as the scenario expects it.
+    app.write(
+        "shopify-local/checkouts/everything.json",
+        &every_function(serde_json::json!({
+            "payment_methods": {"equals": ["Card (secure)", "paypal"], "excludes": ["cod"]},
+            "express_methods": {"includes": ["paypal", "shop_pay"]},
+            "delivery_options": {
+                "equals": [{"handle": "pickup", "cost": 0}, {"handle": "standard", "title": "Standard (3-5 days)", "cost": "5.00"}],
+                "excludes": ["express"]
+            },
+            "discounts": {"includes": [{"title": "10% off 3+ items", "class": "PRODUCT", "amount": "9.60"}]},
+            "lines": {"equals": [{"sku": "TEE-BLK-M", "quantity": 3, "total": "86.40"}, {"sku": "MUG-OAT", "title": "Member mug", "price": "7.50"}]},
+            "errors": {"includes": [{"message": "Not possible to order more than 2 of each", "target": "$.cart"}]},
+            "totals": {"subtotal": "103.50", "discounts": "9.60", "shipping": 0, "tax": "9.39", "total": "103.29"}
+        })),
+    );
+    // The validation checks nothing while the buyer is on the page.
+    app.write(
+        "shopify-local/checkouts/on-the-page.json",
+        &every_function(serde_json::json!({"step": "interaction", "errors": {"equals": []}})),
+    );
+    // No `expect`: only that its Functions run.
+    app.write(
+        "shopify-local/checkouts/plain.json",
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["payment-rules"]}"#,
+    );
+    let output = lsf(&app.0, &["app", "check"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("checked 3 of 3 scenarios in ")
+            && text(&output).contains(": every Function ran, 15 expectations met\n"),
+        "{}",
+        text(&output)
+    );
+    let output = lsf(&app.0, &["app", "check", "--format", "json"]);
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("JSON: {}", text(&output)));
+    assert_eq!(json["ok"], true, "{json}");
+    assert_eq!(
+        json["expectations"],
+        serde_json::json!({"checked": 15, "unmet": []})
+    );
+
+    // PayPal in the express buttons, a total, and the validation on the page: three are wrong.
+    app.write(
+        "shopify-local/checkouts/everything.json",
+        &every_function(serde_json::json!({
+            "express_methods": {"excludes": ["paypal"]},
+            "payment_methods": {"includes": ["paypal"]},
+            "totals": {"total": "100.00", "tax": "9.39"}
+        })),
+    );
+    app.write(
+        "shopify-local/checkouts/on-the-page.json",
+        &every_function(serde_json::json!({
+            "step": "interaction",
+            "errors": {"includes": ["Not possible to order more than 2 of each"]}
+        })),
+    );
+    let output = lsf(&app.0, &["app", "check"]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    let printed = text(&output);
+    for block in [
+        "expect   everything: express_methods.excludes\n\
+         \x20        expected: no entry matching \"paypal\"\n\
+         \x20        actual:   [{\"handle\": \"paypal\", \"name\": \"PayPal\"}, {\"handle\": \"shop_pay\", \"name\": \"Shop Pay\"}]\n",
+        "expect   everything: totals.total\n\
+         \x20        expected: \"100.00\"\n\
+         \x20        actual:   \"103.29\"\n",
+        "expect   on-the-page: errors.includes (step: interaction)\n\
+         \x20        expected: an entry matching \"Not possible to order more than 2 of each\"\n\
+         \x20        actual:   []\n",
+    ] {
+        assert!(printed.contains(block), "missing\n{block}in\n{printed}");
+    }
+    assert!(
+        printed.contains(": 0 failures, 0 invalid scenarios, 3 of 5 expectations unmet\n"),
+        "{printed}"
+    );
+    let output = lsf(&app.0, &["app", "check", "--format", "json"]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("JSON: {}", text(&output)));
+    assert_eq!(json["ok"], false, "{json}");
+    assert_eq!(json["expectations"]["checked"], 5, "{json}");
+    assert_eq!(
+        json["expectations"]["unmet"][0],
+        serde_json::json!({
+            "scenario": "everything",
+            "file": "checkouts/everything.json",
+            "step": "completion",
+            "assertion": "express_methods.excludes",
+            "expected": "paypal",
+            "actual": [{"handle": "paypal", "name": "PayPal"}, {"handle": "shop_pay", "name": "Shop Pay"}]
+        })
+    );
+    assert_eq!(
+        json["expectations"]["unmet"][2]["step"], "interaction",
+        "{json}"
+    );
+    assert_eq!(
+        json["expectations"]["unmet"][2]["actual"],
+        serde_json::json!([]),
+        "{json}"
+    );
+
+    // A handle `excludes` names that the checkout does not offer checks nothing: `validate`
+    // warns, and the scenario still runs.
+    app.write(
+        "shopify-local/checkouts/everything.json",
+        &every_function(serde_json::json!({"express_methods": {"excludes": ["paypall"]}})),
+    );
+    let output = lsf(&app.0, &["validate"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains(
+            "warning[expect_checks_nothing]: the checkout offers no payment method \"paypall\""
+        ) && text(&output).contains("did you mean \"paypal\"?"),
+        "{}",
+        text(&output)
+    );
+}
+
 /// The words of a JSON description: its keys, and the placeholders of its values.
 fn words(text: &str) -> std::collections::BTreeSet<String> {
     text.split(|c: char| !c.is_ascii_alphanumeric())
@@ -481,7 +649,8 @@ fn app_check_help_describes_the_json_it_prints() {
     // A Function that fails, and a scenario that does not validate: every list has an entry.
     app.write(
         "shopify-local/checkouts/tees.json",
-        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}, "extensions": ["quantity-limit", "bundle-transform", "delivery-rules", "payment-rules", "volume-discount"]}"#,
+        // An expectation that is not met, of an amount: its values have no keys of their own.
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}, "extensions": ["quantity-limit", "bundle-transform", "delivery-rules", "payment-rules", "volume-discount"], "expect": {"totals": {"total": "1.00"}}}"#,
     );
     app.write(
         "shopify-local/checkouts/typo.json",
@@ -492,6 +661,10 @@ fn app_check_help_describes_the_json_it_prints() {
         .unwrap_or_else(|_| panic!("JSON: {}", text(&output)));
     assert!(!json["failures"].as_array().unwrap().is_empty(), "{json}");
     assert!(!json["invalid"].as_array().unwrap().is_empty(), "{json}");
+    assert!(
+        !json["expectations"]["unmet"].as_array().unwrap().is_empty(),
+        "{json}"
+    );
     let mut printed = std::collections::BTreeSet::new();
     keys(&json, &mut printed);
     // `error`, said when there is no scenario, is a key of the failures too.
@@ -516,7 +689,9 @@ fn app_check_help_describes_the_json_it_prints() {
         text(&output)
     );
     assert!(
-        text(&output).contains(": 1 failure, 1 invalid scenario, 1 Function ran in no scenario\n"),
+        text(&output).contains(
+            ": 1 failure, 1 invalid scenario, 1 of 1 expectation unmet, 1 Function ran in no scenario\n"
+        ),
         "{}",
         text(&output)
     );

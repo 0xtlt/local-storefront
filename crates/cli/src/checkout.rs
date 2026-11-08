@@ -660,6 +660,7 @@ mod tests {
             extensions: None,
             checkout: store.checkout,
             overrides: Vec::new(),
+            expect: None,
             problems: Vec::new(),
         }
     }

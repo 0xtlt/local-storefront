@@ -15,5 +15,28 @@
   },
   "extensions": [
     "payment-hide-cod"
-  ]
+  ],
+  "expect": {
+    "payment_methods": {
+      "excludes": [
+        "cod"
+      ],
+      "equals": [
+        "card",
+        "paypal",
+        "bank",
+        "invoice"
+      ]
+    },
+    "express_methods": {
+      "equals": [
+        "shop_pay",
+        "apple_pay"
+      ]
+    },
+    "totals": {
+      "subtotal": "136.00",
+      "total": "136.00"
+    }
+  }
 }

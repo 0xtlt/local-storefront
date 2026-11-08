@@ -171,7 +171,7 @@ what it would cost Shopify. Guide: [performance](docs/performance.md).
 | `npx local-storefront app webhook trigger --topic <topic> --app <dir> --app-url <url>` | Sends one webhook of an app to its backend, signed as Shopify signs it, as `shopify app webhook trigger` does. |
 | `npx local-storefront app init [--app <dir>]` | Writes checkout scenarios (`checkouts/` in the store data) made for the Functions and extensions of the app. |
 | `npx local-storefront app build [handle]... --app <dir>` | Builds the extensions of an app as `shopify app build` does, without Node: Functions, and UI extensions from their sources. |
-| `npx local-storefront app check [--app <dir>]` | Runs the Functions of every checkout scenario, for CI: exits with 1 when one fails. |
+| `npx local-storefront app check [--app <dir>]` | Runs the Functions of every checkout scenario and checks each scenario's `expect` (what its checkout must look like), for CI: exits with 1 when a Function fails or an expectation is not met. |
 | `npx local-storefront app function build [handle]... --app <dir>` | Builds the Functions of an app. A JavaScript or TypeScript Function is built by lsf, without Node, as `shopify app function build` builds it. |
 | `npx local-storefront app function run [handle]... --app <dir>` | Runs the Functions of an app once and prints each input, output and log. `--scenario <name>` runs a checkout scenario. `--format json` for tools. |
 | `npx local-storefront render <path>` | Prints the HTML of one page, without a server. |

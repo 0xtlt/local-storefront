@@ -93,6 +93,18 @@
         "type": "string"
       },
       "default": null
+    },
+    "expect": {
+      "description": "What the checkout must look like once the Functions ran: `lsf app check` fails when it\ndoes not, and says what it expected and what it got. Without it, `app check` only checks\nthat the Functions run without an error.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScenarioExpectInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "additionalProperties": false,
@@ -689,6 +701,702 @@
           "const": "shop"
         }
       ]
+    },
+    "ScenarioExpectInput": {
+      "description": "What the checkout of a scenario must look like once its Functions ran, which\n`lsf app check` checks. Each list (`payment_methods`, `express_methods`, `delivery_options`,\n`discounts`, `lines`, `errors`) takes `includes`, `excludes` and `equals`; `totals` takes\nexact amounts:\n\n```json\n\"expect\": {\n  \"express_methods\": { \"excludes\": [\"paypal\"] },\n  \"payment_methods\": { \"includes\": [\"paypal\"] },\n  \"totals\": { \"total\": \"120.00\" }\n}\n```",
+      "type": "object",
+      "properties": {
+        "step": {
+          "description": "The step of the buyer journey the Functions run for: `completion` (the default), the\norder being placed, as `lsf app function run` runs them; `interaction`, the page as the\nbuyer sees it before. Only a validation Function tells them apart\n(`buyerJourney.step`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScenarioStep"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "payment_methods": {
+          "description": "The payment methods of the list of the checkout (`PAYMENT_METHOD`), in order, once the\npayment customizations ran. A string matches the handle or the name.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExpectedPaymentMethods"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "express_methods": {
+          "description": "The express buttons (`ACCELERATED_CHECKOUT`), in order, once the payment customizations\nran. A method can be in both lists. A string matches the handle or the name.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExpectedPaymentMethods"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "delivery_options": {
+          "description": "The delivery options, in the order the buyer sees them, once the delivery customizations\nand the shipping discounts ran. A string matches the handle or the title.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExpectedDeliveryOptions"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "discounts": {
+          "description": "The discounts applied, product, order and shipping ones. A string matches the title (the\nmessage the Function gave) or the code.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExpectedDiscounts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lines": {
+          "description": "The lines of the checkout once the cart transforms ran. A string matches the SKU or the\ntitle.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExpectedLines"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "errors": {
+          "description": "The errors that block the order: those validation Functions report, and those of\nFunctions that failed. A string matches the message. `{\"equals\": []}`: no error.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExpectedErrors"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "totals": {
+          "description": "The amounts of the checkout, each exactly.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExpectedTotals"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "ScenarioStep": {
+      "description": "The step of the buyer journey the Functions run for.",
+      "oneOf": [
+        {
+          "description": "The buyer places the order (`CHECKOUT_COMPLETION`).",
+          "type": "string",
+          "const": "completion"
+        },
+        {
+          "description": "The buyer is on the page (`CHECKOUT_INTERACTION`).",
+          "type": "string",
+          "const": "interaction"
+        }
+      ]
+    },
+    "ExpectedPaymentMethods": {
+      "description": "What a list of the checkout must hold. Each entry is a string, which matches an entry of the\nlist by its name (see the list), or an object of the fields the entry must have.",
+      "type": "object",
+      "properties": {
+        "includes": {
+          "description": "Each of these matches an entry of the list, in any order.",
+          "type": "array",
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedPaymentMethod"
+              }
+            ]
+          }
+        },
+        "excludes": {
+          "description": "None of these matches an entry of the list.",
+          "type": "array",
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedPaymentMethod"
+              }
+            ]
+          }
+        },
+        "equals": {
+          "description": "The whole list, in order: as many entries, the first matching the first, and so on.\n`[]` is an empty list.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedPaymentMethod"
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExpectedPaymentMethod": {
+      "description": "A payment method of `expect`: the fields it must have.",
+      "type": "object",
+      "properties": {
+        "handle": {
+          "description": "Its handle (`checkout.payment_methods`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Its name, as the buyer sees it: the one a payment customization gave it, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExpectedDeliveryOptions": {
+      "description": "What a list of the checkout must hold. Each entry is a string, which matches an entry of the\nlist by its name (see the list), or an object of the fields the entry must have.",
+      "type": "object",
+      "properties": {
+        "includes": {
+          "description": "Each of these matches an entry of the list, in any order.",
+          "type": "array",
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedDeliveryOption"
+              }
+            ]
+          }
+        },
+        "excludes": {
+          "description": "None of these matches an entry of the list.",
+          "type": "array",
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedDeliveryOption"
+              }
+            ]
+          }
+        },
+        "equals": {
+          "description": "The whole list, in order: as many entries, the first matching the first, and so on.\n`[]` is an empty list.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedDeliveryOption"
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExpectedDeliveryOption": {
+      "description": "A delivery option of `expect`: the fields it must have.",
+      "type": "object",
+      "properties": {
+        "handle": {
+          "description": "Its handle (`checkout.shipping_rates`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "description": "Its title, as the buyer sees it: the one a delivery customization gave it, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cost": {
+          "description": "What it costs once the shipping discounts ran.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExpectedDiscounts": {
+      "description": "What a list of the checkout must hold. Each entry is a string, which matches an entry of the\nlist by its name (see the list), or an object of the fields the entry must have.",
+      "type": "object",
+      "properties": {
+        "includes": {
+          "description": "Each of these matches an entry of the list, in any order.",
+          "type": "array",
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedDiscount"
+              }
+            ]
+          }
+        },
+        "excludes": {
+          "description": "None of these matches an entry of the list.",
+          "type": "array",
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedDiscount"
+              }
+            ]
+          }
+        },
+        "equals": {
+          "description": "The whole list, in order: as many entries, the first matching the first, and so on.\n`[]` is an empty list.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedDiscount"
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExpectedDiscount": {
+      "description": "A discount of `expect`: the fields it must have.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Its title: the message the Function gave, or the title of the discount.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code": {
+          "description": "The code it applied with. An automatic discount has none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "class": {
+          "description": "What it reduced: `PRODUCT`, `ORDER` or `SHIPPING`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CheckoutDiscountClass"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "amount": {
+          "description": "What it took off.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExpectedLines": {
+      "description": "What a list of the checkout must hold. Each entry is a string, which matches an entry of the\nlist by its name (see the list), or an object of the fields the entry must have.",
+      "type": "object",
+      "properties": {
+        "includes": {
+          "description": "Each of these matches an entry of the list, in any order.",
+          "type": "array",
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedLine"
+              }
+            ]
+          }
+        },
+        "excludes": {
+          "description": "None of these matches an entry of the list.",
+          "type": "array",
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedLine"
+              }
+            ]
+          }
+        },
+        "equals": {
+          "description": "The whole list, in order: as many entries, the first matching the first, and so on.\n`[]` is an empty list.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedLine"
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExpectedLine": {
+      "description": "A line of `expect`: the fields it must have.",
+      "type": "object",
+      "properties": {
+        "sku": {
+          "description": "The SKU of its variant.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "description": "Its title: the product's, or the one a cart transform gave it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quantity": {
+          "description": "How many units it has.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "price": {
+          "description": "The price of one unit, before discounts.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total": {
+          "description": "What the line costs once its discounts ran.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "components": {
+          "description": "The lines a cart transform made it of (merge) or split it into (expand), in order, each\nby its SKU or title. `[]`: none.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "attributes": {
+          "description": "Attributes it must have, by key; it can have others.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExpectedErrors": {
+      "description": "What a list of the checkout must hold. Each entry is a string, which matches an entry of the\nlist by its name (see the list), or an object of the fields the entry must have.",
+      "type": "object",
+      "properties": {
+        "includes": {
+          "description": "Each of these matches an entry of the list, in any order.",
+          "type": "array",
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedError"
+              }
+            ]
+          }
+        },
+        "excludes": {
+          "description": "None of these matches an entry of the list.",
+          "type": "array",
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedError"
+              }
+            ]
+          }
+        },
+        "equals": {
+          "description": "The whole list, in order: as many entries, the first matching the first, and so on.\n`[]` is an empty list.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "description": "An entry of a list of `expect`: its name, or the fields it must have.",
+            "anyOf": [
+              {
+                "description": "What the entry is named by (see the list).",
+                "type": "string"
+              },
+              {
+                "description": "The fields the entry must have; those left out can be anything.",
+                "$ref": "#/$defs/ExpectedError"
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExpectedError": {
+      "description": "An error of `expect`: the fields it must have.",
+      "type": "object",
+      "properties": {
+        "message": {
+          "description": "The message, exactly.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "description": "The target the Function gave (`$.cart`, `$.cart.buyerIdentity.email`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExpectedTotals": {
+      "description": "The amounts of the checkout `expect` checks, each exactly. Those left out are not checked.",
+      "type": "object",
+      "properties": {
+        "subtotal": {
+          "description": "The lines before discounts.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "discounts": {
+          "description": "The product and order discounts (the shipping discounts are in `shipping`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "shipping": {
+          "description": "The selected delivery option, once the shipping discounts ran. 0 before the address has\na country.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tax": {
+          "description": "The tax (`checkout.tax_rate`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total": {
+          "description": "What the order costs in all, the part paid later included.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "due_now": {
+          "description": "What the buyer pays now.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "due_later": {
+          "description": "What the selling plans leave to pay later.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

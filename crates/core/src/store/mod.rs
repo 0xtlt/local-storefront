@@ -945,6 +945,9 @@ pub struct CheckoutScenario {
     /// What the scenario overrides of the `checkout` section: `shipping_rates`,
     /// `payment_methods`, `discounts`, `functions`, `tax_rate`.
     pub overrides: Vec<&'static str>,
+    /// What the checkout must look like once the Functions ran, which `lsf app check` checks.
+    /// Its amounts are valid: those that are not are in `problems`.
+    pub expect: Option<model::ScenarioExpectInput>,
     /// What stops the scenario from opening, as the diagnostics `validate` prints them.
     pub problems: Vec<String>,
 }

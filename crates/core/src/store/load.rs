@@ -2327,6 +2327,120 @@ mod tests {
     }
 
     #[test]
+    fn a_scenario_reads_what_its_checkout_must_look_like() {
+        let (store, diagnostics) = with_scenarios(
+            "expect",
+            None,
+            &[
+                (
+                    "expect.json",
+                    r#"{"checkout": {"payment_methods": [{"handle": "card", "name": "Credit card"}, {"handle": "paypal", "name": "PayPal", "placements": ["PAYMENT_METHOD", "ACCELERATED_CHECKOUT"]}, {"handle": "cod", "name": "Cash on Delivery"}]},
+                    "expect": {
+                        "step": "interaction",
+                        "express_methods": {"excludes": ["paypal", {"handle": "cod"}]},
+                        "payment_methods": {"includes": ["Credit card", {"handle": "card", "name": "Card"}], "equals": []},
+                        "delivery_options": {"equals": [{"handle": "standard", "cost": "5.00"}]},
+                        "discounts": {"includes": [{"title": "10% off", "class": "ORDER", "amount": 210}]},
+                        "lines": {"equals": [{"sku": "TEE-BLK-M", "quantity": 2, "components": [], "attributes": {"gift": "yes"}}]},
+                        "errors": {"equals": []},
+                        "totals": {"total": "120.00", "due_later": 0}
+                    }}"#,
+                ),
+                // An amount that is not one, and a field that is not a field.
+                (
+                    "wrong.json",
+                    r#"{"expect": {"totals": {"total": 12.5}, "lines": {"includes": [{"skus": "TEE"}]}, "errors": {"contains": []}}}"#,
+                ),
+                // What `excludes` names must be offered: otherwise it checks nothing.
+                (
+                    "typo.json",
+                    r#"{"checkout": {"payment_methods": [{"handle": "card"}, {"handle": "paypal", "name": "PayPal"}, {"handle": "cod", "name": "Cash on Delivery"}]},
+                    "expect": {
+                        "express_methods": {"excludes": ["paypl", "Cash on Delivery"]},
+                        "delivery_options": {"excludes": [{"handle": "expres"}], "includes": ["Renamed by a Function"]}
+                    }}"#,
+                ),
+            ],
+        );
+        let by_name = |name: &str| store.scenarios.iter().find(|s| s.name == name).expect(name);
+
+        let expect = by_name("expect");
+        assert!(expect.problems.is_empty(), "{:?}", expect.problems);
+        let read = expect.expect.as_ref().expect("read");
+        assert_eq!(read.step, Some(model::ScenarioStep::Interaction));
+        let excludes = &read.express_methods.as_ref().unwrap().excludes;
+        assert!(matches!(&excludes[0], model::Expected::Name(name) if name == "paypal"));
+        assert!(
+            matches!(&excludes[1], model::Expected::Fields(method) if method.handle.as_deref() == Some("cod"))
+        );
+        assert_eq!(
+            read.payment_methods
+                .as_ref()
+                .unwrap()
+                .equals
+                .as_deref()
+                .map(<[_]>::len),
+            Some(0)
+        );
+        assert_eq!(
+            read.totals.as_ref().unwrap().total,
+            Some(model::Money::Decimal("120.00".into()))
+        );
+        assert!(
+            !diagnostics
+                .items
+                .iter()
+                .any(|item| item.file == "checkouts/expect.json"),
+            "{diagnostics}"
+        );
+
+        let wrong = by_name("wrong").problems.join("\n");
+        for expected in [
+            "checkouts/wrong.json at /expect/totals/total",
+            "unknown field \"skus\"",
+            "did you mean \"sku\"?",
+            "unknown field \"contains\"",
+        ] {
+            assert!(
+                wrong.contains(expected),
+                "missing {expected:?} in:\n{wrong}"
+            );
+        }
+
+        // A warning, which `validate` prints: the scenario still opens.
+        let typo = by_name("typo");
+        assert!(typo.problems.is_empty(), "{:?}", typo.problems);
+        let warnings: Vec<String> = diagnostics
+            .items
+            .iter()
+            .filter(|item| item.file == "checkouts/typo.json")
+            .map(|item| {
+                assert_eq!(
+                    item.severity,
+                    crate::diagnostics::Severity::Warning,
+                    "{item}"
+                );
+                item.to_string()
+            })
+            .collect();
+        assert_eq!(warnings.len(), 2, "{warnings:#?}");
+        assert!(
+            warnings[0].contains("the checkout offers no payment method \"paypl\"")
+                && warnings[0].contains("/expect/express_methods/excludes/0")
+                && warnings[0]
+                    .contains("did you mean \"paypal\"? The checkout offers: card, paypal, cod"),
+            "{}",
+            warnings[0]
+        );
+        assert!(
+            warnings[1].contains("no delivery option \"expres\"")
+                && warnings[1].contains("/expect/delivery_options/excludes/0"),
+            "{}",
+            warnings[1]
+        );
+    }
+
+    #[test]
     fn a_file_of_the_data_directory_is_store_data_a_scenario_or_unread() {
         for (path, role) in [
             ("store.json", FileRole::Store),

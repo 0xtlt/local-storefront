@@ -32,9 +32,10 @@ enum Subcommand {
     /// account, that name their sources (`module`), bundled by lsf without Node
     /// (`dist/<handle>.js`).
     Build(BuildArgs),
-    /// Run the Functions of every checkout scenario, as the home page checks them, for CI:
-    /// exits with 1 when a scenario does not validate, a Function fails in one, or the time
-    /// ran out. No HTTP request of a `.fetch` target is sent.
+    /// Run the Functions of every checkout scenario, as the home page checks them, for CI, and
+    /// check what the checkout of each must look like (its `expect`): exits with 1 when a
+    /// scenario does not validate, a Function fails in one, an expectation is not met, or the
+    /// time ran out. No HTTP request of a `.fetch` target is sent.
     Check(CheckArgs),
     /// Run or build the Shopify Functions of the app.
     Function(function::Args),
@@ -46,7 +47,7 @@ enum Subcommand {
 enum Format {
     /// One line per problem.
     Text,
-    /// `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `ranInNoScenario` is filled only when every scenario ran.
+    /// `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says, `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran.
     Json,
 }
 
@@ -193,7 +194,11 @@ fn check(
     let complete = report.checked == report.total;
     // No scenario, nothing checked: a check that cannot fail is not one.
     let empty = report.total == 0;
-    let ok = report.failures.is_empty() && invalid.is_empty() && complete && !empty;
+    let ok = report.failures.is_empty()
+        && invalid.is_empty()
+        && report.unmet.is_empty()
+        && complete
+        && !empty;
     // The Functions no scenario ran: nothing checks them. A warning, not a failure: a Function
     // may be meant for a case the scenarios leave aside. Only known once every scenario ran.
     let ran_nowhere: Vec<&lsf_app::config::FunctionExtension> = if complete && !empty {
@@ -215,6 +220,17 @@ fn check(
                 .iter()
                 .map(|scenario| serde_json::json!({"scenario": scenario.name, "file": scenario.file, "problems": scenario.problems}))
                 .collect::<Vec<_>>());
+            json["expectations"] = serde_json::json!({
+                "checked": report.expectations,
+                "unmet": report.unmet.iter().map(|unmet| serde_json::json!({
+                    "scenario": unmet.scenario,
+                    "file": unmet.file,
+                    "step": unmet.step,
+                    "assertion": unmet.unmet.assertion,
+                    "expected": unmet.unmet.expected,
+                    "actual": unmet.unmet.actual,
+                })).collect::<Vec<_>>(),
+            });
             json["ranInNoScenario"] = serde_json::json!(
                 ran_nowhere
                     .iter()
@@ -257,22 +273,33 @@ fn check(
                     failure.scenarios.join(", ")
                 );
             }
+            for unmet in &report.unmet {
+                print_unmet(unmet);
+            }
+            let expectations = count(report.expectations, "expectation", "expectations");
             let mut said = if empty {
                 NO_SCENARIO.to_string()
             } else if !complete {
                 "out of time for the others (raise --budget)".to_string()
             } else if !ok {
-                format!(
+                let mut said = format!(
                     "{}, {}",
                     count(report.failures.len(), "failure", "failures"),
                     count(invalid.len(), "invalid scenario", "invalid scenarios")
-                )
+                );
+                if report.expectations > 0 {
+                    said.push_str(&format!(", {} of {expectations} unmet", report.unmet.len()));
+                }
+                said
             } else if ran_nowhere.is_empty() {
                 "every Function ran".to_string()
             } else {
                 // Not "every Function ran": some did not, as the warnings above say.
                 "no Function failed".to_string()
             };
+            if ok && report.expectations > 0 {
+                said.push_str(&format!(", {expectations} met"));
+            }
             if !ran_nowhere.is_empty() {
                 said.push_str(&format!(
                     ", {} ran in no scenario",
@@ -292,4 +319,45 @@ fn check(
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// An expectation that is not met, as `app check` prints it: the scenario and the assertion,
+/// then what the scenario expects and what the checkout has, as they are written in it.
+fn print_unmet(unmet: &crate::server::Unmet) {
+    let step = if unmet.step == "completion" {
+        String::new()
+    } else {
+        format!(" (step: {})", unmet.step)
+    };
+    let expected = compact(&unmet.unmet.expected);
+    let expected = match unmet.unmet.assertion.rsplit_once('.') {
+        Some((_, "includes")) => format!("an entry matching {expected}"),
+        Some((_, "excludes")) => format!("no entry matching {expected}"),
+        _ => expected,
+    };
+    println!(
+        "expect   {}: {}{step}",
+        unmet.scenario, unmet.unmet.assertion
+    );
+    println!("         expected: {expected}");
+    println!("         actual:   {}", compact(&unmet.unmet.actual));
+}
+
+/// A JSON value on one line, as one writes it by hand: `{"handle": "pickup", "cost": "0.00"}`.
+fn compact(value: &serde_json::Value) -> String {
+    use serde_json::Value as Json;
+    match value {
+        Json::Array(items) => format!(
+            "[{}]",
+            items.iter().map(compact).collect::<Vec<_>>().join(", ")
+        ),
+        Json::Object(map) => format!(
+            "{{{}}}",
+            map.iter()
+                .map(|(key, value)| format!("{}: {}", Json::from(key.as_str()), compact(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        other => other.to_string(),
+    }
 }

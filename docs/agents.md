@@ -295,8 +295,12 @@ command line did not run; it says why. Guide: [checkout](checkout.md#owners-and-
 lsf's copy of the API's schema, offline.
 
 For CI, `npx local-storefront app check --build --format json` builds the extensions, then runs
-the Functions of every scenario: `ok`, `failures`, `invalid`, and `ranInNoScenario`, the
-Functions no scenario ran (a warning: the exit code stays `0`).
+the Functions of every scenario and checks the `expect` of each, what its checkout must look like
+([expected results](checkout.md#expected-results)): `ok`, `failures`, `invalid`, `expectations`
+(`checked`, and in `unmet` the `scenario`, the `assertion`, `expected` and `actual` of each
+expectation not met), and `ranInNoScenario`, the Functions no scenario ran (a warning: the exit
+code stays `0`). Assert what a Function decides with an `expect` rather than piping
+`app function run --format json` into `jq`.
 
 ### Test the backend of an app
 

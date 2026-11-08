@@ -19,7 +19,7 @@ Installed with mise, from a release or from source, the command is `lsf`: `lsf s
 | Code | Meaning |
 |---|---|
 | `0` | Done, nothing to report. |
-| `1` | Done, and something to fix: data or app errors (`validate`), problems in the theme (`check`), Liquid errors in the page or nothing at its path (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run or did not run (`app function run`), a scenario that fails (`app check`), a webhook that was not delivered (`app webhook trigger`). |
+| `1` | Done, and something to fix: data or app errors (`validate`), problems in the theme (`check`), Liquid errors in the page or nothing at its path (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run or did not run (`app function run`), a scenario that fails or whose `expect` is not met (`app check`), a webhook that was not delivered (`app webhook trigger`). |
 | `2` | The command could not run: a wrong option, a theme or a file that cannot be read, a file `fmt` cannot write, a port `serve` cannot listen on. The message is on stderr, after `error:`. |
 
 ## Output
@@ -137,7 +137,7 @@ and the store data defaults to the app's `shopify-local/`. Guide: [checkout](che
 | [`app dev`](#app-dev) | Serves the app alone: its checkout and its customer account. |
 | [`app init`](#app-init) | Writes checkout scenarios made for the app. |
 | [`app build`](#app-build) | Builds its extensions, without Node. |
-| [`app check`](#app-check) | Runs the Functions of every scenario, for CI. |
+| [`app check`](#app-check) | Runs the Functions of every scenario and checks their `expect`, for CI. |
 | [`app function run`](#app-function-run), [`app function build`](#app-function-build), [`app function schema`](#app-function-schema) | Runs or builds its Functions, without a server, or writes the schema of a Function's API. |
 | [`app webhook trigger`](#app-webhook-trigger) | Sends one of its webhooks to its backend, signed as Shopify signs it. |
 
@@ -198,9 +198,11 @@ name their sources (`module`), bundled into `dist/<handle>.js`. Guide:
 `npx local-storefront app check [--app <dir>]`
 
 Runs the Functions of every checkout scenario, as the home page checks them, without a server:
-for CI. Prints each scenario that does not validate and each Function that fails, with the
-scenarios it fails in, and exits with `1` when there is one, when the time ran out, or when
-there is no scenario at all (`app init` writes a set). No request of a `.fetch` target is sent.
+for CI. Prints each scenario that does not validate, each Function that fails, with the
+scenarios it fails in, and each expectation of a scenario's [`expect`](checkout.md#expected-results)
+that its checkout does not meet. Exits with `1` when there is one, when the time ran out, or
+when there is no scenario at all (`app init` writes a set). No request of a `.fetch` target is
+sent.
 It builds nothing without `--build`: in a fresh clone, where `dist/` is not committed, give
 `--build` (or run `npx local-storefront app build` first).
 
@@ -219,12 +221,27 @@ warning  volume-discount: ran in no scenario, so nothing checks it (a discount F
 checked 8 of 8 scenarios in 0.4 s: no Function failed, 1 Function ran in no scenario
 ```
 
-When every Function ran somewhere and none failed, the summary ends with `every Function ran`.
-When something failed, it counts the failures and the invalid scenarios:
-`1 failure, 0 invalid scenarios`.
+An expectation that is not met prints the scenario and the assertion (the list and the rule,
+or the amount), what the scenario expects, and what the checkout has, as the scenario writes it.
+The Functions run for it as the order is placed, unless the `expect` says
+`"step": "interaction"`, which the first line then names:
 
-Exiting with `0` means no Function failed where it ran, not that it decided right: assert that
-with `app function run --format json`. CI: [checkout](checkout.md#in-ci).
+```text
+expect   paypal-express: express_methods.excludes
+         expected: no entry matching "paypal"
+         actual:   [{"handle": "paypal", "name": "PayPal"}, {"handle": "shop_pay", "name": "Shop Pay"}]
+expect   paypal-express: totals.total
+         expected: "96.00"
+         actual:   "86.40"
+```
+
+When every Function ran somewhere and none failed, the summary ends with `every Function ran`,
+then `12 expectations met` when scenarios have an `expect`. When something failed, it counts the
+failures, the invalid scenarios and the expectations not met:
+`1 failure, 0 invalid scenarios, 2 of 12 expectations unmet`.
+
+Exiting with `0` means no Function failed where it ran, and every `expect` holds. A scenario
+without `expect` checks only that its Functions run. CI: [checkout](checkout.md#in-ci).
 
 | Option | Environment variable | What it does |
 |---|---|---|
@@ -232,7 +249,7 @@ with `app function run --format json`. CI: [checkout](checkout.md#in-ci).
 | `--extension <handle>` | | Only these extensions. Repeat it for several. |
 | `--build` | | Builds the extensions first, as `app build` does. |
 | `--format text` | | Default. One line per problem, then a summary. |
-| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `ranInNoScenario` is filled only when every scenario ran. |
+| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says (the entry, the list, the amount), `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran. |
 | `--budget <seconds>` | | How long the Functions may run in all. Default 300. |
 
 ### app function run

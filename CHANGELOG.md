@@ -151,6 +151,20 @@ the same data every run.
     it.
   - `--admin-source <url>=<file>`: a URL of your backend's own answered with a file, never
     downloaded; `PUT /__lsf/admin/sources?url=` stubs one from a test.
+- **Expected results in checkout scenarios: `lsf app check` fails when a Function decides
+  wrong,** not only when it fails to run. A scenario's `expect` says what its checkout must look
+  like once the Functions ran: the payment methods, the express buttons, the delivery options,
+  the discounts, the lines and the errors, each with `includes`, `excludes` and `equals` (an
+  entry by its handle or name, or by the fields it must have, such as
+  `{"handle": "standard", "cost": "0.00"}`), and exact `totals`.
+  `"express_methods": {"excludes": ["paypal"]}` with `"payment_methods": {"includes": ["paypal"]}`
+  replaces piping `app function run --format json` into `jq`. Each expectation that is not met
+  prints the scenario, the assertion, what was expected and what the checkout has, and makes the
+  check exit with `1`; `--format json` has them in `expectations`. The Functions run as the
+  order is placed (`"step": "interaction"`: the page before it). `validate` warns about a name in
+  `excludes` that the checkout does not offer, which would check nothing. The scenario schema has
+  `expect`, and two scenarios of the playground use it.
+  [Expected results](docs/checkout.md#expected-results).
 - **`lsf app check --build`** builds the extensions first, for a clone where `dist/` is not
   committed. `app check` also warns about a Function that ran in no scenario, so that nothing
   checks it (`ranInNoScenario` in JSON), and its summary counts it (`no Function failed, 1

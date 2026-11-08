@@ -687,6 +687,11 @@ Every field is optional.
   names run whether or not the shop has an owner of them: a scenario that names none shows the
   shop's checkout, where only those with an enabled owner run. A Function you add to the app
   later is not in the `extensions` of the scenarios written before it: add its handle.
+- `expect` is what the checkout must look like once the Functions ran, which `app check`
+  checks: the payment methods, express buttons, delivery options, discounts, lines and errors,
+  each with `includes`, `excludes` and `equals`, and exact `totals`
+  (`"expect": { "express_methods": { "excludes": ["paypal"] }, "totals": { "total": "96.00" } }`).
+  See [expected results](checkout.md#expected-results).
 
 A scenario that does not validate is still listed, with its errors, and cannot be opened.
 `validate` reports it with the file `checkouts/<name>.json` and a pointer into it

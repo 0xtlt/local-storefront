@@ -532,15 +532,18 @@ fn scenario_start(
     Ok((session, entered, prepared))
 }
 
-/// What the Functions of the app compute for a scenario as it opens, in its language: what the
-/// home page looks at to find the Functions that fail. `app` is the app as loaded once for
-/// every scenario; `runs` says how the requests of the `.fetch` targets go out and when to stop.
+/// What the Functions of the app compute for a scenario as it opens, in its language, at `step`
+/// of the buyer journey: what the home page looks at to find the Functions that fail
+/// (`Interaction`, the checkout as it opens), and what `lsf app check` checks the `expect` of
+/// the scenario against. `app` is the app as loaded once for every scenario; `runs` says how
+/// the requests of the `.fetch` targets go out and when to stop.
 pub(super) fn run_scenario(
     state: &ServerState,
     app: &App,
     store: &Store,
     scenario: &lsf_core::store::CheckoutScenario,
     runs: pipeline::RunOptions,
+    step: BuyerJourneyStep,
 ) -> Result<CheckoutResult, String> {
     let (session, mut checkout, _) =
         scenario_start(state, store, scenario).map_err(|problems| problems.join("; "))?;
@@ -558,7 +561,7 @@ pub(super) fn run_scenario(
         store,
         &mut checkout,
         language,
-        BuyerJourneyStep::Interaction,
+        step,
         runs,
     ))
 }

@@ -1751,6 +1751,214 @@ pub struct CheckoutScenarioInput {
     /// those of the app that `--extension` allows. Every one when omitted.
     #[serde(default)]
     pub extensions: Option<Vec<String>>,
+    /// What the checkout must look like once the Functions ran: `lsf app check` fails when it
+    /// does not, and says what it expected and what it got. Without it, `app check` only checks
+    /// that the Functions run without an error.
+    #[serde(default)]
+    pub expect: Option<ScenarioExpectInput>,
+}
+
+/// What the checkout of a scenario must look like once its Functions ran, which
+/// `lsf app check` checks. Each list (`payment_methods`, `express_methods`, `delivery_options`,
+/// `discounts`, `lines`, `errors`) takes `includes`, `excludes` and `equals`; `totals` takes
+/// exact amounts:
+///
+/// ```json
+/// "expect": {
+///   "express_methods": { "excludes": ["paypal"] },
+///   "payment_methods": { "includes": ["paypal"] },
+///   "totals": { "total": "120.00" }
+/// }
+/// ```
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScenarioExpectInput {
+    /// The step of the buyer journey the Functions run for: `completion` (the default), the
+    /// order being placed, as `lsf app function run` runs them; `interaction`, the page as the
+    /// buyer sees it before. Only a validation Function tells them apart
+    /// (`buyerJourney.step`).
+    #[serde(default)]
+    pub step: Option<ScenarioStep>,
+    /// The payment methods of the list of the checkout (`PAYMENT_METHOD`), in order, once the
+    /// payment customizations ran. A string matches the handle or the name.
+    #[serde(default)]
+    pub payment_methods: Option<ExpectList<ExpectedPaymentMethod>>,
+    /// The express buttons (`ACCELERATED_CHECKOUT`), in order, once the payment customizations
+    /// ran. A method can be in both lists. A string matches the handle or the name.
+    #[serde(default)]
+    pub express_methods: Option<ExpectList<ExpectedPaymentMethod>>,
+    /// The delivery options, in the order the buyer sees them, once the delivery customizations
+    /// and the shipping discounts ran. A string matches the handle or the title.
+    #[serde(default)]
+    pub delivery_options: Option<ExpectList<ExpectedDeliveryOption>>,
+    /// The discounts applied, product, order and shipping ones. A string matches the title (the
+    /// message the Function gave) or the code.
+    #[serde(default)]
+    pub discounts: Option<ExpectList<ExpectedDiscount>>,
+    /// The lines of the checkout once the cart transforms ran. A string matches the SKU or the
+    /// title.
+    #[serde(default)]
+    pub lines: Option<ExpectList<ExpectedLine>>,
+    /// The errors that block the order: those validation Functions report, and those of
+    /// Functions that failed. A string matches the message. `{"equals": []}`: no error.
+    #[serde(default)]
+    pub errors: Option<ExpectList<ExpectedError>>,
+    /// The amounts of the checkout, each exactly.
+    #[serde(default)]
+    pub totals: Option<ExpectedTotals>,
+}
+
+/// The step of the buyer journey the Functions run for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ScenarioStep {
+    /// The buyer places the order (`CHECKOUT_COMPLETION`).
+    #[default]
+    Completion,
+    /// The buyer is on the page (`CHECKOUT_INTERACTION`).
+    Interaction,
+}
+
+/// What a list of the checkout must hold. Each entry is a string, which matches an entry of the
+/// list by its name (see the list), or an object of the fields the entry must have.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "{T}s")]
+pub struct ExpectList<T> {
+    /// Each of these matches an entry of the list, in any order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub includes: Vec<Expected<T>>,
+    /// None of these matches an entry of the list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excludes: Vec<Expected<T>>,
+    /// The whole list, in order: as many entries, the first matching the first, and so on.
+    /// `[]` is an empty list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equals: Option<Vec<Expected<T>>>,
+}
+
+/// An entry of a list of `expect`: its name, or the fields it must have.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+#[schemars(inline)]
+pub enum Expected<T> {
+    /// What the entry is named by (see the list).
+    Name(String),
+    /// The fields the entry must have; those left out can be anything.
+    Fields(T),
+}
+
+/// A payment method of `expect`: the fields it must have.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectedPaymentMethod {
+    /// Its handle (`checkout.payment_methods`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    /// Its name, as the buyer sees it: the one a payment customization gave it, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// A delivery option of `expect`: the fields it must have.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectedDeliveryOption {
+    /// Its handle (`checkout.shipping_rates`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    /// Its title, as the buyer sees it: the one a delivery customization gave it, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// What it costs once the shipping discounts ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<Money>,
+}
+
+/// A discount of `expect`: the fields it must have.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectedDiscount {
+    /// Its title: the message the Function gave, or the title of the discount.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The code it applied with. An automatic discount has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// What it reduced: `PRODUCT`, `ORDER` or `SHIPPING`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<CheckoutDiscountClass>,
+    /// What it took off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<Money>,
+}
+
+/// A line of `expect`: the fields it must have.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectedLine {
+    /// The SKU of its variant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sku: Option<String>,
+    /// Its title: the product's, or the one a cart transform gave it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// How many units it has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity: Option<u32>,
+    /// The price of one unit, before discounts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<Money>,
+    /// What the line costs once its discounts ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<Money>,
+    /// The lines a cart transform made it of (merge) or split it into (expand), in order, each
+    /// by its SKU or title. `[]`: none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub components: Option<Vec<String>>,
+    /// Attributes it must have, by key; it can have others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attributes: Option<IndexMap<String, String>>,
+}
+
+/// An error of `expect`: the fields it must have.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectedError {
+    /// The message, exactly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// The target the Function gave (`$.cart`, `$.cart.buyerIdentity.email`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
+/// The amounts of the checkout `expect` checks, each exactly. Those left out are not checked.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectedTotals {
+    /// The lines before discounts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtotal: Option<Money>,
+    /// The product and order discounts (the shipping discounts are in `shipping`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discounts: Option<Money>,
+    /// The selected delivery option, once the shipping discounts ran. 0 before the address has
+    /// a country.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shipping: Option<Money>,
+    /// The tax (`checkout.tax_rate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tax: Option<Money>,
+    /// What the order costs in all, the part paid later included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<Money>,
+    /// What the buyer pays now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_now: Option<Money>,
+    /// What the selling plans leave to pay later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_later: Option<Money>,
 }
 
 /// A data file: any combination of the sections below. Every `*.json` file at the root of the

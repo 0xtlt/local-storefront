@@ -7253,6 +7253,32 @@ fn a_check_past_its_budget_says_how_many_scenarios_it_checked() {
     );
 }
 
+/// The `expect` of the playground's scenarios, as `lsf app check` checks it: the payment
+/// customization hides Cash on Delivery, and the validation refuses the address as the order is
+/// placed (the step `expect` runs the Functions for by default, a second run after the one of
+/// the page).
+#[test]
+fn the_scenarios_of_the_playground_get_what_they_expect() {
+    let (app_dir, data) = playground_with(
+        "expect",
+        &["fn-payment-hide-cod", "fn-validation-street-number"],
+        "http://127.0.0.1:9",
+    );
+    let state = checkout_server_with_data(app_dir.clone(), &[], true, Some(&data));
+    let app = lsf_app::config::load(&app_dir).unwrap();
+    let store = state.loaded().store.clone();
+    // The check of the home page leaves them aside.
+    let report = super::home_check::run(&state, &app, &store, Duration::from_secs(60));
+    assert_eq!((report.expectations, report.unmet.len()), (0, 0));
+    let report =
+        super::home_check::run_with_expectations(&state, &app, &store, Duration::from_secs(60));
+    std::fs::remove_dir_all(&data).ok();
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!((report.checked, report.total), (2, 2));
+    assert_eq!(report.expectations, 8);
+    assert!(report.unmet.is_empty(), "{:#?}", report.unmet);
+}
+
 #[test]
 fn scenarios_whose_names_differ_only_by_what_an_id_cannot_hold_have_ids_of_their_own() {
     let cart = r#"{"session": {"cart": {"items": [{"variant": "NOPE"}]}}}"#;

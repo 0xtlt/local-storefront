@@ -15,7 +15,7 @@ pub use control::{apply_session_input, routes};
 mod forms;
 mod home;
 mod home_check;
-pub use home_check::run as check_scenarios;
+pub use home_check::{Unmet, run_with_expectations as check_scenarios};
 mod live_reload;
 mod minify;
 pub mod params;

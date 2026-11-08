@@ -18,10 +18,13 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
+use lsf_app::checkout::BuyerJourneyStep;
+use lsf_app::checkout::expect;
 use lsf_app::checkout::fetch::OfflineFetcher;
 use lsf_app::checkout::pipeline::RunOptions;
 use lsf_app::config::App;
 use lsf_core::Store;
+use lsf_core::store::model::ScenarioStep;
 use serde_json::{Value as Json, json};
 
 use super::ServerState;
@@ -43,10 +46,25 @@ pub struct Failure {
     pub scenarios: Vec<String>,
 }
 
+/// An expectation of the `expect` of a scenario that its checkout does not meet.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Unmet {
+    pub scenario: String,
+    /// The file of the scenario, relative to the data directory.
+    pub file: String,
+    /// The step the Functions ran for: `completion` or `interaction`.
+    pub step: &'static str,
+    pub unmet: expect::Unmet,
+}
+
 /// What a check found.
 #[derive(Clone, Debug, Default)]
 pub struct Report {
     pub failures: Vec<Failure>,
+    /// How many expectations of the `expect` of the scenarios were checked, met or not, and
+    /// those that are not met. Checked by [`run_with_expectations`] only.
+    pub expectations: usize,
+    pub unmet: Vec<Unmet>,
     /// How many scenarios ran, out of how many could.
     pub checked: usize,
     pub total: usize,
@@ -87,9 +105,9 @@ impl Report {
     }
 }
 
-/// What one scenario came to: the Functions that ran and the runs that failed, or why it could
-/// not run.
-type Outcome = Result<(Vec<String>, Vec<FailedRun>), String>;
+/// What one scenario came to: the Functions that ran, the runs that failed and what its
+/// `expect` found (when it has one and it was checked), or why it could not run.
+type Outcome = Result<(Vec<String>, Vec<FailedRun>, Option<expect::Outcome>), String>;
 
 /// A run that failed: the handle, the target, the error and the logs.
 type FailedRun = (String, String, String, String);
@@ -99,6 +117,28 @@ type FailedRun = (String, String, String, String);
 /// scenario whose Functions did not all run in time is not checked (the runs of it that failed
 /// before still count).
 pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> Report {
+    check(state, app, store, budget, false)
+}
+
+/// [`run`], and the `expect` of each scenario that has one checked against its checkout: the
+/// one the Functions compute at the step it names (`completion` by default, the Functions run
+/// a second time then), which `lsf app check` fails on.
+pub fn run_with_expectations(
+    state: &ServerState,
+    app: &App,
+    store: &Store,
+    budget: Duration,
+) -> Report {
+    check(state, app, store, budget, true)
+}
+
+fn check(
+    state: &ServerState,
+    app: &App,
+    store: &Store,
+    budget: Duration,
+    expectations: bool,
+) -> Report {
     let started = Instant::now();
     let deadline = started + budget;
     let options = state
@@ -119,27 +159,47 @@ pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> R
     };
     // What a scenario came to, and whether all its Functions ran.
     let one = |scenario: &lsf_core::store::CheckoutScenario| -> (Outcome, bool) {
+        let at = |step| super::checkout::run_scenario(state, app, store, scenario, runs, step);
         // A panic in a run must not take the page down: the scenario is not checked.
-        match catch_unwind(AssertUnwindSafe(|| {
-            super::checkout::run_scenario(state, app, store, scenario, runs)
-        })) {
-            Ok(Ok(result)) => {
-                let complete = !result.interrupted;
-                let ran = result.runs.iter().map(|run| run.handle.clone()).collect();
-                let failed = result
-                    .runs
-                    .into_iter()
-                    .filter_map(|run| {
-                        let error = run.error?;
-                        Some((
-                            run.handle,
-                            run.target,
-                            with_message(error, &run.logs),
-                            run.logs,
-                        ))
-                    })
-                    .collect();
-                (Ok((ran, failed)), complete)
+        let ran = catch_unwind(AssertUnwindSafe(|| {
+            // The checkout as it opens, then, for an `expect` of the completion, as the order is
+            // placed: only a validation Function reads the difference.
+            let mut results = vec![at(BuyerJourneyStep::Interaction)?];
+            let mut found = None;
+            if let Some(expected) = scenario.expect.as_ref().filter(|_| expectations)
+                && !results[0].interrupted
+            {
+                if expected.step.unwrap_or_default() == ScenarioStep::Completion {
+                    results.push(at(BuyerJourneyStep::Completion)?);
+                }
+                let last = results.last().expect("one result at least");
+                if !last.interrupted {
+                    found = Some(expect::evaluate(expected, last));
+                }
+            }
+            Ok::<_, String>((results, found))
+        }));
+        match ran {
+            Ok(Ok((results, found))) => {
+                let complete = results.iter().all(|result| !result.interrupted);
+                let mut ran = Vec::new();
+                let mut failed = Vec::new();
+                for result in results {
+                    for run in result.runs {
+                        if !ran.contains(&run.handle) {
+                            ran.push(run.handle.clone());
+                        }
+                        if let Some(error) = run.error {
+                            failed.push((
+                                run.handle,
+                                run.target,
+                                with_message(error, &run.logs),
+                                run.logs,
+                            ));
+                        }
+                    }
+                }
+                (Ok((ran, failed, found)), complete)
             }
             Ok(Err(problem)) => (Err(problem), true),
             Err(_) => (Err("running its Functions panicked".to_string()), true),
@@ -168,12 +228,38 @@ pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> R
     };
     // By (handle, target), in the order of the scenarios.
     for (index, outcome) in outcomes {
-        let name = &runnable[index].name;
-        // A scenario that could not run at all has errors of its own, which the page lists
-        // anyway: it is not a failure.
-        let Ok((ran, failed)) = outcome else {
-            continue;
+        let scenario = runnable[index];
+        let name = &scenario.name;
+        let step = match scenario.expect.as_ref().and_then(|expect| expect.step) {
+            Some(ScenarioStep::Interaction) => "interaction",
+            _ => "completion",
         };
+        let unmet = |unmet| Unmet {
+            scenario: name.clone(),
+            file: scenario.file.clone(),
+            step,
+            unmet,
+        };
+        // A scenario that could not run at all has errors of its own, which the page lists
+        // anyway: it is not a failure. Its `expect` is not met, though: nothing checked it.
+        let (ran, failed, found) = match outcome {
+            Ok(outcome) => outcome,
+            Err(problem) => {
+                if expectations && scenario.expect.is_some() {
+                    report.expectations += 1;
+                    report.unmet.push(unmet(expect::Unmet {
+                        assertion: "expect".to_string(),
+                        expected: json!("the checkout of the scenario"),
+                        actual: json!(problem),
+                    }));
+                }
+                continue;
+            }
+        };
+        if let Some(found) = found {
+            report.expectations += found.checked;
+            report.unmet.extend(found.unmet.into_iter().map(unmet));
+        }
         for handle in ran {
             if !report.ran.contains(&handle) {
                 report.ran.push(handle);

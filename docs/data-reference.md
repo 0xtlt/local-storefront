@@ -988,6 +988,7 @@ depends on on top of the store data, and what it does not set stays as the store
 | `checkout` | [Checkout](#checkout) | Overrides of the `checkout` section of the store data: every field that is present replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`, `tax_rate`), except `functions`, which replaces the settings of the Functions it names. |
 | `variant` | [ScenarioLook](#scenariolook) | The look of the page. Defaults to the one of the server (`--variant`). |
 | `extensions` | array of string | The handles of the extensions (Functions and checkout UI extensions) that run, among those of the app that `--extension` allows. Every one when omitted. |
+| `expect` | [ScenarioExpect](#scenarioexpect) | What the checkout must look like once the Functions ran: `lsf app check` fails when it does not, and says what it expected and what it got. Without it, `app check` only checks that the Functions run without an error. |
 
 ## ScenarioEntered
 
@@ -1027,3 +1028,160 @@ One of:
 
 - `"standard"`: Shopify's one-page checkout.
 - `"shop"`: The look of the Shop app and Shop Pay.
+
+## ScenarioExpect
+
+What the checkout of a scenario must look like once its Functions ran, which
+`lsf app check` checks. Each list (`payment_methods`, `express_methods`, `delivery_options`,
+`discounts`, `lines`, `errors`) takes `includes`, `excludes` and `equals`; `totals` takes
+exact amounts:
+
+```json
+"expect": {
+  "express_methods": { "excludes": ["paypal"] },
+  "payment_methods": { "includes": ["paypal"] },
+  "totals": { "total": "120.00" }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `step` | [ScenarioStep](#scenariostep) | The step of the buyer journey the Functions run for: `completion` (the default), the order being placed, as `lsf app function run` runs them; `interaction`, the page as the buyer sees it before. Only a validation Function tells them apart (`buyerJourney.step`). |
+| `payment_methods` | [ExpectedPaymentMethods](#expectedpaymentmethods) | The payment methods of the list of the checkout (`PAYMENT_METHOD`), in order, once the payment customizations ran. A string matches the handle or the name. |
+| `express_methods` | [ExpectedPaymentMethods](#expectedpaymentmethods) | The express buttons (`ACCELERATED_CHECKOUT`), in order, once the payment customizations ran. A method can be in both lists. A string matches the handle or the name. |
+| `delivery_options` | [ExpectedDeliveryOptions](#expecteddeliveryoptions) | The delivery options, in the order the buyer sees them, once the delivery customizations and the shipping discounts ran. A string matches the handle or the title. |
+| `discounts` | [ExpectedDiscounts](#expecteddiscounts) | The discounts applied, product, order and shipping ones. A string matches the title (the message the Function gave) or the code. |
+| `lines` | [ExpectedLines](#expectedlines) | The lines of the checkout once the cart transforms ran. A string matches the SKU or the title. |
+| `errors` | [ExpectedErrors](#expectederrors) | The errors that block the order: those validation Functions report, and those of Functions that failed. A string matches the message. `{"equals": []}`: no error. |
+| `totals` | [ExpectedTotals](#expectedtotals) | The amounts of the checkout, each exactly. |
+
+## ScenarioStep
+
+The step of the buyer journey the Functions run for.
+
+One of:
+
+- `"completion"`: The buyer places the order (`CHECKOUT_COMPLETION`).
+- `"interaction"`: The buyer is on the page (`CHECKOUT_INTERACTION`).
+
+## ExpectedPaymentMethods
+
+What a list of the checkout must hold. Each entry is a string, which matches an entry of the
+list by its name (see the list), or an object of the fields the entry must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `includes` | array of string or [ExpectedPaymentMethod](#expectedpaymentmethod) | Each of these matches an entry of the list, in any order. |
+| `excludes` | array of string or [ExpectedPaymentMethod](#expectedpaymentmethod) | None of these matches an entry of the list. |
+| `equals` | array of string or [ExpectedPaymentMethod](#expectedpaymentmethod) | The whole list, in order: as many entries, the first matching the first, and so on. `[]` is an empty list. |
+
+## ExpectedPaymentMethod
+
+A payment method of `expect`: the fields it must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `handle` | string | Its handle (`checkout.payment_methods`). |
+| `name` | string | Its name, as the buyer sees it: the one a payment customization gave it, if any. |
+
+## ExpectedDeliveryOptions
+
+What a list of the checkout must hold. Each entry is a string, which matches an entry of the
+list by its name (see the list), or an object of the fields the entry must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `includes` | array of string or [ExpectedDeliveryOption](#expecteddeliveryoption) | Each of these matches an entry of the list, in any order. |
+| `excludes` | array of string or [ExpectedDeliveryOption](#expecteddeliveryoption) | None of these matches an entry of the list. |
+| `equals` | array of string or [ExpectedDeliveryOption](#expecteddeliveryoption) | The whole list, in order: as many entries, the first matching the first, and so on. `[]` is an empty list. |
+
+## ExpectedDeliveryOption
+
+A delivery option of `expect`: the fields it must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `handle` | string | Its handle (`checkout.shipping_rates`). |
+| `title` | string | Its title, as the buyer sees it: the one a delivery customization gave it, if any. |
+| `cost` | [Money](#money) | What it costs once the shipping discounts ran. |
+
+## ExpectedDiscounts
+
+What a list of the checkout must hold. Each entry is a string, which matches an entry of the
+list by its name (see the list), or an object of the fields the entry must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `includes` | array of string or [ExpectedDiscount](#expecteddiscount) | Each of these matches an entry of the list, in any order. |
+| `excludes` | array of string or [ExpectedDiscount](#expecteddiscount) | None of these matches an entry of the list. |
+| `equals` | array of string or [ExpectedDiscount](#expecteddiscount) | The whole list, in order: as many entries, the first matching the first, and so on. `[]` is an empty list. |
+
+## ExpectedDiscount
+
+A discount of `expect`: the fields it must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `title` | string | Its title: the message the Function gave, or the title of the discount. |
+| `code` | string | The code it applied with. An automatic discount has none. |
+| `class` | [CheckoutDiscountClass](#checkoutdiscountclass) | What it reduced: `PRODUCT`, `ORDER` or `SHIPPING`. |
+| `amount` | [Money](#money) | What it took off. |
+
+## ExpectedLines
+
+What a list of the checkout must hold. Each entry is a string, which matches an entry of the
+list by its name (see the list), or an object of the fields the entry must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `includes` | array of string or [ExpectedLine](#expectedline) | Each of these matches an entry of the list, in any order. |
+| `excludes` | array of string or [ExpectedLine](#expectedline) | None of these matches an entry of the list. |
+| `equals` | array of string or [ExpectedLine](#expectedline) | The whole list, in order: as many entries, the first matching the first, and so on. `[]` is an empty list. |
+
+## ExpectedLine
+
+A line of `expect`: the fields it must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `sku` | string | The SKU of its variant. |
+| `title` | string | Its title: the product's, or the one a cart transform gave it. |
+| `quantity` | integer | How many units it has. |
+| `price` | [Money](#money) | The price of one unit, before discounts. |
+| `total` | [Money](#money) | What the line costs once its discounts ran. |
+| `components` | array of string | The lines a cart transform made it of (merge) or split it into (expand), in order, each by its SKU or title. `[]`: none. |
+| `attributes` | map of string | Attributes it must have, by key; it can have others. |
+
+## ExpectedErrors
+
+What a list of the checkout must hold. Each entry is a string, which matches an entry of the
+list by its name (see the list), or an object of the fields the entry must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `includes` | array of string or [ExpectedError](#expectederror) | Each of these matches an entry of the list, in any order. |
+| `excludes` | array of string or [ExpectedError](#expectederror) | None of these matches an entry of the list. |
+| `equals` | array of string or [ExpectedError](#expectederror) | The whole list, in order: as many entries, the first matching the first, and so on. `[]` is an empty list. |
+
+## ExpectedError
+
+An error of `expect`: the fields it must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `message` | string | The message, exactly. |
+| `target` | string | The target the Function gave (`$.cart`, `$.cart.buyerIdentity.email`). |
+
+## ExpectedTotals
+
+The amounts of the checkout `expect` checks, each exactly. Those left out are not checked.
+
+| Field | Type | Description |
+|---|---|---|
+| `subtotal` | [Money](#money) | The lines before discounts. |
+| `discounts` | [Money](#money) | The product and order discounts (the shipping discounts are in `shipping`). |
+| `shipping` | [Money](#money) | The selected delivery option, once the shipping discounts ran. 0 before the address has a country. |
+| `tax` | [Money](#money) | The tax (`checkout.tax_rate`). |
+| `total` | [Money](#money) | What the order costs in all, the part paid later included. |
+| `due_now` | [Money](#money) | What the buyer pays now. |
+| `due_later` | [Money](#money) | What the selling plans leave to pay later. |

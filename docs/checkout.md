@@ -437,8 +437,10 @@ the store data: the cart (lines, quantities, selling plans, note, attributes), t
 a customer, a company location), the country, the language, what the buyer already entered
 (email, address, discount codes, delivery and payment), overrides of the `checkout` section
 (shipping rates, payment methods, discounts, Function settings, tax), the look and the
-extensions that run. The files are reloaded when they change, and `validate` checks them: run
-it in the app folder, no theme needed (`npx local-storefront validate`).
+extensions that run, and what the checkout must look like once the Functions ran
+([`expect`](#expected-results), which `app check` checks). The files are reloaded when they
+change, and `validate` checks them: run it in the app folder, no theme needed
+(`npx local-storefront validate`).
 
 ```json
 {
@@ -524,6 +526,83 @@ values of the type of each variable (`[]`, `""`, `0`, `false`) to fill in. Those
 Function go in the `metafields` of its discounts in the scenarios; the others in
 `checkout.functions` of `app-settings.json`. When another data file has the `checkout` section,
 it prints what to add to it instead.
+
+### Expected results
+
+`expect` says what the checkout of a scenario must look like once its Functions ran, and
+`npx local-storefront app check` fails when it does not. An app that hides PayPal from the express
+buttons, and only from them, asserts that PayPal is gone from the buttons and still in the list:
+
+```json
+{
+  "title": "PayPal Express hidden, PayPal kept",
+  "session": { "cart": { "items": [{ "variant": "TEE-BLK-M", "quantity": 3 }] } },
+  "checkout": {
+    "payment_methods": [
+      { "handle": "card", "name": "Credit card" },
+      { "handle": "paypal", "name": "PayPal", "placements": ["PAYMENT_METHOD", "ACCELERATED_CHECKOUT"] },
+      { "handle": "shop_pay", "name": "Shop Pay", "placements": ["ACCELERATED_CHECKOUT"] }
+    ]
+  },
+  "extensions": ["hide-paypal-express"],
+  "expect": {
+    "express_methods": { "excludes": ["paypal"], "equals": ["shop_pay"] },
+    "payment_methods": { "includes": ["paypal"] },
+    "errors": { "equals": [] },
+    "totals": { "total": "96.00" }
+  }
+}
+```
+
+Each list takes `includes` (each of these matches an entry of the list, in any order),
+`excludes` (none of these matches one) and `equals` (the whole list, in order; `[]` is an empty
+list, so `"errors": { "equals": [] }` says there is no error):
+
+| List | What it is | A string matches | An object can give |
+|---|---|---|---|
+| `payment_methods` | The payment methods of the list (`PAYMENT_METHOD`), in order, once the payment customizations ran | the handle or the name | `handle`, `name` |
+| `express_methods` | The express buttons (`ACCELERATED_CHECKOUT`), in order | the handle or the name | `handle`, `name` |
+| `delivery_options` | The delivery options, in the order the buyer sees them, once the delivery customizations and the shipping discounts ran | the handle or the title | `handle`, `title`, `cost` |
+| `discounts` | The discounts applied: product, order and shipping ones | the title or the code | `title`, `code`, `class` (`PRODUCT`, `ORDER`, `SHIPPING`), `amount` |
+| `lines` | The lines, once the cart transforms ran | the SKU or the title | `sku`, `title`, `quantity`, `price` (of one unit), `total` (after its discounts), `components`, `attributes` |
+| `errors` | The errors that block the order: those validation Functions report, and those of Functions that failed | the message | `message`, `target` |
+
+A string names an entry, so a renamed method is matched by its new name (`"Card (secure)"`) or by
+its handle. An object gives the fields the entry must have, and leaves the others free:
+`{ "handle": "standard", "cost": "0.00" }` is the option `standard`, free, whatever its title.
+Amounts are written as in the store data: cents (`490`) or a decimal string (`"4.90"`). A line's
+`components` are the lines a cart transform merged into it or split it into, in order, each by
+its SKU or title (`[]`: none); its `attributes`, those it must have, by key. `totals` takes
+amounts, each checked exactly: `subtotal`, `discounts` (product and order ones), `shipping`
+(after the shipping discounts), `tax`, `total`, `due_now` and `due_later`.
+
+The Functions run for `expect` as the order is placed (`buyerJourney.step` is
+`CHECKOUT_COMPLETION`), as `app function run` runs them. `"step": "interaction"` checks the page
+as the buyer sees it before: a validation Function that waits for "Pay now" reports nothing then.
+Only a validation Function tells the two apart.
+
+`app check` prints each expectation that is not met: the scenario and the assertion, what the
+scenario expects, and what the checkout has. With a Function that hides nothing:
+
+```text
+expect   paypal-express: express_methods.excludes
+         expected: no entry matching "paypal"
+         actual:   [{"handle": "paypal", "name": "PayPal"}, {"handle": "shop_pay", "name": "Shop Pay"}]
+expect   paypal-express: express_methods.equals
+         expected: ["shop_pay"]
+         actual:   [{"handle": "paypal", "name": "PayPal"}, {"handle": "shop_pay", "name": "Shop Pay"}]
+checked 1 of 1 scenario in 0.0 s: 0 failures, 0 invalid scenarios, 2 of 5 expectations unmet
+```
+
+`actual` shows each entry with the fields the expectation names, amounts as decimal strings, so
+that it can be pasted into the scenario. Each entry of `includes` and `excludes`, each `equals`
+and each amount is one expectation: when all are met, the summary ends with `5 expectations met`.
+`--format json` has them in `expectations` ([`app check`](cli.md#app-check)). A scenario
+without `expect` is checked as before: its Functions must run without an error.
+
+A name in `excludes` that the checkout does not offer, such as `"paypall"`, is never in the list,
+so the expectation would always pass: `validate` warns about it (`expect_checks_nothing`), with
+the closest handle. The scenario still opens.
 
 ## Log in as a customer
 
@@ -1327,18 +1406,18 @@ extensions before checking them.
 ```yaml
 - run: npx local-storefront app build      # every Function and UI extension, without Node
 - run: npx local-storefront validate       # the store data, the scenarios and the app
-- run: npx local-storefront app check      # every Function of every scenario runs (`--build` builds first)
-- run: npx local-storefront app function run volume-discount --scenario discount-automatic --format json | jq -e '.cost.discounts.amount > 0'
+- run: npx local-storefront app check      # every Function of every scenario runs, and each `expect` holds (`--build` builds first)
 ```
 
-`app check` fails on a scenario that does not validate, and on a Function that traps or panics,
-runs past 11 million instructions or answers an output out of its schema. A trap ends with the
-last message the Function logged (`the Function trapped: Error: boom (in b2b)` for a `throw new
-Error("boom")`), and the JSON has the `logs` of each failure. It does not check
-what a Function decides: a discount of the wrong amount passes. Assert that with
-`app function run --format json` (`lines`, `discounts`, `deliveryGroups`, `paymentMethods`,
-`errors`, `cost`, and each run in `runs`), or through the checkout in a test, as above. The
-browser tests of a theme in CI: [testing](testing.md#in-ci).
+`app check` fails on a scenario that does not validate, on a Function that traps or panics,
+runs past 11 million instructions or answers an output out of its schema, and on an
+[expectation](#expected-results) of a scenario that is not met: a discount of the wrong amount,
+PayPal left in the express buttons. A trap ends with the last message the Function logged
+(`the Function trapped: Error: boom (in b2b)` for a `throw new Error("boom")`), and the JSON has
+the `logs` of each failure. For what `expect` cannot say, `app function run --format json` has the
+whole checkout (`lines`, `discounts`, `deliveryGroups`, `paymentMethods`, `expressMethods`,
+`errors`, `cost`, and each run in `runs`) for `jq`, and a test can drive the checkout, as above.
+The browser tests of a theme in CI: [testing](testing.md#in-ci).
 
 ## What it does not do
 

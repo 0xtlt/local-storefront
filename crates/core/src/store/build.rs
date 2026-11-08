@@ -14,7 +14,7 @@ use super::model::{
 use super::reference;
 use super::*;
 use crate::Session;
-use crate::diagnostics::Diagnostics;
+use crate::diagnostics::{Diagnostics, Severity};
 use crate::util::{closest_match, count, handleize, humanize, short_hash, stable_id};
 
 /// Where a piece of data was written, for diagnostics.
@@ -3227,15 +3227,17 @@ fn build_scenarios(builder: &mut Builder<'_>, store: &mut Store, merged: &[Merge
             extensions: None,
             checkout: store.checkout.clone(),
             overrides: Vec::new(),
+            expect: None,
             problems: entry.problems.clone(),
         };
         if let Some(input) = &entry.input {
             let first_new = builder.diagnostics.items.len();
             resolve_scenario(builder, store, entry, input, &mut scenario);
+            // A warning (an `expect` that checks nothing) does not stop the scenario.
             scenario.problems.extend(
                 builder.diagnostics.items[first_new..]
                     .iter()
-                    .filter(|item| item.file == entry.file)
+                    .filter(|item| item.file == entry.file && item.severity == Severity::Error)
                     .map(ToString::to_string),
             );
         }
@@ -3351,6 +3353,10 @@ fn resolve_scenario(
             scenario.overrides.push("tax_rate");
         }
     }
+    if let Some(expect) = &input.expect {
+        check_expect(builder, scenario, expect, &origin.child("expect"));
+        scenario.expect = Some(expect.clone());
+    }
     // What the buyer chose must be offered by the checkout the scenario sets up.
     let rates: Vec<&str> = scenario
         .checkout
@@ -3390,6 +3396,170 @@ fn resolve_scenario(
                     offered.join(", ")
                 )),
                 None => diagnostic.hint(format!("the checkout offers: {}", offered.join(", "))),
+            };
+        }
+    }
+}
+
+/// The amounts of the `expect` of a scenario must be amounts, and what its `excludes` name for a
+/// payment method or a delivery option must be one the checkout offers: one it does not offer is
+/// never in the list, so the expectation checks nothing (a warning: the scenario still opens).
+fn check_expect(
+    builder: &mut Builder<'_>,
+    scenario: &CheckoutScenario,
+    expect: &model::ScenarioExpectInput,
+    origin: &Origin,
+) {
+    use model::Expected;
+    fn amounts<T>(
+        list: &Option<model::ExpectList<T>>,
+        origin: &Origin,
+        fields: impl Fn(&T) -> Vec<(&'static str, &Money)>,
+        mut each: impl FnMut(&Money, Origin),
+    ) {
+        let Some(list) = list else {
+            return;
+        };
+        for (name, items) in [
+            ("includes", Some(&list.includes)),
+            ("excludes", Some(&list.excludes)),
+            ("equals", list.equals.as_ref()),
+        ] {
+            for (index, item) in items.into_iter().flatten().enumerate() {
+                if let Expected::Fields(item) = item {
+                    for (field, money) in fields(item) {
+                        each(money, origin.child(name).child(index).child(field));
+                    }
+                }
+            }
+        }
+    }
+    let mut check = |money: &Money, at: Origin| {
+        builder.money(money, &at);
+    };
+    amounts(
+        &expect.delivery_options,
+        &origin.child("delivery_options"),
+        |option| option.cost.iter().map(|cost| ("cost", cost)).collect(),
+        &mut check,
+    );
+    amounts(
+        &expect.discounts,
+        &origin.child("discounts"),
+        |discount| {
+            discount
+                .amount
+                .iter()
+                .map(|amount| ("amount", amount))
+                .collect()
+        },
+        &mut check,
+    );
+    amounts(
+        &expect.lines,
+        &origin.child("lines"),
+        |line| {
+            [("price", &line.price), ("total", &line.total)]
+                .into_iter()
+                .filter_map(|(field, money)| Some((field, money.as_ref()?)))
+                .collect()
+        },
+        &mut check,
+    );
+    if let Some(totals) = &expect.totals {
+        for (field, money) in [
+            ("subtotal", &totals.subtotal),
+            ("discounts", &totals.discounts),
+            ("shipping", &totals.shipping),
+            ("tax", &totals.tax),
+            ("total", &totals.total),
+            ("due_now", &totals.due_now),
+            ("due_later", &totals.due_later),
+        ] {
+            if let Some(money) = money {
+                check(money, origin.child("totals").child(field));
+            }
+        }
+    }
+
+    let methods: Vec<(&str, &str)> = scenario
+        .checkout
+        .payment_methods
+        .iter()
+        .map(|method| (method.handle.as_str(), method.name.as_str()))
+        .collect();
+    let rates: Vec<(&str, &str)> = scenario
+        .checkout
+        .shipping_rates
+        .iter()
+        .map(|rate| (rate.handle.as_str(), rate.title.as_str()))
+        .collect();
+    /// What `excludes` names an entry by: a string, or the handle of an object.
+    fn excluded<T>(
+        list: &Option<model::ExpectList<T>>,
+        handle: fn(&T) -> Option<&str>,
+    ) -> Vec<Option<&str>> {
+        list.iter()
+            .flat_map(|list| list.excludes.iter())
+            .map(|item| match item {
+                Expected::Name(name) => Some(name.as_str()),
+                Expected::Fields(fields) => handle(fields),
+            })
+            .collect()
+    }
+    let method_handle: fn(&model::ExpectedPaymentMethod) -> Option<&str> =
+        |method| method.handle.as_deref();
+    let option_handle: fn(&model::ExpectedDeliveryOption) -> Option<&str> =
+        |option| option.handle.as_deref();
+    for (list, excluded, offered, what) in [
+        (
+            "payment_methods",
+            excluded(&expect.payment_methods, method_handle),
+            &methods,
+            "payment method",
+        ),
+        (
+            "express_methods",
+            excluded(&expect.express_methods, method_handle),
+            &methods,
+            "payment method",
+        ),
+        (
+            "delivery_options",
+            excluded(&expect.delivery_options, option_handle),
+            &rates,
+            "delivery option",
+        ),
+    ] {
+        for (index, name) in excluded.into_iter().enumerate() {
+            let Some(name) = name else {
+                continue;
+            };
+            if offered
+                .iter()
+                .any(|(handle, title)| *handle == name || *title == name)
+            {
+                continue;
+            }
+            let at = origin.child(list).child("excludes").child(index);
+            let diagnostic = builder.diagnostics.warning(
+                "expect_checks_nothing",
+                &at.file,
+                &at.pointer,
+                format!(
+                    "the checkout offers no {what} \"{name}\": it is never in the list, so excluding it checks nothing"
+                ),
+            );
+            let handles: Vec<&str> = offered.iter().map(|(handle, _)| *handle).collect();
+            match closest_match(
+                name,
+                offered.iter().flat_map(|(handle, title)| [*handle, *title]),
+            ) {
+                Some(suggestion) => diagnostic.hint(format!(
+                    "did you mean \"{suggestion}\"? The checkout offers: {}",
+                    handles.join(", ")
+                )),
+                None => diagnostic.hint(format!("the checkout offers: {}", handles.join(", "))),
             };
         }
     }

@@ -6,6 +6,7 @@
 
 pub mod app_metafields;
 pub mod assets;
+pub mod expect;
 pub mod fetch;
 pub mod input;
 pub mod javascript;
