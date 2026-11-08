@@ -2946,6 +2946,17 @@ fn hiding_the_list_placement_keeps_the_express_button() {
         placements_of(&seen, "card"),
         Some(vec!["ACCELERATED_CHECKOUT".to_string()])
     );
+    // The page shows it there.
+    let express: Vec<&str> = result
+        .express_methods
+        .iter()
+        .map(|method| method.name.as_str())
+        .collect();
+    assert_eq!(express, ["Credit card"]);
+    assert_eq!(
+        result.express_methods[0].placements,
+        [lsf_app::checkout::PaymentPlacement::AcceleratedCheckout]
+    );
 }
 
 #[test]
@@ -2961,6 +2972,12 @@ fn hiding_the_express_placement_keeps_the_method_in_the_list() {
         placements_of(&seen, "card"),
         Some(vec!["PAYMENT_METHOD".to_string()])
     );
+    // No express button left.
+    assert!(
+        result.express_methods.is_empty(),
+        "{:?}",
+        result.express_methods
+    );
 }
 
 #[test]
@@ -2968,6 +2985,7 @@ fn hiding_without_placements_hides_them_all() {
     let (result, seen) = hide_placements(json!({"paymentMethodId": CARD}));
     assert_eq!(method_names(&result), ["Cash on Delivery", "Bank Deposit"]);
     assert_eq!(placements_of(&seen, "card"), None);
+    assert!(result.express_methods.is_empty());
 }
 
 // ---- how the discounts of a class stack ----

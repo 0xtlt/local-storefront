@@ -607,13 +607,28 @@ fn print_text(result: &CheckoutResult) {
             );
         }
     }
-    if !result.payment_methods.is_empty() {
-        let names: Vec<&str> = result
-            .payment_methods
+    // Each method with where it is still offered once the Functions ran: the list of the
+    // checkout (`PAYMENT_METHOD`), the express buttons (`ACCELERATED_CHECKOUT`), or both.
+    let mut methods: Vec<&lsf_app::checkout::PaymentMethod> =
+        result.payment_methods.iter().collect();
+    for method in &result.express_methods {
+        if !methods.iter().any(|known| known.handle == method.handle) {
+            methods.push(method);
+        }
+    }
+    if !methods.is_empty() {
+        let described: Vec<String> = methods
             .iter()
-            .map(|method| method.name.as_str())
+            .map(|method| {
+                let placements: Vec<&str> = method
+                    .placements
+                    .iter()
+                    .map(|placement| placement.graphql())
+                    .collect();
+                format!("{} [{}]", method.name, placements.join(", "))
+            })
             .collect();
-        println!("  payment: {}", names.join(", "));
+        println!("  payment: {}", described.join(", "));
     }
     for error in &result.errors {
         println!(

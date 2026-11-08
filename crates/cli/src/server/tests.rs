@@ -10061,3 +10061,50 @@ fn the_home_page_says_which_functions_the_shop_has_no_enabled_owner_of() {
         "{payment}"
     );
 }
+
+#[test]
+fn the_express_buttons_are_the_methods_still_offered_there_once_the_functions_ran() {
+    let state = checkout_server(&["payment-rules"], false);
+    let methods = json!([
+        {"handle": "card", "name": "Credit card"},
+        {"handle": "paypal", "name": "PayPal", "placements": ["PAYMENT_METHOD", "ACCELERATED_CHECKOUT"]},
+        {"handle": "shop_pay", "name": "Shop Pay", "placements": ["ACCELERATED_CHECKOUT"]},
+    ]);
+    let names = |json: &Json, key: &str| -> Vec<String> {
+        json[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|method| method["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let path = start_checkout(
+        &state,
+        "co-express",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {"payment_methods": methods.clone()}}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-express"));
+    assert_eq!(names(&json, "paymentMethods"), ["Credit card", "PayPal"]);
+    assert_eq!(names(&json, "expressMethods"), ["PayPal", "Shop Pay"]);
+    assert_eq!(
+        json["expressMethods"][0]["placements"],
+        json!(["PAYMENT_METHOD", "ACCELERATED_CHECKOUT"])
+    );
+
+    // A payment customization that hides PayPal: gone from both, the page's express row too.
+    let path = start_checkout(
+        &state,
+        "co-express-hidden",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {
+            "payment_methods": methods,
+            "functions": {"payment-rules": {"enabled": true, "metafields": {"$app:config.settings": {
+                "type": "json", "value": {"hideName": "PayPal", "hideAbove": 0}
+            }}}}
+        }}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-express-hidden"));
+    assert_eq!(names(&json, "paymentMethods"), ["Credit card"]);
+    assert_eq!(names(&json, "expressMethods"), ["Shop Pay"]);
+}

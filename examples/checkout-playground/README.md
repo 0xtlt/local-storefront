@@ -294,5 +294,5 @@ A scenario without an `extensions` list shows the shop's checkout: its checkout 
 the broken ones included, and only the Functions the shop has an enabled owner of (a payment
 customization, …), of which the playground's store data declares none, as on a shop the app was
 just installed on. Every scenario here names its Functions, which run whether or not the shop
-has an owner of them ([what runs](../../docs/checkout.md#what-runs-owners-and-scenarios)). `crates/app/assets/tests/playground.test.mjs` (`mise run test:js`) checks that
+has an owner of them ([what runs](../../docs/checkout.md#owners-and-scenarios)). `crates/app/assets/tests/playground.test.mjs` (`mise run test:js`) checks that
 every bundle registers the targets of its toml and that the working ones draw without an error.

@@ -229,7 +229,7 @@ test only go through `PUT /__lsf/session`, as above; `/checkout` opens the check
 buyer). A discount Function runs only for a discount that names it: give one in
 `data.checkout`. Another Function runs only through an enabled owner, as on Shopify: give it
 `"enabled": true` in `data.checkout.functions`, or open a scenario that names it in `extensions`
-([what runs](checkout.md#what-runs-owners-and-scenarios)). As in a scenario, each field it gives (`shipping_rates`, `payment_methods`,
+([what runs](checkout.md#owners-and-scenarios)). As in a scenario, each field it gives (`shipping_rates`, `payment_methods`,
 `discounts`, `tax_rate`) replaces the store data's for the session, and the settings of the
 Functions (`functions`) are merged Function by Function: what it does not give stays. A
 discount has the settings of its Function in `metafields`, the metafield its

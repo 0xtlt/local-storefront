@@ -52,6 +52,8 @@ export function startCheckout({ root, initial, document, window, location, fetch
     suggestions: null,
     actionRequired: null,
     giftCard: false,
+    // The express button the buyer clicked: lsf does not simulate the wallet, the page says so.
+    express: null,
   };
 
   // Under the locale root of the buyer's language (`/fr`), so that every request of the page
@@ -373,6 +375,10 @@ export function startCheckout({ root, initial, document, window, location, fetch
     },
 
     chooseDelivery: (group, handle) => run([op.deliveryOption(group, handle)]),
+    expressCheckout(handle) {
+      ui.express = ui.express === handle ? null : handle;
+      paint();
+    },
     choosePayment(handle) {
       // A form an extension shows for the method opens with it, as Shopify's does.
       if (host.hasTarget(ACTION_REQUIRED) && !preview) ui.actionRequired = handle;

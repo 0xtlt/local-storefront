@@ -1834,6 +1834,17 @@ impl<'a> Pipeline<'a> {
             skipped_discounts: self.skipped_discounts,
             discount_codes,
             delivery_groups: self.groups,
+            // The express buttons, above the page.
+            express_methods: self
+                .payment_methods
+                .iter()
+                .filter(|method| {
+                    method
+                        .placements
+                        .contains(&PaymentPlacement::AcceleratedCheckout)
+                })
+                .cloned()
+                .collect(),
             // Offered in the list of the checkout, not only as an express button.
             payment_methods: self
                 .payment_methods

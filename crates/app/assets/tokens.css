@@ -28,6 +28,16 @@
   --lsf-color-text: #000;
   --lsf-color-text-subdued: #707070;
   --lsf-color-border: #dedede;
+  /* The express buttons: the wallets' own colors, never the store's. */
+  --lsf-express-background: #000;
+  --lsf-express-text: #fff;
+  --lsf-express-shop-pay: #5a31f4;
+  --lsf-express-paypal: #ffc439;
+  --lsf-express-paypal-text: #003087;
+  --lsf-express-paypal-text-2: #009cde;
+  --lsf-express-amazon-pay: #ffd814;
+  --lsf-express-amazon-pay-text: #0f1111;
+  --lsf-express-meta-pay: #0866ff;
   --lsf-color-border-emphasis: #8f8f8f;
   --lsf-color-overlay: rgb(0 0 0 / 4.3%);
   --lsf-color-backdrop: rgb(0 0 0 / 45%);

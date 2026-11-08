@@ -604,8 +604,10 @@ changes nothing for a theme.
 - `payment_methods`: without it, "Credit card", "Cash on Delivery" and "Bank Deposit".
   `placements` says where a method is offered, which payment customization Functions read:
   `["PAYMENT_METHOD"]` (the list of the checkout, the default) and/or `["ACCELERATED_CHECKOUT"]`
-  (the express buttons). A method that is only an express button is not in the list the page
-  shows.
+  (the express buttons). The page shows the methods of `PAYMENT_METHOD` in its list, and those of
+  `ACCELERATED_CHECKOUT` as express buttons above the contact section, once the payment
+  customizations ran (one can hide a method in one placement and leave it in the other). PayPal
+  with PayPal Express on is in both.
 - `discounts`: each one uses a discount Function of the app by its handle. A `code` makes it a
   code discount; without one it is automatic. `classes` (`PRODUCT`, `ORDER`, `SHIPPING`) says
   what it may reduce, all three by default. `metafields` are those of the discount, by
@@ -619,7 +621,7 @@ changes nothing for a theme.
   it, `false` is an owner turned off, and without `enabled` the shop has none (as after an
   install, until the app creates one through the Admin API). A scenario that names the Function
   in `extensions` runs it anyway, with these metafields
-  ([what runs](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#what-runs-owners-and-scenarios)).
+  ([what runs](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#owners-and-scenarios)).
 - `tax_rate`: a percentage, added to the discounted subtotal.
 
 ### Checkout scenarios

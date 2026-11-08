@@ -385,6 +385,30 @@ test('each JSON has a button that copies it, and says when it did', () => {
   assert.deepEqual(byClass(after, 'lsf-fn-copy').map(text), ['Copy', 'Copied']);
 });
 
+test('the express buttons are the methods of the ACCELERATED_CHECKOUT placement, above the contact section', () => {
+  const expressMethods = [
+    { handle: 'shop_pay', name: 'Shop Pay', placements: ['ACCELERATED_CHECKOUT'] },
+    { handle: 'paypal', name: 'PayPal', placements: ['PAYMENT_METHOD', 'ACCELERATED_CHECKOUT'] },
+    { handle: 'apple_pay', name: 'Apple Pay', placements: ['ACCELERATED_CHECKOUT'] },
+    { handle: 'klarna_express', name: 'Klarna', placements: ['ACCELERATED_CHECKOUT'] },
+  ];
+  const tree = page(checkoutState({ expressMethods }));
+  const sections = findAll(tree, (node) => node.tag === 'section').map((node) => node.props['data-section']);
+  assert.deepEqual(sections.slice(0, 2), ['express', 'contact']);
+  const buttons = byClass(tree, 'lsf-express-button');
+  assert.deepEqual(buttons.map((button) => button.props['data-express']), ['shop_pay', 'paypal', 'apple_pay', 'klarna_express']);
+  assert.deepEqual(buttons.map((button) => button.props['aria-label']), ['Shop Pay', 'PayPal', 'Apple Pay', 'Klarna']);
+  assert.ok(has(buttons[0], 'is-shop-pay') && has(buttons[1], 'is-paypal') && has(buttons[2], 'is-apple-pay') && has(buttons[3], 'is-other'));
+  assert.equal(text(buttons[3]), 'Klarna');
+  assert.equal(text(byClass(tree, 'lsf-express-or')[0]), 'OR');
+  // A click: lsf says it does not simulate the wallet.
+  const clicked = page(checkoutState({ expressMethods }), { express: 'paypal' });
+  assert.match(text(byClass(clicked, 'lsf-express-note')[0]), /^PayPal: lsf does not simulate express checkout/);
+  // None left (a Function hid them, or the store has none): no section.
+  const none = page(checkoutState({ expressMethods: [] }));
+  assert.equal(findAll(none, (node) => node.props?.['data-section'] === 'express').length, 0);
+});
+
 test('the dialog opens on the first run that failed, else on the first run, else on the overview', () => {
   const state = withRuns([{ handle: 'a' }, { handle: 'b', error: 'boom' }, { handle: 'c', error: 'bang' }]);
   assert.deepEqual(defaultRunView(state.runs), { handle: 'b', target: state.runs[0].target, occurrence: 0 });

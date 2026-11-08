@@ -329,6 +329,12 @@ fn function_run_finds_the_app_and_says_why_a_function_did_not_run() {
         "{}",
         text(&output)
     );
+    // Each payment method with its placements.
+    assert!(
+        text(&output).contains("payment: Credit card [PAYMENT_METHOD], "),
+        "{}",
+        text(&output)
+    );
     // A typo is suggested.
     let output = lsf(&app.0, &["app", "function", "run", "volume-discont"]);
     assert!(

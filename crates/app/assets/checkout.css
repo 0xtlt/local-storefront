@@ -231,6 +231,28 @@ a:focus-visible { outline-offset: 3px; border-radius: 2px; }
 /* --- Option lists (shipping methods, payment) ------------------------------------------ */
 
 /* One box of rows. The chosen row has a tint and a border of the accent drawn over the box. */
+/* Express checkout: the wallets' buttons above the contact section, then "OR". */
+.lsf-express { gap: var(--lsf-space-m); }
+.lsf-express > .lsf-express-title { font-size: var(--lsf-size-s); font-weight: 400; text-align: center; color: var(--lsf-color-text-subdued); margin: 0; }
+.lsf-express-buttons { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--lsf-space-s); }
+.lsf-express-button {
+  height: 48px; border: 0; border-radius: var(--lsf-radius-button); cursor: pointer;
+  font: 600 18px/1 system-ui, -apple-system, sans-serif; letter-spacing: -0.01em;
+  display: flex; align-items: center; justify-content: center; gap: 1px;
+  background: var(--lsf-express-background); color: var(--lsf-express-text); padding: 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lsf-express-button:focus-visible { outline: 2px solid var(--lsf-color-accent); outline-offset: 2px; }
+.lsf-express-button.is-shop-pay { background: var(--lsf-express-shop-pay); }
+.lsf-express-button.is-shop-pay .lsf-express-shop { font-weight: 800; font-style: italic; }
+.lsf-express-button.is-shop-pay .lsf-express-pay { background: var(--lsf-express-text); color: var(--lsf-express-shop-pay); border-radius: 4px; padding: 1px 4px; margin-left: 3px; font-size: 14px; }
+.lsf-express-button.is-paypal { background: var(--lsf-express-paypal); color: var(--lsf-express-paypal-text); font-style: italic; font-weight: 800; }
+.lsf-express-button.is-paypal .lsf-express-pal { color: var(--lsf-express-paypal-text-2); }
+.lsf-express-button.is-amazon-pay { background: var(--lsf-express-amazon-pay); color: var(--lsf-express-amazon-pay-text); }
+.lsf-express-button.is-meta-pay { background: var(--lsf-express-meta-pay); }
+.lsf-express-button.is-other { font-size: 15px; }
+.lsf-express-note { margin: 0; text-align: center; }
+.lsf-express-or { display: flex; align-items: center; gap: var(--lsf-space-m); color: var(--lsf-color-text-subdued); font-size: 13px; }
+.lsf-express-or::before, .lsf-express-or::after { content: ''; flex: 1; border-top: var(--lsf-border-width) solid var(--lsf-color-border); }
 .lsf-radio-list { border: var(--lsf-border-width) solid var(--lsf-color-border); border-radius: var(--lsf-radius-panel); }
 .lsf-radio-card { position: relative; }
 .lsf-radio-card + .lsf-radio-card { border-top: var(--lsf-border-width) solid var(--lsf-color-border); }

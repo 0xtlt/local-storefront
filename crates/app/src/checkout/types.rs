@@ -239,7 +239,11 @@ pub struct CheckoutResult {
     pub skipped_discounts: Vec<SkippedDiscount>,
     pub discount_codes: Vec<DiscountCodeStatus>,
     pub delivery_groups: Vec<DeliveryGroup>,
+    /// The payment methods of the list of the checkout (`PAYMENT_METHOD`), in order.
     pub payment_methods: Vec<PaymentMethod>,
+    /// The express buttons (`ACCELERATED_CHECKOUT`): the methods still offered there once the
+    /// payment customizations ran, in order. A method can be in both.
+    pub express_methods: Vec<PaymentMethod>,
     /// Errors that block completing the checkout (validation Functions, Function failures).
     pub errors: Vec<CheckoutError>,
     pub cost: Cost,
@@ -529,9 +533,10 @@ pub struct PaymentMethod {
     pub handle: String,
     pub name: String,
     /// Where the method is still offered. A method a Function hid from the list of the checkout
-    /// only (`PAYMENT_METHOD`) is not in [`CheckoutResult::payment_methods`], and a Function
-    /// that runs after sees it with the placements that are left.
-    #[serde(skip)]
+    /// only (`PAYMENT_METHOD`) is not in [`CheckoutResult::payment_methods`], one it hid from
+    /// the express buttons only (`ACCELERATED_CHECKOUT`) not in
+    /// [`CheckoutResult::express_methods`], and a Function that runs after sees it with the
+    /// placements that are left.
     pub placements: Vec<PaymentPlacement>,
 }
 

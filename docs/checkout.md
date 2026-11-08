@@ -470,7 +470,7 @@ it in the app folder, no theme needed (`npx local-storefront validate`).
 | a cart transform | `cart-transform`: several lines of more than one unit and one of three, for a merge, an expand or an update |
 | a discount Function | `discount-automatic` (a cart of six, three and two units) and `discount-code` (the same cart with `SAVE10` entered; the code of a discount of the store data is kept) |
 | a delivery customization | `delivery-options`: standard, express, local delivery and store pickup |
-| a payment customization | `payment-methods`: card, PayPal, cash on delivery, bank deposit and two express buttons |
+| a payment customization | `payment-methods`: card, PayPal, cash on delivery and bank deposit in the list; PayPal, Shop Pay and Apple Pay as express buttons (PayPal in both placements, as with PayPal Express on) |
 | a validation Function | `validation`: a big cart, for the Function to refuse |
 | a checkout UI extension | `all-extensions`: a customer, several lines (one with a subscription), a code, shipping options |
 | (always) | `guest`, `customer` (with a note and an attribute), `b2b` (a company customer at another location), `abroad` (another country and language), `subscription`, `pre-order` (a deposit, the rest later), `shop-look`, `large-cart` |
@@ -478,7 +478,7 @@ it in the app folder, no theme needed (`npx local-storefront validate`).
 A scenario about one kind of Function runs that Function and the checkout UI extensions, and no
 other Function (`extensions`), so that its effect shows alone; `all-extensions` names every
 extension. A scenario that names a Function runs it whether or not the shop has an owner of it
-(see [what runs](#what-runs-owners-and-scenarios)): it tries the Function alone. The others
+(see [what runs](#owners-and-scenarios)): it tries the Function alone. The others
 (`guest`, `b2b`, `abroad`, `large-cart`, …) name none: they show the shop's checkout, where only
 the Functions with an enabled owner run. A Function you add later is not in those lists: add its
 handle to them. The settings of your Functions are the store data's: the scenarios leave
@@ -731,7 +731,7 @@ settings of your other Functions, and a tax rate.
   `PUT /__lsf/session` (see [testing](testing.md#a-checkout-in-a-test)).
 - A Function that is not a discount (cart transform, delivery or payment customization,
   validation) has its metafields under `functions`, by its handle, and `"enabled"` when the shop
-  has an owner of it: see [what runs](#what-runs-owners-and-scenarios).
+  has an owner of it: see [what runs](#owners-and-scenarios).
 - A metafield is written `"namespace.key"`, with a [typed value](data-format.md#metafields-and-metaobjects).
   The input query of a Function reads it; `[extensions.input.variables]` of the Function says
   which one.
@@ -811,6 +811,8 @@ them:
 6. payment customization (`cart.payment-methods.transform.run`, `purchase.payment-customization.run`)
 7. validation (`cart.validations.generate.run`, `purchase.validation.run`)
 
+Not every Function of the app runs: see [owners and scenarios](#owners-and-scenarios).
+
 A `linesMerge` of a cart transform takes `quantity` units of each cart line it names (no more than
 the line holds). The merged line is as many bundles as the greatest common divisor of those
 quantities, and each component is in a bundle as many times as its quantity says divided by that
@@ -849,6 +851,51 @@ discount (`PricingPercentageValue` or `MoneyV2`), its allocation method (`EACH` 
 `ACROSS` for a fixed amount shared between the lines), what it targets (`EXPLICIT` for the lines
 the Function named, `ALL` for the whole order, `ENTITLED` when an order discount leaves lines
 out) and what it took off in total; its `metafield` is one of the discount's.
+
+### Owners and scenarios
+
+On Shopify, a Function runs only through an object of the shop that runs it, its **owner**, which
+the app creates once installed: a payment customization (`paymentCustomizationCreate`), a
+delivery customization, a cart and checkout validation (`validationCreate`), a cart transform
+(`cartTransformCreate`); a discount Function, through a discount. A shop the app was just
+installed on has none, and its checkout runs none of the app's Functions until the app sets
+them up. lsf follows that rule at the shop's checkout (`/checkout` from the storefront's cart,
+and a scenario that names no `extensions`):
+
+| Function | Runs when |
+|---|---|
+| payment customization | the shop has an enabled `PaymentCustomization` of it |
+| delivery customization | the shop has an enabled `DeliveryCustomization` of it |
+| cart and checkout validation | the shop has an enabled `Validation` of it (`validationCreate` takes `enable`, `false` by default) |
+| cart transform | the shop has a `CartTransform` of it (it has no `enabled`: deleting it stops it) |
+| discount | a discount names it that is active by the shop's clock (`startsAt` ≤ now < `endsAt`), automatic or with a code the buyer entered |
+| fulfillment constraints, order routing, pickup generators | never: the local checkout lists them and does not run them |
+
+The owners come from two places:
+
+- **The app**, through the [Admin API](admin.md): what it creates, updates (`enabled`), deletes
+  or turns on and off (`paymentCustomizationActivation`) is what the next checkout runs, with the
+  metafields it gives them.
+- **The store data**, for a shop already set up: `"enabled": true` on the Function's entry of
+  `checkout.functions` (`false`: an owner that is turned off). An entry without `enabled` is
+  settings alone: the shop has no owner of the Function.
+
+```json
+{ "checkout": { "functions": { "hide-paypal": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": { "hide": ["paypal"] } } } } } } }
+```
+
+lsf creates no owner at install: `paymentCustomizations` answers none, as Shopify does, and an
+app that checks whether it is set up sees that it is not.
+
+**Trying a Function alone** does not need an owner. A [scenario](#scenarios) that names it in
+`extensions` runs it, and so does `lsf app function run <handle>`, with the metafields of
+`checkout.functions` (the scenario's, or the store data's). That is how the scenarios of
+`app init` try each Function; the shop's checkout shows what the app has set up. `--extension`
+of `app dev` only narrows the extensions: the shop's owners still decide which Functions run.
+
+A Function the shop's checkout leaves out is said: the home page warns that the shop has no
+enabled owner of it, the "Functions" dialog of the checkout lists it under "Functions not run",
+with why, and so does `lsf app function run` (`Not run: …`; `idle` in JSON).
 
 ### How discounts stack
 
@@ -1071,51 +1118,6 @@ of checkout UI extensions has no such type): an `ORDER` declaration reads nothin
 a warning. Shopify lists `CART` as an owner type of checkout UI extensions only and `ORDER` of
 customer account UI extensions only; lsf takes both on either, as one extension can target both.
 
-## What runs: owners and scenarios
-
-On Shopify, a Function runs only through an object of the shop that runs it, its **owner**, which
-the app creates once installed: a payment customization (`paymentCustomizationCreate`), a
-delivery customization, a cart and checkout validation (`validationCreate`), a cart transform
-(`cartTransformCreate`); a discount Function, through a discount. A shop the app was just
-installed on has none, and its checkout runs none of the app's Functions until the app sets
-them up. lsf follows that rule at the shop's checkout (`/checkout` from the storefront's cart,
-and a scenario that names no `extensions`):
-
-| Function | Runs when |
-|---|---|
-| payment customization | the shop has an enabled `PaymentCustomization` of it |
-| delivery customization | the shop has an enabled `DeliveryCustomization` of it |
-| cart and checkout validation | the shop has an enabled `Validation` of it (`validationCreate` takes `enable`, `false` by default) |
-| cart transform | the shop has a `CartTransform` of it (it has no `enabled`: deleting it stops it) |
-| discount | a discount names it that is active by the shop's clock (`startsAt` ≤ now < `endsAt`), automatic or with a code the buyer entered |
-| fulfillment constraints, order routing, pickup generators | never: the local checkout lists them and does not run them |
-
-The owners come from two places:
-
-- **The app**, through the [Admin API](admin.md): what it creates, updates (`enabled`), deletes
-  or turns on and off (`paymentCustomizationActivation`) is what the next checkout runs, with the
-  metafields it gives them.
-- **The store data**, for a shop already set up: `"enabled": true` on the Function's entry of
-  `checkout.functions` (`false`: an owner that is turned off). An entry without `enabled` is
-  settings alone: the shop has no owner of the Function.
-
-```json
-{ "checkout": { "functions": { "hide-paypal": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": { "hide": ["paypal"] } } } } } } }
-```
-
-lsf creates no owner at install: `paymentCustomizations` answers none, as Shopify does, and an
-app that checks whether it is set up sees that it is not.
-
-**Trying a Function alone** does not need an owner. A [scenario](#scenarios) that names it in
-`extensions` runs it, and so does `lsf app function run <handle>`, with the metafields of
-`checkout.functions` (the scenario's, or the store data's). That is how the scenarios of
-`app init` try each Function; the shop's checkout shows what the app has set up. `--extension`
-of `app dev` only narrows the extensions: the shop's owners still decide which Functions run.
-
-A Function the shop's checkout leaves out is said: the home page warns that the shop has no
-enabled owner of it, the "Functions" dialog of the checkout lists it under "Functions not run",
-with why, and so does `lsf app function run` (`Not run: …`; `idle` in JSON).
-
 ## Run a Function without a server
 
 ```bash
@@ -1149,7 +1151,7 @@ instructions: 337817
   2 × Linen Overshirt (S)  136.00 USD
   discount 10% off 3 or more: -21.00 USD (Product, volume-discount)
   delivery * Standard (standard): 5.00 USD
-  payment: Credit card, Cash on Delivery, Bank Deposit
+  payment: Credit card [PAYMENT_METHOD], Cash on Delivery [PAYMENT_METHOD], Bank Deposit [PAYMENT_METHOD]
   subtotal 346.00 USD · discounts -21.00 USD · shipping 5.00 USD · tax 0.00 USD · total 330.00 USD
 ```
 
@@ -1346,7 +1348,9 @@ browser tests of a theme in CI: [testing](testing.md#in-ci).
   `totalSpent` (set them in the data); a `Market` is a country, or the group of countries that
   `localization.markets` declares, with no catalog or price list; the `id` of a `Metaobject`
   is made up from its type and handle.
-- Shop Pay and express checkout. Logging in is picking a customer of the data, see
+- Shop Pay and express checkout: the express buttons show (the methods of the
+  `ACCELERATED_CHECKOUT` placement that the payment customizations left), but a click only says
+  that lsf does not simulate the wallet. Logging in is picking a customer of the data, see
   [log in as a customer](#log-in-as-a-customer).
 - With `app dev` (no theme), the links to the storefront (return to cart, continue shopping)
   lead to pages the server does not have. Use `serve --app` for those.

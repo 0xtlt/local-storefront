@@ -452,6 +452,49 @@ function giftCard(ctx) {
     open && slot(target, { key: 'gift-card' }));
 }
 
+/** How an express button looks, by the handle or the name of its method: the brands Shopify shows
+ * there, and a plain dark button for any other. */
+const EXPRESS_BRANDS = [
+  ['shop-pay', /shop[\s_-]*pay/i, [h('span', { class: 'lsf-express-shop' }, 'shop'), h('span', { class: 'lsf-express-pay' }, 'Pay')]],
+  ['paypal', /pay[\s_-]*pal/i, [h('span', { class: 'lsf-express-pay-dark' }, 'Pay'), h('span', { class: 'lsf-express-pal' }, 'Pal')]],
+  ['apple-pay', /apple[\s_-]*pay/i, [h('span', { 'aria-hidden': 'true' }, '\uF8FF'), ' Pay']],
+  ['google-pay', /google[\s_-]*pay|g[\s_-]*pay/i, [h('span', { class: 'lsf-express-g' }, 'G'), ' Pay']],
+  ['amazon-pay', /amazon/i, ['amazon pay']],
+  ['meta-pay', /meta[\s_-]*pay|facebook/i, ['Meta Pay']],
+];
+
+function expressBrand(method) {
+  return EXPRESS_BRANDS.find(([, pattern]) => pattern.test(method.handle) || pattern.test(method.name)) ?? null;
+}
+
+/** The express buttons, above the contact section as on Shopify: the payment methods offered in
+ * the `ACCELERATED_CHECKOUT` placement once the Functions ran (a payment customization may hide
+ * one there, and leave it in the list below). lsf does not simulate the wallets: a click says so. */
+function expressSection(ctx) {
+  const { state, ui, actions } = ctx;
+  const methods = state.expressMethods ?? [];
+  if (methods.length === 0) return null;
+  const clicked = methods.find((method) => method.handle === ui.express);
+  return h('section', { class: 'lsf-section lsf-express', 'data-section': 'express' },
+    h('h2', { class: 'lsf-express-title' }, 'Express checkout'),
+    h('div', { class: 'lsf-express-buttons', role: 'group', 'aria-label': 'Express checkout' },
+      methods.map((method) => {
+        const brand = expressBrand(method);
+        return h('button', {
+          type: 'button',
+          key: method.handle,
+          class: `lsf-express-button is-${brand ? brand[0] : 'other'}`,
+          'data-express': method.handle,
+          'aria-label': method.name,
+          title: method.name,
+          onClick: () => actions.expressCheckout?.(method.handle),
+        }, brand ? brand[2] : method.name);
+      })),
+    clicked && h('p', { class: 'lsf-muted lsf-express-note', role: 'status' },
+      `${clicked.name}: lsf does not simulate express checkout. Choose a payment method below to complete the order.`),
+    h('div', { class: 'lsf-express-or', 'aria-hidden': 'true' }, h('span', null, 'OR')));
+}
+
 function paymentSection(ctx) {
   const { state, actions, slot } = ctx;
   const errors = fieldErrors(ctx);
@@ -698,6 +741,7 @@ function checkoutPage(ctx) {
     h('main', { class: 'lsf-main' },
       diagnostics(ctx),
       slot('purchase.checkout.header.render-after', { key: 'header' }),
+      expressSection(ctx),
       contactSection(ctx),
       needsShipping && addressSection(ctx),
       needsShipping && deliverySection(ctx),

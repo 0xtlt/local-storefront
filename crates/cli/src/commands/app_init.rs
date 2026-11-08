@@ -677,14 +677,14 @@ fn plan(store: &Store, app: Option<&ShopifyApp>, app_store: Option<&Store>) -> P
             json!({
                 "title": "Several payment methods",
                 "description": format!(
-                    "Card, PayPal, cash on delivery, bank deposit and two express buttons, for {} to hide, rename or reorder.",
+                    "Card, PayPal, cash on delivery and bank deposit in the list, and PayPal, Shop Pay and Apple Pay as express buttons above the page (PayPal in both, as with PayPal Express on), for {} to hide, rename or reorder, in one placement or both.",
                     kinds.payment_customization.join(", ")
                 ),
                 "session": {"cart": cart(&picks, &[3, 2])},
                 "entered": {"email": "buyer@example.com", "shipping_address": address(&home)},
                 "checkout": {"payment_methods": [
                     {"handle": "card", "name": "Credit card"},
-                    {"handle": "paypal", "name": "PayPal"},
+                    {"handle": "paypal", "name": "PayPal", "placements": ["PAYMENT_METHOD", "ACCELERATED_CHECKOUT"]},
                     {"handle": "cod", "name": "Cash on Delivery"},
                     {"handle": "bank", "name": "Bank Deposit"},
                     {"handle": "shop_pay", "name": "Shop Pay", "placements": ["ACCELERATED_CHECKOUT"]},
@@ -1150,6 +1150,11 @@ mod tests {
                 .unwrap()
                 .len(),
             6
+        );
+        // PayPal in the list and as an express button, as with PayPal Express on.
+        assert_eq!(
+            read(&root, "payment-methods")["checkout"]["payment_methods"][1],
+            json!({"handle": "paypal", "name": "PayPal", "placements": ["PAYMENT_METHOD", "ACCELERATED_CHECKOUT"]})
         );
         assert_eq!(
             read(&root, "b2b")["session"]["customer"],

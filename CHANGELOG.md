@@ -170,6 +170,14 @@ the same data every run.
   API at its `api_version`, as `shopify app function schema` does, from the schemas lsf
   carries, without the network: in the Function's folder, by handle, or with `--path`;
   `--stdout` prints it. [The schema of a Function](docs/checkout.md#the-schema-of-a-function).
+- **Express checkout buttons.** The checkout shows the payment methods of the
+  `ACCELERATED_CHECKOUT` placement as express buttons above the contact section (Shop Pay,
+  PayPal, Apple Pay, Google Pay… in their colors, then "OR"), once the payment customizations
+  ran: a Function that hides a method there (`paymentMethodHide` with `placements`) now has a
+  visible effect. A click says lsf does not simulate the wallet. The page's JSON has
+  `expressMethods`, and every method its `placements`; `lsf app function run` prints each method
+  with its placements. The `payment-methods` scenario of `app init` has PayPal in both
+  placements, as Shopify offers it with PayPal Express on.
 
 ### Changed
 
@@ -184,7 +192,7 @@ the same data every run.
   run it alone, without an owner; `app init`'s scenarios name theirs, `all-extensions` every
   extension. The checkout's "Functions" dialog, the home page and `app function run` say which
   Functions did not run and why (`idle` in JSON). Store data that relied on every Function
-  running adds `"enabled": true` to them. [What runs](docs/checkout.md#what-runs-owners-and-scenarios).
+  running adds `"enabled": true` to them. [What runs](docs/checkout.md#owners-and-scenarios).
 - **No owner is created at install.** lsf no longer seeds an enabled payment customization,
   delivery customization, validation and cart transform for every Function: a fresh shop has
   none, so an app that checks whether it is set up sees that it is not. Only those the store data
