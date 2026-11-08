@@ -343,6 +343,11 @@ configuration where Shopify's does (`data-api-key` of the CDN tag, `<meta name="
 `sessionStorage`), and takes the admin's origin from its own `src`: open the admin on the host
 name the page loads it from (`127.0.0.1` and `localhost` are two origins).
 
+Give `--app-url` an address on this machine (`http://localhost:3000`), not a tunnel: Chrome
+treats a page served from a public address as public, and blocks its requests to `127.0.0.1` or
+`localhost` (lsf's App Bridge, Polaris from `/__lsf/cdn/`) until the browser grants it local
+network access.
+
 In the React Router template (`@shopify/shopify-app-react-router` 4.0.0), `AppProvider`
 writes Shopify's tag, with no option to change it. Three changes, all behind `APP_BRIDGE_URL`,
 which is unset on Shopify:
