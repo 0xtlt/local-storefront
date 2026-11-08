@@ -206,6 +206,14 @@ the same data every run.
 
 ### Fixed
 
+- **Polaris offline with the app and lsf on one host.** With the app on `localhost:3000` and lsf
+  on `localhost:9393`, Polaris's icons (`/__lsf/cdn/…/icons/<id>.svg`) failed with "blocked by
+  CORS policy", and an `s-button slot="secondary-actions"` of an `s-banner` took no room: lsf's
+  App Bridge gave its session token to lsf's own origin, and lsf answered the preflight `405`.
+  lsf's App Bridge no longer adds the token, `X-Requested-With` or `Accept-Language` to requests
+  to lsf's origin (on Shopify the admin and the CDN are never the app's host), and `/__lsf/cdn/`,
+  `/__lsf/polaris`, `/__lsf/admin/app-bridge.js` and `/cdn/` answer `OPTIONS` preflights
+  (`204`, any origin, the headers asked for, `Max-Age` a day).
 - **A control API body that is JSON is read as JSON** without `Content-Type: application/json`
   (`fetch` sends a string as `text/plain`): `PUT /__lsf/session` used to read it as a form.
 - **`lsf routes` no longer lists `/account`**, a page of lsf's that `render --strict` refuses:

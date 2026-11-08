@@ -80,6 +80,30 @@ impl HttpResponse {
         HttpResponse::error(405, format!("{method} is not allowed here"))
     }
 
+    /// The answer to a CORS preflight for a file the app's pages load from another origin
+    /// (lsf's App Bridge): any origin, `GET` and `HEAD`, the headers asked for, kept a day.
+    pub(crate) fn preflight(requested_headers: Option<&str>) -> HttpResponse {
+        let mut response = HttpResponse {
+            status: 204,
+            headers: Vec::new(),
+            body: Vec::new(),
+        }
+        .header("access-control-allow-origin", "*")
+        .header("access-control-allow-methods", "GET, HEAD, OPTIONS")
+        .header("access-control-max-age", "86400")
+        .header("allow", "GET, HEAD, OPTIONS")
+        .header("vary", "Access-Control-Request-Headers");
+        if let Some(asked) = requested_headers.map(str::trim).filter(|asked| {
+            !asked.is_empty()
+                && asked.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b',' | b' ')
+                })
+        }) {
+            response = response.header("access-control-allow-headers", asked);
+        }
+        response
+    }
+
     /// An HTML page.
     pub(crate) fn html(status: u16, body: impl Into<String>) -> HttpResponse {
         HttpResponse {

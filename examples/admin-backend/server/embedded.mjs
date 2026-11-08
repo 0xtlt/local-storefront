@@ -64,6 +64,10 @@ export function embeddedPage({ apiKey, shop, shopName, appBridgeUrl, polarisUrl 
           <s-icon type="cart"></s-icon>
           <s-text>Web components, icons and fonts from POLARIS_URL.</s-text>
         </s-stack>
+        <s-banner id="polaris-banner" tone="info" heading="Polaris loads its icons with fetch()">
+          From POLARIS_URL's origin, with the headers App Bridge adds to the app's own requests.
+          <s-button slot="secondary-actions" id="banner-action" href="/app/settings">Open the settings</s-button>
+        </s-banner>
       </s-section>
       <ui-modal id="about">
         <p style="padding: 0 4px">A Shopify app backend run against lsf: its Admin API, its webhooks, and this embedded page in lsf's admin.</p>

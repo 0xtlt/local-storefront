@@ -9933,6 +9933,13 @@ fn the_admin_opens_the_embedded_app_serves_its_app_bridge_and_is_linked_from_hom
     let script = get(&state, "/__lsf/admin/app-bridge.js", "embedded");
     assert_eq!(script.status, 200);
     assert!(text(&script).contains("lsf's App Bridge"));
+    // Loaded by the app's pages, from their origin: a preflight is answered.
+    let preflight = state.dispatch(&polaris::preflight("/__lsf/admin/app-bridge.js"));
+    assert_eq!(preflight.status, 204);
+    assert_eq!(
+        header(&preflight, "access-control-allow-headers"),
+        Some("authorization,x-requested-with")
+    );
 
     // A page of the admin lsf does not have is said so, before the storefront's 404.
     let products = get(&state, "/admin/products", "embedded");

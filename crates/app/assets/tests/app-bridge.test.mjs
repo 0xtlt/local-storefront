@@ -147,6 +147,48 @@ test('fetch() adds the session token to the app\'s requests, as App Bridge v4 de
   assert.equal((await call('/x', { headers: { Authorization: 'Bearer mine' } })).headers.get('authorization'), 'Bearer mine');
 });
 
+test('fetch() never gives the token to lsf, the admin the script comes from, even on the app\'s host', async () => {
+  // lsf on localhost:9393, the app on localhost:3000: the same host, which App Bridge's rule
+  // alone would give the token. Polaris offline fetches its icons from lsf's `/__lsf/cdn/`.
+  const lsf = 'http://localhost:9393';
+  const { fetch, requests } = recordingFetch();
+  const frame = appFrame({ fetch, scriptSrc: `${lsf}/__lsf/admin/app-bridge.js` });
+  const welcome = { type: 'welcome', shop: 'local-supply-co.myshopify.com', clientId: 'client-1', locale: 'fr' };
+  // The admin's answers come from lsf's origin.
+  const tokens = (frame) => async () => {
+    for (const request of frame.posts('request').filter(({ method }) => method === 'idToken')) {
+      frame.receive({ type: 'response', id: request.id, ok: true, value: 'token' }, lsf);
+    }
+  };
+  frame.receive(welcome, lsf);
+  const answer = tokens(frame);
+  const call = async (url) => {
+    const response = frame.window.fetch(url);
+    await settle();
+    await answer();
+    await response;
+    return requests.at(-1);
+  };
+  const icon = await call(`${lsf}/__lsf/cdn/shopifycloud/admin-ui-foundations/icons/info.svg`);
+  assert.equal(icon.headers.get('authorization'), null);
+  assert.equal(icon.headers.get('x-requested-with'), null);
+  assert.equal(icon.headers.get('accept-language'), null);
+  // The app's other ports still get it.
+  assert.equal((await call('/api/x')).headers.get('authorization'), 'Bearer token');
+  assert.equal((await call('http://localhost:8080/x')).headers.get('authorization'), 'Bearer token');
+
+  // A page lsf serves itself is the app: its requests get the token.
+  const own = recordingFetch();
+  const served = appFrame({ fetch: own.fetch, href: `${lsf}/app?embedded=1&shop=local-supply-co.myshopify.com`, scriptSrc: `${lsf}/__lsf/admin/app-bridge.js` });
+  served.receive(welcome, lsf);
+  const answered = tokens(served);
+  const response = served.window.fetch('/api/x');
+  await settle();
+  await answered();
+  await response;
+  assert.equal(own.requests.at(-1).headers.get('authorization'), 'Bearer token');
+});
+
 test('fetch() asks a new token once when the backend says so, and follows a reauthorization', async () => {
   const { fetch, requests } = recordingFetch((request, count) =>
     count === 1 ? new Response('', { status: 401, headers: { 'X-Shopify-Retry-Invalid-Session-Request': '1' } }) : new Response('ok'),

@@ -128,8 +128,14 @@ const PATH: &AsciiSet = &CONTROLS
 
 /// `GET /__lsf/cdn/<path>`: a redirect to Shopify's CDN, or lsf's copy, by the mode.
 pub fn cdn(state: &ServerState, incoming: &Incoming) -> Reply {
+    // The app's page is on another origin, and lsf's App Bridge gives its `fetch()`es of the
+    // icons headers that need a preflight when the app shares lsf's host.
+    if incoming.method == "OPTIONS" {
+        return Reply::preflight(incoming.header("access-control-request-headers"));
+    }
     if !matches!(incoming.method.as_str(), "GET" | "HEAD") {
-        return Reply::text(405, "Only GET and HEAD\n").header("allow", "GET, HEAD");
+        return Reply::text(405, "Only GET, HEAD and OPTIONS\n")
+            .header("allow", "GET, HEAD, OPTIONS");
     }
     let path = incoming
         .path
@@ -234,6 +240,9 @@ pub fn control(state: &ServerState, incoming: &Incoming, segments: &[&str]) -> O
             let mode = state.polaris.reset();
             Reply::json(200, &json!({ "ok": true, "mode": mode.as_str() }))
         }
+        "OPTIONS" => return Some(Reply::preflight(
+            incoming.header("access-control-request-headers"),
+        )),
         _ => Reply::text(405, "Only GET, PUT, POST and DELETE\n")
             .header("allow", "GET, PUT, POST, DELETE"),
     };

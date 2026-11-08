@@ -455,8 +455,10 @@ Then run the backend with
 loads today: `polaris-2.js` is the default of 4.0.0, `polaris.js` (Polaris 1.x) that of 2.1.0. A
 page with a `Content-Security-Policy` allows lsf's origin where it allows `cdn.shopify.com`:
 `script-src` (Polaris), `style-src` (the stylesheets of its fonts), `font-src` (the fonts) and
-`connect-src` (Polaris fetches its icons). lsf answers with `Access-Control-Allow-Origin: *`, so
-the app's origin may differ from lsf's.
+`connect-src` (Polaris fetches its icons). lsf answers with `Access-Control-Allow-Origin: *`, and
+answers the preflight of a `fetch()` with headers (`OPTIONS`: `204`, the headers asked for
+allowed, kept a day), so the app's origin may differ from lsf's: the app on `localhost:3000`,
+lsf on `localhost:9393`, works, Polaris's icons included.
 
 A page that still loads Polaris from `cdn.shopify.com` runs offline too: when that script fails
 to load and lsf is `offline`, lsf's App Bridge loads lsf's copy of the same path, once, and says
@@ -473,7 +475,7 @@ script). In lsf's admin:
 | API | What it does |
 |---|---|
 | `shopify.idToken()` | A session token of the admin's shop and user, minted by lsf and signed with the client secret, valid a minute. |
-| `fetch()` | Adds `Authorization: Bearer <session token>`, `X-Requested-With: XMLHttpRequest` and `Accept-Language` to the requests to the page's host (on any port) or its subdomains, over the page's protocol, and to `appOrigins`; not to others, nor when the request has an `Authorization` already. Asks a new token once when the answer has `X-Shopify-Retry-Invalid-Session-Request`, and sends the admin to `X-Shopify-API-Request-Failure-Reauthorize-Url` when there is one. `disabledFeatures: ["fetch"]` leaves `fetch` alone. As the CDN script 0.41.4 does. |
+| `fetch()` | Adds `Authorization: Bearer <session token>`, `X-Requested-With: XMLHttpRequest` and `Accept-Language` to the requests to the page's host (on any port) or its subdomains, over the page's protocol, and to `appOrigins`; not to others, nor when the request has an `Authorization` already, nor to lsf's own origin (the admin the script comes from, its `/__lsf/cdn/` included), which on Shopify is never the app's host, unless the page itself is on lsf's origin. Asks a new token once when the answer has `X-Shopify-Retry-Invalid-Session-Request`, and sends the admin to `X-Shopify-API-Request-Failure-Reauthorize-Url` when there is one. `disabledFeatures: ["fetch"]` leaves `fetch` alone. As the CDN script 0.41.4 does. |
 | `shopify.config`, `shopify.origin`, `shopify.ready`, `shopify.environment` | The configuration as the page gives it; lsf's admin's origin; ready once the admin answered; `{embedded: true, mobile: false, pos: false, intent: false}`. |
 | `shopify.user()` | `{id, name, email, accountAccess, locale}` of the admin's user: `"Account owner"` for user 1, `"Full access"` for another. |
 | `shopify.toast.show()`, `.hide()` | Toasts at the bottom of the admin, five seconds by default, `isError`, an `action` that calls `onAction`; `onDismiss` when the toast goes. |

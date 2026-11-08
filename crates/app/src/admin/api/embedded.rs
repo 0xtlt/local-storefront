@@ -83,6 +83,9 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest) -> Option<HttpRespon
 /// A file of the page, or lsf's App Bridge.
 fn asset(request: &HttpRequest, name: &str) -> HttpResponse {
     let method = request.method.to_ascii_uppercase();
+    if method == "OPTIONS" {
+        return HttpResponse::preflight(request.header("access-control-request-headers"));
+    }
     if method != "GET" && method != "HEAD" {
         return HttpResponse::not_allowed(&method);
     }

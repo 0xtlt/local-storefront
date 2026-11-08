@@ -497,6 +497,62 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
       return "the CDN's polaris-2.js refused → App Bridge loads /__lsf/cdn/shopifycloud/polaris-2.js, once; s-button defined";
     });
   });
+  await check("polaris", "polaris: offline, lsf and the app both on localhost (other ports): no CORS error, the icons load, the banner's action shows", async () => {
+    // lsf at localhost:<port>, the app at localhost:<other port>: one host name, which App
+    // Bridge's rule would give the session token; lsf's App Bridge keeps it from lsf's origin, and
+    // lsf answers the preflight anyway.
+    const local = lsf.replace("127.0.0.1", "localhost");
+    const preflight = await fetch(`${local}/__lsf/cdn/shopifycloud/admin-ui-foundations/icons/f359e.svg`, {
+      method: "OPTIONS",
+      headers: { Origin: appUrl, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization,x-requested-with" },
+    });
+    assert(
+      preflight.status === 204 &&
+        preflight.headers.get("access-control-allow-origin") === "*" &&
+        preflight.headers.get("access-control-allow-headers") === "authorization,x-requested-with",
+      `the preflight answered ${preflight.status}`,
+      Object.fromEntries(preflight.headers),
+    );
+    return withChromium(async ({ context, served }) => {
+      const errors = [];
+      context.on("console", (message) => message.type() === "error" && errors.push(message.text()));
+      context.on("requestfailed", (request) => request.url().startsWith(local) && errors.push(`${request.url()}: ${request.failure()?.errorText}`));
+      // The pages as the backend renders them, with lsf at `localhost`: its scripts' URLs, and
+      // the admin the pages may be framed by (`frame-ancestors`).
+      await context.grantPermissions(["local-network-access"]);
+      await context.route((url) => url.href.startsWith(`${appUrl}/app`), async (route) => {
+        const response = await route.fetch();
+        const headers = Object.fromEntries(Object.entries(response.headers()).map(([name, value]) => [name, value.replaceAll(lsf, local)]));
+        await route.fulfill({ response, headers, body: (await response.text()).replaceAll(lsf, local) });
+      });
+      const page = await context.newPage();
+      await page.goto(`${local}/admin/apps/admin-backend/app`);
+      const deadline = Date.now() + 15_000;
+      let frame;
+      while (!(frame = page.frames().find((candidate) => candidate.url().startsWith(`${appUrl}/app`))) && Date.now() < deadline) await sleep(50);
+      assert(frame, "the app's frame did not open", page.frames().map((candidate) => candidate.url()));
+      await frame.waitForFunction(() => customElements.get("s-banner") && customElements.get("s-button"), null, { timeout: 15_000 });
+      const icons = () => served.filter((response) => response.url.startsWith(`${local}/__lsf/cdn/`) && response.url.endsWith(".svg"));
+      await waitFor(() => icons().length >= 3, "no icon from lsf at localhost", () => ({ served, errors }));
+      // Polaris draws in the shadow root of the elements, which take no room of their own.
+      const drawn = async (selector) =>
+        frame.evaluate((selector) => {
+          const host = document.querySelector(selector);
+          const rects = [host, ...(host?.shadowRoot?.querySelectorAll("*") ?? [])].map((node) => node.getBoundingClientRect());
+          return { width: Math.max(0, ...rects.map((rect) => rect.width)), height: Math.max(0, ...rects.map((rect) => rect.height)) };
+        }, selector);
+      let action;
+      const until = Date.now() + 10_000;
+      while (((action = await drawn("#banner-action")).width === 0 || action.height === 0) && Date.now() < until) await sleep(100);
+      assert(action.width > 0 && action.height > 0, "the banner's secondary action takes no room", { action, errors });
+      const cors = errors.filter((error) => /CORS|preflight|access control/i.test(error));
+      assert(!cors.length, "CORS errors", cors);
+      assert(icons().every((response) => response.status === 200), "an icon did not load", icons());
+      const failed = errors.filter((error) => error.includes("/__lsf/cdn/"));
+      assert(!failed.length, "requests to lsf's CDN failed", failed);
+      return `preflight 204; ${icons().length} icons from ${local}/__lsf/cdn/, 200; the banner's action ${Math.round(action.width)}×${Math.round(action.height)}; no CORS error`;
+    });
+  });
   await check("polaris", "polaris: DELETE /__lsf/polaris → back to online, the route redirects again", async () => {
     assert((await polarisMode("DELETE")) === "online", "not online again");
     const answer = await fetch(polarisUrl, { redirect: "manual" });

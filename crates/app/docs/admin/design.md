@@ -1012,7 +1012,12 @@ of the CDN script 0.41.4 where shopify.dev leaves it open:
 - **`fetch`**: the rule of the CDN script (`Ft`): the page's protocol and host or a subdomain
   (the port is not compared), or `appOrigins`; the ID token unless `Authorization` is set,
   `X-Requested-With`, `Accept-Language`; one retry on `X-Shopify-Retry-Invalid-Session-Request`;
-  `X-Shopify-API-Request-Failure-Reauthorize-Url` sends the admin there and never answers.
+  `X-Shopify-API-Request-Failure-Reauthorize-Url` sends the admin there and never answers. One
+  departure: never lsf's own origin (the `src` of the script) while the page is elsewhere. On
+  Shopify the admin and the CDN are never the app's host; locally both are `localhost`, and the
+  headers made each `fetch()` of an icon of lsf's Polaris a preflighted request. lsf answers
+  those preflights too (`OPTIONS` on `/__lsf/cdn/`, `/__lsf/polaris`, `/__lsf/admin/*` files,
+  `/cdn/`: `204`, the asked headers echoed), for a page that sets the headers itself.
 - **Navigation** (the CDN script's click handler, `history` and `open` patches): `shopify:` links
   (`/admin/*` only, else the same error), `app:` paths, `target="_top"`; while the save bar
   shows, a link asks the admin first. A plain `<a>` the app's router does not take reloads the

@@ -236,7 +236,7 @@ fn offline_a_path_lsf_has_no_copy_of_is_a_404_that_says_so() {
 }
 
 #[test]
-fn only_get_and_head_are_answered() {
+fn only_get_head_and_options_are_answered() {
     for mode in [Mode::Online, Mode::Offline] {
         let state = server_in(mode);
         let head = state.dispatch(&request(
@@ -253,8 +253,68 @@ fn only_get_and_head_are_answered() {
             "a",
         ));
         assert_eq!(post.status, 405);
-        assert_eq!(header(&post, "allow"), Some("GET, HEAD"));
+        assert_eq!(header(&post, "allow"), Some("GET, HEAD, OPTIONS"));
     }
+}
+
+/// The preflight a browser sends before a `fetch()` from an app on another port with the headers
+/// lsf's App Bridge adds to its own requests (`Authorization`, `X-Requested-With`).
+pub(super) fn preflight(path: &str) -> super::Incoming {
+    let mut incoming = request("OPTIONS", path, json!({}), "a");
+    for (name, value) in [
+        ("origin", "http://localhost:3000"),
+        ("access-control-request-method", "GET"),
+        (
+            "access-control-request-headers",
+            "authorization,x-requested-with",
+        ),
+    ] {
+        incoming.headers.insert(name.to_string(), value.to_string());
+    }
+    incoming
+}
+
+#[test]
+fn a_preflight_of_another_origin_is_allowed_with_the_headers_it_asks_for() {
+    for mode in [Mode::Online, Mode::Offline] {
+        let state = server_in(mode);
+        for path in [
+            "/__lsf/cdn/shopifycloud/admin-ui-foundations/icons/f359e.svg",
+            "/__lsf/cdn/shopifycloud/polaris-2.js",
+            "/__lsf/polaris",
+            "/cdn/shop/t/1/assets/base.css",
+        ] {
+            let reply = state.dispatch(&preflight(path));
+            assert_eq!(reply.status, 204, "{path} ({mode:?})");
+            assert!(reply.body.is_empty(), "{path}");
+            assert_eq!(header(&reply, "access-control-allow-origin"), Some("*"));
+            assert_eq!(
+                header(&reply, "access-control-allow-methods"),
+                Some("GET, HEAD, OPTIONS"),
+                "{path}"
+            );
+            assert_eq!(
+                header(&reply, "access-control-allow-headers"),
+                Some("authorization,x-requested-with"),
+                "{path}"
+            );
+            assert_eq!(
+                header(&reply, "access-control-max-age"),
+                Some("86400"),
+                "{path}"
+            );
+        }
+    }
+    // Headers that are not header names are not echoed.
+    let state = server();
+    let mut odd = preflight("/__lsf/cdn/shopifycloud/polaris-2.js");
+    odd.headers.insert(
+        "access-control-request-headers".to_string(),
+        "x\r\nset-cookie: a=b".to_string(),
+    );
+    let reply = state.dispatch(&odd);
+    assert_eq!(reply.status, 204);
+    assert_eq!(header(&reply, "access-control-allow-headers"), None);
 }
 
 #[test]

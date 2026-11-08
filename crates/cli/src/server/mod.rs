@@ -645,6 +645,11 @@ impl ServerState {
             return control::handle(self, incoming);
         }
         if incoming.path.starts_with("/cdn/") {
+            // As Shopify's CDN: a page of another origin may fetch its files with headers that
+            // need a preflight.
+            if incoming.method == "OPTIONS" {
+                return Reply::preflight(incoming.header("access-control-request-headers"));
+            }
             return cdn::handle(self, incoming);
         }
         self.refresh_if_changed(false);

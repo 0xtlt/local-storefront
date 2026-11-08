@@ -936,8 +936,14 @@
 
   // Which requests get the ID token: those to the page's host (the port is not compared) or one
   // of its subdomains, over the page's protocol, and those to `appOrigins`. As the CDN script.
+  // Never those to lsf, the admin this script comes from (its CDN, `/__lsf/cdn/`, included):
+  // on Shopify, the admin and the CDN are never the app's host, but locally lsf and the app
+  // share `localhost`, and the token and `X-Requested-With` would make every `fetch()` of
+  // lsf's copy of Polaris (its icons) a preflighted request. Unless the page is on lsf's origin
+  // itself: then lsf serves the app.
   function sameApp(url) {
     const location = new URL(win.location.href);
+    if (lsfOrigin && url.origin === lsfOrigin && location.origin !== lsfOrigin) return false;
     return (
       (url.protocol === location.protocol &&
         (url.hostname === location.hostname || url.hostname.endsWith('.' + location.hostname))) ||
