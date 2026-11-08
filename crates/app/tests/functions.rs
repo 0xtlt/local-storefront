@@ -386,6 +386,67 @@ fn a_function_runs_only_through_an_enabled_owner_when_the_checkout_follows_the_s
     assert!(!result.errors.is_empty(), "the validation refuses two");
 }
 
+/// An app that is not installed has no Function on the shop: none runs, even one a run names
+/// (a scenario's `extensions`, which needs no owner) or an active discount, and each says why.
+#[test]
+fn no_function_runs_while_the_app_is_not_installed() {
+    let app = app();
+    let store = store();
+    let mut config = config();
+    config.discounts = vec![discount(
+        "volume-discount",
+        "Volume",
+        None,
+        &[Product],
+        json!({"minimumQuantity": 1, "percentage": 10}),
+    )];
+    config.function_metafields.insert(
+        "payment-rules".to_string(),
+        settings(json!({"hideName": "Cash on Delivery", "hideAbove": 0})),
+    );
+    // As a scenario that names its extensions: every Function would run.
+    config.owners = None;
+    config.uninstalled = true;
+    let selection = Selection::only(["payment-rules", "volume-discount", "quantity-limit"]);
+    let cart = session(&store, &[(TEE, 2)]);
+    let result = compute(&app, &selection, &store, &cart, &addressed(), &config);
+    assert!(result.runs.is_empty(), "{:?}", result.runs);
+    assert!(result.discounts.is_empty());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert!(
+        result
+            .payment_methods
+            .iter()
+            .any(|method| method.name == "Cash on Delivery")
+    );
+    let idle: Vec<(&str, &str)> = result
+        .idle
+        .iter()
+        .map(|idle| (idle.handle.as_str(), idle.owner))
+        .collect();
+    assert_eq!(
+        idle,
+        [
+            ("payment-rules", "PaymentCustomization"),
+            ("quantity-limit", "Validation"),
+            ("volume-discount", "DiscountNode"),
+        ]
+    );
+    assert!(
+        result.idle.iter().all(|idle| idle
+            .reason
+            .starts_with("the app is not installed on the shop")),
+        "{:?}",
+        result.idle
+    );
+
+    // Installed: they run.
+    config.uninstalled = false;
+    let result = compute(&app, &selection, &store, &cart, &addressed(), &config);
+    assert!(result.idle.is_empty());
+    assert_eq!(result.discounts.len(), 1);
+}
+
 #[test]
 fn payment_customization_hides_and_renames_methods() {
     let app = app();

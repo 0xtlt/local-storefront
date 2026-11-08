@@ -10,6 +10,7 @@ mod checkout_account;
 mod compress;
 mod control;
 mod customer_account;
+mod data_files;
 pub use control::{apply_session_input, routes};
 mod forms;
 mod home;
@@ -101,7 +102,6 @@ pub struct Loaded {
     pub store: Arc<Store>,
     /// The problems of the files.
     pub diagnostics: Diagnostics,
-    fingerprint: u64,
     /// The store of the files alone: what the shops of the Admin API were seeded from, which
     /// store sync projects their changes onto. `store` itself while the Admin API changed
     /// nothing the store data shows.
@@ -139,6 +139,9 @@ pub struct ServerState {
     /// store was last brought up to date with.
     admin_changes: AtomicU64,
     last_check: Mutex<Instant>,
+    /// The files of the data directory as the store was last read from them: what tells which
+    /// changed (`--watch`), and so whether the shops of the Admin API are seeded again.
+    data_files: Mutex<data_files::DataFiles>,
     sessions: Mutex<HashMap<String, SessionEntry>>,
     /// The variants of the images that were encoded, by what they were made from: encoding
     /// one costs too much to do it again while the image has not changed.
@@ -214,6 +217,13 @@ impl Incoming {
     }
 }
 
+/// The files of the data directory of `app` as they are now: none for the demo store.
+fn data_files_of(app: &App) -> data_files::DataFiles {
+    app.data_dir()
+        .map(|directory| data_files::DataFiles::read(&directory))
+        .unwrap_or_default()
+}
+
 /// A fingerprint of a directory tree: it changes when a file is added, removed or modified.
 fn fingerprint(root: &Path) -> u64 {
     fn walk(directory: &Path, hasher: &mut std::collections::hash_map::DefaultHasher) {
@@ -268,9 +278,6 @@ impl Loaded {
         Loaded {
             store: base.clone(),
             diagnostics,
-            fingerprint: app
-                .data_dir()
-                .map_or(0, |directory| fingerprint(&directory)),
             base,
             source,
             load_options,
@@ -281,6 +288,8 @@ impl Loaded {
 
 impl ServerState {
     pub fn new(app: App, options: ServeOptions) -> (ServerState, Diagnostics) {
+        // Before the files are read: one changed meanwhile is read again.
+        let data_files = data_files_of(&app);
         let files = Loaded::of_files(&app);
         let diagnostics = files.diagnostics.clone();
         let admin = options.admin.as_ref().map(|settings| {
@@ -300,6 +309,7 @@ impl ServerState {
             loaded: RwLock::new(Arc::new(files)),
             rebuilding: Mutex::new(()),
             admin_changes: AtomicU64::new(admin_changes),
+            data_files: Mutex::new(data_files),
             app,
             options,
             last_check: Mutex::new(Instant::now()),
@@ -337,50 +347,106 @@ impl ServerState {
         Ok(app)
     }
 
+    /// Whether the Admin API has the app uninstalled from its default shop, the shop of the
+    /// checkout (`POST /__lsf/admin/uninstall`, `appUninstall`): its Functions then do not run.
+    /// `false` without the Admin API.
+    pub fn app_uninstalled(&self) -> bool {
+        self.admin.as_ref().is_some_and(|admin| {
+            admin
+                .api
+                .installed_scopes(&admin.api.default_shop())
+                .is_none()
+        })
+    }
+
     pub fn loaded(&self) -> Arc<Loaded> {
         self.loaded.read().expect("store lock poisoned").clone()
     }
 
-    /// Reloads the store from disk. Sessions keep their cart and customer; the shops of the
-    /// Admin API are seeded again, and what it changed in them is dropped (the terminal says so):
-    /// the store is the files', and the theme the directory's, without the Admin API's files or
-    /// script tags.
+    /// Reloads the store from disk, whatever changed (`POST /__lsf/reload`). Sessions keep their
+    /// cart and customer; the shops of the Admin API are seeded again, and what it changed in
+    /// them is dropped (the terminal says so): the store is the files', and the theme the
+    /// directory's, without the Admin API's files or script tags. `--watch` reads the files
+    /// again only when they changed, and seeds the shops again only when the store's own data
+    /// did ([`ServerState::refresh_if_changed`]).
     pub fn reload(&self) -> Arc<Loaded> {
+        let (loaded, dropped) = self.reload_and_reseed();
+        if !dropped.is_empty() && !self.options.quiet {
+            eprintln!(
+                "admin:  the store data was read again: the shops were seeded again, and what the Admin API changed in {} was dropped",
+                dropped.join(", ")
+            );
+        }
+        loaded
+    }
+
+    /// Reads every file again and seeds the shops of the Admin API again from them: the store
+    /// is the files', the theme the directory's. Answers the store and the shops whose changes
+    /// were dropped.
+    fn reload_and_reseed(&self) -> (Arc<Loaded>, Vec<String>) {
         let _rebuilding = lock(&self.rebuilding);
+        *lock(&self.data_files) = data_files_of(&self.app);
         let files = Loaded::of_files(&self.app);
+        let mut dropped = Vec::new();
         let loaded = match &self.admin {
             Some(admin) => {
-                let reseeded = admin.api.reseed(&files.base);
-                if !reseeded.dropped.is_empty() && !self.options.quiet {
-                    eprintln!(
-                        "admin:  the store data changed: the shops were seeded again, and what the Admin API changed in {} was dropped",
-                        reseeded.dropped.join(", ")
-                    );
-                }
+                dropped = admin.api.reseed(&files.base).dropped;
                 admin.api.sync_store(files.base.clone());
                 // The reseed dropped what the Admin API wrote to the theme and the script tags:
                 // the storefront serves the directory again, as the Admin API now reports it.
                 self.sync_theme(&admin.api);
-                // Nothing changed since the reseed, unless a request of the backend came in
-                // meanwhile: then the store has it already.
-                match admin.api.synced() {
-                    Some(synced) => {
-                        let loaded = self.with_admin_changes(&files, &synced);
-                        self.admin_changes.store(synced.changes, Ordering::Release);
-                        loaded
-                    }
-                    None => files,
-                }
+                self.with_synced(files, admin)
             }
             None => files,
         };
+        (self.swap_loaded(loaded), dropped)
+    }
+
+    /// Reads every file again when only checkout scenarios changed: the store data the shops
+    /// of the Admin API were seeded from is the same, so they keep what the backend changed
+    /// (its subscription, its customizations, its other writes), and the store is the files
+    /// with those changes on top, as before, with the new scenarios.
+    fn reload_scenarios(&self) -> Arc<Loaded> {
+        let _rebuilding = lock(&self.rebuilding);
+        *lock(&self.data_files) = data_files_of(&self.app);
+        let files = Loaded::of_files(&self.app);
+        let loaded = match &self.admin {
+            Some(admin) => {
+                admin.api.sync_store(files.base.clone());
+                self.with_synced(files, admin)
+            }
+            None => files,
+        };
+        self.swap_loaded(loaded)
+    }
+
+    /// The store of `files` with what the Admin API changed on top. Nothing changed since the
+    /// shops were seeded, unless a request of the backend came in meanwhile: then the store
+    /// has it already. Called while `rebuilding` is held.
+    fn with_synced(&self, files: Loaded, admin: &admin::Admin) -> Loaded {
+        match admin.api.synced() {
+            Some(synced) => {
+                let loaded = self.with_admin_changes(&files, &synced);
+                self.admin_changes.store(synced.changes, Ordering::Release);
+                loaded
+            }
+            None => files,
+        }
+    }
+
+    /// Makes `loaded` the store the server serves.
+    fn swap_loaded(&self, loaded: Loaded) -> Arc<Loaded> {
         let loaded = Arc::new(loaded);
         *self.loaded.write().expect("store lock poisoned") = loaded.clone();
         loaded
     }
 
-    /// Reloads the store when its files changed since the last check. The files are looked at
-    /// every 300 ms at most, unless the caller knows that they changed (`now`).
+    /// Reloads the store when its files changed since they were last read (`--watch`). The
+    /// files are looked at every 300 ms at most, unless the caller knows that they changed
+    /// (`now`). A change of checkout scenarios alone reads the files again without touching
+    /// the shops of the Admin API; a change of the store's own data seeds them again; a file
+    /// the store does not read (`schema/`, `README.md`) changes nothing. The terminal says
+    /// which files changed and what was done.
     fn refresh_if_changed(&self, now: bool) {
         if !self.options.watch {
             return;
@@ -395,11 +461,52 @@ impl ServerState {
             }
             *last_check = Instant::now();
         }
-        if fingerprint(&directory) != self.loaded().fingerprint {
-            let loaded = self.reload();
-            if !self.options.quiet {
-                eprintln!("store data reloaded");
-                crate::output::print_diagnostics(&loaded.diagnostics);
+        let files = data_files::DataFiles::read(&directory);
+        let change = {
+            let mut seen = lock(&self.data_files);
+            if *seen == files {
+                return;
+            }
+            let change = seen.change_to(&files);
+            *seen = files;
+            change
+        };
+        match change {
+            data_files::DataChange::Unread => {}
+            data_files::DataChange::Scenarios(changed) => {
+                let loaded = self.reload_scenarios();
+                if !self.options.quiet {
+                    let kept = if self.admin.is_some() {
+                        ": the store and what the Admin API changed are kept (no re-seed)"
+                    } else {
+                        ""
+                    };
+                    eprintln!(
+                        "checkout scenarios reloaded ({}){kept}",
+                        data_files::describe(&changed)
+                    );
+                    crate::output::print_diagnostics(&loaded.diagnostics);
+                }
+            }
+            data_files::DataChange::Store(changed) => {
+                let (loaded, dropped) = self.reload_and_reseed();
+                if !self.options.quiet {
+                    let seeded = match (&self.admin, dropped.is_empty()) {
+                        (None, _) => String::new(),
+                        (Some(_), true) => {
+                            ": the shops of the Admin API were seeded again".to_string()
+                        }
+                        (Some(_), false) => format!(
+                            ": the shops of the Admin API were seeded again, and what the Admin API changed in {} was dropped",
+                            dropped.join(", ")
+                        ),
+                    };
+                    eprintln!(
+                        "store data reloaded ({}){seeded}",
+                        data_files::describe(&changed)
+                    );
+                    crate::output::print_diagnostics(&loaded.diagnostics);
+                }
             }
         }
     }

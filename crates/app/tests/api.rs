@@ -588,6 +588,42 @@ fn uninstalls_and_installs_the_app() {
     assert_eq!(status, 200);
 }
 
+/// The objects that run the app's Functions go with the uninstall, those the store data declares
+/// included, and neither a reseed (the data changed on disk) nor a reinstall brings them back.
+#[test]
+fn an_uninstall_removes_the_owners_of_the_functions_for_good() {
+    let store = support::fixture_store("rich");
+    let api = AdminApi::new(&store, options(Some(support::fixture_app()), None));
+    let owners = |api: &AdminApi| {
+        api.with_default_shop(|state| {
+            lsf_app::admin::domains::app::FUNCTION_OWNER_TYPES
+                .iter()
+                .map(|type_name| state.count(type_name))
+                .sum::<usize>()
+                + state.count("DiscountAutomaticNode")
+                + state.count("DiscountCodeNode")
+        })
+        .unwrap()
+    };
+    // The data's: a payment, a delivery customization, a validation, a cart transform, and
+    // two app discounts.
+    assert_eq!(owners(&api), 6);
+    let uninstalled = send(&api, "POST", "/__lsf/admin/uninstall", Value::Null);
+    assert_eq!(json_of(&uninstalled)["removedFunctionOwners"], json!(6));
+    assert_eq!(owners(&api), 0);
+    // Uninstalled again: nothing more.
+    let again = send(&api, "POST", "/__lsf/admin/uninstall", Value::Null);
+    assert_eq!(json_of(&again)["removedFunctionOwners"], json!(0));
+
+    api.reseed(&store);
+    assert_eq!(owners(&api), 0, "a new seed does not bring them back");
+    send(&api, "POST", "/__lsf/admin/install", Value::Null);
+    assert_eq!(owners(&api), 0, "nor does a reinstall");
+    // Installed, a new seed is the data's again.
+    api.reseed(&store);
+    assert_eq!(owners(&api), 6);
+}
+
 #[test]
 fn refuses_requests_without_a_valid_token() {
     let api = demo_api();

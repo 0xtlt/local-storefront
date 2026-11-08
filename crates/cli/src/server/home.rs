@@ -1404,7 +1404,7 @@ pub fn page(
             let report = if incoming.query_param("check").is_some() {
                 Some(state.home_check.get_or_run(state, &app, &store))
             } else {
-                state.home_check.get(&app, &store)
+                state.home_check.get(&app, &store, state.app_uninstalled())
             };
             build(state, options, &store, &app, root, check, report.as_deref())
         }

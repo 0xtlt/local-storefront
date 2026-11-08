@@ -150,6 +150,12 @@ pub struct CheckoutConfig {
     /// `None`: every Function of the selection runs, as if each had one: the run names its
     /// Functions (a scenario's `extensions`, `lsf app function run <handle>`).
     pub owners: Option<IndexMap<String, bool>>,
+    /// The app is not installed on the shop: uninstalling it (`POST /__lsf/admin/uninstall`,
+    /// `appUninstall`) removed its Functions, with every object that ran them, as Shopify does.
+    /// No Function of the app runs then, whatever `owners`, `discounts` or the run names (a
+    /// scenario's `extensions`), and each is in [`CheckoutResult::idle`]. `false` without the
+    /// Admin API, which is what installs and uninstalls the app.
+    pub uninstalled: bool,
     /// Tax rate in basis points (2000 = 20 %), added on top of the discounted subtotal. 0 by
     /// default.
     pub tax_rate_bps: i64,
@@ -250,7 +256,8 @@ pub struct CheckoutResult {
     /// Every Function run, in order, for the debug panel and `lsf app function run`.
     pub runs: Vec<FunctionRun>,
     /// The Functions of the selection that did not run because the shop has no enabled owner
-    /// of them ([`CheckoutConfig::owners`]).
+    /// of them ([`CheckoutConfig::owners`]), or because the app is not installed on the shop
+    /// ([`CheckoutConfig::uninstalled`]).
     pub idle: Vec<IdleFunction>,
     /// Whether the Functions stopped running at the deadline of their
     /// [`RunOptions`](crate::checkout::pipeline::RunOptions): the result is then not the checkout, only
@@ -546,7 +553,8 @@ pub struct PaymentMethod {
 pub struct IdleFunction {
     pub handle: String,
     /// The type of the object that runs it in the Admin API: `PaymentCustomization`,
-    /// `DeliveryCustomization`, `Validation`, `CartTransform`.
+    /// `DeliveryCustomization`, `Validation`, `CartTransform`; `DiscountNode` for a discount
+    /// Function (only while the app is not installed: an active discount runs one otherwise).
     pub owner: &'static str,
     /// `Some(false)`: its owner is disabled. `None`: the shop has none.
     pub enabled: Option<bool>,

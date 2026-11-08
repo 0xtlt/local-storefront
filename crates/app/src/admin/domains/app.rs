@@ -22,9 +22,9 @@ use lsf_core::store::{CheckoutDiscount, model::CheckoutDiscountClass};
 use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
-use crate::admin::state::gid;
 use crate::admin::state::seed::Seed;
 use crate::admin::state::value;
+use crate::admin::state::{ShopState, gid};
 use crate::config::{App, FunctionExtension, TargetKind};
 
 /// The client id of the app when there is none (no `--app`, or no `client_id` in
@@ -391,6 +391,74 @@ pub use crate::admin::auth::scopes::ALL_SCOPES;
 /// shop changed, as every change must ("Writing a resolver or a mutation" in
 /// `crates/app/docs/admin/design.md`).
 pub const CHANGED: &str = "lsf/changed";
+
+/// The types of the objects that run a Function of the app that is not a discount: those the
+/// checkout runs (`CartTransform`, `DeliveryCustomization`, `PaymentCustomization`,
+/// `Validation`), and the fulfillment constraint rules, which it does not.
+pub const FUNCTION_OWNER_TYPES: [&str; 5] = [
+    "CartTransform",
+    "DeliveryCustomization",
+    "PaymentCustomization",
+    "Validation",
+    "FulfillmentConstraintRule",
+];
+
+/// What uninstalling the app does to the records of the shop, whether the merchant uninstalls it
+/// (`POST /__lsf/admin/uninstall`) or the app itself (`appUninstall`): its subscriptions are
+/// cancelled ([`billing::cancel_on_uninstall`]), and its Functions go with every object that runs
+/// them ([`remove_function_owners`]). Answers how many of those objects were removed.
+pub fn uninstall(state: &mut ShopState) -> usize {
+    billing::cancel_on_uninstall(state);
+    remove_function_owners(state)
+}
+
+/// Removes every object that runs a Function of the app, with its metafields, as uninstalling the
+/// app does: the app discounts (`DiscountAutomaticApp`, `DiscountCodeApp`), the cart transforms,
+/// delivery and payment customizations, validations and fulfillment constraint rules, whether the
+/// app created them or the store data declared them. A reinstalled app finds none: it creates
+/// them again. Answers how many were removed.
+///
+/// As Shopify does: uninstalling an app removes its Functions (community.shopify.dev, "Shopify
+/// Function behavior after app uninstall and reinstall": "Shopify automatically removes the app's
+/// theme extensions and Shopify Functions"), and a Function goes with its owners ("The function,
+/// including all associated function owners, is permanently deleted", shopify.dev, "About
+/// Shopify Functions"). Shopify's staff: "When a merchant uninstalls your app, the cart
+/// transforms created by the app should be automatically removed by Shopify", and "the job that
+/// deletes the price rules and their associated codes runs asynchronously after an app is
+/// uninstalled"; a payment customization that stayed active after an uninstall was "an issue on
+/// our end". A reinstalled app "had to register them again through the API". Shopify removes them
+/// in the background; lsf at once. The discounts Shopify's own types make (a `DiscountCodeBasic`
+/// the app created) stay: they run no Function of the app. No webhook: the app's subscriptions
+/// are deleted with it, so each removal emits [`CHANGED`].
+pub fn remove_function_owners(state: &mut ShopState) -> usize {
+    let mut owners: Vec<String> = FUNCTION_OWNER_TYPES
+        .iter()
+        .flat_map(|type_name| state.keys(type_name).map(str::to_string))
+        .collect();
+    for node_type in ["DiscountAutomaticNode", "DiscountCodeNode"] {
+        owners.extend(
+            state
+                .keys(node_type)
+                .filter(|key| {
+                    state
+                        .get(key)
+                        .and_then(discounts::inner)
+                        .and_then(|discount| discount.get("__typename"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|type_name| {
+                            matches!(type_name, "DiscountAutomaticApp" | "DiscountCodeApp")
+                        })
+                })
+                .map(str::to_string),
+        );
+    }
+    for owner in &owners {
+        metafields::remove_all(state, owner);
+        state.emit(CHANGED, owner);
+        state.remove(owner);
+    }
+    owners.len()
+}
 
 /// The custom resolvers and the mutations of this family: see "Writing a resolver or a
 /// mutation" in `crates/app/docs/admin/design.md`.

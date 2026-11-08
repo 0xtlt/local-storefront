@@ -371,8 +371,16 @@ impl AdminApi {
     /// Whether the app is on managed pricing: it declared at least one plan. The Billing API
     /// then creates no charge.
     pub fn managed_pricing(&self) -> bool {
-        self.pricing()
-            .is_some_and(|(pricing, _)| !pricing.plans.is_empty())
+        self.billing().managed()
+    }
+
+    /// How the app bills: by the Billing API, or on managed pricing with or without the legacy
+    /// features (`legacy`), which decide the webhooks of a change of a subscription.
+    pub fn billing(&self) -> crate::admin::domains::app::pricing::Billing {
+        let pricing = self.pricing();
+        crate::admin::domains::app::pricing::Billing::of(
+            pricing.as_ref().map(|(pricing, _)| pricing.as_ref()),
+        )
     }
 
     /// Sets the plans that apply (`PUT /__lsf/admin/pricing-plans`), or puts back those of
@@ -700,6 +708,26 @@ impl AdminApi {
                 Utc::now(),
             );
         }
+        // A shop the app is not installed on has no object that runs its Functions, whatever
+        // the store data declares: uninstalling removed them, and a new seed does not bring
+        // them back before the app is installed again.
+        let uninstalled: Vec<Arc<Mutex<LiveShop>>> = {
+            let tokens = lock(&self.tokens);
+            self.all_shops()
+                .into_iter()
+                .filter(|(domain, _)| {
+                    tokens
+                        .installed_scopes(domain, &self.auth.client_id)
+                        .is_none()
+                })
+                .map(|(_, shop)| shop)
+                .collect()
+        };
+        for shop in uninstalled {
+            let mut live = lock(&shop);
+            app_domain::remove_function_owners(&mut live.state);
+            live.state.take_events();
+        }
         Reseeded { dropped }
     }
 
@@ -1000,7 +1028,7 @@ impl AdminApi {
             .with_webhooks(&self.webhooks)
             .with_origin(&origin)
             .with_fetched(&fetched)
-            .with_managed_pricing(self.managed_pricing());
+            .with_billing(self.billing());
         let bucket = Bucket {
             throttle: &self.throttle,
             key: &key,
@@ -1355,10 +1383,13 @@ impl AdminApi {
         })
     }
 
-    /// `POST /__lsf/admin/uninstall`: the app's tokens on the shop are revoked, `app/uninstalled`
-    /// is delivered, then the subscriptions the backend made on the shop are deleted and nothing
-    /// more is delivered for it until the app is installed again (`POST /__lsf/admin/install`,
-    /// OAuth, a token exchange), which brings back those of `shopify.app.toml`.
+    /// `POST /__lsf/admin/uninstall`: the app's tokens on the shop are revoked, its subscription
+    /// cancelled, its Functions removed with every object that runs them (`app::uninstall`:
+    /// the shop's checkout runs none of them), `app/uninstalled` is delivered, then the
+    /// subscriptions the backend made on the shop are deleted and nothing more is delivered for
+    /// it until the app is installed again (`POST /__lsf/admin/install`, OAuth, a token
+    /// exchange), which brings back those of `shopify.app.toml`, and not the objects that ran
+    /// its Functions: the app creates them again.
     ///
     /// As Shopify does: "When an app uninstalls, Shopify automatically performs cleanup tasks,
     /// such as deleting WebhookSubscription objects and admin links associated with the app"
@@ -1384,11 +1415,13 @@ impl AdminApi {
         let installed = lock(&self.tokens)
             .installed_scopes(&domain, &self.auth.client_id)
             .is_some();
+        let mut removed = 0;
         let (revoked, deleted) = self.finish_uninstall(&domain, || {
             if installed {
                 self.change_shop(&domain, |state| {
-                    // Shopify cancels the app's subscription when it is uninstalled.
-                    app_domain::billing::cancel_on_uninstall(state);
+                    // Shopify cancels the app's subscription when it is uninstalled, and removes
+                    // its Functions with every object that runs them.
+                    removed = app_domain::uninstall(state);
                     if let Some(shop) = state.shop_gid().map(str::to_string) {
                         state.emit("app/uninstalled", &shop);
                     }
@@ -1397,7 +1430,13 @@ impl AdminApi {
         });
         HttpResponse::json(
             200,
-            &json!({"ok": true, "shop": domain, "revoked": revoked, "deletedSubscriptions": deleted}),
+            &json!({
+                "ok": true,
+                "shop": domain,
+                "revoked": revoked,
+                "deletedSubscriptions": deleted,
+                "removedFunctionOwners": removed,
+            }),
         )
     }
 

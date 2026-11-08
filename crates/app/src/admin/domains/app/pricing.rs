@@ -29,7 +29,12 @@
 //!
 //! The subscription is the Billing API's record (`AppSubscription`, one `AppRecurringPricing` line
 //! with the plan's `planHandle`): `currentAppInstallation.activeSubscriptions`,
-//! `appSubscriptionCancel` and uninstalling the app work on it as on the others (`billing`).
+//! `appSubscriptionCancel` and uninstalling the app work on it as on the others (`billing`). Without
+//! the legacy features they send no webhook either ([`Billing::subscription_topic`]): "Shopify App
+//! Pricing doesn't use webhooks to notify your app of subscription changes", and for "status
+//! changes that happen outside of a redirect (such as cancellations or freezes)" the page sends
+//! the app to the Partner API. Uninstalling the app sends none in either mode: its webhook
+//! subscriptions are deleted with it (`billing::cancel_on_uninstall`).
 
 use std::path::Path;
 
@@ -43,6 +48,46 @@ use crate::admin::state::{ShopState, gid, parse_gid, value};
 /// The user error of the Billing API's charge creation for an app on managed pricing.
 pub const BILLING_API_REFUSED: &str =
     "Managed Pricing Apps cannot use the Billing API (to create charges).";
+
+/// How the app bills, as the mutations of the Billing API see it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Billing {
+    /// No plans declared: the Billing API makes the charges, and sends its webhooks.
+    #[default]
+    BillingApi,
+    /// Managed pricing with the features Shopify keeps for the apps enrolled before April 2026
+    /// ([`Pricing::legacy`], lsf's default): `app_subscriptions/update` on every change.
+    Legacy,
+    /// Managed pricing as Shopify App Pricing is for the apps enrolled since April 2026, and for
+    /// every app after April 28, 2026 (`legacy = false`): no subscription webhook at all.
+    AppPricing,
+}
+
+impl Billing {
+    /// How an app with `pricing` bills: by the Billing API without plans.
+    pub fn of(pricing: Option<&Pricing>) -> Billing {
+        match pricing {
+            Some(pricing) if !pricing.plans.is_empty() && pricing.legacy => Billing::Legacy,
+            Some(pricing) if !pricing.plans.is_empty() => Billing::AppPricing,
+            _ => Billing::BillingApi,
+        }
+    }
+
+    /// Whether the app is on managed pricing: the Billing API creates no charge.
+    pub fn managed(self) -> bool {
+        self != Billing::BillingApi
+    }
+
+    /// The topic of a change of a subscription: `app_subscriptions/update`, or [`CHANGED`] (no
+    /// webhook) under Shopify App Pricing, which "no longer sends webhooks for subscription
+    /// changes" after April 28, 2026, whether the app cancels it or the merchant changes plan.
+    pub fn subscription_topic(self) -> &'static str {
+        match self {
+            Billing::AppPricing => CHANGED,
+            Billing::BillingApi | Billing::Legacy => "app_subscriptions/update",
+        }
+    }
+}
 
 /// How often a plan is billed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -515,11 +560,7 @@ pub fn select(
     } else {
         None
     };
-    let topic = if pricing.legacy {
-        "app_subscriptions/update"
-    } else {
-        CHANGED
-    };
+    let topic = Billing::of(Some(pricing)).subscription_topic();
     for old in &replaced {
         billing::set_status(state, old, "CANCELLED");
         state.emit(topic, old);

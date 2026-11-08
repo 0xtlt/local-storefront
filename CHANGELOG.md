@@ -127,7 +127,9 @@ the same data every run.
   and the template's `redirect(…, { target: "_top" })` land. The merchant picks a plan: a test
   subscription with the plan's `planHandle` replaces the current one, `app_subscriptions/update`
   is delivered, and the browser goes to the plan's welcome link with `charge_id` and
-  `plan_handle`. The Billing API then refuses to create charges, as Shopify does.
+  `plan_handle`. The Billing API then refuses to create charges, as Shopify does. With
+  `legacy = false` (Shopify App Pricing since April 2026), no change of the subscription sends a
+  webhook, `appSubscriptionCancel` from the app included.
   [Managed pricing](docs/admin.md#managed-pricing).
 - **Control endpoints under `/__lsf/admin`:** reset the shop, make and delete extra shops for
   isolated tests, install and uninstall the app, and make session tokens for a test to call the
@@ -244,6 +246,29 @@ the same data every run.
 
 ### Fixed
 
+- **Uninstalling the app stops its Functions.** After `POST /__lsf/admin/uninstall` (or
+  `appUninstall`), the app's payment customization stayed enabled and its Function kept hiding a
+  payment method at the checkout. As Shopify removes an uninstalled app's Functions with their
+  owners, the uninstall now deletes every object that runs one of them, with its metafields: payment
+  and delivery customizations, validations, cart transforms, fulfillment constraint rules and app
+  discounts, those of the store data included (`removedFunctionOwners` counts them). While the app
+  is uninstalled, the shop's checkout runs none of its Functions, even one a scenario names in
+  `extensions`, and the Functions dialog says "the app is not installed on the shop". A reinstall
+  finds none of them, as on Shopify: the app creates them again.
+  [Uninstall](docs/admin.md#tokens).
+- **Adding a checkout scenario no longer throws away what the backend set up.** Without
+  `--static`, a file added or changed in `checkouts/` re-seeded the shops of the Admin API,
+  dropping the app's subscription, customizations and other writes. Scenarios are checkout
+  inputs: lsf now reads them again on top of the same store data and keeps the Admin API's state
+  (`checkout scenarios reloaded (checkouts/b2b.json added): the store and what the Admin API
+  changed are kept (no re-seed)`). Only a change of the store's own data seeds the shops again,
+  and its line names the files (`store data reloaded (products/tee.json changed): the shops of the
+  Admin API were seeded again, …`); `schema/` and `README.md` change nothing.
+  [When the data changes on disk](docs/cli.md#when-the-data-changes-on-disk).
+- **`appSubscriptionCancel` sends no webhook under Shopify App Pricing.** With `legacy = false`
+  in the plans file, it still delivered `app_subscriptions/update` (`CANCELLED`), which Shopify
+  App Pricing "no longer sends" for any subscription change after April 28, 2026. An uninstall
+  sends none in either mode. [Managed pricing](docs/admin.md#managed-pricing).
 - **`--watch` no longer rebuilds the Functions when the app's web front end builds.** In the
   app's own folder, `--watch` now follows only what the builds of the Functions read: the
   workspace's manifests and lock files (`Cargo.toml`, `Cargo.lock`, `package.json`, …) and the

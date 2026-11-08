@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use lsf_app::admin::api::{AdminApi, AdminOptions, HttpRequest, HttpResponse, ThrottleSetting};
-use lsf_app::admin::domains::app::pricing::{self, Pricing, SelectError};
+use lsf_app::admin::domains::app::pricing::{self, Billing, Pricing, SelectError};
 use lsf_app::admin::graphql::{self, Request};
 use lsf_app::admin::resolve::{Registry, ShopResolver};
 use lsf_app::admin::state::ShopState;
@@ -67,9 +67,9 @@ fn choose(
     })
 }
 
-/// The answer to a request through the resolver, the app on managed pricing or not.
-fn run(shop: &mut ShopState, managed: bool, query: &str, variables: Value) -> Value {
-    let mut resolver = ShopResolver::new(shop, Registry::standard()).with_managed_pricing(managed);
+/// The answer to a request through the resolver, the app billing as `billing` says.
+fn run(shop: &mut ShopState, billing: Billing, query: &str, variables: Value) -> Value {
+    let mut resolver = ShopResolver::new(shop, Registry::standard()).with_billing(billing);
     let variables = match variables {
         Value::Object(map) => map,
         _ => Map::new(),
@@ -100,7 +100,7 @@ const ACTIVE: &str = r#"{ currentAppInstallation { activeSubscriptions { id name
   lineItems { plan { pricingDetails { ... on AppRecurringPricing { price { amount currencyCode } interval planHandle } } } } } } }"#;
 
 fn active(shop: &mut ShopState) -> Vec<Value> {
-    let answer = run(shop, true, ACTIVE, json!({}));
+    let answer = run(shop, Billing::Legacy, ACTIVE, json!({}));
     answer["data"]["currentAppInstallation"]["activeSubscriptions"]
         .as_array()
         .unwrap_or_else(|| panic!("{answer}"))
@@ -190,7 +190,7 @@ fn a_new_plan_replaces_the_current_one_at_once_with_a_webhook_for_each() {
     );
     let old = run(
         &mut shop,
-        true,
+        Billing::Legacy,
         r#"query($id: ID!) { node(id: $id) { ... on AppSubscription { status currentPeriodEnd } } }"#,
         json!({"id": pro.subscription}),
     );
@@ -272,19 +272,24 @@ const PURCHASE_CREATE: &str = r#"mutation { appPurchaseOneTimeCreate(name: "Cred
 fn an_app_on_managed_pricing_creates_no_charge_with_the_billing_api_but_cancels_its_subscription() {
     let mut shop = shop();
     let refused = json!([{"field": null, "message": pricing::BILLING_API_REFUSED}]);
-    let created = run(&mut shop, true, SUBSCRIPTION_CREATE, json!({}));
+    let created = run(&mut shop, Billing::Legacy, SUBSCRIPTION_CREATE, json!({}));
     assert_eq!(
         created["data"]["appSubscriptionCreate"],
         json!({"appSubscription": null, "confirmationUrl": null, "userErrors": refused})
     );
-    let purchased = run(&mut shop, true, PURCHASE_CREATE, json!({}));
+    let purchased = run(&mut shop, Billing::Legacy, PURCHASE_CREATE, json!({}));
     assert_eq!(
         purchased["data"]["appPurchaseOneTimeCreate"]["userErrors"],
         refused
     );
     assert!(events(&mut shop).is_empty());
     // An app on manual pricing creates its charges.
-    let manual = run(&mut shop, false, SUBSCRIPTION_CREATE, json!({}));
+    let manual = run(
+        &mut shop,
+        Billing::BillingApi,
+        SUBSCRIPTION_CREATE,
+        json!({}),
+    );
     assert_eq!(
         manual["data"]["appSubscriptionCreate"]["userErrors"],
         json!([])
@@ -294,7 +299,7 @@ fn an_app_on_managed_pricing_creates_no_charge_with_the_billing_api_but_cancels_
     shop.take_events();
     let cancelled = run(
         &mut shop,
-        true,
+        Billing::Legacy,
         r#"mutation($id: ID!) { appSubscriptionCancel(id: $id) { appSubscription { status } userErrors { message } } }"#,
         json!({"id": selected.subscription}),
     );
@@ -304,6 +309,61 @@ fn an_app_on_managed_pricing_creates_no_charge_with_the_billing_api_but_cancels_
     );
     assert!(active(&mut shop).is_empty());
     assert_eq!(pricing::current(&shop), None);
+    // With the legacy features, the cancellation is an `app_subscriptions/update`.
+    assert_eq!(
+        events(&mut shop),
+        [(
+            "app_subscriptions/update".to_string(),
+            selected.subscription.clone()
+        )]
+    );
+}
+
+const CANCEL: &str = r#"mutation($id: ID!) { appSubscriptionCancel(id: $id) { appSubscription { status } userErrors { message } } }"#;
+
+/// Shopify App Pricing "no longer sends webhooks for subscription changes" after April 28, 2026:
+/// the app's own cancellation sends none either, nor does an uninstall in any mode.
+#[test]
+fn without_the_legacy_features_cancelling_a_subscription_sends_no_webhook() {
+    let mut shop = shop();
+    let mut pricing = plans();
+    pricing.legacy = false;
+    assert_eq!(Billing::of(Some(&pricing)), Billing::AppPricing);
+    let selected = choose(&mut shop, &pricing, "pro").unwrap();
+    shop.take_events();
+    let cancelled = run(
+        &mut shop,
+        Billing::AppPricing,
+        CANCEL,
+        json!({"id": selected.subscription}),
+    );
+    assert_eq!(
+        cancelled["data"]["appSubscriptionCancel"],
+        json!({"appSubscription": {"status": "CANCELLED"}, "userErrors": []})
+    );
+    let topics: Vec<String> = events(&mut shop)
+        .into_iter()
+        .map(|(topic, _)| topic)
+        .collect();
+    assert_eq!(topics, [lsf_app::admin::domains::app::CHANGED]);
+    assert!(active(&mut shop).is_empty());
+
+    // The merchant uninstalls the app: the subscription is cancelled, without a webhook.
+    let again = choose(&mut shop, &pricing, "pro").unwrap();
+    shop.take_events();
+    lsf_app::admin::domains::app::billing::cancel_on_uninstall(&mut shop);
+    assert!(events(&mut shop).is_empty());
+    assert!(active(&mut shop).is_empty());
+    assert_ne!(again.subscription, selected.subscription);
+
+    // Without plans, or with the legacy features, the Billing API's webhook.
+    assert_eq!(Billing::of(None), Billing::BillingApi);
+    assert_eq!(Billing::of(Some(&plans())), Billing::Legacy);
+    assert_eq!(
+        Billing::of(Some(&Pricing::default())),
+        Billing::BillingApi,
+        "no plans: the Billing API"
+    );
 }
 
 // ---- through `AdminApi::handle` ---------------------------------------------------------------
@@ -623,6 +683,52 @@ fn the_merchant_chooses_and_changes_plans_on_the_page_and_the_backend_hears_of_i
     assert_eq!(
         json_of(&get(&api, "/__lsf/admin/pricing-plans"))["current"],
         json!({"id": "gid://shopify/AppSubscription/2", "name": "Free", "plan": "free"})
+    );
+
+    // Without the legacy features, the app cancels the free plan: no webhook. The next one the
+    // backend hears of is the plan chosen once they are back.
+    let mut plans = plans_json();
+    plans["legacy"] = json!(false);
+    let set = send(
+        &api,
+        "PUT",
+        "/__lsf/admin/pricing-plans",
+        &[],
+        plans.to_string().as_bytes(),
+    );
+    assert_eq!(set.status, 200, "{}", text(&set));
+    assert_eq!(api.billing(), pricing::Billing::AppPricing);
+    let cancelled = graphql(
+        &api,
+        CANCEL,
+        json!({"id": "gid://shopify/AppSubscription/2"}),
+    );
+    assert_eq!(
+        cancelled["data"]["appSubscriptionCancel"]["appSubscription"]["status"],
+        json!("CANCELLED")
+    );
+    let set = send(
+        &api,
+        "PUT",
+        "/__lsf/admin/pricing-plans",
+        &[],
+        plans_json().to_string().as_bytes(),
+    );
+    assert_eq!(set.status, 200, "{}", text(&set));
+    assert_eq!(api.billing(), pricing::Billing::Legacy);
+    let pro = send(
+        &api,
+        "POST",
+        "/__lsf/admin/pricing-plans/pro/select",
+        &[],
+        json!({"shop": shop}).to_string().as_bytes(),
+    );
+    assert_eq!(pro.status, 200, "{}", text(&pro));
+    let next = receiver.next().1["app_subscription"].clone();
+    assert_eq!(
+        (&next["plan_handle"], &next["status"]),
+        (&json!("pro"), &json!("ACTIVE")),
+        "the cancellation sent nothing: {next}"
     );
 
     // Gone: back to no plans, and the Billing API again.

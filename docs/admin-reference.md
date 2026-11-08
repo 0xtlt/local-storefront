@@ -975,14 +975,16 @@ fetches (from the loader of a page, see ["Billing from a page"](admin.md#javascr
 - Approved, a subscription is `ACTIVE` and the app's other active subscription `CANCELLED`;
   `currentAppInstallation { activeSubscriptions oneTimePurchases allSubscriptions }` list them. A
   charge left pending two days (by the shop's clock) is `EXPIRED`. Uninstalling the app
-  (`POST /__lsf/admin/uninstall`) cancels its subscription.
+  (`POST /__lsf/admin/uninstall`) cancels its subscription, without a webhook.
 - `appUsageRecordCreate` charges a usage line of an active subscription, up to its capped amount
   (`"Failed to create usage charge"` past it); the same `idempotencyKey` gives back the same
   record. `appSubscriptionLineItemUpdate` asks for a new capped amount, which the merchant
   approves on the same page. `appSubscriptionTrialExtend` and `appSubscriptionCancel` too.
 - Webhooks: `app_subscriptions/update` (a status or a capped amount changed),
   `app_purchases_one_time/update`, `app_subscriptions/approaching_capped_amount` (the usage
-  balance crossed 90%).
+  balance crossed 90%). Under managed pricing with `legacy = false` (Shopify App Pricing), no
+  change of a subscription sends one, `appSubscriptionCancel` included
+  ([managed pricing](admin.md#managed-pricing)).
 - No money moves: `prorate` credits nothing, and there are no billing cycles. A replacement
   Shopify defers to the next cycle (`APPLY_ON_NEXT_BILLING_CYCLE`, and some `STANDARD` ones)
   applies at once, and the usage balance never resets. `currentPeriodEnd` is the end of the trial,
@@ -1021,8 +1023,10 @@ which the store sync writes back as the Function's settings in `checkout.functio
 `enabled`: the local checkout runs the Function only through an enabled owner, as Shopify does,
 so creating, disabling (`…Update`, `…Activation`, `validationUpdate(enable:)`) or deleting one
 changes the next checkout. A shop the app was just installed on has none: lsf creates no owner
-at install (the store data may declare some, `checkout.functions.<handle>.enabled`). Titles are
-the Functions' names, a `t:` key of `shopify.extension.toml` read from its default locale.
+at install (the store data may declare some, `checkout.functions.<handle>.enabled`). Uninstalling
+the app deletes them all, with the app discounts and the fulfillment constraint rules, and a
+reinstall brings none back ([uninstall](admin.md#tokens)). Titles are the Functions' names, a
+`t:` key of `shopify.extension.toml` read from its default locale.
 
 **Bulk operations.** `bulkOperationRunQuery` runs the query against the shop, every page of every
 connection, and writes JSON Lines as Shopify does (one line per node, nested connections on lines
@@ -1207,7 +1211,7 @@ errors (lsf's files are `READY` at once, so only a file made `FAILED` otherwise 
 ### The app's installation and Shopify's other services
 
 **Access.** `appUninstall` uninstalls the app as `POST /__lsf/admin/uninstall` does
-([Uninstall](admin.md#tokens)).
+([Uninstall](admin.md#tokens)): its Functions go with every object that runs them.
 `appRevokeAccessScopes` revokes optional scopes the installation was granted (not the
 `scopes` of `shopify.app.toml`: `CANNOT_REVOKE_REQUIRED_SCOPES`; not an undeclared one; not a
 `read_x` its `write_x` implies): every token of the installation loses them at once, and

@@ -7,8 +7,9 @@
 //!
 //! - **`appUninstall`** "Uninstalls an App from a shop. Apps use this mutation to uninstall
 //!   themselves": the same uninstall as `POST /__lsf/admin/uninstall` (the app's tokens revoked,
-//!   its subscription cancelled, `app/uninstalled` delivered, then the shop's webhook
-//!   subscriptions deleted). The payload names the app; the token that asked works no more.
+//!   its subscription cancelled, its Functions removed with every object that runs them
+//!   (`app::uninstall`), `app/uninstalled` delivered, then the shop's webhook subscriptions
+//!   deleted). The payload names the app; the token that asked works no more.
 //! - **`appRevokeAccessScopes`**: "You can only revoke scopes that are configured as
 //!   `optional_scopes` and that were dynamically granted. Access scopes configured in the
 //!   `scopes` field can't be revoked dynamically." The codes are Shopify's:
@@ -163,8 +164,9 @@ fn app_uninstall(m: &mut Mutation<'_>, _ctx: &FieldContext<'_>) -> Result<Value,
         return Ok(payload(json!({"app": null}), &[error]));
     };
     let state = m.state_mut();
-    // Shopify cancels the app's subscription when it is uninstalled.
-    super::super::app::billing::cancel_on_uninstall(state);
+    // Shopify cancels the app's subscription when it is uninstalled, and removes its Functions
+    // with every object that runs them.
+    super::super::app::uninstall(state);
     if let Some(shop) = state.shop_gid().map(str::to_string) {
         state.emit("app/uninstalled", &shop);
     }

@@ -585,6 +585,108 @@ fn a_change_of_the_files_and_a_reset_bring_the_files_back() {
     assert!(Arc::ptr_eq(&loaded.store, &loaded.base));
 }
 
+/// `--watch`: a checkout scenario added or changed is read again on top of the same store data,
+/// and the shops of the Admin API keep what the backend changed (here a payment customization
+/// and a product's title); a change of the store's own data seeds them again.
+#[test]
+fn a_scenario_added_while_watching_keeps_what_the_backend_changed() {
+    let data = ScenarioData::new("sync-scenario-watch", &[]);
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
+    let app = App::open(&theme, Some(&data.0), Revalidate::Never, &[]).expect("the theme");
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            polaris: Default::default(),
+            admin: Some(Default::default()),
+            live_reload: false,
+            watch: true,
+            quiet: true,
+            compress: false,
+            minify: false,
+            throttle: Default::default(),
+            timings: false,
+            customer: None,
+            checkout: Some(crate::checkout::CheckoutOptions {
+                app_dir: fixture_app(),
+                extensions: Vec::new(),
+                variant: crate::checkout::Variant::Standard,
+                standalone: false,
+                no_functions: false,
+            }),
+        },
+    );
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "write_products,write_payment_customizations"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    mutate(
+        &state,
+        r#"mutation($customization: PaymentCustomizationInput!) { paymentCustomizationCreate(paymentCustomization: $customization) { paymentCustomization { id } userErrors { field message } } }"#,
+        json!({"customization": {
+            "functionHandle": "payment-rules", "title": "Hide bank deposit", "enabled": true,
+            "metafields": [{"namespace": "$app:config", "key": "settings", "type": "json", "value": r#"{"hideName":"Bank Deposit","hideAbove":0}"#}],
+        }}),
+    );
+    retitle(&state, "ceramic-mug", "Stoneware Mug");
+    let bank = |state: &ServerState, session: &str| -> bool {
+        let path = cart_checkout(
+            state,
+            session,
+            json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        );
+        body_json(&get(state, &format!("{path}.json"), session))["paymentMethods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method["name"] == "Bank Deposit")
+    };
+    assert!(!bank(&state, "sw-0"));
+    assert_eq!(title_on_page(&state, "ceramic-mug", "sw"), "Stoneware Mug");
+
+    // A scenario added, the README rewritten: the scenarios are read again, nothing else moves.
+    std::fs::write(
+        data.0.join("checkouts/added.json"),
+        r#"{"title": "Added while watching"}"#,
+    )
+    .unwrap();
+    std::fs::write(data.0.join("README.md"), "notes").unwrap();
+    state.observe_changes();
+    assert!(
+        state.loaded().store.scenario("added").is_some(),
+        "the new scenario is read"
+    );
+    assert!(!bank(&state, "sw-1"), "the payment customization is kept");
+    assert_eq!(title_on_page(&state, "ceramic-mug", "sw"), "Stoneware Mug");
+    assert_eq!(
+        get(&state, "/checkout?scenario=added", "sw-2").status,
+        302,
+        "it opens"
+    );
+    // Changed: the same.
+    std::fs::write(
+        data.0.join("checkouts/added.json"),
+        r#"{"title": "Changed while watching"}"#,
+    )
+    .unwrap();
+    state.observe_changes();
+    assert_eq!(
+        state.loaded().store.scenario("added").unwrap().title,
+        "Changed while watching"
+    );
+    assert!(!bank(&state, "sw-3"));
+
+    // The store's own data changes: the shops are seeded again, and the backend's changes go.
+    let pages = data.0.join("pages.json");
+    let content = std::fs::read_to_string(&pages).unwrap();
+    std::fs::write(&pages, format!("{content}\n")).unwrap();
+    state.observe_changes();
+    assert_eq!(title_on_page(&state, "ceramic-mug", "sw"), "Ceramic Mug");
+    assert!(bank(&state, "sw-4"));
+}
+
 #[test]
 fn an_order_placed_at_the_checkout_does_not_build_the_store_again() {
     let state = checkout_admin_server();
@@ -725,4 +827,95 @@ fn a_burst_of_mutations_is_built_once_and_pages_see_whole_stores() {
         }
     });
     assert_eq!(title_on_page(&state, "ceramic-mug", "burst"), "Mug 29");
+}
+
+/// Uninstalling the app removes its Functions with every object that runs them: the shop's
+/// checkout runs none of them, and a reinstalled app finds no owner until it creates one again.
+#[test]
+fn uninstalling_the_app_stops_its_functions_and_a_reinstall_finds_no_owner() {
+    let state = checkout_admin_server();
+    let settings = r#"{"hideName":"Bank Deposit","hideAbove":0}"#;
+    let customize = |state: &ServerState| {
+        mutate(
+            state,
+            r#"mutation($customization: PaymentCustomizationInput!) { paymentCustomizationCreate(paymentCustomization: $customization) { paymentCustomization { id } userErrors { field message } } }"#,
+            json!({"customization": {
+                "functionHandle": "payment-rules", "title": "Hide bank deposit", "enabled": true,
+                "metafields": [{"namespace": "$app:config", "key": "settings", "type": "json", "value": settings}],
+            }}),
+        )
+    };
+    customize(&state);
+    mutate(
+        &state,
+        r#"mutation($discount: DiscountAutomaticAppInput!) { discountAutomaticAppCreate(automaticAppDiscount: $discount) { automaticAppDiscount { discountId } userErrors { field message } } }"#,
+        json!({"discount": {
+            "title": "Volume 10", "functionHandle": "volume-discount", "discountClasses": ["PRODUCT"],
+            "startsAt": "2026-01-01T00:00:00Z",
+            "metafields": [{"namespace": "$app:config", "key": "settings", "type": "json", "value": r#"{"minimumQuantity":1,"percentage":10}"#}],
+        }}),
+    );
+    let checkout = |state: &ServerState, session: &str| -> Json {
+        let path = cart_checkout(
+            state,
+            session,
+            json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        );
+        body_json(&get(state, &format!("{path}.json"), session))
+    };
+    let bank = |checkout: &Json| {
+        checkout["paymentMethods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method["name"] == "Bank Deposit")
+    };
+    let idle = |checkout: &Json, handle: &str| -> String {
+        checkout["idle"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|idle| idle["handle"] == handle)
+            .map(|idle| idle["reason"].as_str().unwrap().to_string())
+            .unwrap_or_else(|| panic!("{handle} ran: {}", checkout["idle"]))
+    };
+    let set_up = checkout(&state, "co-un-0");
+    assert!(!bank(&set_up));
+    assert_eq!(set_up["discounts"][0]["function"], "volume-discount");
+
+    let uninstalled = admin_request(&state, "POST", "/__lsf/admin/uninstall", "{}");
+    assert_eq!(uninstalled.status, 200, "{}", text(&uninstalled));
+    assert_eq!(body_json(&uninstalled)["removedFunctionOwners"], json!(2));
+    assert!(state.app_uninstalled());
+    let gone = checkout(&state, "co-un-1");
+    assert!(bank(&gone), "{}", gone["paymentMethods"]);
+    assert_eq!(gone["discounts"], json!([]));
+    assert_eq!(gone["runs"], json!([]));
+    for handle in ["payment-rules", "volume-discount"] {
+        assert!(
+            idle(&gone, handle).contains("the app is not installed on the shop"),
+            "{}",
+            gone["idle"]
+        );
+    }
+
+    // Installed again: Shopify gives the app no owner back. It creates one.
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "write_products,write_discounts,write_payment_customizations"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    assert!(!state.app_uninstalled());
+    let again = checkout(&state, "co-un-2");
+    assert!(bank(&again));
+    assert_eq!(again["discounts"], json!([]));
+    assert!(
+        idle(&again, "payment-rules").contains("the shop has no payment customization"),
+        "{}",
+        again["idle"]
+    );
+    customize(&state);
+    assert!(!bank(&checkout(&state, "co-un-3")));
 }

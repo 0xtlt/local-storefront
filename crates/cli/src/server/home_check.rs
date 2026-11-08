@@ -221,22 +221,27 @@ fn with_message(error: String, logs: &str) -> String {
     }
 }
 
-/// What a check was run on: the very store that was loaded, and the app as its files are.
+/// What a check was run on: the very store that was loaded, the app as its files are, and
+/// whether the Admin API had the app uninstalled (none of its Functions runs then).
 struct Key {
     store: Arc<Store>,
     app: u64,
+    uninstalled: bool,
 }
 
 impl Key {
-    fn of(app: &App, store: &Arc<Store>) -> Key {
+    fn of(app: &App, store: &Arc<Store>, uninstalled: bool) -> Key {
         Key {
             store: store.clone(),
             app: fingerprint(app),
+            uninstalled,
         }
     }
 
     fn matches(&self, other: &Key) -> bool {
-        Arc::ptr_eq(&self.store, &other.store) && self.app == other.app
+        Arc::ptr_eq(&self.store, &other.store)
+            && self.app == other.app
+            && self.uninstalled == other.uninstalled
     }
 }
 
@@ -275,9 +280,10 @@ impl Cache {
         *self.last.lock().expect("check cache poisoned") = None;
     }
 
-    /// The last check, if it was run on this app and this store.
-    pub fn get(&self, app: &App, store: &Arc<Store>) -> Option<Arc<Report>> {
-        let key = Key::of(app, store);
+    /// The last check, if it was run on this app and this store, the app installed or not as
+    /// it is now (`uninstalled`).
+    pub fn get(&self, app: &App, store: &Arc<Store>, uninstalled: bool) -> Option<Arc<Report>> {
+        let key = Key::of(app, store, uninstalled);
         let last = self.last.lock().expect("check cache poisoned");
         last.as_ref()
             .filter(|(cached, _)| cached.matches(&key))
@@ -286,7 +292,8 @@ impl Cache {
 
     /// The check of this app and this store: the last one, or a new one.
     pub fn get_or_run(&self, state: &ServerState, app: &App, store: &Arc<Store>) -> Arc<Report> {
-        self.get_or_run_with(app, store, || run(state, app, store, BUDGET))
+        let uninstalled = state.app_uninstalled();
+        self.get_or_run_with(app, store, uninstalled, || run(state, app, store, BUDGET))
     }
 
     /// [`Cache::get_or_run`], with `check` to run the check.
@@ -294,21 +301,22 @@ impl Cache {
         &self,
         app: &App,
         store: &Arc<Store>,
+        uninstalled: bool,
         check: impl FnOnce() -> Report,
     ) -> Arc<Report> {
         let _running = self
             .running
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(report) = self.get(app, store) {
+        if let Some(report) = self.get(app, store, uninstalled) {
             return report;
         }
         // What the check runs on, taken before it runs: a module rebuilt while it runs makes the
         // key of after differ, and what it found is not kept for the new module.
-        let before = Key::of(app, store);
+        let before = Key::of(app, store, uninstalled);
         let report = Arc::new(check());
         // A check that ran out of time is not kept either: the next request tries again.
-        if report.checked == report.total && before.matches(&Key::of(app, store)) {
+        if report.checked == report.total && before.matches(&Key::of(app, store, uninstalled)) {
             *self.last.lock().expect("check cache poisoned") = Some((before, report.clone()));
         }
         report

@@ -131,7 +131,11 @@ Function runs, as for a run that names them (a scenario's `extensions`, `lsf app
 <handle>`, the library's tests). lsf-cli builds the map from `CheckoutSettings::owners`
 (`checkout.functions.<handle>.enabled` of the store data, which the Admin API's store sync writes
 from the owners the app creates). Discount Functions run through `config.discounts`, active
-discounts only (the sync writes those whose dates hold).
+discounts only (the sync writes those whose dates hold). `config.uninstalled` (the server sets it
+while the Admin API has the app uninstalled from the default shop) comes before all of that: no
+Function runs, whatever `enabled`, `owners` and `discounts` say, since Shopify removed the app's
+Functions with their owners; each Function of `enabled` the checkout would run is in `idle`
+(owner `DiscountNode` for a discount Function), saying the app is not installed.
 
 Network access (`fetch`): `cart.lines.discounts.generate`, `cart.delivery-options.discounts.generate`
 and `cart.validations.generate` may have a `.fetch` target (`TargetKind::*Fetch`). Right before its

@@ -551,6 +551,7 @@ pub(super) fn run_scenario(
         .unwrap_or_else(|| store.primary_language());
     let selection = options(state).selection(app, Some(scenario))?;
     Ok(price_with(
+        state,
         app,
         &selection,
         &session,
@@ -640,6 +641,7 @@ fn price(
     let scenario = scenario_named(store, checkout.scenario.as_deref());
     let selection = options.selection(&app, scenario)?;
     let result = price_with(
+        state,
         &app,
         &selection,
         session,
@@ -655,6 +657,7 @@ fn price(
 /// [`price`] with the app loaded and the extensions selected.
 #[allow(clippy::too_many_arguments)]
 fn price_with(
+    state: &ServerState,
     app: &App,
     selection: &Selection,
     session: &Session,
@@ -675,7 +678,7 @@ fn price_with(
             .map(|customer| customer.phone.clone())
             .filter(|phone| !phone.is_empty());
     }
-    let config = config_for(store, checkout.scenario.as_deref());
+    let config = checkout_config(state, store, checkout.scenario.as_deref());
     pipeline::compute_with_options(
         app,
         selection,
@@ -686,6 +689,19 @@ fn price_with(
         &lsf_app::checkout::input::build,
         runs,
     )
+}
+
+/// The settings a checkout of the server runs with ([`config_for`]): none of the app's
+/// Functions runs while the Admin API has it uninstalled from the shop, whatever the owners or
+/// the scenario say ([`lsf_app::checkout::CheckoutConfig::uninstalled`]).
+fn checkout_config(
+    state: &ServerState,
+    store: &Store,
+    scenario: Option<&str>,
+) -> lsf_app::checkout::CheckoutConfig {
+    let mut config = config_for(store, scenario);
+    config.uninstalled = state.app_uninstalled();
+    config
 }
 
 /// The checkout as the Functions compute it for `step`: `Interaction` for everything the buyer
@@ -1162,7 +1178,7 @@ pub(super) fn apply_update(
         return conflict(state, incoming, id);
     }
     let (mut session, store, mut checkout, basis) = read(state, id);
-    let config = config_for(&store, checkout.scenario.as_deref());
+    let config = checkout_config(state, &store, checkout.scenario.as_deref());
     // The operations that run the Functions (a change of a line) see the checkout the buyer sees.
     let language = language_of(state, &store, incoming);
     for (position, operation) in operations.iter().enumerate() {

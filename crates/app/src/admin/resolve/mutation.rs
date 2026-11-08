@@ -25,6 +25,7 @@ use serde_json::{Map, Value, json};
 
 use super::{Obj, Registry, ShopResolver};
 use crate::admin::auth::Grant;
+use crate::admin::domains::app::pricing::Billing;
 use crate::admin::graphql::{self, FieldContext, FieldError, Output, Request};
 use crate::admin::state::{Record, Savepoint, ShopState};
 use crate::admin::version::ApiVersion;
@@ -44,7 +45,7 @@ pub struct Mutation<'m> {
     version: ApiVersion,
     origin: &'m str,
     fetched: Option<&'m crate::admin::sources::Fetched>,
-    managed_pricing: bool,
+    billing: Billing,
     notes: Vec<String>,
     /// Whether the changes stay when the payload has user errors (a partial update).
     keep: bool,
@@ -103,7 +104,12 @@ impl Mutation<'_> {
 
     /// Whether the app is on managed pricing: the Billing API creates no charge.
     pub fn managed_pricing(&self) -> bool {
-        self.managed_pricing
+        self.billing.managed()
+    }
+
+    /// How the app bills: what decides the webhooks of a change of a subscription.
+    pub fn billing(&self) -> Billing {
+        self.billing
     }
 
     /// What the request's sources gave, fetched before the shop was locked: what
@@ -117,18 +123,18 @@ impl Mutation<'_> {
     /// here (within this mutation's savepoint, as [`Mutation::state_mut`] opens it), and its
     /// events are the request's.
     pub fn resolver(&mut self) -> ShopResolver<'_> {
-        let (registry, grant, webhooks, version, origin, fetched, managed_pricing) = (
+        let (registry, grant, webhooks, version, origin, fetched, billing) = (
             self.registry,
             self.grant,
             self.webhooks,
             self.version,
             self.origin,
             self.fetched,
-            self.managed_pricing,
+            self.billing,
         );
         let mut resolver = ShopResolver::new(self.state_mut(), registry)
             .with_origin(origin)
-            .with_managed_pricing(managed_pricing);
+            .with_billing(billing);
         resolver.grant = grant;
         resolver.webhooks = webhooks;
         resolver.version = version;
@@ -337,7 +343,7 @@ pub(super) fn run(
         version: resolver.version,
         origin: resolver.origin,
         fetched: resolver.fetched,
-        managed_pricing: resolver.managed_pricing,
+        billing: resolver.billing,
         notes: Vec::new(),
         keep: false,
     };

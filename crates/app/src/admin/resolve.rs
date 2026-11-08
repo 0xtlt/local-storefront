@@ -46,6 +46,7 @@ use indexmap::IndexSet;
 use serde_json::{Map, Value, json};
 
 use crate::admin::auth::Grant;
+use crate::admin::domains::app::pricing::Billing;
 use crate::admin::graphql::{self, FieldContext, FieldError, Output};
 use crate::admin::schema::{Kind, Schema, TypeRef};
 use crate::admin::state::{Record, ShopState, gid_number, gid_type, parse_gid};
@@ -174,9 +175,9 @@ pub struct ShopResolver<'a> {
     /// Whether the request is the query of a bulk operation: its connections take every item
     /// when they are given neither `first` nor `last`, and no limit of 250.
     bulk: bool,
-    /// Whether the app is on managed pricing (it declared plans): the Billing API creates no
-    /// charge ([`crate::admin::domains::app::pricing`]).
-    managed_pricing: bool,
+    /// How the app bills: by the Billing API, or on managed pricing (it declared plans), whose
+    /// Billing API creates no charge ([`crate::admin::domains::app::pricing`]).
+    billing: Billing,
     report: RefCell<Report>,
 }
 
@@ -198,7 +199,7 @@ impl<'a> ShopResolver<'a> {
             origin: DEFAULT_ORIGIN,
             fetched: None,
             bulk: false,
-            managed_pricing: false,
+            billing: Billing::BillingApi,
             report: RefCell::new(Report::default()),
         }
     }
@@ -229,10 +230,11 @@ impl<'a> ShopResolver<'a> {
         self
     }
 
-    /// Says the app is on managed pricing: the Billing API's charge mutations answer
-    /// [`crate::admin::domains::app::pricing::BILLING_API_REFUSED`].
-    pub fn with_managed_pricing(mut self, managed: bool) -> ShopResolver<'a> {
-        self.managed_pricing = managed;
+    /// Says how the app bills: on managed pricing, the Billing API's charge mutations answer
+    /// [`crate::admin::domains::app::pricing::BILLING_API_REFUSED`], and under Shopify App
+    /// Pricing no change of a subscription sends a webhook.
+    pub fn with_billing(mut self, billing: Billing) -> ShopResolver<'a> {
+        self.billing = billing;
         self
     }
 

@@ -887,6 +887,14 @@ The owners come from two places:
 lsf creates no owner at install: `paymentCustomizations` answers none, as Shopify does, and an
 app that checks whether it is set up sees that it is not.
 
+**Uninstalled, the app runs nothing.** Shopify removes an uninstalled app's Functions, and a
+Function goes with its owners: `POST /__lsf/admin/uninstall` (or `appUninstall`) deletes every
+owner of the app's Functions, those of the store data and the app discounts included. While the
+app is not installed, the shop's checkout runs none of its Functions, whatever a scenario
+declares or names in its `extensions`, and lists each as not run because "the app is not
+installed on the shop". Installing it again brings no owner back: the app creates them, as after
+a first install ([uninstall](admin.md#tokens)).
+
 **Trying a Function alone** does not need an owner. A [scenario](#scenarios) that names it in
 `extensions` runs it, and so does `lsf app function run <handle>`, with the metafields of
 `checkout.functions` (the scenario's, or the store data's). That is how the scenarios of
@@ -896,6 +904,9 @@ of `app dev` only narrows the extensions: the shop's owners still decide which F
 A Function the shop's checkout leaves out is said: the home page warns that the shop has no
 enabled owner of it, the "Functions" dialog of the checkout lists it under "Functions not run",
 with why, and so does `lsf app function run` (`Not run: …`; `idle` in JSON).
+
+A scenario added or edited while lsf runs is read again without seeding the shops of the Admin
+API: the owners the app created stay ([when the data changes on disk](cli.md#when-the-data-changes-on-disk)).
 
 ### How discounts stack
 

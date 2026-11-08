@@ -652,8 +652,11 @@ storefront, the checkout and the Function inputs already use.
   `Shop` id (`stable_id("shop", domain)`), its `myshopifyDomain`, and every value naming the old
   domain or `Shop` GID rewritten (a custom primary domain stays). `reset` puts every shop back to
   the seed and keeps the shops; `reseed` seeds again from new store data, then resets.
-- Store data edited while the server runs (`--watch`) reseeds every shop: what the Admin API
-  changed is dropped, and the terminal says so. `DELETE /__lsf/admin` reseeds on demand.
+- Store data edited while the server runs (without `--static`) reseeds every shop: what the
+  Admin API changed is dropped, and the terminal says so. A change of checkout scenarios alone
+  (`checkouts/`) does not: the seed reads no scenario ("Server wiring", 6). A shop the app is not
+  installed on gets no owner of its Functions from a reseed (`app::remove_function_owners` after
+  it). `DELETE /__lsf/admin` reseeds on demand.
 
 ### How a field is resolved (`resolve`)
 
@@ -1726,6 +1729,22 @@ changed.
   `checkout.functions` gives it. `enabled: false` on a cart transform makes none (it cannot be
   turned off). Otherwise none, as on a shop the app was just installed on: the app creates them,
   and an app that checks whether it is set up sees that it is not. Without an app, none.
+- **Uninstalled** (`domains::app::uninstall`): the app's Functions go with every object that
+  runs them, as Shopify removes an uninstalled app's Functions and a Function goes "including all
+  associated function owners" (shopify.dev, "About Shopify Functions"; staff on the community
+  forums: the cart transforms "should be automatically removed", "the job that deletes the price
+  rules and their associated codes runs asynchronously after an app is uninstalled"; a payment
+  customization left active was "an issue on our end"). `remove_function_owners` deletes, with
+  their metafields, the records of `FUNCTION_OWNER_TYPES` (`CartTransform`,
+  `DeliveryCustomization`, `PaymentCustomization`, `Validation`, `FulfillmentConstraintRule`)
+  and the discount nodes whose discount is a `DiscountAutomaticApp` or a `DiscountCodeApp`,
+  those of the seed included; Shopify's own discount types stay. lsf does it at once (Shopify, in
+  the background). A reinstall brings none back (a reinstalled app "had to register them again
+  through the API"), nor does a reseed while the app is uninstalled (`AdminApi::reseed` removes
+  them again from those shops). The store sync then writes `checkout.discounts: []` and every
+  Function without an owner; the server's checkout also runs none of the app's Functions while
+  the default shop has the app uninstalled (`CheckoutConfig::uninstalled`, which covers a
+  scenario's own owners and `extensions`).
 
 What the app family's mutations make (`domains/app/`: `billing`, `discounts`, `functions`,
 `bulk`, `uploads`, `metafields`), in the same shapes, so that the store sync reads them as it
@@ -1801,6 +1820,15 @@ back, and those that apply. A reset of the shops keeps them, as it keeps the stu
   2026: `charge_id`, the webhook, test subscriptions. `false` is what its page says of the apps
   enrolled since, and of every app after April 28, 2026: `plan_handle` alone, no webhook; such an
   app reads the Partner API, which lsf does not simulate, so the record stays in the Admin API.
+- **The mutations** see how the app bills through `pricing::Billing` (`BillingApi`, `Legacy`,
+  `AppPricing`; `AdminApi::billing`, then `ShopResolver::with_billing` and `Mutation::billing`).
+  `Billing::subscription_topic` is the topic of a change of a subscription:
+  `app_subscriptions/update`, or `CHANGED` under `AppPricing`, whose page says "Shopify App
+  Pricing doesn't use webhooks to notify your app of subscription changes" and sends the app to
+  the Partner API for "status changes that happen outside of a redirect (such as cancellations
+  or freezes)": `appSubscriptionCancel` uses it, as `pricing::select` does. An uninstall cancels
+  without a webhook in every mode (`billing::cancel_on_uninstall`): the app's subscriptions go
+  with it.
 
 ### Markets, catalogs and channels (`domains/markets.rs`)
 
@@ -2145,7 +2173,11 @@ for each subscription of the shop whose topic matches and whose `filter` matches
   control endpoint, OAuth, a token exchange: `AdminApi::note_installs` after each, the tokens
   locked) brings them back; the shop's are gone. `shop/redact`, "48 hours after a store owner
   uninstalls your app" ("Privacy law compliance"), is sent on demand. A trigger is not an
-  event: it is sent whether the app is installed or not.
+  event: it is sent whether the app is installed or not. Before `app/uninstalled`, the uninstall
+  changes the shop's records (`domains::app::uninstall`, for the control endpoint and
+  `appUninstall` alike): the subscription is cancelled (no webhook), and every object that runs
+  one of the app's Functions is deleted with its metafields (`remove_function_owners`, see
+  "App"), each emitting `CHANGED`, which no subscription receives.
 - **Where**: a `uri` starting with `/` joins the app URL (`--app-url`, else `application_url`),
   trailing slashes removed, as Shopify's CLI prepends `application_url`; an absolute one under
   `application_url` (or on its origin) moves to `--app-url` when it is given; another HTTP(S) URL
@@ -2442,12 +2474,20 @@ which every mutation would have paid on the Admin request's path, ten times for 
 5. **Live reload**: the token has the generation of the store built (`Loaded::synced`), and
    `observe_changes` builds before it computes the token: the pages reload once the store is
    built, and find it so.
-6. **The files change** (`--watch`, `POST /__lsf/reload`): `reload` reads the files again and
-   loads the new base, reseeds
+6. **The files change** (without `--static`, or `POST /__lsf/reload`): `reload_and_reseed`
+   reads the files again and loads the new base, reseeds
    (`AdminApi::reseed`; the terminal says what was dropped), moves sync to the new base
    (`sync_store`, which counts a change), applies the theme the reseeded shop has
    (`sync_theme`: the directory, without the Admin API's files or script tags), and builds
    from `synced()`: the store is the new base, unless the backend changed the shop in between.
+   The watch (`refresh_if_changed`) keeps the files as they were last read
+   (`server::data_files::DataFiles`: path, size, modification time) and sorts what changed by
+   `lsf_core::store::load::role_of`: the store's own data reseeds as above; checkout scenarios
+   alone (`checkouts/*.json`, which the seed does not read) go through `reload_scenarios`,
+   which reads the files and moves sync to the new base without reseeding, so the shops keep
+   the backend's changes and the store is the new files with the same overlay; a file the store
+   does not read (`schema/`, `README.md`) does nothing. The line says which files changed and
+   what was done. `POST /__lsf/reload` always reseeds.
 7. **What the store data refuses** of the overlay: the problems of the store built with it that
    the files alone do not have (`Applied::diagnostics`) are printed when they differ from the
    last build's, and given to `AdminApi::sync_built`, which `GET /__lsf/admin` shows in

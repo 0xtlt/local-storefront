@@ -90,9 +90,9 @@ home:   http://127.0.0.1:9292/__lsf/checkouts   (extensions and checkout scenari
 Without `--app`, it prints none of these. An app without an `extensions` directory is a
 backend, and its line says so: `app:    ../my-app (no extensions: the Admin API, webhooks and
 the app proxy)`. The token is the same every run for a shop and an app; a tool reads it from
-`GET /__lsf/admin` (`shops[0].token`). When the data changes on disk (or `POST /__lsf/reload`),
-the shops of the Admin API are seeded again, and the server says when that drops what the Admin
-API had changed.
+`GET /__lsf/admin` (`shops[0].token`). When the data changes on disk, the server reads it
+again, and seeds the shops of the Admin API again only when the store's own data changed, not
+for a checkout scenario ([when the data changes on disk](#when-the-data-changes-on-disk)).
 
 While it runs, a webhook the backend refuses (`401`, `403`) gets one line, at its first refusal,
 `--quiet` or not, naming the secret lsf signed it with as `client secret:` does:
@@ -108,6 +108,23 @@ Address already in use`), or, with `--strict`, when the store data has errors (e
 render budget (see [the render budget](compatibility.md#the-render-budget)).
 
 While it runs, tests talk to it through the [control API](control-api.md).
+
+### When the data changes on disk
+
+Without `--static`, the server looks at the data folder before it answers (every 300 ms at most)
+and reads it again when a file changed. What it does then depends on the files, and the
+terminal says which changed and what was done:
+
+| What changed | What the server does | The line |
+|---|---|---|
+| The store's own data: a data file at the root (`store.json`), a file of `products/`, `collections/`, `pages/`, `blogs/`, `customers/`, `menus/`, or of `files/` | Reads everything again and seeds the shops of the Admin API again from it: what the backend changed there (a product, a subscription, a customization) is dropped. | `store data reloaded (products/tee.json changed): the shops of the Admin API were seeded again, and what the Admin API changed in local-supply-co.myshopify.com was dropped` |
+| Only checkout scenarios (`checkouts/*.json`) | Reads the scenarios again on top of the same store data. The shops of the Admin API keep their state: the app's subscription, its customizations, its other writes. An open checkout follows its scenario. | `checkout scenarios reloaded (checkouts/b2b.json added): the store and what the Admin API changed are kept (no re-seed)` |
+| A file the store does not read (`schema/`, `README.md`, another folder, a name that starts with a dot) | Nothing. | none |
+
+A scenario is a checkout input, not store data: adding one while the backend has set the shop
+up must not undo that setup. A change that touches both kinds seeds again. `POST /__lsf/reload`
+reads everything again and seeds the shops again whatever changed, and `DELETE /__lsf/admin`
+puts them back to the store data without reading the files.
 
 ## app
 

@@ -541,16 +541,36 @@ scopes: `POST /__lsf/admin/install {"scopes": "read_orders"}` installs the app a
 and OAuth alike, and `app/scopes_update` is delivered).
 
 **Uninstall.** `POST /__lsf/admin/uninstall` does what Shopify does when a merchant uninstalls
-the app: it revokes the app's tokens on the shop, cancels its subscription, delivers
-`app/uninstalled` (through the subscriptions the shop had), then deletes the subscriptions the
-backend made with `webhookSubscriptionCreate` ("Shopify automatically performs cleanup tasks,
-such as deleting WebhookSubscription objects", [`appUninstall`](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/appUninstall)).
+the app: it revokes the app's tokens on the shop, cancels its subscription, removes its
+Functions with every object that runs them (below), delivers `app/uninstalled` (through the
+subscriptions the shop had), then deletes the subscriptions the backend made with
+`webhookSubscriptionCreate` ("Shopify automatically performs cleanup tasks, such as deleting
+WebhookSubscription objects", [`appUninstall`](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/appUninstall)).
 From then on nothing is delivered for the shop: an order placed at the checkout is recorded, and
 no `orders/create` goes out, not even through `shopify.app.toml`, whose subscriptions apply to
 "every shop that installs your app". Installing it again (`POST /__lsf/admin/install`, OAuth, or a
 token exchange) brings back the subscriptions of `shopify.app.toml`; those of the shop are gone,
 for the backend to make again, as on Shopify. `shop/redact`, which Shopify sends 48 hours after
 an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/redact"}`.
+
+**The app's Functions stop with the uninstall.** Shopify removes an uninstalled app's
+extensions, Functions included, and a Function goes "including all associated function owners"
+([About Shopify Functions](https://shopify.dev/docs/apps/build/functions)). So the uninstall
+deletes, with their metafields, every object that runs one of the app's Functions: its payment
+and delivery customizations, validations, cart transforms, fulfillment constraint rules, and its
+app discounts (`DiscountAutomaticApp`, `DiscountCodeApp`), whether the app created them or the
+store data declared them (`checkout.functions.<handle>.enabled`, `checkout.discounts`). The
+answer counts them (`removedFunctionOwners`). The discounts of Shopify's own types (a
+`DiscountCodeBasic` the app made) stay. While the app is uninstalled, the shop's checkout runs
+none of its Functions, whatever a scenario declares or names in its `extensions`: the
+checkout's Functions dialog lists each with "the app is not installed on the shop". A reinstall
+gets none of those objects back, as on Shopify, where a reinstalled app "had to register them
+again through the API" ([community](https://community.shopify.com/t/shopify-function-doesnt-work-when-reinstalling-the-app/261798)):
+the app creates them again, as on a first install. Shopify removes them in the background
+after the uninstall ("the job that deletes the price rules and their associated codes runs
+asynchronously", Shopify's staff on [community.shopify.dev](https://community.shopify.dev/t/discountredeemcodebulkadd-phantom-redemption-codes/32591));
+lsf removes them at once. The app's metafields on the shop's other resources stay, as Shopify
+keeps them a while for a reinstall.
 
 ## Webhooks
 
@@ -924,7 +944,9 @@ Shopify:
 While plans are declared, `appSubscriptionCreate` and `appPurchaseOneTimeCreate` answer the user
 error Shopify gives an app on managed pricing: "Managed Pricing Apps cannot use the Billing API
 (to create charges)." `appSubscriptionCancel` and uninstalling the app still cancel the
-subscription. A test chooses a plan without the page:
+subscription: `appSubscriptionCancel` delivers `app_subscriptions/update` (`CANCELLED`), the
+uninstall nothing (the app's webhook subscriptions go with it). A test chooses a plan without
+the page:
 
 ```js
 await fetch(`${LSF}/__lsf/admin/pricing-plans/pro/select`, { method: "POST", body: JSON.stringify({ shop }) });
@@ -936,8 +958,15 @@ and for every app after April 28, 2026, the welcome link gets `plan_handle` alon
 `app_subscriptions/update` is sent, and the app reads its plan from the Partner API's
 `activeSubscription`. Its "legacy features" section still lists `charge_id`, the webhook and test
 subscriptions for the apps enrolled before. lsf does what those apps get, unless the declaration
-says `legacy = false`: then `plan_handle` alone, no webhook, `test: false`. lsf still records the
-subscription in the Admin API either way: it does not simulate the Partner API.
+says `legacy = false`: then `plan_handle` alone, no webhook, `test: false`. No webhook means none
+for any change of the subscription: a plan chosen, `appSubscriptionCancel` from the app, an
+uninstall by the merchant. Shopify's page: "Shopify App Pricing doesn't use webhooks to notify
+your app of subscription changes", and for "status changes that happen outside of a redirect
+(such as cancellations or freezes), query the Partner API"; Partner support told a developer
+that `app_subscriptions/update` "belongs to the older Billing API and is not supported for App
+Pricing" ([community](https://community.shopify.dev/t/app-pricing-app-events-usage-billing-request-for-documented-answers-on-undocumented-behaviors/36911)).
+lsf still records the subscription in the Admin API either way: it does not simulate the
+Partner API.
 
 lsf does not simulate: the Partner API (`activeSubscription`, the history of events) and the App
 Events API (usage meters), usage charges, private plans and their stores, the eight-plan limit,
@@ -1239,7 +1268,9 @@ sync").
 - **The files do not change.** lsf builds the store from the files with the Admin API's changes on
   top; nothing is written to disk. `DELETE /__lsf/admin` (and the store data edited, with
   `--watch`, or `POST /__lsf/reload`) puts the storefront back to the files, and the theme back
-  to the directory, without the files and script tags the Admin API added.
+  to the directory, without the files and script tags the Admin API added. With `--watch`, a
+  checkout scenario added or edited (`checkouts/`) is not store data: lsf reads the scenarios
+  again and keeps what the Admin API changed ([what reloads](cli.md#what---watch-reloads)).
 - **A session with its own data** (`PUT /__lsf/session` with `data`) sees its data on top of the
   Admin API's changes.
 - **An order placed at the checkout** is recorded in the Admin API, and the store is not built

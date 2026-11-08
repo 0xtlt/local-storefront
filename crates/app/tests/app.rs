@@ -1598,3 +1598,97 @@ fn a_discount_percentage_outside_zero_to_one_is_refused() {
         json!([])
     );
 }
+
+/// Uninstalling the app removes its Functions with every object that runs them, as on Shopify:
+/// the app discounts, cart transforms, customizations and validations, whether the store data
+/// declared them or the app made them, with their metafields. The discounts of Shopify's own
+/// types stay. The store sync then gives the checkout neither discounts nor owners.
+#[test]
+fn uninstalling_the_app_removes_every_object_that_runs_its_functions() {
+    let (store, mut shop) = rich();
+    let created = run(
+        &mut shop,
+        r#"mutation { paymentCustomizationCreate(paymentCustomization: {title: "Hide PayPal", enabled: true, functionHandle: "payment-rules",
+            metafields: [{namespace: "$app:config", key: "rules", type: "json", value: "{\"hide\": [\"paypal\"]}"}]}) {
+            paymentCustomization { id metafield(namespace: "$app:config", key: "rules") { id } } userErrors { code } } }"#,
+        Value::Null,
+    );
+    let payment = &data(&created, "paymentCustomizationCreate")["paymentCustomization"];
+    let (payment_id, metafield) = (
+        payment["id"].as_str().unwrap().to_string(),
+        payment["metafield"]["id"].as_str().unwrap().to_string(),
+    );
+    let automatic = run(
+        &mut shop,
+        AUTOMATIC_APP_CREATE,
+        json!({"automaticAppDiscount": {"title": "Spring sale", "functionHandle": "volume-discount",
+            "startsAt": "2026-03-01T00:00:00Z"}}),
+    );
+    assert_eq!(
+        data(&automatic, "discountAutomaticAppCreate")["userErrors"],
+        json!([])
+    );
+    let basic = run(
+        &mut shop,
+        r#"mutation { discountCodeBasicCreate(basicCodeDiscount: {title: "Ten off", code: "TEN", startsAt: "2026-03-01T00:00:00Z",
+            customerGets: {value: {percentage: 0.1}, items: {all: true}}, context: {all: ALL}}) { codeDiscountNode { id } userErrors { message } } }"#,
+        Value::Null,
+    );
+    let basic = data(&basic, "discountCodeBasicCreate")["codeDiscountNode"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let owners = |shop: &ShopState| -> usize {
+        lsf_app::admin::domains::app::FUNCTION_OWNER_TYPES
+            .iter()
+            .map(|type_name| shop.count(type_name))
+            .sum()
+    };
+    // The data's payment, delivery, validation and cart transform, and the app's.
+    assert_eq!(owners(&shop), 5);
+    shop.take_events();
+
+    let answer = run(
+        &mut shop,
+        "mutation { appUninstall { app { title } userErrors { code } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        data(&answer, "appUninstall")["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+    assert_eq!(owners(&shop), 0);
+    assert!(!shop.contains(&payment_id));
+    assert!(!shop.contains(&metafield), "its metafields go with it");
+    let app_discounts: Vec<&str> = ["DiscountAutomaticNode", "DiscountCodeNode"]
+        .into_iter()
+        .flat_map(|node_type| shop.keys(node_type))
+        .collect();
+    assert_eq!(app_discounts, [basic.as_str()], "Shopify's own types stay");
+    // No webhook for what went: the app's subscriptions go with it.
+    assert_eq!(
+        topics(&mut shop)
+            .into_iter()
+            .filter(|topic| !topic.starts_with("lsf/"))
+            .collect::<Vec<_>>(),
+        ["app/uninstalled"]
+    );
+
+    // What the checkout reads: no app discount, no owner of any Function.
+    let overlay = sync::overlay(&shop, &store).expect("the uninstall syncs");
+    assert_eq!(
+        overlay.data["checkout"]["discounts"],
+        json!([]),
+        "{}",
+        overlay.data
+    );
+    let functions = overlay.data["checkout"]["functions"].as_object().unwrap();
+    for handle in ["payment-rules", "order-limits", "delivery-rules", "bundles"] {
+        assert!(
+            functions[handle].get("enabled").is_none(),
+            "{handle}: {}",
+            functions[handle]
+        );
+    }
+}

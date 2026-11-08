@@ -446,6 +446,13 @@ impl Selection {
         Selection { handles: None }
     }
 
+    /// No extension at all.
+    pub const fn none() -> Selection {
+        Selection {
+            handles: Some(BTreeSet::new()),
+        }
+    }
+
     /// Only the named extensions, without checking they exist; see [`Selection::resolve`].
     pub fn only<I, S>(handles: I) -> Selection
     where

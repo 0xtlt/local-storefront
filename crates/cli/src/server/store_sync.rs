@@ -104,8 +104,8 @@ impl ServerState {
         }
     }
 
-    /// The store of the files of `files` (its base, the data its files gave, its diagnostics,
-    /// its fingerprint) with what the Admin API changed on top, as `synced` says: built from
+    /// The store of the files of `files` (its base, the data its files gave, its diagnostics)
+    /// with what the Admin API changed on top, as `synced` says: built from
     /// that data, not from the files on disk, which may have changed since without a reload. The store data's problems with the
     /// overlay are printed when they are new, and the build is told to the Admin API for
     /// `GET /__lsf/admin`. Called while `rebuilding` is held.
@@ -134,7 +134,6 @@ impl ServerState {
         Loaded {
             store,
             diagnostics: files.diagnostics.clone(),
-            fingerprint: files.fingerprint,
             base: files.base.clone(),
             source: files.source.clone(),
             load_options: files.load_options.clone(),

@@ -18,7 +18,8 @@
 //!   it is `DECLINED`; pending for more than two days by the shop's clock, `EXPIRED`.
 //! - `currentPeriodEnd`, *chosen*: the end of the trial when there is one, else 30 days (365 for
 //!   an `ANNUAL` plan) from the approval; `null` while the subscription is not active.
-//! - `appSubscriptionCancel` cancels (`prorate` moves no money here), `appSubscriptionTrialExtend`
+//! - `appSubscriptionCancel` cancels (`prorate` moves no money here; `app_subscriptions/update`,
+//!   none under Shopify App Pricing: `pricing::Billing`), `appSubscriptionTrialExtend`
 //!   adds days to an active trial (its codes and their descriptions), `appSubscriptionLineItemUpdate`
 //!   asks for a new capped amount, which the merchant approves on the same page.
 //! - `appUsageRecordCreate` charges a usage line of an active subscription: the balance used may
@@ -519,9 +520,11 @@ fn subscription_cancel(
     if ctx.arg_bool("prorate") == Some(true) {
         mutation.note("appSubscriptionCancel: lsf moves no money: `prorate` issued no credit");
     }
+    // Under Shopify App Pricing, no webhook: the app reads the Partner API.
+    let topic = mutation.billing().subscription_topic();
     let state = mutation.state_mut();
     set_status(state, &id, "CANCELLED");
-    state.emit("app_subscriptions/update", &id);
+    state.emit(topic, &id);
     Ok(payload(json!({"appSubscription": id}), &[]))
 }
 
@@ -1080,7 +1083,9 @@ fn with_charge_id(url: &str, number: u64) -> String {
 }
 
 /// Cancels the app's active subscriptions, as uninstalling the app does ("When an app is
-/// uninstalled, Shopify automatically cancels the subscription"). No webhook: the app is gone.
+/// uninstalled, Shopify automatically cancels the subscription"). No webhook, whether the app
+/// bills with the Billing API or managed pricing, legacy or not: the app is gone, and its
+/// webhook subscriptions with it.
 pub fn cancel_on_uninstall(state: &mut ShopState) {
     let active: Vec<String> = state
         .keys("AppSubscription")

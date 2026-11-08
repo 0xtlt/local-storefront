@@ -7112,23 +7112,28 @@ fn a_check_whose_app_changed_while_it_ran_is_not_kept() {
 
     // The module is rebuilt after the check ran it, before the check ends: what it found is
     // about the old module, and is not kept.
-    let report = cache.get_or_run_with(&app, &store, || {
+    let report = cache.get_or_run_with(&app, &store, false, || {
         std::fs::write(&wasm, b"another module, of another size").unwrap();
         found(1)
     });
     assert_eq!(report.checked, 1, "the answer is still given");
-    assert!(cache.get(&app, &store).is_none(), "kept for the new module");
+    assert!(
+        cache.get(&app, &store, false).is_none(),
+        "kept for the new module"
+    );
 
     // A check that nothing changed under is kept, and the next request takes it.
-    let report = cache.get_or_run_with(&app, &store, || found(1));
-    let again = cache.get_or_run_with(&app, &store, || panic!("ran again"));
+    let report = cache.get_or_run_with(&app, &store, false, || found(1));
+    let again = cache.get_or_run_with(&app, &store, false, || panic!("ran again"));
     assert!(std::sync::Arc::ptr_eq(&report, &again));
+    // Not while the app is uninstalled: none of its Functions runs then.
+    assert!(cache.get(&app, &store, true).is_none());
 
     // A check that ran out of time is not kept.
     std::fs::write(&wasm, b"a third module").unwrap();
-    cache.get_or_run_with(&app, &store, || found(0));
+    cache.get_or_run_with(&app, &store, false, || found(0));
     std::fs::remove_dir_all(&app_dir).ok();
-    assert!(cache.get(&app, &store).is_none());
+    assert!(cache.get(&app, &store, false).is_none());
 }
 
 /// The checkout playground, with the store data in a copy of its own that keeps the scenarios

@@ -156,6 +156,12 @@ pub fn compute_with_options(
     options: RunOptions,
 ) -> CheckoutResult {
     let RunOptions { fetcher, deadline } = options;
+    // An app that is not installed has no Function on the shop: none runs, and each says why.
+    let (enabled, idle) = if config.uninstalled {
+        (&NO_EXTENSION, uninstalled(app, enabled))
+    } else {
+        (enabled, Vec::new())
+    };
     let now = store
         .now
         .unwrap_or_else(Utc::now)
@@ -196,10 +202,46 @@ pub fn compute_with_options(
             .collect(),
         errors: Vec::new(),
         runs: Vec::new(),
-        idle: Vec::new(),
+        idle,
         blind: None,
     };
     pipeline.run()
+}
+
+/// What runs while the app is not installed on the shop.
+static NO_EXTENSION: Selection = Selection::none();
+
+/// The Functions of `enabled` the checkout runs (a discount Function, or one with an owner), as
+/// they are left out while the app is not installed ([`CheckoutConfig::uninstalled`]).
+fn uninstalled(app: &App, enabled: &Selection) -> Vec<IdleFunction> {
+    enabled
+        .functions(app)
+        .filter_map(|function| {
+            let discount = function.targets.iter().any(|target| {
+                matches!(
+                    target.kind,
+                    TargetKind::LinesDiscounts
+                        | TargetKind::ProductDiscount
+                        | TargetKind::OrderDiscount
+                        | TargetKind::DeliveryDiscounts
+                        | TargetKind::ShippingDiscount
+                )
+            });
+            let owner = function
+                .owner_type()
+                .or_else(|| discount.then_some("DiscountNode"))?;
+            Some(IdleFunction {
+                handle: function.handle.clone(),
+                owner,
+                enabled: None,
+                reason: "the app is not installed on the shop: uninstalling it removed its \
+                         Functions and every object that ran them (`POST /__lsf/admin/install`, \
+                         OAuth or a token exchange installs it again, without them: the app \
+                         creates them again)"
+                    .to_string(),
+            })
+        })
+        .collect()
 }
 
 struct Pipeline<'a> {

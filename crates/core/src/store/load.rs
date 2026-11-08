@@ -10,9 +10,13 @@
 //!                     session, checkout, now, theme_settings. They are merged.
 //!   products/*.json   one product per file (or an array); the file name is the default handle
 //!   collections/*.json, pages/*.json, blogs/*.json, customers/*.json, menus/*.json
+//!   checkouts/*.json  checkout scenarios, one per file
 //!   files/            images and other files, served under /cdn/shop/files/
 //!   schema/           JSON Schemas written by `lsf init` for editor support (ignored here)
 //! ```
+//!
+//! [`role_of`] says which of these a file is: what a server watching the directory reloads
+//! when it changes.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -37,6 +41,48 @@ pub enum DataSource {
     Directory(PathBuf),
     /// The built-in demo store.
     Demo,
+}
+
+/// What a file of a data directory is to the store: what [`SourceData::read`] reads it as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileRole {
+    /// The store's own data: a data file at the root, an entity of `products/`, `collections/`,
+    /// `pages/`, `blogs/`, `customers/` or `menus/`, or a file of `files/` (the store reads the
+    /// sizes of its images).
+    Store,
+    /// A checkout scenario: a file of `checkouts/`. It sets up the local checkout on top of the
+    /// store, and nothing else reads it.
+    Scenario,
+    /// A file the store does not read: `schema/`, `README.md`, a file of another folder, a name
+    /// that starts with a dot.
+    Unread,
+}
+
+/// The role of the file at `relative` in a data directory (`/` between folders), as
+/// [`SourceData::read`] reads the directory.
+pub fn role_of(relative: &str) -> FileRole {
+    let parts: Vec<&str> = relative
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.iter().any(|part| part.starts_with('.')) {
+        return FileRole::Unread;
+    }
+    match parts.as_slice() {
+        [name] if name.ends_with(".json") => FileRole::Store,
+        ["files", _, ..] => FileRole::Store,
+        [directory, name] if name.ends_with(".json") => {
+            match FileKind::ALL
+                .iter()
+                .find(|kind| kind.directory() == Some(directory))
+            {
+                Some(FileKind::CheckoutScenario) => FileRole::Scenario,
+                Some(_) => FileRole::Store,
+                None => FileRole::Unread,
+            }
+        }
+        _ => FileRole::Unread,
+    }
 }
 
 /// One data file, already read.
@@ -2278,6 +2324,30 @@ mod tests {
             "{problems}"
         );
         assert!(problems.contains("checkouts/choices.json at /entered/payment"));
+    }
+
+    #[test]
+    fn a_file_of_the_data_directory_is_store_data_a_scenario_or_unread() {
+        for (path, role) in [
+            ("store.json", FileRole::Store),
+            ("menus.json", FileRole::Store),
+            ("products/blue-shirt.json", FileRole::Store),
+            ("customers/ada.json", FileRole::Store),
+            ("menus/footer.json", FileRole::Store),
+            ("files/logo.png", FileRole::Store),
+            ("files/nested/hero.jpg", FileRole::Store),
+            ("checkouts/b2b.json", FileRole::Scenario),
+            ("checkouts/notes.txt", FileRole::Unread),
+            ("checkouts/nested/deep.json", FileRole::Unread),
+            ("schema/product.schema.json", FileRole::Unread),
+            ("README.md", FileRole::Unread),
+            ("notes.txt", FileRole::Unread),
+            (".DS_Store", FileRole::Unread),
+            ("products/.draft.json", FileRole::Unread),
+            ("other/thing.json", FileRole::Unread),
+        ] {
+            assert_eq!(role_of(path), role, "{path}");
+        }
     }
 
     #[test]
