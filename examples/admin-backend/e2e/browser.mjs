@@ -23,3 +23,29 @@ export class Browser {
     return response;
   }
 }
+
+/**
+ * Runs `run` with a Chromium context (playwright-core, a dev dependency) that says it is Chrome,
+ * as `Browser` does, and refuses every request to cdn.shopify.com, as a machine without the
+ * internet would: `refused` lists them, `served` every answer of lsf's `/__lsf/cdn/`. The browser
+ * is closed after. `npx playwright-core install --only-shell chromium` installs it.
+ */
+export async function withChromium(run) {
+  const { chromium } = await import("playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext({ userAgent: Browser.userAgent });
+    const refused = [];
+    const served = [];
+    await context.route(/^https:\/\/cdn\.shopify\.com\//, (route) => {
+      refused.push(route.request().url());
+      return route.abort("internetdisconnected");
+    });
+    context.on("response", (response) => {
+      if (new URL(response.url()).pathname.startsWith("/__lsf/cdn/")) served.push({ url: response.url(), status: response.status() });
+    });
+    return await run({ context, refused, served });
+  } finally {
+    await browser.close();
+  }
+}

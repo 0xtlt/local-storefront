@@ -52,6 +52,8 @@ dir = "examples/admin-backend"
 run = [
   "cargo build --manifest-path ../../Cargo.toml -p lsf-cli",
   "npm install --no-audit --no-fund",
+  # The headless Chromium of the Polaris checks: nothing to do once it is there.
+  "npx playwright-core install --only-shell --no-remove chromium",
   "npm run e2e",
 ]
 

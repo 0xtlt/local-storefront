@@ -40,6 +40,10 @@ export const config = {
   // run in lsf's admin; unset: Shopify's alone. The library's own pages (the bounce page, the
   // exit-iframe page) read the same variable.
   appBridgeUrl: env.APP_BRIDGE_URL,
+  // Where the pages load Polaris from, as AppProvider's and shopifyApp's `polarisUrl`: lsf's route
+  // (http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris-2.js), which redirects to Shopify's CDN
+  // or serves lsf's copy, by lsf's Polaris mode; unset: Shopify's CDN, the template's default.
+  polarisUrl: env.POLARIS_URL,
   toml,
 };
 

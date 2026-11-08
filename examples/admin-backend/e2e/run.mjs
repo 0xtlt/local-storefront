@@ -14,7 +14,7 @@ import { join, resolve } from "node:path";
 import { createAdminApiClient } from "@shopify/admin-api-client";
 import { appRoot, config } from "../server/config.mjs";
 import { lsfFetch } from "../server/lsf.mjs";
-import { Browser } from "./browser.mjs";
+import { Browser, withChromium } from "./browser.mjs";
 
 const repoRoot = join(appRoot, "..", "..");
 const targetDir = process.env.CARGO_TARGET_DIR
@@ -115,7 +115,18 @@ async function main() {
       process.execPath,
       ["server/index.mjs"],
       // APP_BRIDGE_URL: the embedded page, and the library's own pages, load lsf's App Bridge.
-      { cwd: appRoot, env: { ...process.env, PORT: String(backendPort), LSF_URL: lsf, SHOPIFY_APP_URL: appUrl, APP_BRIDGE_URL: `${lsf}/__lsf/admin/app-bridge.js` } },
+      // POLARIS_URL: they load Polaris from lsf's route, Shopify's CDN or lsf's copy by its mode.
+      {
+        cwd: appRoot,
+        env: {
+          ...process.env,
+          PORT: String(backendPort),
+          LSF_URL: lsf,
+          SHOPIFY_APP_URL: appUrl,
+          APP_BRIDGE_URL: `${lsf}/__lsf/admin/app-bridge.js`,
+          POLARIS_URL: `${lsf}/__lsf/cdn/shopifycloud/polaris-2.js`,
+        },
+      },
       (text) => text.includes("backend: "),
     );
     const results = await runChecks({ lsf, appUrl, token, lsfLog: lsfProcess.log });
@@ -401,6 +412,96 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
     const html = await page.text();
     assert(page.status === 404 && html.includes("lsf has no page here") && html.includes("Back to Admin backend"), `answered ${page.status}`, html.slice(0, 300));
     return "404, says so, links back to the app";
+  });
+
+  // Polaris in lsf's admin: the app's pages load it from lsf's route (POLARIS_URL), which
+  // redirects to Shopify's CDN (online, lsf's default) or serves lsf's copy (offline, set here
+  // through the control API). In Chromium, with every request to cdn.shopify.com refused.
+  const polarisUrl = `${lsf}/__lsf/cdn/shopifycloud/polaris-2.js`;
+  const polarisMode = async (method, mode) => {
+    const answer = await fetch(`${lsf}/__lsf/polaris`, { method, body: mode && JSON.stringify({ mode }) });
+    return (await answer.json()).mode;
+  };
+  // The app open in lsf's admin, once Polaris defined its components in the app's frame.
+  const openApp = async (context) => {
+    const page = await context.newPage();
+    await page.goto(`${lsf}/admin/apps/admin-backend/app`);
+    const deadline = Date.now() + 15_000;
+    let frame;
+    while (!(frame = page.frames().find((candidate) => candidate.url().startsWith(`${appUrl}/app`))) && Date.now() < deadline) await sleep(50);
+    assert(frame, "the app's frame did not open", page.frames().map((candidate) => candidate.url()));
+    await frame.waitForFunction(() => customElements.get("s-button") && customElements.get("s-page"), null, { timeout: 15_000 });
+    return frame;
+  };
+  const waitFor = async (condition, message, details) => {
+    const deadline = Date.now() + 10_000;
+    while (!condition() && Date.now() < deadline) await sleep(50);
+    assert(condition(), message, details?.());
+  };
+  await check("polaris", "polaris: online, lsf's route redirects to Shopify's CDN; the pages load and preload it", async () => {
+    assert((await polarisMode("GET")) === "online", "lsf did not start online");
+    const answer = await fetch(`${polarisUrl}?v=1`, { redirect: "manual" });
+    const location = answer.headers.get("location");
+    assert(answer.status === 302 && location === "https://cdn.shopify.com/shopifycloud/polaris-2.js?v=1", `answered ${answer.status} → ${location}`);
+    const launch = await browser.fetch(`${lsf}/__lsf/admin/launch?shop=${SHOP}`);
+    const page = await browser.fetch(launch.headers.get("location"));
+    const html = await page.text();
+    assert(html.includes(`<script src="${polarisUrl}"></script>`), "AppProvider's script is not lsf's route", html.slice(0, 600));
+    const link = page.headers.get("link") ?? "";
+    assert(link.includes(`<${polarisUrl}>; rel="preload"; as="script"`), "shopifyApp's polarisUrl is not lsf's route: the Link header preloads another", link);
+    return `302 → ${location}; <script> and Link: preload both lsf's route`;
+  });
+  await check("polaris", "polaris: offline (PUT /__lsf/polaris), the app renders Polaris, its icons and fonts from lsf, cdn.shopify.com refused", async () => {
+    assert((await polarisMode("PUT", "offline")) === "offline", "PUT /__lsf/polaris did not set offline");
+    return withChromium(async ({ context, refused, served }) => {
+      const frame = await openApp(context);
+      const ok = (test) => served.filter((response) => test(response.url) && response.status === 200);
+      await waitFor(
+        () => ok((url) => url.endsWith(".svg")).length >= 3 && ok((url) => url.endsWith(".woff2")).length,
+        "no icon or no font from lsf",
+        () => ({ served, refused }),
+      );
+      const drawn = await frame.evaluate(() => document.querySelector("s-icon")?.shadowRoot?.innerHTML.includes("<svg"));
+      assert(drawn, "the s-icon has no <svg>");
+      assert(served.every((response) => response.status === 200), "lsf did not serve one", served);
+      assert(ok((url) => url === polarisUrl).length === 1, "Polaris was not lsf's copy", served);
+      // Shopify's CDN was asked for its App Bridge alone, which lsf's makes useless.
+      const others = refused.filter((url) => url !== "https://cdn.shopify.com/shopifycloud/app-bridge.js");
+      assert(!others.length, "requests to cdn.shopify.com", others);
+      const count = (extension) => ok((url) => url.endsWith(extension)).length;
+      return `s-button defined; from lsf: polaris-2.js, ${count(".svg")} icons, ${count(".css")} stylesheets, ${count(".woff2")} font; cdn.shopify.com: app-bridge.js only (refused)`;
+    });
+  });
+  await check("polaris", "polaris: offline, a page that loads Polaris from cdn.shopify.com gets lsf's copy from lsf's App Bridge", async () => {
+    return withChromium(async ({ context, refused, served }) => {
+      // The pages as the template renders them by default: Polaris from Shopify's CDN. Chrome
+      // takes a page Playwright answers itself for a page of the internet, whose requests to
+      // 127.0.0.1 need the local network permission (a page of localhost does not).
+      const cdnPolaris = "https://cdn.shopify.com/shopifycloud/polaris-2.js";
+      await context.grantPermissions(["local-network-access"]);
+      await context.route((url) => url.href.startsWith(`${appUrl}/app`), async (route) => {
+        const response = await route.fetch();
+        await route.fulfill({ response, body: (await response.text()).replaceAll(polarisUrl, cdnPolaris) });
+      });
+      const frame = await openApp(context);
+      const scripts = await frame.evaluate(() =>
+        [...document.querySelectorAll("script[src*='polaris']")].map((script) => [script.src, script.hasAttribute("data-lsf-polaris")]),
+      );
+      assert(
+        JSON.stringify(scripts) === JSON.stringify([[cdnPolaris, false], [polarisUrl, true]]),
+        "not the page's script, then lsf's copy",
+        scripts,
+      );
+      assert(refused.includes(cdnPolaris), "the page did not ask the CDN", refused);
+      assert(served.filter((response) => response.url === polarisUrl).length === 1, "lsf's copy was not loaded once", served);
+      return "the CDN's polaris-2.js refused → App Bridge loads /__lsf/cdn/shopifycloud/polaris-2.js, once; s-button defined";
+    });
+  });
+  await check("polaris", "polaris: DELETE /__lsf/polaris → back to online, the route redirects again", async () => {
+    assert((await polarisMode("DELETE")) === "online", "not online again");
+    const answer = await fetch(polarisUrl, { redirect: "manual" });
+    assert(answer.status === 302, `answered ${answer.status}`);
+    return "online, 302";
   });
 
   await check("webhooks", "webhooks: registerWebhooks (afterAuth) → products/delete", async () => {

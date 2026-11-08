@@ -12,8 +12,9 @@ npm install
 npm run e2e
 ```
 
-Or `mise run admin:e2e` from the root of the repository, which does the three. A run takes about
-2 seconds and exits with `1` when a check fails.
+Or `mise run admin:e2e` from the root of the repository, which does the three and installs the
+headless Chromium the Polaris checks run in (`npx playwright-core install --only-shell chromium`,
+once). A run takes about 5 seconds and exits with `1` when a check fails.
 
 ```text
 result    check                                                                       detail
@@ -23,7 +24,7 @@ PASS      auth: OAuth authorize → callback → access token                   
 …
 KNOWN     billing: billing.require from a page (exit-iframe)                          the template's exit-iframe page only redirects to https admin URLs, …
 
-42 passed, 0 failed, 1 known gaps
+46 passed, 0 failed, 1 known gaps
 ```
 
 `E2E_VERBOSE=1` prints the logs of lsf and the backend, `E2E_ONLY=proxy` runs the checks whose
@@ -86,6 +87,12 @@ throttling checks use `@shopify/admin-api-client` directly.
   lands on lsf's page, which says it has none. What the page does in a browser (the title bar,
   the navigation, toasts, the picker, the save bar, the modal) is tested on lsf's App Bridge
   itself (`crates/app/assets/tests/app-bridge.test.mjs`).
+- **Polaris**: the page loads Polaris from lsf's `/__lsf/cdn/shopifycloud/polaris-2.js`
+  (`POLARIS_URL`, AppProvider's and `shopifyApp`'s `polarisUrl`), which redirects to Shopify's
+  CDN while lsf is online; in Chromium (`playwright-core`), with every request to
+  `cdn.shopify.com` refused, once `PUT /__lsf/polaris` sets lsf offline: the components are
+  defined and their icons and fonts come from lsf; a page still on the CDN's Polaris gets lsf's
+  copy from lsf's App Bridge; `DELETE /__lsf/polaris` puts lsf back online.
 - **App proxy**: `/apps/reviews/*` through the storefront, verified by
   `authenticate.public.appProxy`, answered with `liquid(…)` in the theme, the logged-in customer;
   a form `POST` through the proxy, then its redirect; a forged signature (`400`).
@@ -94,7 +101,8 @@ throttling checks use `@shopify/admin-api-client` directly.
 
 ```bash
 ../../target/debug/lsf app dev --app . --app-url http://localhost:3000     # or `serve --theme theme --app .` for the storefront
-LSF_URL=http://127.0.0.1:9292 APP_BRIDGE_URL=http://127.0.0.1:9292/__lsf/admin/app-bridge.js npm start
+LSF_URL=http://127.0.0.1:9292 APP_BRIDGE_URL=http://127.0.0.1:9292/__lsf/admin/app-bridge.js \
+  POLARIS_URL=http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris-2.js npm start
 open http://127.0.0.1:9292/admin/apps/admin-backend                        # the embedded page, in lsf's admin
 ```
 

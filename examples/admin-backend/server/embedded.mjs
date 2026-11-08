@@ -1,9 +1,11 @@
 // The embedded app's page: what the React Router template's `app/routes/app.tsx` renders with
 // `AppProvider`, written by hand (no React here). Its head loads lsf's App Bridge when
 // APP_BRIDGE_URL is set, then Shopify's script as AppProvider puts it: Shopify's finds
-// `shopify.ready` and does nothing (online), or does not load (offline). The body has the app's
-// navigation (`s-app-nav`), its title bar (`ui-title-bar`), and a section per route, switched in
-// the browser as a router does: the admin's nav items click the links of `s-app-nav`.
+// `shopify.ready` and does nothing (online), or does not load (offline); then Polaris, from
+// POLARIS_URL (lsf's `/__lsf/cdn/shopifycloud/polaris-2.js`) or Shopify's CDN. The body has the
+// app's navigation (`s-app-nav`), its title bar (`ui-title-bar`), a few Polaris components with
+// icons, and a section per route, switched in the browser as a router does: the admin's nav items
+// click the links of `s-app-nav`.
 //
 // What it uses of App Bridge: toast, loading, user, resourcePicker, the title bar and the
 // navigation, a `data-save-bar` form, and fetch() to routes behind authenticate.admin (App
@@ -12,7 +14,10 @@
 const escape = (text) =>
   String(text).replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
 
-export function embeddedPage({ apiKey, shop, shopName, appBridgeUrl, settings }) {
+// AppProvider's default `polarisUrl`.
+const SHOPIFY_POLARIS = "https://cdn.shopify.com/shopifycloud/polaris-2.js";
+
+export function embeddedPage({ apiKey, shop, shopName, appBridgeUrl, polarisUrl = SHOPIFY_POLARIS, settings }) {
   const lsfScript = appBridgeUrl ? `<script src="${escape(appBridgeUrl)}"></script>\n    ` : "";
   return `<!doctype html>
 <html lang="en">
@@ -21,6 +26,7 @@ export function embeddedPage({ apiKey, shop, shopName, appBridgeUrl, settings })
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Admin backend</title>
     ${lsfScript}<script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${escape(apiKey)}"></script>
+    <script src="${escape(polarisUrl)}"></script>
     <style>
       body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 16px 20px; color: #1c1e21; }
       .card { background: #fff; border: 1px solid #dcdfe3; border-radius: 10px; padding: 16px 20px; margin-bottom: 16px; }
@@ -51,6 +57,14 @@ export function embeddedPage({ apiKey, shop, shopName, appBridgeUrl, settings })
         <ul id="picked"></ul>
         <p><a href="shopify://admin/products" target="_top">The shop's products in the admin</a></p>
       </div>
+      <s-section heading="Polaris" id="polaris">
+        <s-stack direction="inline" gap="base" alignItems="center">
+          <s-button id="polaris-button" icon="product" href="/app/products">Products</s-button>
+          <s-badge tone="success" icon="check">Synced</s-badge>
+          <s-icon type="cart"></s-icon>
+          <s-text>Web components, icons and fonts from POLARIS_URL.</s-text>
+        </s-stack>
+      </s-section>
       <ui-modal id="about">
         <p style="padding: 0 4px">A Shopify app backend run against lsf: its Admin API, its webhooks, and this embedded page in lsf's admin.</p>
         <ui-title-bar title="About this app">

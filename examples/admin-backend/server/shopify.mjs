@@ -21,6 +21,8 @@ export const shopify = shopifyApp({
   appUrl: config.appUrl,
   authPathPrefix: "/auth",
   sessionStorage,
+  // What the pages' `Link` header preloads: the Polaris AppProvider loads (unset: the CDN's).
+  polarisUrl: config.polarisUrl,
   // A subscription the app makes when it is installed, besides those of shopify.app.toml.
   webhooks: {
     PRODUCTS_DELETE: { deliveryMethod: DeliveryMethod.Http, callbackUrl: "/webhooks/products" },

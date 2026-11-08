@@ -57,6 +57,7 @@ const routes = [
       shop: shop.myshopifyDomain,
       shopName: shop.name,
       appBridgeUrl: config.appBridgeUrl,
+      polarisUrl: config.polarisUrl,
       settings,
     });
     return new Response(html, { headers: documentHeaders(request) });
