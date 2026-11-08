@@ -15,6 +15,7 @@ pub fn run(
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: None,
             live_reload: false,
             watch: false,

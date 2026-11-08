@@ -18,6 +18,7 @@ pub use home_check::run as check_scenarios;
 mod live_reload;
 mod minify;
 pub mod params;
+pub mod polaris;
 pub mod reply;
 mod speedscope;
 mod store_sync;
@@ -88,6 +89,9 @@ pub struct ServeOptions {
     /// Serve the Admin API of the store (and the webhooks of the app of `checkout`). `None`
     /// for the commands that only run the checkout.
     pub admin: Option<admin::AdminSettings>,
+    /// What `/__lsf/cdn/` answers when the server starts (`--polaris`): Shopify's CDN, or lsf's
+    /// copy of Polaris.
+    pub polaris: polaris::Mode,
 }
 
 /// The store as last loaded from disk, with what the Admin API changed on top.
@@ -158,6 +162,8 @@ pub struct ServerState {
     /// The app proxy of the app, when it has an `[app_proxy]` and the server serves the Admin
     /// API (whose client secret signs the requests, and whose shop they are from).
     pub app_proxy: Option<app_proxy::AppProxy>,
+    /// The Polaris mode, which the control API changes (`/__lsf/polaris`).
+    pub polaris: polaris::Polaris,
 }
 
 /// One HTTP request, decoded.
@@ -166,6 +172,8 @@ pub struct Incoming {
     /// The path as requested, percent-decoded.
     pub path: String,
     pub query: Vec<(String, String)>,
+    /// The query as sent, without the `?`, not decoded.
+    pub raw_query: String,
     pub headers: HashMap<String, String>,
     /// The body, parsed into nested parameters.
     pub params: Json,
@@ -287,6 +295,7 @@ impl ServerState {
             app_proxy::AppProxy::of_app(app_dir, settings.app_url.as_deref())
         });
         let admin_changes = admin.as_ref().map_or(0, |admin| admin.api.store_changes());
+        let polaris = polaris::Polaris::new(options.polaris);
         let state = ServerState {
             loaded: RwLock::new(Arc::new(files)),
             rebuilding: Mutex::new(()),
@@ -306,6 +315,7 @@ impl ServerState {
             builds: Default::default(),
             admin,
             app_proxy,
+            polaris,
         };
         (state, diagnostics)
     }
@@ -620,6 +630,10 @@ impl ServerState {
     }
 
     fn dispatch(&self, incoming: &Incoming) -> Reply {
+        // Shopify's CDN for the app's pages: nothing of the store.
+        if incoming.path.starts_with(polaris::PREFIX) {
+            return polaris::cdn(self, incoming);
+        }
         // The Admin API, OAuth and their control endpoints come first: a backend's request is
         // never a page.
         if let Some(reply) = admin::route(self, incoming) {
@@ -668,6 +682,7 @@ async fn handle(
     let incoming = Incoming {
         method: parts.method.as_str().to_string(),
         query: params::query_pairs(parts.uri.query().unwrap_or_default()),
+        raw_query: parts.uri.query().unwrap_or_default().to_string(),
         host: headers
             .get("host")
             .cloned()
@@ -707,6 +722,7 @@ async fn handle(
 
     if !quiet
         && !parts.uri.path().starts_with("/cdn/")
+        && !parts.uri.path().starts_with(polaris::PREFIX)
         && !parts.uri.path().starts_with("/__lsf/livereload")
     {
         let errors = reply

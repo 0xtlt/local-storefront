@@ -478,3 +478,63 @@ fn a_webhook_the_backend_refuses_is_said_with_the_secret_lsf_signed_it_with() {
     );
     assert!(!server.said().join("\n").contains("given-secret"));
 }
+
+#[test]
+fn polaris_offline_is_said_before_ready_and_set_by_the_option_or_its_variable() {
+    let theme = theme();
+    // Online by default: the CDN's, nothing said.
+    let server = Server::start(&["--theme", &theme, "serve"], &[]);
+    assert!(
+        !server
+            .said()
+            .iter()
+            .any(|line| line.starts_with("polaris:"))
+    );
+    let status: serde_json::Value = serde_json::from_str(&server.get("/__lsf/polaris")).unwrap();
+    assert_eq!(
+        (status["mode"].as_str(), status["default"].as_str()),
+        (Some("online"), Some("online"))
+    );
+    drop(server);
+
+    for (args, env) in [
+        (
+            vec!["--theme", &theme, "serve", "--polaris", "offline"],
+            vec![],
+        ),
+        (
+            vec!["--theme", &theme, "serve"],
+            vec![("LSF_POLARIS", "offline")],
+        ),
+    ] {
+        let server = Server::start(&args, &env);
+        let line = server
+            .before_ready
+            .iter()
+            .find(|line| line.starts_with("polaris:"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "no polaris: line ({args:?} {env:?}):\n{}",
+                    server.before_ready.join("\n")
+                )
+            });
+        assert_eq!(
+            line,
+            &format!(
+                "polaris: offline: http://{}/__lsf/cdn/shopifycloud/polaris-2.js (lsf's copy of Polaris 2.0.0 and 1.1.0)",
+                server.address
+            )
+        );
+        let status: serde_json::Value =
+            serde_json::from_str(&server.get("/__lsf/polaris")).unwrap();
+        assert_eq!(
+            (status["mode"].as_str(), status["default"].as_str()),
+            (Some("offline"), Some("offline"))
+        );
+        let script = server.get("/__lsf/cdn/shopifycloud/polaris-2.js");
+        assert!(script.contains(&format!(
+            "\"http://{}/__lsf/cdn/shopifycloud/admin-ui-foundations/icons/\"",
+            server.address
+        )));
+    }
+}

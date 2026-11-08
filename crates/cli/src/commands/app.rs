@@ -156,6 +156,7 @@ fn check(
     let (state, diagnostics) = ServerState::new(
         local,
         ServeOptions {
+            polaris: Default::default(),
             admin: None,
             live_reload: false,
             watch: false,

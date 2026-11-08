@@ -12,6 +12,7 @@ use super::throttle::Throttle;
 use super::{Incoming, SESSION_HEADER, ServeOptions, ServerState};
 use crate::app::App;
 
+mod polaris;
 mod store_base;
 mod store_sync;
 mod themes;
@@ -31,6 +32,7 @@ fn fixture_server(
     ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin,
             live_reload: false,
             watch: false,
@@ -60,6 +62,7 @@ fn request(method: &str, path_and_query: &str, body: Json, session: &str) -> Inc
         method: method.to_string(),
         path: path.to_string(),
         query: super::params::query_pairs(query),
+        raw_query: query.to_string(),
         headers,
         params: body,
         body: Default::default(),
@@ -798,6 +801,7 @@ fn server_with_throttle(rules: &str) -> ServerState {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: None,
             live_reload: false,
             watch: false,
@@ -1116,6 +1120,7 @@ fn the_server_can_start_logged_in() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: None,
             live_reload: false,
             watch: false,
@@ -1225,6 +1230,7 @@ fn robots_and_sitemaps_are_served() {
     let (plain, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: None,
             live_reload: false,
             watch: false,
@@ -1626,6 +1632,7 @@ fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: None,
             live_reload: false,
             watch: false,
@@ -1711,6 +1718,7 @@ fn a_video_is_served_in_the_parts_the_browser_asks_for() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: None,
             live_reload: false,
             watch: false,
@@ -1779,6 +1787,7 @@ fn a_theme_with_partials_gets_their_runtime_with_the_preview() {
         ServerState::new(
             app,
             ServeOptions {
+                polaris: Default::default(),
                 admin: None,
                 live_reload: false,
                 watch: false,
@@ -1854,6 +1863,7 @@ fn preloads_are_one_link_header_written_as_shopify_writes_it() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: None,
             live_reload: false,
             watch: false,
@@ -2028,6 +2038,7 @@ fn stylesheets_and_scripts_are_minified_as_on_shopify() {
         let (state, _) = ServerState::new(
             app,
             ServeOptions {
+                polaris: Default::default(),
                 admin: None,
                 live_reload: false,
                 watch: false,
@@ -2190,6 +2201,7 @@ async fn live_reload_tells_pages_about_changes_over_a_websocket() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: None,
             live_reload: true,
             watch: true,
@@ -2298,6 +2310,7 @@ async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::Jo
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: None,
             live_reload: false,
             watch: false,
@@ -2328,6 +2341,7 @@ async fn a_part_of_a_file_is_sent_as_it_is_even_to_a_browser_that_accepts_compre
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: None,
             live_reload: false,
             watch: false,
@@ -2598,6 +2612,7 @@ fn what_is_rendered_says_how_long_it_took() {
     let (naming, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: None,
             live_reload: false,
             watch: false,
@@ -3061,6 +3076,7 @@ fn checkout_server_with(
         ServerState::new(
             app,
             ServeOptions {
+                polaris: Default::default(),
                 admin,
                 live_reload: false,
                 watch: false,
@@ -9047,6 +9063,7 @@ fn the_admin_api_serves_the_versions_it_is_told() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: Some(super::admin::AdminSettings {
                 versions: lsf_app::admin::version::Served::parse("2026-10,2027-01").unwrap(),
                 ..Default::default()

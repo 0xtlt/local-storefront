@@ -608,6 +608,7 @@ mod tests {
         ServerState::new(
             app,
             ServeOptions {
+                polaris: Default::default(),
                 admin: Some(AdminSettings {
                     client_secret: Some(SECRET.to_string()),
                     app_url: Some(app_url.to_string()),
@@ -645,6 +646,7 @@ mod tests {
             method: method.to_string(),
             path: path.to_string(),
             query: crate::server::params::query_pairs(query),
+            raw_query: query.to_string(),
             headers,
             params: serde_json::json!({}),
             body: Default::default(),

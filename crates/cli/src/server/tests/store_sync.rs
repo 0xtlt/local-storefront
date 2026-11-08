@@ -222,6 +222,7 @@ impl MetafieldTheme {
         ServerState::new(
             app,
             ServeOptions {
+                polaris: Default::default(),
                 admin: Some(Default::default()),
                 live_reload: false,
                 watch: false,
@@ -430,6 +431,7 @@ fn a_change_of_the_files_and_a_reset_bring_the_files_back() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: Some(Default::default()),
             live_reload: false,
             watch: true,

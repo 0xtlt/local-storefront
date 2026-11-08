@@ -10,6 +10,7 @@ use crate::app::App;
 use crate::checkout::{self, AppArgs, CheckoutOptions, Variant};
 use crate::output::print_diagnostics;
 use crate::server::admin::AdminSettings;
+use crate::server::polaris::Mode as PolarisMode;
 use crate::server::throttle::Throttle;
 use crate::server::{ServeOptions, ServerState, run as run_server};
 use crate::watch::{self, Watcher};
@@ -149,6 +150,20 @@ pub struct Args {
     /// each use. `PUT /__lsf/admin/sources?url=` stubs others while lsf runs.
     #[arg(long = "admin-source", value_name = "URL=FILE", value_parser = super::admin_source)]
     admin_sources: Vec<(String, std::path::PathBuf)>,
+
+    /// What `/__lsf/cdn/<path>` answers, the URL an embedded app loads Polaris from in lsf's
+    /// admin (`/__lsf/cdn/shopifycloud/polaris-2.js`): `online` redirects to
+    /// `https://cdn.shopify.com/<path>`; `offline` serves lsf's copy of Polaris 1.x and 2.x, its
+    /// icons and its fonts, for an app shown without the internet. `PUT /__lsf/polaris` changes
+    /// it while lsf runs.
+    #[arg(
+        long,
+        env = "LSF_POLARIS",
+        value_enum,
+        value_name = "MODE",
+        default_value_t = PolarisMode::Online
+    )]
+    polaris: PolarisMode,
 }
 
 /// The port used when `--port` is not given.
@@ -282,6 +297,7 @@ pub fn run(
     let (state, diagnostics) = ServerState::new(
         app,
         ServeOptions {
+            polaris: args.polaris,
             admin: Some(admin),
             live_reload: args.live_reload || args.watch,
             watch: !args.static_files,
@@ -406,6 +422,9 @@ pub fn run(
             {
                 eprintln!("{line}");
             }
+        }
+        if let Some(line) = crate::server::polaris::banner(&state, &format!("http://{local}")) {
+            eprintln!("{line}");
         }
         if standalone {
             eprintln!(

@@ -19,6 +19,7 @@ fn static_server(data: &Path) -> ServerState {
     ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
             admin: Some(Default::default()),
             live_reload: false,
             watch: false,

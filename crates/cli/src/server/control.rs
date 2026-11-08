@@ -31,6 +31,9 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
     if let Some(reply) = super::checkout::control(state, incoming, &segments) {
         return reply;
     }
+    if let Some(reply) = super::polaris::control(state, incoming, &segments) {
+        return reply;
+    }
     match (incoming.method.as_str(), segments.as_slice()) {
         ("GET", []) => dashboard(state, incoming),
         ("GET", ["status"]) => Reply::json(200, &status(state)),
