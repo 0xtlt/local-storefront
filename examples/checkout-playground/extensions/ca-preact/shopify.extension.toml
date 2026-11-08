@@ -16,3 +16,10 @@ target = "customer-account.order-status.block.render"
 [[extensions.targeting]]
 module = "./src/ProfileBlock.jsx"
 target = "customer-account.profile.block.render"
+
+# The order's copy of the cart metafield `ui-preact` sets (see `[order.metafields]` in
+# shopify.app.toml). `owner_type` is optional on 2026-10 and required from 2027-01.
+[[extensions.metafields]]
+namespace = "$app"
+key = "requestedFreeGift"
+owner_type = "ORDER"

@@ -5,6 +5,7 @@
     "other": "{{count}} items in this order"
   },
   "total": "Total {{total}}",
+  "freeGift": "Free gift requested at checkout",
   "confirmation": "Confirmation {{number}}",
   "profileHeading": "Customer account: Preact",
   "customer": "Logged in as customer {{id}}",

@@ -203,6 +203,13 @@ Shopify, the cart's too. The template's checkbox reads the cart metafield `$app.
 it writes, which the template does not declare: the toml of `ui-preact` adds the
 `[[extensions.metafields]]` (`owner_type = "CART"`) that keeps the box ticked.
 
+The box's metafield goes on to the order: `shopify.app.toml` defines the order metafield
+`app.requestedFreeGift` with `capabilities.cart_to_order_copyable`, so when the buyer pays, lsf
+copies the cart's value onto the order, as Shopify does. `ca-preact` declares it
+(`owner_type = "ORDER"`) and shows "Free gift requested at checkout" on the order status page.
+Try it: open the `ui-preact` scenario logged in as `jane.doe@example.com`, tick the box, complete
+the order, then open it in the customer account (`/account`).
+
 ## Customer account UI extensions
 
 `/account` is the customer account of the app ([docs](../../docs/checkout.md#customer-account)):
@@ -213,7 +220,7 @@ with two locations on the profile.
 | Extension | API | Targets | What it shows |
 |---|---|---|---|
 | `ca-every-target` | 2026-10 | the 24 targets of customer accounts | A badge naming each target and what it is for (order, shipment, return, location); a full page with a route of its own (`/account/pages/ca-every-target`); an order action, "Ask about this order", whose dialog shows a toast |
-| `ca-preact` | 2026-10 | `order-status.block.render`, `profile.block.render` | Built from its sources in Preact with the hooks of `@shopify/ui-extensions/customer-account/preact`: the order, its items and total; the customer logged in, and a toast |
+| `ca-preact` | 2026-10 | `order-status.block.render`, `profile.block.render` | Built from its sources in Preact with the hooks of `@shopify/ui-extensions/customer-account/preact`: the order, its items and total, and the free gift the order's `$app.requestedFreeGift` records; the customer logged in, and a toast |
 
 Add `?targets=all` to a page of the account for the list of every target and where it renders.
 
