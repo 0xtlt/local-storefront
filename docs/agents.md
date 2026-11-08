@@ -284,9 +284,15 @@ npx local-storefront app function run --app ../my-app --scenario <name> --format
 Prints the checkout the Functions produce for the cart of a scenario, a file of
 `shopify-local/checkouts/` (`app init` writes a set). Without `--scenario`, it is the cart of the
 store data's `session`, empty in the demo store. The JSON has `lines`,
-`discounts`, `deliveryGroups`, `errors`, `cost`, and in `runs` the input, the output, the logs
-and the error of each Function. Exits with `1` when a Function fails to run, or when a Function
-named on the command line did not run; it says why. Guide: [checkout](checkout.md).
+`discounts`, `deliveryGroups`, `paymentMethods` and `expressMethods` (with their `placements`),
+`errors`, `cost`, in `runs` the input, the output, the logs and the error of each Function, and in
+`idle` the Functions the shop's checkout left out for want of an enabled owner (a payment
+customization, …), with why. A Function named on the command line runs whether or not the shop
+has an owner of it. Exits with `1` when a Function fails to run, or when a Function named on the
+command line did not run; it says why. Guide: [checkout](checkout.md#owners-and-scenarios).
+
+`npx local-storefront app function schema <handle>` writes the Function's `schema.graphql`, from
+lsf's copy of the API's schema, offline.
 
 For CI, `npx local-storefront app check --build --format json` builds the extensions, then runs
 the Functions of every scenario: `ok`, `failures`, `invalid`, and `ranInNoScenario`, the
