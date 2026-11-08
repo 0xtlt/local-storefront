@@ -77,6 +77,14 @@ the same data every run.
   admin says when the app runs Shopify's App Bridge instead. In the React Router template, three
   lines behind `APP_BRIDGE_URL` switch to lsf's. [Preview the embedded
   app](docs/admin.md#preview-the-embedded-app).
+- **Polaris without the internet.** lsf serves the paths of Shopify's CDN at `/__lsf/cdn/<path>`:
+  an app's pages load Polaris from `/__lsf/cdn/shopifycloud/polaris-2.js` (`polarisUrl` of the
+  React Router template, in `AppProvider` and `shopifyApp`). `--polaris online`, the default,
+  redirects to the CDN; `--polaris offline` (or `PUT /__lsf/polaris` while lsf runs) serves lsf's
+  copy of Polaris 2.0.0 and 1.1.0, its icons and its fonts, pointed at lsf, so that the
+  components, icons and fonts render with no request to `cdn.shopify.com`. Offline, a page that
+  still loads Polaris from the CDN gets lsf's copy from lsf's App Bridge when the CDN's fails.
+  [Polaris without the internet](docs/admin.md#polaris-without-the-internet).
 - **Webhooks, signed as Shopify signs them.** The subscriptions of `shopify.app.toml` and those
   the backend makes with `webhookSubscriptionCreate` are delivered to the backend:
   - with Shopify's headers and HMAC;

@@ -113,7 +113,9 @@ Router template's subscribes to `app/uninstalled`). Webhooks go to this machine,
 or to the `--address` you give, and nowhere else. The app's embedded pages open in a local
 admin, `http://127.0.0.1:9292/admin/apps/<handle>`, with a local App Bridge: session tokens,
 title bar, navigation, save bar, toasts and the resource picker work offline
-([preview the embedded app](docs/admin.md#preview-the-embedded-app)). Guide: [Admin API](docs/admin.md).
+([preview the embedded app](docs/admin.md#preview-the-embedded-app)), and so do Polaris's
+components, icons and fonts with `--polaris offline`, from lsf's copy
+([Polaris without the internet](docs/admin.md#polaris-without-the-internet)). Guide: [Admin API](docs/admin.md).
 
 ### Get ready for Shopify's strict Liquid parser
 

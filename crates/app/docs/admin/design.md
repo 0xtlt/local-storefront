@@ -1017,9 +1017,19 @@ of the CDN script 0.41.4 where shopify.dev leaves it open:
   (`/admin/*` only, else the same error), `app:` paths, `target="_top"`; while the save bar
   shows, a link asks the admin first. A plain `<a>` the app's router does not take reloads the
   frame without the session token: Shopify's breaks the same way, so lsf does not mend it, it
-  says so in the console. Without Polaris (offline), `s-link[href]` and its kin dispatch
+  says so in the console. Without Polaris (it did not load), `s-link[href]` and its kin dispatch
   `shopify:navigate` as Polaris does (`AppProvider` routes on it), and navigate when nothing read
   the event's `href`.
+- **Polaris** is Shopify's, served rather than simulated: lsf-cli's `server::polaris` answers
+  `/__lsf/cdn/<path>` (a path of `https://cdn.shopify.com/`) with a redirect to the CDN
+  (`online`, the default) or with the copy in the binary (`offline`: `crates/cli/assets/
+  shopify-cdn`, Polaris 2.0.0 and 1.1.0, their 844 icons and their fonts), whose scripts and
+  stylesheets get `https://cdn.shopify.com/` rewritten to lsf's `/__lsf/cdn/` (the icon fetcher's
+  own check of the prefix is rewritten with it). `--polaris`, `GET`/`PUT`/`DELETE /__lsf/polaris`.
+  App Bridge's part: a capturing `error` listener on the window sees the page's
+  `cdn.shopify.com/shopifycloud/polaris*.js` fail to load, asks `GET /__lsf/polaris`, and when it
+  is `offline` appends `<script data-lsf-polaris src="<lsf>/__lsf/cdn/<the same path>">`. Once,
+  and never when `s-page` is defined: two Polaris would define the same elements twice.
 - **Outside a frame**, the page goes to lsf's admin (`/admin/apps/<apiKey>/<path>`), as Shopify's
   goes to Shopify's, unless `auto-redirect` is disabled. **`?shopify-reload=`** (the bounce page
   of Shopify's libraries) comes back with a new `id_token` in the URL; the CDN script fetches it
@@ -1058,8 +1068,8 @@ Shopify's syntax; `selectionIds` are fetched by id (`id:`, `variant_id:`).
 
 ### What is not simulated
 
-The admin itself (its pages, its search, its other apps); Polaris (`polaris-2.js` is Shopify's
-CDN's); `shopify.scanner`, `pos`, `intents` (`invoke`, `register`), `webVitals`, `support`,
+The admin itself (its pages, its search, its other apps); Polaris itself (lsf serves Shopify's,
+or its copy of it, and does not draw a component of its own); `shopify.scanner`, `pos`, `intents` (`invoke`, `register`), `webVitals`, `support`,
 `reviews`, `scopes.request` and `revoke`, `app.extensions`, `shopifyQL`, `sidekick`, `tools`
 (they reject or warn with "lsf does not simulate shopify.<name>"); Direct API access
 (`fetch("shopify:admin/api/…")`); `extension:` links; the mobile and POS environments; modals

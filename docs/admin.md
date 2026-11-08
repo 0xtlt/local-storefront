@@ -401,6 +401,65 @@ Outside an admin (the page opened alone, as `/__lsf/admin/launch` does), lsf's A
 the page to lsf's admin, as Shopify's sends it to Shopify's, unless `shopify.config` has
 `disabledFeatures: ["auto-redirect"]`.
 
+### Polaris without the internet
+
+Polaris, the web components of the app's pages (`<s-page>`, `<s-button>`, …), is a script of
+Shopify's CDN, and loads its icons and its fonts from the CDN too. lsf serves the CDN's paths at
+`/__lsf/cdn/<path>`, `<path>` being the path on `https://cdn.shopify.com/`: the page loads Polaris
+from `http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris-2.js`, and lsf's Polaris mode decides
+what it gets.
+
+| Mode | What `/__lsf/cdn/<path>` answers |
+|---|---|
+| `online`, the default | A `302` to `https://cdn.shopify.com/<path>`, the query kept: Shopify's Polaris, as without lsf. |
+| `offline` | lsf's copy, which is in the binary: Polaris 2.0.0 (`shopifycloud/polaris-2.js`, `polaris-2.0.js`) and 1.1.0 (`shopifycloud/polaris.js`, `polaris-1.js`, `polaris-1.1.js`), every icon they name, and their fonts. In the scripts and stylesheets, `https://cdn.shopify.com/` becomes `http://<lsf>/__lsf/cdn/`: the icons and the fonts come from lsf too. A path lsf has no copy of is a `404` that says so. |
+
+The mode is `--polaris offline` (or `LSF_POLARIS=offline`) of `serve` and `app dev`, and lsf
+prints a `polaris:` line when it starts offline. While lsf runs, the
+[control API](control-api.md) reads and changes it, for every page at once: `GET /__lsf/polaris`,
+`PUT /__lsf/polaris` with `{"mode": "offline"}`, and `DELETE /__lsf/polaris` for the mode lsf
+started in. `DELETE /__lsf/admin` and `DELETE /__lsf/sessions` keep it, as they keep stubbed URLs.
+The copy is what the CDN served on 2026-11-08 (`crates/cli/assets/shopify-cdn`, whose README has
+its hashes): lsf never downloads Polaris, and offline is the copy of the lsf you run. Online, the
+page gets Shopify's current one.
+
+In the React Router template, `polarisUrl` (`@shopify/shopify-app-react-router` 2.1.0 or later)
+goes in two places, behind a variable that is unset on Shopify, next to `APP_BRIDGE_URL`:
+
+1. **`app/routes/app.tsx`**: `AppProvider` writes the `<script>` of `polarisUrl` (undefined: the
+   CDN's).
+
+   ```tsx
+   return { apiKey: process.env.SHOPIFY_API_KEY || "", appBridgeUrl: process.env.APP_BRIDGE_URL, polarisUrl: process.env.POLARIS_URL };
+   // …
+   <AppProvider apiKey={apiKey} polarisUrl={polarisUrl}>
+   ```
+
+2. **`app/shopify.server.ts`**: the `Link` header of the pages (`addDocumentResponseHeaders`)
+   preloads the same file. Without it, the browser preloads the CDN's, which fails offline.
+
+   ```ts
+   const shopify = shopifyApp({
+     // …
+     polarisUrl: process.env.POLARIS_URL,
+   });
+   ```
+
+Then run the backend with
+`POLARIS_URL=http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris-2.js`. Keep the file the app
+loads today: `polaris-2.js` is the default of 4.0.0, `polaris.js` (Polaris 1.x) that of 2.1.0. A
+page with a `Content-Security-Policy` allows lsf's origin where it allows `cdn.shopify.com`:
+`script-src` (Polaris), `style-src` (the stylesheets of its fonts), `font-src` (the fonts) and
+`connect-src` (Polaris fetches its icons). lsf answers with `Access-Control-Allow-Origin: *`, so
+the app's origin may differ from lsf's.
+
+A page that still loads Polaris from `cdn.shopify.com` runs offline too: when that script fails
+to load and lsf is `offline`, lsf's App Bridge loads lsf's copy of the same path, once, and says
+so in the console. It never loads one when Polaris is already defined, nor when lsf is `online`.
+[`examples/admin-backend`](https://github.com/0xtlt/local-storefront/tree/main/examples/admin-backend)
+loads Polaris from `POLARIS_URL`, and its end-to-end run checks both in Chromium, with every
+request to `cdn.shopify.com` refused.
+
 ### What App Bridge does in lsf's admin
 
 lsf's App Bridge has every name of `@shopify/app-bridge-types` 0.7.4 (the types of the CDN
@@ -431,10 +490,12 @@ and `.revoke`, `shopify.app.extensions()`, `shopify.shopifyQL`, `shopify.sidekic
 `shopify.tools`, `fetch()` of `shopify:admin/api/…` (Direct API access), and `extension:` links.
 `shopify.intents.request.value` is `null`: the page never runs as an intent.
 
-Polaris web components (`s-page`, `s-button`, `s-text-field`, …) come from Shopify's CDN
-(`polaris-2.js`), which lsf does not serve: offline, they do not load, and they show as plain
-elements with their text. lsf's App Bridge reads what it needs of them all the same (the title
-bar of `s-page`, the links of `s-app-nav`). Online, they load and work as on Shopify.
+Polaris web components (`s-page`, `s-button`, `s-text-field`, …) are Shopify's own, which lsf
+serves rather than simulates: Shopify's CDN through `/__lsf/cdn/`, or lsf's copy of it
+([without the internet](#polaris-without-the-internet)). When no Polaris loads (a page on the
+CDN, no internet, lsf `online`), they show as plain elements with their text, and lsf's App
+Bridge reads what it needs of them all the same (the title bar of `s-page`, the links of
+`s-app-nav`), opens `s-modal`s and follows `s-link`s itself.
 
 ## Tokens
 
