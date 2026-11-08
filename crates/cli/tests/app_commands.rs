@@ -733,3 +733,52 @@ fn every_path_routes_lists_renders_with_render_strict() {
         assert!(output.status.success(), "{route}: {}", text(&output));
     }
 }
+
+#[test]
+fn function_schema_writes_the_schema_of_the_functions_api_and_version() {
+    let app = App::new("schema");
+    let folder = app.0.join("extensions/payment-rules");
+    let _ = std::fs::remove_file(folder.join("schema.graphql"));
+    // In the Function's folder, as `shopify app function schema`.
+    let output = lsf(&folder, &["app", "function", "schema"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("payment_customization"),
+        "{}",
+        text(&output)
+    );
+    let written = std::fs::read_to_string(folder.join("schema.graphql")).unwrap();
+    assert!(written.starts_with("schema {"), "{}", &written[..40]);
+    assert!(written.contains("input PaymentMethodHideOperation"));
+    // `--stdout`, by handle from the app's folder: the same text, nothing written.
+    std::fs::remove_file(folder.join("schema.graphql")).unwrap();
+    let output = lsf(
+        &app.0,
+        &["app", "function", "schema", "payment-rules", "--stdout"],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), written);
+    assert!(!folder.join("schema.graphql").exists());
+    // `--path` to another one.
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "function",
+            "schema",
+            "--path",
+            "extensions/delivery-rules",
+            "--stdout",
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("DeliveryOptionHideOperation"));
+    // Out of a Function's folder, without a handle: it says how to name one.
+    let output = lsf(&app.0, &["app", "function", "schema"]);
+    assert!(!output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("is not the folder of a Function"),
+        "{}",
+        text(&output)
+    );
+}

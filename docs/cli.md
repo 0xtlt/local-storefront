@@ -120,7 +120,7 @@ and the store data defaults to the app's `shopify-local/`. Guide: [checkout](che
 | [`app init`](#app-init) | Writes checkout scenarios made for the app. |
 | [`app build`](#app-build) | Builds its extensions, without Node. |
 | [`app check`](#app-check) | Runs the Functions of every scenario, for CI. |
-| [`app function run`](#app-function-run), [`app function build`](#app-function-build) | Runs or builds its Functions, without a server. |
+| [`app function run`](#app-function-run), [`app function build`](#app-function-build), [`app function schema`](#app-function-schema) | Runs or builds its Functions, without a server, or writes the schema of a Function's API. |
 | [`app webhook trigger`](#app-webhook-trigger) | Sends one of its webhooks to its backend, signed as Shopify signs it. |
 
 ### app dev
@@ -260,6 +260,25 @@ TypeScript without a build command is built by lsf, without Node: its types
 |---|---|---|
 | `[handle]...` | | The Functions to build. Every Function of the app when none is given. |
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
+
+### app function schema
+
+`npx local-storefront app function schema [handle] [--path <dir>] [--stdout]`
+
+Writes the GraphQL schema of a Function's API, at the `api_version` of its
+`shopify.extension.toml`, to its `schema.graphql`, as `shopify app function schema` does: the
+schema a Rust Function's `#[typegen("schema.graphql")]` and a JavaScript Function's
+graphql-codegen read. It comes from the schemas lsf carries (the checkout's Function APIs:
+cart transform, discounts, delivery and payment customizations, validations, at 2026-10 and
+2027-01), without the network or a Partner account. Guide:
+[checkout](checkout.md#the-schema-of-a-function).
+
+| Option | Environment variable | What it does |
+|---|---|---|
+| `[handle]` | | The Function. Without it, the Function whose folder `--path` names, or the one the current folder is in. |
+| `--path <dir>` | | The folder of the Function, as Shopify's `--path`. |
+| `--app <dir>` | `LSF_APP` | The app. Defaults to the app `--path` or the current folder is in. |
+| `--stdout` | | Prints the schema instead of writing `schema.graphql`. |
 
 ### app webhook trigger
 

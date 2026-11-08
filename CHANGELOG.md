@@ -166,6 +166,10 @@ the same data every run.
 - **`examples/admin-backend`:** a backend written with Shopify's libraries
   (`@shopify/shopify-app-react-router`, `@shopify/shopify-api`), with a script that runs it
   against lsf end to end (`mise run admin:e2e`).
+- **`lsf app function schema`** writes a Function's `schema.graphql`, the GraphQL schema of its
+  API at its `api_version`, as `shopify app function schema` does, from the schemas lsf
+  carries, without the network: in the Function's folder, by handle, or with `--path`;
+  `--stdout` prints it. [The schema of a Function](docs/checkout.md#the-schema-of-a-function).
 
 ### Changed
 

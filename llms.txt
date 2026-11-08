@@ -18,7 +18,7 @@ The links below are relative to this file. Read the docs of the version you run 
 - [Strict Liquid](docs/strict-liquid.md): `npx local-storefront check` and `npx local-storefront check --fix`
 - [Formatting](docs/formatting.md): `npx local-storefront fmt` and its options
 - [Performance](docs/performance.md): `npx local-storefront profile`, points, Server-Timing
-- [Checkout](docs/checkout.md): `npx local-storefront app dev --app`, `app init` (scenarios) and `app function run`: the Functions and checkout UI extensions of a Shopify app
+- [Checkout](docs/checkout.md): `npx local-storefront app dev --app`, `app init` (scenarios), `app function run` and `app function schema` (a Function's `schema.graphql`, offline): the Functions and checkout UI extensions of a Shopify app
 - [Admin API](docs/admin.md): the local GraphQL Admin API (2026-10), OAuth, token exchange, webhooks and the app proxy, for the backend of a Shopify app; a local admin and App Bridge to preview its embedded pages, and Polaris served offline (`--polaris offline`, `/__lsf/cdn/shopifycloud/polaris-2.js`)
 - [Storefront](docs/storefront.md): accounts, password page, images, feature previews
 

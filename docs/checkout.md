@@ -112,6 +112,24 @@ Then build it at each save with `npx local-storefront app dev --watch`. A discou
 only for a discount that names it, and the scenarios written before it leave it out: see
 [scenarios](#scenarios).
 
+### The schema of a Function
+
+A Function's `schema.graphql` is the GraphQL schema of its API at its `api_version`: the Rust
+`shopify_function` crate generates its types from it (`#[typegen("schema.graphql")]`), and a
+JavaScript Function's graphql-codegen too. `shopify app function schema` writes it from
+Shopify's servers; lsf writes it from the schemas it carries, offline:
+
+```bash
+cd extensions/hide-paypal && npx local-storefront app function schema   # in the Function's folder
+npx local-storefront app function schema hide-paypal                    # or by handle, from the app
+npx local-storefront app function schema hide-paypal --stdout > other.graphql
+```
+
+lsf carries the schemas of the checkout's Function APIs (cart transform, discounts, delivery and
+payment customizations, cart and checkout validations) at 2026-10 and 2027-01: the ones it runs
+the Functions with. Fulfillment constraints, order routing and pickup generators are not among
+them. After changing `api_version`, write it again.
+
 ### Rust Functions
 
 `cargo build` writes a module that calls the Function Wasm API of the host by name

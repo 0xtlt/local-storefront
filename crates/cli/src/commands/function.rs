@@ -34,6 +34,11 @@ enum Subcommand {
     /// (`dist/function.js`), then its Wasm module. The others run their
     /// `[extensions.build] command`.
     Build(BuildArgs),
+    /// Write the GraphQL schema of a Function's API, at the API version its
+    /// `shopify.extension.toml` declares, to its `schema.graphql`, as `shopify app function
+    /// schema` does: from the schemas lsf carries, without the network. Run it in the Function's
+    /// folder, or name the Function (or give `--path`).
+    Schema(schema::SchemaArgs),
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -142,6 +147,7 @@ pub fn run(
     let args = match args.command {
         Subcommand::Run(args) => args,
         Subcommand::Build(args) => return build(&args),
+        Subcommand::Schema(args) => return schema::run(&args),
     };
     let Ran {
         app: shopify_app,
@@ -621,6 +627,8 @@ fn print_text(result: &CheckoutResult) {
         );
     }
 }
+
+mod schema;
 
 #[cfg(test)]
 mod playground;

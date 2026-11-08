@@ -284,8 +284,10 @@ fn types(function: &FunctionExtension, plan: &typegen::Plan) -> Result<PathBuf, 
                 (Some(version), Some(api)) => version.schema_source(api).to_string(),
                 _ => {
                     return Err(format!(
-                        "no {} for the typegen: run `shopify app function schema`",
-                        plan.schema
+                        "no {} for the typegen: run `{} app function schema {}`",
+                        plan.schema,
+                        lsf_core::util::command(),
+                        function.handle
                     ));
                 }
             }
