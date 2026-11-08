@@ -13,8 +13,10 @@
 //! - A change in a Function that has a build command (`[extensions.build] command`) builds it
 //!   again, in its folder. One build at a time per Function; what changes during a build
 //!   builds it once more after it. Several Functions build at once, up to [`PARALLEL`].
-//! - A change to the other files of the app (a Cargo workspace's `Cargo.toml` and
-//!   `Cargo.lock`, a `package.json`, a crate the Functions share) builds every Function.
+//! - A change to the other files of the app the builds read (a Cargo workspace's `Cargo.toml`
+//!   and `Cargo.lock`, a `package.json`, a crate or a package the Functions share) builds every
+//!   Function. The rest of the app's own folder is the app's (its sources, its web front end and
+//!   what its dev server builds in `dist/` or `build/`): it is not followed.
 //! - The checkout never runs the module a build writes: it runs a copy of the last one that
 //!   built ([`Modules`]), outside the app, replaced in one step once a build is over and its
 //!   module compiles as a run compiles it. A build that fails (or writes a module that does not
@@ -1057,16 +1059,86 @@ impl Snapshot {
     }
 }
 
+/// The folders of an app's own folder that hold what a build writes or what the tools fetch
+/// (the app's web front end built by trunk or Vite in `dist/`, React Router's `build/`), never
+/// what a Function reads: a change there builds nothing. Hidden folders (`.git/`, `.shopify/`)
+/// and `node_modules/` are left alone everywhere ([`ignored`]).
+const OUTPUT_FOLDERS: [&str; 4] = ["dist", "build", "target", "node_modules"];
+
+/// The files of an app's own folder that the builds of its Functions read: the manifests and
+/// lock files of a Cargo or npm workspace, the toolchain.
+const BUILD_FILES: [&str; 13] = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+    "tsconfig.json",
+];
+
+/// How deep in a folder of the app's own folder a crate or a package is looked for:
+/// `crates/common/Cargo.toml`, `packages/shared/utils/package.json`.
+const MANIFEST_DEPTH: usize = 3;
+
 /// Whether a file or folder of the app's own folder (`name`, at `path`) is one the builds may
-/// read: not the extensions, the tools' folders, the store data, or a Markdown document.
+/// read: a manifest of [`BUILD_FILES`], or a folder that holds a crate or a package (a
+/// `Cargo.toml` or a `package.json`) the Functions may share. Not the extensions, the store
+/// data, the build and dependency folders ([`OUTPUT_FOLDERS`]), nor the rest of an app that is
+/// more than its Functions: its own sources (`src/`, `app/`), its pages, its documents. Those
+/// are the app's business, whose dev server rebuilds them: following them would build every
+/// Function and reload the pages each time it does.
 fn shared_input(name: &Path, path: &Path, root: &Path, data: Option<&Path>) -> bool {
-    if ignored(name, &[]) || name == Path::new(crate::app::DEFAULT_DATA_DIRECTORY) {
+    if ignored(name, &[])
+        || name == Path::new(crate::app::DEFAULT_DATA_DIRECTORY)
+        || OUTPUT_FOLDERS
+            .iter()
+            .any(|folder| name == Path::new(folder))
+    {
         return false;
     }
-    match data {
-        Some(data) => data != path && data != root.join(name),
-        None => true,
+    if data.is_some_and(|data| data == path || data == root.join(name)) {
+        return false;
     }
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => holds_manifest(path, MANIFEST_DEPTH),
+        Ok(_) => BUILD_FILES.iter().any(|file| name == Path::new(file)),
+        Err(_) => false,
+    }
+}
+
+/// Whether `dir`, or a folder in it at most `depth` levels down, holds a `Cargo.toml` or a
+/// `package.json`. The build, dependency and hidden folders are not looked into.
+fn holds_manifest(dir: &Path, depth: usize) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut folders = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = Path::new(&name);
+        if name == Path::new("Cargo.toml") || name == Path::new("package.json") {
+            return true;
+        }
+        if depth > 1
+            && !ignored(name, &[])
+            && !OUTPUT_FOLDERS
+                .iter()
+                .any(|folder| name == Path::new(folder))
+            && entry.file_type().is_ok_and(|kind| kind.is_dir())
+        {
+            folders.push(entry.path());
+        }
+    }
+    folders
+        .iter()
+        .any(|folder| holds_manifest(folder, depth - 1))
 }
 
 /// The files that changed.

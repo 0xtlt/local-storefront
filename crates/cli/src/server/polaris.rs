@@ -240,9 +240,11 @@ pub fn control(state: &ServerState, incoming: &Incoming, segments: &[&str]) -> O
             let mode = state.polaris.reset();
             Reply::json(200, &json!({ "ok": true, "mode": mode.as_str() }))
         }
-        "OPTIONS" => return Some(Reply::preflight(
-            incoming.header("access-control-request-headers"),
-        )),
+        "OPTIONS" => {
+            return Some(Reply::preflight(
+                incoming.header("access-control-request-headers"),
+            ));
+        }
         _ => Reply::text(405, "Only GET, PUT, POST and DELETE\n")
             .header("allow", "GET, PUT, POST, DELETE"),
     };

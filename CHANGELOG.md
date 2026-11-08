@@ -206,6 +206,13 @@ the same data every run.
 
 ### Fixed
 
+- **`--watch` no longer rebuilds the Functions when the app's web front end builds.** In the
+  app's own folder, `--watch` now follows only what the builds of the Functions read: the
+  workspace's manifests and lock files (`Cargo.toml`, `Cargo.lock`, `package.json`, …) and the
+  folders that hold a crate or a package (`crates/common/Cargo.toml`). An openshop project, whose
+  trunk writes `dist/` at its root on every save of `src/`, built every Function and reloaded the
+  pages each time. `dist/`, `build/`, `target/`, `node_modules/`, dot folders (`.git/`,
+  `.shopify/`) and the app's own sources are left alone.
 - **Polaris offline with the app and lsf on one host.** With the app on `localhost:3000` and lsf
   on `localhost:9393`, Polaris's icons (`/__lsf/cdn/…/icons/<id>.svg`) failed with "blocked by
   CORS policy", and an `s-button slot="secondary-actions"` of an `s-banner` took no room: lsf's

@@ -226,16 +226,22 @@ A change to a checkout UI extension's bundle, an extension added or removed,
   Windows only the server holds the lock: a build that a killed server left running is not
   waited for there (the next start still builds again a module that is not the one recorded).
 - **What is watched**: the folder of each extension (`src/`, the input queries, its
-  `shopify.extension.toml`, `locales/`, and the `dist/` bundle of a checkout UI extension), the
-  other files of the app (a Cargo workspace's `Cargo.toml` and `Cargo.lock`, `package.json` and
-  its lock file, the crates and folders the Functions share), `shopify.app.toml`, and the
-  extension folders that are added or removed. A symbolic link is watched where it leads. The
-  store data and its scenarios are watched as always.
-- **What is not**: `target/`, `node_modules/`, `.git/` and other dot folders, editors' temporary
-  files, Markdown documents (in any folder), the store data folder (`shopify-local/`, or the one `--data` names),
-  and what a build writes: the `dist/` folder of a Function that has a build command, its module
-  (`[extensions.build] path`), `schema.graphql`, and the types of a JavaScript Function's
-  typegen (`generated/api.ts`). A build does not start itself again.
+  `shopify.extension.toml`, `locales/`, and the `dist/` bundle of a checkout UI extension), what
+  the builds of the Functions read in the app's own folder (a Cargo workspace's `Cargo.toml` and
+  `Cargo.lock`, `rust-toolchain.toml`, `package.json` and its lock file, `pnpm-workspace.yaml`,
+  `tsconfig.json`, and the folders that hold a crate or a package the Functions may share: a
+  `Cargo.toml` or a `package.json` at most three levels down, as `crates/common/Cargo.toml`),
+  `shopify.app.toml`, and the extension folders that are added or removed. A symbolic link is
+  watched where it leads. The store data and its scenarios are watched as always.
+- **What is not**: the rest of the app's own folder, which is the app's and its dev server's: its
+  sources (`src/`, `app/`), its pages (`index.html`), and what its tools build or fetch at its
+  root (`dist/` of trunk or Vite, `build/`, `target/`, `node_modules/`), so that an app whose
+  web front end rebuilds on every save (an openshop project) does not build its Functions and
+  reload the pages each time. Nor `.git/`, `.shopify/` and other dot folders, editors' temporary
+  files, Markdown documents (in any folder), the store data folder (`shopify-local/`, or the one
+  `--data` names), and what a build writes: the `dist/` folder of a Function that has a build
+  command, its module (`[extensions.build] path`), `schema.graphql`, and the types of a
+  JavaScript Function's typegen (`generated/api.ts`). A build does not start itself again.
 - **A change to a Function** with a build command runs that command in its folder, as `--build`
   does. A save that writes several files builds once. One build at a time per Function: a change
   during its build makes one more build after it. Up to 3 Functions build at once (the Functions
