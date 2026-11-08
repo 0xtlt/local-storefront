@@ -1658,7 +1658,8 @@ module's header has the rules and the sources):
   `access` (an app-owned definition's defaults). A declaration without `type` is left out with
   a warning of the loader. The definitions of other owner types are not read: only the order
   ones change what lsf does (the copy of the cart's metafields). Shopify keeps declared
-  definitions read-only through the Admin API; lsf does not *(gap)*.
+  definitions read-only through the Admin API; lsf does not *(gap)*. An uninstall deletes those of
+  the reserved namespace, a reinstall creates them again under new ids (see "App").
 - **`Metaobject`**: `type` (an app's own type, `$app:author` in the store data, is
   `app--<app id>--author`, as Shopify writes it; store sync writes it back as `$app:author`),
   `handle`, `displayName` (its `name` or `title` field, else the handle humanized), `definition`, `fields` (inline `MetaobjectField`s: `key`, `type`, `value`,
@@ -1747,13 +1748,76 @@ changed.
   scenario's own owners and `extensions`). `domains::storefront::remove_on_uninstall` deletes the
   app's script tags ("all of the script tags that it created are automatically removed",
   shopify.dev, `ScriptTag`) and its web pixel (a reinstalled app calls `webPixelCreate` again),
-  emitting `CHANGED`: the next sync gives the theme no script tag. `uninstall` answers what it
-  removed (`Uninstalled`: `removedFunctionOwners`, `removedScriptTags`, `removedWebPixels` of the
-  control endpoint). The UI extensions are not records: the server hides them while the default
-  shop has the app uninstalled (`place_extensions` in lsf-cli's `server/checkout.rs`), and
-  `AdminApi::with_notices` lets the terminal say when an app is uninstalled from a shop
-  (`finish_uninstall`) or installed again (`note_installs`). The words are
-  `lsf_app::config::NOT_INSTALLED` and the reasons next to it.
+  emitting `CHANGED`: the next sync gives the theme no script tag.
+  `content::remove_app_owned` deletes the metafield definitions of the app's reserved namespaces
+  (`app--<app id>` and `app--<app id>--<name>`, never another app's), declared
+  (`seed_declared_definitions`) or created (`metafieldDefinitionCreate`), unpinned first; their
+  metafields stay with `definition: null`, and each definition is kept aside as a memo
+  (`lsf/uninstalled-definition:<owner type>/<namespace>/<key>`, not a record: no GraphQL type, no
+  sync). A reinstall (`note_installs`, for each shop it installs the app on again, through
+  `change_shop` with the tokens locked, which come before the shops) runs `app::reinstall`:
+  `content::restore_app_owned` creates each kept definition again under a new id, unpinned, in the
+  order of the old ids, and links back the metafields of its owner type, namespace and key; one
+  made meanwhile under the same three stays. A new seed of a shop the app is not installed on runs
+  `app::reseed_uninstalled` (the Function owners and the reserved definitions again: the memos went
+  with the old state, so only the declared definitions come back on reinstall). Why, and the
+  sources: "App metafields after an uninstall" below. `uninstall` answers what it removed
+  (`Uninstalled`: `removedFunctionOwners`, `removedScriptTags`, `removedWebPixels`,
+  `removedMetafieldDefinitions` of the control endpoint). The UI extensions and the app proxy are
+  not records: the server hides the extensions while the default shop has the app uninstalled
+  (`place_extensions` in lsf-cli's `server/checkout.rs`) and answers the storefront's `404` on the
+  proxy's path (`not_installed` in `server/app_proxy.rs`: a store gets the proxy with the app, a
+  change of `prefix` or `subpath` reaching "only new installations", shopify.dev, "About app
+  proxies"), and `AdminApi::with_notices` lets the terminal say when an app is uninstalled from a
+  shop (`finish_uninstall`, plus `uninstalled_proxy_reason` for the default shop of an app with an
+  `[app_proxy]`) or installed again (`note_installs`, with the definitions brought back and the
+  proxy's path). The words are `lsf_app::config::NOT_INSTALLED` and the reasons next to it.
+
+**App metafields after an uninstall.** Decided from the most authoritative source, in this order:
+shopify.dev, the changelog, Shopify's staff.
+
+- shopify.dev, "Manage metafield definitions", section "App uninstall and reinstall"
+  (<https://shopify.dev/docs/apps/build/metafields/definitions#app-uninstall-and-reinstall>,
+  read 2026-11-08): "When a user uninstalls your app, Shopify deletes its app-owned metafield
+  definitions and temporarily retains the metafields and their values without a definition. This
+  applies to any app-owned definition, whether declared in `shopify.app.toml` or created with the
+  GraphQL Admin API. Cleanup of the retained data runs asynchronously." "If the same app is
+  reinstalled while that data is still retained, then Shopify recreates the definitions and
+  associates the existing metafields with them." TOML definitions: "Shopify deletes them during
+  uninstall and creates them again on reinstall. The new definitions have new GIDs"; GraphQL
+  definitions: "can persist after uninstall until asynchronous cleanup removes them". "Shopify
+  doesn't guarantee how long metafields and their values are retained after an uninstall." The
+  same page defines app-owned: "Use the reserved `$app` namespace. The app controls the
+  definition", against merchant-owned, "any non-reserved namespace". The metaobject page says the
+  same of app-owned metaobject definitions
+  (<https://shopify.dev/docs/apps/build/metaobjects/manage-metaobject-definitions#app-uninstall-and-reinstall>).
+- The changelog has no entry on it. The section was added in August 2026: Wes-Dev-Shopify on
+  community.shopify.dev ("App-owned TOML metafield definitions: what happens after
+  uninstall/reinstall?", 2026-08-12) first observed the metafield and its value kept, then wrote
+  "Uninstalling deletes app-owned metafield definitions" and linked the new sections.
+- Older threads (2024 to May 2026: "Metafields/metaobjects definitions with reserved namespace
+  left after app uninstall", "App-reserved metafield definitions blocking product/variant updates
+  after app uninstall") report reserved definitions left behind, relaying a reply of Shopify that
+  "merchants might still rely on the data", and no staff post there says otherwise; they predate
+  the documented behaviour, which lsf follows. Of the posts read as saying app metafields are
+  cleaned up, none is a staff statement on app-owned metafields: Paige-Shopify ("App-owned
+  metafields randomly disappearing after a few days?", 2026-02) only answers "Outside of
+  uninstalling the app, this is the first I'm hearing of it."; David_Arbias, no staff mark ("What
+  happens to app-owned collection sources after the app owning it was uninstalled?", 2026-08-01),
+  writes that a metafield "under `currentAppInstallation` … gets deleted together with any
+  resource owned by the app", which is about app-data metafields, not the reserved namespaces;
+  Kellan-Shopify ("Orphaned app-owned metaobject definitions cannot be deleted even after
+  reinstalling app", 2026-03-03) speaks of "a process in place to clear out any orphaned
+  metaobjects on our end".
+
+So lsf deletes the reserved definitions (`$app`, `$app:<name>`), keeps their metafields, and a
+reinstall creates the definitions again under new ids; the definitions of other namespaces are
+the merchant's, and no source says an uninstall touches them: they stay. lsf deletes the created
+definitions at once, as it deletes the Function owners Shopify removes in the background, and
+keeps the values until a new seed, since it has no clock to expire them by. Not done *(gap)*: the
+app's metaobject definitions (`$app:<type>`), whose definitions lsf also infers from the entries.
+The app-data metafields of the installation (`AppInstallation`) stay: no shopify.dev page says
+what an uninstall does to them, and the one post that does is not Shopify's.
 
 What the app family's mutations make (`domains/app/`: `billing`, `discounts`, `functions`,
 `bulk`, `uploads`, `metafields`), in the same shapes, so that the store sync reads them as it

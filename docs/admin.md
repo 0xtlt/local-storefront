@@ -570,8 +570,30 @@ again through the API" ([community](https://community.shopify.com/t/shopify-func
 the app creates them again, as on a first install. Shopify removes them in the background
 after the uninstall ("the job that deletes the price rules and their associated codes runs
 asynchronously", Shopify's staff on [community.shopify.dev](https://community.shopify.dev/t/discountredeemcodebulkadd-phantom-redemption-codes/32591));
-lsf removes them at once. The app's metafields on the shop's other resources stay, as Shopify
-keeps them a while for a reinstall.
+lsf removes them at once.
+
+**The app's own metafield definitions go too; their metafields stay.** "When a user uninstalls
+your app, Shopify deletes its app-owned metafield definitions and temporarily retains the
+metafields and their values without a definition. This applies to any app-owned definition,
+whether declared in `shopify.app.toml` or created with the GraphQL Admin API", and "If the same app
+is reinstalled while that data is still retained, then Shopify recreates the definitions and
+associates the existing metafields with them" ([Manage metafield definitions, App uninstall and
+reinstall](https://shopify.dev/docs/apps/build/metafields/definitions#app-uninstall-and-reinstall)).
+lsf does the same:
+
+| Definition | On Shopify | In lsf |
+|---|---|---|
+| In the app's reserved namespace (`$app`, `$app:<name>`, stored `app--<app id>…`), declared in `shopify.app.toml` | Deleted during the uninstall; created again on reinstall, under a new GID ("a definition ID from before the uninstall no longer resolves") | Deleted by the uninstall (`removedMetafieldDefinitions`); the reinstall creates it again under a new id, with its metafields |
+| In the app's reserved namespace, made with `metafieldDefinitionCreate` | Deleted too, in the background ("can persist after uninstall until asynchronous cleanup removes them"); created again by a reinstall while the data is retained | Deleted at once, like the declared ones; the reinstall creates it again under a new id |
+| In any other namespace (`custom`, one the app chose) | The merchant's definition: nothing says an uninstall touches it | Stays, id and metafields included |
+| The metafields (values) of the app's definitions | Kept a while without a definition ("Shopify doesn't guarantee how long") | Kept, without a definition, until the store data is seeded again; a new seed while the app is uninstalled keeps the declared definitions deleted and drops the ones the app made |
+
+While the app is uninstalled, an order does not copy the cart metafields of a deleted `$app`
+definition (`cart_to_order_copyable`): the definition is gone. Look definitions up by owner type,
+namespace and key after a reinstall, as shopify.dev advises, not by an id kept from before. The
+metaobject definitions of the app (`$app:<type>`) are not deleted *(gap)*, nor are the
+app-data metafields of its installation (`AppInstallation`, which no shopify.dev page says an
+uninstall deletes).
 
 **The app's extensions go with it too.** While the app is not installed on the default shop, lsf
 renders none of its extensions, as Shopify removes an uninstalled app's extensions:
@@ -584,6 +606,7 @@ renders none of its extensions, as Shopify removes an uninstalled app's extensio
 | Web pixel | Removed with the app; a reinstalled app calls `webPixelCreate` again | The uninstall deletes the `WebPixel` record (`removedWebPixels`); the storefront runs no web pixel anyway | The app creates it again |
 | Script tags | "When an app is uninstalled from a shop, all of the script tags that it created are automatically removed" ([`ScriptTag`](https://shopify.dev/docs/api/admin-graphql/2026-10/objects/ScriptTag)) | The uninstall deletes them (`removedScriptTags`): `content_for_header` stops loading them at once | The app creates them again |
 | Admin UI extensions, admin links | Admin links are deleted ([`appUninstall`](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/appUninstall)) | lsf's admin renders neither | - |
+| App proxy | A store gets it with the app: a change of `prefix` or `subpath` applies "only to new installations" (on a dev store, "uninstall and reinstall the app", [About app proxies](https://shopify.dev/docs/apps/build/online-store/app-proxies)), so the uninstall removes it and the storefront answers the path with its `404` page | `/<prefix>/<subpath>` is the theme's `404` page (with `X-LSF-Reason`), and nothing reaches the backend ([App proxy](#app-proxy)) | Forwarded again, on the path of `shopify.app.toml` |
 
 Each place that shows extensions says why they are gone, "the app is not installed on the shop":
 
@@ -596,8 +619,10 @@ Each place that shows extensions says why they are gone, "the app is not install
   `"installed": false` and `"uninstalled"`;
 - the terminal, unless `--quiet`: `admin:  local-supply-co.myshopify.com: the app is not installed
   on the shop: its UI extensions do not render and its Functions do not run until it is installed
-  again (…)`, and `… the app is installed again: its UI extensions render again, …` after a
-  reinstall.
+  again (…)`, then, for an app with an `[app_proxy]`, `… uninstalling it removed its app proxy, so
+  /apps/reviews is the storefront's 404 …`; and `… the app is installed again: its UI extensions
+  render again, …; its 2 metafield definitions are back, under new ids; /apps/reviews goes to
+  its app proxy again` after a reinstall.
 
 ## Webhooks
 
@@ -1163,6 +1188,17 @@ proxy:  http://127.0.0.1:9292/apps/reviews → http://localhost:3000/proxy
 - **When the backend does not answer**: nothing listening is a `502` page, no answer within 10
   seconds a `504` page, each saying what failed and to start the backend on `--app-url`.
   Shopify documents no timeout for app proxies; 10 seconds is what it documents for its APIs.
+- **While the app is uninstalled** (`POST /__lsf/admin/uninstall`, `appUninstall`): no proxy. A
+  store gets the proxy with the app ("Configuring an app proxy requires the `write_app_proxy`
+  access scope"; a change of `prefix` or `subpath` applies "only to new installations", and on a
+  dev store means "uninstall and reinstall the app", [About app
+  proxies](https://shopify.dev/docs/apps/build/online-store/app-proxies)), so uninstalling the app
+  removes it, and the storefront answers the path as any path it has no page for. lsf answers the
+  theme's `404` page (a `POST`, `404 Not found`), sends nothing to the backend, and says why in
+  `X-LSF-Reason` and the terminal: `app proxy: the app is not installed on the shop: uninstalling
+  it removed its app proxy, so /apps/reviews is the storefront's 404 and no request reaches the
+  backend until it is installed again (…)`. A reinstall forwards it again. Shopify documents no
+  page for this case: the 404 is what a storefront answers on a path no app proxy holds.
 
 In a React Router app, `authenticate.public.appProxy` verifies the request and `liquid` answers
 in the theme:

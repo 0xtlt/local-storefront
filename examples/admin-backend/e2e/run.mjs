@@ -899,6 +899,26 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
     assert(answer.status === 400, `answered ${answer.status}`);
     return "400";
   });
+  await check("proxy", "proxy: uninstalled → the storefront's 404, nothing reaches the backend; a reinstall brings it back", async () => {
+    const seen = (await backendState()).proxied.length;
+    const before = Date.now();
+    await fetch(`${lsf}/__lsf/admin/uninstall`, { method: "POST", body: "{}" });
+    await received("APP_UNINSTALLED", (w) => w.at >= before);
+    const page = await fetch(`${lsf}/apps/reviews/product/1`);
+    const html = await page.text();
+    assert(page.status === 404 && page.headers.get("x-lsf-template") === "404", `answered ${page.status}, template ${page.headers.get("x-lsf-template")}`, html.slice(0, 300));
+    const reason = page.headers.get("x-lsf-reason") ?? "";
+    assert(reason.startsWith("the app is not installed on the shop: uninstalling it removed its app proxy"), "no reason given", reason);
+    assert((await backendState()).proxied.length === seen, "the backend got the request");
+    await fetch(`${lsf}/__lsf/admin/install`, { method: "POST", body: "{}" });
+    // The backend dropped its sessions on app/uninstalled: a token exchange makes them again.
+    const again = await app("GET", "/api/cost");
+    assert(again.status === 200, `after reinstall: ${again.status}`, again.body);
+    const back = await fetch(`${lsf}/apps/reviews`);
+    assert(back.status === 200, `after reinstall: ${back.status}`, (await back.text()).slice(0, 300));
+    assert((await backendState()).proxied.length === seen + 1, "the backend did not get the request after the reinstall");
+    return `404 (theme's 404 page), "${reason.slice(0, 48)}…", backend untouched; 200 after the reinstall`;
+  });
 
   return results;
 }

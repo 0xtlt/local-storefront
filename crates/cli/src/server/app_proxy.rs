@@ -19,6 +19,14 @@
 //!   'appProxy'`), which `authenticate.public.appProxy` of the app templates calls: the
 //!   signature, and a `timestamp` within 90 seconds of the backend's clock. lsf signs with the
 //!   system clock, whatever time the store data fixes for the storefront.
+//! - A store gets the proxy with the app: "Configuring an app proxy requires the
+//!   `write_app_proxy` access scope", the merchant customizes it on the app's page of the
+//!   installed apps, and a change of `prefix` or `subpath` applies "only to new installations"
+//!   (on a dev store: "change it in your dev store admin, or uninstall and reinstall the app",
+//!   "About app proxies"). So an uninstall removes it, as it removes the app's other extensions,
+//!   and the shop's storefront answers the path as any path it does not know, with its `404`
+//!   page: nothing reaches the backend. A reinstall brings it back, on the app's path. lsf does
+//!   so while the default shop has the app uninstalled ([`ServerState::app_uninstalled`]).
 
 use std::io::Read;
 use std::path::Path;
@@ -165,7 +173,7 @@ impl AppProxy {
             application_url: config.application_url.clone(),
         };
         Some(AppProxy {
-            path_prefix: format!("/{prefix}/{subpath}"),
+            path_prefix: proxy.path(),
             url: proxy.url.clone(),
             target: resolve_uri(&proxy.url, &urls),
             problem,
@@ -230,6 +238,9 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
     let store = state.store_of(incoming);
     let (locale, root, path) = state.localize(&store, &incoming.path);
     let rest = proxy.rest_of(&path)?.to_string();
+    if state.app_uninstalled() {
+        return Some(not_installed(state, incoming, proxy));
+    }
     let (session_id, is_new) = state.session_id(incoming);
     let locale = (!root.is_empty()).then_some(locale);
     let reply = forward(state, proxy, incoming, &session_id, &rest, locale);
@@ -241,6 +252,17 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
     } else {
         reply
     })
+}
+
+/// The answer on the proxied path while the app is not installed on the shop: the storefront's,
+/// as for any path it has no page for (the theme's `404` page for a `GET`), since the uninstall
+/// removed the proxy; nothing is sent to the backend. The terminal and `X-LSF-Reason` say why.
+fn not_installed(state: &ServerState, incoming: &Incoming, proxy: &AppProxy) -> Reply {
+    let reason = lsf_app::config::uninstalled_proxy_reason(&proxy.path_prefix);
+    if !state.options.quiet {
+        eprintln!("    app proxy: {reason}");
+    }
+    super::storefront::handle(state, incoming).header("x-lsf-reason", header_text(&reason))
 }
 
 struct Answer {
@@ -1094,6 +1116,64 @@ mod tests {
             seen.headers["accept-language"],
             format!("fr;q=1.0, {primary};q=0.5")
         );
+    }
+
+    /// A control endpoint of the Admin API (`/__lsf/admin/uninstall`, `/__lsf/admin/install`).
+    fn control(state: &ServerState, path: &str) -> Reply {
+        let mut incoming = request("POST", path, "control");
+        incoming
+            .headers
+            .insert("content-type".to_string(), "application/json".to_string());
+        incoming.body = bytes::Bytes::from_static(b"{}");
+        state.dispatch(&incoming)
+    }
+
+    /// Shopify gives a store the app's proxy with the app, so uninstalling the app removes it:
+    /// the storefront answers the path as one it has no page for (the theme's 404 page), and no
+    /// request reaches the backend. `X-LSF-Reason` says why. A reinstall brings it back.
+    #[test]
+    fn an_uninstalled_app_has_no_app_proxy_until_it_is_installed_again() {
+        let (url, requests) = backend(|_| http("200 OK", &[], "proxied"));
+        let state = server(app("uninstalled", PROXY), &url, false);
+        assert_eq!(text(&get(&state, "/apps/reviews/a", "un")), "proxied");
+        received(&requests);
+
+        let uninstalled = control(&state, "/__lsf/admin/uninstall");
+        assert_eq!(uninstalled.status, 200, "{}", text(&uninstalled));
+        assert!(state.app_uninstalled());
+        let reason = "the app is not installed on the shop: uninstalling it removed its app \
+                      proxy, so /apps/reviews is the storefront's 404 and no request reaches the \
+                      backend until it is installed again";
+        for path in ["/apps/reviews", "/apps/reviews/a?x=1", "/apps/reviews/"] {
+            let reply = get(&state, path, "un");
+            assert_eq!(reply.status, 404, "{path}: {}", text(&reply));
+            // The theme's 404 page, as for any path the storefront does not know.
+            assert_eq!(header(&reply, "x-lsf-template"), Some("404"), "{path}");
+            assert!(
+                header(&reply, "x-lsf-reason").is_some_and(|value| value.starts_with(reason)),
+                "{path}: {:?}",
+                header(&reply, "x-lsf-reason")
+            );
+            assert!(!text(&reply).contains("proxied"), "{path}");
+        }
+        let posted = state.dispatch(&request("POST", "/apps/reviews/form", "un"));
+        assert_eq!(posted.status, 404, "{}", text(&posted));
+        assert!(
+            requests.recv_timeout(Duration::from_millis(300)).is_err(),
+            "nothing reaches the backend"
+        );
+        // Without a theme (`lsf app dev`), the storefront's 404 all the same.
+        let standalone = server(app("uninstalled-standalone", PROXY), &url, true);
+        control(&standalone, "/__lsf/admin/uninstall");
+        let reply = get(&standalone, "/apps/reviews", "un");
+        assert_eq!(reply.status, 404, "{}", text(&reply));
+        assert!(header(&reply, "x-lsf-reason").is_some_and(|value| value.starts_with(reason)));
+        assert!(requests.recv_timeout(Duration::from_millis(100)).is_err());
+
+        let installed = control(&state, "/__lsf/admin/install");
+        assert_eq!(installed.status, 200, "{}", text(&installed));
+        assert_eq!(text(&get(&state, "/apps/reviews/a", "un")), "proxied");
+        assert_eq!(seen_path(&requests), "/proxy/a");
     }
 
     #[test]

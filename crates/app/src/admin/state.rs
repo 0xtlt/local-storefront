@@ -1031,6 +1031,17 @@ impl ShopState {
         self.log(|| Undo::Memo { key, before });
     }
 
+    /// Forgets what was kept under `key` (see [`ShopState::set_memo`]).
+    pub fn remove_memo(&mut self, key: &str) {
+        if let Some(before) = self.memos.remove(key) {
+            let key = key.to_string();
+            self.log(|| Undo::Memo {
+                key,
+                before: Some(before),
+            });
+        }
+    }
+
     /// Opens a savepoint: from now on each write keeps what it overwrote, until
     /// [`ShopState::rollback`] puts it back or [`ShopState::release`] keeps the writes. What a
     /// mutation does before it fails is undone this way ([`crate::admin::resolve::Mutation`]): the

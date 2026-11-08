@@ -412,23 +412,48 @@ pub struct Uninstalled {
     pub script_tags: usize,
     /// Its web pixel: 0 or 1.
     pub web_pixels: usize,
+    /// The metafield definitions of its reserved namespaces; their metafields stay
+    /// ([`super::content::remove_app_owned`]).
+    pub metafield_definitions: usize,
 }
 
 /// What uninstalling the app does to the records of the shop, whether the merchant uninstalls it
 /// (`POST /__lsf/admin/uninstall`) or the app itself (`appUninstall`): its subscriptions are
 /// cancelled ([`billing::cancel_on_uninstall`]), its Functions go with every object that runs
 /// them ([`remove_function_owners`]), and its script tags and web pixel go too
-/// ([`super::storefront::remove_on_uninstall`]). Its UI extensions are not records: the pages
-/// stop rendering them while the app is not installed (`crate::config::NOT_INSTALLED`).
+/// ([`super::storefront::remove_on_uninstall`]), and so do the metafield definitions of its
+/// reserved namespaces, whose metafields stay for a reinstall ([`super::content::remove_app_owned`]).
+/// Its UI extensions are not records: the pages stop rendering them while the app is not
+/// installed (`crate::config::NOT_INSTALLED`).
 pub fn uninstall(state: &mut ShopState) -> Uninstalled {
     billing::cancel_on_uninstall(state);
     let function_owners = remove_function_owners(state);
     let (script_tags, web_pixels) = super::storefront::remove_on_uninstall(state);
+    let metafield_definitions = super::content::remove_app_owned(state);
     Uninstalled {
         function_owners,
         script_tags,
         web_pixels,
+        metafield_definitions,
     }
+}
+
+/// What installing the app again on a shop it was uninstalled from does to the records: the
+/// metafield definitions the uninstall deleted are created again under new ids, with the
+/// metafields kept meanwhile ([`super::content::restore_app_owned`]). Nothing else comes back:
+/// the app creates its Function owners, script tags and web pixel again. Answers how many
+/// definitions were created.
+pub fn reinstall(state: &mut ShopState) -> usize {
+    super::content::restore_app_owned(state)
+}
+
+/// What a new seed of a shop the app is not installed on loses again: the objects that run its
+/// Functions ([`remove_function_owners`]) and the metafield definitions of its reserved
+/// namespaces ([`super::content::remove_app_owned`]), which the store data and
+/// `shopify.app.toml` declare and the uninstall removed.
+pub fn reseed_uninstalled(state: &mut ShopState) {
+    remove_function_owners(state);
+    super::content::remove_app_owned(state);
 }
 
 /// Removes every object that runs a Function of the app, with its metafields, as uninstalling the

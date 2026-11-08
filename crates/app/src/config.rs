@@ -151,6 +151,18 @@ pub struct AppProxyConfig {
     pub prefix: String,
 }
 
+impl AppProxyConfig {
+    /// `/<prefix>/<subpath>`: the storefront path that is proxied, spaces and slashes around
+    /// each part left out.
+    pub fn path(&self) -> String {
+        format!(
+            "/{}/{}",
+            self.prefix.trim().trim_matches('/'),
+            self.subpath.trim().trim_matches('/')
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FunctionExtension {
     pub handle: String,
@@ -461,6 +473,18 @@ pub fn uninstalled_extensions_reason() -> String {
         "{NOT_INSTALLED}: uninstalling it removed its UI extensions from the checkout, the \
          thank-you page and the customer account, which render again once it is installed \
          ({INSTALL_AGAIN})"
+    )
+}
+
+/// Why the storefront answers its own `404` on the path of the app proxy (`path`) while the app is
+/// not installed on the shop: Shopify gives a store the app's proxy when it installs the app (a
+/// change of `prefix` or `subpath` applies "only to new installations", which on a dev store
+/// means an uninstall and a reinstall, shopify.dev, "About app proxies"), so uninstalling it
+/// removes it, and a reinstall brings it back.
+pub fn uninstalled_proxy_reason(path: &str) -> String {
+    format!(
+        "{NOT_INSTALLED}: uninstalling it removed its app proxy, so {path} is the storefront's \
+         404 and no request reaches the backend until it is installed again ({INSTALL_AGAIN})"
     )
 }
 

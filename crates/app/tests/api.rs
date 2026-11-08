@@ -658,6 +658,240 @@ fn an_uninstall_and_a_reinstall_are_said_in_the_terminal() {
     );
 }
 
+/// The definitions of the app's reserved namespaces, as a test reads them: `(owner type,
+/// namespace, key, id)` of each, in the order of their ids.
+fn definitions(api: &AdminApi) -> Vec<(String, String, String, String)> {
+    api.with_default_shop(|state| {
+        state
+            .all("MetafieldDefinition")
+            .map(|definition| {
+                let text = |field: &str| definition[field].as_str().unwrap_or_default().to_string();
+                (
+                    text("ownerType"),
+                    text("namespace"),
+                    text("key"),
+                    text("id"),
+                )
+            })
+            .collect()
+    })
+    .unwrap()
+}
+
+/// What shopify.dev says an uninstall does to an app's metafield definitions ("Manage metafield
+/// definitions", "App uninstall and reinstall"): those of its reserved namespaces are deleted,
+/// declared in `shopify.app.toml` or made through the Admin API, and their metafields stay without
+/// a definition; a reinstall creates them again under new ids and gives them back their
+/// metafields. A definition of another namespace is the merchant's: it stays, under its id. The
+/// terminal says what comes back, and what happens to the app proxy.
+#[test]
+fn an_uninstall_deletes_the_apps_own_metafield_definitions_and_a_reinstall_brings_them_back() {
+    let store = support::fixture_store("rich");
+    let mut app = support::fixture_app();
+    app.config
+        .order_metafields
+        .push(lsf_app::config::DeclaredMetafieldDefinition {
+            namespace: "$app".to_string(),
+            key: "gift_note".to_string(),
+            kind: "single_line_text_field".to_string(),
+            name: Some("Gift note".to_string()),
+            description: None,
+            cart_to_order_copyable: true,
+        });
+    app.config.app_proxy = Some(lsf_app::config::AppProxyConfig {
+        url: "/proxy".to_string(),
+        subpath: "reviews".to_string(),
+        prefix: "apps".to_string(),
+    });
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = lines.clone();
+    let api = AdminApi::new(&store, options(Some(app), None)).with_notices(std::sync::Arc::new(
+        move |line: &str| sink.lock().unwrap().push(line.to_string()),
+    ));
+    let shop = api.default_shop();
+    let token = default_token(&api);
+    let (_, products) = graphql(
+        &api,
+        &token,
+        "{ products(first: 1) { nodes { id } } }",
+        Value::Null,
+    );
+    let product = products["data"]["products"]["nodes"][0]["id"].clone();
+    for (namespace, key, kind) in [
+        ("$app:loyalty", "tier", "single_line_text_field"),
+        ("loyalty", "points", "number_integer"),
+    ] {
+        let (_, created) = graphql(
+            &api,
+            &token,
+            "mutation($definition: MetafieldDefinitionInput!) { metafieldDefinitionCreate(definition: $definition) { createdDefinition { id } userErrors { message } } }",
+            json!({"definition": {
+                "name": key, "namespace": namespace, "key": key, "type": kind,
+                "ownerType": "PRODUCT",
+            }}),
+        );
+        assert_eq!(
+            created["data"]["metafieldDefinitionCreate"]["userErrors"],
+            json!([]),
+            "{created}"
+        );
+    }
+    let (_, set) = graphql(
+        &api,
+        &token,
+        "mutation($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { userErrors { message } } }",
+        json!({"metafields": [
+            {"ownerId": product, "namespace": "$app:loyalty", "key": "tier", "type": "single_line_text_field", "value": "gold"},
+            {"ownerId": product, "namespace": "loyalty", "key": "points", "type": "number_integer", "value": "10"},
+        ]}),
+    );
+    assert_eq!(
+        set["data"]["metafieldsSet"]["userErrors"],
+        json!([]),
+        "{set}"
+    );
+    let before = definitions(&api);
+    let app_owned = |list: &[(String, String, String, String)]| -> Vec<(String, String, String)> {
+        list.iter()
+            .filter(|(_, namespace, _, _)| namespace.starts_with("app--"))
+            .map(|(owner, namespace, key, _)| (owner.clone(), namespace.clone(), key.clone()))
+            .collect()
+    };
+    let merchant =
+        |list: &[(String, String, String, String)]| -> Vec<(String, String, String, String)> {
+            list.iter()
+                .filter(|(_, namespace, _, _)| !namespace.starts_with("app--"))
+                .cloned()
+                .collect()
+        };
+    let owned = app_owned(&before);
+    assert_eq!(owned.len(), 2, "{before:?}");
+    assert!(
+        owned
+            .iter()
+            .any(|(owner, _, key)| owner == "ORDER" && key == "gift_note")
+    );
+    assert!(
+        owned
+            .iter()
+            .any(|(owner, namespace, key)| owner == "PRODUCT"
+                && namespace.ends_with("--loyalty")
+                && key == "tier")
+    );
+    let tier = |api: &AdminApi| -> (Option<String>, Value) {
+        api.with_default_shop(|state| {
+            let metafield = state
+                .all("Metafield")
+                .find(|metafield| {
+                    metafield["owner"] == product
+                        && metafield["key"] == "tier"
+                        && metafield["namespace"]
+                            .as_str()
+                            .is_some_and(|namespace| namespace.starts_with("app--"))
+                })
+                .expect("the metafield stays");
+            (
+                metafield["value"].as_str().map(str::to_string),
+                metafield["definition"].clone(),
+            )
+        })
+        .unwrap()
+    };
+
+    let uninstalled = send(&api, "POST", "/__lsf/admin/uninstall", Value::Null);
+    assert_eq!(
+        json_of(&uninstalled)["removedMetafieldDefinitions"],
+        json!(2)
+    );
+    let after = definitions(&api);
+    assert_eq!(app_owned(&after), Vec::<(String, String, String)>::new());
+    assert_eq!(
+        merchant(&after),
+        merchant(&before),
+        "the merchant's stay, ids included"
+    );
+    let (value, definition) = tier(&api);
+    assert_eq!(value.as_deref(), Some("gold"), "the value stays");
+    assert_eq!(definition, Value::Null, "without a definition");
+
+    send(&api, "POST", "/__lsf/admin/install", Value::Null);
+    let back = definitions(&api);
+    assert_eq!(app_owned(&back), owned, "in the order they were created");
+    for (owner, namespace, key, id) in back.iter().filter(|(_, ns, _, _)| ns.starts_with("app--")) {
+        let old = before
+            .iter()
+            .find(|(o, n, k, _)| (o, n, k) == (owner, namespace, key))
+            .map(|(_, _, _, id)| id)
+            .unwrap();
+        assert_ne!(id, old, "{key}: a new id");
+    }
+    assert_eq!(merchant(&back), merchant(&before));
+    let (value, definition) = tier(&api);
+    assert_eq!(value.as_deref(), Some("gold"));
+    let (_, read) = graphql(
+        &api,
+        &token,
+        "{ metafieldDefinitions(first: 5, ownerType: PRODUCT, namespace: \"$app:loyalty\") { nodes { id key metafieldsCount } } }",
+        Value::Null,
+    );
+    let nodes = &read["data"]["metafieldDefinitions"]["nodes"];
+    assert_eq!(nodes[0]["key"], "tier", "{read}");
+    assert_eq!(nodes[0]["metafieldsCount"], 1, "{read}");
+    assert_eq!(definition, nodes[0]["id"], "the metafield has it again");
+
+    // A new seed while the app is uninstalled: the declared definition is deleted again, the one
+    // made through the API is gone with the data the seed dropped; a reinstall brings back the
+    // declared one.
+    send(&api, "POST", "/__lsf/admin/uninstall", Value::Null);
+    api.reseed(&store);
+    assert_eq!(
+        app_owned(&definitions(&api)),
+        Vec::<(String, String, String)>::new()
+    );
+    send(&api, "POST", "/__lsf/admin/install", Value::Null);
+    let reseeded = app_owned(&definitions(&api));
+    assert_eq!(
+        reseeded,
+        vec![(
+            "ORDER".to_string(),
+            owned
+                .iter()
+                .find(|(o, _, _)| o == "ORDER")
+                .unwrap()
+                .1
+                .clone(),
+            "gift_note".to_string()
+        )]
+    );
+
+    let lines = lines.lock().unwrap().clone();
+    assert_eq!(
+        lines[1],
+        format!(
+            "{shop}: the app is not installed on the shop: uninstalling it removed its app proxy, \
+             so /apps/reviews is the storefront's 404 and no request reaches the backend until it \
+             is installed again (`POST /__lsf/admin/install`, OAuth or a token exchange installs \
+             it again)"
+        ),
+        "{lines:?}"
+    );
+    assert!(
+        lines[2].ends_with(
+            "; its 2 metafield definitions are back, under new ids; /apps/reviews goes to its app \
+             proxy again"
+        ),
+        "{}",
+        lines[2]
+    );
+    assert!(
+        lines.last().unwrap().ends_with(
+            "; its metafield definition is back, under a new id; /apps/reviews goes to its app \
+             proxy again"
+        ),
+        "{lines:?}"
+    );
+}
+
 #[test]
 fn refuses_requests_without_a_valid_token() {
     let api = demo_api();

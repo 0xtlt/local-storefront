@@ -15,7 +15,7 @@ mod tests;
 pub(crate) mod translations;
 pub mod types;
 
-pub use metafield_definitions::seed_declared_definitions;
+pub use metafield_definitions::{remove_app_owned, restore_app_owned, seed_declared_definitions};
 pub use online_store::refresh_blog;
 
 use chrono::Offset;

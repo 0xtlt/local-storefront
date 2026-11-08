@@ -270,6 +270,25 @@ the same data every run.
   within 24 hours; lsf has no checkout editor); the app creates its script tags and pixel again.
   Theme app blocks and embeds render nothing in lsf, installed or not.
   [Uninstall](docs/admin.md#tokens).
+- **An uninstalled app's proxy no longer forwards.** After an uninstall, `/apps/<subpath>` still
+  went to the app's backend. A store gets the app's proxy with the app (shopify.dev: a change of
+  `prefix` or `subpath` reaches only new installations, or a store that uninstalls and reinstalls
+  the app), so the uninstall removes it: while the app is not installed, the storefront answers
+  the path as a page it does not have (the theme's `404` page) and nothing reaches the backend.
+  `X-LSF-Reason` and the terminal say why (`app proxy: the app is not installed on the shop:
+  uninstalling it removed its app proxy, so /apps/reviews is the storefront's 404 …`). A reinstall
+  forwards it again. [App proxy](docs/admin.md#app-proxy).
+- **An uninstall deletes the app's own metafield definitions; a reinstall brings them back.**
+  shopify.dev: "When a user uninstalls your app, Shopify deletes its app-owned metafield
+  definitions and temporarily retains the metafields and their values without a definition", and
+  a reinstall "recreates the definitions and associates the existing metafields with them", under
+  new ids. lsf now does the same for the definitions of the app's reserved namespaces (`$app`,
+  `$app:<name>`), declared in `shopify.app.toml` or made with `metafieldDefinitionCreate`
+  (`removedMetafieldDefinitions`): their metafields keep their values, and the reinstall creates
+  the definitions again with new ids, so an app that kept a definition id finds it gone, as on
+  Shopify. While uninstalled, an order no longer copies the cart metafields of a deleted `$app`
+  definition. Definitions of any other namespace (`custom`, or one the app chose) are the
+  merchant's and stay, ids included. [Uninstall](docs/admin.md#tokens).
 - **Adding a checkout scenario no longer throws away what the backend set up.** Without
   `--static`, a file added or changed in `checkouts/` re-seeded the shops of the Admin API,
   dropping the app's subscription, customizations and other writes. Scenarios are checkout

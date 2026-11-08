@@ -349,20 +349,43 @@ impl AdminApi {
         self
     }
 
-    /// Says what the change of the app's installation on `shop` does, when the server prints it.
-    fn notice_installation(&self, shop: &str, installed: bool) {
+    /// Says what the change of the app's installation on `shop` does, when the server prints it:
+    /// on a reinstall, `restored` metafield definitions came back.
+    fn notice_installation(&self, shop: &str, installed: bool, restored: usize) {
         let Some(notices) = &self.notices else {
             return;
         };
         notices(&if installed {
+            let definitions = match restored {
+                0 => String::new(),
+                1 => "; its metafield definition is back, under a new id".to_string(),
+                n => format!("; its {n} metafield definitions are back, under new ids"),
+            };
+            let proxy = self
+                .proxied_path(shop)
+                .map(|path| format!("; {path} goes to its app proxy again"))
+                .unwrap_or_default();
             format!(
                 "{shop}: the app is installed again: its UI extensions render again, and the \
                  objects that ran its Functions, its script tags and its web pixel are gone, for \
-                 the app to create again"
+                 the app to create again{definitions}{proxy}"
             )
         } else {
             format!("{shop}: {}", crate::config::uninstalled_app_reason())
         });
+        if !installed && let Some(path) = self.proxied_path(shop) {
+            notices(&format!(
+                "{shop}: {}",
+                crate::config::uninstalled_proxy_reason(&path)
+            ));
+        }
+    }
+
+    /// The storefront path of the app proxy (`[app_proxy]`) when `shop` is the default shop, whose
+    /// storefront the server serves; `None` for another shop or an app without one.
+    fn proxied_path(&self, shop: &str) -> Option<String> {
+        let proxy = self.app.as_ref()?.config.app_proxy.as_ref()?;
+        (shop == self.default_shop()).then(|| proxy.path())
     }
 
     /// `--admin-source <url>=<file>`.
@@ -753,7 +776,7 @@ impl AdminApi {
         };
         for shop in uninstalled {
             let mut live = lock(&shop);
-            app_domain::remove_function_owners(&mut live.state);
+            app_domain::reseed_uninstalled(&mut live.state);
             live.state.take_events();
         }
         Reseeded { dropped }
@@ -867,7 +890,11 @@ impl AdminApi {
             }
         }
         for shop in installed {
-            self.notice_installation(&shop, true);
+            // The metafield definitions the uninstall deleted come back, under new ids.
+            let restored = self
+                .change_shop(&shop, app_domain::reinstall)
+                .unwrap_or_default();
+            self.notice_installation(&shop, true, restored);
         }
     }
 
@@ -1474,6 +1501,7 @@ impl AdminApi {
                 "removedFunctionOwners": removed.function_owners,
                 "removedScriptTags": removed.script_tags,
                 "removedWebPixels": removed.web_pixels,
+                "removedMetafieldDefinitions": removed.metafield_definitions,
             }),
         )
     }
@@ -1498,7 +1526,7 @@ impl AdminApi {
         delivered();
         let deleted = self.webhooks.registry().clear(domain);
         if installed {
-            self.notice_installation(domain, false);
+            self.notice_installation(domain, false, 0);
         }
         (revoked, deleted)
     }

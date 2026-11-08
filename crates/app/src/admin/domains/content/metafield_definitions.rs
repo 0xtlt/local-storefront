@@ -42,7 +42,7 @@ use crate::admin::graphql::{FieldContext, FieldError, Output};
 use crate::admin::resolve::sort::SortValue;
 use crate::admin::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::admin::state::seed::Seed;
-use crate::admin::state::{ShopState, value};
+use crate::admin::state::{ShopState, gid_number, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -111,6 +111,114 @@ pub fn seed_declared_definitions(seed: &mut Seed) {
             "metafieldsCount": 0,
         })));
     }
+}
+
+/// Where an uninstall keeps each app-owned definition it deleted, for a reinstall to create it
+/// again: a memo per definition, under this prefix, its owner type, namespace and key.
+const UNINSTALLED: &str = "lsf/uninstalled-definition:";
+
+/// Whether `namespace`, as the records write it, is one of the app's reserved namespaces
+/// (`$app` is `app--<app id>`, `$app:x` is `app--<app id>--x`). Another app's are not.
+fn is_app_owned(app_id: u64, namespace: &str) -> bool {
+    let own = format!("app--{app_id}");
+    namespace
+        .strip_prefix(&own)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with("--"))
+}
+
+/// What uninstalling the app does to its metafield definitions: those of its reserved namespaces
+/// are deleted, declared in `shopify.app.toml` or made with `metafieldDefinitionCreate` alike,
+/// and their metafields stay without a definition, values included. Each definition is kept
+/// aside (a memo, not a record) for [`restore_app_owned`]. Definitions of any other namespace
+/// (`custom`, a namespace of the app's own choosing) are the merchant's and stay, as their
+/// metafields do. No webhook: the app's subscriptions go with it, so each removal emits
+/// `CHANGED`. Answers how many were deleted.
+///
+/// As shopify.dev says ("Manage metafield definitions", "App uninstall and reinstall"): "When a
+/// user uninstalls your app, Shopify deletes its app-owned metafield definitions and temporarily
+/// retains the metafields and their values without a definition. This applies to any app-owned
+/// definition, whether declared in `shopify.app.toml` or created with the GraphQL Admin API."
+/// Shopify deletes the TOML ones during the uninstall and the others in the background ("can
+/// persist after uninstall until asynchronous cleanup removes them"); lsf deletes both at once.
+pub fn remove_app_owned(state: &mut ShopState) -> usize {
+    let app_id = state.app_id();
+    let ids: Vec<String> = state
+        .keys("MetafieldDefinition")
+        .filter(|id| {
+            state
+                .get(id)
+                .is_some_and(|definition| is_app_owned(app_id, text(definition, "namespace")))
+        })
+        .map(str::to_string)
+        .collect();
+    for id in &ids {
+        let owner_type = state
+            .get(id)
+            .map(|record| text(record, "ownerType").to_string())
+            .unwrap_or_default();
+        unpin_definition(state, id, &owner_type);
+        let Some(record) = state.get(id).cloned() else {
+            continue;
+        };
+        for metafield in gids(record.get("metafields")) {
+            if let Some(metafield) = state.get_mut(&metafield) {
+                metafield.insert("definition".into(), Value::Null);
+            }
+        }
+        let memo = format!(
+            "{UNINSTALLED}{owner_type}/{}/{}",
+            text(&record, "namespace"),
+            text(&record, "key")
+        );
+        state.set_memo(memo, Value::Object(record));
+        state.emit(crate::admin::domains::app::CHANGED, id);
+        state.remove(id);
+    }
+    ids.len()
+}
+
+/// What installing the app again does to the definitions an uninstall deleted
+/// ([`remove_app_owned`]): each is created again, under a new id, unpinned, and takes back the
+/// metafields of its owner type, namespace and key, which lsf kept. One made meanwhile under the
+/// same owner type, namespace and key stays as it is. Answers how many were created.
+///
+/// As shopify.dev says: "If the same app is reinstalled while that data is still retained, then
+/// Shopify recreates the definitions and associates the existing metafields with them", and "The
+/// new definitions have new GIDs, so a definition ID from before the uninstall no longer
+/// resolves". Shopify keeps the metafields for a while ("Shopify doesn't guarantee how long");
+/// lsf keeps them until the store data is seeded again.
+pub fn restore_app_owned(state: &mut ShopState) -> usize {
+    let mut kept: Vec<(String, Map<String, Value>)> = state
+        .memos_with_prefix(UNINSTALLED)
+        .filter_map(|(memo, record)| Some((memo.to_string(), record.as_object()?.clone())))
+        .collect();
+    // In the order they were first created, as a listing by id shows them.
+    kept.sort_by_key(|(memo, record)| (gid_number(text(record, "id")), memo.clone()));
+    let mut restored = 0;
+    for (memo, mut record) in kept {
+        state.remove_memo(&memo);
+        let (owner_type, namespace, key) = (
+            text(&record, "ownerType").to_string(),
+            text(&record, "namespace").to_string(),
+            text(&record, "key").to_string(),
+        );
+        if find_definition(state, &owner_type, &namespace, &key).is_some() {
+            continue;
+        }
+        let id = state.new_gid("MetafieldDefinition");
+        record.insert("id".into(), json!(id));
+        record.insert("pinnedPosition".into(), Value::Null);
+        record.insert("metafields".into(), json!([]));
+        record.insert("metafieldsCount".into(), json!(0));
+        state.insert(record);
+        for metafield in metafields_of(state, &owner_type, &namespace, &key) {
+            metafields::link_definition(state, &metafield);
+        }
+        metafields::refresh_definition(state, &id);
+        state.emit(crate::admin::domains::app::CHANGED, &id);
+        restored += 1;
+    }
+    restored
 }
 
 /// `metafieldDefinitions(ownerType:, namespace:, key:, pinnedStatus:, query:, sortKey:)`.

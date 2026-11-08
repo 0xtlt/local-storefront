@@ -783,6 +783,9 @@ metafield onto the order placed from the cart ([admin](admin.md#what-the-storefr
 The order definitions `shopify.app.toml` declares (`[order.metafields.app.<key>]`) are
 definitions of the shop from the start; those of other owner types are not read. Unlike
 Shopify's, which are read-only through the Admin API, the mutations may change them.
+Uninstalling the app deletes the definitions of its reserved namespaces, declared or created,
+and keeps their metafields; a reinstall creates them again under new ids, with those metafields,
+as Shopify does. The others stay ([uninstall](admin.md#tokens)).
 
 **Metaobjects.** `metaobjectDefinitionCreate`, `metaobjectDefinitionUpdate` (field definitions
 created, updated and deleted; the entries follow), `metaobjectDefinitionDelete` (with its
@@ -1214,7 +1217,8 @@ errors (lsf's files are `READY` at once, so only a file made `FAILED` otherwise 
 
 **Access.** `appUninstall` uninstalls the app as `POST /__lsf/admin/uninstall` does
 ([Uninstall](admin.md#tokens)): its Functions go with every object that runs them, its script
-tags and web pixel are deleted, and its UI extensions stop rendering until it is installed again.
+tags, web pixel and the metafield definitions of its reserved namespaces are deleted (their
+metafields stay), and its UI extensions and app proxy stop until it is installed again.
 `appRevokeAccessScopes` revokes optional scopes the installation was granted (not the
 `scopes` of `shopify.app.toml`: `CANNOT_REVOKE_REQUIRED_SCOPES`; not an undeclared one; not a
 `read_x` its `write_x` implies): every token of the installation loses them at once, and
