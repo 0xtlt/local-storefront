@@ -352,8 +352,38 @@ export function startAdmin(env) {
     markCurrent();
   }
 
-  // A link of the app that leaves it: `shopify:admin/…` (a page of the admin, lsf's page of it)
-  // or a URL for the whole window.
+  // A URL of Shopify's admin (`https://admin.shopify.com/store/<store>/…`, or the older
+  // `https://<store>.myshopify.com/admin/…`) as lsf's page of it, for that shop: where the app's
+  // `redirect(…, { target: '_top' })` and `open(…, '_top')` send the merchant, such as the plan
+  // selection page of managed pricing. `null` for another URL.
+  function shopifyAdmin(url) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      return null;
+    }
+    if (parsed.protocol !== 'https:') return null;
+    let shop;
+    let path;
+    const store = parsed.hostname === 'admin.shopify.com' && parsed.pathname.match(/^\/store\/([^/]+)(\/.*)?$/);
+    if (store) {
+      shop = `${decodeURIComponent(store[1]).toLowerCase()}.myshopify.com`;
+      path = store[2] ?? '';
+    } else if (/\.myshopify\.com$/i.test(parsed.hostname) && /^\/admin(\/|$)/.test(parsed.pathname)) {
+      shop = parsed.hostname.toLowerCase();
+      path = parsed.pathname.slice('/admin'.length);
+    } else {
+      return null;
+    }
+    const admin = new URL(`/admin${path}${parsed.search}`, 'http://admin.invalid');
+    for (const [name, value] of Object.entries(config.query ?? {})) admin.searchParams.set(name, value);
+    admin.searchParams.set('shop', shop);
+    return admin.pathname + admin.search + parsed.hash;
+  }
+
+  // A link of the app that leaves it: `shopify:admin/…` (a page of the admin, lsf's page of it),
+  // a URL of Shopify's admin (lsf's page of it too), or a URL for the whole window.
   function navigate(url, target) {
     let href = url;
     if (url.startsWith('shopify:')) {
@@ -362,6 +392,8 @@ export function startAdmin(env) {
       href = admin.pathname + admin.search;
     } else if (!/^https?:/i.test(url)) {
       return;
+    } else {
+      href = shopifyAdmin(url) ?? url;
     }
     if (target === '_blank') window.open(href, '_blank', 'noopener');
     else location.assign(href);

@@ -115,7 +115,10 @@ admin, `http://127.0.0.1:9292/admin/apps/<handle>`, with a local App Bridge: ses
 title bar, navigation, save bar, toasts and the resource picker work offline
 ([preview the embedded app](docs/admin.md#preview-the-embedded-app)), and so do Polaris's
 components, icons and fonts with `--polaris offline`, from lsf's copy
-([Polaris without the internet](docs/admin.md#polaris-without-the-internet)). Guide: [Admin API](docs/admin.md).
+([Polaris without the internet](docs/admin.md#polaris-without-the-internet)). An app on managed
+pricing declares its plans with `--pricing-plans pricing.toml`: the merchant picks one on the
+admin's plan selection page, and the backend gets the subscription, its webhook and the welcome
+link ([managed pricing](docs/admin.md#managed-pricing)). Guide: [Admin API](docs/admin.md).
 
 ### Get ready for Shopify's strict Liquid parser
 

@@ -35,6 +35,12 @@ pub struct AdminSettings {
     pub fetch_local: bool,
     /// `--admin-source <url>=<file>`: the URLs lsf answers itself with a file, never fetched.
     pub sources: Vec<(String, std::path::PathBuf)>,
+    /// `--pricing-plans <file>` (`LSF_PRICING_PLANS`): the plans of the app's managed pricing,
+    /// read from the file.
+    pub pricing: Option<(
+        lsf_app::admin::domains::app::pricing::Pricing,
+        std::path::PathBuf,
+    )>,
 }
 
 /// The Admin API of a server, and where its client secret came from.
@@ -87,6 +93,10 @@ impl Admin {
         // A token a reset, a shop deletion or an uninstall revoked: said once per token, even
         // with `--quiet`, since the backend that sends it fails until it forgets it.
         .with_log(Arc::new(|line: &str| eprintln!("admin:  {line}")));
+        let api = match &settings.pricing {
+            Some((pricing, path)) => api.with_pricing(pricing.clone(), path.display().to_string()),
+            None => api,
+        };
         // A webhook the backend refuses (`401`, `403`): said once per delivery, `--quiet` or
         // not, since every webhook fails until the two secrets agree.
         api.webhooks()
@@ -154,6 +164,21 @@ impl Admin {
                 "embedded: {origin}{path} opens the app once lsf knows its URL: give --app-url (where the backend listens)"
             ),
         })
+    }
+
+    /// What the server prints of the app's managed pricing when plans are declared: how many,
+    /// where from, and the page where the merchant chooses one.
+    pub fn pricing_banner(&self, origin: &str) -> Option<String> {
+        let (pricing, source) = self.api.pricing()?;
+        let key = self
+            .api
+            .app()
+            .and_then(|app| app.handle.clone())
+            .unwrap_or_else(|| self.api.client_id().to_string());
+        Some(format!(
+            "pricing: {} ({source}): {origin}/admin/charges/{key}/pricing_plans   (managed pricing: the Billing API creates no charge)",
+            crate::output::count(pricing.plans.len(), "plan", "plans"),
+        ))
     }
 
     /// Where the client secret came from: the value only when it is lsf's own, which is no

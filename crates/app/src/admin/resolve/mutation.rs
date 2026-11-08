@@ -44,6 +44,7 @@ pub struct Mutation<'m> {
     version: ApiVersion,
     origin: &'m str,
     fetched: Option<&'m crate::admin::sources::Fetched>,
+    managed_pricing: bool,
     notes: Vec<String>,
     /// Whether the changes stay when the payload has user errors (a partial update).
     keep: bool,
@@ -100,6 +101,11 @@ impl Mutation<'_> {
         self.origin
     }
 
+    /// Whether the app is on managed pricing: the Billing API creates no charge.
+    pub fn managed_pricing(&self) -> bool {
+        self.managed_pricing
+    }
+
     /// What the request's sources gave, fetched before the shop was locked: what
     /// [`crate::admin::sources::bytes`] reads. `None` for a resolver run alone.
     pub fn fetched(&self) -> Option<&crate::admin::sources::Fetched> {
@@ -111,15 +117,18 @@ impl Mutation<'_> {
     /// here (within this mutation's savepoint, as [`Mutation::state_mut`] opens it), and its
     /// events are the request's.
     pub fn resolver(&mut self) -> ShopResolver<'_> {
-        let (registry, grant, webhooks, version, origin, fetched) = (
+        let (registry, grant, webhooks, version, origin, fetched, managed_pricing) = (
             self.registry,
             self.grant,
             self.webhooks,
             self.version,
             self.origin,
             self.fetched,
+            self.managed_pricing,
         );
-        let mut resolver = ShopResolver::new(self.state_mut(), registry).with_origin(origin);
+        let mut resolver = ShopResolver::new(self.state_mut(), registry)
+            .with_origin(origin)
+            .with_managed_pricing(managed_pricing);
         resolver.grant = grant;
         resolver.webhooks = webhooks;
         resolver.version = version;
@@ -328,6 +337,7 @@ pub(super) fn run(
         version: resolver.version,
         origin: resolver.origin,
         fetched: resolver.fetched,
+        managed_pricing: resolver.managed_pricing,
         notes: Vec::new(),
         keep: false,
     };

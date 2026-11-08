@@ -987,6 +987,11 @@ fetches (from the loader of a page, see ["Billing from a page"](admin.md#javascr
   Shopify defers to the next cycle (`APPLY_ON_NEXT_BILLING_CYCLE`, and some `STANDARD` ones)
   applies at once, and the usage balance never resets. `currentPeriodEnd` is the end of the trial,
   else 30 days (365 for an annual plan) after the approval.
+- [Managed pricing](admin.md#managed-pricing): with plans declared (`--pricing-plans`,
+  `PUT /__lsf/admin/pricing-plans`), the merchant picks one at
+  `/admin/charges/<app handle>/pricing_plans` of lsf's admin; the subscription is the same record,
+  its line's `planHandle` set, and the two creating mutations above answer "Managed Pricing Apps
+  cannot use the Billing API (to create charges)."
 
 **Discounts.** `discountAutomaticAppCreate`/`Update` and `discountCodeAppCreate`/`Update` take the
 Function by `functionHandle` (or the deprecated `functionId`), which must be a discount Function

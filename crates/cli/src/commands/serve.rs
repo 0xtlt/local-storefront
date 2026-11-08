@@ -151,6 +151,15 @@ pub struct Args {
     #[arg(long = "admin-source", value_name = "URL=FILE", value_parser = super::admin_source)]
     admin_sources: Vec<(String, std::path::PathBuf)>,
 
+    /// The plans of the app's managed pricing (Shopify App Pricing), which Shopify keeps in the
+    /// Partner Dashboard: a TOML file of `[[plans]]` (`handle`, `name`, `price`, `interval`,
+    /// `trial_days`, `features`, `welcome_link`), or JSON for a `.json` file. lsf's admin then
+    /// shows them at `/admin/charges/<app handle>/pricing_plans`, where the merchant chooses one,
+    /// and the Billing API creates no charge, as on Shopify. Read at start;
+    /// `PUT /__lsf/admin/pricing-plans` changes them while lsf runs.
+    #[arg(long, env = "LSF_PRICING_PLANS", value_name = "FILE")]
+    pricing_plans: Option<std::path::PathBuf>,
+
     /// What `/__lsf/cdn/<path>` answers, the URL an embedded app loads Polaris from in lsf's
     /// admin (`/__lsf/cdn/shopifycloud/polaris-2.js`): `online` redirects to
     /// `https://cdn.shopify.com/<path>`; `offline` serves lsf's copy of Polaris 1.x and 2.x, its
@@ -280,6 +289,14 @@ pub fn run(
         },
         fetch_local: args.admin_fetch_local,
         sources: args.admin_sources.clone(),
+        pricing: match &args.pricing_plans {
+            Some(path) => Some((
+                lsf_app::admin::domains::app::pricing::Pricing::read(path)
+                    .map_err(|problem| format!("--pricing-plans: {problem}"))?,
+                path.clone(),
+            )),
+            None => None,
+        },
     };
     // The app's store data when the theme has none.
     let data = crate::app::data_with_app(theme, data, app_dir.as_deref());
@@ -422,6 +439,13 @@ pub fn run(
             {
                 eprintln!("{line}");
             }
+        }
+        if let Some(line) = state
+            .admin
+            .as_ref()
+            .and_then(|admin| admin.pricing_banner(&format!("http://{local}")))
+        {
+            eprintln!("{line}");
         }
         if let Some(line) = crate::server::polaris::banner(&state, &format!("http://{local}")) {
             eprintln!("{line}");

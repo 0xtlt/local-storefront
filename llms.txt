@@ -19,13 +19,13 @@ The links below are relative to this file. Read the docs of the version you run 
 - [Formatting](docs/formatting.md): `npx local-storefront fmt` and its options
 - [Performance](docs/performance.md): `npx local-storefront profile`, points, Server-Timing
 - [Checkout](docs/checkout.md): `npx local-storefront app dev --app`, `app init` (scenarios), `app function run` and `app function schema` (a Function's `schema.graphql`, offline): the Functions and checkout UI extensions of a Shopify app
-- [Admin API](docs/admin.md): the local GraphQL Admin API (2026-10), OAuth, token exchange, webhooks and the app proxy, for the backend of a Shopify app; a local admin and App Bridge to preview its embedded pages, and Polaris served offline (`--polaris offline`, `/__lsf/cdn/shopifycloud/polaris-2.js`)
+- [Admin API](docs/admin.md): the local GraphQL Admin API (2026-10), OAuth, token exchange, webhooks and the app proxy, for the backend of a Shopify app; a local admin and App Bridge to preview its embedded pages, and Polaris served offline (`--polaris offline`, `/__lsf/cdn/shopifycloud/polaris-2.js`); managed pricing, its plans declared with `--pricing-plans`, picked on the admin's plan selection page
 - [Storefront](docs/storefront.md): accounts, password page, images, feature previews
 
 ## Reference
 
 - [Control API](docs/control-api.md): `/__lsf` endpoints, sessions, response headers
-- [Admin API reference](docs/admin-reference.md): what the local Admin API simulates, family by family: billing, bulk operations, discounts, staged uploads
+- [Admin API reference](docs/admin-reference.md): what the local Admin API simulates, family by family: billing (and managed pricing: plans from `--pricing-plans` or `PUT /__lsf/admin/pricing-plans`, the plan selection page at `/admin/charges/<app handle>/pricing_plans`), bulk operations, discounts, staged uploads
 - [Field reference](docs/data-reference.md): every field of the store data
 - [Compatibility](docs/compatibility.md): what matches Shopify, and the known differences
 

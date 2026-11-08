@@ -937,6 +937,7 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 | `/admin/oauth/*`, `/__lsf/admin/session-token`, `/__lsf/admin/launch` | `auth::oauth::handle`, with `oauth::Shops` over the shops and the system clock. |
 | `/__lsf/admin` (`GET` status, `DELETE` reset), `/__lsf/admin/shops`, `/__lsf/admin/uninstall`, `/__lsf/admin/install` | The control endpoints of `docs/control-api.md`. |
 | `/__lsf/admin/charges/<n>` (`GET` the page, `POST …/approve`, `…/decline`), `/__lsf/admin/uploads/<shop>[/<key>]`, `/__lsf/admin/bulk/<shop>/<n>.jsonl` | `api::app`: the merchant's approval of a charge, staged uploads, bulk operations' results; no token, as Shopify's admin page and signed URLs need none from the app. The URLs the mutations answer for them are on the origin the request reached lsf at (`http://<Host>`, `ShopResolver::with_origin`). |
+| `/__lsf/admin/pricing-plans` (`GET`, `PUT`, `DELETE`), `…/<plan>/select` | `api::pricing`: the plans of managed pricing and the merchant's choice of one (below, "Managed pricing"); no token. |
 | `/__lsf/admin/card-sessions`, `/__lsf/admin/subscriptions`, `/__lsf/admin/billing-attempts/<n>/challenge[/complete\|/fail]`, `/__lsf/admin/payment-methods/<token>/update` | `api::subscriptions`: lsf's card vault, the log of the emails and charges, the customer's 3D Secure and card update pages; no token. |
 | `/__lsf/admin/clock`, `/__lsf/admin/outbox`, `/__lsf/admin/emails`, `/__lsf/admin/disputes[/<n>/won\|lost\|accepted]`, `/__lsf/admin/orders/protect`, `/__lsf/admin/orders/link-request`, `/__lsf/admin/tax-app/activate` | `api::simulate`: the world outside the shop, which a test drives (see "The outbox", and "Payments, store credit, disputes and the clock" under "Orders"). No token. |
 | `/__lsf/webhooks*` | `Webhooks::handle`, the payload of a trigger built from the record named, else the first record of the topic's type (`api::samples`), else lsf's sample of the topic. |
@@ -1761,6 +1762,45 @@ reads the seed's:
 - A change Shopify has no webhook topic for (a customization, a validation, a cart transform, a
   usage record, a charge waiting for the merchant) emits `domains::app::CHANGED`
   (`lsf/changed`): no subscription can receive it, but it says the shop changed.
+
+#### Managed pricing (`domains/app/pricing.rs`, `api/pricing.rs`)
+
+Shopify keeps an app's plans in the Partner Dashboard and hosts the page where the merchant picks
+one (`admin.shopify.com/store/<store>/charges/<app handle>/pricing_plans`). lsf takes the plans
+from `--pricing-plans <file>` (TOML, or JSON for `.json`; `Pricing::read`) or from
+`PUT /__lsf/admin/pricing-plans` (`Pricing::from_json`), checked as a whole: a wrong declaration
+says every fault (`plans[1] (pro): price is 0 or more`) and changes nothing. `AdminApi` holds
+them for every shop (`with_pricing`, `pricing`, `set_pricing`): the file's, which `DELETE` puts
+back, and those that apply. A reset of the shops keeps them, as it keeps the stubbed URLs.
+
+- **The pages** are pages of lsf's admin (`embedded::render`, so the same top bar, navigation and
+  title bar): `GET /admin/charges/<app>/pricing_plans` lists the plans, the shop's current one
+  marked (`pricing::current`: its active subscription, and the `planHandle` of its recurring
+  line); `…/pricing_plans/<plan>` is the plan to approve, whose form posts to
+  `POST /__lsf/admin/pricing-plans/<plan>/select`, as the charge page's form posts to its
+  control endpoint. `admin.js` maps Shopify's URLs of the admin (`https://admin.shopify.com/store/
+  <store>/…`, `https://<store>.myshopify.com/admin/…`) that App Bridge asks the admin to open
+  (`navigate` with `target: '_top'`) to lsf's `/admin/…?shop=<store>.myshopify.com`.
+- **Choosing a plan** (`pricing::select`) makes the records of the Billing API: an
+  `AppSubscription` named after the plan (`test` on a development store, which lsf's shops are,
+  in legacy mode), its trial, one `AppSubscriptionLineItem` whose `AppRecurringPricing` has the
+  plan's `price`, `interval` and `planHandle`; it is activated as an approved charge is
+  (`billing::activate`). The shop's other active subscription is `CANCELLED` first. Down to a
+  free plan, the new subscription keeps the paid one's `currentPeriodEnd` ("a downgrade doesn't
+  start a new billing cycle"). The number is the next charge's (`billing::next_charge`): the
+  `charge_id` of the welcome link. Each change emits `app_subscriptions/update` (legacy) or
+  `CHANGED`.
+- **The welcome link** (`pricing::welcome_url`): a path, or none, is the app's page in lsf's
+  admin with the admin's `shop`; a URL gets `shop` last. `charge_id` (legacy) and `plan_handle`
+  are appended. It is the subscription's `returnUrl` too.
+- **The Billing API** creates no charge while plans are declared: `AdminApi::managed_pricing`
+  goes to the resolver (`ShopResolver::with_managed_pricing`, then `Mutation::managed_pricing`),
+  and `appSubscriptionCreate` and `appPurchaseOneTimeCreate` answer the user error developers
+  report (`pricing::BILLING_API_REFUSED`).
+- **`legacy`** (`true` by default) is what Shopify keeps for the apps enrolled before April
+  2026: `charge_id`, the webhook, test subscriptions. `false` is what its page says of the apps
+  enrolled since, and of every app after April 28, 2026: `plan_handle` alone, no webhook; such an
+  app reads the Partner API, which lsf does not simulate, so the record stays in the Admin API.
 
 ### Markets, catalogs and channels (`domains/markets.rs`)
 

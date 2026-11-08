@@ -11,7 +11,7 @@ import * as api from "./api.mjs";
 import { embeddedPage } from "./embedded.mjs";
 
 // What the backend saw, for the end-to-end runner (GET /debug/state). A real app has none.
-const seen = { webhooks: [], rejectedWebhooks: [], billingReturns: [], proxied: [], oauth: [], settings: [] };
+const seen = { webhooks: [], rejectedWebhooks: [], billingReturns: [], welcomes: [], proxied: [], oauth: [], settings: [] };
 
 // The settings of the embedded page's form, kept in memory.
 const settings = { threshold: 5, notify: false };
@@ -27,6 +27,16 @@ function documentHeaders(request) {
     headers.set("Content-Security-Policy", `frame-ancestors ${new URL(config.appBridgeUrl).origin};`);
   }
   return headers;
+}
+
+// A page the library throws (the App Bridge page of `redirect(…, { target: "_top" })`, the bounce
+// page) gets the same frame-ancestors: the template's entry.server.tsx sets them on every
+// document, a thrown one too.
+function thrownDocument(response) {
+  if (!config.appBridgeUrl || !(response.headers.get("content-type") ?? "").startsWith("text/html")) return response;
+  const headers = new Headers(response.headers);
+  headers.set("Content-Security-Policy", `frame-ancestors ${new URL(config.appBridgeUrl).origin};`);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 const json = (value, init = {}) =>
@@ -50,6 +60,12 @@ const routes = [
   // switches between them, as a router does (server/embedded.mjs).
   ["GET", /^\/(app(\/(products|settings))?)?$/, async (request) => {
     const { admin } = await shopify.authenticate.admin(request);
+    // The welcome link of a plan of managed pricing: Shopify appends plan_handle (and charge_id
+    // for the apps enrolled before April 2026).
+    const params = new URL(request.url).searchParams;
+    if (params.has("plan_handle")) {
+      seen.welcomes.push({ path: new URL(request.url).pathname, plan_handle: params.get("plan_handle"), charge_id: params.get("charge_id") });
+    }
     const { shop } = await api.gql(admin, `#graphql
       query { shop { name myshopifyDomain } }`);
     const html = embeddedPage({
@@ -162,6 +178,19 @@ const routes = [
     });
     return new Response("subscribed");
   }],
+  // Managed pricing (Shopify App Pricing): the plan selection page is Shopify's. The template's
+  // way to send the merchant there, out of the app's frame.
+  ["GET", /^\/app\/plans$/, async (request) => {
+    const { redirect } = await shopify.authenticate.admin(request);
+    return redirect(`shopify://admin/charges/${config.toml.handle}/pricing_plans`, { target: "_top" });
+  }],
+  // What the app knows of its plan: its active subscription, in the Admin API.
+  ["GET", /^\/api\/billing\/subscriptions$/, adminApi(async (admin) => {
+    const { currentAppInstallation } = await api.gql(admin, `#graphql
+      query { currentAppInstallation { activeSubscriptions { id name status test trialDays
+        lineItems { plan { pricingDetails { ... on AppRecurringPricing { planHandle interval price { amount currencyCode } } } } } } } }`);
+    return currentAppInstallation.activeSubscriptions;
+  })],
   ["GET", /^\/billing\/return$/, async (request) => {
     seen.billingReturns.push(Object.fromEntries(new URL(request.url).searchParams));
     return new Response("<!doctype html><p>Thanks for subscribing.</p>", { headers: { "Content-Type": "text/html" } });
@@ -187,7 +216,10 @@ const routes = [
       webhookId,
       apiVersion,
       hasSession: Boolean(session),
-      id: payload?.admin_graphql_api_id ?? payload?.id ?? null,
+      id: payload?.admin_graphql_api_id ?? payload?.app_subscription?.admin_graphql_api_id ?? payload?.id ?? null,
+      subscription: payload?.app_subscription
+        ? { name: payload.app_subscription.name, status: payload.app_subscription.status, plan_handle: payload.app_subscription.plan_handle }
+        : undefined,
       keys: Object.keys(payload ?? {}).slice(0, 12),
       at: Date.now(),
     });
@@ -274,7 +306,7 @@ async function handle(request) {
       try {
         return await handler(request);
       } catch (error) {
-        if (error instanceof Response) return error;
+        if (error instanceof Response) return thrownDocument(error);
         console.error(`${request.method} ${pathname}: ${error.name}: ${error.message}`);
         return json(
           { error: error.message, name: error.constructor.name, details: error.details ?? error.body ?? error.response ?? null },

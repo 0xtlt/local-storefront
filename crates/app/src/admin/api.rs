@@ -8,6 +8,7 @@ mod admin;
 mod app;
 mod audit;
 mod embedded;
+mod pricing;
 pub mod samples;
 mod simulate;
 mod subscriptions;

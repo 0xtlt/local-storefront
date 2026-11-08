@@ -15,6 +15,7 @@ use super::{HttpRequest, HttpResponse};
 use crate::admin::auth::oauth::{self, AppAuth};
 use crate::admin::auth::scopes::{self, ALL_SCOPES};
 use crate::admin::auth::tokens::{Grant, Revocation, TokenError, Tokens};
+use crate::admin::domains::app::pricing::Pricing;
 use crate::admin::domains::platform::{self, access::AuthEffect};
 use crate::admin::domains::{app as app_domain, orders};
 use crate::admin::graphql::{self, Bucket, Request};
@@ -145,6 +146,9 @@ pub struct AdminApi {
     stubs: crate::admin::sources::Stubs,
     /// Where what the server should print goes ([`AdminApi::with_log`]): nowhere by default.
     log: Option<Log>,
+    /// The plans of managed pricing, every shop's: those of `--pricing-plans`, or those a request
+    /// set. Kept when the shops are reset.
+    pricing: RwLock<PricingPlans>,
     /// What a test runs once at a point of a request ([`Hook`]).
     #[cfg(test)]
     test_hooks: TestHooks,
@@ -152,6 +156,16 @@ pub struct AdminApi {
 
 /// What prints a line the server's terminal should show ([`AdminApi::with_log`]).
 pub type Log = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// The plans of managed pricing ([`crate::admin::domains::app::pricing`]) and where they come
+/// from: a file (`--pricing-plans`), or `"request"` (`PUT /__lsf/admin/pricing-plans`).
+#[derive(Default)]
+struct PricingPlans {
+    /// Those of `--pricing-plans`, which `DELETE /__lsf/admin/pricing-plans` puts back.
+    configured: Option<(Arc<Pricing>, String)>,
+    /// Those that apply.
+    current: Option<(Arc<Pricing>, String)>,
+}
 
 /// A point of a GraphQL request a test runs code at.
 #[cfg(test)]
@@ -261,6 +275,7 @@ impl AdminApi {
             fetch: crate::admin::sources::FetchOptions::default(),
             stubs: crate::admin::sources::Stubs::default(),
             log: None,
+            pricing: RwLock::new(PricingPlans::default()),
             #[cfg(test)]
             test_hooks: Mutex::new(Default::default()),
         }
@@ -326,6 +341,51 @@ impl AdminApi {
     pub fn with_sources(mut self, stubs: crate::admin::sources::Stubs) -> AdminApi {
         self.stubs = stubs;
         self
+    }
+
+    /// The plans of managed pricing a file declared (`--pricing-plans`), `source` naming it:
+    /// those that apply until a request sets others.
+    pub fn with_pricing(self, pricing: Pricing, source: impl Into<String>) -> AdminApi {
+        {
+            let mut plans = self
+                .pricing
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let declared = (Arc::new(pricing), source.into());
+            plans.configured = Some(declared.clone());
+            plans.current = Some(declared);
+        }
+        self
+    }
+
+    /// The plans of managed pricing that apply, and where they come from (a file, or
+    /// `"request"`). `None` when none are declared.
+    pub fn pricing(&self) -> Option<(Arc<Pricing>, String)> {
+        self.pricing
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .current
+            .clone()
+    }
+
+    /// Whether the app is on managed pricing: it declared at least one plan. The Billing API
+    /// then creates no charge.
+    pub fn managed_pricing(&self) -> bool {
+        self.pricing()
+            .is_some_and(|(pricing, _)| !pricing.plans.is_empty())
+    }
+
+    /// Sets the plans that apply (`PUT /__lsf/admin/pricing-plans`), or puts back those of
+    /// `--pricing-plans` (`None`).
+    pub(super) fn set_pricing(&self, pricing: Option<Pricing>) {
+        let mut plans = self
+            .pricing
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        plans.current = match pricing {
+            Some(pricing) => Some((Arc::new(pricing), "request".to_string())),
+            None => plans.configured.clone(),
+        };
     }
 
     pub fn stubs(&self) -> &crate::admin::sources::Stubs {
@@ -939,7 +999,8 @@ impl AdminApi {
             .with_grant(&grant)
             .with_webhooks(&self.webhooks)
             .with_origin(&origin)
-            .with_fetched(&fetched);
+            .with_fetched(&fetched)
+            .with_managed_pricing(self.managed_pricing());
         let bucket = Bucket {
             throttle: &self.throttle,
             key: &key,
@@ -1272,6 +1333,11 @@ impl AdminApi {
                 "clientId": self.auth.client_id,
                 "appUrl": self.auth.app_url(),
                 "scopes": self.scopes,
+                "pricingPlans": self.pricing().map(|(pricing, source)| json!({
+                    "plans": pricing.plans.len(),
+                    "legacy": pricing.legacy,
+                    "source": source,
+                })),
             },
             "throttle": {
                 "enabled": self.throttle.is_enabled(),

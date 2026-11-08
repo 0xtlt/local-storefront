@@ -9,6 +9,7 @@
 //! | `PUT /__lsf/admin/uploads/<shop>/<key>` | A `PUT` target: the body is the file. `200`. |
 //! | `GET /__lsf/admin/uploads/<shop>/<key>` | What was uploaded there. |
 //! | `GET /__lsf/admin/bulk/<shop>/<n>.jsonl` | The result of a bulk operation. |
+//! | `/__lsf/admin/pricing-plans[/<plan>/select]` | The plans of managed pricing, and the merchant's choice of one (`api::pricing`). |
 //!
 //! None of these needs a token, as Shopify's signed URLs and its admin page need none from the
 //! app: they are for the merchant's browser and the client's uploads on this machine.
@@ -27,12 +28,13 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
         "charges" => Some(charges(api, request, rest)),
         "uploads" => Some(uploads_endpoint(api, request, rest)),
         "bulk" => Some(bulk_result(api, request, rest)),
+        "pricing-plans" => Some(super::pricing::control(api, request, rest)),
         _ => None,
     }
 }
 
 /// The shop a request names (`?shop=`, a JSON or form body's `shop`), else the default one.
-fn shop_of(api: &AdminApi, request: &HttpRequest) -> String {
+pub(super) fn shop_of(api: &AdminApi, request: &HttpRequest) -> String {
     let from_body = || {
         let body = String::from_utf8_lossy(&request.body);
         serde_json::from_str::<Value>(&body)

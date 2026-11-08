@@ -8,6 +8,7 @@
 //! |---|---|
 //! | `GET /admin/apps/<app>/<path>?shop=&user=&locale=` | The admin with the app open at `<path>`: `<app>` is the app's handle or client id. The other parameters go to the app. |
 //! | `GET /admin`, `GET /admin/apps` | A redirect to the app's page. |
+//! | `GET /admin/charges/<app>/pricing_plans[/<plan>]` | The plan selection page of managed pricing, and the page that approves a plan (`api::pricing`). |
 //! | `GET /admin/<other>` | A page of the admin lsf does not have (`/admin/products` of a `shopify:admin/products` link): it says so, `404`. |
 //! | `GET /__lsf/admin/app-bridge.js` | lsf's App Bridge. |
 //! | `GET /__lsf/admin/assets/<file>` | The files of the page. |
@@ -108,8 +109,8 @@ fn asset(request: &HttpRequest, name: &str) -> HttpResponse {
 }
 
 /// Who the page is for: the shop, the user and the locale of the request, or why there is none.
-struct Viewer {
-    shop: String,
+pub(super) struct Viewer {
+    pub(super) shop: String,
     user: u64,
     locale: String,
 }
@@ -152,7 +153,7 @@ fn viewer(api: &AdminApi, request: &HttpRequest) -> Result<Viewer, HttpResponse>
 }
 
 /// The handle the admin's URLs name the app by: its handle, else its client id.
-fn app_key(api: &AdminApi) -> String {
+pub(super) fn app_key(api: &AdminApi) -> String {
     api.app()
         .and_then(|app| app.handle.clone())
         .unwrap_or_else(|| api.client_id().to_string())
@@ -160,7 +161,7 @@ fn app_key(api: &AdminApi) -> String {
 
 /// The parameters of the admin's URL that it keeps from page to page: the shop, the user and the
 /// locale the request named.
-fn admin_query(request: &HttpRequest) -> Vec<(String, String)> {
+pub(super) fn admin_query(request: &HttpRequest) -> Vec<(String, String)> {
     request
         .query
         .iter()
@@ -169,7 +170,7 @@ fn admin_query(request: &HttpRequest) -> Vec<(String, String)> {
         .collect()
 }
 
-fn with_query(path: &str, params: &[(String, String)]) -> String {
+pub(super) fn with_query(path: &str, params: &[(String, String)]) -> String {
     if params.is_empty() {
         return path.to_string();
     }
@@ -193,6 +194,9 @@ fn page(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse {
             &admin_query(request),
         )),
         ["apps", app, path @ ..] => app_page(api, request, &viewer, app, path),
+        ["charges", app, "pricing_plans", rest @ ..] => {
+            super::pricing::page(api, request, &viewer, app, rest)
+        }
         _ => notice_page(
             api,
             Some(&viewer),
@@ -314,7 +318,7 @@ fn app_page(
 }
 
 /// The name of the app: `name` of `shopify.app.toml`, else its handle or client id.
-fn app_name(api: &AdminApi) -> String {
+pub(super) fn app_name(api: &AdminApi) -> String {
     api.app()
         .and_then(|app| app.name.clone())
         .unwrap_or_else(|| app_key(api))
@@ -330,7 +334,11 @@ fn origin_of(url: &str) -> String {
 }
 
 /// What `admin.js` knows of the shop, the user and the app, as JSON.
-fn admin_config(api: &AdminApi, viewer: &Viewer, request: &HttpRequest) -> Map<String, Value> {
+pub(super) fn admin_config(
+    api: &AdminApi,
+    viewer: &Viewer,
+    request: &HttpRequest,
+) -> Map<String, Value> {
     let shop_name = api
         .with_shop(&viewer.shop, |state| {
             state
@@ -399,7 +407,7 @@ fn admin_params(request: &HttpRequest) -> Map<String, Value> {
 }
 
 /// A page of the admin that says something instead of showing the app.
-fn notice_page(
+pub(super) fn notice_page(
     api: &AdminApi,
     viewer: Option<&Viewer>,
     status: u16,
@@ -454,7 +462,7 @@ fn notice_page(
 }
 
 /// The page around `main`: the admin's top bar, its navigation, the title bar.
-fn render(
+pub(super) fn render(
     api: &AdminApi,
     viewer: &Viewer,
     title: &str,
