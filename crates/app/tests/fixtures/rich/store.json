@@ -228,8 +228,10 @@
       { "function": "volume-discount", "title": "Welcome", "code": "WELCOME10", "metafields": { "custom.featured": { "type": "product_reference", "value": "linen-dress" } } }
     ],
     "functions": {
-      "payment-rules": { "metafields": { "$app:config.rules": { "type": "json", "value": { "hide": ["cod"] } } } },
-      "order-limits": { "metafields": { "$app:config.max": 5 } }
+      "payment-rules": { "enabled": true, "metafields": { "$app:config.rules": { "type": "json", "value": { "hide": ["cod"] } } } },
+      "order-limits": { "enabled": true, "metafields": { "$app:config.max": 5 } },
+      "delivery-rules": { "enabled": false },
+      "bundles": { "enabled": true }
     },
     "tax_rate": 20
   }

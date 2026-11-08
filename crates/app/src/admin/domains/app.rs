@@ -1,7 +1,8 @@
 //! The app: the `App` and its installation on the shop, its Shopify Functions, and the objects
 //! that run them at the checkout: the app discounts of the store data's `checkout.discounts`,
-//! and the cart transforms, delivery and payment customizations and validations of its
-//! Functions.
+//! and the cart transforms, delivery and payment customizations and validations the store data
+//! declares (`checkout.functions.<handle>.enabled`). A shop the app was just installed on has
+//! none of those: the app creates them.
 //!
 //! The records and their ids: the "Records" section of `crates/app/docs/admin/design.md`. The ids of
 //! the discounts and of the other owners of Functions are those the checkout gives them in the
@@ -232,9 +233,14 @@ pub fn seed(seed: &mut Seed) {
         seed_discount(seed, discount, &created);
     }
 
-    // The cart transforms, customizations and validations: one per Function that has such a
-    // target, with the metafields `checkout.functions` gives it.
+    // The cart transforms, customizations and validations the store data declares
+    // (`checkout.functions.<handle>.enabled`): none otherwise, as on a shop the app was just
+    // installed on, whose app creates them. One per kind of target of the Function, enabled or
+    // not as the data says, with the metafields `checkout.functions` gives it.
     for (index, function) in functions.iter().enumerate() {
+        let Some(&enabled) = store.checkout.owners.get(&function.handle) else {
+            continue;
+        };
         let mut kinds: Vec<TargetKind> = Vec::new();
         for target in &function.targets {
             if owner_of(target.kind).is_some() && !kinds.contains(&target.kind) {
@@ -251,6 +257,10 @@ pub fn seed(seed: &mut Seed) {
             let Some((type_name, owner_type)) = owner_of(kind) else {
                 continue;
             };
+            // A cart transform cannot be turned off: one that is not enabled is not there.
+            if kind == TargetKind::CartTransform && !enabled {
+                continue;
+            }
             let id = owner_gid(type_name, index);
             let metafields = seed.checkout_metafields(&id, owner_type, &created, config);
             let function_id = function_id(app, &function.handle);
@@ -266,7 +276,7 @@ pub fn seed(seed: &mut Seed) {
                     "__typename": type_name,
                     "id": id,
                     "title": function_title(function),
-                    "enabled": true,
+                    "enabled": enabled,
                     "blockOnFailure": false,
                     "shopifyFunction": function_id,
                     "metafields": metafields,
@@ -275,7 +285,7 @@ pub fn seed(seed: &mut Seed) {
                     "__typename": type_name,
                     "id": id,
                     "title": function_title(function),
-                    "enabled": true,
+                    "enabled": enabled,
                     "functionId": function_id,
                     "shopifyFunction": function_id,
                     "metafields": metafields,

@@ -173,6 +173,24 @@ the same data every run.
 
 ### Changed
 
+- **A Function runs only through an enabled owner, as on Shopify.** At the shop's checkout (no
+  scenario, or a scenario without `extensions`), a payment or delivery customization, validation
+  or cart transform Function runs only when the shop has an enabled owner of it: the
+  `PaymentCustomization`, `DeliveryCustomization`, `Validation` or `CartTransform` the app
+  creates through the Admin API, or one the store data declares
+  (`checkout.functions.<handle>.enabled`, new). Disabling it (`paymentCustomizationUpdate`,
+  `…Activation`, `validationUpdate(enable:)`) or deleting it takes it out of the next checkout.
+  A scenario that names a Function in `extensions`, and `lsf app function run <handle>`, still
+  run it alone, without an owner; `app init`'s scenarios name theirs, `all-extensions` every
+  extension. The checkout's "Functions" dialog, the home page and `app function run` say which
+  Functions did not run and why (`idle` in JSON). Store data that relied on every Function
+  running adds `"enabled": true` to them. [What runs](docs/checkout.md#what-runs-owners-and-scenarios).
+- **No owner is created at install.** lsf no longer seeds an enabled payment customization,
+  delivery customization, validation and cart transform for every Function: a fresh shop has
+  none, so an app that checks whether it is set up sees that it is not. Only those the store data
+  declares (`enabled`) are there. Extension names written as a locale key (`name = "t:name"`)
+  are read from the extension's default locale (`locales/en.default.json`), for the Functions'
+  titles and wherever lsf shows a name.
 - **Store data:** products gain `status` (`active`, `draft`, `archived`) and `published`. Only
   an active, published product is on the storefront. Entries of `checkout.discounts` gain an
   `id`. [Data format](docs/data-format.md).

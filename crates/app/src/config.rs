@@ -179,6 +179,20 @@ impl FunctionExtension {
         self.wasm_path.is_file()
     }
 
+    /// The object of the Admin API that runs the Function at the checkout, when it is not a
+    /// discount Function (an active discount runs those): `CartTransform`,
+    /// `DeliveryCustomization`, `PaymentCustomization` or `Validation`, by its first target of
+    /// those kinds. `None` for a discount Function and for targets the checkout does not run.
+    pub fn owner_type(&self) -> Option<&'static str> {
+        self.targets.iter().find_map(|target| match target.kind {
+            TargetKind::CartTransform => Some("CartTransform"),
+            TargetKind::DeliveryCustomization => Some("DeliveryCustomization"),
+            TargetKind::PaymentCustomization => Some("PaymentCustomization"),
+            TargetKind::Validation | TargetKind::ValidationFetch => Some("Validation"),
+            _ => None,
+        })
+    }
+
     /// What a Function whose module is not at its `wasm_path` says: lsf's own build, which
     /// needs no Shopify CLI, or why lsf cannot build it. The diagnostic of the app, and the error
     /// of a run.
@@ -819,10 +833,19 @@ fn load_extension_file(app: &mut App, file: &Path) {
             .get("handle")
             .and_then(|v| v.as_str())
             .map_or_else(|| dir_name.clone(), str::to_string);
-        let name = entry
-            .get("name")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
+        let name = entry.get("name").and_then(|v| v.as_str()).and_then(|name| {
+            match localized(&dir, name) {
+                Ok(name) => Some(name),
+                Err(problem) => {
+                    app.diagnostics.push(Diagnostic {
+                        severity: Severity::Warning,
+                        extension: Some(handle.clone()),
+                        message: problem,
+                    });
+                    None
+                }
+            }
+        });
         let api_version = entry
             .get("api_version")
             .and_then(|v| v.as_str())
@@ -844,6 +867,48 @@ fn load_extension_file(app: &mut App, file: &Path) {
             }),
         }
     }
+}
+
+/// A text of `shopify.extension.toml` as Shopify shows it: `t:<key>` is the value of `<key>` (a
+/// dotted path) in the extension's default locale file (`locales/<lang>.default.json`), as
+/// `name = "t:name"` with `{"name": "Hide PayPal"}`; any other text is itself. `Err` says why a
+/// key has no value.
+pub fn localized(dir: &Path, text: &str) -> Result<String, String> {
+    let Some(key) = text.strip_prefix("t:") else {
+        return Ok(text.to_string());
+    };
+    let key = key.trim();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir.join("locales"))
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".default.json"))
+        })
+        .collect();
+    files.sort();
+    let Some(file) = files.first() else {
+        return Err(format!(
+            "`{text}`: no default locale file (locales/<lang>.default.json) to read `{key}` from"
+        ));
+    };
+    let shown = format!(
+        "locales/{}",
+        file.file_name().unwrap_or_default().to_string_lossy()
+    );
+    let json: Value = std::fs::read_to_string(file)
+        .map_err(|error| format!("`{text}`: {shown}: {error}"))
+        .and_then(|source| {
+            serde_json::from_str(&source).map_err(|error| format!("`{text}`: {shown}: {error}"))
+        })?;
+    key.split('.')
+        .try_fold(&json, |value, part| value.get(part))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| format!("`{text}`: {shown} has no text at `{key}`"))
 }
 
 fn load_function(
@@ -1247,6 +1312,67 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_name_that_is_a_locale_key_is_read_from_the_extensions_default_locale() {
+        let root = temp_app("locale-names");
+        write(&root, "shopify.app.toml", "name = \"Locales\"\n");
+        let function = |handle: &str, name: &str| {
+            format!(
+                "api_version = \"2026-10\"\n[[extensions]]\nname = \"{name}\"\nhandle = \"{handle}\"\ntype = \"function\"\n[[extensions.targeting]]\ntarget = \"cart.payment-methods.transform.run\"\ninput_query = \"src/run.graphql\"\nexport = \"run\"\n"
+            )
+        };
+        write(
+            &root,
+            "extensions/hide-paypal/shopify.extension.toml",
+            &function("hide-paypal", "t:name"),
+        );
+        write(
+            &root,
+            "extensions/hide-paypal/locales/en.default.json",
+            r#"{"name": "Hide PayPal Express", "description": "t"}"#,
+        );
+        write(
+            &root,
+            "extensions/hide-paypal/locales/fr.json",
+            r#"{"name": "Masquer PayPal Express"}"#,
+        );
+        write(
+            &root,
+            "extensions/nested/shopify.extension.toml",
+            &function("nested", "t:extension.title"),
+        );
+        write(
+            &root,
+            "extensions/nested/locales/de.default.json",
+            r#"{"extension": {"title": "Verschachtelt"}}"#,
+        );
+        write(
+            &root,
+            "extensions/missing/shopify.extension.toml",
+            &function("missing", "t:name"),
+        );
+        write(
+            &root,
+            "extensions/plain/shopify.extension.toml",
+            &function("plain", "Plain name"),
+        );
+        let app = load(&root).unwrap();
+        let name = |handle: &str| app.function(handle).unwrap().name.clone();
+        assert_eq!(name("hide-paypal").as_deref(), Some("Hide PayPal Express"));
+        assert_eq!(name("nested").as_deref(), Some("Verschachtelt"));
+        assert_eq!(name("plain").as_deref(), Some("Plain name"));
+        // A key without a value: no name (the handle stands for it), and a warning.
+        assert_eq!(name("missing"), None);
+        let warning = app
+            .diagnostics
+            .iter()
+            .find(|d| d.extension.as_deref() == Some("missing"))
+            .expect("a warning");
+        assert_eq!(warning.severity, Severity::Warning);
+        assert!(warning.message.contains("`t:name`"), "{}", warning.message);
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

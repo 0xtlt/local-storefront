@@ -476,10 +476,13 @@ it in the app folder, no theme needed (`npx local-storefront validate`).
 | (always) | `guest`, `customer` (with a note and an attribute), `b2b` (a company customer at another location), `abroad` (another country and language), `subscription`, `pre-order` (a deposit, the rest later), `shop-look`, `large-cart` |
 
 A scenario about one kind of Function runs that Function and the checkout UI extensions, and no
-other Function (`extensions`), so that its effect shows alone; `all-extensions` has no such
-list. A Function you add later is not in those lists: add its handle to them, or remove the
-list to run every extension. The settings of your Functions are the store data's: the scenarios
-leave `checkout.functions` alone, and the `discount-*` scenarios list the discount Functions again
+other Function (`extensions`), so that its effect shows alone; `all-extensions` names every
+extension. A scenario that names a Function runs it whether or not the shop has an owner of it
+(see [what runs](#what-runs-owners-and-scenarios)): it tries the Function alone. The others
+(`guest`, `b2b`, `abroad`, `large-cart`, …) name none: they show the shop's checkout, where only
+the Functions with an enabled owner run. A Function you add later is not in those lists: add its
+handle to them. The settings of your Functions are the store data's: the scenarios leave
+`checkout.functions` alone, and the `discount-*` scenarios list the discount Functions again
 with the settings (and the code) `checkout.discounts` gives them. The scenarios are a place to
 start: edit them.
 
@@ -727,7 +730,8 @@ settings of your other Functions, and a tax rate.
   `lsf init` has none: add yours here, in a scenario, or for one test in the `data.checkout` of
   `PUT /__lsf/session` (see [testing](testing.md#a-checkout-in-a-test)).
 - A Function that is not a discount (cart transform, delivery or payment customization,
-  validation) has its metafields under `functions`, by its handle.
+  validation) has its metafields under `functions`, by its handle, and `"enabled"` when the shop
+  has an owner of it: see [what runs](#what-runs-owners-and-scenarios).
 - A metafield is written `"namespace.key"`, with a [typed value](data-format.md#metafields-and-metaobjects).
   The input query of a Function reads it; `[extensions.input.variables]` of the Function says
   which one.
@@ -1067,6 +1071,51 @@ of checkout UI extensions has no such type): an `ORDER` declaration reads nothin
 a warning. Shopify lists `CART` as an owner type of checkout UI extensions only and `ORDER` of
 customer account UI extensions only; lsf takes both on either, as one extension can target both.
 
+## What runs: owners and scenarios
+
+On Shopify, a Function runs only through an object of the shop that runs it, its **owner**, which
+the app creates once installed: a payment customization (`paymentCustomizationCreate`), a
+delivery customization, a cart and checkout validation (`validationCreate`), a cart transform
+(`cartTransformCreate`); a discount Function, through a discount. A shop the app was just
+installed on has none, and its checkout runs none of the app's Functions until the app sets
+them up. lsf follows that rule at the shop's checkout (`/checkout` from the storefront's cart,
+and a scenario that names no `extensions`):
+
+| Function | Runs when |
+|---|---|
+| payment customization | the shop has an enabled `PaymentCustomization` of it |
+| delivery customization | the shop has an enabled `DeliveryCustomization` of it |
+| cart and checkout validation | the shop has an enabled `Validation` of it (`validationCreate` takes `enable`, `false` by default) |
+| cart transform | the shop has a `CartTransform` of it (it has no `enabled`: deleting it stops it) |
+| discount | a discount names it that is active by the shop's clock (`startsAt` ≤ now < `endsAt`), automatic or with a code the buyer entered |
+| fulfillment constraints, order routing, pickup generators | never: the local checkout lists them and does not run them |
+
+The owners come from two places:
+
+- **The app**, through the [Admin API](admin.md): what it creates, updates (`enabled`), deletes
+  or turns on and off (`paymentCustomizationActivation`) is what the next checkout runs, with the
+  metafields it gives them.
+- **The store data**, for a shop already set up: `"enabled": true` on the Function's entry of
+  `checkout.functions` (`false`: an owner that is turned off). An entry without `enabled` is
+  settings alone: the shop has no owner of the Function.
+
+```json
+{ "checkout": { "functions": { "hide-paypal": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": { "hide": ["paypal"] } } } } } } }
+```
+
+lsf creates no owner at install: `paymentCustomizations` answers none, as Shopify does, and an
+app that checks whether it is set up sees that it is not.
+
+**Trying a Function alone** does not need an owner. A [scenario](#scenarios) that names it in
+`extensions` runs it, and so does `lsf app function run <handle>`, with the metafields of
+`checkout.functions` (the scenario's, or the store data's). That is how the scenarios of
+`app init` try each Function; the shop's checkout shows what the app has set up. `--extension`
+of `app dev` only narrows the extensions: the shop's owners still decide which Functions run.
+
+A Function the shop's checkout leaves out is said: the home page warns that the shop has no
+enabled owner of it, the "Functions" dialog of the checkout lists it under "Functions not run",
+with why, and so does `lsf app function run` (`Not run: …`; `idle` in JSON).
+
 ## Run a Function without a server
 
 ```bash
@@ -1074,8 +1123,10 @@ npx local-storefront app function run volume-discount --app ../my-app --scenario
 ```
 
 Builds the input of each Function from the store data and the [scenario](#scenarios), runs them
-in checkout order, and prints each input, output and log with the checkout that results. Without
-a handle, every Function of the app runs. Without `--scenario` or `--session`, the cart is the
+in checkout order, and prints each input, output and log with the checkout that results. The
+Functions it names run whether or not the shop has an owner of them; without a handle, those the
+checkout runs (an enabled owner, a discount, or the `extensions` of the scenario), and the others
+are listed as not run, with why. Without `--scenario` or `--session`, the cart is the
 `session` of the store data, empty in the demo store: a Function that runs gets an empty cart
 and changes nothing. Give `--scenario`.
 

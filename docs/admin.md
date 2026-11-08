@@ -1151,7 +1151,7 @@ What the backend changes through the Admin API is what the storefront and the
 | Customers: email, names, phone, tags, marketing consent, account state, addresses, their company | Gift cards the Admin API creates (changes to the data's cards sync) |
 | Companies and their locations, pages, blogs and articles, menus, locations, metaobjects, selling plan groups | SEO, product categories, bundle components and combined listings (a bundle is a product of its own there), collection rules and sources (a changed automated collection becomes a manual one), product feeds, point of sale |
 | Metafields of all of these, of the shop and of markets; markets, their countries and their currency; the published languages | Metafield and metaobject definitions, files, translations, publications other than the Online Store; catalogs, price lists, quantity rules, web presences, channels |
-| Shop: name, email, description, policies | Domains, currency, time zone, plan; turning a Function off (its settings go, it still runs) |
+| Shop: name, email, description, policies | Domains, currency, time zone, plan |
 
 Each family of the [reference](admin-reference.md#what-lsf-simulates) says what of it syncs.
 For contributors, the full list, field by field, is in `crates/app/docs/admin/design.md` ("Store

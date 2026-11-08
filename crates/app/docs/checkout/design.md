@@ -122,6 +122,17 @@ constraints, order routing, pickup point/local pickup generators (and their `.fe
 discount `conditions` and combinations (every product and order discount stacks; only one shipping
 discount applies).
 
+Which Functions run: those of `enabled` (the `--extension` filter, a scenario's `extensions`),
+and, for those that are not discounts, `config.owners`. `Some(map)` is Shopify's rule, the
+shop's checkout: a cart transform, delivery or payment customization, or validation Function
+runs only when the map has it `true` (an enabled owner); the others of the selection are
+`CheckoutResult::idle`, with the owner type and why (none, or disabled). `None`: every selected
+Function runs, as for a run that names them (a scenario's `extensions`, `lsf app function run
+<handle>`, the library's tests). lsf-cli builds the map from `CheckoutSettings::owners`
+(`checkout.functions.<handle>.enabled` of the store data, which the Admin API's store sync writes
+from the owners the app creates). Discount Functions run through `config.discounts`, active
+discounts only (the sync writes those whose dates hold).
+
 Network access (`fetch`): `cart.lines.discounts.generate`, `cart.delivery-options.discounts.generate`
 and `cart.validations.generate` may have a `.fetch` target (`TargetKind::*Fetch`). Right before its
 `.run` target the pipeline runs it with `FetchInput::Unavailable` (its query cannot read

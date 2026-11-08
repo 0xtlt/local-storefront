@@ -1,7 +1,7 @@
 api_version = "2026-10"
 
 [[extensions]]
-name = "Payment rules"
+name = "t:name"
 handle = "payment-rules"
 type = "function"
 

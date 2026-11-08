@@ -92,7 +92,7 @@ fn checkout_check_runs_every_scenario_and_fails_on_one_that_fails() {
     );
     app.write(
         "shopify-local/checkouts/tees.json",
-        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}, "extensions": ["quantity-limit"]}"#,
     );
     // In the app's folder: no `--app`, and its own store data.
     let output = lsf(&app.0, &["app", "check", "--format", "json"]);
@@ -148,7 +148,7 @@ fn checkout_init_gives_the_functions_the_settings_their_input_query_reads() {
     assert!(lsf(&app.0, &["init"]).status.success());
     app.write(
         "shopify-local/checkouts/tees.json",
-        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}, "extensions": ["quantity-limit"]}"#,
     );
     // Without its settings, it cannot run, and the check says where they go.
     let output = lsf(&app.0, &["app", "check"]);
@@ -287,6 +287,48 @@ fn function_run_finds_the_app_and_says_why_a_function_did_not_run() {
     );
     assert!(output.status.success(), "{}", text(&output));
     assert!(!text(&output).contains("not run"), "{}", text(&output));
+    // Without a handle, the checkout's Functions: those the shop has an enabled owner of. The
+    // others say why they did not run.
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "function",
+            "run",
+            "--session",
+            r#"{"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}"#,
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output)
+            .contains("Not run: payment-rules: the shop has no payment customization that runs it"),
+        "{}",
+        text(&output)
+    );
+    assert!(
+        text(&output).contains("(name it to run it anyway: `lsf app function run payment-rules`)"),
+        "{}",
+        text(&output)
+    );
+    // Named, it runs.
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "function",
+            "run",
+            "payment-rules",
+            "--session",
+            r#"{"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}"#,
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("== payment-rules"),
+        "{}",
+        text(&output)
+    );
     // A typo is suggested.
     let output = lsf(&app.0, &["app", "function", "run", "volume-discont"]);
     assert!(
@@ -336,7 +378,7 @@ fn app_check_names_the_functions_no_scenario_ran() {
     // No discount names `volume-discount`: it runs in no scenario.
     app.write(
         "shopify-local/checkouts/tees.json",
-        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}, "extensions": ["quantity-limit"]}"#,
     );
     let only = ["app", "check", "--extension", "volume-discount"];
     let output = lsf(&app.0, &only);
@@ -433,7 +475,7 @@ fn app_check_help_describes_the_json_it_prints() {
     // A Function that fails, and a scenario that does not validate: every list has an entry.
     app.write(
         "shopify-local/checkouts/tees.json",
-        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}, "extensions": ["quantity-limit", "bundle-transform", "delivery-rules", "payment-rules", "volume-discount"]}"#,
     );
     app.write(
         "shopify-local/checkouts/typo.json",
@@ -516,7 +558,7 @@ type = "function"
     );
     app.write(
         "shopify-local/checkouts/b2b.json",
-        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}}"#,
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["boom"]}"#,
     );
     let check = ["app", "check", "--build", "--extension", "boom"];
     let output = lsf(&app.0, &check);
@@ -580,7 +622,7 @@ fn a_missing_build_says_to_run_lsf_app_build() {
     std::fs::remove_file(app.0.join("extensions/quantity-limit/dist/function.wasm")).unwrap();
     app.write(
         "shopify-local/checkouts/tees.json",
-        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}, "extensions": ["quantity-limit"]}"#,
     );
     let advice = "build it with `lsf app build quantity-limit` (or `--build`)";
     for args in [

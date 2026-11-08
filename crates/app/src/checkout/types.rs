@@ -142,6 +142,14 @@ pub struct CheckoutConfig {
     /// The metafields of the object that owns each non-discount Function (cart transform,
     /// delivery/payment customization, validation): Function handle → metafields.
     pub function_metafields: IndexMap<String, Vec<Metafield>>,
+    /// Which Functions that are not discounts run. On Shopify, one runs only through an owner
+    /// that is enabled: a cart transform, a delivery or payment customization, a validation (a
+    /// discount Function, through an active discount of `discounts`). `Some`: the owners the
+    /// shop has, by the handle of their Function, and whether each is enabled; a Function of
+    /// the selection without an enabled owner does not run, and is in [`CheckoutResult::idle`].
+    /// `None`: every Function of the selection runs, as if each had one: the run names its
+    /// Functions (a scenario's `extensions`, `lsf app function run <handle>`).
+    pub owners: Option<IndexMap<String, bool>>,
     /// Tax rate in basis points (2000 = 20 %), added on top of the discounted subtotal. 0 by
     /// default.
     pub tax_rate_bps: i64,
@@ -237,6 +245,9 @@ pub struct CheckoutResult {
     pub cost: Cost,
     /// Every Function run, in order, for the debug panel and `lsf app function run`.
     pub runs: Vec<FunctionRun>,
+    /// The Functions of the selection that did not run because the shop has no enabled owner
+    /// of them ([`CheckoutConfig::owners`]).
+    pub idle: Vec<IdleFunction>,
     /// Whether the Functions stopped running at the deadline of their
     /// [`RunOptions`](crate::checkout::pipeline::RunOptions): the result is then not the checkout, only
     /// the runs before it are.
@@ -522,6 +533,20 @@ pub struct PaymentMethod {
     /// that runs after sees it with the placements that are left.
     #[serde(skip)]
     pub placements: Vec<PaymentPlacement>,
+}
+
+/// A Function that did not run because the shop has no enabled owner of it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdleFunction {
+    pub handle: String,
+    /// The type of the object that runs it in the Admin API: `PaymentCustomization`,
+    /// `DeliveryCustomization`, `Validation`, `CartTransform`.
+    pub owner: &'static str,
+    /// `Some(false)`: its owner is disabled. `None`: the shop has none.
+    pub enabled: Option<bool>,
+    /// Why, as the pages say it.
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Serialize)]

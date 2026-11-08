@@ -978,6 +978,7 @@ function functionsOverview(ctx) {
   const focus = ctx.ui?.functionsFocus?.handle ?? null;
   const focused = (handle) => (focus !== null && handle === focus ? 'is-focus' : null);
   const named = focus !== null && ((state.errors ?? []).some((error) => error.function === focus)
+    || (state.idle ?? []).some((idle) => idle.handle === focus)
     || (state.extensions ?? []).some((ext) => ext.handle === focus));
   const ran = focus !== null && (state.runs ?? []).some((entry) => entry.handle === focus);
   const target = ctx.ui?.functionsFocus?.target;
@@ -997,6 +998,9 @@ function functionsOverview(ctx) {
     (state.builds ?? []).length > 0 && h('div', { 'data-test': 'build-errors' }, h('h4', null, 'Builds that failed'),
       h('ul', null, state.builds.map((build) => h('li', { key: build.handle, class: focused(build.handle) }, buildFailure(build))))),
     (state.runs ?? []).length === 0 && h('p', { class: 'lsf-muted' }, 'No Function ran.'),
+    // The Functions the shop's owners leave out: no enabled payment customization (…) runs them.
+    (state.idle ?? []).length > 0 && h('div', { 'data-test': 'idle-functions' }, h('h4', null, 'Functions not run'),
+      h('ul', null, state.idle.map((idle) => h('li', { key: idle.handle, class: focused(idle.handle) }, h('code', null, idle.handle), ` ${idle.reason}.`)))),
     (state.errors ?? []).length > 0 && h('div', null, h('h4', null, 'Errors that block the checkout'),
       h('ul', null, state.errors.map((error) => h('li', { class: focused(error.function) }, error.message, error.function && h('code', null, error.function), error.target && h('code', null, error.target))))),
     (state.skippedDiscounts ?? []).length > 0 && h('div', { 'data-test': 'skipped-discounts' }, h('h4', null, 'Discounts not applied'),

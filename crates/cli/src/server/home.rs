@@ -246,6 +246,7 @@ fn extension_status(problems: &[(Level, String)], failures: &[Json], selected: b
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn function_json(
     app: &App,
     selection: &Selection,
@@ -254,6 +255,7 @@ fn function_json(
     build: Option<&Failure>,
     used_by: usize,
     discounted: &std::collections::HashSet<&str>,
+    owners: &indexmap::IndexMap<String, bool>,
 ) -> Json {
     let targets: Vec<Json> = function
         .targets
@@ -311,6 +313,32 @@ fn function_json(
             ),
         ));
     }
+    // Any other Function runs through an owner the app creates (a payment customization, …): a
+    // shop it was just installed on has none, and its checkout does not run the Function.
+    let owner_note = !store_note
+        && function.owner_type().is_some()
+        && owners.get(&function.handle) != Some(&true);
+    if let (true, Some(owner)) = (owner_note, function.owner_type()) {
+        let words = owner_words(owner);
+        let declared = owners.get(&function.handle) == Some(&false);
+        problems.push(problem(
+            Level::Warning,
+            format!(
+                "{}, so the store's checkout does not run it, as on Shopify: the app creates one \
+                 (`{}Create`), or the store data declares one, \
+                 `\"checkout\": {{\"functions\": {{\"{}\": {{\"enabled\": true}}}}}}`. The \
+                 scenarios that name it in `extensions` run it anyway",
+                if declared {
+                    format!("its {words} is disabled")
+                } else {
+                    format!("the shop has no {words} that runs it")
+                },
+                lower_first(owner),
+                function.handle
+            ),
+        ));
+    }
+    let store_note = store_note || owner_note;
     let failures = failures_json(report, &function.handle);
     let selected = selection.contains(&function.handle);
     json!({
@@ -350,6 +378,27 @@ fn function_json(
         // How many scenarios that open run it.
         "scenarios": used_by,
     })
+}
+
+/// `PaymentCustomization` in words: `payment customization`.
+fn owner_words(owner: &str) -> String {
+    let mut words = String::new();
+    for (index, char) in owner.char_indices() {
+        if char.is_uppercase() && index > 0 {
+            words.push(' ');
+        }
+        words.extend(char.to_lowercase());
+    }
+    words
+}
+
+/// `PaymentCustomization` → `paymentCustomization`, the name of its mutations.
+fn lower_first(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 fn ui_extension_json(
@@ -675,11 +724,20 @@ struct Context<'a> {
 fn uses<'a>(context: &'a Context, scenario: &'a CheckoutScenario) -> Vec<&'a str> {
     match &scenario.extensions {
         Some(handles) => handles.iter().map(String::as_str).collect(),
+        // The shop's checkout: a Function that needs an owner runs through an enabled one.
         None => context
             .app
             .handles()
             .into_iter()
             .filter(|handle| context.selection.contains(handle))
+            .filter(|handle| {
+                context
+                    .app
+                    .function(handle)
+                    .and_then(FunctionExtension::owner_type)
+                    .is_none()
+                    || scenario.checkout.owners.get(*handle) == Some(&true)
+            })
             .collect(),
     }
 }
@@ -1210,6 +1268,7 @@ fn build(
                 build.as_ref(),
                 used(&function.handle),
                 &discounted,
+                &store.checkout.owners,
             )
         })
         .map(runs_in)

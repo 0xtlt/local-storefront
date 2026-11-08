@@ -290,6 +290,9 @@ The `ui-broken-*` extensions fail on purpose. They are in no scenario but their 
 | `ui-broken-tall` | 2026-10 | 150 rows, far taller than the window | `ui-broken-layout` |
 | `ui-broken-long-text` | 2026-10 | Long unbroken words, URLs and codes in a banner, badge, button, field, link and under each line | `ui-broken-layout` |
 
-A scenario without an `extensions` list runs every extension of the app, the broken ones
-included. `crates/app/assets/tests/playground.test.mjs` (`mise run test:js`) checks that
+A scenario without an `extensions` list shows the shop's checkout: its checkout UI extensions,
+the broken ones included, and only the Functions the shop has an enabled owner of (a payment
+customization, …), of which the playground's store data declares none, as on a shop the app was
+just installed on. Every scenario here names its Functions, which run whether or not the shop
+has an owner of them ([what runs](../../docs/checkout.md#what-runs-owners-and-scenarios)). `crates/app/assets/tests/playground.test.mjs` (`mise run test:js`) checks that
 every bundle registers the targets of its toml and that the working ones draw without an error.

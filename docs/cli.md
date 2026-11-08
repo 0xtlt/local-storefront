@@ -231,7 +231,7 @@ npx local-storefront app function run volume-discount --app ../my-app --session 
 
 | Option | Environment variable | What it does |
 |---|---|---|
-| `[handle]...` | | The Functions to run. Every Function of the app when none is given. |
+| `[handle]...` | | The Functions to run, whether or not the shop has an owner of them (a payment customization, …). Without them, what the checkout runs: the Functions with an enabled owner, those of a discount, or those the scenario names; the others are listed as not run, with why. |
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in; the store data to its `shopify-local/` when the current folder has none. |
 | `--build` | | Builds each Function first, as `app function build` does. |
 | `--scenario <name>` | | A [checkout scenario](data-format.md#checkout-scenarios) of the store data (`checkouts/<name>.json`): its cart, buyer, language, `checkout` settings and the extensions it names. `--session`, `--checkout` and `--locale` go on top of it. |

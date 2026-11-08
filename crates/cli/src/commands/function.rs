@@ -411,7 +411,12 @@ fn compute(
         Step::Completion => BuyerJourneyStep::Completion,
     };
 
-    let config = checkout::config_for(&store, scenario.map(|scenario| scenario.name.as_str()));
+    let mut config = checkout::config_for(&store, scenario.map(|scenario| scenario.name.as_str()));
+    // The Functions named on the command line run, whether or not the shop has an owner of
+    // them, as `shopify app function run` runs one: without them, the checkout's.
+    if !args.handles.is_empty() {
+        config.owners = None;
+    }
     let functions_only =
         Selection::only(selection.functions(&shopify_app).map(|f| f.handle.clone()));
     let result = pipeline::compute(
@@ -487,6 +492,18 @@ fn print_text(result: &CheckoutResult) {
     let currency = result.cost.currency_code.as_str();
     if result.runs.is_empty() {
         println!("No Function ran.");
+    }
+    // What the shop's owners leave out: name a Function to run it anyway.
+    for idle in &result.idle {
+        println!(
+            "Not run: {}: {} (name it to run it anyway: `{}`)",
+            idle.handle,
+            idle.reason,
+            checkout::as_typed(&format!("lsf app function run {}", idle.handle))
+        );
+    }
+    if !result.idle.is_empty() {
+        println!();
     }
     for run in &result.runs {
         println!("== {} · {} ({})", run.handle, run.target, run.export);
@@ -959,7 +976,7 @@ mod tests {
                 "shipping_rates": [{"handle": "pallet", "price": "45.00"}],
                 "discounts": [{"function": "volume-discount", "code": "SAVE", "classes": ["PRODUCT"],
                     "metafields": {"$app:config.settings": {"type": "json", "value": {"minimumQuantity": 1, "percentage": 50}}}}],
-                "functions": {"quantity-limit": {"metafields": {"$app:config.settings": {"type": "json", "value": {"maxQuantity": 3}}}}}
+                "functions": {"quantity-limit": {"enabled": true, "metafields": {"$app:config.settings": {"type": "json", "value": {"maxQuantity": 3}}}}}
             }
         }"#;
         let narrow = r#"{

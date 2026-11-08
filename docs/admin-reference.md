@@ -1012,8 +1012,12 @@ follows its dates), `discountAutomaticBulkDelete`, `discountCodeBulkActivate`/`D
 customizations (`…Create`, `…Update`, `…Delete`, `…Activation`), validations (`validationCreate`,
 `Update`, `Delete`) and cart transforms (`cartTransformCreate`, `Delete`) take the Function by
 handle or id, check it implements their API, and keep its configuration in their metafields,
-which the store sync writes back as the Function's settings in `checkout.functions` (the
-settings of a disabled one are dropped, but its Function still runs at the local checkout).
+which the store sync writes back as the Function's settings in `checkout.functions`, with
+`enabled`: the local checkout runs the Function only through an enabled owner, as Shopify does,
+so creating, disabling (`…Update`, `…Activation`, `validationUpdate(enable:)`) or deleting one
+changes the next checkout. A shop the app was just installed on has none: lsf creates no owner
+at install (the store data may declare some, `checkout.functions.<handle>.enabled`). Titles are
+the Functions' names, a `t:` key of `shopify.extension.toml` read from its default locale.
 
 **Bulk operations.** `bulkOperationRunQuery` runs the query against the shop, every page of every
 connection, and writes JSON Lines as Shopify does (one line per node, nested connections on lines

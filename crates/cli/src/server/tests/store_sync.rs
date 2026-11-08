@@ -26,7 +26,7 @@ fn checkout_admin_server() -> ServerState {
         &state,
         "POST",
         "/__lsf/admin/install",
-        r#"{"scopes": "write_products,write_publications,write_customers,write_discounts,write_validations"}"#,
+        r#"{"scopes": "write_products,write_publications,write_customers,write_discounts,write_validations,write_payment_customizations"}"#,
     );
     assert_eq!(installed.status, 200, "{}", text(&installed));
     state
@@ -281,32 +281,50 @@ fn metafields_the_backend_sets_are_read_by_liquid() {
 }
 
 #[test]
-fn the_settings_the_backend_gives_a_validation_are_read_by_its_function() {
+fn a_validation_runs_once_the_backend_creates_it_and_stops_when_it_is_disabled() {
     let state = checkout_admin_server();
-    // The validation the app made for its Function.
-    let validations = admin_query(
-        &state,
-        "{ validations(first: 10) { nodes { id shopifyFunction { handle } } } }",
+    // A shop the app was just installed on has no validation: its Function does not run.
+    let validations = admin_query(&state, "{ validations(first: 10) { nodes { id } } }");
+    assert_eq!(
+        validations["data"]["validations"]["nodes"],
+        json!([]),
+        "{validations}"
     );
-    let owner = validations["data"]["validations"]["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|validation| validation["shopifyFunction"]["handle"] == "quantity-limit")
-        .map(|validation| validation["id"].clone())
-        .unwrap_or_else(|| panic!("the validation of quantity-limit: {validations}"));
     let three = json!([{"variant": "TEE-BLK-M", "quantity": 3}]);
     let path = cart_checkout(&state, "co-limit-before", three.clone());
     let before = body_json(&get(&state, &format!("{path}.json"), "co-limit-before"));
     assert_eq!(before["errors"], json!([]), "{before}");
-
-    // `metafieldsSet` on it, in the app's `$app:config`.
-    mutate(
-        &state,
-        r#"mutation($owner: ID!) { metafieldsSet(metafields: [{ownerId: $owner, namespace: "$app:config", key: "settings", type: "json", value: "{\"maxQuantity\":2}"}]) { userErrors { field message } } }"#,
-        json!({ "owner": owner }),
+    assert!(
+        before["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|run| run["handle"] != "quantity-limit"),
+        "{before}"
     );
-    let path = cart_checkout(&state, "co-limit", three);
+    let idle = |json: &Json| {
+        json["idle"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|idle| idle["handle"] == "quantity-limit")
+            .cloned()
+            .unwrap_or_else(|| panic!("quantity-limit is not idle: {json}"))
+    };
+    assert_eq!(idle(&before)["owner"], "Validation");
+    assert_eq!(idle(&before)["enabled"], Json::Null);
+
+    // `validationCreate`, enabled, with the settings in its metafields.
+    let created = mutate(
+        &state,
+        r#"mutation($validation: ValidationCreateInput!) { validationCreate(validation: $validation) { validation { id enabled } userErrors { field message } } }"#,
+        json!({"validation": {
+            "functionHandle": "quantity-limit", "title": "Limits", "enable": true,
+            "metafields": [{"namespace": "$app:config", "key": "settings", "type": "json", "value": "{\"maxQuantity\":2}"}],
+        }}),
+    );
+    let owner = created["validation"]["id"].clone();
+    let path = cart_checkout(&state, "co-limit", three.clone());
     let after = body_json(&get(&state, &format!("{path}.json"), "co-limit"));
     assert_eq!(after["errors"][0]["function"], "quantity-limit", "{after}");
     let input = &run_of(&after, "quantity-limit")["input"];
@@ -314,6 +332,102 @@ fn the_settings_the_backend_gives_a_validation_are_read_by_its_function() {
         input.to_string().contains("maxQuantity"),
         "the input reads the settings: {input}"
     );
+
+    // `metafieldsSet` on it changes what the Function reads.
+    mutate(
+        &state,
+        r#"mutation($owner: ID!) { metafieldsSet(metafields: [{ownerId: $owner, namespace: "$app:config", key: "settings", type: "json", value: "{\"maxQuantity\":5}"}]) { userErrors { field message } } }"#,
+        json!({ "owner": owner }),
+    );
+    let path = cart_checkout(&state, "co-limit-5", three.clone());
+    let five = body_json(&get(&state, &format!("{path}.json"), "co-limit-5"));
+    assert_eq!(five["errors"], json!([]), "{five}");
+
+    // Disabled: it does not run any more.
+    mutate(
+        &state,
+        r#"mutation($id: ID!) { validationUpdate(id: $id, validation: {enable: false, metafields: []}) { validation { enabled } userErrors { field message } } }"#,
+        json!({ "id": owner }),
+    );
+    let path = cart_checkout(&state, "co-limit-off", three);
+    let off = body_json(&get(&state, &format!("{path}.json"), "co-limit-off"));
+    assert!(
+        off["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|run| run["handle"] != "quantity-limit"),
+        "{off}"
+    );
+    assert_eq!(idle(&off)["enabled"], false);
+    assert_eq!(idle(&off)["reason"], "its validation is disabled");
+}
+
+#[test]
+fn toggling_a_payment_customization_changes_the_payment_methods_of_the_checkout() {
+    let state = checkout_admin_server();
+    // The app's setup: a payment customization of its Function, that hides "Bank Deposit".
+    let settings = r#"{"hideName":"Bank Deposit","hideAbove":0}"#;
+    let names = |state: &ServerState, session: &str| -> Vec<String> {
+        let path = cart_checkout(
+            state,
+            session,
+            json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        );
+        let json = body_json(&get(state, &format!("{path}.json"), session));
+        json["paymentMethods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|method| method["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    // Not set up yet: every method.
+    assert!(names(&state, "co-pay-0").contains(&"Bank Deposit".to_string()));
+    let created = mutate(
+        &state,
+        r#"mutation($customization: PaymentCustomizationInput!) { paymentCustomizationCreate(paymentCustomization: $customization) { paymentCustomization { id enabled } userErrors { field message } } }"#,
+        json!({"customization": {
+            "functionHandle": "payment-rules", "title": "Hide bank deposit", "enabled": true,
+            "metafields": [{"namespace": "$app:config", "key": "settings", "type": "json", "value": settings}],
+        }}),
+    );
+    let id = created["paymentCustomization"]["id"].clone();
+    assert!(!names(&state, "co-pay-1").contains(&"Bank Deposit".to_string()));
+
+    // `paymentCustomizationUpdate(enabled: false)`: the method is back.
+    mutate(
+        &state,
+        r#"mutation($id: ID!) { paymentCustomizationUpdate(id: $id, paymentCustomization: {enabled: false}) { paymentCustomization { enabled } userErrors { field message } } }"#,
+        json!({ "id": id }),
+    );
+    assert!(names(&state, "co-pay-2").contains(&"Bank Deposit".to_string()));
+    // Enabled again: hidden again, with its settings.
+    mutate(
+        &state,
+        r#"mutation($id: ID!) { paymentCustomizationUpdate(id: $id, paymentCustomization: {enabled: true}) { paymentCustomization { enabled } userErrors { field message } } }"#,
+        json!({ "id": id }),
+    );
+    assert!(!names(&state, "co-pay-3").contains(&"Bank Deposit".to_string()));
+    // `paymentCustomizationActivation`, then deleted: back each time.
+    mutate(
+        &state,
+        r#"mutation($ids: [ID!]!) { paymentCustomizationActivation(ids: $ids, enabled: false) { ids userErrors { field message } } }"#,
+        json!({ "ids": [id.clone()] }),
+    );
+    assert!(names(&state, "co-pay-4").contains(&"Bank Deposit".to_string()));
+    mutate(
+        &state,
+        r#"mutation($id: ID!) { paymentCustomizationActivation(ids: [$id], enabled: true) { ids userErrors { field message } } }"#,
+        json!({ "id": id }),
+    );
+    assert!(!names(&state, "co-pay-5").contains(&"Bank Deposit".to_string()));
+    mutate(
+        &state,
+        r#"mutation($id: ID!) { paymentCustomizationDelete(id: $id) { deletedId userErrors { field message } } }"#,
+        json!({ "id": id }),
+    );
+    assert!(names(&state, "co-pay-6").contains(&"Bank Deposit".to_string()));
 }
 
 #[test]

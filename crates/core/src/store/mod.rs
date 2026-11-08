@@ -883,6 +883,9 @@ pub struct CheckoutSettings {
     pub discounts: Vec<CheckoutDiscount>,
     /// Function handle → the metafields of its owner.
     pub functions: IndexMap<String, Vec<CheckoutMetafield>>,
+    /// The Functions of `functions` the shop has an owner of (`"enabled"`), by handle: whether
+    /// it is enabled. Only those that are run at the checkout, unless a scenario names them.
+    pub owners: IndexMap<String, bool>,
     /// Basis points: 2000 is 20 %.
     pub tax_rate_bps: i64,
 }
@@ -911,6 +914,7 @@ impl Default for CheckoutSettings {
             .collect(),
             discounts: Vec::new(),
             functions: IndexMap::new(),
+            owners: IndexMap::new(),
             tax_rate_bps: 0,
         }
     }

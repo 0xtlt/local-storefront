@@ -1718,10 +1718,13 @@ changed.
   on creation)*, `status: ACTIVE`, `startsAt`, `context` (all buyers), and the node's
   `metafields`.
 - **`CartTransform`**, **`DeliveryCustomization`**, **`PaymentCustomization`**,
-  **`Validation`** for each Function of the app with such a target (whether or not
-  `checkout.functions` names it): `title`, `enabled`, `functionId`, `shopifyFunction`,
-  `blockOnFailure: false`, and the metafields `checkout.functions` gives it. Without an app,
-  none: there is no Function to own.
+  **`Validation`** only for a Function the store data declares an owner of
+  (`checkout.functions.<handle>.enabled`, `true` or `false`), as a shop already set up has them:
+  `title` (the Function's name, a `t:` key read from its default locale), `enabled` as the data
+  says, `functionId`, `shopifyFunction`, `blockOnFailure: false`, and the metafields
+  `checkout.functions` gives it. `enabled: false` on a cart transform makes none (it cannot be
+  turned off). Otherwise none, as on a shop the app was just installed on: the app creates them,
+  and an app that checks whether it is set up sees that it is not. Without an app, none.
 
 What the app family's mutations make (`domains/app/`: `billing`, `discounts`, `functions`,
 `bulk`, `uploads`, `metafields`), in the same shapes, so that the store sync reads them as it
@@ -2250,7 +2253,7 @@ the changes. `None` when nothing the store data expresses changed.
 | `shop` | name, email, description, the five policies of the data, metafields (merged field by field; a metafield removed is in `removed.shop_metafields`) |
 | `localization` | rewritten when a market or a locale changed: the markets declared in the data or created by the Admin API (renamed or not; not a country's market of its own), active and of type `REGION`, with their countries (a country they add is added) and metafields; each country in the currency its active region market sells in (its own with `localCurrencies`, else the market's base currency, a country's own market included); the published `ShopLocale`s as the languages, the primary first |
 | `checkout.discounts` | rewritten when an app discount changed: every `DiscountAutomaticApp` and `DiscountCodeApp` active by the shop's clock (`startsAt` ≤ now < `endsAt`), in id order, with its `id`, the handle of its Function (`appDiscountType.functionId`), title, first code, classes and metafields |
-| `checkout.functions` | the settings of a Function whose owner changed: the metafields of its enabled `CartTransform`, `DeliveryCustomization`, `PaymentCustomization` and `Validation` objects, in creation order, a later one's taking the place of an earlier one's |
+| `checkout.functions` | a Function whose owner changed: `enabled` (`true` when one of its `CartTransform`, `DeliveryCustomization`, `PaymentCustomization` and `Validation` objects runs it, `false` when every one is disabled, left out when it has none), and the metafields of the enabled ones (of the disabled ones when none is), in creation order, a later one's taking the place of an earlier one's. The checkout runs a Function that is not a discount only through an enabled owner. |
 | `checkout.shipping_rates` | rewritten when a delivery profile changed: the rates of the data in their order, each shipping rate replaced by the method definition the seed made of it in the general profile's zones that ship to the rest of the world (left out when gone or inactive), then that zone's other active method definitions with a flat price and no condition, their handle made of their name (`logistics::profiles::checkout_rates`) |
 
 ### What does not sync
@@ -2266,9 +2269,8 @@ Kept here so that nobody invents a field for it; each would need the store data 
   automatic ones): the local checkout runs Functions only. Of app discounts: `combinesWith`,
   usage limits, `appliesOncePerCustomer`, the buyers they apply to (`context`), every code but
   the first.
-- **Turning a Function off**: a disabled customization or validation is left out of the
-  settings, but its Function still runs (only a scenario's `extensions` chooses which run). Two
-  owners of one Function share one set of settings.
+- **Owners of one Function**: two customizations of one Function share one set of settings
+  and run it once; on Shopify each runs it with its own metafields.
 - **Products**: SEO, the category, bundle components (a bundle syncs as a product of its own,
   available while its components are: the checkout sells it as one line, which a cart transform
   Function may expand, `tests/bundles.rs`) and combined listings, product feeds, the inventory

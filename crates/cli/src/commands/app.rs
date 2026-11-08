@@ -240,6 +240,9 @@ fn check(
                     if is_discount(function) {
                         " (a discount Function runs only for a discount that names it: add one \
                          to `checkout.discounts` of the store data or of a scenario)"
+                    } else if function.owner_type().is_some() {
+                        " (it runs where the shop has an enabled owner of it, as on Shopify, or \
+                         where a scenario names it: add it to the `extensions` of one)"
                     } else {
                         ""
                     }

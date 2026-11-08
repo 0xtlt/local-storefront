@@ -2355,26 +2355,37 @@ impl<'s> Sync<'s> {
             .collect()
     }
 
-    /// The settings of a Function: the metafields of the enabled objects that run it, in the
-    /// order they were created, a later one's taking the place of an earlier one's.
+    /// A Function's owners and settings: `enabled` when an object runs it (a cart transform,
+    /// which has no `enabled`, always does), `false` when every one is disabled, nothing when
+    /// there is none; the metafields of the enabled ones (of the disabled ones when none is), in
+    /// the order they were created, a later one's taking the place of an earlier one's.
     fn function_settings(&self, era: Era, handle: &str) -> model::CheckoutFunctionInput {
         let view = self.view(era);
         let removed = self.removed_of(&FUNCTION_OWNERS);
-        let mut metafields = IndexMap::new();
+        let mut enabled = IndexMap::new();
+        let mut disabled = IndexMap::new();
+        let (mut on, mut off) = (0, 0);
         for type_name in FUNCTION_OWNERS {
             for key in view.keys(type_name, &removed) {
                 let Some(record) = view.get(key) else {
                     continue;
                 };
-                if flag(record, "enabled") == Some(false)
-                    || self.function_of(view, key).as_deref() != Some(handle)
-                {
+                if self.function_of(view, key).as_deref() != Some(handle) {
                     continue;
                 }
-                metafields.extend(self.checkout_metafields(view, key));
+                if flag(record, "enabled") == Some(false) {
+                    off += 1;
+                    disabled.extend(self.checkout_metafields(view, key));
+                } else {
+                    on += 1;
+                    enabled.extend(self.checkout_metafields(view, key));
+                }
             }
         }
-        model::CheckoutFunctionInput { metafields }
+        model::CheckoutFunctionInput {
+            enabled: (on + off > 0).then_some(on > 0),
+            metafields: if on > 0 { enabled } else { disabled },
+        }
     }
 
     /// The keys of the records of some types removed since the seed, by type.
@@ -2646,7 +2657,7 @@ mod tests {
             for key in state.keys(type_name) {
                 if let Some(handle) = sync.function_of(&sync.now, key) {
                     let settings = sync.function_settings(Era::Now, &handle);
-                    if !settings.metafields.is_empty() {
+                    if settings.enabled.is_some() || !settings.metafields.is_empty() {
                         functions.insert(handle, settings);
                     }
                 }

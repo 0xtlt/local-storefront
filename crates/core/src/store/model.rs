@@ -1610,11 +1610,19 @@ pub struct CheckoutDiscountInput {
     pub metafields: IndexMap<String, MetafieldInput>,
 }
 
-/// The settings of a Function that is not a discount: cart transform, delivery or payment
-/// customization, validation.
+/// A Function that is not a discount (cart transform, delivery or payment customization,
+/// validation): its owner in the shop, and its settings.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckoutFunctionInput {
+    /// Whether the shop has an owner of the Function (the payment or delivery customization,
+    /// validation or cart transform an app creates for it), and it is enabled. As on Shopify,
+    /// the Function runs at the checkout only through an enabled owner: `true` runs it, `false`
+    /// is an owner that is turned off. Without it, the shop has no owner of it, as after an
+    /// install: the Function runs only for a scenario that names it in `extensions`, or for
+    /// `app function run <handle>`, with these metafields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
     /// The metafields of the object the Function belongs to, by `"namespace.key"`.
     #[serde(default)]
     pub metafields: IndexMap<String, MetafieldInput>,

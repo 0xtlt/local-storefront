@@ -32,8 +32,8 @@ use crate::checkout::{
     AllocationMethod, AppliedDiscount, Cents, CheckoutConfig, CheckoutError, CheckoutResult,
     CheckoutState, Cost, DeliveryGroup, DeliveryOption, DiscountAllocation, DiscountClass,
     DiscountCodeStatus, DiscountConfig, DiscountDetails, DiscountTarget, DiscountValue,
-    FunctionRun, KeyValue, LineSellingPlan, Metafield, PaymentMethod, PaymentPlacement, ResultLine,
-    SelectedOption, SkippedDiscount, SourceLine, TargetSelection,
+    FunctionRun, IdleFunction, KeyValue, LineSellingPlan, Metafield, PaymentMethod,
+    PaymentPlacement, ResultLine, SelectedOption, SkippedDiscount, SourceLine, TargetSelection,
 };
 use crate::config::version::ApiVersion;
 use crate::config::{App, FunctionExtension, FunctionTarget, Selection, TargetKind};
@@ -196,6 +196,7 @@ pub fn compute_with_options(
             .collect(),
         errors: Vec::new(),
         runs: Vec::new(),
+        idle: Vec::new(),
         blind: None,
     };
     pipeline.run()
@@ -229,6 +230,8 @@ struct Pipeline<'a> {
     payment_methods: Vec<PaymentMethod>,
     errors: Vec<CheckoutError>,
     runs: Vec<FunctionRun>,
+    /// The Functions left out for want of an enabled owner.
+    idle: Vec<IdleFunction>,
     /// While discount Functions run: the cart they all see, whatever the ones before them did.
     blind: Option<Blind>,
 }
@@ -293,10 +296,14 @@ impl<'a> Pipeline<'a> {
             .collect()
     }
 
-    fn functions_with(&self, kinds: &[TargetKind]) -> Vec<(usize, &'a FunctionExtension)> {
+    /// The Functions of the selection with a target of one of `kinds` (cart transform,
+    /// customizations, validation) that run: those with an enabled owner, when the checkout
+    /// follows the shop's owners ([`CheckoutConfig::owners`]). The others are recorded as idle.
+    fn functions_with(&mut self, kinds: &[TargetKind]) -> Vec<(usize, &'a FunctionExtension)> {
         let app = self.app;
         let enabled = self.enabled;
-        app.functions
+        let candidates: Vec<(usize, &'a FunctionExtension)> = app
+            .functions
             .iter()
             .enumerate()
             .filter(|(_, function)| enabled.contains(&function.handle))
@@ -307,7 +314,38 @@ impl<'a> Pipeline<'a> {
                     .iter()
                     .any(|target| kinds.contains(&target.kind))
             })
-            .collect()
+            .collect();
+        let Some(owners) = &self.config.owners else {
+            return candidates;
+        };
+        let mut running = Vec::new();
+        for (index, function) in candidates {
+            let state = owners.get(&function.handle).copied();
+            if state == Some(true) {
+                running.push((index, function));
+                continue;
+            }
+            if self.idle.iter().any(|idle| idle.handle == function.handle) {
+                continue;
+            }
+            let (owner, what) = owner_of(kinds);
+            self.idle.push(IdleFunction {
+                handle: function.handle.clone(),
+                owner,
+                enabled: state,
+                reason: match state {
+                    Some(_) => format!("its {what} is disabled"),
+                    None => format!(
+                        "the shop has no {what} that runs it: the app creates one \
+                         (`{}Create`), or the store data declares one \
+                         (`checkout.functions.{}.enabled`)",
+                        lower_first(owner),
+                        function.handle
+                    ),
+                },
+            });
+        }
+        running
     }
 
     fn function_metafields(&self, handle: &str) -> &'a [Metafield] {
@@ -1815,6 +1853,7 @@ impl<'a> Pipeline<'a> {
                 currency_code: self.currency,
             },
             runs: self.runs,
+            idle: self.idle,
             interrupted: self.interrupted,
         }
     }
@@ -2662,6 +2701,27 @@ fn reduce_shipping(groups: &mut [DeliveryGroup], candidate: &Candidate) -> Vec<O
 }
 
 // ---- JSON helpers ----
+
+/// The type of the owner of a Function with a target of `kinds`, in the Admin API and in words.
+fn owner_of(kinds: &[TargetKind]) -> (&'static str, &'static str) {
+    match kinds.first() {
+        Some(TargetKind::CartTransform) => ("CartTransform", "cart transform"),
+        Some(TargetKind::DeliveryCustomization) => {
+            ("DeliveryCustomization", "delivery customization")
+        }
+        Some(TargetKind::Validation) => ("Validation", "validation"),
+        _ => ("PaymentCustomization", "payment customization"),
+    }
+}
+
+/// `PaymentCustomization` → `paymentCustomization`: the name of its mutations.
+fn lower_first(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
 
 fn array<'v>(value: &'v Value, key: &str) -> impl Iterator<Item = &'v Value> {
     value

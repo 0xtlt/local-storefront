@@ -293,6 +293,100 @@ fn delivery_customization_hides_renames_and_moves_options() {
 }
 
 #[test]
+fn a_function_runs_only_through_an_enabled_owner_when_the_checkout_follows_the_shop() {
+    let app = app();
+    let store = store();
+    let mut config = config();
+    config.function_metafields.insert(
+        "payment-rules".to_string(),
+        settings(json!({"hideName": "Cash on Delivery", "hideAbove": 0})),
+    );
+    config.function_metafields.insert(
+        "quantity-limit".to_string(),
+        settings(json!({"maxQuantity": 1})),
+    );
+    let selection = Selection::only(["payment-rules", "quantity-limit", "delivery-rules"]);
+    let cart = session(&store, &[(TEE, 2)]);
+    let ran = |config: &lsf_app::checkout::CheckoutConfig| {
+        let result = compute(&app, &selection, &store, &cart, &addressed(), config);
+        let handles: Vec<String> = result.runs.iter().map(|run| run.handle.clone()).collect();
+        (handles, result)
+    };
+
+    // A shop without owners (the app was just installed): nothing runs, and each says why.
+    config.owners = Some(Default::default());
+    let (handles, result) = ran(&config);
+    assert!(handles.is_empty(), "{handles:?}");
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let idle: Vec<(&str, &str, Option<bool>)> = result
+        .idle
+        .iter()
+        .map(|idle| (idle.handle.as_str(), idle.owner, idle.enabled))
+        .collect();
+    assert_eq!(
+        idle,
+        [
+            ("delivery-rules", "DeliveryCustomization", None),
+            ("payment-rules", "PaymentCustomization", None),
+            ("quantity-limit", "Validation", None),
+        ]
+    );
+    assert!(
+        result.idle[1]
+            .reason
+            .contains("the shop has no payment customization that runs it"),
+        "{}",
+        result.idle[1].reason
+    );
+    assert!(
+        result
+            .payment_methods
+            .iter()
+            .any(|method| method.name == "Cash on Delivery")
+    );
+
+    // An enabled payment customization, a disabled validation.
+    config.owners = Some(
+        [
+            ("payment-rules".to_string(), true),
+            ("quantity-limit".to_string(), false),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let (handles, result) = ran(&config);
+    assert_eq!(handles, ["payment-rules"]);
+    assert!(
+        result.errors.is_empty(),
+        "the validation is off: {:?}",
+        result.errors
+    );
+    assert!(
+        !result
+            .payment_methods
+            .iter()
+            .any(|method| method.name == "Cash on Delivery")
+    );
+    let off = result
+        .idle
+        .iter()
+        .find(|idle| idle.handle == "quantity-limit")
+        .unwrap();
+    assert_eq!(off.enabled, Some(false));
+    assert_eq!(off.reason, "its validation is disabled");
+
+    // A run that names its Functions runs them all, as if each had an owner.
+    config.owners = None;
+    let (handles, result) = ran(&config);
+    assert_eq!(
+        handles,
+        ["delivery-rules", "payment-rules", "quantity-limit"]
+    );
+    assert!(result.idle.is_empty());
+    assert!(!result.errors.is_empty(), "the validation refuses two");
+}
+
+#[test]
 fn payment_customization_hides_and_renames_methods() {
     let app = app();
     let store = store();

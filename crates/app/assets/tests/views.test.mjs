@@ -397,6 +397,21 @@ test('the dialog opens on the first run that failed, else on the first run, else
   assert.match(text(byClass(empty, 'lsf-fn-overview')[0]), /No Function ran\./);
 });
 
+test('the overview says which Functions the shop\'s owners leave out, and why', () => {
+  const idle = [
+    { handle: 'hide-paypal', owner: 'PaymentCustomization', enabled: false, reason: 'its payment customization is disabled' },
+    { handle: 'limits', owner: 'Validation', enabled: null, reason: 'the shop has no validation that runs it' },
+  ];
+  const tree = page({ ...checkoutState(), runs: [], idle }, { functionsOpen: true, functionsView: 'overview' });
+  const list = byClass(tree, 'lsf-fn-overview')[0];
+  assert.match(text(list), /Functions not run/);
+  assert.match(text(list), /hide-paypal its payment customization is disabled\./);
+  assert.match(text(list), /limits the shop has no validation that runs it\./);
+  // Without any, nothing is said.
+  const none = page({ ...checkoutState(), runs: [] }, { functionsOpen: true, functionsView: 'overview' });
+  assert.doesNotMatch(text(byClass(none, 'lsf-fn-overview')[0]), /Functions not run/);
+});
+
 test('the run shown is found again by its handle and target after an update, else the default', () => {
   const target = 'cart.lines.discounts.generate.run';
   const before = withRuns([{ handle: 'a', target }, { handle: 'b', target }, { handle: 'b', target }]);

@@ -654,9 +654,16 @@
       ]
     },
     "CheckoutFunctionInput": {
-      "description": "The settings of a Function that is not a discount: cart transform, delivery or payment\ncustomization, validation.",
+      "description": "A Function that is not a discount (cart transform, delivery or payment customization,\nvalidation): its owner in the shop, and its settings.",
       "type": "object",
       "properties": {
+        "enabled": {
+          "description": "Whether the shop has an owner of the Function (the payment or delivery customization,\nvalidation or cart transform an app creates for it), and it is enabled. As on Shopify,\nthe Function runs at the checkout only through an enabled owner: `true` runs it, `false`\nis an owner that is turned off. Without it, the shop has no owner of it, as after an\ninstall: the Function runs only for a scenario that names it in `extensions`, or for\n`app function run <handle>`, with these metafields.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "metafields": {
           "description": "The metafields of the object the Function belongs to, by `\"namespace.key\"`.",
           "type": "object",

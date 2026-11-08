@@ -317,6 +317,34 @@ fn without_an_app_the_installation_has_every_scope() {
 }
 
 #[test]
+fn a_shop_the_app_was_just_installed_on_has_no_owner_of_its_functions() {
+    // The fixture app's own store data: settings for its Functions, no owner (`enabled`).
+    let (store, _) = lsf_core::store::load::load_with_overlay(
+        &lsf_core::store::load::DataSource::Demo,
+        &Default::default(),
+        Some(&json!({
+            "checkout": {"functions": {"payment-rules": {"metafields": {"$app:config.settings": {"type": "json", "value": {"hideName": "Card"}}}}}}
+        })),
+    );
+    let app = support::fixture_app();
+    let state = ShopState::seeded(&store, Some(&app));
+    for type_name in [
+        "PaymentCustomization",
+        "DeliveryCustomization",
+        "Validation",
+        "CartTransform",
+    ] {
+        assert_eq!(state.count(type_name), 0, "{type_name}");
+    }
+    // The Functions are there, named as `shopify.extension.toml` names them.
+    let payment = state
+        .all("ShopifyFunction")
+        .find(|function| function["handle"] == json!("payment-rules"))
+        .unwrap();
+    assert_eq!(payment["title"], json!("Payment rules"));
+}
+
+#[test]
 fn the_ids_are_those_the_checkout_gives() {
     let (store, app, state) = rich();
     // The owners of discount Functions: their position in `checkout.discounts`.
@@ -665,6 +693,10 @@ fn the_app_owns_its_functions_and_their_owners() {
         payment["functionId"],
         json!(app::function_id(Some(&app), "payment-rules"))
     );
+    // As the data declares them: enabled, or not.
+    assert_eq!(payment["enabled"], json!(true));
+    let delivery = state.all("DeliveryCustomization").next().unwrap();
+    assert_eq!(delivery["enabled"], json!(false));
     assert_eq!(payment["shopifyFunction"], payment["functionId"]);
     let rules = record(&state, strings(&payment["metafields"])[0]);
     assert_eq!(rules["jsonValue"], json!({"hide": ["cod"]}));

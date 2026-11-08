@@ -724,6 +724,14 @@ fn plan(store: &Store, app: Option<&ShopifyApp>, app_store: Option<&Store>) -> P
             line.as_object_mut().expect("a line").remove("product");
             items.push(line);
         }
+        // Every extension, named: the Functions run whether or not the shop has an owner of
+        // them (a payment customization, …), as a scenario about one Function runs it.
+        let every: Vec<&String> = app
+            .functions
+            .iter()
+            .map(|function| &function.handle)
+            .chain(&kinds.ui)
+            .collect();
         plan.add(
             "all-extensions",
             json!({
@@ -735,6 +743,7 @@ fn plan(store: &Store, app: Option<&ShopifyApp>, app_store: Option<&Store>) -> P
                     {"handle": "standard", "title": "Standard", "price": "4.90"},
                     {"handle": "express", "title": "Express", "price": "12.90"},
                 ]},
+                "extensions": every,
             }),
         );
     }
@@ -1096,6 +1105,24 @@ mod tests {
             read(&root, "payment-methods")["extensions"][0],
             "payment-rules"
         );
+        // Everything at once names every extension: its Functions run whether or not the shop
+        // has an owner of them. The scenarios about the shop itself name none.
+        let every = read(&root, "all-extensions")["extensions"].clone();
+        for handle in [
+            "bundle-transform",
+            "delivery-rules",
+            "payment-rules",
+            "quantity-limit",
+            "volume-discount",
+            "gift-message",
+            "order-notice",
+        ] {
+            assert!(
+                every.as_array().unwrap().contains(&json!(handle)),
+                "{handle}: {every}"
+            );
+        }
+        assert_eq!(read(&root, "guest")["extensions"], Json::Null);
         // The discount code is entered, and the discount has it.
         let code = read(&root, "discount-code");
         assert_eq!(code["entered"]["discount_codes"], json!(["SAVE10"]));

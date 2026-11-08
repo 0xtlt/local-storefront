@@ -593,7 +593,7 @@ changes nothing for a theme.
         "metafields": { "$app:config.settings": { "type": "json", "value": { "percentage": 10 } } }
       }
     ],
-    "functions": { "delivery-rules": { "metafields": { "$app:config.settings": { "type": "json", "value": {} } } } },
+    "functions": { "delivery-rules": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": {} } } } },
     "tax_rate": 20
   }
 }
@@ -612,8 +612,14 @@ changes nothing for a theme.
   `"namespace.key"`, in the same shorthand as other metafields. `id` is the number of the id
   its Function reads (`gid://shopify/DiscountAutomaticNode/<id>`), its position in the list from
   1 by default.
-- `functions`: the metafields of the other Functions (cart transform, delivery or payment
-  customization, validation), by the handle of the Function.
+- `functions`: the other Functions (cart transform, delivery or payment customization,
+  validation), by the handle of the Function: `metafields`, their settings, and `enabled`, whether
+  the shop has an owner of it (the payment customization, … the app creates) and it is on. As on
+  Shopify, the shop's checkout runs such a Function only through an enabled owner: `true` runs
+  it, `false` is an owner turned off, and without `enabled` the shop has none (as after an
+  install, until the app creates one through the Admin API). A scenario that names the Function
+  in `extensions` runs it anyway, with these metafields
+  ([what runs](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#what-runs-owners-and-scenarios)).
 - `tax_rate`: a percentage, added to the discounted subtotal.
 
 ### Checkout scenarios
@@ -672,12 +678,13 @@ Every field is optional.
 - `checkout` overrides the [`checkout` section](#checkout) of the store data. Every field that is
   present replaces the store's: `shipping_rates`, `payment_methods`, `discounts` (`[]` runs no
   discount), `tax_rate`. `functions` replaces the settings of the Functions it names and keeps
-  those of the others.
+  those of the others; an entry without `enabled` keeps the store's owner of it.
 - `variant` is the look: `standard` or `shop`. `?variant=` in the URL still wins.
 - `extensions` lists the handles of the extensions (Functions and checkout UI extensions) that
-  run. The others of the app are left out. It narrows what `--extension` allows. A Function you
-  add to the app later is not in the `extensions` of the scenarios written before it: add its
-  handle, or remove the list to run every extension.
+  run. The others of the app are left out. It narrows what `--extension` allows. The Functions it
+  names run whether or not the shop has an owner of them: a scenario that names none shows the
+  shop's checkout, where only those with an enabled owner run. A Function you add to the app
+  later is not in the `extensions` of the scenarios written before it: add its handle.
 
 A scenario that does not validate is still listed, with its errors, and cannot be opened.
 `validate` reports it with the file `checkouts/<name>.json` and a pointer into it
@@ -1833,11 +1840,12 @@ One of: `"PRODUCT"`, `"ORDER"`, `"SHIPPING"`.
 
 ### CheckoutFunction
 
-The settings of a Function that is not a discount: cart transform, delivery or payment
-customization, validation.
+A Function that is not a discount (cart transform, delivery or payment customization,
+validation): its owner in the shop, and its settings.
 
 | Field | Type | Description |
 |---|---|---|
+| `enabled` | boolean | Whether the shop has an owner of the Function (the payment or delivery customization, validation or cart transform an app creates for it), and it is enabled. As on Shopify, the Function runs at the checkout only through an enabled owner: `true` runs it, `false` is an owner that is turned off. Without it, the shop has no owner of it, as after an install: the Function runs only for a scenario that names it in `extensions`, or for `app function run <handle>`, with these metafields. |
 | `metafields` | map of [Metafield](#metafield) | The metafields of the object the Function belongs to, by `"namespace.key"`. |
 
 ### Checkout scenario

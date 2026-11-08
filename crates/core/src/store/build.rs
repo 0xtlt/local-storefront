@@ -3175,6 +3175,10 @@ fn override_checkout(
             &origin.child("functions").child(handle).child("metafields"),
         );
         settings.functions.insert(handle.clone(), metafields);
+        // A scenario that says nothing of the owner keeps the store's.
+        if let Some(enabled) = function.enabled {
+            settings.owners.insert(handle.clone(), enabled);
+        }
     }
     if let Some(rate) = input.tax_rate {
         if rate.is_finite() && (0.0..=100.0).contains(&rate) {

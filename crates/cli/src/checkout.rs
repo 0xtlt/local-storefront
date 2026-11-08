@@ -426,6 +426,8 @@ pub fn config_from_settings(settings: &CheckoutSettings) -> CheckoutConfig {
             .iter()
             .map(|(handle, fields)| (handle.clone(), metafields(fields)))
             .collect(),
+        // As on Shopify: a Function that is not a discount runs through an enabled owner.
+        owners: Some(settings.owners.clone()),
         tax_rate_bps: settings.tax_rate_bps,
     }
 }
@@ -437,10 +439,19 @@ pub fn scenario_named<'a>(store: &'a Store, name: Option<&str>) -> Option<&'a Ch
         .filter(|scenario| scenario.problems.is_empty())
 }
 
-/// The settings a checkout runs with: those of its scenario, otherwise those of the store.
+/// The settings a checkout runs with: those of its scenario, otherwise those of the store. A
+/// scenario that names its extensions runs the Functions it names whether or not the shop has
+/// an enabled owner of them (a payment customization, …): it tries a Function alone. Otherwise
+/// only the Functions with an enabled owner run, as on Shopify.
 pub fn config_for(store: &Store, scenario: Option<&str>) -> CheckoutConfig {
     match scenario_named(store, scenario) {
-        Some(scenario) => config_from_settings(&scenario.checkout),
+        Some(scenario) => {
+            let mut config = config_from_settings(&scenario.checkout);
+            if scenario.extensions.is_some() {
+                config.owners = None;
+            }
+            config
+        }
         None => config_from_store(store),
     }
 }
@@ -838,6 +849,52 @@ type = "function"
             "strict"
         );
         assert_eq!(config.tax_rate_bps, 2000);
+        // Settings without `enabled`: the shop has no owner of it, so it does not run.
+        assert_eq!(config.owners, Some(Default::default()));
+    }
+
+    #[test]
+    fn the_owners_decide_what_runs_unless_the_scenario_names_its_extensions() {
+        let overlay = serde_json::json!({"checkout": {"functions": {
+            "payment-rules": {"enabled": true},
+            "delivery-rules": {"enabled": false, "metafields": {"$app:config.mode": "strict"}},
+            "quantity-limit": {"metafields": {"$app:config.max": 2}}
+        }}});
+        let directory =
+            std::env::temp_dir().join(format!("lsf-checkout-owners-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(directory.join("checkouts")).unwrap();
+        std::fs::write(directory.join("store.json"), overlay.to_string()).unwrap();
+        std::fs::write(
+            directory.join("checkouts/named.json"),
+            r#"{"extensions": ["quantity-limit"]}"#,
+        )
+        .unwrap();
+        // A scenario may give an owner its own state; one that says nothing keeps the store's.
+        std::fs::write(
+            directory.join("checkouts/shop.json"),
+            r#"{"checkout": {"functions": {"delivery-rules": {"enabled": true}, "payment-rules": {"metafields": {"$app:config.x": "y"}}}}}"#,
+        )
+        .unwrap();
+        let (store, diagnostics) = lsf_core::store::load::load(
+            &lsf_core::store::load::DataSource::Directory(directory.clone()),
+            &lsf_core::store::load::LoadOptions::default(),
+        );
+        std::fs::remove_dir_all(&directory).ok();
+        assert!(!diagnostics.has_errors(), "{diagnostics}");
+        let owners = |scenario: Option<&str>| config_for(&store, scenario).owners;
+        let expected: indexmap::IndexMap<String, bool> = [
+            ("payment-rules".to_string(), true),
+            ("delivery-rules".to_string(), false),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(owners(None), Some(expected));
+        assert_eq!(owners(Some("named")), None, "the scenario names what runs");
+        let shop = owners(Some("shop")).unwrap();
+        assert_eq!(shop.get("delivery-rules"), Some(&true));
+        assert_eq!(shop.get("payment-rules"), Some(&true));
+        assert_eq!(shop.get("quantity-limit"), None);
     }
 
     #[test]

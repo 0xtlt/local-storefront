@@ -804,6 +804,38 @@ fn the_settings_of_functions_follow_their_owners() {
         store.checkout.discounts.len(),
         base.checkout.discounts.len()
     );
+    assert_eq!(store.checkout.owners.get("payment-rules"), Some(&true));
+
+    // Disabled: the owner stays, off, with its settings (for the scenarios that name it).
+    set(&mut state, &owner, "enabled", json!(false));
+    let (store, _) = synced(&state, &base);
+    assert_eq!(store.checkout.owners.get("payment-rules"), Some(&false));
+    assert_eq!(
+        store.checkout.functions["payment-rules"][0].value,
+        r#"{"hide":["card"]}"#
+    );
+    // A disabled one of the data, enabled by the app.
+    let delivery_index = app
+        .functions
+        .iter()
+        .position(|function| function.handle == "delivery-rules")
+        .unwrap();
+    let delivery = app::owner_gid("DeliveryCustomization", delivery_index);
+    assert_eq!(base.checkout.owners.get("delivery-rules"), Some(&false));
+    set(&mut state, &delivery, "enabled", json!(true));
+    let (store, _) = synced(&state, &base);
+    assert_eq!(store.checkout.owners.get("delivery-rules"), Some(&true));
+
+    // Deleted: the shop has no owner of it any more.
+    state.remove(&owner);
+    let (store, overlay) = synced(&state, &base);
+    assert_eq!(
+        store.checkout.owners.get("payment-rules"),
+        None,
+        "{:?}",
+        overlay.data
+    );
+    assert_eq!(store.checkout.functions["payment-rules"], []);
 }
 
 #[test]

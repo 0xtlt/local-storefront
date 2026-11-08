@@ -3863,7 +3863,7 @@ fn the_functions_read_the_language_of_the_buyer() {
     state.dispatch(&request(
         "PUT",
         "/__lsf/session",
-        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}, "data": owned(&["payment-rules"])}),
         "co-fn-fr",
     ));
     let path = header(&get(&state, "/fr/checkout", "co-fn-fr"), "location")
@@ -3892,7 +3892,7 @@ fn the_functions_read_the_language_of_the_buyer() {
     state.dispatch(&request(
         "PUT",
         "/__lsf/session",
-        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}, "data": owned(&["payment-rules"])}),
         "co-fn-en",
     ));
     let path = header(&get(&state, "/checkout", "co-fn-en"), "location")
@@ -3976,7 +3976,7 @@ fn bundle_in_french_checkout(state: &ServerState, session: &str) -> String {
         json!({"cart": {"items": [
             {"variant": "TEE-BLK-M", "quantity": 1},
             {"variant": "TOTE-NAT", "quantity": 1}
-        ]}}),
+        ]}, "data": owned(&["bundle-transform"])}),
         session,
     ));
     assert_eq!(reply.status, 200, "{}", text(&reply));
@@ -4277,6 +4277,16 @@ fn operations_change_the_cart_lines() {
     assert_eq!(cart["item_count"], 0);
 }
 
+/// Store data in which the shop has an enabled owner of each of `handles` (a cart transform, a
+/// payment customization, …), as an app creates it: the store's checkout runs them.
+fn owned(handles: &[&str]) -> Json {
+    let functions: serde_json::Map<String, Json> = handles
+        .iter()
+        .map(|handle| (handle.to_string(), json!({"enabled": true})))
+        .collect();
+    json!({"checkout": {"functions": functions}})
+}
+
 /// A checkout where the cart transform of the fixture app does what `operations` says.
 fn transformed_checkout(
     state: &ServerState,
@@ -4288,7 +4298,7 @@ fn transformed_checkout(
         state,
         session,
         items,
-        json!({"checkout": {"functions": {"bundle-transform": {"metafields": {
+        json!({"checkout": {"functions": {"bundle-transform": {"enabled": true, "metafields": {
             "$app:config.settings": {"type": "json", "value": {"operations": operations}}
         }}}}}),
     )
@@ -5204,7 +5214,7 @@ fn the_functions_of_the_app_apply() {
                     "type": "json", "value": {"minimumQuantity": 3, "percentage": 10}
                 }}
             }],
-            "functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+            "functions": {"quantity-limit": {"enabled": true, "metafields": {"$app:config.settings": {
                 "type": "json", "value": {"maxQuantity": 2}
             }}}}
         }}),
@@ -5268,7 +5278,7 @@ fn a_validation_function_sees_the_step_of_the_buyer_journey() {
         &state,
         "co-step",
         json!([{"variant": "TEE-BLK-M", "quantity": 3}]),
-        json!({"checkout": {"functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+        json!({"checkout": {"functions": {"quantity-limit": {"enabled": true, "metafields": {"$app:config.settings": {
             "type": "json", "value": {"maxQuantity": 2, "onlyAtCompletion": true}
         }}}}}}),
     );
@@ -5327,7 +5337,7 @@ fn a_validation_function_sees_the_step_of_the_buyer_journey() {
         &state,
         "co-step-all",
         json!([{"variant": "TEE-BLK-M", "quantity": 3}]),
-        json!({"checkout": {"functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+        json!({"checkout": {"functions": {"quantity-limit": {"enabled": true, "metafields": {"$app:config.settings": {
             "type": "json", "value": {"maxQuantity": 2}
         }}}}}}),
     );
@@ -5658,7 +5668,7 @@ fn a_checkout_needs_a_payment_method_to_complete() {
         json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
         json!({"checkout": {
             "payment_methods": [{"handle": "card", "name": "Card"}],
-            "functions": {"payment-rules": {"metafields": {"$app:config.settings": {
+            "functions": {"payment-rules": {"enabled": true, "metafields": {"$app:config.settings": {
                 "type": "json", "value": {"hideName": "Card", "hideAbove": 0}
             }}}}
         }}),
@@ -6485,7 +6495,12 @@ fn the_functions_read_the_customer_the_checkout_switched_to() {
     .unwrap();
     let state = checkout_server_of(root.clone(), &["payment-rules"], false);
     let session = "co-fn-buyer";
-    let path = guest_checkout(&state, session);
+    let path = start_checkout(
+        &state,
+        session,
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        owned(&["payment-rules"]),
+    );
     let buyer = |json: &Json| {
         let run = json["runs"]
             .as_array()
@@ -7653,10 +7668,11 @@ fn a_problem_of_the_home_page_opens_the_checkout_where_it_shows() {
                 "a a.json",
                 r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["quantity-limit", "volume-discount"]}"#,
             ),
-            // Runs every extension: one that names it wins over it.
+            // Runs every extension the shop has an enabled owner of (and its UI extensions): one
+            // that names it wins over it.
             (
                 "aaa-all.json",
-                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}}"#,
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "checkout": {"functions": {"remote-rules": {"enabled": true}, "quantity-limit": {"enabled": true}}}}"#,
             ),
             (
                 "a b&c.json",
@@ -8490,7 +8506,7 @@ fn app_metafields_have_the_products_of_the_components_of_a_bundle() {
                 {"variant": "TEE-BLK-M", "quantity": 1},
                 {"variant": "TOTE-NAT", "quantity": 1}
             ]},
-            "data": {"checkout": {"functions": {"bundle-transform": {"metafields": {
+            "data": {"checkout": {"functions": {"bundle-transform": {"enabled": true, "metafields": {
                 "$app:config.settings": {"type": "json", "value": {"operations": [
                     {"type": "merge", "lines": [1, 2], "parentVariant": mug, "title": "Set"}
                 ]}}
@@ -9975,4 +9991,73 @@ fn an_app_that_is_not_embedded_has_no_admin_to_open() {
     assert_eq!(admin.embedded_banner("http://127.0.0.1:9292"), None);
     assert!(!text(&get(&state, "/__lsf/checkouts", "standalone")).contains("data-link=\"admin\""));
     std::fs::remove_dir_all(&directory).ok();
+}
+
+#[test]
+fn the_home_page_says_which_functions_the_shop_has_no_enabled_owner_of() {
+    let state = checkout_server(&[], false);
+    let json = body_json(&get(&state, "/__lsf/checkouts?format=json", "home-owners"));
+    let function = |handle: &str| {
+        json["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|function| function["handle"] == handle)
+            .cloned()
+            .unwrap_or_else(|| panic!("{handle}: {json}"))
+    };
+    let payment = function("payment-rules");
+    let note = payment["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|problem| {
+            problem["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("the shop has no payment customization"))
+        })
+        .unwrap_or_else(|| panic!("{payment}"));
+    // The store's, not of the scenarios that name it.
+    assert_eq!(note["store"], true, "{note}");
+    assert!(
+        note["message"]
+            .as_str()
+            .unwrap()
+            .contains("`paymentCustomizationCreate`"),
+        "{note}"
+    );
+    // A discount Function says what it always said.
+    let discount = function("volume-discount");
+    assert!(
+        discount
+            .to_string()
+            .contains("no discount of the store data runs it"),
+        "{discount}"
+    );
+
+    // With an enabled owner in the store data, nothing to say.
+    let data = std::env::temp_dir().join(format!("lsf-home-owners-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&data);
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(
+        data.join("store.json"),
+        r#"{"checkout": {"functions": {"payment-rules": {"enabled": true}}}}"#,
+    )
+    .unwrap();
+    let state = checkout_server_with_data(fixture_app(), &[], false, Some(&data));
+    let json = body_json(&get(&state, "/__lsf/checkouts?format=json", "home-owners"));
+    std::fs::remove_dir_all(&data).ok();
+    let payment = json["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|function| function["handle"] == "payment-rules")
+        .cloned()
+        .unwrap();
+    assert!(
+        !payment
+            .to_string()
+            .contains("payment customization that runs it"),
+        "{payment}"
+    );
 }
