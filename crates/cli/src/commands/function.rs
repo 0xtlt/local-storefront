@@ -214,7 +214,7 @@ pub fn run(
             }
             for (handle, reason) in &forced {
                 println!(
-                    "Named: {handle} runs because this run names it, but the shop's checkout does not run it: {reason}. `{}` runs what the checkout runs.",
+                    "Named: {handle} runs because this run names it, but the checkout of the store data does not run it: {reason}. This command reads the store data on disk, not a running lsf, where the app may have created or enabled one; `{}` runs what the store data's checkout runs.",
                     checkout::as_typed("lsf app function run")
                 );
             }
@@ -433,7 +433,9 @@ fn compute(
     let mut config = checkout::config_for(&store, scenario.map(|scenario| scenario.name.as_str()));
     // The Functions named on the command line run, whether or not the shop has an owner of
     // them, as `shopify app function run` runs one: without them, the checkout's. Each one the
-    // shop's checkout would leave out is said, so that this run is not taken for the checkout.
+    // checkout of the store data would leave out is said, so that this run is not taken for the
+    // checkout. The store data is the files: an owner the app created in a running lsf, through
+    // the Admin API, is not in them.
     let mut forced = Vec::new();
     if !args.handles.is_empty()
         && let Some(owners) = config.owners.take()
@@ -457,7 +459,7 @@ fn compute(
             let reason = match owners.get(handle) {
                 Some(true) => continue,
                 Some(false) => format!("its {owner} is disabled"),
-                None => format!("the shop has no {owner} of it"),
+                None => format!("it has no {owner} of it"),
             };
             forced.push((handle.clone(), reason));
         }

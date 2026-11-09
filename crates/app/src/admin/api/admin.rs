@@ -168,6 +168,21 @@ struct PricingPlans {
     configured: Option<(Arc<Pricing>, String)>,
     /// Those that apply.
     current: Option<(Arc<Pricing>, String)>,
+    /// The size and the modification time of the file of `configured` when it was last read:
+    /// `--watch` reads it again when they change.
+    stamp: Option<(u64, u128)>,
+}
+
+/// The size and the modification time of a file, to tell that it changed.
+fn file_stamp(path: &std::path::Path) -> Option<(u64, u128)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some((metadata.len(), modified))
 }
 
 /// A point of a GraphQL request a test runs code at.
@@ -411,11 +426,73 @@ impl AdminApi {
                 .pricing
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let declared = (Arc::new(pricing), source.into());
+            let source: String = source.into();
+            plans.stamp = file_stamp(std::path::Path::new(&source));
+            let declared = (Arc::new(pricing), source);
             plans.configured = Some(declared.clone());
             plans.current = Some(declared);
         }
         self
+    }
+
+    /// Reads the file of `--pricing-plans` again (`DELETE /__lsf/admin/pricing-plans`, and
+    /// `--watch` when it changed): its plans become those of the file, and those that apply
+    /// unless a request set others (`PUT`). `Ok(None)` without a file, or when it is gone (the
+    /// plans read last stay); `Ok(Some(file))` once read. A file that no longer reads is the
+    /// error, and the plans stay as they were.
+    pub fn reload_pricing_file(&self) -> Result<Option<String>, String> {
+        let Some(source) = self.pricing_file() else {
+            return Ok(None);
+        };
+        let path = std::path::Path::new(&source);
+        let stamp = file_stamp(path);
+        let read = path.is_file().then(|| Pricing::read(path));
+        let mut plans = self
+            .pricing
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Read or not, this version of the file is seen: `--watch` says so once.
+        plans.stamp = stamp;
+        let Some(read) = read else {
+            return Ok(None);
+        };
+        let declared = (Arc::new(read?), source.clone());
+        let from_file = plans
+            .current
+            .as_ref()
+            .is_none_or(|(_, current)| *current == source);
+        plans.configured = Some(declared.clone());
+        if from_file {
+            plans.current = Some(declared);
+        }
+        Ok(Some(source))
+    }
+
+    /// [`reload_pricing_file`](Self::reload_pricing_file) when the file changed since it was
+    /// last read (`--watch`): `Ok(None)` when it did not, or there is none.
+    pub fn reload_pricing_file_if_changed(&self) -> Result<Option<String>, String> {
+        let Some(source) = self.pricing_file() else {
+            return Ok(None);
+        };
+        let seen = self
+            .pricing
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .stamp;
+        if file_stamp(std::path::Path::new(&source)) == seen {
+            return Ok(None);
+        }
+        self.reload_pricing_file()
+    }
+
+    /// The file of `--pricing-plans`, when the plans come from one.
+    pub fn pricing_file(&self) -> Option<String> {
+        self.pricing
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .configured
+            .as_ref()
+            .map(|(_, source)| source.clone())
     }
 
     /// The plans of managed pricing that apply, and where they come from (a file, or

@@ -1056,3 +1056,76 @@ fn the_control_api_ends_the_shops_plan_as_if_it_ended_outside_the_app() {
         "the plan ended under Shopify App Pricing sent something: {next}"
     );
 }
+
+#[test]
+fn the_file_of_the_plans_is_read_again_when_it_changes_and_on_delete() {
+    let dir = std::env::temp_dir().join(format!("lsf-pricing-reload-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("pricing.toml");
+    let source = file.display().to_string();
+    let one = "[[plans]]\nhandle = \"free\"\nname = \"Free\"\nprice = 0\n";
+    let two = format!("{one}\n[[plans]]\nhandle = \"pro\"\nname = \"Pro\"\nprice = 4.99\n");
+    std::fs::write(&file, one).unwrap();
+    let api = api().with_pricing(Pricing::read(&file).unwrap(), source.clone());
+    let handles = |api: &AdminApi| -> Vec<String> {
+        api.pricing()
+            .unwrap()
+            .0
+            .plans
+            .iter()
+            .map(|plan| plan.handle.clone())
+            .collect()
+    };
+    // Unchanged: nothing to read.
+    assert_eq!(api.reload_pricing_file_if_changed(), Ok(None));
+
+    // Changed: read again, once.
+    std::fs::write(&file, &two).unwrap();
+    assert_eq!(
+        api.reload_pricing_file_if_changed(),
+        Ok(Some(source.clone()))
+    );
+    assert_eq!(handles(&api), ["free", "pro"]);
+    assert_eq!(api.reload_pricing_file_if_changed(), Ok(None));
+
+    // Plans a request set stay over the file until the DELETE, which reads the file again.
+    let set = send(
+        &api,
+        "PUT",
+        "/__lsf/admin/pricing-plans",
+        &[],
+        br#"{"plans": [{"handle": "solo", "name": "Solo", "price": 1}]}"#,
+    );
+    assert_eq!(set.status, 200);
+    std::fs::write(&file, one).unwrap();
+    assert_eq!(
+        api.reload_pricing_file_if_changed(),
+        Ok(Some(source.clone()))
+    );
+    assert_eq!(handles(&api), ["solo"]);
+    std::fs::write(&file, &two).unwrap();
+    let back = send(&api, "DELETE", "/__lsf/admin/pricing-plans", &[], b"");
+    assert_eq!(back.status, 200);
+    assert_eq!(json_of(&back)["source"], json!(source));
+    assert_eq!(handles(&api), ["free", "pro"]);
+
+    // A file that no longer reads: said once, and the plans stay; the DELETE is a 422.
+    std::fs::write(&file, "[[plans]]\nhandle = ").unwrap();
+    assert!(api.reload_pricing_file_if_changed().is_err());
+    assert_eq!(api.reload_pricing_file_if_changed(), Ok(None));
+    assert_eq!(handles(&api), ["free", "pro"]);
+    assert_eq!(
+        send(&api, "DELETE", "/__lsf/admin/pricing-plans", &[], b"").status,
+        422
+    );
+
+    // A file that is gone: the plans read last stay.
+    std::fs::remove_file(&file).unwrap();
+    assert_eq!(api.reload_pricing_file_if_changed(), Ok(None));
+    assert_eq!(
+        send(&api, "DELETE", "/__lsf/admin/pricing-plans", &[], b"").status,
+        200
+    );
+    assert_eq!(handles(&api), ["free", "pro"]);
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -8,7 +8,7 @@
 //! | `GET /admin/charges/<app>/pricing_plans/<plan>?shop=` | The plan to approve: its price, its trial, the plan it replaces. |
 //! | `GET /__lsf/admin/pricing-plans?shop=` | The plans, `legacy`, where they come from, the page, and the shop's current subscription. |
 //! | `PUT /__lsf/admin/pricing-plans` (`POST` too) | Declares the plans: `{"plans": [...], "legacy"?}`, as `--pricing-plans` does. `422` for a wrong declaration. |
-//! | `DELETE /__lsf/admin/pricing-plans` | Back to the plans of `--pricing-plans`, or none. |
+//! | `DELETE /__lsf/admin/pricing-plans` | Back to the plans of `--pricing-plans`, read again from the file, or none. `422` when the file no longer reads. |
 //! | `POST /__lsf/admin/pricing-plans/<plan>/select` (`?shop=`, or `{"shop"}`) | The merchant chooses the plan: from the page's form, a `303` to its welcome link, as Shopify redirects; otherwise JSON `{ok, shop, plan, subscription, replaced, redirect}`. `404` for no such plan, `409` when the shop is on it already. |
 //! | `POST /__lsf/admin/pricing-plans/cancel` (`?shop=`, or `{"shop"}`) | The shop's plan ends without the app doing it: its active subscription `CANCELLED`, `app_subscriptions/update` unless `legacy` is `false`. JSON `{ok, shop, plan, subscription, webhook}`. `409` when the shop has no active subscription. Shopify's page has no such button: a test's stand-in for a plan ended outside the app. |
 //!
@@ -360,6 +360,10 @@ pub(super) fn control(api: &AdminApi, request: &HttpRequest, rest: &str) -> Http
             }
         }
         ("DELETE", []) => {
+            // The file as it is now, not as it was at start.
+            if let Err(error) = api.reload_pricing_file() {
+                return HttpResponse::error(422, format!("--pricing-plans: {error}"));
+            }
             api.set_pricing(None);
             let mut answer = status(api, &shop_of(api, request));
             answer["ok"] = json!(true);

@@ -331,7 +331,7 @@ fn function_run_finds_the_app_and_says_why_a_function_did_not_run() {
     );
     assert!(
         text(&output).contains(
-            "Named: payment-rules runs because this run names it, but the shop's checkout does not run it: the shop has no payment customization of it."
+            "Named: payment-rules runs because this run names it, but the checkout of the store data does not run it: it has no payment customization of it. This command reads the store data on disk, not a running lsf"
         ),
         "{}",
         text(&output)

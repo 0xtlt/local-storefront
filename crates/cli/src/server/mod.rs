@@ -457,9 +457,6 @@ impl ServerState {
         if !self.options.watch {
             return;
         }
-        let Some(directory) = self.app.data_dir() else {
-            return;
-        };
         {
             let mut last_check = self.last_check.lock().expect("check lock poisoned");
             if !now && last_check.elapsed() < Duration::from_millis(300) {
@@ -467,6 +464,19 @@ impl ServerState {
             }
             *last_check = Instant::now();
         }
+        // The plans of `--pricing-plans`, wherever their file is.
+        if let Some(admin) = &self.admin {
+            match admin.api.reload_pricing_file_if_changed() {
+                Ok(Some(file)) if !self.options.quiet => {
+                    eprintln!("pricing plans reloaded ({file})")
+                }
+                Ok(_) => {}
+                Err(error) => eprintln!("pricing plans not reloaded: {error}"),
+            }
+        }
+        let Some(directory) = self.app.data_dir() else {
+            return;
+        };
         let files = data_files::DataFiles::read(&directory);
         let change = {
             let mut seen = lock(&self.data_files);
