@@ -1081,14 +1081,15 @@ lsf:      POST http://127.0.0.1:9292/{partner_id}/api/2026-10/graphql.json
 lsf prints the URL and the token at start, after the `pricing:` line:
 
 ```text
-partner: http://127.0.0.1:9292/9880163/api/2026-10/graphql.json   (Partner API: activeSubscription and events of gid://shopify/App/3662721844947; token prtapi_9c17…)
+partner: http://127.0.0.1:9292/9880163/api/2026-10/graphql.json   (Partner API: activeSubscription and events of gid://shopify/App/3662721844947; token prtapi_lsf_9c17…)
 ```
 
 `GET /__lsf/admin/partner` has the same, with each shop's GID: a test reads them there.
 
-- **The Partner ID** is seven digits, and **the token** is `prtapi_` and 32 hex digits, the shape
-  GitHub's secret scanning knows as a Shopify Partner API token (Shopify documents none). Both are
-  the same every run for the app's client id: a test can hard-code them, or read them from
+- **The Partner ID** is seven digits, and **the token** is `prtapi_lsf_` and 32 hex digits.
+  Shopify's real tokens are `prtapi_` and 32 hex digits, which GitHub's push protection refuses in
+  a commit; the `lsf_` keeps lsf's token out of that shape, so your repository can hold it. Both
+  are the same every run for the app's client id: a test can hard-code them, or read them from
   `GET /__lsf/admin/partner` (`partnerId`, `token`). Another token, or another number in the
   path, answers Shopify's `401` `{"errors": [{"message": "Invalid access token", "extensions":
   {"code": "401"}}]}`; `X-Lsf-Reason` says which part is wrong.

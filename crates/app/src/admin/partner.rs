@@ -44,10 +44,11 @@
 //! lsf's choices, where Shopify does not say:
 //!
 //! - The Partner ID is a number of seven digits, the same every run for the app's client id
-//!   ([`partner_id`]); the token `prtapi_` and 32 hex digits ([`token`]), the same every run too
-//!   (Shopify documents no format; GitHub's secret scanning stops `prtapi_` and 32 hex digits as a
-//!   "Shopify Partner API Token", so a test builds a fake one at run time). A wrong token, or
-//!   another Partner ID in the path, is the `401`.
+//!   ([`partner_id`]); the token `prtapi_lsf_` and 32 hex digits ([`token`]), the same every run
+//!   too. Shopify documents no format. Its real tokens are `prtapi_` and 32 hex digits, which
+//!   GitHub's secret scanning stops as a "Shopify Partner API Token": the `lsf_` keeps lsf's out
+//!   of that shape, so that an app's repository can hold it in a test or a `.env` and still be
+//!   pushed. A wrong token, or another Partner ID in the path, is the `401`.
 //! - The app's number is its Admin API one (`gid://shopify/App/<n>`, what
 //!   `currentAppInstallation { app { id } }` answers), and `gid://partners/App/<n>` the same
 //!   number; a shop's is its `shop { id }` number, under both prefixes too. `activeSubscription`
@@ -109,12 +110,13 @@ pub fn partner_id(client_id: &str) -> u64 {
     1_000_000 + lsf_core::util::stable_id("partner organization", client_id) % 9_000_000
 }
 
-/// The token of the organization's Partner API client: `prtapi_` and 32 hex digits, the same
-/// every run.
+/// The token of the organization's Partner API client: `prtapi_lsf_` and 32 hex digits, the
+/// same every run. Not `prtapi_` and 32 hex digits, the shape of a real one, which GitHub's push
+/// protection refuses in a commit.
 pub fn token(client_id: &str) -> String {
     use crate::admin::auth::signing::{hex, sha256};
     let digest = sha256(format!("lsf partner api token\0{client_id}").as_bytes());
-    format!("prtapi_{}", &hex(&digest)[..32])
+    format!("prtapi_lsf_{}", &hex(&digest)[..32])
 }
 
 /// The URL of the Partner API on lsf: `http://127.0.0.1:9292/1234567/api/2026-10/graphql.json`.
@@ -717,7 +719,10 @@ mod tests {
         assert!((1_000_000..10_000_000).contains(&id), "{id}");
         assert_ne!(partner_id("abc"), partner_id("abd"));
         let token = token("abc");
-        assert!(token.starts_with("prtapi_") && token.len() == 39, "{token}");
+        assert!(
+            token.starts_with("prtapi_lsf_") && token.len() == 43,
+            "{token}"
+        );
         assert_eq!(token, super::token("abc"));
         assert_eq!(
             endpoint("http://127.0.0.1:9292", 1234567),

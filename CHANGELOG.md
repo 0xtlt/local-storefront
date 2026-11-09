@@ -144,7 +144,7 @@ the same data every run.
   `partners.shopify.com`. `activeSubscription` answers the shop's plan, its trial and its billing
   cycle by the shop's clock; `events` and `app { events }` answer the history: installs,
   uninstalls, plans chosen, changed and ended, and every change of a charge. Both `legacy` modes
-  feed it. The Partner ID and the `prtapi_` token are printed at start (`partner:`, with the
+  feed it. The Partner ID and the `prtapi_lsf_` token are printed at start (`partner:`, with the
   plans) and in `GET /__lsf/admin/partner`; they are the same every run. A wrong token is
   Shopify's `401`. The rest of the Partner API answers `LSF_NOT_SIMULATED`.
   [Read the plan from the Partner API](docs/admin.md#read-the-plan-from-the-partner-api).
