@@ -8,7 +8,7 @@
 //
 // | Suite | What it measures |
 // |---|---|
-// | `startup` | time to the `ready:` line, idle RSS (`serve` on the fixture theme, the demo store) |
+// | `startup` | time to the `ready:` line, idle RSS (`serve` on the fixture theme, the demo store: the theme alone) |
 // | `startup-app` | the same with `examples/admin-backend` and 2026-10,2027-01, then the first request of each version |
 // | `storefront` | home, product and collection pages: p50, p95, CPU per render (`--n`, 300) |
 // | `storefront-ab` | the same, two builds at once, requests alternated: `--against <lsf> --against-label <name>` |
@@ -18,10 +18,15 @@
 // | `webhooks` | a burst of `productUpdate` with and without a subscription to a local sink |
 // | `sync` | a mutation then a page (the store rebuilt), before and after 1000 products created |
 //
+// The suites of the Admin API serve it with an app of the bench's own (`serve` without `--app`
+// serves the theme alone): no extension, no webhook, the scopes of the workloads.
+//
 // macOS only (`/usr/bin/time -l`, `ps`). No dependencies. A build without the Admin API (before
 // it) runs `startup`, `storefront` and `storefront-ab`.
 import { spawn, execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,7 +39,7 @@ const option = (name, fallback) => {
 };
 const bin = option("bin", join(repo, "target", "release", "lsf"));
 const label = option("label", "lsf");
-const theme = option("theme", join(repo, "crates", "core", "tests", "fixtures", "theme"));
+const theme = option("theme", join(repo, "crates", "theme", "tests", "fixtures", "theme"));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const emit = (what, values) => console.log(JSON.stringify({ label, suite, what, ...values }));
 
@@ -150,15 +155,30 @@ async function pagesOf(server) {
   };
 }
 
-// A build without the Admin API (main before it) has no `--admin-throttle`.
-const hasAdminOf = (binary) => execFileSync(binary, ["serve", "--help"]).toString().includes("--admin-throttle");
-const hasAdmin = hasAdminOf(bin);
-// `more` null: the options of a build without the Admin API.
-const serveArgs = (more = []) => [
-  "serve", "--theme", theme, "--port", "0", "--static",
-  ...(more !== null && hasAdmin ? ["--admin-throttle", "off"] : []),
-  ...(more ?? []),
-];
+// The storefront alone: what every build serves without `--app`, the theme only since `--only`.
+const serveArgs = () => ["serve", "--theme", theme, "--port", "0", "--static"];
+
+// The app the suites of the Admin API serve it with, written once, removed at exit.
+let benchApp;
+function appDir() {
+  if (benchApp) return benchApp;
+  benchApp = mkdtempSync(join(tmpdir(), "lsf-bench-app-"));
+  writeFileSync(
+    join(benchApp, "shopify.app.toml"),
+    [
+      'client_id = "be5c0000be5c0000be5c0000be5c0000"',
+      'name = "Bench"',
+      "[access_scopes]",
+      'scopes = "read_products,write_products,read_orders,write_orders,read_customers,write_customers,read_inventory,write_inventory,read_locations,read_publications,write_publications"',
+      "",
+    ].join("\n"),
+  );
+  process.on("exit", () => rmSync(benchApp, { recursive: true, force: true }));
+  return benchApp;
+}
+
+// The theme and the Admin API, unthrottled, with the bench's app.
+const adminArgs = (more = []) => [...serveArgs(), "--app", appDir(), "--admin-throttle", "off", ...more];
 
 // --- workloads --------------------------------------------------------------------------------
 
@@ -230,7 +250,7 @@ async function suiteStorefront() {
 }
 
 async function suiteAdmin() {
-  const server = await startLsf(serveArgs(["--admin-versions", "2026-10,2027-01"]));
+  const server = await startLsf(adminArgs(["--admin-versions", "2026-10,2027-01"]));
   const idle = ps(server.pid);
   let start = performance.now();
   await admin(server, "{ shop { name } }");
@@ -273,7 +293,7 @@ async function suiteAdmin() {
 async function suiteGrowth() {
   const total = Number(option("n", 10_000));
   const marks = new Set([1000, 2000, 5000, 10_000, 20_000].filter((mark) => mark <= total));
-  const server = await startLsf(serveArgs());
+  const server = await startLsf(adminArgs());
   await admin(server, "{ shop { name } }");
   emit("baseline", { pid: server.pid, url: server.url, ...ps(server.pid) });
   const kind = option("kind", "update");
@@ -317,7 +337,7 @@ async function suiteGrowth() {
 }
 
 async function suiteShops() {
-  const server = await startLsf(serveArgs());
+  const server = await startLsf(adminArgs());
   await admin(server, "{ shop { name } }");
   emit("baseline", { pid: server.pid, url: server.url, ...ps(server.pid) });
   let made = 0;
@@ -353,7 +373,7 @@ async function suiteWebhooks() {
   const sinkUrl = `http://127.0.0.1:${sink.address().port}/webhooks`;
 
   for (const subscribed of [false, true]) {
-    const server = await startLsf(serveArgs());
+    const server = await startLsf(adminArgs());
     const product = (await createProduct(server, 0)).productCreate.product.id;
     if (subscribed) {
       const { userErrors } = (await admin(server, SUBSCRIBE, { uri: sinkUrl })).webhookSubscriptionCreate;
@@ -386,7 +406,7 @@ async function suiteWebhooks() {
 // The developer's loop: a mutation, then a page, which rebuilds the store with what changed.
 async function suiteSync() {
   const n = Number(option("n", 100));
-  const server = await startLsf(serveArgs());
+  const server = await startLsf(adminArgs());
   const pages = await pagesOf(server);
   for (let i = 0; i < 20; i++) await page(server, pages.collection);
   emit("page-unchanged", { pid: server.pid, ...(await measure(server, n, () => page(server, pages.collection))) });
@@ -422,7 +442,7 @@ async function suiteStorefrontAb() {
   const n = Number(option("n", 1000));
   const against = option("against");
   const a = await startLsf(serveArgs());
-  const b = await startLsfWith(against, serveArgs(hasAdminOf(against) ? [] : null));
+  const b = await startLsfWith(against, serveArgs());
   const pages = await pagesOf(a);
   for (const [name, path] of Object.entries(pages)) {
     for (let i = 0; i < 50; i++) await Promise.all([page(a, path), page(b, path)]);
