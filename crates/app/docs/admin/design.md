@@ -941,6 +941,7 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 | `/__lsf/admin` (`GET` status, `DELETE` reset), `/__lsf/admin/shops`, `/__lsf/admin/uninstall`, `/__lsf/admin/install` | The control endpoints of `docs/control-api.md`. |
 | `/__lsf/admin/charges/<n>` (`GET` the page, `POST …/approve`, `…/decline`), `/__lsf/admin/uploads/<shop>[/<key>]`, `/__lsf/admin/bulk/<shop>/<n>.jsonl` | `api::app`: the merchant's approval of a charge, staged uploads, bulk operations' results; no token, as Shopify's admin page and signed URLs need none from the app. The URLs the mutations answer for them are on the origin the request reached lsf at (`http://<Host>`, `ShopResolver::with_origin`). |
 | `/__lsf/admin/pricing-plans` (`GET`, `PUT`, `DELETE`), `…/<plan>/select` | `api::pricing`: the plans of managed pricing and the merchant's choice of one (below, "Managed pricing"); no token. |
+| `POST\|GET /<partner id>/api/<version>/graphql.json`, `GET /__lsf/admin/partner` | `api::partner`: the Partner API (`admin::partner`, below, "The Partner API"), its token checked; where a test finds its URL, token and GIDs. |
 | `/__lsf/admin/card-sessions`, `/__lsf/admin/subscriptions`, `/__lsf/admin/billing-attempts/<n>/challenge[/complete\|/fail]`, `/__lsf/admin/payment-methods/<token>/update` | `api::subscriptions`: lsf's card vault, the log of the emails and charges, the customer's 3D Secure and card update pages; no token. |
 | `/__lsf/admin/clock`, `/__lsf/admin/outbox`, `/__lsf/admin/emails`, `/__lsf/admin/disputes[/<n>/won\|lost\|accepted]`, `/__lsf/admin/orders/protect`, `/__lsf/admin/orders/link-request`, `/__lsf/admin/tax-app/activate` | `api::simulate`: the world outside the shop, which a test drives (see "The outbox", and "Payments, store credit, disputes and the clock" under "Orders"). No token. |
 | `/__lsf/webhooks*` | `Webhooks::handle`, the payload of a trigger built from the record named, else the first record of the topic's type (`api::samples`), else lsf's sample of the topic. |
@@ -1758,12 +1759,20 @@ changed.
   `change_shop` with the tokens locked, which come before the shops) runs `app::reinstall`:
   `content::restore_app_owned` creates each kept definition again under a new id, unpinned, in the
   order of the old ids, and links back the metafields of its owner type, namespace and key; one
-  made meanwhile under the same three stays. A new seed of a shop the app is not installed on runs
+  made meanwhile under the same three stays. `content::remove_app_owned_metaobject_definitions`
+  does the same for the metaobject definitions of the app's reserved types (`app--<app id>--<type>`),
+  from the store data or `metaobjectDefinitionCreate`: each goes with its entries into a memo
+  (`lsf/uninstalled-metaobject-definition:<type>`), the entries out of the records too, since a
+  `Metaobject` has a non-null `definition`; the reinstall
+  (`content::restore_app_owned_metaobject_definitions`, after the metafield definitions) creates the
+  definition under a new id, puts the entries back under their ids, now naming it, and renames
+  the old id in the metafield definitions' validations. A new seed of a shop the app is not installed on runs
   `app::reseed_uninstalled` (the Function owners and the reserved definitions again: the memos went
   with the old state, so only the declared definitions come back on reinstall). Why, and the
   sources: "App metafields after an uninstall" below. `uninstall` answers what it removed
   (`Uninstalled`: `removedFunctionOwners`, `removedScriptTags`, `removedWebPixels`,
-  `removedMetafieldDefinitions` of the control endpoint). The UI extensions and the app proxy are
+  `removedMetafieldDefinitions`, `removedMetaobjectDefinitions`, `retainedMetaobjects` of the
+  control endpoint), `reinstall` what came back (`Reinstalled`, which the terminal says). The UI extensions and the app proxy are
   not records: the server hides the extensions while the default shop has the app uninstalled
   (`place_extensions` in lsf-cli's `server/checkout.rs`) and answers the storefront's `404` on the
   proxy's path (`not_installed` in `server/app_proxy.rs`: a store gets the proxy with the app, a
@@ -1814,9 +1823,11 @@ So lsf deletes the reserved definitions (`$app`, `$app:<name>`), keeps their met
 reinstall creates the definitions again under new ids; the definitions of other namespaces are
 the merchant's, and no source says an uninstall touches them: they stay. lsf deletes the created
 definitions at once, as it deletes the Function owners Shopify removes in the background, and
-keeps the values until a new seed, since it has no clock to expire them by. Not done *(gap)*: the
-app's metaobject definitions (`$app:<type>`), whose definitions lsf also infers from the entries.
-The app-data metafields of the installation (`AppInstallation`) stay: no shopify.dev page says
+keeps the values until a new seed, since it has no clock to expire them by. The metaobject page
+says the same of the app's metaobject definitions (`$app:<type>`) and their entries, and lsf does
+the same to them; their entries are kept out of the records meanwhile, which no query could
+reach anyway (`Metaobject.definition` is non-null, `metaobjects(type:)` needs a definition). lsf
+does not read `[metaobjects.app.<type>]` of `shopify.app.toml` *(gap)*. The app-data metafields of the installation (`AppInstallation`) stay: no shopify.dev page says
 what an uninstall does to them, and the one post that does is not Shopify's.
 
 What the app family's mutations make (`domains/app/`: `billing`, `discounts`, `functions`,
@@ -1877,7 +1888,9 @@ back, and those that apply. A reset of the shops keeps them, as it keeps the stu
   `AppSubscription` named after the plan (`test` on a development store, which lsf's shops are,
   in legacy mode), its trial, one `AppSubscriptionLineItem` whose `AppRecurringPricing` has the
   plan's `price`, `interval` and `planHandle`; it is activated as an approved charge is
-  (`billing::activate`). The shop's other active subscription is `CANCELLED` first. Down to a
+  (`billing::activate_until`, which sets the dates before the status). The shop's other active
+  subscription is `CANCELLED` once the new one is active, so that the Partner API's history sees
+  one change of plan (`SUBSCRIPTION_UPDATED`), not an end and a start. Down to a
   free plan, the new subscription keeps the paid one's `currentPeriodEnd` ("a downgrade doesn't
   start a new billing cycle"). The number is the next charge's (`billing::next_charge`): the
   `charge_id` of the welcome link. Each change emits `app_subscriptions/update` (legacy) or
@@ -1892,7 +1905,7 @@ back, and those that apply. A reset of the shops keeps them, as it keeps the stu
 - **`legacy`** (`true` by default) is what Shopify keeps for the apps enrolled before April
   2026: `charge_id`, the webhook, test subscriptions. `false` is what its page says of the apps
   enrolled since, and of every app after April 28, 2026: `plan_handle` alone, no webhook; such an
-  app reads the Partner API, which lsf does not simulate, so the record stays in the Admin API.
+  app reads the Partner API (below), and the record stays in the Admin API too.
 - **The mutations** see how the app bills through `pricing::Billing` (`BillingApi`, `Legacy`,
   `AppPricing`; `AdminApi::billing`, then `ShopResolver::with_billing` and `Mutation::billing`).
   `Billing::subscription_topic` is the topic of a change of a subscription:
@@ -1902,6 +1915,36 @@ back, and those that apply. A reset of the shops keeps them, as it keeps the stu
   or freezes)": `appSubscriptionCancel` uses it, as `pricing::select` does. An uninstall cancels
   without a webhook in every mode (`billing::cancel_on_uninstall`): the app's subscriptions go
   with it.
+
+#### The Partner API (`admin/partner.rs`, `api/partner.rs`, `domains/app/partner.rs`)
+
+An app on Shopify App Pricing reads its plan from the Partner API (`activeSubscription`) and its
+history from it (`events`, and the older `app { events }`). lsf serves it at Shopify's path on
+its own origin, `/<partner id>/api/<version>/graphql.json`: `api::partner::handle` checks the
+version (2026-07, 2026-10 and 2027-01, whose introspections are the same), the token
+(`X-Shopify-Access-Token`, `partner::token`) and the Partner ID (`partner::partner_id`), both the
+same every run for the client id, and answers Shopify's errors (`401` "Invalid access token",
+`404` "Invalid API version", `400` past 50000 characters). The module's header has the sources,
+what the pages contradict, and lsf's choices.
+
+- **The schema** is Shopify's whole 2026-10 one, from the pinned `@shopify/dev-mcp`
+  (`tools/admin/partner_schema.mjs` writes `schemas/partner/2026-10/`; `mise run
+  partner:schema`), parsed by `admin::schema` and run by `admin::graphql` without a cost
+  (`partner::execute`): validation and introspection are Shopify's. The resolver answers
+  `activeSubscription`, `events` and `App.events`; another root field answers
+  `LSF_NOT_SIMULATED`.
+- **The data** is read once per request (`partner::Organization`, `ShopView::of` for each shop
+  in turn, `AdminApi::read_shops`): the shop's active subscription of managed pricing
+  (`domains::app::partner::active_subscription`, computed at the shop's clock: the trial, the
+  billing cycle), and its history.
+- **The history** is a memo of the shop (`lsf/partner-events`, a list: not a record, so no type,
+  no webhook, no sync), written as the changes happen, so that a later change does not rewrite
+  an event: `billing::set_status` calls `partner::status_changed` on every change of a charge's
+  status (the `App.events` types, the Billing API's included; for a subscription with a
+  `planHandle`, `SUBSCRIPTION_CREATED`, `_UPDATED` when another plan is active, `_CANCELED` when
+  none is), `app::uninstall` and `app::reseed_uninstalled` add `RELATIONSHIP_UNINSTALLED`,
+  `app::reinstall` `RELATIONSHIP_INSTALLED`, and the seed the install the shop starts with, at
+  `Seed::epoch`. A reset gives back the seed's.
 
 ### Markets, catalogs and channels (`domains/markets.rs`)
 

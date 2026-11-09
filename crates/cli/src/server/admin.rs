@@ -189,6 +189,20 @@ impl Admin {
         ))
     }
 
+    /// What the server prints of the Partner API when plans are declared: where an app on Shopify
+    /// App Pricing reads its plan, with the token and the app's GID it takes.
+    pub fn partner_banner(&self, origin: &str) -> Option<String> {
+        self.api.pricing()?;
+        let client_id = self.api.client_id();
+        let id = lsf_app::admin::partner::partner_id(client_id);
+        Some(format!(
+            "partner: {}   (Partner API: activeSubscription and events of gid://shopify/App/{}; token {})",
+            lsf_app::admin::partner::endpoint(origin, id),
+            lsf_app::admin::domains::app::app_id(self.api.app()),
+            lsf_app::admin::partner::token(client_id),
+        ))
+    }
+
     /// Where the client secret came from: the value only when it is lsf's own, which is no
     /// secret, so that a webhook the backend refuses has a first place to look.
     fn secret_line(&self) -> String {
@@ -211,7 +225,9 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
         || path == "/__lsf/admin"
         || path.starts_with("/__lsf/admin/")
         || path == "/__lsf/webhooks"
-        || path.starts_with("/__lsf/webhooks/");
+        || path.starts_with("/__lsf/webhooks/")
+        // The Partner API: `/{partner_id}/api/{version}/graphql.json`.
+        || lsf_app::admin::partner::parse_path(path).is_some();
     if !ours {
         return None;
     }

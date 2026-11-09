@@ -1,0 +1,3765 @@
+# Shopify GraphQL Partner API 2026-10, from the introspection of @shopify/dev-mcp@1.17.0, package/dist/data/partner_2026-10.json.gz (sha256 f651c221109dbc55601ab7a85353f3b82fec8ec9bbf9f260440139e28c7e8a7a), by tools/admin/partner_schema.mjs: do not edit.
+
+schema {
+  query: QueryRoot
+  mutation: MutationRoot
+}
+
+"""
+Directs the executor to include this field or fragment only when the `if` argument is true.
+"""
+directive @include(
+  """
+  Included when true.
+  """
+  if: Boolean!
+) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+"""
+Directs the executor to skip this field or fragment when the `if` argument is true.
+"""
+directive @skip(
+  """
+  Skipped when true.
+  """
+  if: Boolean!
+) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+"""
+Marks an element of a GraphQL schema as no longer supported.
+"""
+directive @deprecated(
+  """
+  Explains why this element was deprecated, usually also including a suggestion for how to access supported similar data. Formatted using the Markdown syntax, as specified by [CommonMark](https://commonmark.org/).
+  """
+  reason: String = "No longer supported"
+) on FIELD_DEFINITION | ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION | ENUM_VALUE
+
+"""
+Exposes a URL that specifies the behavior of this scalar.
+"""
+directive @specifiedBy(
+  """
+  The URL that specifies the behavior of this scalar.
+  """
+  url: String!
+) on SCALAR
+
+"""
+Indicates exactly one field must be supplied and this field must not be `null`.
+"""
+directive @oneOf on INPUT_OBJECT
+
+"""
+Represents an active pricing subscription between a shop and an app.
+"""
+type ActiveSubscription {
+  """
+  The app that provides this subscription.
+  """
+  app: AppReference!
+  """
+  The frequency at which the shop is billed for an app subscription.
+  """
+  billingPeriod: AppPricingInterval!
+  """
+  Returns true if the subscription will be cancelled at the end of the cycle.
+  """
+  cancelAtEndOfCycle: Boolean!
+  """
+  The current billing cycle for the subscription. Returns null if the subscription is still in trial.
+  """
+  currentBillingCycle: BillingCycle
+  """
+  The subscription items included in this subscription.
+  """
+  items: [SubscriptionItem!]!
+  """
+  The ID of the legacy AppSubscription object accessible via Admin API.
+  """
+  legacySubscriptionId: ID
+  """
+  Pending updates that will be applied at the next billing cycle. Returns null if no pending updates.
+  """
+  pendingUpdate: PendingUpdate
+  """
+  The shop that owns this subscription.
+  """
+  shop: ShopReference!
+  """
+  The date and time when the trial period ends. Returns null if no active trial.
+  """
+  trialEndsAt: DateTime
+}
+
+"""
+The `Boolean` scalar type represents `true` or `false`.
+"""
+scalar Boolean
+
+"""
+The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `"4"`) or integer (such as `4`) input value will be accepted as an ID.
+"""
+scalar ID
+
+"""
+A Partner organization or shop.
+"""
+interface Actor {
+  """
+  A URL referencing the avatar associated with the actor.
+  """
+  avatarUrl: Url
+  """
+  A globally unique identifier for the actor. Example value: `gid://partners/Shop/1234`.
+  """
+  id: ID!
+  """
+  The name of the actor. This might be a Partner organization or shop name.
+  """
+  name: String!
+}
+
+"""
+The `String` scalar type represents textual data, represented as UTF-8 character sequences. The String type is most often used by GraphQL to represent free-form human-readable text.
+"""
+scalar String
+
+"""
+A version of the API.
+"""
+type ApiVersion {
+  """
+  The human-readable name of the version.
+  """
+  displayName: String!
+  """
+  The unique identifier of an ApiVersion. All supported API versions have a date-based (YYYY-MM) or `unstable` handle.
+  """
+  handle: String!
+  """
+  Whether the version is supported by Shopify.
+  """
+  supported: Boolean!
+}
+
+"""
+A Shopify [app](/docs/apps/build).
+"""
+type App implements Node {
+  """
+  A unique application API identifier.
+  """
+  apiKey: String!
+  """
+  A list of app events.
+  """
+  events(
+    """
+    Returns the elements in the list that come after the specified cursor.
+    """
+    after: String
+    """
+    Returns the elements in the list that come before the specified cursor.
+    """
+    before: String
+    """
+    Returns app events associated with the specified [app
+    charge](/tutorials/bill-for-your-app-using-graphql-admin-api). Example
+    value: `gid://shopify/AppUsageRecord/1234`.
+    """
+    chargeId: ID
+    """
+    Returns the first _n_ elements from the list.
+    """
+    first: Int
+    """
+    Returns the last _n_ elements from the list.
+    """
+    last: Int
+    """
+    Returns app events that occurred on or before the specified date and time.
+    """
+    occurredAtMax: DateTime
+    """
+    Returns app events that occurred on or after the specified date and time.
+    """
+    occurredAtMin: DateTime
+    """
+    Returns app events associated with the specified shop ID. Example value: `gid://partners/Shop/1234`.
+    """
+    shopId: ID
+    """
+    Returns app events of the specified types.
+    """
+    types: [AppEventTypes!]
+  ): AppEventConnection!
+  """
+  The ID of the app. Example value: `gid://partners/App/1234`.
+  """
+  id: ID!
+  """
+  The name of the app.
+  """
+  name: String!
+}
+
+"""
+The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1.
+"""
+scalar Int
+
+"""
+A [charge](/docs/admin-api/rest/reference/billing/applicationcharge) created through an app.
+"""
+interface AppCharge {
+  """
+  The amount of the app charge.
+  """
+  amount: Money!
+  """
+  A globally unique identifier.
+  """
+  id: ID!
+  """
+  The name of the app charge.
+  """
+  name: String!
+  """
+  Whether the app purchase was a test transaction.
+  """
+  test: Boolean!
+}
+
+"""
+A [credit](/docs/admin-api/rest/reference/billing/applicationcredit) issued
+to a merchant for an app. Merchants are entitled to app credits under certain circumstances,
+such as when a paid app subscription is downgraded partway through its billing cycle.
+"""
+type AppCredit implements AppCharge & Node {
+  """
+  The amount that can be used towards future app purchases in Shopify.
+  """
+  amount: Money!
+  """
+  A globally unique identifier.
+  """
+  id: ID!
+  """
+  The description of the app credit.
+  """
+  name: String!
+  """
+  Whether the app credit was a test transaction.
+  """
+  test: Boolean!
+}
+
+"""
+The result of an appCreditCreate mutation.
+"""
+type AppCreditCreatePayload {
+  """
+  The app credit that was created.
+  """
+  appCredit: AppCredit
+  """
+  Errors when creating the application credit.
+  """
+  userErrors: [UserError!]
+}
+
+"""
+An event involving an app credit.
+"""
+interface AppCreditEvent {
+  """
+  A [credit](/docs/admin-api/rest/reference/billing/applicationcredit) issued
+  to a merchant for an app. Merchants are entitled to app credits under certain circumstances,
+  such as when a paid app subscription is downgraded partway through its billing cycle.
+  """
+  appCredit: AppCredit!
+}
+
+"""
+An event related to a Shopify app.
+"""
+interface AppEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+The connection type for AppEvent.
+"""
+type AppEventConnection {
+  """
+  A list of edges.
+  """
+  edges: [AppEventEdge!]!
+  """
+  Information about pagination in a connection.
+  """
+  pageInfo: PageInfo!
+}
+
+"""
+An edge in a connection.
+"""
+type AppEventEdge {
+  """
+  A cursor for use in pagination.
+  """
+  cursor: String!
+  """
+  The item at the end of the edge.
+  """
+  node: AppEvent!
+}
+
+"""
+The type of app event.
+"""
+enum AppEventTypes {
+  """
+  Credit applied
+  """
+  CREDIT_APPLIED
+  """
+  Credit failed
+  """
+  CREDIT_FAILED
+  """
+  Credit pending
+  """
+  CREDIT_PENDING
+  """
+  One time charge accepted
+  """
+  ONE_TIME_CHARGE_ACCEPTED
+  """
+  One time charge activated
+  """
+  ONE_TIME_CHARGE_ACTIVATED
+  """
+  One time charge declined
+  """
+  ONE_TIME_CHARGE_DECLINED
+  """
+  One time charge expired
+  """
+  ONE_TIME_CHARGE_EXPIRED
+  """
+  Relationship deactivated
+  """
+  RELATIONSHIP_DEACTIVATED
+  """
+  Relationship installed
+  """
+  RELATIONSHIP_INSTALLED
+  """
+  Relationship reactivated
+  """
+  RELATIONSHIP_REACTIVATED
+  """
+  Relationship uninstalled
+  """
+  RELATIONSHIP_UNINSTALLED
+  """
+  Subscription is approaching capped amount.
+  """
+  SUBSCRIPTION_APPROACHING_CAPPED_AMOUNT
+  """
+  Subscription capped amount was updated.
+  """
+  SUBSCRIPTION_CAPPED_AMOUNT_UPDATED
+  """
+  Subscription charge accepted
+  """
+  SUBSCRIPTION_CHARGE_ACCEPTED
+  """
+  Subscription charge activated
+  """
+  SUBSCRIPTION_CHARGE_ACTIVATED
+  """
+  Subscription charge canceled
+  """
+  SUBSCRIPTION_CHARGE_CANCELED
+  """
+  Subscription charge declined
+  """
+  SUBSCRIPTION_CHARGE_DECLINED
+  """
+  Subscription charge expired
+  """
+  SUBSCRIPTION_CHARGE_EXPIRED
+  """
+  Subscription charge frozen
+  """
+  SUBSCRIPTION_CHARGE_FROZEN
+  """
+  Subscription charge unfrozen
+  """
+  SUBSCRIPTION_CHARGE_UNFROZEN
+  """
+  Usage charge applied
+  """
+  USAGE_CHARGE_APPLIED
+}
+
+"""
+A transaction corresponding to a one-time app charge.
+"""
+type AppOneTimeSale implements Node & Transaction {
+  """
+  The app associated with the sale.
+  """
+  app: App!
+  """
+  The ID of the [app
+  charge](/tutorials/bill-for-your-app-using-graphql-admin-api) associated with
+  the transaction. Example value: `gid://shopify/AppUsageRecord/1234`. This
+  value might be `null` for transactions that occurred before September 2020.
+  """
+  chargeId: ID
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The total amount that the merchant paid, excluding taxes.
+  """
+  grossAmount: Money
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The net amount that is added to or deducted from your payout.
+  """
+  netAmount: Money!
+  """
+  The shop associated with the transaction.
+  """
+  shop: Shop
+  """
+  The amount that Shopify retained from the sale.
+  """
+  shopifyFee: Money
+}
+
+"""
+The billing frequency for the app.
+"""
+enum AppPricingInterval {
+  """
+  The merchant is billed for this app annually.
+  """
+  ANNUAL
+  """
+  The merchant is billed for this app every 30 days.
+  """
+  EVERY_30_DAYS
+}
+
+"""
+A one-time app charge for services and features purchased once by a store.
+For example, a one-time migration of a merchant's data from one platform to another.
+"""
+type AppPurchaseOneTime implements AppCharge & Node {
+  """
+  The amount of the app charge.
+  """
+  amount: Money!
+  """
+  A globally unique identifier.
+  """
+  id: ID!
+  """
+  The name of the app charge.
+  """
+  name: String!
+  """
+  Whether the app purchase was a test transaction.
+  """
+  test: Boolean!
+}
+
+"""
+An app event for a one-time app charge.
+"""
+interface AppPurchaseOneTimeEvent {
+  """
+  A one-time app charge for services and features purchased once by a store.
+  For example, a one-time migration of a merchant's data from one platform to another.
+  """
+  charge: AppPurchaseOneTime!
+}
+
+"""
+A reference to a Shopify app, identified by its global ID. Use the
+`gid://shopify/App/<id>` format to look up the app in the Admin API.
+"""
+type AppReference {
+  """
+  A unique application API identifier.
+  """
+  apiKey: String!
+  """
+  The app ID. Example value: `gid://shopify/App/1234`.
+  """
+  id: ID!
+  """
+  The name of the app.
+  """
+  name: String!
+}
+
+"""
+A transaction corresponding to a refund, downgrade, or adjustment of an app charge.
+"""
+type AppSaleAdjustment implements Node & Transaction {
+  """
+  The app associated with the refund.
+  """
+  app: App!
+  """
+  The ID of the [app
+  charge](/tutorials/bill-for-your-app-using-graphql-admin-api) associated with
+  the transaction. Example value: `gid://shopify/AppUsageRecord/1234`. This
+  value might be `null` for transactions that occurred before September 2020.
+  """
+  chargeId: ID
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The total amount that the merchant paid, excluding taxes.
+  """
+  grossAmount: Money
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The net amount that is added to or deducted from your payout.
+  """
+  netAmount: Money!
+  """
+  The shop associated with the transaction.
+  """
+  shop: Shop
+  """
+  The amount that Shopify retained from the adjustment.
+  """
+  shopifyFee: Money
+}
+
+"""
+A transaction corresponding to an [app credit](/docs/admin-api/rest/reference/billing/applicationcredit).
+"""
+type AppSaleCredit implements Node & Transaction {
+  """
+  The app associated with the sale.
+  """
+  app: App!
+  """
+  The ID of the [app
+  charge](/tutorials/bill-for-your-app-using-graphql-admin-api) associated with
+  the transaction. Example value: `gid://shopify/AppUsageRecord/1234`. This
+  value might be `null` for transactions that occurred before September 2020.
+  """
+  chargeId: ID
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The total amount that the merchant paid, excluding taxes.
+  """
+  grossAmount: Money
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The net amount that is added to or deducted from your payout.
+  """
+  netAmount: Money!
+  """
+  The shop associated with the transaction.
+  """
+  shop: Shop
+  """
+  The amount that Shopify retained from the sale.
+  """
+  shopifyFee: Money
+}
+
+"""
+A recurring charge for use of an app, such as a monthly subscription charge.
+"""
+type AppSubscription implements AppCharge & Node {
+  """
+  The amount of the app charge.
+  """
+  amount: Money!
+  """
+  The date when the merchant will next be billed.
+  """
+  billingOn: DateTime
+  """
+  A globally unique identifier.
+  """
+  id: ID!
+  """
+  The name of the app charge.
+  """
+  name: String!
+  """
+  Whether the app purchase was a test transaction.
+  """
+  test: Boolean!
+}
+
+"""
+The result of an appSubscriptionCancel mutation.
+"""
+type AppSubscriptionCancelPayload {
+  """
+  The app subscription that was cancelled.
+  """
+  appSubscription: CancelledSubscription
+  """
+  Errors when cancelling the app subscription.
+  """
+  userErrors: [UserError!]
+}
+
+"""
+An event related to an [app subscription charge](/docs/admin-api/rest/reference/billing/recurringapplicationcharge).
+"""
+interface AppSubscriptionEvent {
+  """
+  A recurring charge for use of an app, such as a monthly subscription charge.
+  """
+  charge: AppSubscription!
+}
+
+"""
+A transaction corresponding to an app subscription charge.
+"""
+type AppSubscriptionSale implements Node & Transaction {
+  """
+  The app associated with the sale.
+  """
+  app: App!
+  """
+  The billing frequency for the app.
+  """
+  billingInterval: AppPricingInterval
+  """
+  The ID of the [app
+  charge](/tutorials/bill-for-your-app-using-graphql-admin-api) associated with
+  the transaction. Example value: `gid://shopify/AppUsageRecord/1234`. This
+  value might be `null` for transactions that occurred before September 2020.
+  """
+  chargeId: ID
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The total amount that the merchant paid, excluding taxes.
+  """
+  grossAmount: Money
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The net amount that is added to or deducted from your payout.
+  """
+  netAmount: Money!
+  """
+  The shop associated with the transaction.
+  """
+  shop: Shop
+  """
+  The amount that Shopify retained from the sale.
+  """
+  shopifyFee: Money
+}
+
+"""
+An app charge. This charge varies based on how much the merchant uses the app
+or a service that the app integrates with.
+"""
+type AppUsageRecord implements AppCharge & Node {
+  """
+  The amount of the app charge.
+  """
+  amount: Money!
+  """
+  A globally unique identifier.
+  """
+  id: ID!
+  """
+  The name of the app charge.
+  """
+  name: String!
+  """
+  Whether the app purchase was a test transaction.
+  """
+  test: Boolean!
+}
+
+"""
+An app event for an app usage charge.
+"""
+interface AppUsageRecordEvent {
+  """
+  An app charge. This charge varies based on how much the merchant uses the app
+  or a service that the app integrates with.
+  """
+  charge: AppUsageRecord!
+}
+
+"""
+A transaction corresponding to an app usage charge.
+"""
+type AppUsageSale implements Node & Transaction {
+  """
+  The app associated with the sale.
+  """
+  app: App!
+  """
+  The ID of the [app
+  charge](/tutorials/bill-for-your-app-using-graphql-admin-api) associated with
+  the transaction. Example value: `gid://shopify/AppUsageRecord/1234`. This
+  value might be `null` for transactions that occurred before September 2020.
+  """
+  chargeId: ID
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The total amount that the merchant paid, excluding taxes.
+  """
+  grossAmount: Money
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The net amount that is added to or deducted from your payout.
+  """
+  netAmount: Money!
+  """
+  The shop associated with the transaction.
+  """
+  shop: Shop
+  """
+  The amount that Shopify retained from the sale.
+  """
+  shopifyFee: Money
+}
+
+"""
+Represents the current billing cycle for a subscription.
+"""
+type BillingCycle {
+  """
+  When the next charge will occur.
+  """
+  endTime: DateTime!
+  """
+  When the current billing period started.
+  """
+  startTime: DateTime!
+}
+
+"""
+Represents a pricing subscription that was cancelled.
+"""
+type CancelledSubscription {
+  """
+  The app that provides this subscription.
+  """
+  app: AppReference!
+  """
+  The frequency at which the shop is billed for an app subscription.
+  """
+  billingPeriod: AppPricingInterval!
+  """
+  Returns true if the subscription will be cancelled at the end of the cycle.
+  """
+  cancelAtEndOfCycle: Boolean!
+  """
+  The date and time when the subscription was cancelled. Returns null for deferred cancellations.
+  """
+  cancelledAt: DateTime
+  """
+  The current billing cycle for the subscription. Returns null if the subscription is still in trial.
+  """
+  currentBillingCycle: BillingCycle
+  """
+  The subscription items included in this subscription.
+  """
+  items: [SubscriptionItem!]!
+  """
+  The ID of the legacy AppSubscription object accessible via Admin API.
+  """
+  legacySubscriptionId: ID
+  """
+  Pending updates that will be applied at the next billing cycle. Returns null if no pending updates.
+  """
+  pendingUpdate: PendingUpdate
+  """
+  The shop that owns this subscription.
+  """
+  shop: ShopReference!
+  """
+  The date and time when the trial period ends. Returns null if no active trial.
+  """
+  trialEndsAt: DateTime
+}
+
+"""
+A charge event representing when a merchant was billed.
+"""
+type Charge implements PartnerEvent {
+  """
+  The amount the merchant was charged.
+  """
+  amount: Money!
+  """
+  The balance used for capped amount charges (legacy charges only).
+  """
+  balanceUsed: Decimal
+  """
+  The capped amount limit for usage-based charges (legacy charges only).
+  """
+  cappedAmount: Decimal
+  """
+  Stable identifier for this charge.
+  """
+  chargeId: ID!
+  """
+  The type of charge.
+  """
+  chargeType: ChargeType!
+  """
+  Description of the charge.
+  """
+  description: String
+  """
+  The type of event.
+  """
+  eventType: EventType!
+  """
+  Unique identifier for the event.
+  """
+  id: ID!
+  """
+  Additional metadata for backfilled charges.
+  """
+  metadata: EventMetadata
+  """
+  The date and time when the event occurred.
+  """
+  occurredAt: DateTime!
+  """
+  The plan handle associated with this charge.
+  """
+  planHandle: String
+  """
+  The shop associated with the event.
+  """
+  shop: ShopReference
+  """
+  The subject of the event (App or Theme).
+  """
+  subject: Subject
+  """
+  Quantity for usage charges.
+  """
+  usageQuantity: Decimal
+}
+
+"""
+The type of charge.
+"""
+enum ChargeType {
+  """
+  A one-time charge.
+  """
+  ONE_TIME
+  """
+  A recurring charge.
+  """
+  RECURRING
+  """
+  A usage-based charge.
+  """
+  USAGE
+}
+
+"""
+A credit event.
+"""
+type Credit implements PartnerEvent {
+  """
+  Description of the credit.
+  """
+  description: String
+  """
+  The type of event.
+  """
+  eventType: EventType!
+  """
+  Unique identifier for the event.
+  """
+  id: ID!
+  """
+  The credit amount.
+  """
+  money: Money!
+  """
+  The date and time when the event occurred.
+  """
+  occurredAt: DateTime!
+  """
+  The shop associated with the event.
+  """
+  shop: ShopReference
+  """
+  The status of the credit.
+  """
+  status: CreditStatus!
+  """
+  The subject of the event (App or Theme).
+  """
+  subject: Subject
+}
+
+"""
+An event that marks that an app credit was applied.
+"""
+type CreditApplied implements AppCreditEvent & AppEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A [credit](/docs/admin-api/rest/reference/billing/applicationcredit) issued
+  to a merchant for an app. Merchants are entitled to app credits under certain circumstances,
+  such as when a paid app subscription is downgraded partway through its billing cycle.
+  """
+  appCredit: AppCredit!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that an app credit failed to apply.
+"""
+type CreditFailed implements AppCreditEvent & AppEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A [credit](/docs/admin-api/rest/reference/billing/applicationcredit) issued
+  to a merchant for an app. Merchants are entitled to app credits under certain circumstances,
+  such as when a paid app subscription is downgraded partway through its billing cycle.
+  """
+  appCredit: AppCredit!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that an app credit is pending.
+"""
+type CreditPending implements AppCreditEvent & AppEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A [credit](/docs/admin-api/rest/reference/billing/applicationcredit) issued
+  to a merchant for an app. Merchants are entitled to app credits under certain circumstances,
+  such as when a paid app subscription is downgraded partway through its billing cycle.
+  """
+  appCredit: AppCredit!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+The status of a credit.
+"""
+enum CreditStatus {
+  """
+  Credit has been applied.
+  """
+  APPLIED
+  """
+  Credit application failed.
+  """
+  FAILED
+  """
+  Credit is pending.
+  """
+  PENDING
+}
+
+"""
+Supported monetary currencies from ISO 4217.
+"""
+enum Currency {
+  """
+  United arab emirates dirham.
+  """
+  AED
+  """
+  Afghan afghani.
+  """
+  AFN
+  """
+  Albanian lek.
+  """
+  ALL
+  """
+  Armenian dram.
+  """
+  AMD
+  """
+  Netherlands antillean gulden.
+  """
+  ANG
+  """
+  Angolan kwanza.
+  """
+  AOA
+  """
+  Argentine peso.
+  """
+  ARS
+  """
+  Australian dollar.
+  """
+  AUD
+  """
+  Aruban florin.
+  """
+  AWG
+  """
+  Azerbaijani manat.
+  """
+  AZN
+  """
+  Bosnia and herzegovina convertible mark.
+  """
+  BAM
+  """
+  Barbadian dollar.
+  """
+  BBD
+  """
+  Bangladeshi taka.
+  """
+  BDT
+  """
+  Bulgarian lev.
+  """
+  BGN
+  """
+  Bahraini dinar.
+  """
+  BHD
+  """
+  Burundian franc.
+  """
+  BIF
+  """
+  Bermudian dollar.
+  """
+  BMD
+  """
+  Brunei dollar.
+  """
+  BND
+  """
+  Bolivian boliviano.
+  """
+  BOB
+  """
+  Brazilian real.
+  """
+  BRL
+  """
+  Bahamian dollar.
+  """
+  BSD
+  """
+  Bhutanese ngultrum.
+  """
+  BTN
+  """
+  Botswana pula.
+  """
+  BWP
+  """
+  Belarusian ruble.
+  """
+  BYN
+  """
+  Belarusian ruble.
+  """
+  BYR
+  """
+  Belize dollar.
+  """
+  BZD
+  """
+  Canadian dollar.
+  """
+  CAD
+  """
+  Congolese franc.
+  """
+  CDF
+  """
+  Swiss franc.
+  """
+  CHF
+  """
+  Unidad de fomento.
+  """
+  CLF
+  """
+  Chilean peso.
+  """
+  CLP
+  """
+  Chinese renminbi yuan.
+  """
+  CNY
+  """
+  Colombian peso.
+  """
+  COP
+  """
+  Costa rican colón.
+  """
+  CRC
+  """
+  Cuban convertible peso.
+  """
+  CUC
+  """
+  Cuban peso.
+  """
+  CUP
+  """
+  Cape verdean escudo.
+  """
+  CVE
+  """
+  Cypriot pound.
+  """
+  CYP
+  """
+  Czech koruna.
+  """
+  CZK
+  """
+  Djiboutian franc.
+  """
+  DJF
+  """
+  Danish krone.
+  """
+  DKK
+  """
+  Dominican peso.
+  """
+  DOP
+  """
+  Algerian dinar.
+  """
+  DZD
+  """
+  Estonian kroon.
+  """
+  EEK
+  """
+  Egyptian pound.
+  """
+  EGP
+  """
+  Eritrean nakfa.
+  """
+  ERN
+  """
+  Ethiopian birr.
+  """
+  ETB
+  """
+  Euro.
+  """
+  EUR
+  """
+  Fijian dollar.
+  """
+  FJD
+  """
+  Falkland pound.
+  """
+  FKP
+  """
+  British pound.
+  """
+  GBP
+  """
+  British penny.
+  """
+  GBX
+  """
+  Georgian lari.
+  """
+  GEL
+  """
+  Guernsey pound.
+  """
+  GGP
+  """
+  Ghanaian cedi.
+  """
+  GHC
+  """
+  Ghanaian cedi.
+  """
+  GHS
+  """
+  Gibraltar pound.
+  """
+  GIP
+  """
+  Gambian dalasi.
+  """
+  GMD
+  """
+  Guinean franc.
+  """
+  GNF
+  """
+  Guatemalan quetzal.
+  """
+  GTQ
+  """
+  Guyanese dollar.
+  """
+  GYD
+  """
+  Hong kong dollar.
+  """
+  HKD
+  """
+  Honduran lempira.
+  """
+  HNL
+  """
+  Croatian kuna.
+  """
+  HRK
+  """
+  Haitian gourde.
+  """
+  HTG
+  """
+  Hungarian forint.
+  """
+  HUF
+  """
+  Indonesian rupiah.
+  """
+  IDR
+  """
+  Israeli new sheqel.
+  """
+  ILS
+  """
+  Isle of man pound.
+  """
+  IMP
+  """
+  Indian rupee.
+  """
+  INR
+  """
+  Iraqi dinar.
+  """
+  IQD
+  """
+  Iranian rial.
+  """
+  IRR
+  """
+  Icelandic króna.
+  """
+  ISK
+  """
+  Jersey pound.
+  """
+  JEP
+  """
+  Jamaican dollar.
+  """
+  JMD
+  """
+  Jordanian dinar.
+  """
+  JOD
+  """
+  Japanese yen.
+  """
+  JPY
+  """
+  Kenyan shilling.
+  """
+  KES
+  """
+  Kyrgyzstani som.
+  """
+  KGS
+  """
+  Cambodian riel.
+  """
+  KHR
+  """
+  Kiribati dollar.
+  """
+  KID
+  """
+  Comorian franc.
+  """
+  KMF
+  """
+  North korean won.
+  """
+  KPW
+  """
+  South korean won.
+  """
+  KRW
+  """
+  Kuwaiti dinar.
+  """
+  KWD
+  """
+  Cayman islands dollar.
+  """
+  KYD
+  """
+  Kazakhstani tenge.
+  """
+  KZT
+  """
+  Lao kip.
+  """
+  LAK
+  """
+  Lebanese pound.
+  """
+  LBP
+  """
+  Sri lankan rupee.
+  """
+  LKR
+  """
+  Liberian dollar.
+  """
+  LRD
+  """
+  Lesotho loti.
+  """
+  LSL
+  """
+  Lithuanian litas.
+  """
+  LTL
+  """
+  Latvian lats.
+  """
+  LVL
+  """
+  Libyan dinar.
+  """
+  LYD
+  """
+  Moroccan dirham.
+  """
+  MAD
+  """
+  Moldovan leu.
+  """
+  MDL
+  """
+  Malagasy ariary.
+  """
+  MGA
+  """
+  Macedonian denar.
+  """
+  MKD
+  """
+  Myanmar kyat.
+  """
+  MMK
+  """
+  Mongolian tögrög.
+  """
+  MNT
+  """
+  Macanese pataca.
+  """
+  MOP
+  """
+  Mauritanian ouguiya.
+  """
+  MRO
+  """
+  Mauritanian new ouguiya.
+  """
+  MRU
+  """
+  Maltese lira.
+  """
+  MTL
+  """
+  Mauritian rupee.
+  """
+  MUR
+  """
+  Maldivian rufiyaa.
+  """
+  MVR
+  """
+  Malawian kwacha.
+  """
+  MWK
+  """
+  Mexican peso.
+  """
+  MXN
+  """
+  Malaysian ringgit.
+  """
+  MYR
+  """
+  Mozambican metical.
+  """
+  MZN
+  """
+  Namibian dollar.
+  """
+  NAD
+  """
+  Nigerian naira.
+  """
+  NGN
+  """
+  Nicaraguan córdoba.
+  """
+  NIO
+  """
+  Norwegian krone.
+  """
+  NOK
+  """
+  Nepalese rupee.
+  """
+  NPR
+  """
+  New zealand dollar.
+  """
+  NZD
+  """
+  Omani rial.
+  """
+  OMR
+  """
+  Panamanian balboa.
+  """
+  PAB
+  """
+  Peruvian sol.
+  """
+  PEN
+  """
+  Papua new guinean kina.
+  """
+  PGK
+  """
+  Philippine peso.
+  """
+  PHP
+  """
+  Pakistani rupee.
+  """
+  PKR
+  """
+  Polish złoty.
+  """
+  PLN
+  """
+  Paraguayan guaraní.
+  """
+  PYG
+  """
+  Qatari riyal.
+  """
+  QAR
+  """
+  Romanian leu.
+  """
+  RON
+  """
+  Serbian dinar.
+  """
+  RSD
+  """
+  Russian ruble.
+  """
+  RUB
+  """
+  Rwandan franc.
+  """
+  RWF
+  """
+  Saudi riyal.
+  """
+  SAR
+  """
+  Solomon islands dollar.
+  """
+  SBD
+  """
+  Seychellois rupee.
+  """
+  SCR
+  """
+  Sudanese pound.
+  """
+  SDG
+  """
+  Swedish krona.
+  """
+  SEK
+  """
+  Singapore dollar.
+  """
+  SGD
+  """
+  Saint helenian pound.
+  """
+  SHP
+  """
+  Slovak koruna.
+  """
+  SKK
+  """
+  Sierra leonean leone.
+  """
+  SLL
+  """
+  Somali shilling.
+  """
+  SOS
+  """
+  Surinamese dollar.
+  """
+  SRD
+  """
+  South sudanese pound.
+  """
+  SSP
+  """
+  São tomé and príncipe dobra.
+  """
+  STD
+  """
+  São tomé and príncipe dobra.
+  """
+  STN
+  """
+  Salvadoran colón.
+  """
+  SVC
+  """
+  Syrian pound.
+  """
+  SYP
+  """
+  Swazi lilangeni.
+  """
+  SZL
+  """
+  Thai baht.
+  """
+  THB
+  """
+  Tajikistani somoni.
+  """
+  TJS
+  """
+  Turkmenistani manat.
+  """
+  TMM
+  """
+  Turkmenistani manat.
+  """
+  TMT
+  """
+  Tunisian dinar.
+  """
+  TND
+  """
+  Tongan paʻanga.
+  """
+  TOP
+  """
+  Turkish lira.
+  """
+  TRY
+  """
+  Trinidad and tobago dollar.
+  """
+  TTD
+  """
+  New taiwan dollar.
+  """
+  TWD
+  """
+  Tanzanian shilling.
+  """
+  TZS
+  """
+  Ukrainian hryvnia.
+  """
+  UAH
+  """
+  Ugandan shilling.
+  """
+  UGX
+  """
+  United states dollar.
+  """
+  USD
+  """
+  Uruguayan peso.
+  """
+  UYU
+  """
+  Uzbekistan som.
+  """
+  UZS
+  """
+  Venezuelan bolívar.
+  """
+  VEB
+  """
+  Venezuelan bolívar soberano.
+  """
+  VED
+  """
+  Venezuelan bolívar fuerte.
+  """
+  VEF
+  """
+  Venezuelan bolívar soberano.
+  """
+  VES
+  """
+  Vietnamese đồng.
+  """
+  VND
+  """
+  Vanuatu vatu.
+  """
+  VUV
+  """
+  Samoan tala.
+  """
+  WST
+  """
+  Central african cfa franc.
+  """
+  XAF
+  """
+  Silver (troy ounce).
+  """
+  XAG
+  """
+  Gold (troy ounce).
+  """
+  XAU
+  """
+  European composite unit.
+  """
+  XBA
+  """
+  European monetary unit.
+  """
+  XBB
+  """
+  European unit of account 9.
+  """
+  XBC
+  """
+  European unit of account 17.
+  """
+  XBD
+  """
+  East caribbean dollar.
+  """
+  XCD
+  """
+  Special drawing rights.
+  """
+  XDR
+  """
+  Uic franc.
+  """
+  XFU
+  """
+  West african cfa franc.
+  """
+  XOF
+  """
+  Palladium.
+  """
+  XPD
+  """
+  Cfp franc.
+  """
+  XPF
+  """
+  Platinum.
+  """
+  XPT
+  """
+  Yemeni rial.
+  """
+  YER
+  """
+  South african rand.
+  """
+  ZAR
+  """
+  Zambian kwacha.
+  """
+  ZMK
+  """
+  Zambian kwacha.
+  """
+  ZMW
+  """
+  Zimbabwean dollar.
+  """
+  ZWD
+  """
+  Zimbabwean dollar.
+  """
+  ZWL
+  """
+  Zimbabwean dollar.
+  """
+  ZWN
+  """
+  Zimbabwean dollar.
+  """
+  ZWR
+  """
+  Codes specifically reserved for testing purposes.
+  """
+  xts
+}
+
+"""
+An ISO-8601 encoded date string.
+"""
+scalar Date
+
+"""
+An [ISO-8601](https://en.wikipedia.org/wiki/ISO_8601) encoded UTC date time
+string. Example value: `"2019-07-03T20:47:55.123456Z"`.
+"""
+scalar DateTime
+
+"""
+A signed decimal number, which supports arbitrary precision and is serialized as a string.
+"""
+scalar Decimal
+
+"""
+An earning event representing when a partner receives payment.
+"""
+type Earning implements PartnerEvent {
+  """
+  References the charge ID from the related charge event.
+  """
+  chargeId: ID
+  """
+  Description of the earning.
+  """
+  description: String
+  """
+  The type of earning.
+  """
+  earningType: EarningType!
+  """
+  The type of event.
+  """
+  eventType: EventType!
+  """
+  The amount the merchant was charged.
+  """
+  grossAmount: Money!
+  """
+  Unique identifier for the event.
+  """
+  id: ID!
+  """
+  Additional metadata for backfilled earnings.
+  """
+  metadata: EventMetadata
+  """
+  The amount the partner receives after commission.
+  """
+  netAmount: Money!
+  """
+  The date and time when the event occurred.
+  """
+  occurredAt: DateTime!
+  """
+  The date when the earning was settled.
+  """
+  settlementDate: Date
+  """
+  The shop associated with the event.
+  """
+  shop: ShopReference
+  """
+  Shopify's commission.
+  """
+  shopifyFee: Money!
+  """
+  The subject of the event (App or Theme).
+  """
+  subject: Subject
+}
+
+"""
+The type of earning.
+"""
+enum EarningType {
+  """
+  Earning adjustment.
+  """
+  ADJUSTMENT
+  """
+  Earning from a charge.
+  """
+  CHARGE
+  """
+  Earning from credit.
+  """
+  CREDIT
+  """
+  Earning refund.
+  """
+  REFUND
+}
+
+"""
+Filter criteria for historical events.
+"""
+input EventFilterInput {
+  """
+  Filter events by one or more event types.
+  """
+  eventTypes: [EventType!]
+  """
+  Filter events that occurred on or before this date. If only this is provided,
+  occurred_at_min defaults to this date - 30 days. Defaults to now if neither
+  date is provided. Maximum range between occurred_at_min and occurred_at_max is 365 days.
+  """
+  occurredAtMax: DateTime
+  """
+  Filter events that occurred on or after this date. If only this is provided,
+  occurred_at_max defaults to the earlier of this date + 30 days or now.
+  Defaults to 30 days ago if neither date is provided. Maximum range between
+  occurred_at_min and occurred_at_max is 365 days.
+  """
+  occurredAtMin: DateTime
+  """
+  Filter events by shop ID. Example value: `gid://shopify/Shop/1234`.
+  """
+  shopId: ID
+  """
+  Filter events by subject ID. Example value: `gid://shopify/App/1234`.
+  """
+  subjectId: ID
+  """
+  Filter events by subject type (APP or THEME).
+  """
+  subjectType: SubjectType
+}
+
+"""
+Additional metadata for backfilled historical events.
+"""
+type EventMetadata {
+  """
+  The legacy charge identifier from the previous billing system.
+  """
+  legacyChargeId: ID!
+}
+
+"""
+Order direction for event results.
+"""
+enum EventOrder {
+  """
+  Events ordered by occurred_at ascending (oldest first).
+  """
+  OCCURRED_AT_ASC
+  """
+  Events ordered by occurred_at descending (newest first).
+  """
+  OCCURRED_AT_DESC
+}
+
+"""
+The type of historical event.
+"""
+enum EventType {
+  """
+  The event type is a one-time charge event.
+  """
+  CHARGE_ONE_TIME
+  """
+  The event type is a recurring charge event.
+  """
+  CHARGE_RECURRING
+  """
+  The event type is a usage-based charge event.
+  """
+  CHARGE_USAGE
+  """
+  The event type is a credit applied event.
+  """
+  CREDIT_APPLIED
+  """
+  The event type is a credit failed event.
+  """
+  CREDIT_FAILED
+  """
+  The event type is a pending credit event.
+  """
+  CREDIT_PENDING
+  """
+  The event type is an adjustment earning event.
+  """
+  EARNING_ADJUSTMENT
+  """
+  The event type is a one-time earning event.
+  """
+  EARNING_CHARGE_ONE_TIME
+  """
+  The event type is a recurring earning event.
+  """
+  EARNING_CHARGE_RECURRING
+  """
+  The event type is a usage-based earning event.
+  """
+  EARNING_CHARGE_USAGE
+  """
+  The event type is a credit earning event.
+  """
+  EARNING_CREDIT
+  """
+  The event type is a refund earning event.
+  """
+  EARNING_REFUND
+  """
+  The event type is a relationship deactivated event.
+  """
+  RELATIONSHIP_DEACTIVATED
+  """
+  The event type is a relationship installed event.
+  """
+  RELATIONSHIP_INSTALLED
+  """
+  The event type is a relationship reactivated event.
+  """
+  RELATIONSHIP_REACTIVATED
+  """
+  The event type is a relationship uninstalled event.
+  """
+  RELATIONSHIP_UNINSTALLED
+  """
+  The event type is a subscription canceled event.
+  """
+  SUBSCRIPTION_CANCELED
+  """
+  The event type is a subscription cancellation scheduled event.
+  """
+  SUBSCRIPTION_CANCELLATION_SCHEDULED
+  """
+  The event type is a subscription created event.
+  """
+  SUBSCRIPTION_CREATED
+  """
+  The event type is a subscription frozen event.
+  """
+  SUBSCRIPTION_FROZEN
+  """
+  The event type is a subscription unfrozen event.
+  """
+  SUBSCRIPTION_UNFROZEN
+  """
+  The event type is a subscription updated event.
+  """
+  SUBSCRIPTION_UPDATED
+}
+
+"""
+Flat-rate price information for a subscription plan.
+"""
+type FlatRatePlanPrice implements PlanPrice {
+  """
+  The flat rate amount for recurring charges.
+  """
+  amount: Decimal!
+  """
+  The price currency code.
+  """
+  currencyCode: Currency!
+}
+
+"""
+Flat-rate price information for a subscription item.
+"""
+type FlatRatePrice implements Price {
+  """
+  Whether this price is currently active. False if the product has been updated to a different price.
+  """
+  active: Boolean!
+  """
+  The flat rate amount for recurring charges.
+  """
+  amount: Decimal!
+  """
+  The price currency code.
+  """
+  currency: Currency!
+}
+
+"""
+Information about pagination in a historical events connection.
+"""
+type HistoricalEventsPageInfo {
+  """
+  The cursor of the last edge in the connection.
+  """
+  endCursor: String
+  """
+  Whether there are more pages to fetch.
+  """
+  hasNextPage: Boolean!
+  """
+  Whether there are any pages prior to the current page.
+  """
+  hasPreviousPage: Boolean!
+  """
+  The cursor of the first edge in the connection.
+  """
+  startCursor: String
+}
+
+"""
+A transaction of a type that is no longer supported.
+"""
+type LegacyTransaction implements Node & Transaction {
+  """
+  The net amount that is added to or deducted from your payout.
+  """
+  amount: Money!
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The shop associated with the transaction.
+  """
+  shop: Shop
+}
+
+"""
+A monetary value with currency.
+"""
+type Money {
+  """
+  The decimal money amount.
+  """
+  amount: Decimal!
+  """
+  The currency.
+  """
+  currencyCode: Currency!
+}
+
+"""
+A monetary value with currency.
+"""
+input MoneyInput {
+  """
+  The amount of money.
+  """
+  amount: Decimal
+  """
+  Currency of the money.
+  """
+  currencyCode: Currency
+}
+
+"""
+The schema's entry-point for mutations. This acts as the public, top-level API from which all mutations must start.
+"""
+type MutationRoot {
+  """
+  Allows an app to create a credit for a shop that can be used towards future
+  app purchases. This mutation is only available to Partner API clients that
+  have been granted the `View financials` permission.
+  """
+  appCreditCreate(
+    """
+    The amount that can be used towards future app purchases in Shopify.
+    """
+    amount: MoneyInput!
+    """
+    The id of the app to associate the credit with. Example value: `gid://partners/App/123`.
+    """
+    appId: ID!
+    """
+    The description of the app credit.
+    """
+    description: String!
+    """
+    The id of the shop to be credited. Example value: `gid://partners/Shop/456`.
+    """
+    shopId: ID!
+    """
+    Specifies whether the app credit is a test transaction.
+    """
+    test: Boolean = false
+  ): AppCreditCreatePayload
+  """
+  Cancels an app subscription.
+  """
+  appSubscriptionCancel(
+    """
+    The id of the app. Example value: `gid://shopify/App/123`.
+    """
+    appId: ID!
+    """
+    Whether to defer cancellation until the end of the current billing cycle.
+    """
+    deferCancellation: Boolean!
+    """
+    Whether to issue prorated credits for the unused portion of the
+    subscription. Cannot be used together with `skipFinalUsageCharge`.
+    """
+    prorate: Boolean!
+    """
+    The id of the shop. Example value: `gid://shopify/Shop/456`.
+    """
+    shopId: ID!
+    """
+    Whether to skip the final usage charge when cancelling. Only applicable to
+    usage-billed subscriptions. Cannot be used together with `prorate`.
+    """
+    skipFinalUsageCharge: Boolean!
+  ): AppSubscriptionCancelPayload
+}
+
+"""
+An object with an ID to support global identification.
+"""
+interface Node {
+  """
+  A globally unique identifier.
+  """
+  id: ID!
+}
+
+"""
+An event that marks that a one-time app charge was accepted by the merchant.
+"""
+type OneTimeChargeAccepted implements AppEvent & AppPurchaseOneTimeEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A one-time app charge for services and features purchased once by a store.
+  For example, a one-time migration of a merchant's data from one platform to another.
+  """
+  charge: AppPurchaseOneTime!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that a one-time app charge was activated.
+"""
+type OneTimeChargeActivated implements AppEvent & AppPurchaseOneTimeEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A one-time app charge for services and features purchased once by a store.
+  For example, a one-time migration of a merchant's data from one platform to another.
+  """
+  charge: AppPurchaseOneTime!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that a one-time app charge was declined by the merchant.
+"""
+type OneTimeChargeDeclined implements AppEvent & AppPurchaseOneTimeEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A one-time app charge for services and features purchased once by a store.
+  For example, a one-time migration of a merchant's data from one platform to another.
+  """
+  charge: AppPurchaseOneTime!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that a one-time app charge expired before the merchant could accept it.
+"""
+type OneTimeChargeExpired implements AppEvent & AppPurchaseOneTimeEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A one-time app charge for services and features purchased once by a store.
+  For example, a one-time migration of a merchant's data from one platform to another.
+  """
+  charge: AppPurchaseOneTime!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+A Partner organization.
+"""
+type Organization implements Actor & Node {
+  """
+  A URL referencing the avatar associated with the actor.
+  """
+  avatarUrl: Url
+  """
+  A globally unique identifier for the actor. Example value: `gid://partners/Shop/1234`.
+  """
+  id: ID!
+  """
+  The name of the actor. This might be a Partner organization or shop name.
+  """
+  name: String!
+}
+
+"""
+Information about pagination in a connection.
+"""
+type PageInfo {
+  """
+  Whether there are more pages to fetch.
+  """
+  hasNextPage: Boolean!
+  """
+  Whether there are any pages prior to the current page.
+  """
+  hasPreviousPage: Boolean!
+}
+
+"""
+A historical event for apps and themes.
+"""
+interface PartnerEvent {
+  """
+  The type of event.
+  """
+  eventType: EventType!
+  """
+  Unique identifier for the event.
+  """
+  id: ID!
+  """
+  The date and time when the event occurred.
+  """
+  occurredAt: DateTime!
+  """
+  The shop associated with the event.
+  """
+  shop: ShopReference
+  """
+  The subject of the event (App or Theme).
+  """
+  subject: Subject
+}
+
+"""
+The connection type for PartnerEvent.
+"""
+type PartnerEventConnection {
+  """
+  A list of edges.
+  """
+  edges: [PartnerEventEdge!]!
+  """
+  Information about pagination in this connection.
+  """
+  pageInfo: HistoricalEventsPageInfo!
+}
+
+"""
+An edge in a PartnerEvent connection.
+"""
+type PartnerEventEdge {
+  """
+  A cursor for use in pagination.
+  """
+  cursor: String!
+  """
+  The item at the end of the edge.
+  """
+  node: PartnerEvent!
+}
+
+"""
+Represents pending changes to a subscription that will be applied at the next billing cycle.
+"""
+type PendingUpdate {
+  """
+  The billing period for the pending update.
+  """
+  billingPeriod: AppPricingInterval!
+  """
+  The subscription items that will be applied in the next billing cycle.
+  """
+  items: [SubscriptionItem!]!
+  """
+  The ID of the legacy AppSubscription object accessible via Admin API.
+  """
+  legacySubscriptionId: ID
+}
+
+"""
+Subscription plan details.
+"""
+type Plan {
+  """
+  The billing interval for the plan.
+  """
+  billingPeriod: AppPricingInterval
+  """
+  The plan handle.
+  """
+  handle: String
+  """
+  The pricing details for the plan.
+  """
+  prices: [PlanPrice!]!
+  """
+  Number of trial days for the plan.
+  """
+  trialDays: Int
+  """
+  Number of trial days remaining.
+  """
+  trialDaysRemaining: Int
+}
+
+"""
+Pricing information for a subscription plan.
+"""
+interface PlanPrice {
+  """
+  The price currency code.
+  """
+  currencyCode: Currency!
+}
+
+"""
+Pricing information for a subscription item, supporting both recurring flat-rate and tiered pricing.
+"""
+interface Price {
+  """
+  Whether this price is currently active. False if the product has been updated to a different price.
+  """
+  active: Boolean!
+  """
+  The price currency code.
+  """
+  currency: Currency!
+}
+
+"""
+Represents a pricing tier for usage-based pricing.
+"""
+type PriceTier {
+  """
+  The flat amount for this tier.
+  """
+  amount: Decimal!
+  """
+  The price per unit in this tier.
+  """
+  amountPerUnit: Decimal!
+  """
+  Upper bound for this tier. Null for the final tier with no upper limit.
+  """
+  upTo: Int
+}
+
+"""
+The schema's entry-point for queries. This acts as the public, top-level API from which all queries must start.
+"""
+type QueryRoot {
+  """
+  The active managed pricing subscription for a shop on a given app.
+  """
+  activeSubscription(
+    """
+    The ID of the app to get the active subscription for. Example value: `gid://shopify/App/1234`.
+    """
+    appId: ID!
+    """
+    The ID of the shop to get the active subscription for. Example value: `gid://shopify/Shop/1234`.
+    """
+    shopId: ID!
+  ): ActiveSubscription
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app(
+    """
+    The app ID. Example value: `gid://partners/App/1234`.
+    """
+    id: ID!
+  ): App
+  """
+  A timeline of historical events for the authenticated partner.
+  """
+  events(
+    """
+    Returns the elements in the list that come after the specified cursor.
+    """
+    after: String
+    """
+    Returns the elements in the list that come before the specified cursor.
+    """
+    before: String
+    """
+    Filter criteria for historical events.
+    """
+    filter: EventFilterInput
+    """
+    Returns the first _n_ elements from the list.
+    """
+    first: Int
+    """
+    Returns the last _n_ elements from the list.
+    """
+    last: Int
+    """
+    The order in which to return events.
+    """
+    orderBy: EventOrder = OCCURRED_AT_DESC
+  ): PartnerEventConnection
+  """
+  The list of public Partner API versions, including supported, release candidate and unstable versions.
+  """
+  publicApiVersions: [ApiVersion!]!
+  """
+  A Shopify Partner transaction.
+  """
+  transaction(
+    """
+    The transaction ID. Example value: `gid://partners/ThemeSale/1234`.
+    """
+    id: ID!
+  ): Transaction
+  """
+  A list of the Partner organization's [transactions](https://help.shopify.com/partners/getting-started/getting-paid).
+  """
+  transactions(
+    """
+    Returns the elements in the list that come after the specified cursor.
+    """
+    after: String
+    """
+    Returns transactions associated with the specified app ID.
+    """
+    appId: ID
+    """
+    Returns the elements in the list that come before the specified cursor.
+    """
+    before: String
+    """
+    Returns transactions that were created on or before the specified date and time.
+    """
+    createdAtMax: DateTime
+    """
+    Returns transactions that were created on or after the specified date and time.
+    """
+    createdAtMin: DateTime
+    """
+    Returns the first _n_ elements from the list.
+    """
+    first: Int
+    """
+    Returns the last _n_ elements from the list.
+    """
+    last: Int
+    """
+    Returns transactions associated with the specified `.myshopify.com` shop domain. Example value: `example.myshopify.com`.
+    """
+    myshopifyDomain: String
+    """
+    Returns transactions associated with the specified shop ID.
+    """
+    shopId: ID
+    """
+    Returns transactions of the specified types.
+    """
+    types: [TransactionType!]
+  ): TransactionConnection!
+}
+
+"""
+A transaction corresponding to a shop referral adjustment.
+"""
+type ReferralAdjustment implements Node & Transaction {
+  """
+  The net amount that is added to or deducted from your payout.
+  """
+  amount: Money!
+  """
+  The referral type.
+  """
+  category: ReferralCategory!
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The referred shop.
+  """
+  shop: Shop
+}
+
+"""
+The referral type.
+"""
+enum ReferralCategory {
+  """
+  The merchant was referred using an affiliate link.
+  """
+  AFFILIATE_STORES
+  """
+  The merchant was referred to B2B by a partner.
+  """
+  B2B_PROFIT_SHARE
+  """
+  The merchant was referred to Shop Pay off Shopify by a partner.
+  """
+  CCS_SHOP_PAY_GMV
+  """
+  Co-Marketing payout adjustment.
+  """
+  CO_MARKETING
+  """
+  The merchant was referred from an Intuit Channel Partner.
+  """
+  INTUIT_POINT_OF_SALE
+  """
+  The merchant was referred to Markets Pro by a partner.
+  """
+  MARKETS_PRO
+  """
+  The merchant was referred to an online store by a partner.
+  """
+  ONLINE_DTC_GMV
+  """
+  Partner Development Funds adjustment.
+  """
+  PARTNER_DEVELOPMENT_FUNDS
+  """
+  The merchant was referred using the Partner POS lead form.
+  """
+  POINT_OF_SALE
+  """
+  The merchant was referred to POS by a partner.
+  """
+  POS_SHOPIFY_PAYMENTS_PROFIT
+  """
+  The merchant was referred using the Shopify Plus lead form.
+  """
+  SHOPIFY_PLUS
+  """
+  The merchant was referred to Shopify Plus by a partner.
+  """
+  SHOPIFY_PLUS_ONE_TIME_REFERRAL
+  """
+  The merchant was referred using a development store transfer.
+  """
+  TRANSFERRED_STORES
+}
+
+"""
+A transaction corresponding to a shop referral.
+"""
+type ReferralTransaction implements Node & Transaction {
+  """
+  The net amount that is added to your payout.
+  """
+  amount: Money!
+  """
+  The referral type.
+  """
+  category: ReferralCategory!
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The referred shop.
+  """
+  shop: Shop!
+}
+
+"""
+A relationship event (install, uninstall, deactivate, reactivate).
+"""
+type Relationship implements PartnerEvent {
+  """
+  The type of event.
+  """
+  eventType: EventType!
+  """
+  Unique identifier for the event.
+  """
+  id: ID!
+  """
+  The date and time when the event occurred.
+  """
+  occurredAt: DateTime!
+  """
+  Reason for any non-installed state.
+  """
+  reason: String
+  """
+  Description of the reason for any non-installed state.
+  """
+  reasonDescription: String
+  """
+  The shop associated with the event.
+  """
+  shop: ShopReference
+  """
+  The state of the relationship.
+  """
+  state: RelationshipState!
+  """
+  The subject of the event (App or Theme).
+  """
+  subject: Subject
+}
+
+"""
+An event that marks that an app was deactivated.
+"""
+type RelationshipDeactivated implements AppEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that an app was installed.
+"""
+type RelationshipInstalled implements AppEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that an app was reactivated.
+"""
+type RelationshipReactivated implements AppEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+The state of an app or theme relationship with a shop.
+"""
+enum RelationshipState {
+  """
+  Shop's billing account was deactivated.
+  """
+  DEACTIVATED
+  """
+  App or theme was installed.
+  """
+  INSTALLED
+  """
+  Shop's billing account was reactivated.
+  """
+  REACTIVATED
+  """
+  App or theme was uninstalled.
+  """
+  UNINSTALLED
+}
+
+"""
+An event that marks that an app was uninstalled.
+"""
+type RelationshipUninstalled implements AppEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  More details from the merchant about why they uninstalled the app.
+  """
+  description: String
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A comma separated list of reasons why the merchant uninstalled the app.
+  """
+  reason: String
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+A transaction corresponding to a paid invoice for a service.
+"""
+type ServiceSale implements Node & Transaction {
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The total amount that the merchant paid, excluding taxes.
+  """
+  grossAmount: Money
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The net amount that is added to or deducted from your payout.
+  """
+  netAmount: Money!
+  """
+  The shop associated with the transaction.
+  """
+  shop: Shop
+  """
+  The amount that Shopify retained from the sale.
+  """
+  shopifyFee: Money
+}
+
+"""
+A transaction corresponding to a refund, downgrade, or adjustment of a service sale.
+"""
+type ServiceSaleAdjustment implements Node & Transaction {
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The total amount that the merchant paid, excluding taxes.
+  """
+  grossAmount: Money
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The net amount that is added to or deducted from your payout.
+  """
+  netAmount: Money!
+  """
+  The shop associated with the transaction.
+  """
+  shop: Shop
+  """
+  The amount that Shopify retained from the adjustment.
+  """
+  shopifyFee: Money
+}
+
+"""
+A Shopify shop.
+"""
+type Shop implements Actor & Node {
+  """
+  A URL referencing the avatar associated with the actor.
+  """
+  avatarUrl: Url
+  """
+  A globally unique identifier for the actor. Example value: `gid://partners/Shop/1234`.
+  """
+  id: ID!
+  """
+  The shop's `.myshopify.com` domain name.
+  """
+  myshopifyDomain: Url!
+  """
+  The name of the actor. This might be a Partner organization or shop name.
+  """
+  name: String!
+}
+
+"""
+A reference to a Shopify shop, identified by its global ID. Use the
+`gid://shopify/Shop/<id>` format to look up the shop in the Admin API.
+"""
+type ShopReference {
+  """
+  The shop ID. Example value: `gid://shopify/Shop/1234`.
+  """
+  id: ID!
+  """
+  The shop's `.myshopify.com` domain name.
+  """
+  myshopifyDomain: Url!
+  """
+  The name of the shop.
+  """
+  name: String!
+}
+
+"""
+Represents the subject of an event (App or Theme).
+"""
+union Subject = AppReference | ThemeReference
+
+"""
+The type of subject (product) for an event.
+"""
+enum SubjectType {
+  """
+  An app.
+  """
+  APP
+  """
+  A theme.
+  """
+  THEME
+}
+
+"""
+An event that marks that a subscription is approaching its capped amount.
+"""
+type SubscriptionApproachingCappedAmount implements AppEvent & AppSubscriptionEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A recurring charge for use of an app, such as a monthly subscription charge.
+  """
+  charge: AppSubscription!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that a subscription had its capped amount updated.
+"""
+type SubscriptionCappedAmountUpdated implements AppEvent & AppSubscriptionEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A recurring charge for use of an app, such as a monthly subscription charge.
+  """
+  charge: AppSubscription!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that a recurring app charge was accepted.
+"""
+type SubscriptionChargeAccepted implements AppEvent & AppSubscriptionEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A recurring charge for use of an app, such as a monthly subscription charge.
+  """
+  charge: AppSubscription!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that a recurring app charge was activated.
+"""
+type SubscriptionChargeActivated implements AppEvent & AppSubscriptionEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A recurring charge for use of an app, such as a monthly subscription charge.
+  """
+  charge: AppSubscription!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that a recurring app charge was cancelled.
+"""
+type SubscriptionChargeCanceled implements AppEvent & AppSubscriptionEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A recurring charge for use of an app, such as a monthly subscription charge.
+  """
+  charge: AppSubscription!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that a recurring app charge was declined.
+"""
+type SubscriptionChargeDeclined implements AppEvent & AppSubscriptionEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A recurring charge for use of an app, such as a monthly subscription charge.
+  """
+  charge: AppSubscription!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that a recurring app charge has expired.
+"""
+type SubscriptionChargeExpired implements AppEvent & AppSubscriptionEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A recurring charge for use of an app, such as a monthly subscription charge.
+  """
+  charge: AppSubscription!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that a recurring app charge has been suspended. For example,
+if a merchant stops paying their bills, or closes their store, then Shopify
+suspends the recurring app charge.
+"""
+type SubscriptionChargeFrozen implements AppEvent & AppSubscriptionEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A recurring charge for use of an app, such as a monthly subscription charge.
+  """
+  charge: AppSubscription!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+An event that marks that a recurring app charge was unfrozen.
+"""
+type SubscriptionChargeUnfrozen implements AppEvent & AppSubscriptionEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  A recurring charge for use of an app, such as a monthly subscription charge.
+  """
+  charge: AppSubscription!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+Discounts applied to subscription items.
+"""
+type SubscriptionDiscount {
+  """
+  The fixed amount value of a discount.
+  """
+  amount: Decimal
+  """
+  The date and time when the discount ends.
+  """
+  discountEndsAt: DateTime
+  """
+  The total number of billing cycles the discount was originally set to apply.
+  The discount will be applied to an indefinite number of billing intervals if
+  this value is blank.
+  """
+  originalDiscountCycles: Int
+  """
+  The percentage value of a discount.
+  """
+  percentage: Float
+  """
+  The number of billing cycles remaining for this discount.
+  """
+  remainingDiscountCycles: Int
+}
+
+"""
+The `Float` scalar type represents signed double-precision fractional values as specified by [IEEE 754](https://en.wikipedia.org/wiki/IEEE_floating_point).
+"""
+scalar Float
+
+"""
+Individual items within a subscription.
+"""
+type SubscriptionItem {
+  """
+  The plan or event description for this subscription item.
+  """
+  description: String
+  """
+  The discount applied to this item, if any.
+  """
+  discount: SubscriptionDiscount
+  """
+  The plan or event handle for this subscription item.
+  """
+  handle: String
+  """
+  The pricing information for this subscription item.
+  """
+  price: Price!
+  """
+  The usage information for this subscription item if the price is a tiered price.
+  """
+  usage: Usage
+}
+
+"""
+A subscription status event.
+"""
+type SubscriptionStatus implements PartnerEvent {
+  """
+  Date when the subscription will actually end, if cancelled.
+  """
+  cancelEffectiveOn: Date
+  """
+  The type of event.
+  """
+  eventType: EventType!
+  """
+  Unique identifier for the event.
+  """
+  id: ID!
+  """
+  The date and time when the event occurred.
+  """
+  occurredAt: DateTime!
+  """
+  The subscription plan details.
+  """
+  plan: Plan
+  """
+  The shop associated with the event.
+  """
+  shop: ShopReference
+  """
+  The state of the subscription.
+  """
+  state: SubscriptionStatusState!
+  """
+  The subject of the event (App or Theme).
+  """
+  subject: Subject
+}
+
+"""
+The state of a subscription.
+"""
+enum SubscriptionStatusState {
+  """
+  Subscription was canceled.
+  """
+  CANCELED
+  """
+  Subscription cancellation has been scheduled for a future date.
+  """
+  CANCELLATION_SCHEDULED
+  """
+  Subscription was created.
+  """
+  CREATED
+  """
+  Subscription was frozen.
+  """
+  FROZEN
+  """
+  Subscription was unfrozen.
+  """
+  UNFROZEN
+  """
+  Subscription was updated.
+  """
+  UPDATED
+}
+
+"""
+Tax transactions are not computed for pending transactions. Instead, they're rolled
+up as one transaction per payout. The type of tax and the way it's
+computed is dependent on the type of transaction.
+
+For sale transactions, such as app subscriptions or theme purchases, Shopify charges
+the Partner tax on the fee collected for brokering the transaction. The amount is
+a negative number in this scenario.
+
+For referral transactions, such as a development store transfer, Shopify pays the Partner
+a commission. The tax represents any taxes on the referral commission that are payable to
+the Partner. The amount is a positive number in this scenario.
+"""
+type TaxTransaction implements Node & Transaction {
+  """
+  The net amount that is added to or deducted from your payout.
+  """
+  amount: Money!
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The tax model applied to the transaction, based on the transaction type.
+  """
+  type: TaxTransactionType! @deprecated(reason: "Use `taxType` instead.")
+}
+
+"""
+The tax model applied to the transaction, based on the transaction type.
+"""
+enum TaxTransactionType {
+  """
+  The taxes paid out on your commission fee for a referral.
+  """
+  REFERRAL_COMMISSION
+  """
+  The taxes charged on Shopify's commission fee for an app, theme, or service transaction.
+  """
+  SALE_SHOPIFY_FEE @deprecated(reason: "Use `SALE_FEES` instead.")
+}
+
+"""
+A Shopify [theme](/concepts/themes).
+"""
+type Theme {
+  """
+  The name of the theme.
+  """
+  name: String!
+}
+
+"""
+A reference to a theme, identified by its global ID.
+"""
+type ThemeReference {
+  """
+  The theme ID. Example value: `gid://shopify/Theme/1234`.
+  """
+  id: ID!
+  """
+  The name of the theme.
+  """
+  name: String!
+}
+
+"""
+A transaction corresponding to a theme purchase.
+"""
+type ThemeSale implements Node & Transaction {
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The total amount that the merchant paid, excluding taxes.
+  """
+  grossAmount: Money
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The net amount that is added to or deducted from your payout.
+  """
+  netAmount: Money!
+  """
+  The shop associated with the transaction.
+  """
+  shop: Shop
+  """
+  The amount that Shopify retained from the sale.
+  """
+  shopifyFee: Money
+  """
+  The theme associated with the purchase.
+  """
+  theme: Theme!
+}
+
+"""
+A transaction corresponding to a refund, downgrade, or adjustment of a theme sale.
+"""
+type ThemeSaleAdjustment implements Node & Transaction {
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The total amount that the merchant paid, excluding taxes.
+  """
+  grossAmount: Money
+  """
+  The transaction ID.
+  """
+  id: ID!
+  """
+  The net amount that is added to or deducted from your payout.
+  """
+  netAmount: Money!
+  """
+  The shop associated with the transaction.
+  """
+  shop: Shop
+  """
+  The amount that Shopify retained from the adjustment.
+  """
+  shopifyFee: Money
+  """
+  The theme associated with the refund.
+  """
+  theme: Theme!
+}
+
+"""
+Tiered price information for a subscription plan.
+"""
+type TieredPlanPrice implements PlanPrice {
+  """
+  The price currency code.
+  """
+  currencyCode: Currency!
+  """
+  Array of pricing tiers for tiered pricing models.
+  """
+  tiers: [PriceTier!]!
+  """
+  The tier pricing model.
+  """
+  tiersMode: TiersMode!
+}
+
+"""
+Tiered price information for a subscription item.
+"""
+type TieredPrice implements Price {
+  """
+  Whether this price is currently active. False if the product has been updated to a different price.
+  """
+  active: Boolean!
+  """
+  The price currency code.
+  """
+  currency: Currency!
+  """
+  Array of pricing tiers for tiered pricing models.
+  """
+  tiers: [PriceTier!]!
+  """
+  The tier pricing model.
+  """
+  tiersMode: TiersMode!
+}
+
+"""
+The pricing model for tiered pricing.
+"""
+enum TiersMode {
+  """
+  Units are priced at the rate of each tier they pass through.
+  """
+  GRADUATED
+  """
+  All units are priced at the rate of the tier they fall into.
+  """
+  VOLUME
+}
+
+"""
+A Shopify Partner transaction.
+"""
+interface Transaction {
+  """
+  The date and time when the transaction was recorded.
+  """
+  createdAt: DateTime!
+  """
+  The transaction ID.
+  """
+  id: ID!
+}
+
+"""
+The connection type for Transaction.
+"""
+type TransactionConnection {
+  """
+  A list of edges.
+  """
+  edges: [TransactionEdge!]!
+  """
+  Information about pagination in a connection.
+  """
+  pageInfo: PageInfo!
+}
+
+"""
+An edge in a connection.
+"""
+type TransactionEdge {
+  """
+  A cursor for use in pagination.
+  """
+  cursor: String!
+  """
+  The item at the end of the edge.
+  """
+  node: Transaction!
+}
+
+"""
+The type of transaction.
+"""
+enum TransactionType {
+  """
+  A transaction corresponding to a one-time app charge.
+  """
+  APP_ONE_TIME_SALE
+  """
+  A transaction corresponding to a refund, downgrade, or adjustment of an app charge.
+  """
+  APP_SALE_ADJUSTMENT
+  """
+  A transaction corresponding to an [app credit](/docs/admin-api/rest/reference/billing/applicationcredit).
+  """
+  APP_SALE_CREDIT
+  """
+  A transaction corresponding to an app subscription charge.
+  """
+  APP_SUBSCRIPTION_SALE
+  """
+  A transaction corresponding to an app usage charge.
+  """
+  APP_USAGE_SALE
+  """
+  A transaction of a type that is no longer supported.
+  """
+  LEGACY
+  """
+  A transaction corresponding to a shop referral.
+  """
+  REFERRAL
+  """
+  A transaction corresponding to a shop referral adjustment.
+  """
+  REFERRAL_ADJUSTMENT
+  """
+  A transaction corresponding to a paid invoice for a service.
+  """
+  SERVICE_SALE
+  """
+  A transaction corresponding to a refund, downgrade, or adjustment of a service sale.
+  """
+  SERVICE_SALE_ADJUSTMENT
+  """
+  Tax transactions are not computed for pending transactions. Instead, they're rolled
+  up as one transaction per payout. The type of tax and the way it's
+  computed is dependent on the type of transaction.
+
+  For sale transactions, such as app subscriptions or theme purchases, Shopify charges
+  the Partner tax on the fee collected for brokering the transaction. The amount is
+  a negative number in this scenario.
+
+  For referral transactions, such as a development store transfer, Shopify pays the Partner
+  a commission. The tax represents any taxes on the referral commission that are payable to
+  the Partner. The amount is a positive number in this scenario.
+  """
+  TAX
+  """
+  A transaction corresponding to a theme purchase.
+  """
+  THEME_SALE
+  """
+  A transaction corresponding to a refund, downgrade, or adjustment of a theme sale.
+  """
+  THEME_SALE_ADJUSTMENT
+}
+
+"""
+A valid URL, transported as a string.
+"""
+scalar Url
+
+"""
+Usage information for the current billing cycle.
+"""
+type Usage {
+  """
+  The calculated cost of the current billing cycle.
+  """
+  cost: Money!
+  """
+  The quantity of usage for the current billing cycle.
+  """
+  quantity: Float!
+}
+
+"""
+An event that marks that an app usage charge was applied.
+"""
+type UsageChargeApplied implements AppEvent & AppUsageRecordEvent {
+  """
+  A Shopify [app](/docs/apps/build).
+  """
+  app: App!
+  """
+  An app charge. This charge varies based on how much the merchant uses the app
+  or a service that the app integrates with.
+  """
+  charge: AppUsageRecord!
+  """
+  The date and time when the event took place.
+  """
+  occurredAt: DateTime!
+  """
+  A Shopify shop.
+  """
+  shop: Shop!
+  """
+  The type of app event.
+  """
+  type: AppEventTypes!
+}
+
+"""
+Represents an error in a mutation.
+"""
+type UserError {
+  """
+  The path to the input field that caused the error.
+  """
+  field: [String!]
+  """
+  The error message.
+  """
+  message: String!
+}

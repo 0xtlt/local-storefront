@@ -137,6 +137,17 @@ the same data every run.
   to notice by itself that the plan ended. Shopify's plan page has no button for it (the merchant
   chooses another plan or uninstalls), so lsf's page has none either: the route stands for a plan
   that ends while the app stays installed. [Managed pricing](docs/admin.md#managed-pricing).
+- **A local Partner API: an app on Shopify App Pricing reads its plan.** Since April 2026 such an
+  app learns its plan from the Partner API's `activeSubscription`, not from a webhook. lsf serves
+  it at Shopify's path on its own origin, `POST /{partner_id}/api/2026-10/graphql.json` (also
+  2026-07 and 2027-01), with Shopify's schema: the app changes only the origin of
+  `partners.shopify.com`. `activeSubscription` answers the shop's plan, its trial and its billing
+  cycle by the shop's clock; `events` and `app { events }` answer the history: installs,
+  uninstalls, plans chosen, changed and ended, and every change of a charge. Both `legacy` modes
+  feed it. The Partner ID and the `prtapi_` token are printed at start (`partner:`, with the
+  plans) and in `GET /__lsf/admin/partner`; they are the same every run. A wrong token is
+  Shopify's `401`. The rest of the Partner API answers `LSF_NOT_SIMULATED`.
+  [Read the plan from the Partner API](docs/admin.md#read-the-plan-from-the-partner-api).
 - **Control endpoints under `/__lsf/admin`:** reset the shop, make and delete extra shops for
   isolated tests, install and uninstall the app, and make session tokens for a test to call the
   backend's routes. [Control API](docs/control-api.md).
@@ -309,6 +320,13 @@ the same data every run.
   Shopify. While uninstalled, an order no longer copies the cart metafields of a deleted `$app`
   definition. Definitions of any other namespace (`custom`, or one the app chose) are the
   merchant's and stay, ids included. [Uninstall](docs/admin.md#tokens).
+- **An uninstall deletes the app's own metaobject definitions; a reinstall brings them back.**
+  shopify.dev says the same of metaobjects ("Manage metaobject definitions", "App uninstall and
+  reinstall"). The definitions of the app's reserved types (`$app:<type>`), from the store data
+  or `metaobjectDefinitionCreate`, are deleted (`removedMetaobjectDefinitions`), and their
+  metaobjects are kept aside (`retainedMetaobjects`). A reinstall creates each definition again
+  under a new id and gives it back its metaobjects, ids unchanged. Other types are the merchant's
+  and stay. [Uninstall](docs/admin.md#tokens).
 - **Adding a checkout scenario no longer throws away what the backend set up.** Without
   `--static`, a file added or changed in `checkouts/` re-seeded the shops of the Admin API,
   dropping the app's subscription, customizations and other writes. Scenarios are checkout

@@ -101,6 +101,8 @@ async function main() {
     },
   );
   const { lsf, token } = lsfProcess.match;
+  // Where the backend reads its plan: lsf's Partner API, its Partner ID and its token.
+  const partner = await (await fetch(`${lsf}/__lsf/admin/partner`)).json();
   let backendProcess;
   const stop = () => {
     for (const child of [backendProcess?.child, lsfProcess.child]) child?.kill("SIGTERM");
@@ -125,6 +127,10 @@ async function main() {
           SHOPIFY_APP_URL: appUrl,
           APP_BRIDGE_URL: `${lsf}/__lsf/admin/app-bridge.js`,
           POLARIS_URL: `${lsf}/__lsf/cdn/shopifycloud/polaris-2.js`,
+          // PARTNER_API_URL: the Partner API's origin, lsf's instead of partners.shopify.com.
+          PARTNER_API_URL: lsf,
+          PARTNER_ID: String(partner.partnerId),
+          PARTNER_API_TOKEN: partner.token,
         },
       },
       (text) => text.includes("backend: "),
@@ -784,6 +790,26 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
     const sent = (await backendState()).webhooks.filter((w) => w.id === before.id && w.subscription?.status === "CANCELLED");
     assert(sent.length === 0, "a webhook came for the plan that ended under Shopify App Pricing", sent);
     return `${before.name} (${before.id}) CANCELLED, webhook null; the backend's activeSubscriptions []; again → 409`;
+  });
+  // Under Shopify App Pricing the app reads its plan from the Partner API: lsf's, at the path of
+  // Shopify's (`/{partner_id}/api/2026-10/graphql.json`), the backend's PARTNER_API_URL.
+  await check("pricing", "pricing: the Partner API (legacy = false): a plan chosen → activeSubscription; ended → null; events SUBSCRIPTION_CREATED then _CANCELED", async () => {
+    const declared = await pricingPlans("PUT", { plans: PLANS, legacy: false });
+    assert(declared.ok && declared.legacy === false, "PUT /__lsf/admin/pricing-plans", declared);
+    const cancel = () => fetch(`${lsf}/__lsf/admin/pricing-plans/cancel`, { method: "POST" });
+    if (declared.current) await cancel();
+    assert((await appOk("GET", "/api/billing/partner")).activeSubscription === null, "a plan before one is chosen");
+    await fetch(`${lsf}/__lsf/admin/pricing-plans/pro/select`, { method: "POST" });
+    const chosen = await appOk("GET", "/api/billing/partner");
+    const plan = chosen.activeSubscription;
+    assert(plan?.items[0].handle === "pro" && plan.items[0].price.amount === "4.99" && plan.trialEndsAt && plan.currentBillingCycle === null && plan.legacySubscriptionId === null, "not Pro, in its trial", chosen);
+    assert((await cancel()).status === 200, "POST /__lsf/admin/pricing-plans/cancel");
+    const ended = await appOk("GET", "/api/billing/partner");
+    assert(ended.activeSubscription === null, "the plan did not end", ended);
+    const [last, before] = ended.events;
+    assert(last?.eventType === "SUBSCRIPTION_CANCELED" && last.plan.handle === "pro" && before?.eventType === "SUBSCRIPTION_CREATED" && before.plan.handle === "pro", "not the history", ended.events);
+    const { url } = await (await fetch(`${lsf}/__lsf/admin/partner`)).json();
+    return `${url}: Pro (trial until ${plan.trialEndsAt}) → null; events ${last.eventType}, ${before.eventType}`;
   });
   // Whatever happened above, the app bills with the Billing API again.
   if (!only || "pricing".includes(only)) await pricingPlans("DELETE");

@@ -96,7 +96,7 @@ if (isMain(import.meta.url)) {
 
 // ---- SDL ----
 
-function printSchema(schema) {
+export function printSchema(schema) {
   const lines = ["schema {", `  query: ${schema.queryType.name}`];
   if (schema.mutationType) lines.push(`  mutation: ${schema.mutationType.name}`);
   if (schema.subscriptionType) lines.push(`  subscription: ${schema.subscriptionType.name}`);
@@ -110,7 +110,7 @@ function printSchema(schema) {
   return `${lines.join("\n")}\n${types.map(printType).join("\n")}`;
 }
 
-function printType(type) {
+export function printType(type) {
   const lines = description(type.description, "");
   switch (type.kind) {
     case "SCALAR": {

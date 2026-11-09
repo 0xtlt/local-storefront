@@ -44,6 +44,13 @@ export const config = {
   // (http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris-2.js), which redirects to Shopify's CDN
   // or serves lsf's copy, by lsf's Polaris mode; unset: Shopify's CDN, the template's default.
   polarisUrl: env.POLARIS_URL,
+  // The Partner API, where an app on Shopify App Pricing reads its plan: Shopify's origin unless
+  // PARTNER_API_URL says lsf's (`GET /__lsf/admin/partner` has the URL, the Partner ID and the
+  // token, and lsf prints them at start), the Partner ID of the Partner Dashboard's URL, and
+  // the token of a Partner API client.
+  partnerApiUrl: env.PARTNER_API_URL ?? "https://partners.shopify.com",
+  partnerId: env.PARTNER_ID,
+  partnerToken: env.PARTNER_API_TOKEN,
   toml,
 };
 

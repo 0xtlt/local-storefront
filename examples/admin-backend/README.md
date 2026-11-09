@@ -80,7 +80,10 @@ throttling checks use `@shopify/admin-api-client` directly.
   `plan_handle`. Then `/app/plans`, whose loader calls the template's
   `redirect("shopify://admin/charges/…", { target: "_top" })`: App Bridge opens
   `https://admin.shopify.com/store/…/pricing_plans`, which lsf's admin opens as its own page;
-  down to Free, Pro is cancelled, and both webhooks arrive.
+  down to Free, Pro is cancelled, and both webhooks arrive. Then, with `legacy = false`, the
+  backend reads its plan from lsf's Partner API (`GET /api/billing/partner`: `activeSubscription`
+  and `events` for its app and shop GIDs, read from the Admin API), Pro in its trial, then `null`
+  once the plan ends, and the history `SUBSCRIPTION_CANCELED`, `SUBSCRIPTION_CREATED`.
 - **Bulk operations and files**: `bulkOperationRunQuery` → poll → the JSONL; a staged JSONL →
   `bulkOperationRunMutation`; `stagedUploadsCreate` → multipart `POST` → `fileCreate` → the bytes
   back.
@@ -124,7 +127,9 @@ Shopify's does.
 
 The backend reads its client id and scopes from `shopify.app.toml` and its secret from `.env`, as
 lsf does; `SHOPIFY_API_KEY`, `SCOPES`, `SHOPIFY_APP_URL` and `PORT` (what `shopify app dev` sets)
-win over them. Without `LSF_URL`, the same code talks to Shopify.
+win over them. Without `LSF_URL`, the same code talks to Shopify. The Partner API is read at
+`PARTNER_API_URL` (`https://partners.shopify.com` without it) with `PARTNER_ID` and
+`PARTNER_API_TOKEN`: lsf's are in `GET /__lsf/admin/partner`, and the run passes them.
 
 ## What a developer has to know
 

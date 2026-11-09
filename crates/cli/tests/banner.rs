@@ -590,6 +590,35 @@ fn pricing_plans_are_read_from_the_file_of_the_option_or_its_variable_and_said_b
             serde_json::from_str(&server.get("/__lsf/admin/pricing-plans")).unwrap();
         assert_eq!(status["source"], serde_json::json!(path));
         assert_eq!(status["plans"][1]["trial_days"], serde_json::json!(7));
+        // Where the app reads its plan: the Partner API, after the plans.
+        let partner: serde_json::Value =
+            serde_json::from_str(&server.get("/__lsf/admin/partner")).unwrap();
+        let at = server
+            .before_ready
+            .iter()
+            .position(|line| line.starts_with("pricing:"))
+            .unwrap();
+        assert_eq!(
+            server.before_ready[at + 1],
+            format!(
+                "partner: {}   (Partner API: activeSubscription and events of {}; token {})",
+                partner["url"].as_str().unwrap(),
+                partner["app"]["id"].as_str().unwrap(),
+                partner["token"].as_str().unwrap()
+            )
+        );
+        let endpoint = partner["url"]
+            .as_str()
+            .unwrap()
+            .split_once(&server.address)
+            .unwrap()
+            .1
+            .to_string();
+        // Routed to the Partner API (its 401 without a token), not to the storefront.
+        assert_eq!(
+            server.post(&endpoint, r#"{"query": "{ __typename }"}"#),
+            401
+        );
     }
 
     // A wrong file stops the start, and says why.

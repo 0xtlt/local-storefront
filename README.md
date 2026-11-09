@@ -118,7 +118,8 @@ components, icons and fonts with `--polaris offline`, from lsf's copy
 ([Polaris without the internet](docs/admin.md#polaris-without-the-internet)). An app on managed
 pricing declares its plans with `--pricing-plans pricing.toml`: the merchant picks one on the
 admin's plan selection page, and the backend gets the subscription, its webhook and the welcome
-link ([managed pricing](docs/admin.md#managed-pricing)). Guide: [Admin API](docs/admin.md).
+link ([managed pricing](docs/admin.md#managed-pricing)), and reads its plan from lsf's Partner API
+([`activeSubscription`](docs/admin.md#read-the-plan-from-the-partner-api)). Guide: [Admin API](docs/admin.md).
 
 ### Get ready for Shopify's strict Liquid parser
 

@@ -69,6 +69,10 @@ run = "node tools/admin/add_version.mjs"
 description = "Regenerate the schema of a version of the GraphQL Admin API of lsf-app (crates/app/schemas/admin/<version>) from the pinned @shopify/dev-mcp package: mise run admin:schema [-- --version 2027-01]"
 run = "node tools/admin/admin_schema.mjs"
 
+[tasks."partner:schema"]
+description = "Regenerate the schema of the Partner API lsf serves (crates/app/schemas/partner/2026-10) from the pinned @shopify/dev-mcp package, and say which versions share it: mise run partner:schema [-- --version 2027-01]"
+run = "node tools/admin/partner_schema.mjs"
+
 [tasks."admin:access-scopes"]
 description = "Regenerate the access scopes and the search filters of a version of the Admin API (crates/app/schemas/admin/<version>/access.json, search.json) from the pinned @shopify/dev-mcp package: mise run admin:access-scopes [-- --version 2027-01]"
 run = "node tools/admin/access_scopes.mjs"

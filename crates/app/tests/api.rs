@@ -892,6 +892,235 @@ fn an_uninstall_deletes_the_apps_own_metafield_definitions_and_a_reinstall_bring
     );
 }
 
+/// The metaobject definitions of the store, as a test reads them: `(type, id, entries)` of each,
+/// in the order of their ids, the entries by handle.
+fn metaobject_definitions(api: &AdminApi) -> Vec<(String, String, Vec<String>)> {
+    api.with_default_shop(|state| {
+        state
+            .all("MetaobjectDefinition")
+            .map(|definition| {
+                let id = definition["id"].as_str().unwrap_or_default().to_string();
+                let mut entries: Vec<String> = state
+                    .all("Metaobject")
+                    .filter(|entry| entry["definition"] == definition["id"])
+                    .map(|entry| entry["handle"].as_str().unwrap_or_default().to_string())
+                    .collect();
+                entries.sort();
+                (
+                    definition["type"].as_str().unwrap_or_default().to_string(),
+                    id,
+                    entries,
+                )
+            })
+            .collect()
+    })
+    .unwrap()
+}
+
+/// What shopify.dev says an uninstall does to an app's metaobject definitions ("Manage metaobject
+/// definitions", "App uninstall and reinstall"): those of its reserved types (`$app:<type>`) are
+/// deleted, and their metaobjects are kept without a definition; a reinstall creates the
+/// definitions again under new ids and gives them back their metaobjects. A type without the
+/// prefix is the merchant's: it stays, under its id, with its entries. lsf keeps the entries out
+/// of reach meanwhile (a `Metaobject` has a non-null `definition`), and a metafield definition
+/// whose validation names the old definition names the new one.
+#[test]
+fn an_uninstall_deletes_the_apps_own_metaobject_definitions_and_a_reinstall_brings_them_back() {
+    let store = support::fixture_store("rich");
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = lines.clone();
+    let mut app = support::fixture_app();
+    app.config
+        .scopes
+        .extend(["write_metaobject_definitions", "write_metaobjects"].map(str::to_string));
+    let api = AdminApi::new(&store, options(Some(app), None)).with_notices(std::sync::Arc::new(
+        move |line: &str| sink.lock().unwrap().push(line.to_string()),
+    ));
+    let shop = api.default_shop();
+    let token = default_token(&api);
+    let gql = |query: &str, variables: Value| -> Value {
+        let (status, answer) = graphql(&api, &token, query, variables);
+        assert_eq!(status, 200, "{answer}");
+        answer
+    };
+    let mut created = Vec::new();
+    for kind in ["$app:author", "size_chart"] {
+        let answer = gql(
+            "mutation($definition: MetaobjectDefinitionCreateInput!) { metaobjectDefinitionCreate(definition: $definition) { metaobjectDefinition { id type } userErrors { message } } }",
+            json!({"definition": {"type": kind, "name": kind, "displayNameKey": "name",
+                "fieldDefinitions": [{"key": "name", "name": "Name", "type": "single_line_text_field"}]}}),
+        );
+        let payload = &answer["data"]["metaobjectDefinitionCreate"];
+        assert_eq!(payload["userErrors"], json!([]), "{answer}");
+        created.push(
+            payload["metaobjectDefinition"]["id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+        for name in ["Ada", "Grace"] {
+            let entry = gql(
+                "mutation($metaobject: MetaobjectCreateInput!) { metaobjectCreate(metaobject: $metaobject) { metaobject { id } userErrors { message } } }",
+                json!({"metaobject": {"type": kind, "fields": [{"key": "name", "value": name}]}}),
+            );
+            assert_eq!(
+                entry["data"]["metaobjectCreate"]["userErrors"],
+                json!([]),
+                "{entry}"
+            );
+        }
+    }
+    // A merchant's product definition whose entries must be authors: its validation names the
+    // app's definition by id.
+    let referring = gql(
+        "mutation($definition: MetafieldDefinitionInput!) { metafieldDefinitionCreate(definition: $definition) { createdDefinition { id } userErrors { message } } }",
+        json!({"definition": {"name": "Author", "namespace": "custom", "key": "author",
+            "type": "metaobject_reference", "ownerType": "PRODUCT",
+            "validations": [{"name": "metaobject_definition_id", "value": created[0]}]}}),
+    );
+    assert_eq!(
+        referring["data"]["metafieldDefinitionCreate"]["userErrors"],
+        json!([]),
+        "{referring}"
+    );
+    let author_type = api
+        .with_default_shop(|state| format!("app--{}--author", state.app_id()))
+        .unwrap();
+    let before = metaobject_definitions(&api);
+    let app_owned = |list: &[(String, String, Vec<String>)]| -> Vec<(String, Vec<String>)> {
+        list.iter()
+            .filter(|(kind, _, _)| kind.starts_with("app--"))
+            .map(|(kind, _, entries)| (kind.clone(), entries.clone()))
+            .collect()
+    };
+    let merchant = |list: &[(String, String, Vec<String>)]| -> Vec<(String, String, Vec<String>)> {
+        list.iter()
+            .filter(|(kind, _, _)| !kind.starts_with("app--"))
+            .cloned()
+            .collect()
+    };
+    let owned = app_owned(&before);
+    assert!(
+        owned.contains(&(
+            author_type.clone(),
+            vec!["ada".to_string(), "grace".to_string()]
+        )),
+        "{before:?}"
+    );
+    let entry_ids = |api: &AdminApi| -> Vec<String> {
+        let mut ids: Vec<String> = api
+            .with_default_shop(|state| {
+                state
+                    .all("Metaobject")
+                    .filter(|entry| entry["type"] == json!(author_type))
+                    .map(|entry| entry["id"].as_str().unwrap().to_string())
+                    .collect()
+            })
+            .unwrap();
+        ids.sort();
+        ids
+    };
+    let authors = entry_ids(&api);
+    assert_eq!(authors.len(), 2);
+
+    let uninstalled = json_of(&send(&api, "POST", "/__lsf/admin/uninstall", Value::Null));
+    assert_eq!(
+        uninstalled["removedMetaobjectDefinitions"],
+        json!(owned.len()),
+        "{uninstalled}"
+    );
+    assert_eq!(
+        uninstalled["retainedMetaobjects"],
+        json!(
+            owned
+                .iter()
+                .map(|(_, entries)| entries.len())
+                .sum::<usize>()
+        )
+    );
+    let after = metaobject_definitions(&api);
+    assert_eq!(app_owned(&after), Vec::<(String, Vec<String>)>::new());
+    assert_eq!(
+        merchant(&after),
+        merchant(&before),
+        "the merchant's stay, ids included"
+    );
+    assert_eq!(entry_ids(&api), Vec::<String>::new(), "kept out of reach");
+
+    send(&api, "POST", "/__lsf/admin/install", Value::Null);
+    let back = metaobject_definitions(&api);
+    assert_eq!(
+        app_owned(&back),
+        owned,
+        "in the order they were created, with their entries"
+    );
+    assert_eq!(merchant(&back), merchant(&before));
+    let new_id = back
+        .iter()
+        .find(|(kind, _, _)| *kind == author_type)
+        .map(|(_, id, _)| id.clone())
+        .unwrap();
+    assert_ne!(new_id, created[0], "a new id");
+    assert_eq!(entry_ids(&api), authors, "the same metaobjects");
+    let read = gql(
+        "{ metaobjectDefinitionByType(type: \"$app:author\") { id metaobjectsCount } metaobjects(type: \"$app:author\", first: 5) { nodes { handle definition { id } } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        read["data"]["metaobjectDefinitionByType"]["id"],
+        json!(new_id),
+        "{read}"
+    );
+    assert_eq!(
+        read["data"]["metaobjectDefinitionByType"]["metaobjectsCount"],
+        json!(2)
+    );
+    let nodes = read["data"]["metaobjects"]["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 2, "{read}");
+    assert!(
+        nodes
+            .iter()
+            .all(|node| node["definition"]["id"] == json!(new_id))
+    );
+    let validations = api
+        .with_default_shop(|state| {
+            state
+                .all("MetafieldDefinition")
+                .find(|definition| definition["key"] == "author")
+                .map(|definition| definition["validations"].clone())
+        })
+        .flatten()
+        .unwrap();
+    assert_eq!(validations[0]["value"], json!(new_id), "{validations}");
+
+    // A new seed while uninstalled drops the definition the app made, with its entries.
+    send(&api, "POST", "/__lsf/admin/uninstall", Value::Null);
+    api.reseed(&store);
+    send(&api, "POST", "/__lsf/admin/install", Value::Null);
+    assert!(
+        !metaobject_definitions(&api)
+            .iter()
+            .any(|(kind, _, _)| *kind == author_type)
+    );
+
+    let lines = lines.lock().unwrap().clone();
+    let reinstalled = lines
+        .iter()
+        .find(|line| line.starts_with(&format!("{shop}: the app is installed again")))
+        .unwrap();
+    assert!(
+        reinstalled.contains(&format!(
+            "; its {} metaobject definition{} back, under new ids, with their metaobjects",
+            owned.len(),
+            if owned.len() == 1 { " is" } else { "s are" }
+        )) || (owned.len() == 1
+            && reinstalled.contains(
+                "; its metaobject definition is back, under a new id, with its metaobjects"
+            )),
+        "{reinstalled}"
+    );
+}
+
 #[test]
 fn refuses_requests_without_a_valid_token() {
     let api = demo_api();

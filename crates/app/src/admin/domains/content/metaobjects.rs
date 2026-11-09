@@ -706,6 +706,166 @@ fn definition_update(
     Ok(answer(json!({"metaobjectDefinition": id}), &[]))
 }
 
+/// Where an uninstall keeps each app-owned metaobject definition it deleted, with its entries,
+/// for a reinstall to create them again: a memo per definition, under this prefix and its type.
+const UNINSTALLED: &str = "lsf/uninstalled-metaobject-definition:";
+
+/// What uninstalling the app did to its metaobject definitions ([`remove_app_owned`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Removed {
+    /// The definitions of its reserved types deleted.
+    pub definitions: usize,
+    /// Their entries, kept aside.
+    pub metaobjects: usize,
+}
+
+/// What uninstalling the app does to its metaobject definitions: those of its reserved types
+/// (`$app:<type>`, stored `app--<app id>--<type>`) are deleted, declared in the store data or made
+/// with `metaobjectDefinitionCreate` alike, and their entries are kept aside with them (a memo per
+/// definition, not records) for [`restore_app_owned`]. The definitions of other types are the
+/// merchant's and stay, with their entries. No webhook: the app's subscriptions go with it (and
+/// Shopify has no topic for metaobject definitions), so each removal emits `CHANGED`.
+///
+/// As shopify.dev says ("Manage metaobject definitions", "App uninstall and reinstall",
+/// <https://shopify.dev/docs/apps/build/metaobjects/manage-metaobject-definitions#app-uninstall-and-reinstall>):
+/// "When a user uninstalls your app, Shopify deletes its app-owned metaobject definitions and
+/// temporarily retains the metaobjects and their values without a definition. This applies to any
+/// app-owned definition, whether declared in `shopify.app.toml` or created with the GraphQL Admin
+/// API." Shopify deletes the TOML ones during the uninstall and the others in the background
+/// ("can persist after uninstall until asynchronous cleanup removes them"); lsf deletes both at
+/// once. The entries kept are not records meanwhile: a `Metaobject` has a non-null `definition`,
+/// and `metaobjects(type:)` takes the type of "a definition that already exists in the shop", so
+/// no query reaches them, and the storefront does not render them. Answers what was removed.
+pub fn remove_app_owned(state: &mut ShopState) -> Removed {
+    let prefix = format!("app--{}--", state.app_id());
+    let definitions: Vec<String> = state
+        .keys("MetaobjectDefinition")
+        .filter(|id| {
+            state
+                .get(id)
+                .is_some_and(|definition| text(definition, "type").starts_with(&prefix))
+        })
+        .map(str::to_string)
+        .collect();
+    let mut removed = Removed::default();
+    for id in &definitions {
+        let Some(record) = state.get(id).cloned() else {
+            continue;
+        };
+        let entries = entries_of(state, id);
+        let kept: Vec<Value> = entries
+            .iter()
+            .filter_map(|entry| state.get(entry).cloned().map(Value::Object))
+            .collect();
+        let memo = format!("{UNINSTALLED}{}", text(&record, "type"));
+        state.set_memo(
+            memo,
+            json!({"definition": Value::Object(record), "metaobjects": kept}),
+        );
+        for entry in &entries {
+            state.emit(crate::admin::domains::app::CHANGED, entry);
+            state.remove(entry);
+        }
+        state.emit(crate::admin::domains::app::CHANGED, id);
+        state.remove(id);
+        removed.definitions += 1;
+        removed.metaobjects += entries.len();
+    }
+    removed
+}
+
+/// What installing the app again does to the metaobject definitions an uninstall deleted
+/// ([`remove_app_owned`]): each is created again, under a new id, with the entries kept meanwhile
+/// (their ids unchanged), which now name it. One made meanwhile of the same type stays as it is,
+/// and the entries kept for the type are dropped. A metafield definition whose validation named
+/// the old id names the new one. Answers how many definitions were created.
+///
+/// As shopify.dev says: "If the same app is reinstalled while that data is still retained, then
+/// Shopify recreates the definitions and associates the existing metaobjects with them", and "The
+/// new definitions have new GIDs, so a definition ID from before the uninstall no longer
+/// resolves" ("Look up definitions by type instead"). Shopify keeps the entries for a while
+/// ("Shopify doesn't guarantee how long"); lsf keeps them until the store data is seeded again.
+pub fn restore_app_owned(state: &mut ShopState) -> usize {
+    let mut kept: Vec<(String, Value)> = state
+        .memos_with_prefix(UNINSTALLED)
+        .map(|(memo, kept)| (memo.to_string(), kept.clone()))
+        .collect();
+    // In the order they were first created, as a listing by id shows them.
+    kept.sort_by_key(|(memo, kept)| {
+        let id = kept.pointer("/definition/id").and_then(Value::as_str);
+        (id.map_or(0, crate::admin::state::gid_number), memo.clone())
+    });
+    let mut restored = 0;
+    for (memo, kept) in kept {
+        state.remove_memo(&memo);
+        let Some(mut record) = kept.get("definition").and_then(Value::as_object).cloned() else {
+            continue;
+        };
+        let kind = text(&record, "type").to_string();
+        if definition_of(state, &kind).is_some() {
+            continue;
+        }
+        let old = text(&record, "id").to_string();
+        let id = state.new_gid("MetaobjectDefinition");
+        let entries: Vec<Record> = kept
+            .get("metaobjects")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.as_object().cloned())
+            .filter(|entry| !state.contains(text(entry, "id")))
+            .collect();
+        let ids: Vec<Value> = entries
+            .iter()
+            .map(|entry| json!(text(entry, "id")))
+            .collect();
+        record.insert("id".into(), json!(id));
+        record.insert("metaobjectsCount".into(), json!(ids.len()));
+        record.insert("metaobjects".into(), Value::Array(ids));
+        state.insert(record);
+        state.emit(crate::admin::domains::app::CHANGED, &id);
+        for mut entry in entries {
+            entry.insert("definition".into(), json!(id));
+            let entry_id = text(&entry, "id").to_string();
+            state.insert(entry);
+            state.emit(crate::admin::domains::app::CHANGED, &entry_id);
+        }
+        rename_in_validations(state, &old, &id);
+        restored += 1;
+    }
+    restored
+}
+
+/// The metafield definitions whose validations name the metaobject definition `old` name `new`.
+fn rename_in_validations(state: &mut ShopState, old: &str, new: &str) {
+    let naming: Vec<String> = state
+        .keys("MetafieldDefinition")
+        .filter(|definition| {
+            state.get(definition).is_some_and(|definition| {
+                definition
+                    .get("validations")
+                    .is_some_and(|validations| validations.to_string().contains(old))
+            })
+        })
+        .map(str::to_string)
+        .collect();
+    for definition in naming {
+        let Some(record) = state.get_mut(&definition) else {
+            continue;
+        };
+        if let Some(Value::Array(validations)) = record.get_mut("validations") {
+            for validation in validations {
+                if let Some(Value::String(value)) = validation.get_mut("value")
+                    && value.contains(old)
+                {
+                    *value = value.replace(old, new);
+                }
+            }
+        }
+        state.emit(crate::admin::domains::app::CHANGED, &definition);
+    }
+}
+
 fn entries_of(state: &ShopState, definition: &str) -> Vec<String> {
     state
         .keys("Metaobject")

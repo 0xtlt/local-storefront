@@ -217,8 +217,11 @@ pub fn expire_stale(state: &mut ShopState) {
     }
 }
 
+/// Sets the status of a charge, and records the change in the app's history on the shop, which
+/// the Partner API reads (`super::partner::status_changed`).
 pub(super) fn set_status(state: &mut ShopState, key: &str, status: &str) {
     let now = state.timestamp();
+    let before = self::status(state, key).map(str::to_string);
     if let Some(record) = state.get_mut(key) {
         record.insert("status".into(), json!(status));
         record.insert("updatedAt".into(), json!(now));
@@ -227,6 +230,11 @@ pub(super) fn set_status(state: &mut ShopState, key: &str, status: &str) {
         {
             record.insert("currentPeriodEnd".into(), Value::Null);
         }
+    }
+    if let Some(before) = before
+        && before != status
+    {
+        super::partner::status_changed(state, key, &before, status);
     }
 }
 
@@ -1036,6 +1044,13 @@ pub fn decide(
 
 /// Activates an approved subscription: its trial starts now, and its period.
 pub(super) fn activate(state: &mut ShopState, id: &str) {
+    activate_until(state, id, None);
+}
+
+/// [`activate`], its period ending at `period_end` when it is not its own (a downgrade to a free
+/// plan keeps the paid plan's). The dates are set before the status, so that the history the
+/// Partner API reads has them.
+pub(super) fn activate_until(state: &mut ShopState, id: &str, period_end: Option<Value>) {
     let now = state.now();
     let annual = state
         .get(id)
@@ -1046,7 +1061,6 @@ pub(super) fn activate(state: &mut ShopState, id: &str) {
         .filter_map(Value::as_str)
         .filter_map(|line| pricing(state, line))
         .any(|details| details.get("interval").and_then(Value::as_str) == Some("ANNUAL"));
-    set_status(state, id, "ACTIVE");
     if let Some(record) = state.get_mut(id) {
         let trial = record.get("trialDays").and_then(Value::as_i64).unwrap_or(0);
         let period = if annual { 365 } else { 30 };
@@ -1064,8 +1078,10 @@ pub(super) fn activate(state: &mut ShopState, id: &str) {
                 Value::Null
             },
         );
-        record.insert("currentPeriodEnd".into(), json!(value::date_time(ends)));
+        let ends = period_end.unwrap_or_else(|| json!(value::date_time(ends)));
+        record.insert("currentPeriodEnd".into(), ends);
     }
+    set_status(state, id, "ACTIVE");
 }
 
 /// `returnUrl` with `charge_id=<n>` added to its query.

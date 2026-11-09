@@ -30,8 +30,9 @@
 //!   `plan_handle`) on every change, and test subscriptions on development stores, which lsf's
 //!   shops are. Without them (`legacy = false`: the apps enrolled since, and every app after
 //!   April 28, 2026 as the page words it): `plan_handle` alone, no webhook, and no test flag. Those
-//!   apps read their subscription from the Partner API's `activeSubscription`, which lsf does not
-//!   simulate: lsf still records the subscription in the Admin API.
+//!   apps read their subscription from the Partner API's `activeSubscription`, which lsf serves
+//!   (`crate::admin::partner`) from the same records: lsf still records the subscription in the
+//!   Admin API.
 //!
 //! The subscription is the Billing API's record (`AppSubscription`, one `AppRecurringPricing` line
 //! with the plan's `planHandle`): `currentAppInstallation.activeSubscriptions`,
@@ -567,15 +568,14 @@ pub fn select(
         None
     };
     let topic = Billing::of(Some(pricing)).subscription_topic();
+    // The new plan first, then the ones it replaces: the Partner API's history sees one change of
+    // plan (`SUBSCRIPTION_UPDATED`), not an end and a start (`partner::status_changed`).
+    billing::activate_until(state, &id, kept_period);
     for old in &replaced {
         billing::set_status(state, old, "CANCELLED");
-        state.emit(topic, old);
     }
-    billing::activate(state, &id);
-    if let Some(end) = kept_period
-        && let Some(record) = state.get_mut(&id)
-    {
-        record.insert("currentPeriodEnd".into(), end);
+    for old in &replaced {
+        state.emit(topic, old);
     }
     state.emit(topic, &id);
     Ok(Selected {

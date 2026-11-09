@@ -11,6 +11,7 @@ pub mod auth;
 pub mod domains;
 pub mod graphql;
 pub mod outbox;
+pub mod partner;
 pub mod resolve;
 pub mod schema;
 pub mod search;

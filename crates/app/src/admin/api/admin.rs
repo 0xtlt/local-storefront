@@ -350,17 +350,26 @@ impl AdminApi {
     }
 
     /// Says what the change of the app's installation on `shop` does, when the server prints it:
-    /// on a reinstall, `restored` metafield definitions came back.
-    fn notice_installation(&self, shop: &str, installed: bool, restored: usize) {
+    /// on a reinstall, what `restored` brought back.
+    fn notice_installation(&self, shop: &str, installed: bool, restored: app_domain::Reinstalled) {
         let Some(notices) = &self.notices else {
             return;
         };
         notices(&if installed {
-            let definitions = match restored {
+            let mut definitions = match restored.metafield_definitions {
                 0 => String::new(),
                 1 => "; its metafield definition is back, under a new id".to_string(),
                 n => format!("; its {n} metafield definitions are back, under new ids"),
             };
+            match restored.metaobject_definitions {
+                0 => {}
+                1 => definitions.push_str(
+                    "; its metaobject definition is back, under a new id, with its metaobjects",
+                ),
+                n => definitions.push_str(&format!(
+                    "; its {n} metaobject definitions are back, under new ids, with their metaobjects"
+                )),
+            }
             let proxy = self
                 .proxied_path(shop)
                 .map(|path| format!("; {path} goes to its app proxy again"))
@@ -570,6 +579,14 @@ impl AdminApi {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .iter()
             .map(|(domain, shop)| (domain.clone(), shop.clone()))
+            .collect()
+    }
+
+    /// Reads every shop, the default one first, each locked in turn.
+    pub(super) fn read_shops<T>(&self, read: impl Fn(&ShopState) -> T) -> Vec<T> {
+        self.all_shops()
+            .into_iter()
+            .map(|(_, shop)| read(&lock(&shop).state))
             .collect()
     }
 
@@ -917,8 +934,12 @@ impl AdminApi {
     /// | `/admin`, `/admin/apps/<app>/*` and the other pages of `/admin`, `/__lsf/admin/app-bridge.js`, `/__lsf/admin/assets/*`, `/__lsf/admin/resources` | the admin an embedded app is previewed in (`embedded`) |
     /// | `/__lsf/admin`, `/__lsf/admin/shops`, `/__lsf/admin/install`, `/__lsf/admin/uninstall` | the control endpoints |
     /// | `/__lsf/webhooks`, `/__lsf/webhooks/trigger` | [`Webhooks::handle`] |
+    /// | `/{partner_id}/api/{version}/graphql.json` | the Partner API (`crate::admin::partner`) |
     pub fn handle(&self, request: &HttpRequest) -> Option<HttpResponse> {
         let path = request.path.as_str();
+        if let Some((partner_id, version)) = crate::admin::partner::parse_path(path) {
+            return Some(super::partner::handle(self, request, partner_id, version));
+        }
         if let Some(admin) = version::parse_path(path) {
             let primary = self.versions.primary();
             return Some(match admin {
@@ -1327,6 +1348,7 @@ impl AdminApi {
                     Err((status, error)) => HttpResponse::error(status, error),
                 }
             }
+            (_, "/__lsf/admin/partner") => super::partner::control(self, request),
             ("POST", "/__lsf/admin/uninstall") => self.uninstall(request),
             ("POST", "/__lsf/admin/install") => self.install(request),
             (
@@ -1429,6 +1451,7 @@ impl AdminApi {
                     "source": source,
                 })),
             },
+            "partner": super::partner::summary(self),
             "throttle": {
                 "enabled": self.throttle.is_enabled(),
                 "maximumAvailable": plan.maximum_available,
@@ -1502,6 +1525,8 @@ impl AdminApi {
                 "removedScriptTags": removed.script_tags,
                 "removedWebPixels": removed.web_pixels,
                 "removedMetafieldDefinitions": removed.metafield_definitions,
+                "removedMetaobjectDefinitions": removed.metaobject_definitions,
+                "retainedMetaobjects": removed.retained_metaobjects,
             }),
         )
     }
@@ -1526,7 +1551,7 @@ impl AdminApi {
         delivered();
         let deleted = self.webhooks.registry().clear(domain);
         if installed {
-            self.notice_installation(domain, false, 0);
+            self.notice_installation(domain, false, app_domain::Reinstalled::default());
         }
         (revoked, deleted)
     }

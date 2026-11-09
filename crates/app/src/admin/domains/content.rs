@@ -16,6 +16,11 @@ pub(crate) mod translations;
 pub mod types;
 
 pub use metafield_definitions::{remove_app_owned, restore_app_owned, seed_declared_definitions};
+pub use metaobjects::{
+    Removed as RemovedMetaobjectDefinitions,
+    remove_app_owned as remove_app_owned_metaobject_definitions,
+    restore_app_owned as restore_app_owned_metaobject_definitions,
+};
 pub use online_store::refresh_blog;
 
 use chrono::Offset;

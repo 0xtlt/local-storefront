@@ -447,6 +447,13 @@ pub fn run(
         {
             eprintln!("{line}");
         }
+        if let Some(line) = state
+            .admin
+            .as_ref()
+            .and_then(|admin| admin.partner_banner(&format!("http://{local}")))
+        {
+            eprintln!("{line}");
+        }
         if let Some(line) = crate::server::polaris::banner(&state, &format!("http://{local}")) {
             eprintln!("{line}");
         }

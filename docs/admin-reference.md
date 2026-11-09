@@ -997,7 +997,10 @@ fetches (from the loader of a page, see ["Billing from a page"](admin.md#javascr
   `/admin/charges/<app handle>/pricing_plans` of lsf's admin; the subscription is the same record,
   its line's `planHandle` set, and the two creating mutations above answer "Managed Pricing Apps
   cannot use the Billing API (to create charges)." `POST /__lsf/admin/pricing-plans/cancel` ends
-  the shop's plan without the app: `CANCELLED`, with the webhook unless `legacy = false`.
+  the shop's plan without the app: `CANCELLED`, with the webhook unless `legacy = false`. The app
+  reads its plan and its history from lsf's [Partner API](admin.md#read-the-plan-from-the-partner-api)
+  (`activeSubscription`, `events`, `app { events }`), which every change of a charge, install and
+  uninstall feeds.
 
 **Discounts.** `discountAutomaticAppCreate`/`Update` and `discountCodeAppCreate`/`Update` take the
 Function by `functionHandle` (or the deprecated `functionId`), which must be a discount Function

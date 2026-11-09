@@ -591,9 +591,30 @@ lsf does the same:
 While the app is uninstalled, an order does not copy the cart metafields of a deleted `$app`
 definition (`cart_to_order_copyable`): the definition is gone. Look definitions up by owner type,
 namespace and key after a reinstall, as shopify.dev advises, not by an id kept from before. The
-metaobject definitions of the app (`$app:<type>`) are not deleted *(gap)*, nor are the
-app-data metafields of its installation (`AppInstallation`, which no shopify.dev page says an
-uninstall deletes).
+app-data metafields of its installation (`AppInstallation`) stay: no shopify.dev page says an
+uninstall deletes them.
+
+**The app's own metaobject definitions go too; their metaobjects are kept.** Shopify says the
+same of metaobjects: "When a user uninstalls your app, Shopify deletes its app-owned metaobject
+definitions and temporarily retains the metaobjects and their values without a definition", and a
+reinstall "recreates the definitions and associates the existing metaobjects with them", under new
+GIDs ([Manage metaobject definitions, App uninstall and
+reinstall](https://shopify.dev/docs/apps/build/metaobjects/manage-metaobject-definitions#app-uninstall-and-reinstall)).
+lsf does the same:
+
+| Definition | On Shopify | In lsf |
+|---|---|---|
+| Of the app's reserved types (`$app:<type>`, stored `app--<app id>--<type>`), from the store data or `metaobjectDefinitionCreate` | Deleted (the GraphQL ones in the background); created again on reinstall, under a new GID | Deleted by the uninstall (`removedMetaobjectDefinitions`); the reinstall creates it again under a new id |
+| Of any other type (`author`, `size_chart`) | The merchant's | Stays, id and entries included |
+| The metaobjects of the app's definitions | Kept a while without a definition | Kept aside, ids and values included (`retainedMetaobjects`), until the store data is seeded again; the reinstall gives them back to the new definition |
+
+While the app is uninstalled, its metaobjects are out of reach: a `Metaobject` has a non-null
+`definition`, and `metaobjects(type:)` takes the type of "a definition that already exists in the
+shop". So no query lists them, and the storefront does not render them. lsf does not read
+`[metaobjects.app.<type>]` of `shopify.app.toml`: the app's types come from the store data and from
+the Admin API. A metafield definition whose validation names the deleted definition
+(`metaobject_definition_id`) names the new one after the reinstall. Look definitions up by type
+after a reinstall, as shopify.dev advises.
 
 **The app's extensions go with it too.** While the app is not installed on the default shop, lsf
 renders none of its extensions, as Shopify removes an uninstalled app's extensions:
@@ -621,8 +642,9 @@ Each place that shows extensions says why they are gone, "the app is not install
   on the shop: its UI extensions do not render and its Functions do not run until it is installed
   again (…)`, then, for an app with an `[app_proxy]`, `… uninstalling it removed its app proxy, so
   /apps/reviews is the storefront's 404 …`; and `… the app is installed again: its UI extensions
-  render again, …; its 2 metafield definitions are back, under new ids; /apps/reviews goes to
-  its app proxy again` after a reinstall.
+  render again, …; its 2 metafield definitions are back, under new ids; its metaobject definition
+  is back, under a new id, with its metaobjects; /apps/reviews goes to its app proxy again` after a
+  reinstall.
 
 ## Webhooks
 
@@ -1039,15 +1061,100 @@ your app of subscription changes", and for "status changes that happen outside o
 (such as cancellations or freezes), query the Partner API"; Partner support told a developer
 that `app_subscriptions/update` "belongs to the older Billing API and is not supported for App
 Pricing" ([community](https://community.shopify.dev/t/app-pricing-app-events-usage-billing-request-for-documented-answers-on-undocumented-behaviors/36911)).
-lsf still records the subscription in the Admin API either way: it does not simulate the
-Partner API.
+lsf still records the subscription in the Admin API either way, and serves the Partner API
+(below) in both modes.
 
-lsf does not simulate: the Partner API (`activeSubscription`, the history of events) and the App
-Events API (usage meters), usage charges, private plans and their stores, the eight-plan limit,
-prices in local currencies, plans that toggle between monthly and yearly (declare two), proration
-and deferred billing (every change is at once, no money moves, and a plan ended is ended at once:
-no `cancelAtEndOfCycle`), and the 180-day memory of a trial
-used before (each plan's trial applies every time).
+#### Read the plan from the Partner API
+
+An app on Shopify App Pricing reads its plan from the [Partner
+API](https://shopify.dev/docs/api/partner): `activeSubscription(appId:, shopId:)` for the plan now,
+and `events` for the history ([Shopify App
+Pricing](https://shopify.dev/docs/apps/launch/billing/shopify-app-pricing#query-subscription-data)).
+lsf serves it at Shopify's path, on its own origin. The app changes the origin alone:
+
+```text
+Shopify:  POST https://partners.shopify.com/{partner_id}/api/2026-10/graphql.json
+lsf:      POST http://127.0.0.1:9292/{partner_id}/api/2026-10/graphql.json
+          X-Shopify-Access-Token: {partner API client token}
+```
+
+lsf prints the URL and the token at start, after the `pricing:` line:
+
+```text
+partner: http://127.0.0.1:9292/9880163/api/2026-10/graphql.json   (Partner API: activeSubscription and events of gid://shopify/App/3662721844947; token prtapi_9c17…)
+```
+
+`GET /__lsf/admin/partner` has the same, with each shop's GID: a test reads them there.
+
+- **The Partner ID** is seven digits, and **the token** is `prtapi_` and 32 hex digits, the shape
+  GitHub's secret scanning knows as a Shopify Partner API token (Shopify documents none). Both are
+  the same every run for the app's client id: a test can hard-code them, or read them from
+  `GET /__lsf/admin/partner` (`partnerId`, `token`). Another token, or another number in the
+  path, answers Shopify's `401` `{"errors": [{"message": "Invalid access token", "extensions":
+  {"code": "401"}}]}`; `X-Lsf-Reason` says which part is wrong.
+- **The app's GID** is the Admin API's: `gid://shopify/App/<n>`, what
+  `currentAppInstallation { app { id } }` answers. **A shop's GID** is its `shop { id }`. So the
+  app can read both from the Admin API, as the [example
+  backend](https://github.com/0xtlt/local-storefront/tree/main/examples/admin-backend) does
+  (`GET /api/billing/partner` in `server/index.mjs`). The older `app(id:)` takes
+  `gid://partners/App/<n>`, the same number.
+- **Versions**: 2026-07, 2026-10 and 2027-01, which have the same schema. Another version answers
+  `404`. The schema is Shopify's whole 2026-10 one, so introspection and validation work as on
+  Shopify.
+
+```js
+// The app's own code: only the origin changes.
+const PARTNER_API = process.env.PARTNER_API_URL ?? "https://partners.shopify.com";
+const answer = await fetch(`${PARTNER_API}/${process.env.PARTNER_ID}/api/2026-10/graphql.json`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": process.env.PARTNER_API_TOKEN },
+  body: JSON.stringify({
+    query: `query($appId: ID!, $shopId: ID!) {
+      activeSubscription(appId: $appId, shopId: $shopId) { trialEndsAt items { handle } } }`,
+    variables: { appId, shopId },
+  }),
+});
+```
+
+What lsf answers, from the plans chosen, changed and ended, the trials, the installs and the
+uninstalls of every shop:
+
+| Query | What lsf answers |
+|---|---|
+| `activeSubscription(appId:, shopId:)` | The shop's active subscription of managed pricing: one item, the plan (`handle`, the plan's name as `description`, a `FlatRatePrice`); `billingPeriod`; `trialEndsAt` while the trial runs, then `null`; `currentBillingCycle` `null` during the trial, then the cycle the shop's clock is in (periods of 30 days, or 365 for an annual plan, from the end of the trial or the approval); `legacySubscriptionId` the Admin API's `AppSubscription` GID while the plans keep the legacy features, `null` with `legacy = false`; `cancelAtEndOfCycle: false` and `pendingUpdate: null`. `null` without a plan, and for a subscription of the Billing API (below). "Shop not found" for a shop lsf does not have. |
+| `events(filter:, orderBy:, first:, after:, …)` | The history of every shop, newest first (`OCCURRED_AT_ASC` turns it), the last 30 days by each shop's clock unless `occurredAtMin` or `occurredAtMax` says otherwise (365 days at most), 250 a page at most: `RELATIONSHIP_INSTALLED` and `RELATIONSHIP_UNINSTALLED` (`Relationship`); `SUBSCRIPTION_CREATED` (a first plan), `SUBSCRIPTION_UPDATED` (a change of plan, one event) and `SUBSCRIPTION_CANCELED` (the plan ended, with `cancelEffectiveOn`), each with its `plan` (`SubscriptionStatus`). `shopId` needs `subjectId`, as on Shopify ("You must specify a subjectId when filtering by shopId."). |
+| `app(id:) { events(types:, shopId:, …) }` | The older system, newest first, with no default window: the relationship events, and one per change of a charge, the Billing API's included (`SUBSCRIPTION_CHARGE_ACCEPTED` and `…_ACTIVATED` on an approval, `…_CANCELED`, `…_DECLINED`, `…_EXPIRED`, `ONE_TIME_CHARGE_…`), each with its `charge` (`id`, `name`, `amount`, `test`, `billingOn`). |
+
+An uninstall records the end of the plan, then `RELATIONSHIP_UNINSTALLED`; a reinstall
+`RELATIONSHIP_INSTALLED`. Each shop starts with the install of the seed, dated 2024-01-01 12:00
+UTC like the seed's records: outside the default window. `DELETE /__lsf/admin` puts each shop's
+history back to that one event.
+
+Where Shopify's pages disagree, lsf follows the reference. The Shopify App Pricing page says
+`activeSubscription` covers a subscription "through Shopify App Pricing or the Billing API"; the
+[Active subscription](https://shopify.dev/docs/api/partner/2026-07/active-subscription) reference
+says "The shop must have an active managed pricing contract for the app". So lsf answers `null`
+for a subscription the Billing API made. The 2026-10 reference names the number of the path the
+Partner ID, "the number in your Partner Dashboard URL", not the Dev Dashboard's organization ID;
+older pages call it `{organization_id}`.
+
+Shopify's [Historical events](https://shopify.dev/docs/api/partner/2026-07/historical-events)
+example selects `state` on both `Relationship` and `SubscriptionStatus`. Their types differ
+(`RelationshipState!`, `SubscriptionStatusState!`), and lsf refuses that as the GraphQL spec and
+graphql-ruby do (`Field 'state' has a return_type conflict`). Alias one:
+`... on Relationship { relationship: state }`.
+
+The rest of the Partner API (`transactions`, `transaction`, `publicApiVersions`, the mutations
+`appSubscriptionCancel` and `appCreditCreate`) answers an error with `extensions.code:
+LSF_NOT_SIMULATED`. No `CHARGE_…`, `EARNING_…` or `CREDIT_…` event either: no money moves. lsf
+does not throttle (Shopify allows four requests a second).
+
+lsf does not simulate: the App Events API (usage meters), usage charges, private plans and their
+stores, the eight-plan limit, prices in local currencies, plans that toggle between monthly and
+yearly (declare two), proration and deferred billing (every change is at once, no money moves,
+and a plan ended is ended at once: no `cancelAtEndOfCycle`, no `pendingUpdate`), freezes, the
+Partner API's other queries and mutations (above), and the 180-day memory of a trial used before
+(each plan's trial applies every time).
 
 ### Reset between runs
 

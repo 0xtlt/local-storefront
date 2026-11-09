@@ -191,6 +191,29 @@ const routes = [
         lineItems { plan { pricingDetails { ... on AppRecurringPricing { planHandle interval price { amount currencyCode } } } } } } } }`);
     return currentAppInstallation.activeSubscriptions;
   })],
+  // What the app knows of its plan under Shopify App Pricing: the Partner API's
+  // `activeSubscription` and the history of the shop (`events`), for the app's own GID and the
+  // shop's, read from the Admin API.
+  ["GET", /^\/api\/billing\/partner$/, adminApi(async (admin) => {
+    const { currentAppInstallation, shop } = await api.gql(admin, `#graphql
+      query { currentAppInstallation { app { id } } shop { id } }`);
+    const answer = await fetch(`${config.partnerApiUrl}/${config.partnerId}/api/2026-10/graphql.json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": config.partnerToken ?? "" },
+      body: JSON.stringify({
+        query: `query Plan($appId: ID!, $shopId: ID!) {
+          activeSubscription(appId: $appId, shopId: $shopId) {
+            trialEndsAt currentBillingCycle { startTime endTime } legacySubscriptionId
+            items { handle price { ... on FlatRatePrice { amount currency } } } }
+          events(filter: { subjectId: $appId, shopId: $shopId }, first: 10) {
+            edges { node { eventType occurredAt ... on SubscriptionStatus { plan { handle } } } } } }`,
+        variables: { appId: currentAppInstallation.app.id, shopId: shop.id },
+      }),
+    });
+    const body = await answer.json();
+    if (!answer.ok || body.errors) throw new api.AdminError(`Partner API: ${answer.status}`, body.errors);
+    return { activeSubscription: body.data.activeSubscription, events: body.data.events.edges.map((edge) => edge.node) };
+  })],
   ["GET", /^\/billing\/return$/, async (request) => {
     seen.billingReturns.push(Object.fromEntries(new URL(request.url).searchParams));
     return new Response("<!doctype html><p>Thanks for subscribing.</p>", { headers: { "Content-Type": "text/html" } });

@@ -185,7 +185,9 @@ mod tests {
                     continue;
                 }
                 let file = path.file_name().unwrap().to_string_lossy().to_string();
-                if !file.ends_with(".rs") || file.contains("test") {
+                // The types of the Partner API (`admin::partner`, `api::partner`,
+                // `domains::app::partner`) are of its own schema, not the Admin API's.
+                if !file.ends_with(".rs") || file.contains("test") || file == "partner.rs" {
                     continue;
                 }
                 let text = std::fs::read_to_string(&path).unwrap();
