@@ -152,7 +152,8 @@ the same data every run.
   Function.** A named Function runs whatever its owner, as before; when its payment customization
   (or other owner) is disabled in the store data, or there is none, the output says so first
   (`Named: …`, `forced` in JSON), and that it reads the files, not a running lsf.
-- **`pricing.toml` is read again when it changes** (`--watch`), and `DELETE
+- **`pricing.toml` is read again when it changes** (unless `--static`, before the next request of
+  any kind), and `DELETE
   /__lsf/admin/pricing-plans` reads it again rather than putting back the copy read at start (a
   file that no longer reads is a `422`). Plans a `PUT` set stay until the `DELETE`.
 - **The plan selection page takes the app's handle only.** `/admin/charges/<client id>/pricing_plans`

@@ -169,7 +169,7 @@ struct PricingPlans {
     /// Those that apply.
     current: Option<(Arc<Pricing>, String)>,
     /// The size and the modification time of the file of `configured` when it was last read:
-    /// `--watch` reads it again when they change.
+    /// a server without `--static` reads it again when they change.
     stamp: Option<(u64, u128)>,
 }
 
@@ -436,7 +436,7 @@ impl AdminApi {
     }
 
     /// Reads the file of `--pricing-plans` again (`DELETE /__lsf/admin/pricing-plans`, and
-    /// `--watch` when it changed): its plans become those of the file, and those that apply
+    /// when it changed, unless `--static`): its plans become those of the file, and those that apply
     /// unless a request set others (`PUT`). `Ok(None)` without a file, or when it is gone (the
     /// plans read last stay); `Ok(Some(file))` once read. A file that no longer reads is the
     /// error, and the plans stay as they were.
@@ -451,7 +451,7 @@ impl AdminApi {
             .pricing
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // Read or not, this version of the file is seen: `--watch` says so once.
+        // Read or not, this version of the file is seen: the server says so once.
         plans.stamp = stamp;
         let Some(read) = read else {
             return Ok(None);
@@ -469,7 +469,7 @@ impl AdminApi {
     }
 
     /// [`reload_pricing_file`](Self::reload_pricing_file) when the file changed since it was
-    /// last read (`--watch`): `Ok(None)` when it did not, or there is none.
+    /// last read (a server without `--static`): `Ok(None)` when it did not, or there is none.
     pub fn reload_pricing_file_if_changed(&self) -> Result<Option<String>, String> {
         let Some(source) = self.pricing_file() else {
             return Ok(None);

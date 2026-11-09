@@ -59,10 +59,21 @@ struct Server {
 
 impl Server {
     fn start(args: &[&str], env: &[(&str, &str)]) -> Server {
+        Server::start_with(args, env, &["--static", "--quiet"])
+    }
+
+    /// A server that looks at its files before it answers, as `lsf serve` does without
+    /// `--static`, and says what it reloads.
+    fn watching(args: &[&str], env: &[(&str, &str)]) -> Server {
+        Server::start_with(args, env, &[])
+    }
+
+    fn start_with(args: &[&str], env: &[(&str, &str)], mode: &[&str]) -> Server {
         let mut command = Command::new(env!("CARGO_BIN_EXE_lsf"));
         command
             .args(args)
-            .args(["--host", "127.0.0.1", "--port", "0", "--static", "--quiet"])
+            .args(["--host", "127.0.0.1", "--port", "0"])
+            .args(mode)
             .current_dir(std::env::temp_dir())
             .env_remove("LSF_APP")
             .env_remove("LSF_APP_URL")
@@ -644,5 +655,45 @@ fn pricing_plans_are_read_from_the_file_of_the_option_or_its_variable_and_said_b
         )),
         "{stderr}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_plans_file_is_read_again_before_a_control_request_when_it_changed() {
+    let theme = theme();
+    let dir = std::env::temp_dir().join(format!("lsf-banner-pricing-watch-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("pricing.toml");
+    std::fs::write(
+        &file,
+        "[[plans]]\nhandle = \"pro\"\nname = \"Pro\"\nprice = 5\n",
+    )
+    .unwrap();
+    let path = file.to_str().unwrap();
+    let server = Server::watching(&["--theme", &theme, "serve", "--pricing-plans", path], &[]);
+    let price = |server: &Server| -> serde_json::Value {
+        let status: serde_json::Value =
+            serde_json::from_str(&server.get("/__lsf/admin/pricing-plans")).unwrap();
+        status["plans"][0]["price"].clone()
+    };
+    assert_eq!(price(&server), serde_json::json!("5.00"));
+    // A control request, with no page asked in between, sees the file as it is now (another
+    // size too, for a file system whose times are coarse).
+    std::fs::write(
+        &file,
+        "[[plans]]\nhandle = \"pro\"\nname = \"Pro\"\nprice = 7.5\n",
+    )
+    .unwrap();
+    assert_eq!(price(&server), serde_json::json!("7.50"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !server
+        .said()
+        .iter()
+        .any(|line| line.starts_with("pricing plans reloaded ("))
+    {
+        assert!(Instant::now() < deadline, "{}", server.said().join("\n"));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(server);
     let _ = std::fs::remove_dir_all(&dir);
 }

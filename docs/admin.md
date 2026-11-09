@@ -996,8 +996,9 @@ welcome_link = "/welcome"  # a path of the app, or a full URL; the app's home wi
 
 A test sets them while lsf runs: `PUT /__lsf/admin/pricing-plans` with
 `{"plans": [{"handle": "pro", "name": "Pro", "price": 4.99, "trial_days": 7}]}` (the same fields),
-`DELETE` puts back those of the file, read again. With `--watch`, lsf reads the file again when it
-changes (`pricing plans reloaded`); plans a `PUT` set stay until the `DELETE`. lsf prints the page
+`DELETE` puts back those of the file, read again. Unless `--static`, lsf reads the file again when
+it changes, before the next request (`pricing plans reloaded`); plans a `PUT` set stay until the
+`DELETE`. lsf prints the page
 at start (`pricing: 2 plans …`).
 
 The page is at `/admin/charges/<app handle>/pricing_plans` of [lsf's admin](#preview-the-embedded-app).

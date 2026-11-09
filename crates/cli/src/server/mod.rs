@@ -447,6 +447,23 @@ impl ServerState {
         loaded
     }
 
+    /// Reads the file of `--pricing-plans` again when it changed (unless `--static`), before any request
+    /// is answered: the Admin API, lsf's admin and the control endpoints read the plans too, not
+    /// only the pages. A look at the file's size and time, so at every request.
+    fn refresh_pricing_if_changed(&self) {
+        if !self.options.watch {
+            return;
+        }
+        let Some(admin) = &self.admin else {
+            return;
+        };
+        match admin.api.reload_pricing_file_if_changed() {
+            Ok(Some(file)) if !self.options.quiet => eprintln!("pricing plans reloaded ({file})"),
+            Ok(_) => {}
+            Err(error) => eprintln!("pricing plans not reloaded: {error}"),
+        }
+    }
+
     /// Reloads the store when its files changed since they were last read (`--watch`). The
     /// files are looked at every 300 ms at most, unless the caller knows that they changed
     /// (`now`). A change of checkout scenarios alone reads the files again without touching
@@ -463,16 +480,6 @@ impl ServerState {
                 return;
             }
             *last_check = Instant::now();
-        }
-        // The plans of `--pricing-plans`, wherever their file is.
-        if let Some(admin) = &self.admin {
-            match admin.api.reload_pricing_file_if_changed() {
-                Ok(Some(file)) if !self.options.quiet => {
-                    eprintln!("pricing plans reloaded ({file})")
-                }
-                Ok(_) => {}
-                Err(error) => eprintln!("pricing plans not reloaded: {error}"),
-            }
         }
         let Some(directory) = self.app.data_dir() else {
             return;
@@ -757,6 +764,8 @@ impl ServerState {
         if incoming.path.starts_with(polaris::PREFIX) {
             return polaris::cdn(self, incoming);
         }
+        // The plans of `--pricing-plans`, which every kind of request below reads.
+        self.refresh_pricing_if_changed();
         // The Admin API, OAuth and their control endpoints come first: a backend's request is
         // never a page.
         if let Some(reply) = admin::route(self, incoming) {
