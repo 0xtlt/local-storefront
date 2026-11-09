@@ -308,7 +308,9 @@ code stays `0`). Assert what a Function decides with an `expect` rather than pip
 npx local-storefront app dev --app . --app-url http://localhost:3000 --port 9393 --static --quiet
 ```
 
-The local Admin API, OAuth and the app's webhooks, for its backend. Once `ready:` is printed,
+The local Admin API, OAuth and the app's webhooks, for its backend, with the app's checkout.
+`serve --app . --only admin` runs the Admin API alone ([what runs](cli.md#what-runs)): a test
+that needs neither the theme nor the checkout. Once `ready:` is printed,
 `GET /__lsf/admin` gives the shop (`defaultShop`), the path of the API (`graphql`) and the token
 (`shops[0].token`). Webhooks go to `--app-url`, signed with the client secret the start lines
 name; without it, those that lead off this machine are `not_sent`.
@@ -323,10 +325,12 @@ npx local-storefront serve --port 0 --static --quiet
 ```
 
 - **Ready.** Run it in the background and read its stderr until a line matches
-  `^ready:\s+(http://\S+)`: the URL is group 1. Every line of the server goes to stderr. With
-  `--app`, the `admin:` lines (the token, the client secret), `webhooks:` and `proxy:` come
+  `^ready:\s+(http://\S+)`: the URL is group 1. Every line of the server goes to stderr.
+  `serving:` names the parts it runs (`theme`, `checkout`, `admin`: [what runs](cli.md#what-runs)).
+  With `--app`, the `admin:` lines (the token, the client secret), `webhooks:` and `proxy:` come
   before `ready:`, `home:` and `watch:` after it; read the token from `GET /__lsf/admin` rather
-  than from the text. Without `--app`, none of them is printed.
+  than from the text. Without `--app`, or with `--only` leaving out the admin part, none of them
+  is printed, and the Admin API is not served: its routes answer `404` with an `X-LSF-Reason`.
 - **Failed.** It exits with `2` before `ready:` when the port is taken (`error: cannot listen
   on …`), or with `--strict` when the data has errors (on stderr; `validate --format json` gives
   them as JSON).

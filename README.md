@@ -119,7 +119,9 @@ components, icons and fonts with `--polaris offline`, from lsf's copy
 pricing declares its plans with `--pricing-plans pricing.toml`: the merchant picks one on the
 admin's plan selection page, and the backend gets the subscription, its webhook and the welcome
 link ([managed pricing](docs/admin.md#managed-pricing)), and reads its plan from lsf's Partner API
-([`activeSubscription`](docs/admin.md#read-the-plan-from-the-partner-api)). Guide: [Admin API](docs/admin.md).
+([`activeSubscription`](docs/admin.md#read-the-plan-from-the-partner-api)). The Admin API runs
+with `--app`; `serve --app ../my-app --only admin` runs it alone, without the theme or the
+checkout ([what runs](docs/cli.md#what-runs)). Guide: [Admin API](docs/admin.md).
 
 ### Get ready for Shopify's strict Liquid parser
 
@@ -163,12 +165,12 @@ what it would cost Shopify. Guide: [performance](docs/performance.md).
 
 | Command | What it does |
 |---|---|
-| `npx local-storefront serve` | Serves the theme at <http://127.0.0.1:9292>. |
+| `npx local-storefront serve` | Serves the theme at <http://127.0.0.1:9292>. With `--app`, the checkout and the Admin API of the app too; `--only theme,checkout,admin` runs some of them ([what runs](docs/cli.md#what-runs)). |
 | `npx local-storefront init` | Creates `shopify-local/` with a demo store to edit. |
 | `npx local-storefront validate` | Checks the store data and the checkout scenarios, in a theme or in an app without one. `--format json` for tools. |
 | `npx local-storefront check` | Checks every Liquid file, and what Shopify's strict parser rejects. `--fix` rewrites it. `--format json` for tools. |
 | `npx local-storefront fmt [paths]` | Formats Liquid files as Prettier does. `--check` for CI. |
-| `npx local-storefront app dev --app <dir>` | Serves a Shopify app: its checkout, where its Functions run and its checkout UI extensions show, and its customer account, where its customer account UI extensions show. `serve --app` does it with the theme. |
+| `npx local-storefront app dev --app <dir>` | Serves a Shopify app: its checkout, where its Functions run and its checkout UI extensions show, its customer account, where its customer account UI extensions show, and the Admin API of its backend. `serve --app` does it with the theme. |
 | `npx local-storefront app webhook trigger --topic <topic> --app <dir> --app-url <url>` | Sends one webhook of an app to its backend, signed as Shopify signs it, as `shopify app webhook trigger` does. |
 | `npx local-storefront app init [--app <dir>]` | Writes checkout scenarios (`checkouts/` in the store data) made for the Functions and extensions of the app. |
 | `npx local-storefront app build [handle]... --app <dir>` | Builds the extensions of an app as `shopify app build` does, without Node: Functions, and UI extensions from their sources. |

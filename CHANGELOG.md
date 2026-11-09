@@ -11,8 +11,8 @@ the same data every run.
 
 ### Added
 
-- **A local GraphQL Admin API, version 2026-10, with every mutation.** Every server answers
-  `POST /admin/api/2026-10/graphql.json` over the store data, with the ids the storefront, the
+- **A local GraphQL Admin API, version 2026-10, with every mutation.** A server with `--app`
+  answers `POST /admin/api/2026-10/graphql.json` over the store data, with the ids the storefront, the
   checkout and the Function inputs use. Queries follow Shopify's 2026-10 schema (its
   introspection matches Shopify's), with its validation errors, query costs (`extensions.cost`),
   throttling (`THROTTLED`, `MAX_COST_EXCEEDED`), cursors, the `query:` search syntax, and
@@ -114,9 +114,8 @@ the same data every run.
   [Control API](docs/control-api.md#webhook-deliveries).
 - **The start lines of an app.** With `--app`, the Admin API's URL and token, where the client
   secret came from, where the webhooks go and the app proxy are printed before `ready:`: a tool
-  that reads up to `ready:` has the token. Without `--app`, none of them (`GET /__lsf/admin`
-  has the token). An app without an `extensions` directory is said to be a backend, in one
-  line.
+  that reads up to `ready:` has the token. Without the Admin API, none of them. An app without
+  an `extensions` directory is said to be a backend, in one line.
 - **The app proxy.** A storefront request under the prefix of `[app_proxy]` goes to the backend
   with Shopify's parameters and signature. A Liquid answer is rendered in the theme's layout.
 - **Billing.** `appSubscriptionCreate` and `appPurchaseOneTimeCreate` lead to a local approval
@@ -168,6 +167,17 @@ the same data every run.
   checkouts are abandoned, data erasures run, each with its webhooks. What Shopify would send
   the outside world (emails, labels, Flow triggers, point-of-sale messages) is never sent: it is
   in `GET /__lsf/admin/outbox`.
+- **`--only theme,checkout,admin` runs some parts of lsf** (also `LSF_ONLY`), on `serve` and
+  `app dev`: the storefront of the theme, the checkout of the app (its Functions, UI
+  extensions, scenarios), its Admin API (OAuth, webhooks, the app proxy, lsf's admin, managed
+  pricing). `serve` runs the theme, all three with `--app`; `app dev` the checkout and the Admin
+  API. `serve --app ../my-app --only admin` is the Admin API alone, for a backend's tests, without
+  a theme folder. A part left out answers `404` on its routes, with an `X-LSF-Reason` that names
+  the `--only` serving it; a line before `ready:` says what runs (`serving: theme, checkout,
+  admin`), and `GET /__lsf/status` and `GET /__lsf/admin` list it (`parts`). An option of a part
+  left out (`--pricing-plans` without the admin part, `--variant` without the checkout) stops the
+  start. `serve` without `--app` serves no Admin API: it was new in this version, and costs
+  memory a theme does not use. [What runs](docs/cli.md#what-runs).
 - **New options:**
   - `--app-url`: where the backend listens.
   - `--no-functions`: the app's UI extensions and Admin API, and none of its Functions, for a

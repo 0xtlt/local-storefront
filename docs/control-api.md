@@ -8,6 +8,14 @@ app: [Admin API](admin.md).
 Bodies are JSON: send `Content-Type: application/json`. A body that is JSON is read as JSON
 without it too (`fetch` sends a string as `text/plain`, `curl -d` as a form).
 
+The endpoints of a part the server does not run ([`--only`](cli.md#what-runs)) answer `404`:
+those of the checkout without the checkout part, those of the Admin API, webhooks and Polaris
+without the admin part, `/__lsf/profile` without the theme. So do the pages of the part: the
+theme's pages without the theme, `/admin/…` without the admin part. Each `404` says why in
+`X-LSF-Reason`, also in its plain-text body and on the terminal, with the `--only` that serves
+it: ``the admin part is not served (serving: theme): `serve --app <dir> --only theme,admin`
+serves it``. `GET /__lsf/status` lists the parts that run (`parts`).
+
 ## Endpoints
 
 ### Storefront and tests
@@ -29,9 +37,10 @@ without it too (`fetch` sends a string as `text/plain`, `curl -d` as a form).
 
 ### Apps: checkout and Admin API
 
-The checkout needs `--app`; the Admin API runs on every server, with the app of `--app` when
-there is one ([Admin API](admin.md)). First what a backend's tests use, then the rest. How a test
-uses them: [test your backend](admin.md#test-your-backend).
+Both need `--app`: the checkout runs with the checkout part, the Admin API with the admin part,
+and `serve --app` runs both ([what runs](cli.md#what-runs), [Admin API](admin.md)). First what a
+backend's tests use, then the rest. How a test uses them:
+[test your backend](admin.md#test-your-backend).
 
 | Request | What it does | Answer |
 |---|---|---|
@@ -146,6 +155,7 @@ gives:
 
 | Key | Value |
 |---|---|
+| `parts` | The parts the server runs, among `theme`, `checkout` and `admin` ([`--only`](cli.md#what-runs)). |
 | `theme` | The theme folder. |
 | `data` | Where the data comes from. |
 | `data_diagnostics` | `{ ok, errors, warnings, diagnostics }`, as `npx local-storefront validate --format json`. |
@@ -164,6 +174,7 @@ A test runner can wait on this URL to know the server is up.
 
 | Key | Value |
 |---|---|
+| `parts` | The parts the server runs: `admin`, with `theme` and `checkout` when it runs them ([`--only`](cli.md#what-runs)). |
 | `apiVersion`, `graphql` | The version the server names (`2026-10`, unless `--admin-versions` leaves it out), and the path of its GraphQL Admin API. |
 | `apiVersions` | Every version lsf knows: `version`, `status` (`stable`, `release candidate`), `served`, `graphql`. |
 | `defaultShop` | The shop of the store data (`shop.permanent_domain`). |
@@ -230,6 +241,7 @@ Pages and other responses carry headers a test can check:
 | `x-lsf-template` | The template that rendered the page (`product`, `product.alternate`, `404`). |
 | `x-lsf-not-found` | Why a page is the `404` page: `no product with the handle "x"`, `no page at "/x"`, the metaobject type with no template... Absent on every other response. |
 | `x-lsf-liquid-errors` | The number of Liquid errors in the page. Absent when there are none. |
+| `x-lsf-reason` | Why a request lsf could answer otherwise is a `404`: a part the server does not run (``the checkout part is not served (serving: theme, admin): `serve --only theme,checkout,admin` serves it``), an app proxy of an app that is uninstalled, a plan page asked by client id. |
 | `x-lsf-placeholder` | `1`: the image is a placeholder, the file is not in `shopify-local/files/`. |
 | `x-lsf-throttle` | The delay that was applied, as `1000ms`. |
 | `server-timing` | How long the server took. See [performance](performance.md#render-times). |

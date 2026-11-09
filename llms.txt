@@ -9,7 +9,7 @@ The links below are relative to this file. Read the docs of the version you run 
 ## Start here
 
 - [Agents](docs/agents.md): how a tool or an AI agent drives local-storefront, task by task: set up, store data, checks, CI, a server, an app's backend
-- [CLI reference](docs/cli.md): every command, option, exit code and output format; what a change of the data on disk reloads (a checkout scenario keeps the Admin API's state, store data seeds it again)
+- [CLI reference](docs/cli.md): every command, option, exit code and output format; what runs (`--only theme,checkout,admin`: `serve` runs the theme, all three with `--app`; `app dev` the checkout and the Admin API; a part left out answers 404 with `X-LSF-Reason`); what a change of the data on disk reloads (a checkout scenario keeps the Admin API's state, store data seeds it again)
 
 ## Guides
 

@@ -28,6 +28,7 @@ npx local-storefront app dev --app ../my-app --app-url http://localhost:3000
 ```
 
 ```text
+serving: checkout, admin
 admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
         X-Shopify-Access-Token: shpat_4f…   (shop: local-supply-co.myshopify.com)
         client secret: from SHOPIFY_API_SECRET of ../my-app/.env
@@ -92,9 +93,16 @@ pages what the backend changes, serve the theme with the app:
 npx local-storefront serve --theme ../my-theme --app ../my-app --app-url http://localhost:3000
 ```
 
-`serve` without `--app` serves the Admin API too, with a local client id
-(`lsf-local-client-id`), every scope and no subscription, and prints no `admin:`, secret or
-`webhooks:` line: `GET /__lsf/admin` has its token.
+The Admin API is the admin part of lsf, and needs `--app`: `serve` without `--app` serves the
+theme alone, and its `/admin/…` and `/__lsf/admin` answer `404` with an `X-LSF-Reason` that says
+so. A backend whose tests need no theme and no checkout runs the Admin API alone:
+
+```bash
+npx local-storefront serve --app ../my-app --only admin --app-url http://localhost:3000
+```
+
+`--only checkout` runs the checkout without the Admin API, and `--only theme,admin` the theme
+and the Admin API without the checkout ([what runs](cli.md#what-runs)).
 
 [`examples/admin-backend`](https://github.com/0xtlt/local-storefront/tree/main/examples/admin-backend)
 is a backend written with Shopify's libraries (the React Router package and
@@ -717,8 +725,7 @@ def verify_webhook(raw_body: bytes, header: str, secret: str) -> bool:
 
 **The backend answers `401`** (or `403`): the two secrets differ. lsf signs with
 `--client-secret` (`LSF_CLIENT_SECRET`), else `SHOPIFY_API_SECRET` of the environment, else the
-one of the app's `.env`, else `lsf-local-client-secret`; without `--app`, no `.env` is read. lsf
-says so where you look, naming the secret it signed with as the start line `client secret:`
+one of the app's `.env`, else `lsf-local-client-secret`. lsf says so where you look, naming the secret it signed with as the start line `client secret:`
 does:
 
 - the server prints one line at the first refusal of each delivery, `--quiet` or not:

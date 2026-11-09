@@ -33,7 +33,8 @@ one prints: [agents](agents.md#what-each-command-prints).
 
 `npx local-storefront serve`
 
-Serves the theme over HTTP.
+Serves the theme over HTTP. With `--app`, the checkout and the Admin API of the app too;
+`--only` runs a part of them ([what runs](#what-runs)).
 
 ```bash
 npx local-storefront serve --port 9292 --static --quiet --strict
@@ -52,7 +53,8 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--timings` | | Names every section and theme block in the `Server-Timing` header. See [performance](performance.md#render-times). |
 | `--no-minify` | | Serves styles and scripts as written. Without it, they are minified with a source map, as on Shopify. |
 | `--no-compression` | | Sends responses uncompressed. Without it, they are compressed (Brotli or gzip) for clients that accept it, as on Shopify. |
-| `--app <dir>` | `LSF_APP` | A Shopify app. `/checkout` then runs its Functions and shows its checkout UI extensions, and `/account` shows its customer account UI extensions. See [checkout](checkout.md). |
+| `--app <dir>` | `LSF_APP` | A Shopify app. `/checkout` then runs its Functions and shows its checkout UI extensions, `/account` shows its customer account UI extensions, and its backend gets the [Admin API](admin.md). See [checkout](checkout.md). |
+| `--only <parts>` | `LSF_ONLY` | Runs only these parts: `theme`, `checkout`, `admin`, comma-separated or repeated. Without it, the theme, and all three with `--app`. `checkout` and `admin` need `--app`. See [what runs](#what-runs). |
 | `--extension <handle>` | | With `--app`: uses only this extension of the app. Repeat it for several. Without it, every extension is used. |
 | `--build` | | With `--app`: runs the build command of each Function first. |
 | `--no-functions` | | With `--app`: serves the app's UI extensions and its Admin API, but runs none of its Functions. For a backend's tests, whose orders a Function that fails would block: a discount of the data whose Function is not run is left out. A Function named with `--extension` is refused; not with `--watch`. |
@@ -65,19 +67,27 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--admin-fetch-local` | `LSF_ADMIN_FETCH_LOCAL` | Lets `themeCreate`, the `URL` bodies of `themeFilesUpsert` and `urlRedirectImportCreate` download their source from this machine or its network (the loopback, private, link-local and unique-local addresses), for a theme ZIP served from localhost on purpose. Off by default: Shopify cannot reach them, and a backend could otherwise read what the machine serves. See [Sources from a URL](admin.md). |
 | `--admin-source <url>=<file>` | | Answers a URL with a file, never downloading it: what `themeCreate`, a `URL` body of `themeFilesUpsert` or `urlRedirectImportCreate` reads there. Repeatable. For your backend's own URLs (a theme ZIP on its CDN) that nothing serves in a test, wherever they point, `localhost` included. The file must exist when lsf starts, and is read at each use. `PUT /__lsf/admin/sources?url=` stubs others while lsf runs. See [Stubbed URLs](admin-reference.md#stubbed-urls). |
 | `--pricing-plans <file>` | `LSF_PRICING_PLANS` | The plans of the app's [managed pricing](admin.md#managed-pricing) (Shopify App Pricing), which Shopify keeps in the Partner Dashboard: a TOML file of `[[plans]]` (JSON for a `.json` file). lsf's admin shows them at `/admin/charges/<app handle>/pricing_plans`, where the merchant chooses one, and the Billing API creates no charge, as on Shopify. A wrong file stops the start. Read at start, and again when it changes unless `--static` ([when the data changes on disk](#when-the-data-changes-on-disk); a wrong file then keeps the plans it had, and says why); `PUT /__lsf/admin/pricing-plans` changes them while lsf runs. Printed before `ready:` as `pricing: <n> plans (<file>): <page>`, then `partner: <url>   (Partner API: …; token prtapi_lsf_…)`: where the app reads its plan ([Partner API](admin.md#read-the-plan-from-the-partner-api)). |
+| `--polaris <online\|offline>` | `LSF_POLARIS` | What `/__lsf/cdn/<path>` answers, where an embedded app loads Polaris from: `online` (the default) redirects to Shopify's CDN, `offline` serves lsf's copy. See [Polaris without the internet](admin.md#polaris-without-the-internet). |
+
+The options from `--extension` to `--variant` are the checkout's, those from `--app-url` to
+`--polaris` the Admin API's. One given (on the command line or by its variable) while its part
+does not run stops the start: `error: --pricing-plans needs the admin part, which --only leaves
+out`, or without `--app`, ``which needs the app: `--app DIR` (or LSF_APP)``.
 
 Every line of the server goes to stderr; stdout stays empty. It prints the theme and the data
-folder, then, once it takes requests, a line that starts with
-`ready:  http://127.0.0.1:<port>/`. With `--port 0`, read the port from that line. Without
-`--quiet`, each request gets a line (`200 GET / 39.1ms`), with the reason of a 404 above it.
+folder, the parts it runs (`serving: theme, checkout, admin`), then, once it takes requests, a
+line that starts with `ready:  http://127.0.0.1:<port>/`. With `--port 0`, read the port from
+that line. Without `--quiet`, each request gets a line (`200 GET / 39.1ms`), with the reason of
+a 404 above it.
 
 With `--app`, the lines of the app come before `ready:`: how many checkout scenarios the data
-has (when the app serves a Function), the [Admin API](admin.md) of the store and its token, the
-client secret it signs with and where that secret comes from, the webhooks of the app, and its
-proxy. After `ready:`, with a theme, the address of the home page of the checkout, then `watch:`
-with `--watch`:
+has (when the checkout runs a Function), then, with the admin part, the [Admin API](admin.md)
+of the store and its token, the client secret it signs with and where that secret comes from,
+the webhooks of the app, and its proxy. After `ready:`, with the theme and the checkout, the
+address of the home page of the checkout, then `watch:` with `--watch`:
 
 ```text
+serving: theme, checkout, admin
 scenarios: 10
 admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
         X-Shopify-Access-Token: shpat_…   (shop: local-supply-co.myshopify.com)
@@ -87,9 +97,10 @@ ready:  http://127.0.0.1:9292/   (status and control API: http://127.0.0.1:9292/
 home:   http://127.0.0.1:9292/__lsf/checkouts   (extensions and checkout scenarios of the app)
 ```
 
-Without `--app`, it prints none of these. An app without an `extensions` directory is a
-backend, and its line says so: `app:    ../my-app (no extensions: the Admin API, webhooks and
-the app proxy)`. The token is the same every run for a shop and an app; a tool reads it from
+Without `--app`, or with `--only` leaving the admin part out, it prints no `admin:`, secret,
+`webhooks:`, `proxy:`, `embedded:`, `pricing:`, `partner:` or `polaris:` line. An app without an
+`extensions` directory is a backend, and its line says so: `app:    ../my-app (no extensions:
+the Admin API, webhooks and the app proxy)`. The token is the same every run for a shop and an app; a tool reads it from
 `GET /__lsf/admin` (`shops[0].token`). When the data changes on disk, the server reads it
 again, and seeds the shops of the Admin API again only when the store's own data changed, not
 for a checkout scenario ([when the data changes on disk](#when-the-data-changes-on-disk)).
@@ -108,6 +119,52 @@ Address already in use`), or, with `--strict`, when the store data has errors (e
 render budget (see [the render budget](compatibility.md#the-render-budget)).
 
 While it runs, tests talk to it through the [control API](control-api.md).
+
+### What runs
+
+lsf has three parts:
+
+- **theme**: the storefront rendered from the theme: its pages, the cart, search, and the
+  stand-ins of the checkout (`/checkout` lists the cart) and of the customer accounts
+  (`/account`).
+- **checkout**: what `--app` brings to the shop: the [checkout](checkout.md), where its
+  Functions run, its UI extensions (checkout, thank-you page, order status, customer account at
+  `/account`), the scenarios and the home page of the app.
+- **admin**: the [Admin API](admin.md), OAuth and tokens, webhook delivery, the app proxy,
+  lsf's admin (`/admin/…`, App Bridge, Polaris at `/__lsf/cdn/`), managed pricing and the
+  Partner API, and their control endpoints (`/__lsf/admin/…`, `/__lsf/webhooks`,
+  `/__lsf/polaris`).
+
+`--only` (or `LSF_ONLY`) names the parts to run. Without it:
+
+| Command | Runs |
+|---|---|
+| `serve` | `theme` |
+| `serve --app <dir>` | `theme`, `checkout`, `admin` |
+| `app dev` | `checkout`, `admin`: `serve --only checkout,admin` |
+
+```bash
+npx local-storefront serve --only theme                            # the theme alone
+npx local-storefront serve --app ../my-app --only admin            # the Admin API alone, for a backend's tests
+npx local-storefront serve --app ../my-app --only checkout         # the extensions and the Functions alone
+npx local-storefront serve --app ../my-app --only checkout,admin   # what app dev serves
+```
+
+`checkout` and `admin` need `--app`: without it, ``error: `--only admin` needs the app: `--app
+DIR` (or LSF_APP)``. `app dev` serves no theme, so `app dev --only theme` is an error. Without
+the theme, `serve` needs no theme folder, as `app dev`: the store data is still looked for in
+`<theme>/shopify-local`, then in the app's.
+
+A part that does not run answers `404` on its routes, with an `X-LSF-Reason` that names the
+`--only` that serves it: ``the admin part is not served (serving: theme): `serve --app <dir>
+--only theme,admin` serves it`` ([control API](control-api.md)). With the theme and without the
+checkout, `/checkout` and `/account` are the theme's stand-ins, as without `--app`. Without the
+theme, the pages of the theme answer that `404`, `/` too unless the checkout runs (its home
+page). `GET /__lsf/status`, `GET /__lsf/admin` and the page of `/__lsf` say which parts run.
+
+The checkout without the admin part reads the owners of its Functions from the store data, and
+records no order in an Admin API. The theme with the admin part shows what the backend writes,
+with or without the checkout.
 
 ### When the data changes on disk
 
@@ -146,13 +203,14 @@ and the store data defaults to the app's `shopify-local/`. Guide: [checkout](che
 
 `npx local-storefront app dev --app <dir>`
 
-Serves a Shopify app alone, without a theme: `serve --app` without the storefront. `/` is the
+Serves a Shopify app alone, without a theme: `serve --app --only checkout,admin`. `/` is the
 [home page](checkout.md#the-home-page), which lists the extensions of the app and the checkout
 scenarios and opens a checkout for each; `/checkout` starts a checkout, where the Functions run
 and the checkout UI extensions show; `/account` is the
 [customer account](checkout.md#customer-account), where the customer account UI extensions
-show. The control API and `/cdn` are there, other pages answer `404`. It takes the options of
-[`serve`](#serve).
+show. The Admin API, the control API and `/cdn` are there, other pages answer `404`. It takes
+the options of [`serve`](#serve); `--only checkout` or `--only admin` runs one of its two parts
+([what runs](#what-runs)), and `--only theme` is an error.
 
 ```bash
 npx local-storefront app dev --app ../my-app --extension volume-discount --variant shop
