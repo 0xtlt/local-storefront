@@ -155,8 +155,9 @@ pub struct Args {
     /// Partner Dashboard: a TOML file of `[[plans]]` (`handle`, `name`, `price`, `interval`,
     /// `trial_days`, `features`, `welcome_link`), or JSON for a `.json` file. lsf's admin then
     /// shows them at `/admin/charges/<app handle>/pricing_plans`, where the merchant chooses one,
-    /// and the Billing API creates no charge, as on Shopify. Read at start;
-    /// `PUT /__lsf/admin/pricing-plans` changes them while lsf runs.
+    /// and the Billing API creates no charge, as on Shopify. Read at start, and again when the
+    /// file changes unless `--static`; `PUT /__lsf/admin/pricing-plans` changes them while lsf
+    /// runs.
     #[arg(long, env = "LSF_PRICING_PLANS", value_name = "FILE")]
     pricing_plans: Option<std::path::PathBuf>,
 
