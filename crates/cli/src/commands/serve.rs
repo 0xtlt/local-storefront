@@ -326,17 +326,43 @@ fn parts_of(args: &Args, given: &Given, has_app: bool, standalone: bool) -> Resu
         },
     };
     for (id, part) in NEEDS {
-        if parts.has(*part) || given.source(id).is_none() {
+        // A variable of the environment is said and set aside, by `ignored_variables`: one
+        // exported for `app dev` must not stop a `serve` of the theme alone.
+        if parts.has(*part) || given.source(id).is_none() || given.in_env(id) {
             continue;
         }
-        let why = match only {
-            Some(_) if given.in_env("only") => "which LSF_ONLY leaves out".to_string(),
-            Some(_) => "which --only leaves out".to_string(),
-            None => "which needs the app: `--app DIR` (or LSF_APP)".to_string(),
-        };
-        return Err(format!("{} needs the {part} part, {why}", named(given, id)));
+        return Err(format!(
+            "{} needs the {part} part, {}",
+            named(given, id),
+            left_out(only.is_some(), given)
+        ));
     }
     Ok(parts)
+}
+
+/// Why a part is not served: `--only` (or `LSF_ONLY`) leaves it out, or there is no app.
+fn left_out(only: bool, given: &Given) -> String {
+    match only {
+        true if given.in_env("only") => "which LSF_ONLY leaves out".to_string(),
+        true => "which --only leaves out".to_string(),
+        false => "which needs the app: `--app DIR` (or LSF_APP)".to_string(),
+    }
+}
+
+/// The options set by a variable of the environment for a part that is not served: each is
+/// ignored, and said, where the same option on the command line is an error.
+fn ignored_variables(args: &Args, given: &Given, parts: Parts) -> Vec<String> {
+    NEEDS
+        .iter()
+        .filter(|(id, part)| !parts.has(*part) && given.in_env(id))
+        .map(|(id, part)| {
+            format!(
+                "note: {} is set, but the {part} part is not served, {}: ignored",
+                named(given, id),
+                left_out(!args.only.is_empty(), given)
+            )
+        })
+        .collect()
 }
 
 /// Serves the parts of lsf `--only` names (see [`parts_of`]): the theme, the checkout of the app
@@ -359,6 +385,9 @@ pub fn run(
     };
     let app_dir = args.app.app.clone().or(found);
     let parts = parts_of(&args, given, app_dir.is_some(), standalone)?;
+    for line in ignored_variables(&args, given, parts) {
+        eprintln!("{line}");
+    }
     // What the `app:` line says of the app, when it serves a part.
     let mut summary = None;
     // How many of its Functions run: the scenarios are for them.
@@ -421,27 +450,33 @@ pub fn run(
     };
     let throttle = Throttle::parse(args.throttle.iter().map(String::as_str))
         .map_err(|problem| format!("--throttle: {problem}"))?;
-    let admin = AdminSettings {
-        app_dir: app_dir.clone(),
-        client_secret: args.client_secret.clone(),
-        app_url: args.app_url.clone(),
-        throttle: ThrottleSetting::parse(&args.admin_throttle)
-            .map_err(|problem| format!("--admin-throttle: {problem}"))?,
-        versions: match &args.admin_versions {
-            Some(list) => lsf_app::admin::version::Served::parse(list)
-                .map_err(|problem| format!("--admin-versions: {problem}"))?,
-            None => Default::default(),
-        },
-        fetch_local: args.admin_fetch_local,
-        sources: args.admin_sources.clone(),
-        pricing: match &args.pricing_plans {
-            Some(path) => Some((
-                lsf_app::admin::domains::app::pricing::Pricing::read(path)
-                    .map_err(|problem| format!("--pricing-plans: {problem}"))?,
-                path.clone(),
-            )),
-            None => None,
-        },
+    // The settings of the Admin API, read only when it is served: a variable of the environment
+    // for a part that is not served is ignored (`ignored_variables`), not read.
+    let admin = if parts.admin {
+        Some(AdminSettings {
+            app_dir: app_dir.clone(),
+            client_secret: args.client_secret.clone(),
+            app_url: args.app_url.clone(),
+            throttle: ThrottleSetting::parse(&args.admin_throttle)
+                .map_err(|problem| format!("--admin-throttle: {problem}"))?,
+            versions: match &args.admin_versions {
+                Some(list) => lsf_app::admin::version::Served::parse(list)
+                    .map_err(|problem| format!("--admin-versions: {problem}"))?,
+                None => Default::default(),
+            },
+            fetch_local: args.admin_fetch_local,
+            sources: args.admin_sources.clone(),
+            pricing: match &args.pricing_plans {
+                Some(path) => Some((
+                    lsf_app::admin::domains::app::pricing::Pricing::read(path)
+                        .map_err(|problem| format!("--pricing-plans: {problem}"))?,
+                    path.clone(),
+                )),
+                None => None,
+            },
+        })
+    } else {
+        None
     };
     // The app's store data when the theme has none.
     let data = crate::app::data_with_app(theme, data, app_dir.as_deref());
@@ -467,7 +502,7 @@ pub fn run(
         app,
         ServeOptions {
             polaris: args.polaris,
-            admin: parts.admin.then_some(admin),
+            admin,
             live_reload: args.live_reload || args.watch,
             watch: !args.static_files,
             quiet: args.quiet,

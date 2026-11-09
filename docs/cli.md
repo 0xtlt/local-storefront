@@ -70,9 +70,11 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--polaris <online\|offline>` | `LSF_POLARIS` | What `/__lsf/cdn/<path>` answers, where an embedded app loads Polaris from: `online` (the default) redirects to Shopify's CDN, `offline` serves lsf's copy. See [Polaris without the internet](admin.md#polaris-without-the-internet). |
 
 The options from `--extension` to `--variant` are the checkout's, those from `--app-url` to
-`--polaris` the Admin API's. One given (on the command line or by its variable) while its part
-does not run stops the start: `error: --pricing-plans needs the admin part, which --only leaves
-out`, or without `--app`, ``which needs the app: `--app DIR` (or LSF_APP)``.
+`--polaris` the Admin API's. One given on the command line while its part does not run stops the
+start: `error: --pricing-plans needs the admin part, which --only leaves out`, or without
+`--app`, ``which needs the app: `--app DIR` (or LSF_APP)``. One set by its variable is ignored,
+and said (`note: LSF_APP_URL (--app-url) is set, but the admin part is not served, …: ignored`):
+a variable exported for `app dev` does not stop a `serve` of the theme alone.
 
 Every line of the server goes to stderr; stdout stays empty. It prints the theme and the data
 folder, the parts it runs (`serving: theme, checkout, admin`), then, once it takes requests, a

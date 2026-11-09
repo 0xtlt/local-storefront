@@ -176,7 +176,8 @@ the same data every run.
   the `--only` serving it; a line before `ready:` says what runs (`serving: theme, checkout,
   admin`), and `GET /__lsf/status` and `GET /__lsf/admin` list it (`parts`). An option of a part
   left out (`--pricing-plans` without the admin part, `--variant` without the checkout) stops the
-  start. `serve` without `--app` serves no Admin API: it was new in this version, and costs
+  start when given on the command line; set by its variable (`LSF_APP_URL`), it is ignored and
+  said. `serve` without `--app` serves no Admin API: it was new in this version, and costs
   memory a theme does not use. [What runs](docs/cli.md#what-runs).
 - **New options:**
   - `--app-url`: where the backend listens.

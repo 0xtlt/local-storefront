@@ -452,15 +452,32 @@ fn a_part_without_its_app_app_dev_with_a_theme_and_an_option_of_a_part_that_is_o
         ),
         "error: --pricing-plans needs the admin part, which --only leaves out"
     );
-    assert_eq!(
-        refusal(
-            &[
-                "--theme", &theme, "serve", "--app", dir, "--only", "checkout"
-            ],
-            &[("LSF_PRICING_PLANS", "p.toml")]
-        ),
-        "error: LSF_PRICING_PLANS (--pricing-plans) needs the admin part, which --only leaves out"
+    // The same option from a variable of the environment is said and ignored: one exported
+    // for `app dev` must not stop a `serve` of fewer parts.
+    let server = Server::start(
+        &[
+            "--theme", &theme, "serve", "--app", dir, "--only", "checkout",
+        ],
+        &[("LSF_PRICING_PLANS", "p.toml")],
     );
+    assert!(
+        server.before_ready.iter().any(|line| line
+            == "note: LSF_PRICING_PLANS (--pricing-plans) is set, but the admin part is not served, which --only leaves out: ignored"),
+        "{}",
+        server.before_ready.join("\n")
+    );
+    drop(server);
+    let server = Server::start(
+        &["--theme", &theme, "serve"],
+        &[("LSF_APP_URL", "http://localhost:3000")],
+    );
+    assert!(
+        server.before_ready.iter().any(|line| line
+            == "note: LSF_APP_URL (--app-url) is set, but the admin part is not served, which needs the app: `--app DIR` (or LSF_APP): ignored"),
+        "{}",
+        server.before_ready.join("\n")
+    );
+    drop(server);
     assert_eq!(
         refusal(&["--theme", &theme, "serve", "--variant", "shop"], &[]),
         "error: --variant needs the checkout part, which needs the app: `--app DIR` (or LSF_APP)"
