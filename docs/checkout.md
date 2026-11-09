@@ -1223,9 +1223,11 @@ npx local-storefront app function run volume-discount --app ../my-app --scenario
 
 Builds the input of each Function from the store data and the [scenario](#scenarios), runs them
 in checkout order, and prints each input, output and log with the checkout that results. The
-Functions it names run whether or not the shop has an owner of them; without a handle, those the
-checkout runs (an enabled owner, a discount, or the `extensions` of the scenario), and the others
-are listed as not run, with why. Without `--scenario` or `--session`, the cart is the
+Functions it names run whether or not the shop has an owner of them, and a named one that the
+shop's checkout would leave out (its payment customization is disabled, or the shop has none) is
+said first (`Named: …`; `forced` in JSON), so that its run is not taken for the checkout's.
+Without a handle, it runs those the checkout runs (an enabled owner, a discount, or the
+`extensions` of the scenario), and the others are listed as not run, with why. Without `--scenario` or `--session`, the cart is the
 `session` of the store data, empty in the demo store: a Function that runs gets an empty cart
 and changes nothing. Give `--scenario`.
 

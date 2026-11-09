@@ -148,6 +148,10 @@ the same data every run.
   plans) and in `GET /__lsf/admin/partner`; they are the same every run. A wrong token is
   Shopify's `401`. The rest of the Partner API answers `LSF_NOT_SIMULATED`.
   [Read the plan from the Partner API](docs/admin.md#read-the-plan-from-the-partner-api).
+- **`lsf app function run <handle>` says when the shop's checkout would not run the Function.**
+  A named Function runs whatever its owner, as before; when its payment customization (or other
+  owner) is disabled, or the shop has none, the output says so first (`Named: …`, `forced` in
+  JSON), so that a run is not taken for what the checkout does.
 - **The plan selection page takes the app's handle only.** `/admin/charges/<client id>/pricing_plans`
   is a `404` with `X-LSF-Reason` when `shopify.app.toml` has a handle: on Shopify a client id there
   fails, so a link built with it no longer passes locally. An app with no handle keeps its page at

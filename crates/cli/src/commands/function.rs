@@ -155,6 +155,7 @@ pub fn run(
         scenario,
         discounted,
         named,
+        forced,
     } = compute(theme, data, previews, &args)?;
     let failed = result.runs.iter().any(|run| run.error.is_some());
     // A Function asked for by name that did not run is a failure, with why.
@@ -190,6 +191,12 @@ pub fn run(
                     .map(|diagnostic| Json::String(diagnostic.to_string()))
                     .collect(),
             );
+            json["forced"] = Json::Array(
+                forced
+                    .iter()
+                    .map(|(handle, reason)| serde_json::json!({"handle": handle, "reason": reason}))
+                    .collect(),
+            );
             json["notRun"] = Json::Array(
                 not_run
                     .iter()
@@ -204,6 +211,15 @@ pub fn run(
         Format::Text => {
             if let Some((name, title)) = &scenario {
                 println!("== scenario {name}: {title}\n");
+            }
+            for (handle, reason) in &forced {
+                println!(
+                    "Named: {handle} runs because this run names it, but the shop's checkout does not run it: {reason}. `{}` runs what the checkout runs.",
+                    checkout::as_typed("lsf app function run")
+                );
+            }
+            if !forced.is_empty() {
+                println!();
             }
             print_text(&result);
         }
@@ -229,6 +245,9 @@ struct Ran {
     /// The file of the scenario (`checkouts/b2b.json`) and its `extensions`, when it names
     /// them: the Functions it leaves out do not run.
     named: Option<(String, Vec<String>)>,
+    /// The Functions named on the command line that the shop's checkout would not run, for want
+    /// of an enabled owner, and why: they ran anyway, as named, and the output says so.
+    forced: Vec<(String, String)>,
 }
 
 /// Why a Function asked for by name did not run: what the app says is wrong with it, a
@@ -413,9 +432,35 @@ fn compute(
 
     let mut config = checkout::config_for(&store, scenario.map(|scenario| scenario.name.as_str()));
     // The Functions named on the command line run, whether or not the shop has an owner of
-    // them, as `shopify app function run` runs one: without them, the checkout's.
-    if !args.handles.is_empty() {
-        config.owners = None;
+    // them, as `shopify app function run` runs one: without them, the checkout's. Each one the
+    // shop's checkout would leave out is said, so that this run is not taken for the checkout.
+    let mut forced = Vec::new();
+    if !args.handles.is_empty()
+        && let Some(owners) = config.owners.take()
+    {
+        for handle in &args.handles {
+            let Some(owner) = shopify_app
+                .function(handle)
+                .and_then(|function| function.owner_type())
+            else {
+                continue;
+            };
+            // `PaymentCustomization` → `payment customization`.
+            let owner = owner
+                .chars()
+                .enumerate()
+                .flat_map(|(index, c)| {
+                    let space = (index > 0 && c.is_ascii_uppercase()).then_some(' ');
+                    space.into_iter().chain(c.to_lowercase())
+                })
+                .collect::<String>();
+            let reason = match owners.get(handle) {
+                Some(true) => continue,
+                Some(false) => format!("its {owner} is disabled"),
+                None => format!("the shop has no {owner} of it"),
+            };
+            forced.push((handle.clone(), reason));
+        }
     }
     let functions_only =
         Selection::only(selection.functions(&shopify_app).map(|f| f.handle.clone()));
@@ -443,6 +488,7 @@ fn compute(
         scenario,
         discounted,
         named,
+        forced,
     })
 }
 

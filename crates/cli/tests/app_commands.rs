@@ -311,7 +311,7 @@ fn function_run_finds_the_app_and_says_why_a_function_did_not_run() {
         "{}",
         text(&output)
     );
-    // Named, it runs.
+    // Named, it runs, and the output says the shop's checkout would not run it.
     let output = lsf(
         &app.0,
         &[
@@ -329,6 +329,39 @@ fn function_run_finds_the_app_and_says_why_a_function_did_not_run() {
         "{}",
         text(&output)
     );
+    assert!(
+        text(&output).contains(
+            "Named: payment-rules runs because this run names it, but the shop's checkout does not run it: the shop has no payment customization of it."
+        ),
+        "{}",
+        text(&output)
+    );
+    // With a disabled owner, the same, with why; with an enabled one, nothing to say.
+    for (enabled, said) in [(false, true), (true, false)] {
+        let session = format!(
+            r#"{{"cart": {{"items": [{{"variant": "TEE-BLK-M", "quantity": 1}}]}},
+                "data": {{"checkout": {{"functions": {{"payment-rules": {{"enabled": {enabled}}}}}}}}}}}"#
+        );
+        let output = lsf(
+            &app.0,
+            &[
+                "app",
+                "function",
+                "run",
+                "payment-rules",
+                "--session",
+                &session,
+            ],
+        );
+        assert!(output.status.success(), "{}", text(&output));
+        assert_eq!(
+            text(&output).contains("its payment customization is disabled"),
+            said,
+            "{}",
+            text(&output)
+        );
+        assert_eq!(text(&output).contains("Named: "), said, "{}", text(&output));
+    }
     // Each payment method with its placements.
     assert!(
         text(&output).contains("payment: Credit card [PAYMENT_METHOD], "),
