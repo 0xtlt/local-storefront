@@ -60,6 +60,16 @@ impl ThrottleSetting {
     }
 }
 
+/// A page of the server that lsf's admin links to, in a new tab: the storefront, the checkout
+/// ([`AdminApi::with_previews`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Preview {
+    /// What the link says: `Online Store`, `Checkout`.
+    pub label: String,
+    /// Where it leads, on the server's origin: `/`, `/__lsf/checkouts`.
+    pub path: String,
+}
+
 /// How the Admin API of a server is set up.
 #[derive(Clone, Debug, Default)]
 pub struct AdminOptions {
@@ -144,6 +154,9 @@ pub struct AdminApi {
     fetch: crate::admin::sources::FetchOptions,
     /// One set for every shop, kept when they are reset.
     stubs: crate::admin::sources::Stubs,
+    /// The pages of the server lsf's admin links to ([`AdminApi::with_previews`]): none by
+    /// default.
+    previews: Vec<Preview>,
     /// Where what the server should print goes ([`AdminApi::with_log`]): nowhere by default.
     log: Option<Log>,
     /// Where what the server says of a change of the app's installation goes
@@ -292,12 +305,26 @@ impl AdminApi {
             theme: None,
             fetch: crate::admin::sources::FetchOptions::default(),
             stubs: crate::admin::sources::Stubs::default(),
+            previews: Vec::new(),
             log: None,
             notices: None,
             pricing: RwLock::new(PricingPlans::default()),
             #[cfg(test)]
             test_hooks: Mutex::new(Default::default()),
         }
+    }
+
+    /// The pages of the server lsf's admin links to, under "Preview" in its navigation, each
+    /// opened in a new tab: the storefront and the checkout the server runs. They are the
+    /// default shop's, so the admin of another shop has none.
+    pub fn with_previews(mut self, previews: Vec<Preview>) -> AdminApi {
+        self.previews = previews;
+        self
+    }
+
+    /// The pages of the server lsf's admin links to.
+    pub fn previews(&self) -> &[Preview] {
+        &self.previews
     }
 
     /// The theme the storefront serves is `root`: the main theme of every shop, its files read

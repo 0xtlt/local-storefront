@@ -275,3 +275,56 @@ fn the_checkout_without_the_admin_api_runs_on_the_store_data() {
         "{checkout}"
     );
 }
+
+/// The links of lsf's admin under "Preview": the storefront and the checkout the server runs,
+/// in that order, each opened in a new tab.
+fn previews_of(html: &str) -> Vec<(String, String)> {
+    html.split("class=\"lsf-nav-preview\" href=\"")
+        .skip(1)
+        .map(|link| {
+            let (href, rest) = link.split_once('"').expect("an href");
+            assert!(rest.contains("target=\"_blank\""), "{link}");
+            let label = rest.split_once('>').expect("a label").1;
+            let label = label.split_once('<').expect("a label").0;
+            (label.to_string(), href.to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn the_admin_links_to_the_storefront_and_the_checkout_the_server_runs() {
+    let store = ("Online Store".to_string(), "/".to_string());
+    let checkout = ("Checkout".to_string(), "/__lsf/checkouts".to_string());
+    for (parts, expected) in [
+        (Parts::ALL, vec![store.clone(), checkout.clone()]),
+        (and(CHECKOUT, ADMIN), vec![checkout.clone()]),
+        (and(THEME, ADMIN), vec![store.clone()]),
+        (ADMIN, vec![]),
+    ] {
+        let state = server_of(parts);
+        let page = get(&state, "/admin/apps/checkout-fixtures", "parts");
+        assert_eq!(page.status, 200, "{parts:?}: {}", text(&page));
+        let html = text(&page);
+        assert_eq!(previews_of(&html), expected, "{parts:?}");
+        assert_eq!(
+            html.contains(">Preview</div>"),
+            !expected.is_empty(),
+            "{parts:?}"
+        );
+        // Each link answers.
+        for (_, path) in &expected {
+            assert_eq!(get(&state, path, "parts").status, 200, "{parts:?}: {path}");
+        }
+    }
+
+    // The storefront and the checkout are the default shop's: another shop's admin has none.
+    let state = server_of(Parts::ALL);
+    let made = admin_request(&state, "POST", "/__lsf/admin/shops", r#"{"shop": "other"}"#);
+    assert_eq!(made.status, 201, "{}", text(&made));
+    let other = text(&get(
+        &state,
+        "/admin/apps/checkout-fixtures?shop=other.myshopify.com",
+        "parts",
+    ));
+    assert!(previews_of(&other).is_empty(), "{other}");
+}

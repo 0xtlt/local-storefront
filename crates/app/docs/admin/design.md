@@ -965,7 +965,9 @@ serves both halves, so that a developer previews the app offline:
 
 - **The admin**: `GET /admin/apps/<app>/<path>` (`<app>` the handle, or the client id). A page of
   lsf's origin (`assets/admin/admin.html`, `admin.css`, `admin.js`): a top bar, the navigation
-  (the shop's name, sections of the admin that lsf does not have, the app and its items), the
+  (the shop's name, "Preview": the storefront and the checkout the server runs, which the CLI
+  gives with `AdminApi::with_previews`, the app and its items; no link to a section of the
+  admin lsf does not simulate), the
   app's title bar, and the app in an `<iframe>` at `oauth::launch_url` of `<path>`, minted when
   the page is rendered: a new `hmac` and `id_token` on every load. `shop`, `user` and `locale` of
   the query are the admin's; the others go to the app, the launch's own parameters dropped.

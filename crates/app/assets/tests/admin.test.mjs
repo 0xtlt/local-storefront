@@ -183,16 +183,22 @@ test('asks the merchant before leaving with unsaved changes', async () => {
   await settle();
   assert.equal(page.sent('response')[0].value, true);
 
-  // A section of the admin, with the save bar shown.
+  // The brand of the top bar, with the save bar shown.
   page.bridge({ type: 'saveBar', visible: true, save: {}, discard: {} });
-  const section = page.query('.lsf-nav-section');
+  const brand = page.query('.lsf-brand');
   const event = new FakeEvent('click', { bubbles: true, cancelable: true });
-  section.dispatchEvent(event);
+  brand.dispatchEvent(event);
   assert.equal(event.defaultPrevented, true);
   await settle();
   page.query('dialog.lsf-confirm').querySelectorAll('button')[1].click();
   await settle();
-  assert.deepEqual(page.location.assigned, ['/admin/products']);
+  assert.deepEqual(page.location.assigned, [brand.getAttribute('href')]);
+
+  // A link of "Preview" opens a new tab: it leaves nothing, so nothing asks.
+  const preview = page.query('.lsf-nav-preview');
+  const open = new FakeEvent('click', { bubbles: true, cancelable: true });
+  preview.dispatchEvent(open);
+  assert.equal(open.defaultPrevented, false);
 });
 
 test('shows toasts, which go after their duration and say so to the frame', async () => {
@@ -375,8 +381,7 @@ test('the picker of the app\'s items answers their ids', async () => {
   assert.deepEqual(plain(page.sent('response')[0].value), ['a', 'b']);
 });
 
-test('a page lsf has no page for marks its section, not the app', async () => {
+test('a page lsf has no page for does not mark the app', async () => {
   const page = await adminPage({ frame: false, path: '/admin/products/12', config: adminConfig({ frame: undefined }) });
-  assert.ok(page.query('.lsf-nav-section').hasAttribute('aria-current'));
   assert.equal(page.query('.lsf-nav-app').hasAttribute('aria-current'), false);
 });

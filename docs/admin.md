@@ -322,6 +322,13 @@ new launch: a new `hmac`, a new session token in `id_token`. The page's path fol
 app there again. The `serve` and `app dev` banners print its URL (`embedded:`), and the home
 page of the app has an **Admin** button to it.
 
+Under **Preview**, the navigation links to what the server runs, each in a new tab: **Online
+Store** (`/`) with the theme, and **Checkout** (`/__lsf/checkouts`, the scenarios and the
+extensions of the app) with the checkout. So a change the app makes, such as a payment
+customization created, is one click from the checkout that shows it. They are the default
+shop's: the admin of [another shop](#a-shop-per-test) has none, and `--only admin` has none
+([what runs](cli.md#what-runs)).
+
 | Query | What it does |
 |---|---|
 | `shop` | The shop: `test-1` or `test-1.myshopify.com` ([a shop per test](#a-shop-per-test)). The store data's by default. |

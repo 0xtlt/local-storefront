@@ -65,7 +65,9 @@ the same data every run.
 - **An admin to preview the embedded app in, with a local App Bridge.**
   `http://127.0.0.1:9292/admin/apps/<handle>` shows the app in a frame, at a new launch URL on
   every load, with the shop's name, the app's navigation and its title bar around it; `serve`
-  and `app dev` print its URL, and the home page links to it. The app's pages load lsf's App
+  and `app dev` print its URL, and the home page links to it. Its navigation links to the
+  storefront and to the checkout the server runs (**Preview**: Online Store, Checkout), each
+  in a new tab, and lists no section of the admin lsf does not simulate (Orders, Products…). The app's pages load lsf's App
   Bridge (`/__lsf/admin/app-bridge.js`) before Shopify's, which then does nothing:
   - `shopify.idToken()` and `fetch()` with the session token, as App Bridge v4 adds it;
   - the title bar (`ui-title-bar`, `s-page`), the navigation (`s-app-nav`, `ui-nav-menu`), the

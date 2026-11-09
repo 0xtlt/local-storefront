@@ -303,6 +303,20 @@ impl ServerState {
                     .map(|checkout| checkout.app_dir.clone())
             })
         };
+        // What lsf's admin links to: the storefront and the checkout this server runs.
+        let mut previews = Vec::new();
+        if app.has_theme() {
+            previews.push(lsf_app::admin::api::Preview {
+                label: "Online Store".to_string(),
+                path: "/".to_string(),
+            });
+        }
+        if options.checkout.is_some() {
+            previews.push(lsf_app::admin::api::Preview {
+                label: "Checkout".to_string(),
+                path: "/__lsf/checkouts".to_string(),
+            });
+        }
         let admin = options.admin.as_ref().map(|settings| {
             admin::Admin::new(
                 &files.base,
@@ -311,6 +325,7 @@ impl ServerState {
                 app.theme.files().root(),
                 options.quiet,
             )
+            .with_previews(previews)
         });
         let app_proxy = options.admin.as_ref().and_then(|settings| {
             let app_dir = admin_app_dir(settings)?;

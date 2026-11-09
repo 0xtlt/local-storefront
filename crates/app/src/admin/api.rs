@@ -19,7 +19,7 @@ mod tests;
 
 use std::collections::HashMap;
 
-pub use admin::{AdminApi, AdminOptions, INVALID_TOKEN, Reseeded, ThrottleSetting};
+pub use admin::{AdminApi, AdminOptions, INVALID_TOKEN, Preview, Reseeded, ThrottleSetting};
 pub use sync::Synced;
 
 /// A request, as `lsf` decoded it.

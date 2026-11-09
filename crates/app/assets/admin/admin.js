@@ -338,11 +338,6 @@ export function startAdmin(env) {
     }
     if (best) best.link.setAttribute('aria-current', 'page');
     appLink?.toggleAttribute('aria-current', Boolean(frame) && !best);
-    // A page of the admin lsf does not have: its section is the current one.
-    for (const section of document.querySelectorAll('.lsf-nav-section')) {
-      const path = new URL(section.getAttribute('href'), 'http://admin.invalid').pathname;
-      section.toggleAttribute('aria-current', !frame && (location.pathname === path || location.pathname.startsWith(`${path}/`)));
-    }
   }
 
   // The app went somewhere: the admin's URL follows it, as Shopify's admin does.
@@ -437,8 +432,9 @@ export function startAdmin(env) {
     emit('saveBar.discard');
   });
 
-  // Leaving the admin (a section of its navigation) with unsaved changes asks first.
-  for (const link of document.querySelectorAll('.lsf-nav-section, .lsf-brand')) {
+  // Leaving the app (the brand of the top bar) with unsaved changes asks first. The links of
+  // "Preview" open a new tab: they leave nothing.
+  for (const link of document.querySelectorAll('.lsf-brand')) {
     link.addEventListener('click', async (event) => {
       if (!state.saveBar.visible) return;
       event.preventDefault();

@@ -104,7 +104,7 @@ body { background: var(--lsf-bg); }
   75% { transform: translateX(-3px); }
 }
 
-/* The navigation: the shop, the sections lsf does not have, the app and its items. */
+/* The navigation: the shop, the storefront and the checkout of the server, the app and its items. */
 .lsf-nav {
   overflow: auto;
   padding: 12px 8px;
@@ -117,7 +117,7 @@ body { background: var(--lsf-bg); }
   font-weight: 650;
   font-size: 15px;
 }
-.lsf-nav-section, .lsf-nav-app, .lsf-nav-item {
+.lsf-nav-preview, .lsf-nav-app, .lsf-nav-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -126,8 +126,7 @@ body { background: var(--lsf-bg); }
   color: var(--lsf-text);
   text-decoration: none;
 }
-.lsf-nav-section { color: var(--lsf-muted); }
-.lsf-nav-section:hover, .lsf-nav-app:hover, .lsf-nav-item:hover { background: #dfe1e5; }
+.lsf-nav-preview:hover, .lsf-nav-app:hover, .lsf-nav-item:hover { background: #dfe1e5; }
 .lsf-nav-heading {
   margin: 16px 10px 6px;
   color: var(--lsf-muted);
@@ -137,7 +136,7 @@ body { background: var(--lsf-bg); }
   letter-spacing: 0.04em;
 }
 .lsf-nav-app { font-weight: 600; }
-.lsf-nav-app[aria-current], .lsf-nav-item[aria-current], .lsf-nav-section[aria-current] { background: var(--lsf-surface); box-shadow: 0 1px 0 var(--lsf-border); }
+.lsf-nav-app[aria-current], .lsf-nav-item[aria-current] { background: var(--lsf-surface); box-shadow: 0 1px 0 var(--lsf-border); }
 .lsf-app-icon {
   display: inline-grid;
   place-items: center;
@@ -150,6 +149,8 @@ body { background: var(--lsf-bg); }
   font-weight: 700;
 }
 .lsf-nav-items .lsf-nav-item { padding-left: 40px; }
+/* The storefront and the checkout of the server, each opened in a new tab. */
+.lsf-nav-external { margin-left: auto; color: var(--lsf-muted); font-size: 12px; }
 
 /* The app's title bar, the banners, and the app. */
 .lsf-main {
@@ -414,7 +415,7 @@ body { background: var(--lsf-bg); }
 @media (max-width: 720px) {
   .lsf-admin { grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--lsf-topbar-height) auto minmax(0, 1fr); }
   .lsf-nav { border-right: 0; border-bottom: 1px solid var(--lsf-border); }
-  .lsf-nav-sections, .lsf-nav-heading { display: none; }
+  .lsf-nav-heading, .lsf-nav-previews { display: none; }
   .lsf-savebar { padding-left: 16px; }
   .lsf-topbar-shop { display: none; }
 }

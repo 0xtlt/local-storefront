@@ -347,7 +347,7 @@ export async function adminPage({ config = adminConfig(), fetch = async () => ne
       progress,
       el('header', { class: 'lsf-topbar' }, [el('a', { class: 'lsf-brand', href: config.app.base }, ['lsf']), savebar]),
       el('nav', { class: 'lsf-nav' }, [
-        el('a', { class: 'lsf-nav-section', href: '/admin/products' }, ['Products']),
+        el('a', { class: 'lsf-nav-preview', href: '/__lsf/checkouts', target: '_blank' }, ['Checkout']),
         el('a', { class: 'lsf-nav-app', href: config.app.base }, [config.app.name]),
         el('ul', { class: 'lsf-nav-items' }),
       ]),

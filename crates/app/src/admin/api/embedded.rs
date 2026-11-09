@@ -46,14 +46,6 @@ const LAUNCH_PARAMS: &[&str] = &[
     "timestamp",
 ];
 
-/// The sections of the admin the page lists, which lsf does not have: they say so.
-const SECTIONS: &[(&str, &str)] = &[
-    ("Orders", "/admin/orders"),
-    ("Products", "/admin/products"),
-    ("Customers", "/admin/customers"),
-    ("Settings", "/admin/settings"),
-];
-
 /// The answer to a request of the admin, `None` for another path.
 pub(super) fn handle(api: &AdminApi, request: &HttpRequest) -> Option<HttpResponse> {
     let path = request.path.as_str();
@@ -489,16 +481,25 @@ pub(super) fn render(
                 .collect::<Vec<_>>(),
         )
     };
-    let sections: String = SECTIONS
-        .iter()
-        .map(|(label, path)| {
-            format!(
-                "<li><a class=\"lsf-nav-section\" href=\"{}\" title=\"lsf does not simulate this page\">{}</a></li>",
-                escape_html(&keep(path)),
-                escape_html(label)
-            )
-        })
-        .collect();
+    // The storefront and the checkout are the default shop's: another shop's admin has none.
+    let previews: String = if viewer.shop == api.default_shop() && !api.previews().is_empty() {
+        let links: String = api
+            .previews()
+            .iter()
+            .map(|preview| {
+                format!(
+                    "<li><a class=\"lsf-nav-preview\" href=\"{}\" target=\"_blank\" rel=\"noopener\" title=\"Opens in a new tab\">{}<span class=\"lsf-nav-external\" aria-hidden=\"true\">↗</span></a></li>",
+                    escape_html(&preview.path),
+                    escape_html(&preview.label)
+                )
+            })
+            .collect();
+        format!(
+            "<div class=\"lsf-nav-heading\">Preview</div><ul class=\"lsf-nav-previews\">{links}</ul>"
+        )
+    } else {
+        String::new()
+    };
     let app_name = app_name(api);
     let initial = app_name
         .chars()
@@ -523,7 +524,7 @@ pub(super) fn render(
         .replace("{{SHOP_DOMAIN}}", &escape_html(&viewer.shop))
         .replace("{{SHOP_NAME}}", &escape_html(&shop_name))
         .replace("{{USER}}", &escape_html(&user))
-        .replace("{{SECTIONS}}", &sections)
+        .replace("{{PREVIEWS}}", &previews)
         .replace("{{APP_HOME}}", &escape_html(&keep(base)))
         .replace("{{APP_INITIAL}}", &escape_html(&initial))
         .replace("{{APP_NAME}}", &escape_html(&app_name))

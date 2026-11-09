@@ -122,6 +122,13 @@ impl Admin {
         }
     }
 
+    /// lsf's admin links to these pages of the server, in a new tab: the storefront and the
+    /// checkout it runs.
+    pub fn with_previews(mut self, previews: Vec<lsf_app::admin::api::Preview>) -> Admin {
+        self.api = self.api.with_previews(previews);
+        self
+    }
+
     /// What the server prints of its Admin API when it starts with an app, before `ready:`: a
     /// tool that reads up to `ready:` has the token.
     pub fn banner(&self, origin: &str) -> Vec<String> {

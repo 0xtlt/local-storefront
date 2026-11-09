@@ -6,7 +6,9 @@ mod support;
 
 use std::time::Duration;
 
-use lsf_app::admin::api::{AdminApi, AdminOptions, HttpRequest, HttpResponse, ThrottleSetting};
+use lsf_app::admin::api::{
+    AdminApi, AdminOptions, HttpRequest, HttpResponse, Preview, ThrottleSetting,
+};
 use lsf_app::admin::auth::session_token;
 use lsf_app::admin::webhooks::DeliveryOptions;
 use serde_json::Value;
@@ -537,4 +539,39 @@ fn refuses_what_the_resource_picker_cannot_list() {
 
 fn urlencode(text: &str) -> String {
     form_urlencoded::byte_serialize(text.as_bytes()).collect()
+}
+
+#[test]
+fn links_to_the_previews_the_server_gives_it_for_the_default_shop() {
+    // None by default.
+    let html = text(&get(&api(), "/admin/apps/admin-fixtures"));
+    assert!(!html.contains("lsf-nav-preview"), "{html}");
+    assert!(!html.contains(">Preview</div>"), "{html}");
+
+    let api = api().with_previews(vec![
+        Preview {
+            label: "Online Store".into(),
+            path: "/".into(),
+        },
+        Preview {
+            label: "Checkout".into(),
+            path: "/__lsf/checkouts".into(),
+        },
+    ]);
+    assert_eq!(api.previews().len(), 2);
+    let html = text(&get(&api, "/admin/apps/admin-fixtures"));
+    let preview = html
+        .split_once(">Preview</div>")
+        .unwrap_or_else(|| panic!("{html}"))
+        .1;
+    let store = preview
+        .find("href=\"/\" target=\"_blank\" rel=\"noopener\"")
+        .expect(preview);
+    let checkout = preview
+        .find("href=\"/__lsf/checkouts\" target=\"_blank\" rel=\"noopener\"")
+        .expect(preview);
+    assert!(store < checkout, "{preview}");
+    assert!(preview.contains(">Online Store<") && preview.contains(">Checkout<"));
+    // The page of a section lsf lacks has them too.
+    assert!(text(&get(&api, "/admin/products")).contains(">Preview</div>"));
 }
