@@ -4975,6 +4975,7 @@ fn an_update_that_read_the_cart_before_the_completion_writes_nothing() {
         &request("POST", &format!("{path}/update"), json!({}), "co-stale"),
         "co-stale",
         &update,
+        || {},
         || {
             let reply = post(&state, &format!("{path}/complete"), json!({}), "co-stale");
             assert_eq!(reply.status, 200, "{}", text(&reply));
@@ -5008,6 +5009,7 @@ fn an_update_does_not_overwrite_a_cart_change_made_meanwhile() {
         &request("POST", &format!("{path}/update"), json!({}), "co-lost"),
         "co-lost",
         &[json!({"type": "email", "value": "other@example.com"})],
+        || {},
         || {
             let reply = post(
                 &state,
@@ -5023,6 +5025,40 @@ fn an_update_does_not_overwrite_a_cart_change_made_meanwhile() {
     assert_eq!(json["status"], "open");
     assert_eq!(json["buyer"]["email"], "buyer@example.com");
     assert_eq!(cart_count(&state, "co-lost"), 3);
+}
+
+#[test]
+fn a_line_change_that_reads_the_session_after_the_order_is_refused() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-late-line");
+
+    // The update found the checkout open. The order was placed before the update read the
+    // session, so the line it changes is gone: the answer is the order, as for any update after
+    // it, not a missing line.
+    let reply = super::checkout::apply_update(
+        &state,
+        &request("POST", &format!("{path}/update"), json!({}), "co-late-line"),
+        "co-late-line",
+        &[json!({"type": "cartLines", "change": {
+            "type": "updateCartLine", "id": "gid://shopify/CartLine/1", "quantity": 3
+        }})],
+        || {
+            let reply = post(
+                &state,
+                &format!("{path}/complete"),
+                json!({}),
+                "co-late-line",
+            );
+            assert_eq!(reply.status, 200, "{}", text(&reply));
+        },
+        || {},
+    );
+    assert_eq!(reply.status, 409, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["order"]["number"], "#1004");
+    assert_eq!(cart_count(&state, "co-late-line"), 0);
+    assert_eq!(state.placed_orders(), 1);
 }
 
 #[test]
