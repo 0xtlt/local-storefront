@@ -304,13 +304,23 @@ failures, the invalid scenarios and the expectations not met:
 Exiting with `0` means no Function failed where it ran, and every `expect` holds. A scenario
 without `expect` checks only that its Functions run. CI: [checkout](checkout.md#in-ci).
 
+`--extension` keeps some extensions of the app. An `expect` describes the checkout of the
+Functions its scenario names (every Function of the app when it names none): when
+`--extension` leaves one of them out, that checkout is another one, so the `expect` is not
+checked. The scenario still runs, for the Functions that fail in it, and the summary counts
+it:
+
+```text
+checked 8 of 8 scenarios in 0.1 s: every Function ran, the `expect` of 2 scenarios not checked (--extension leaves out a Function they run)
+```
+
 | Option | Environment variable | What it does |
 |---|---|---|
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
 | `--extension <handle>` | | Only these extensions. Repeat it for several. |
 | `--build` | | Builds the extensions first, as `app build` does. |
 | `--format text` | | Default. One line per problem, then a summary. |
-| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says (the entry, the list, the amount), `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran. |
+| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unchecked: [scenario], unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `unchecked` names the scenarios whose `expect` was not checked, as `--extension` leaves out a Function they run; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says (the entry, the list, the amount), `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran. |
 | `--budget <seconds>` | | How long the Functions may run in all. Default 300. |
 
 ### app function run

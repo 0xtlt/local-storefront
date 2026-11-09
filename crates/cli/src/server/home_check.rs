@@ -65,6 +65,9 @@ pub struct Report {
     /// those that are not met. Checked by [`run_with_expectations`] only.
     pub expectations: usize,
     pub unmet: Vec<Unmet>,
+    /// The scenarios whose `expect` was not checked: `--extension` leaves out a Function they
+    /// run, so their checkout is not the one the `expect` describes.
+    pub unchecked: Vec<String>,
     /// How many scenarios ran, out of how many could.
     pub checked: usize,
     pub total: usize,
@@ -157,6 +160,20 @@ fn check(
         fetcher: &OfflineFetcher,
         deadline: Some(deadline),
     };
+    // An `expect` is the checkout of the Functions its scenario names, or of every Function of
+    // the app when it names none. When `--extension` leaves one of them out, the checkout is
+    // another one, so the `expect` is not checked. The scenario still runs, for the Functions
+    // that fail in it.
+    let leaves_out_a_function = |scenario: &lsf_core::store::CheckoutScenario| {
+        !options.extensions.is_empty()
+            && app.functions.iter().any(|function| {
+                scenario
+                    .extensions
+                    .as_ref()
+                    .is_none_or(|named| named.contains(&function.handle))
+                    && !options.extensions.contains(&function.handle)
+            })
+    };
     // What a scenario came to, and whether all its Functions ran.
     let one = |scenario: &lsf_core::store::CheckoutScenario| -> (Outcome, bool) {
         let at = |step| super::checkout::run_scenario(state, app, store, scenario, runs, step);
@@ -166,7 +183,10 @@ fn check(
             // placed: only a validation Function reads the difference.
             let mut results = vec![at(BuyerJourneyStep::Interaction)?];
             let mut found = None;
-            if let Some(expected) = scenario.expect.as_ref().filter(|_| expectations)
+            if let Some(expected) = scenario
+                .expect
+                .as_ref()
+                .filter(|_| expectations && !leaves_out_a_function(scenario))
                 && !results[0].interrupted
             {
                 if expected.step.unwrap_or_default() == ScenarioStep::Completion {
@@ -240,12 +260,17 @@ fn check(
             step,
             unmet,
         };
+        let unchecked =
+            expectations && scenario.expect.is_some() && leaves_out_a_function(scenario);
+        if unchecked {
+            report.unchecked.push(name.clone());
+        }
         // A scenario that could not run at all has errors of its own, which the page lists
         // anyway: it is not a failure. Its `expect` is not met, though: nothing checked it.
         let (ran, failed, found) = match outcome {
             Ok(outcome) => outcome,
             Err(problem) => {
-                if expectations && scenario.expect.is_some() {
+                if expectations && scenario.expect.is_some() && !unchecked {
                     report.expectations += 1;
                     report.unmet.push(unmet(expect::Unmet {
                         assertion: "expect".to_string(),

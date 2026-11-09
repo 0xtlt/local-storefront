@@ -598,7 +598,9 @@ checked 1 of 1 scenario in 0.0 s: 0 failures, 0 invalid scenarios, 2 of 5 expect
 that it can be pasted into the scenario. Each entry of `includes` and `excludes`, each `equals`
 and each amount is one expectation: when all are met, the summary ends with `5 expectations met`.
 `--format json` has them in `expectations` ([`app check`](cli.md#app-check)). A scenario
-without `expect` is checked as before: its Functions must run without an error.
+without `expect` is checked as before: its Functions must run without an error. With
+`--extension`, the `expect` of a scenario that runs a Function left out is not checked (its
+checkout is another one), and the summary counts it.
 
 A name in `excludes` that the checkout does not offer, such as `"paypall"`, is never in the list,
 so the expectation would always pass: `validate` warns about it (`expect_checks_nothing`), with

@@ -569,7 +569,7 @@ fn app_check_checks_what_the_functions_decide() {
     assert_eq!(json["ok"], true, "{json}");
     assert_eq!(
         json["expectations"],
-        serde_json::json!({"checked": 15, "unmet": []})
+        serde_json::json!({"checked": 15, "unchecked": [], "unmet": []})
     );
 
     // PayPal in the express buttons, a total, and the validation on the page: three are wrong.
@@ -634,6 +634,48 @@ fn app_check_checks_what_the_functions_decide() {
         serde_json::json!([]),
         "{json}"
     );
+
+    // `--extension` leaves out Functions the two scenarios with an `expect` run: their checkout
+    // is another one, so their `expect` is not checked, and the Function kept still runs.
+    let output = lsf(&app.0, &["app", "check", "--extension", "payment-rules"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains(
+            ": every Function ran, the `expect` of 2 scenarios not checked \
+             (--extension leaves out a Function they run)\n"
+        ) && !text(&output).contains("expect   "),
+        "{}",
+        text(&output)
+    );
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "check",
+            "--extension",
+            "payment-rules",
+            "--format",
+            "json",
+        ],
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("JSON: {}", text(&output)));
+    assert_eq!(
+        json["expectations"],
+        serde_json::json!({"checked": 0, "unchecked": ["everything", "on-the-page"], "unmet": []})
+    );
+    // With every Function the scenarios name, they are checked again.
+    let mut every = vec!["app", "check"];
+    for handle in [
+        "payment-rules",
+        "delivery-rules",
+        "bundle-transform",
+        "quantity-limit",
+        "volume-discount",
+    ] {
+        every.extend(["--extension", handle]);
+    }
+    assert_eq!(lsf(&app.0, &every).status.code(), Some(1));
 
     // A handle `excludes` names that the checkout does not offer checks nothing: `validate`
     // warns, and the scenario still runs.

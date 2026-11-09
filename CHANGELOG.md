@@ -202,8 +202,10 @@ the same data every run.
   prints the scenario, the assertion, what was expected and what the checkout has, and makes the
   check exit with `1`; `--format json` has them in `expectations`. The Functions run as the
   order is placed (`"step": "interaction"`: the page before it). `validate` warns about a name in
-  `excludes` that the checkout does not offer, which would check nothing. The scenario schema has
-  `expect`, and two scenarios of the playground use it.
+  `excludes` that the checkout does not offer, which would check nothing. With `--extension`, the
+  `expect` of a scenario that runs a Function left out is not checked, and the summary says so:
+  its checkout is not the one it describes. The scenario schema has `expect`, and two scenarios
+  of the playground use it.
   [Expected results](docs/checkout.md#expected-results).
 - **`lsf app check --build`** builds the extensions first, for a clone where `dist/` is not
   committed. `app check` also warns about a Function that ran in no scenario, so that nothing

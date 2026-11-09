@@ -47,7 +47,7 @@ enum Subcommand {
 enum Format {
     /// One line per problem.
     Text,
-    /// `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says, `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran.
+    /// `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unchecked: [scenario], unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `unchecked` names the scenarios whose `expect` was not checked, as `--extension` leaves out a Function they run; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says, `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran.
     Json,
 }
 
@@ -223,6 +223,7 @@ fn check(
                 .collect::<Vec<_>>());
             json["expectations"] = serde_json::json!({
                 "checked": report.expectations,
+                "unchecked": report.unchecked,
                 "unmet": report.unmet.iter().map(|unmet| serde_json::json!({
                     "scenario": unmet.scenario,
                     "file": unmet.file,
@@ -300,6 +301,15 @@ fn check(
             };
             if ok && report.expectations > 0 {
                 said.push_str(&format!(", {expectations} met"));
+            }
+            if !report.unchecked.is_empty() {
+                let (scenarios, they) = match report.unchecked.len() {
+                    1 => ("1 scenario".to_string(), "it runs"),
+                    n => (format!("{n} scenarios"), "they run"),
+                };
+                said.push_str(&format!(
+                    ", the `expect` of {scenarios} not checked (--extension leaves out a Function {they})"
+                ));
             }
             if !ran_nowhere.is_empty() {
                 said.push_str(&format!(
