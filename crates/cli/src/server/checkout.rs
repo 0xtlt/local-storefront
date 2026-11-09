@@ -1618,7 +1618,7 @@ fn complete(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
         Ok(session) => session,
         Err(reply) => return reply,
     };
-    let reply = place_order(state, incoming, &id, token, || {});
+    let reply = place_order(state, incoming, &id, token, || {}, || {});
     with_cookie(reply, &id, is_new)
 }
 
@@ -1642,22 +1642,41 @@ fn is_placed(entry: &SessionEntry) -> bool {
     entry.checkout.completed.is_some() && entry.session.cart_lines.is_empty()
 }
 
-/// Places the order of the cart the Functions were run on. `between` runs after the session was
+/// Whether the session placed an order since it had placed `before`: another completion of the
+/// same checkout did, and this one leads to its thank-you page instead of placing another.
+fn placed_since(state: &ServerState, id: &str, before: u64) -> bool {
+    state.with_session(id, |entry| entry.checkout.placed != before)
+}
+
+/// Places the order of the cart the Functions were run on. `before_read` runs after the order
+/// was found not placed and before the session is read. `between` runs after the session was
 /// read and before the order takes the cart, where the Functions take their time.
 pub(super) fn place_order(
     state: &ServerState,
     incoming: &Incoming,
     id: &str,
     token: &str,
+    before_read: impl FnOnce(),
     between: impl FnOnce(),
 ) -> Reply {
-    if already_placed(state, id) {
+    // How many orders the session placed before this completion, in the same step as the check:
+    // the session is read later, and another completion may place the order meanwhile.
+    let before = state.with_session(id, |entry| {
+        (!is_placed(entry)).then_some(entry.checkout.placed)
+    });
+    let Some(before) = before else {
         return redirect_to_thanks(state, incoming, id, token);
-    }
+    };
+    before_read();
     let mut computed = match compute(state, id, incoming, BuyerJourneyStep::Completion) {
         Ok(computed) => computed,
         Err(problem) => return error(500, problem),
     };
+    // The session was read after another completion placed the order: what was read is the
+    // session after that order (an empty cart, nothing entered), not this checkout.
+    if computed.basis.placed != before {
+        return redirect_to_thanks(state, incoming, id, token);
+    }
     between();
     if computed.result.lines.is_empty() {
         return error(422, "The cart is empty.");
@@ -1719,7 +1738,7 @@ pub(super) fn place_order(
         return redirect_to_thanks(state, incoming, id, token);
     }
     // Another request placed the order meanwhile.
-    if already_placed(state, id) {
+    if placed_since(state, id, before) {
         return redirect_to_thanks(state, incoming, id, token);
     }
     // The cart changed while the order was being priced: nothing was bought, and the buyer

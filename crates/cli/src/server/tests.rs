@@ -4827,6 +4827,7 @@ fn a_cart_change_while_completing_is_kept_and_buys_nothing() {
         &request("POST", &format!("{path}/complete"), json!({}), "co-race"),
         "co-race",
         token,
+        || {},
         || {
             let reply = post(
                 &state,
@@ -4887,6 +4888,7 @@ fn completion_buys_nothing_when(session: &str, own_store: bool, change: impl FnO
         &request("POST", &format!("{path}/complete"), json!({}), session),
         session,
         token,
+        || {},
         || change(&state),
     );
     assert_eq!(reply.status, 409, "{session}: {}", text(&reply));
@@ -5035,6 +5037,7 @@ fn completing_again_places_no_second_order() {
         &request("POST", &format!("{path}/complete"), json!({}), "co-twice"),
         "co-twice",
         token,
+        || {},
         || {
             let reply = post(&state, &format!("{path}/complete"), json!({}), "co-twice");
             assert_eq!(reply.status, 200, "{}", text(&reply));
@@ -5050,6 +5053,41 @@ fn completing_again_places_no_second_order() {
     assert_eq!(state.placed_orders(), 1);
     let json = body_json(&get(&state, &format!("{path}.json"), "co-twice"));
     assert_eq!(json["order"]["number"], "#1004");
+}
+
+#[test]
+fn a_completion_that_reads_the_session_after_the_order_places_none() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-late-read");
+    let token = path.rsplit('/').next().unwrap();
+
+    // This completion found the order not placed yet. Another one placed it before this one
+    // read the session, so it reads an empty cart: it leads to the same thank-you page.
+    let reply = super::checkout::place_order(
+        &state,
+        &request(
+            "POST",
+            &format!("{path}/complete"),
+            json!({}),
+            "co-late-read",
+        ),
+        "co-late-read",
+        token,
+        || {
+            let reply = post(
+                &state,
+                &format!("{path}/complete"),
+                json!({}),
+                "co-late-read",
+            );
+            assert_eq!(reply.status, 200, "{}", text(&reply));
+        },
+        || {},
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+    assert_eq!(state.placed_orders(), 1);
+    assert_eq!(cart_count(&state, "co-late-read"), 0);
 }
 
 #[test]
