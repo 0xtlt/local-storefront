@@ -1001,8 +1001,11 @@ A test sets them while lsf runs: `PUT /__lsf/admin/pricing-plans` with
 The page is at `/admin/charges/<app handle>/pricing_plans` of [lsf's admin](#preview-the-embedded-app).
 A `shopify:admin/charges/…` link of the app, and Shopify's own URL of the page
 (`https://admin.shopify.com/store/<store>/charges/<app handle>/pricing_plans`, which the
-template's `redirect` opens), land there. The merchant chooses a plan and approves it, as on
-Shopify:
+template's `redirect` opens), land there. Build the link with the app's handle (`handle` of
+`shopify.app.toml`): on Shopify a client id in its place fails, so lsf answers it with a `404`
+and an `X-LSF-Reason` header. Only an app whose `shopify.app.toml` has no handle gets its page at
+its client id, since lsf knows no other name for it. The merchant chooses a plan and approves it,
+as on Shopify:
 
 - the shop gets a new `ACTIVE` subscription named after the plan, `test: true` (lsf's shops are
   development stores), with the plan's trial and one `AppRecurringPricing` line

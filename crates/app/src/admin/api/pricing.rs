@@ -4,7 +4,7 @@
 //!
 //! | Request | What answers |
 //! |---|---|
-//! | `GET /admin/charges/<app>/pricing_plans?shop=` | The plans, the shop's current one marked, each with a button to choose it; without plans, how to declare them. `<app>` is the app's handle or client id. |
+//! | `GET /admin/charges/<app>/pricing_plans?shop=` | The plans, the shop's current one marked, each with a button to choose it; without plans, how to declare them. `<app>` is the app's handle; its client id is a `404`, as on Shopify, unless `shopify.app.toml` has no handle. |
 //! | `GET /admin/charges/<app>/pricing_plans/<plan>?shop=` | The plan to approve: its price, its trial, the plan it replaces. |
 //! | `GET /__lsf/admin/pricing-plans?shop=` | The plans, `legacy`, where they come from, the page, and the shop's current subscription. |
 //! | `PUT /__lsf/admin/pricing-plans` (`POST` too) | Declares the plans: `{"plans": [...], "legacy"?}`, as `--pricing-plans` does. `422` for a wrong declaration. |
@@ -55,7 +55,25 @@ pub(super) fn page(
     rest: &[&str],
 ) -> HttpResponse {
     let key = app_key(api);
-    if app != key && app != api.client_id() {
+    if app == api.client_id() && app != key {
+        // Shopify names the app by its handle here; a client id fails (community reports:
+        // https://community.shopify.dev/t/unable-to-access-managed-pricing-pricing-plans-url-always-redirects-to-apps-page-and-no-billing-handle-generated/26732).
+        // Accepting it would let an app pass locally with a link that breaks on Shopify.
+        let reason = format!(
+            "Shopify's plan page names the app by its handle, not its client id: the plans of {} are at {}. Build the link with `handle` of shopify.app.toml.",
+            app_name(api),
+            page_path(api)
+        );
+        return notice_page(
+            api,
+            Some(viewer),
+            404,
+            "Use the app's handle",
+            std::slice::from_ref(&reason),
+        )
+        .header("x-lsf-reason", reason);
+    }
+    if app != key {
         return notice_page(
             api,
             Some(viewer),

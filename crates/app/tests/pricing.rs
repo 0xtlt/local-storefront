@@ -592,7 +592,7 @@ fn the_merchant_chooses_and_changes_plans_on_the_page_and_the_backend_hears_of_i
         json!({"plans": 2, "legacy": true, "source": "request"})
     );
 
-    // The page: a card per plan, a button to choose each; also by client id.
+    // The page: a card per plan, a button to choose each.
     let page = get(&api, PAGE);
     assert_eq!(page.status, 200);
     let html = text(&page);
@@ -608,13 +608,20 @@ fn the_merchant_chooses_and_changes_plans_on_the_page_and_the_backend_hears_of_i
     ] {
         assert!(html.contains(part), "no {part} in the page");
     }
-    assert_eq!(
-        get(
-            &api,
-            "/admin/charges/11111111111111111111111111111111/pricing_plans"
-        )
-        .status,
-        200
+    // By client id it is a 404, as on Shopify, which names the app by its handle there.
+    let by_client_id = get(
+        &api,
+        "/admin/charges/11111111111111111111111111111111/pricing_plans",
+    );
+    assert_eq!(by_client_id.status, 404);
+    assert!(text(&by_client_id).contains("Use the app's handle"));
+    assert!(
+        by_client_id
+            .headers
+            .iter()
+            .any(|(name, reason)| name == "x-lsf-reason" && reason.contains("admin-fixtures")),
+        "{:?}",
+        by_client_id.headers
     );
     let other = get(&api, "/admin/charges/another-app/pricing_plans");
     assert_eq!(other.status, 404);

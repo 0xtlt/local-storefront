@@ -176,16 +176,21 @@ impl Admin {
 
     /// What the server prints of the app's managed pricing when plans are declared: how many,
     /// where from, and the page where the merchant chooses one.
+    /// An app with no `handle` in `shopify.app.toml` is told that Shopify's page needs one: lsf
+    /// serves the page at its client id, where Shopify's fails.
     pub fn pricing_banner(&self, origin: &str) -> Option<String> {
         let (pricing, source) = self.api.pricing()?;
-        let key = self
-            .api
-            .app()
-            .and_then(|app| app.handle.clone())
-            .unwrap_or_else(|| self.api.client_id().to_string());
+        let handle = self.api.app().and_then(|app| app.handle.clone());
+        let no_handle = self.api.app().is_some() && handle.is_none();
+        let key = handle.unwrap_or_else(|| self.api.client_id().to_string());
         Some(format!(
-            "pricing: {} ({source}): {origin}/admin/charges/{key}/pricing_plans   (managed pricing: the Billing API creates no charge)",
+            "pricing: {} ({source}): {origin}/admin/charges/{key}/pricing_plans   (managed pricing: the Billing API creates no charge{})",
             crate::output::count(pricing.plans.len(), "plan", "plans"),
+            if no_handle {
+                "; shopify.app.toml has no handle, which Shopify's page needs in place of the client id"
+            } else {
+                ""
+            },
         ))
     }
 
