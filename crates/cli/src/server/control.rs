@@ -90,6 +90,7 @@ fn status(state: &ServerState) -> Json {
     let loaded = state.loaded();
     let store = &loaded.store;
     json!({
+        "parts": state.parts().to_json(),
         "theme": state.app.theme.files().root().display().to_string(),
         "data": state.app.describe_source(),
         "data_diagnostics": diagnostics_json(&loaded.diagnostics),
@@ -457,7 +458,14 @@ fn dashboard(state: &ServerState, incoming: &Incoming) -> Reply {
             count(diagnostics.warning_count(), "warning", "warnings")
         )
     };
-    let links: String = routes(state)
+    let parts = state.parts();
+    // Without a theme, no page of the list is served.
+    let routes = if parts.theme {
+        routes(state)
+    } else {
+        Vec::new()
+    };
+    let links: String = routes
         .iter()
         .map(|route| {
             let path =
@@ -471,6 +479,16 @@ fn dashboard(state: &ServerState, incoming: &Incoming) -> Reply {
             )
         })
         .collect();
+    let pages = if parts.theme {
+        format!("<h2>Pages</h2><ul>{links}</ul>")
+    } else {
+        String::new()
+    };
+    let serving = if parts == super::parts::Parts::default() {
+        "nothing".to_string()
+    } else {
+        parts.describe()
+    };
     Reply::html(
         200,
         format!(
@@ -482,10 +500,11 @@ fn dashboard(state: &ServerState, incoming: &Incoming) -> Reply {
              .muted{{color:#666}}.badge{{font-size:.75rem;border:1px solid #bbb;border-radius:99px;padding:.05rem .5rem}}\
              .people{{list-style:none;padding:0}}</style></head><body>\
              <h1>lsf · local storefront</h1>\
-             <dl><dt>Theme</dt><dd><code>{}</code></dd><dt>Store data</dt><dd><code>{}</code></dd></dl>\
+             <dl><dt>Serving</dt><dd data-lsf-parts>{serving} <span class=\"muted\">(<code>--only</code>)</span></dd>\
+             <dt>Theme</dt><dd><code>{}</code></dd><dt>Store data</dt><dd><code>{}</code></dd></dl>\
              <h2>Store data</h2>{problems}\
              <h2>Customer</h2><p>Choose who this browser is logged in as.</p>{customers}\
-             <h2>Pages</h2><ul>{links}</ul>\
+             {pages}\
              <h2>Control API</h2><ul>\
              <li><code>GET /__lsf/status</code>: this page as JSON</li>\
              <li><code>GET|PUT|DELETE /__lsf/session</code>: read, set or reset the session (cart, customer, per-session data)</li>\
@@ -495,7 +514,11 @@ fn dashboard(state: &ServerState, incoming: &Incoming) -> Reply {
              <li><code>GET|DELETE /__lsf/timings</code>: how long the templates, the sections and the blocks took to render so far, or forget it</li>\
              <li><code>POST /__lsf/reload</code>: reload the data files</li></ul>\
              </body></html>",
-            escape_html(&state.app.theme.files().root().display().to_string()),
+            if parts.theme {
+                escape_html(&state.app.theme.files().root().display().to_string())
+            } else {
+                "none".to_string()
+            },
             escape_html(&state.app.describe_source()),
         ),
     )

@@ -9,10 +9,11 @@ use serde_json::json;
 
 use super::super::polaris::Mode;
 use super::super::{ServeOptions, ServerState};
-use super::{body_json, get, header, request, server, text};
+use super::{body_json, get, header, request, text};
 use crate::app::App;
 
-/// The fixture theme's server, started in `mode` (`--polaris`).
+/// The fixture theme's server with the Admin API, whose part Polaris is, started in `mode`
+/// (`--polaris`).
 fn server_in(mode: Mode) -> ServerState {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
@@ -20,7 +21,7 @@ fn server_in(mode: Mode) -> ServerState {
         app,
         ServeOptions {
             polaris: mode,
-            admin: None,
+            admin: Some(Default::default()),
             live_reload: false,
             watch: false,
             quiet: true,
@@ -49,7 +50,7 @@ fn vendored(path: &str) -> String {
 
 #[test]
 fn online_the_paths_redirect_to_shopifys_cdn_with_their_query() {
-    let state = server();
+    let state = server_in(Mode::Online);
     assert_eq!(state.polaris.mode(), Mode::Online, "online by default");
     for (path, location) in [
         (
@@ -306,7 +307,7 @@ fn a_preflight_of_another_origin_is_allowed_with_the_headers_it_asks_for() {
         }
     }
     // Headers that are not header names are not echoed.
-    let state = server();
+    let state = server_in(Mode::Online);
     let mut odd = preflight("/__lsf/cdn/shopifycloud/polaris-2.js");
     odd.headers.insert(
         "access-control-request-headers".to_string(),
@@ -319,7 +320,7 @@ fn a_preflight_of_another_origin_is_allowed_with_the_headers_it_asks_for() {
 
 #[test]
 fn the_control_api_reads_sets_and_resets_the_mode() {
-    let state = server();
+    let state = server_in(Mode::Online);
     let status = body_json(&get(&state, "/__lsf/polaris", "control"));
     assert_eq!(status["mode"], "online");
     assert_eq!(status["default"], "online");
@@ -398,7 +399,7 @@ fn polaris_offline_starts_offline_and_resets_to_it() {
         line,
         "polaris: offline: http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris-2.js (lsf's copy of Polaris 2.0.0 and 1.1.0)"
     );
-    assert!(super::super::polaris::banner(&server(), "http://x").is_none());
+    assert!(super::super::polaris::banner(&server_in(Mode::Online), "http://x").is_none());
 }
 
 #[test]

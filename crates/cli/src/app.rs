@@ -136,6 +136,11 @@ impl App {
         })
     }
 
+    /// Whether the app was opened with a theme: without one, the server renders no page.
+    pub fn has_theme(&self) -> bool {
+        self._scratch.is_none()
+    }
+
     /// Where the store data is read from now: the demo store gives way to the directory that
     /// appeared where it was looked for.
     pub fn source(&self) -> DataSource {

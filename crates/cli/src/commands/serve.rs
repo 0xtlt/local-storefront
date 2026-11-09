@@ -10,6 +10,7 @@ use crate::app::App;
 use crate::checkout::{self, AppArgs, CheckoutOptions, Variant};
 use crate::output::print_diagnostics;
 use crate::server::admin::AdminSettings;
+use crate::server::parts::{Part, Parts};
 use crate::server::polaris::Mode as PolarisMode;
 use crate::server::throttle::Throttle;
 use crate::server::{ServeOptions, ServerState, run as run_server};
@@ -85,6 +86,19 @@ pub struct Args {
     /// (`session.customer`).
     #[arg(long, env = "LSF_CUSTOMER", value_name = "EMAIL")]
     customer: Option<String>,
+
+    /// Run only these parts of lsf, comma-separated or repeated (`--only checkout,admin`).
+    /// Without it, `serve` runs the theme, and every part with `--app`; `app dev` runs the
+    /// checkout and the Admin API. `checkout` and `admin` need `--app`. A part left out answers
+    /// `404` on its routes, with an `X-LSF-Reason` that says so.
+    #[arg(
+        long,
+        env = "LSF_ONLY",
+        value_enum,
+        value_delimiter = ',',
+        value_name = "PARTS"
+    )]
+    only: Vec<Part>,
 
     #[command(flatten)]
     app: AppArgs,
@@ -205,13 +219,135 @@ async fn listen(
     Err(failure)
 }
 
-/// Serves the theme. With `standalone`, serves the app of `--app` alone, its checkout and its
-/// customer account: `lsf app dev`.
+/// Where the options of `serve` got their values: what tells an option that was given, on the
+/// command line or in the environment, from one left to its default.
+#[derive(Default)]
+pub struct Given(Option<clap::ArgMatches>);
+
+impl Given {
+    /// The sources of the options parsed into `matches`: those of `serve` or `app dev`.
+    pub fn of(matches: &clap::ArgMatches) -> Given {
+        Given(Some(matches.clone()))
+    }
+
+    /// Where the option of id `id` (its field) was given: `None` when it was not, or is a flag
+    /// turned off (`LSF_ADMIN_FETCH_LOCAL=false`).
+    fn source(&self, id: &str) -> Option<clap::parser::ValueSource> {
+        use clap::parser::ValueSource;
+        let matches = self.0.as_ref()?;
+        let source = matches.value_source(id)?;
+        if source == ValueSource::DefaultValue {
+            return None;
+        }
+        if let Ok(Some(false)) = matches.try_get_one::<bool>(id) {
+            return None;
+        }
+        Some(source)
+    }
+
+    /// Whether the value of `id` came from its environment variable.
+    fn in_env(&self, id: &str) -> bool {
+        self.source(id) == Some(clap::parser::ValueSource::EnvVariable)
+    }
+}
+
+/// The options that need a part, by their id: those of the Admin API, then those of the
+/// checkout. `--app-url` feeds the webhooks, OAuth, the embedded app's launch and the app proxy:
+/// the Admin API's alone. `--watch` builds the Functions the checkout runs.
+const NEEDS: &[(&str, Part)] = &[
+    ("app_url", Part::Admin),
+    ("client_secret", Part::Admin),
+    ("admin_throttle", Part::Admin),
+    ("admin_versions", Part::Admin),
+    ("admin_fetch_local", Part::Admin),
+    ("admin_sources", Part::Admin),
+    ("pricing_plans", Part::Admin),
+    ("polaris", Part::Admin),
+    ("extensions", Part::Checkout),
+    ("no_functions", Part::Checkout),
+    ("variant", Part::Checkout),
+    ("build", Part::Checkout),
+    ("watch", Part::Checkout),
+];
+
+/// How an error names the option of id `id`: `--pricing-plans`, or
+/// `LSF_PRICING_PLANS (--pricing-plans)` when its value came from the environment.
+fn named(given: &Given, id: &str) -> String {
+    let command = <Args as clap::Args>::augment_args(clap::Command::new("serve"));
+    let Some(arg) = command.get_arguments().find(|arg| arg.get_id() == id) else {
+        return id.to_string();
+    };
+    let long = format!("--{}", arg.get_long().unwrap_or(id));
+    match arg.get_env().filter(|_| given.in_env(id)) {
+        Some(env) => format!("{} ({long})", env.to_string_lossy()),
+        None => long,
+    }
+}
+
+/// The parts a server runs: those of `--only`, else the theme for `serve`, every part with
+/// `--app`, and the checkout and the Admin API for `app dev` (`standalone`). An error names
+/// what is wrong: a part that needs the app without one, the theme asked of `app dev`, an option
+/// of a part that is off.
+fn parts_of(args: &Args, given: &Given, has_app: bool, standalone: bool) -> Result<Parts, String> {
+    let command = lsf_core::util::command();
+    let only = (!args.only.is_empty()).then(|| Parts::of(&args.only));
+    // `--only` as it was given, for the errors.
+    let only_named = |parts: Parts| {
+        if given.in_env("only") {
+            format!("`LSF_ONLY={}`", parts.only())
+        } else {
+            format!("`--only {}`", parts.only())
+        }
+    };
+    let parts = match only {
+        Some(parts) if standalone && parts.theme => {
+            return Err(format!(
+                "{}: `{command} app dev` serves no theme (`{command} serve --app DIR --only {}` serves it with the app)",
+                only_named(parts),
+                parts.only()
+            ));
+        }
+        Some(parts) if (parts.checkout || parts.admin) && !has_app => {
+            return Err(format!(
+                "{} needs the app: `--app DIR` (or LSF_APP)",
+                only_named(parts)
+            ));
+        }
+        Some(parts) => parts,
+        None if standalone => Parts {
+            checkout: true,
+            admin: true,
+            ..Parts::default()
+        },
+        None if has_app => Parts::ALL,
+        None => Parts {
+            theme: true,
+            ..Parts::default()
+        },
+    };
+    for (id, part) in NEEDS {
+        if parts.has(*part) || given.source(id).is_none() {
+            continue;
+        }
+        let why = match only {
+            Some(_) if given.in_env("only") => "which LSF_ONLY leaves out".to_string(),
+            Some(_) => "which --only leaves out".to_string(),
+            None => "which needs the app: `--app DIR` (or LSF_APP)".to_string(),
+        };
+        return Err(format!("{} needs the {part} part, {why}", named(given, id)));
+    }
+    Ok(parts)
+}
+
+/// Serves the parts of lsf `--only` names (see [`parts_of`]): the theme, the checkout of the app
+/// of `--app`, its Admin API. With `standalone`, `lsf app dev`: the app of the current folder
+/// when `--app` is not given, and no theme.
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
     previews: &[lsf_theme::Preview],
     args: Args,
+    given: &Given,
     standalone: bool,
 ) -> Result<ExitCode, String> {
     // The app is read before the store data and the theme, so that a wrong `--app` is the first
@@ -221,12 +357,15 @@ pub fn run(
         (None, true) => Some(checkout::app_of(None, "lsf app dev")?),
         _ => None,
     };
-    if args.watch && args.app.app.is_none() && found.is_none() {
-        return Err("--watch needs the app: `--app DIR` (or LSF_APP)".to_string());
-    }
     let app_dir = args.app.app.clone().or(found);
-    let checkout = match &app_dir {
-        Some(dir) => {
+    let parts = parts_of(&args, given, app_dir.is_some(), standalone)?;
+    // What the `app:` line says of the app, when it serves a part.
+    let mut summary = None;
+    // How many of its Functions run: the scenarios are for them.
+    let mut functions = 0;
+    let mut checkout = None;
+    if let Some(dir) = app_dir.as_ref().filter(|_| parts.checkout || parts.admin) {
+        if parts.checkout {
             // The watcher builds the Functions itself, without stopping at one that fails. With
             // `--no-functions`, the UI extensions alone are built, below.
             let opening = AppArgs {
@@ -244,33 +383,37 @@ pub fn run(
             app.diagnostics
                 .retain(|diagnostic| diagnostic.message != lsf_app::config::NO_EXTENSIONS);
             checkout::print_app_diagnostics(&app, &selection);
-            Some((
-                CheckoutOptions {
-                    app_dir: dir.clone(),
-                    extensions: args.app.extensions.clone(),
-                    variant: args.variant,
-                    standalone,
-                    no_functions: args.no_functions,
-                },
-                (
-                    selection.functions(&app).count(),
-                    selection.ui_extensions(&app).count(),
-                    app.has_extensions_directory(),
-                ),
-            ))
-        }
-        None if standalone => {
-            return Err(format!(
-                "`{} app dev` needs the app: `--app DIR` (or LSF_APP)",
-                lsf_core::util::command()
+            functions = selection.functions(&app).count();
+            summary = Some(app_summary(
+                Some((functions, selection.ui_extensions(&app).count())),
+                app.has_extensions_directory(),
+                parts.admin,
+                args.no_functions,
+            ));
+            checkout = Some(CheckoutOptions {
+                app_dir: dir.clone(),
+                extensions: args.app.extensions.clone(),
+                variant: args.variant,
+                standalone: !parts.theme,
+                no_functions: args.no_functions,
+            });
+        } else {
+            // The Admin API alone: what is wrong with the app itself, not with its extensions.
+            let mut app = lsf_app::config::load(dir)?;
+            app.diagnostics
+                .retain(|diagnostic| diagnostic.message != lsf_app::config::NO_EXTENSIONS);
+            checkout::print_app_diagnostics(
+                &app,
+                &lsf_app::config::Selection::only(Vec::<String>::new()),
+            );
+            summary = Some(app_summary(
+                None,
+                app.has_extensions_directory(),
+                true,
+                false,
             ));
         }
-        None => None,
-    };
-    let (checkout, extensions) = match checkout {
-        Some((options, counts)) => (Some(options), Some(counts)),
-        None => (None, None),
-    };
+    }
     let revalidate = if args.static_files {
         Revalidate::Never
     } else {
@@ -279,6 +422,7 @@ pub fn run(
     let throttle = Throttle::parse(args.throttle.iter().map(String::as_str))
         .map_err(|problem| format!("--throttle: {problem}"))?;
     let admin = AdminSettings {
+        app_dir: app_dir.clone(),
         client_secret: args.client_secret.clone(),
         app_url: args.app_url.clone(),
         throttle: ThrottleSetting::parse(&args.admin_throttle)
@@ -302,13 +446,20 @@ pub fn run(
     // The app's store data when the theme has none.
     let data = crate::app::data_with_app(theme, data, app_dir.as_deref());
     let data = data.as_deref();
-    let app = if standalone {
-        App::open_without_theme(theme, data, previews)?
-    } else {
-        let app = App::open(theme, data, revalidate, previews)?;
+    let app = if parts.theme {
+        let app = App::open(theme, data, revalidate, previews).map_err(|problem| {
+            // With an app, the theme may be the part that is not needed.
+            if app_dir.is_some() && args.only.is_empty() {
+                format!("{problem} (`--only checkout,admin` serves the app without a theme)")
+            } else {
+                problem
+            }
+        })?;
         crate::app::note_missing_previews(&app.theme, previews);
         crate::app::note_classic_accounts(&app.theme);
         app
+    } else {
+        App::open_without_theme(theme, data, previews)?
     };
     let source = app.describe_source();
     let data_dir = app.data_dir();
@@ -316,7 +467,7 @@ pub fn run(
         app,
         ServeOptions {
             polaris: args.polaris,
-            admin: Some(admin),
+            admin: parts.admin.then_some(admin),
             live_reload: args.live_reload || args.watch,
             watch: !args.static_files,
             quiet: args.quiet,
@@ -382,28 +533,22 @@ pub fn run(
         };
         let listener = listen(&args.host, ports).await?;
         let local = listener.local_addr().map_err(|error| error.to_string())?;
-        if !standalone {
+        if parts.theme {
             eprintln!("theme:  {}", theme.display());
         }
-        if let (Some(dir), Some((functions, ui_extensions, has_directory))) =
-            (&app_dir, extensions)
-        {
-            eprintln!(
-                "app:    {} ({})",
-                dir.display(),
-                app_summary(functions, ui_extensions, has_directory, args.no_functions)
-            );
+        if let (Some(dir), Some(summary)) = (&app_dir, &summary) {
+            eprintln!("app:    {} ({summary})", dir.display());
         }
         eprintln!("data:   {source}");
         if args.port.is_none() && local.port() != DEFAULT_PORT {
             eprintln!("port:   {DEFAULT_PORT} is taken, using {}", local.port());
         }
+        eprintln!("serving: {}", parts.describe());
         if !throttle.is_empty() {
             eprintln!("throttle: {throttle}");
         }
         // The scenarios are carts for the Functions to run on: nothing to say without one.
-        let functions = extensions.is_some_and(|(functions, _, _)| functions > 0);
-        if let Some(dir) = app_dir.as_ref().filter(|_| functions) {
+        if let Some(dir) = app_dir.as_ref().filter(|_| functions > 0) {
             let scenarios = &state.loaded().store.scenarios;
             let broken = scenarios.iter().filter(|s| !s.problems.is_empty()).count();
             if scenarios.is_empty() {
@@ -421,50 +566,33 @@ pub fn run(
                 eprintln!("scenarios: {}", scenarios.len());
             }
         }
-        // With an app, what its backend's tests need comes before `ready:`, so that a tool that
-        // reads up to it has the token. Without one, a theme has no use for them: the Admin API
-        // is served all the same, and `GET /__lsf/admin` has its token.
-        if app_dir.is_some() {
-            if let Some(admin) = &state.admin {
-                for line in admin.banner(&format!("http://{local}")) {
-                    eprintln!("{line}");
-                }
+        // What the backend's tests need comes before `ready:`, so that a tool that reads up to
+        // it has the token. Nothing of it without the Admin API.
+        if let Some(admin) = &state.admin {
+            let origin = format!("http://{local}");
+            for line in admin.banner(&origin) {
+                eprintln!("{line}");
             }
             if let Some(proxy) = &state.app_proxy {
-                eprintln!("{}", proxy.banner(&format!("http://{local}")));
+                eprintln!("{}", proxy.banner(&origin));
             }
-            if let Some(line) = state
-                .admin
-                .as_ref()
-                .and_then(|admin| admin.embedded_banner(&format!("http://{local}")))
-            {
+            let lines = [
+                admin.embedded_banner(&origin),
+                admin.pricing_banner(&origin),
+                admin.partner_banner(&origin),
+                crate::server::polaris::banner(&state, &origin),
+            ];
+            for line in lines.into_iter().flatten() {
                 eprintln!("{line}");
             }
         }
-        if let Some(line) = state
-            .admin
-            .as_ref()
-            .and_then(|admin| admin.pricing_banner(&format!("http://{local}")))
-        {
-            eprintln!("{line}");
-        }
-        if let Some(line) = state
-            .admin
-            .as_ref()
-            .and_then(|admin| admin.partner_banner(&format!("http://{local}")))
-        {
-            eprintln!("{line}");
-        }
-        if let Some(line) = crate::server::polaris::banner(&state, &format!("http://{local}")) {
-            eprintln!("{line}");
-        }
-        if standalone {
+        if !parts.theme && parts.checkout {
             eprintln!(
                 "ready:  http://{local}/   (extensions and checkout scenarios; checkout: http://{local}/checkout; status and control API: http://{local}/__lsf)"
             );
         } else {
             eprintln!("ready:  http://{local}/   (status and control API: http://{local}/__lsf)");
-            if app_dir.is_some() {
+            if parts.theme && parts.checkout {
                 eprintln!(
                     "home:   http://{local}/__lsf/checkouts   (extensions and checkout scenarios of the app)"
                 );
@@ -509,17 +637,26 @@ fn without_functions(
     Ok(selection.narrowed_to(&ui_extensions))
 }
 
-/// What the `app:` line says of the extensions served: an app without an `extensions` directory
-/// is a backend, served without them.
+/// What the `app:` line says of the app: the Functions and UI extensions served (`None` when
+/// `--only` leaves the checkout out), and what an app without an `extensions` directory is, a
+/// backend.
 fn app_summary(
-    functions: usize,
-    ui_extensions: usize,
+    extensions: Option<(usize, usize)>,
     has_directory: bool,
+    admin: bool,
     no_functions: bool,
 ) -> String {
+    const BACKEND: &str = "the Admin API, webhooks and the app proxy";
     if !has_directory {
-        return "no extensions: the Admin API, webhooks and the app proxy".to_string();
+        return if admin {
+            format!("no extensions: {BACKEND}")
+        } else {
+            "no extensions".to_string()
+        };
     }
+    let Some((functions, ui_extensions)) = extensions else {
+        return format!("{BACKEND}; its extensions are not served: --only leaves out the checkout");
+    };
     let ui_extensions = crate::output::count(ui_extensions, "UI extension", "UI extensions");
     if no_functions {
         return format!("{ui_extensions}, no Function: --no-functions");
@@ -537,17 +674,169 @@ mod tests {
     #[test]
     fn the_app_line_says_what_is_served() {
         assert_eq!(
-            app_summary(2, 1, true, false),
+            app_summary(Some((2, 1)), true, true, false),
             "2 Functions, 1 UI extension"
         );
         assert_eq!(
-            app_summary(0, 0, false, false),
+            app_summary(Some((0, 0)), false, true, false),
             "no extensions: the Admin API, webhooks and the app proxy"
         );
         assert_eq!(
-            app_summary(0, 2, true, true),
+            app_summary(Some((0, 0)), false, false, false),
+            "no extensions"
+        );
+        assert_eq!(
+            app_summary(Some((0, 2)), true, true, true),
             "2 UI extensions, no Function: --no-functions"
         );
+        assert_eq!(
+            app_summary(None, true, true, false),
+            "the Admin API, webhooks and the app proxy; its extensions are not served: --only leaves out the checkout"
+        );
+    }
+
+    /// The parts `serve` runs with `words`, `app dev` with `standalone`, or its error. The
+    /// environment is left out: its variables are tested where a server is started.
+    fn parts(words: &[&str], standalone: bool) -> Result<Parts, String> {
+        let command = <Args as clap::Args>::augment_args(clap::Command::new("serve"))
+            .mut_args(|arg| arg.env(None::<&'static str>));
+        let matches = command
+            .try_get_matches_from(std::iter::once("serve").chain(words.iter().copied()))
+            .unwrap_or_else(|error| panic!("{words:?}: {error}"));
+        let args = <Args as clap::FromArgMatches>::from_arg_matches(&matches).unwrap();
+        // `app dev` finds the app of the current folder.
+        let has_app = args.app.app.is_some() || standalone;
+        parts_of(&args, &Given::of(&matches), has_app, standalone)
+    }
+
+    const THEME: Parts = Parts {
+        theme: true,
+        checkout: false,
+        admin: false,
+    };
+    const CHECKOUT_ADMIN: Parts = Parts {
+        theme: false,
+        checkout: true,
+        admin: true,
+    };
+
+    #[test]
+    fn without_only_serve_runs_the_theme_every_part_with_an_app_and_app_dev_its_app() {
+        assert_eq!(parts(&[], false), Ok(THEME));
+        assert_eq!(parts(&["--app", "a"], false), Ok(Parts::ALL));
+        assert_eq!(parts(&[], true), Ok(CHECKOUT_ADMIN));
+        assert_eq!(parts(&["--app", "a"], true), Ok(CHECKOUT_ADMIN));
+    }
+
+    #[test]
+    fn only_names_the_parts_comma_separated_or_repeated() {
+        let admin = Parts {
+            admin: true,
+            ..Parts::default()
+        };
+        assert_eq!(parts(&["--only", "theme"], false), Ok(THEME));
+        assert_eq!(parts(&["--app", "a", "--only", "admin"], false), Ok(admin));
+        assert_eq!(
+            parts(&["--app", "a", "--only", "checkout,admin"], false),
+            Ok(CHECKOUT_ADMIN)
+        );
+        assert_eq!(
+            parts(
+                &["--app", "a", "--only", "admin", "--only", "checkout"],
+                false
+            ),
+            Ok(CHECKOUT_ADMIN)
+        );
+        assert_eq!(parts(&["--only", "admin"], true), Ok(admin));
+        assert_eq!(
+            parts(&["--app", "a", "--only", "theme,checkout,admin"], false),
+            Ok(Parts::ALL)
+        );
+    }
+
+    #[test]
+    fn the_checkout_and_the_admin_api_need_the_app_and_app_dev_serves_no_theme() {
+        for only in ["checkout", "admin", "theme,admin"] {
+            let error = parts(&["--only", only], false).unwrap_err();
+            assert_eq!(
+                error,
+                format!("`--only {only}` needs the app: `--app DIR` (or LSF_APP)")
+            );
+        }
+        for only in ["theme", "theme,checkout"] {
+            let error = parts(&["--only", only], true).unwrap_err();
+            assert!(
+                error.starts_with(&format!("`--only {only}`: `"))
+                    && error.contains(" app dev` serves no theme ("),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_option_of_a_part_that_is_off_is_an_error_that_names_both() {
+        let app = ["--app", "a"];
+        let cases: &[(&[&str], &str, &str)] = &[
+            (&["--client-secret", "s"], "--client-secret", "admin"),
+            (
+                &["--app-url", "http://localhost:3000"],
+                "--app-url",
+                "admin",
+            ),
+            (&["--admin-throttle", "off"], "--admin-throttle", "admin"),
+            (
+                &["--admin-versions", "2026-10"],
+                "--admin-versions",
+                "admin",
+            ),
+            (&["--admin-fetch-local"], "--admin-fetch-local", "admin"),
+            (&["--pricing-plans", "p.toml"], "--pricing-plans", "admin"),
+            (&["--polaris", "offline"], "--polaris", "admin"),
+            (&["--extension", "banner"], "--extension", "checkout"),
+            (&["--no-functions"], "--no-functions", "checkout"),
+            (&["--variant", "shop"], "--variant", "checkout"),
+            (&["--build"], "--build", "checkout"),
+            (&["--watch"], "--watch", "checkout"),
+        ];
+        for (option, name, part) in cases {
+            // The part is left out by `--only`.
+            let other = if *part == "admin" {
+                "checkout"
+            } else {
+                "admin"
+            };
+            let words = [&app[..], &["--only", other], option].concat();
+            assert_eq!(
+                parts(&words, false),
+                Err(format!(
+                    "{name} needs the {part} part, which --only leaves out"
+                )),
+                "{words:?}"
+            );
+            // A theme without an app has neither.
+            assert_eq!(
+                parts(option, false),
+                Err(format!(
+                    "{name} needs the {part} part, which needs the app: `--app DIR` (or LSF_APP)"
+                )),
+                "{option:?}"
+            );
+            // Every part: nothing left out.
+            assert!(
+                parts(&[&app[..], option].concat(), false).is_ok(),
+                "{option:?}"
+            );
+        }
+        // An option given its default is not given.
+        assert!(parts(&["--app", "a", "--only", "checkout"], false).is_ok());
+        assert!(parts(&["--app", "a", "--only", "admin"], false).is_ok());
+    }
+
+    #[test]
+    fn every_option_that_needs_a_part_is_one_of_serve() {
+        for (id, _) in NEEDS {
+            assert!(named(&Given::default(), id).starts_with("--"), "{id}");
+        }
     }
 
     #[tokio::test]

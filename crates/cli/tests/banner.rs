@@ -1,6 +1,6 @@
-//! What the server prints when it starts: the lines of the Admin API only with an app, before
-//! `ready:`, so that a tool that reads up to `ready:` has the token; and where the client secret
-//! came from.
+//! What the server prints when it starts: the parts it serves (`--only`), the lines of the Admin
+//! API only when it serves it, before `ready:`, so that a tool that reads up to `ready:` has the
+//! token; and where the client secret came from.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -82,6 +82,7 @@ impl Server {
             .env_remove("LSF_THEME")
             .env_remove("LSF_DATA")
             .env_remove("LSF_PRICING_PLANS")
+            .env_remove("LSF_ONLY")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
@@ -127,6 +128,11 @@ impl Server {
 
     /// The body of `GET path`.
     fn get(&self, path: &str) -> String {
+        self.fetch(path).2
+    }
+
+    /// The status of `GET path`, its headers (names in lowercase) and its body.
+    fn fetch(&self, path: &str) -> (u16, Vec<(String, String)>, String) {
         let mut stream = TcpStream::connect(&self.address).unwrap();
         write!(
             stream,
@@ -136,10 +142,28 @@ impl Server {
         .unwrap();
         let mut answer = String::new();
         stream.read_to_string(&mut answer).unwrap();
-        answer
-            .split_once("\r\n\r\n")
-            .map(|(_, body)| body.to_string())
-            .unwrap_or_default()
+        let (head, body) = answer.split_once("\r\n\r\n").unwrap_or((&answer, ""));
+        let mut lines = head.lines();
+        let status = lines
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|status| status.parse().ok())
+            .unwrap_or(0);
+        let headers = lines
+            .filter_map(|line| line.split_once(':'))
+            .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
+            .collect();
+        (status, headers, body.to_string())
+    }
+
+    /// The `X-LSF-Reason` of `GET path`, when it answers `404` with one.
+    fn reason_of_404(&self, path: &str) -> Option<String> {
+        let (status, headers, _) = self.fetch(path);
+        assert_eq!(status, 404, "{path}");
+        headers
+            .into_iter()
+            .find(|(name, _)| name == "x-lsf-reason")
+            .map(|(_, value)| value)
     }
 
     /// The status of `POST path` with a JSON `body`.
@@ -200,27 +224,254 @@ fn theme() -> String {
         .to_string()
 }
 
-#[test]
-fn a_theme_without_an_app_prints_no_admin_webhook_or_secret_line() {
-    let theme = theme();
-    let server = Server::start(&["--theme", &theme, "serve"], &[]);
-    // The Admin API is served all the same, with its token.
-    let admin: serde_json::Value = serde_json::from_str(&server.get("/__lsf/admin")).unwrap();
-    let token = admin["shops"][0]["token"].as_str().unwrap();
-    assert!(token.starts_with("shpat_"), "{admin}");
+/// The lines a server prints only when it serves the Admin API.
+const ADMIN_LINES: &[&str] = &[
+    "admin:",
+    "webhooks:",
+    "X-Shopify-Access-Token",
+    "client secret",
+    "embedded:",
+    "proxy:",
+    "pricing:",
+    "partner:",
+    "polaris:",
+];
+
+/// Asserts that `server` printed none of [`ADMIN_LINES`].
+fn assert_no_admin_line(server: &Server) {
     let said = server.said();
     for line in &said {
         let line = line.trim_start();
         assert!(
-            !line.starts_with("admin:")
-                && !line.starts_with("webhooks:")
-                && !line.starts_with("X-Shopify-Access-Token")
-                && !line.contains("client secret"),
+            !ADMIN_LINES.iter().any(|start| line.starts_with(start)),
             "{}",
             said.join("\n")
         );
     }
-    assert!(!said.join("\n").contains(token), "{}", said.join("\n"));
+}
+
+#[test]
+fn a_theme_without_an_app_serves_no_admin_api_and_prints_no_admin_line() {
+    let theme = theme();
+    let server = Server::start(&["--theme", &theme, "serve"], &[]);
+    assert!(
+        server.before_ready.contains(&"serving: theme".to_string()),
+        "{}",
+        server.before_ready.join("\n")
+    );
+    assert_no_admin_line(&server);
+    // The Admin API is not served: its routes say which `--only` would serve it.
+    for path in [
+        "/__lsf/admin",
+        "/admin/api/2026-10/graphql.json",
+        "/__lsf/webhooks",
+    ] {
+        assert_eq!(
+            server.reason_of_404(path).as_deref(),
+            Some(
+                "the admin part is not served (serving: theme): `serve --app <dir> --only theme,admin` serves it"
+            ),
+            "{path}"
+        );
+    }
+    // The storefront is.
+    assert_eq!(server.fetch("/").0, 200);
+}
+
+#[test]
+fn the_parts_served_are_said_before_ready_and_the_admin_lines_only_with_the_admin_part() {
+    let theme = theme();
+    let app = App::new("parts");
+    let dir = app.0.to_str().unwrap();
+    let serving = |server: &Server| {
+        let at = server
+            .before_ready
+            .iter()
+            .position(|line| line.starts_with("serving: "))
+            .unwrap_or_else(|| panic!("no serving: line:\n{}", server.before_ready.join("\n")));
+        assert!(at < server.before_ready.len() - 1);
+        server.before_ready[at].clone()
+    };
+
+    let server = Server::start(&["--theme", &theme, "serve", "--app", dir], &[]);
+    assert_eq!(serving(&server), "serving: theme, checkout, admin");
+    drop(server);
+
+    // The checkout alone: no line of the Admin API, whose routes say why they are not served.
+    let server = Server::start(
+        &[
+            "--theme", &theme, "serve", "--app", dir, "--only", "checkout",
+        ],
+        &[],
+    );
+    assert_eq!(serving(&server), "serving: checkout");
+    assert_no_admin_line(&server);
+    assert!(
+        !server
+            .before_ready
+            .iter()
+            .any(|line| line.starts_with("theme:")),
+        "{}",
+        server.before_ready.join("\n")
+    );
+    assert_eq!(
+        server.reason_of_404("/__lsf/admin").as_deref(),
+        Some(
+            "the admin part is not served (serving: checkout): `serve --only checkout,admin` serves it"
+        )
+    );
+    assert_eq!(
+        server.reason_of_404("/collections/all").as_deref(),
+        Some(
+            "the theme part is not served (serving: checkout): `serve --only theme,checkout` serves it"
+        )
+    );
+    assert_eq!(server.fetch("/__lsf/checkouts").0, 200);
+    drop(server);
+
+    // The theme and the Admin API: its lines, and its status says what runs.
+    let server = Server::start(
+        &[
+            "--theme",
+            &theme,
+            "serve",
+            "--app",
+            dir,
+            "--only",
+            "theme,admin",
+        ],
+        &[],
+    );
+    assert_eq!(serving(&server), "serving: theme, admin");
+    assert!(
+        server
+            .before_ready
+            .iter()
+            .any(|line| line.starts_with("admin:  http://")),
+        "{}",
+        server.before_ready.join("\n")
+    );
+    let status: serde_json::Value = serde_json::from_str(&server.get("/__lsf/admin")).unwrap();
+    assert_eq!(status["parts"], serde_json::json!(["theme", "admin"]));
+    assert!(server.reason_of_404("/__lsf/checkouts").is_some());
+    drop(server);
+
+    // `app dev`, and the variable: `LSF_ONLY`.
+    let server = Server::start(&["app", "dev", "--app", dir], &[]);
+    assert_eq!(serving(&server), "serving: checkout, admin");
+    drop(server);
+    let server = Server::start(&["app", "dev", "--app", dir], &[("LSF_ONLY", "admin")]);
+    assert_eq!(serving(&server), "serving: admin");
+    assert_eq!(
+        server.reason_of_404("/checkout").as_deref(),
+        Some(
+            "the checkout part is not served (serving: admin): `serve --only checkout,admin` serves it"
+        )
+    );
+}
+
+#[test]
+fn without_the_theme_serve_needs_no_theme_directory() {
+    let app = App::new("no-theme");
+    let empty = std::env::temp_dir().join(format!("lsf-banner-empty-{}", std::process::id()));
+    std::fs::create_dir_all(&empty).unwrap();
+    let server = Server::start(
+        &[
+            "--theme",
+            empty.to_str().unwrap(),
+            "serve",
+            "--app",
+            app.0.to_str().unwrap(),
+            "--only",
+            "checkout,admin",
+        ],
+        &[],
+    );
+    assert!(
+        server
+            .before_ready
+            .contains(&"serving: checkout, admin".to_string())
+    );
+    assert_eq!(server.fetch("/").0, 200, "the home page of the checkout");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&empty);
+}
+
+/// What `lsf <args>` says on stderr when it refuses to start, with `env`.
+fn refusal(args: &[&str], env: &[(&str, &str)]) -> String {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lsf"));
+    command
+        .args(args)
+        .args(["--port", "0"])
+        .current_dir(std::env::temp_dir())
+        .env_remove("LSF_APP")
+        .env_remove("LSF_ONLY")
+        .env_remove("LSF_PRICING_PLANS")
+        .env_remove("LSF_APP_URL")
+        .env_remove("LSF_CLIENT_SECRET")
+        .stdin(Stdio::null());
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    let output = command.output().unwrap();
+    assert_eq!(output.status.code(), Some(2), "{args:?}");
+    String::from_utf8_lossy(&output.stderr).trim().to_string()
+}
+
+#[test]
+fn a_part_without_its_app_app_dev_with_a_theme_and_an_option_of_a_part_that_is_off_are_refused() {
+    let theme = theme();
+    let app = App::new("refusals");
+    let dir = app.0.to_str().unwrap();
+    assert_eq!(
+        refusal(&["--theme", &theme, "serve", "--only", "admin"], &[]),
+        "error: `--only admin` needs the app: `--app DIR` (or LSF_APP)"
+    );
+    assert_eq!(
+        refusal(&["--theme", &theme, "serve"], &[("LSF_ONLY", "checkout")]),
+        "error: `LSF_ONLY=checkout` needs the app: `--app DIR` (or LSF_APP)"
+    );
+    assert_eq!(
+        refusal(&["app", "dev", "--app", dir, "--only", "theme"], &[]),
+        "error: `--only theme`: `lsf app dev` serves no theme (`lsf serve --app DIR --only theme` serves it with the app)"
+    );
+    assert_eq!(
+        refusal(
+            &[
+                "--theme",
+                &theme,
+                "serve",
+                "--app",
+                dir,
+                "--only",
+                "checkout",
+                "--pricing-plans",
+                "p.toml"
+            ],
+            &[]
+        ),
+        "error: --pricing-plans needs the admin part, which --only leaves out"
+    );
+    assert_eq!(
+        refusal(
+            &[
+                "--theme", &theme, "serve", "--app", dir, "--only", "checkout"
+            ],
+            &[("LSF_PRICING_PLANS", "p.toml")]
+        ),
+        "error: LSF_PRICING_PLANS (--pricing-plans) needs the admin part, which --only leaves out"
+    );
+    assert_eq!(
+        refusal(&["--theme", &theme, "serve", "--variant", "shop"], &[]),
+        "error: --variant needs the checkout part, which needs the app: `--app DIR` (or LSF_APP)"
+    );
+    assert_eq!(
+        refusal(
+            &["--theme", &theme, "serve", "--app", dir, "--watch"],
+            &[("LSF_ONLY", "theme,admin")]
+        ),
+        "error: --watch needs the checkout part, which LSF_ONLY leaves out"
+    );
 }
 
 #[test]
@@ -494,8 +745,11 @@ fn a_webhook_the_backend_refuses_is_said_with_the_secret_lsf_signed_it_with() {
 #[test]
 fn polaris_offline_is_said_before_ready_and_set_by_the_option_or_its_variable() {
     let theme = theme();
+    // Polaris is the Admin API's: served with an app.
+    let app = App::new("polaris");
+    let dir = app.0.to_str().unwrap();
     // Online by default: the CDN's, nothing said.
-    let server = Server::start(&["--theme", &theme, "serve"], &[]);
+    let server = Server::start(&["--theme", &theme, "serve", "--app", dir], &[]);
     assert!(
         !server
             .said()
@@ -511,11 +765,19 @@ fn polaris_offline_is_said_before_ready_and_set_by_the_option_or_its_variable() 
 
     for (args, env) in [
         (
-            vec!["--theme", &theme, "serve", "--polaris", "offline"],
+            vec![
+                "--theme",
+                &theme,
+                "serve",
+                "--app",
+                dir,
+                "--polaris",
+                "offline",
+            ],
             vec![],
         ),
         (
-            vec!["--theme", &theme, "serve"],
+            vec!["--theme", &theme, "serve", "--app", dir],
             vec![("LSF_POLARIS", "offline")],
         ),
     ] {
@@ -564,8 +826,11 @@ fn pricing_plans_are_read_from_the_file_of_the_option_or_its_variable_and_said_b
     )
     .unwrap();
     let path = file.to_str().unwrap();
+    // Managed pricing is the Admin API's: served with an app.
+    let app = App::new("pricing-app");
+    let app_dir = app.0.to_str().unwrap();
     // Without the option: no plans, nothing said.
-    let server = Server::start(&["--theme", &theme, "serve"], &[]);
+    let server = Server::start(&["--theme", &theme, "serve", "--app", app_dir], &[]);
     assert!(
         !server
             .said()
@@ -576,11 +841,19 @@ fn pricing_plans_are_read_from_the_file_of_the_option_or_its_variable_and_said_b
 
     for (args, env) in [
         (
-            vec!["--theme", &theme, "serve", "--pricing-plans", path],
+            vec![
+                "--theme",
+                &theme,
+                "serve",
+                "--app",
+                app_dir,
+                "--pricing-plans",
+                path,
+            ],
             vec![],
         ),
         (
-            vec!["--theme", &theme, "serve"],
+            vec!["--theme", &theme, "serve", "--app", app_dir],
             vec![("LSF_PRICING_PLANS", path)],
         ),
     ] {
@@ -593,7 +866,7 @@ fn pricing_plans_are_read_from_the_file_of_the_option_or_its_variable_and_said_b
         assert_eq!(
             line,
             &format!(
-                "pricing: 2 plans ({path}): http://{}/admin/charges/lsf-local-client-id/pricing_plans   (managed pricing: the Billing API creates no charge)",
+                "pricing: 2 plans ({path}): http://{}/admin/charges/checkout-fixtures/pricing_plans   (managed pricing: the Billing API creates no charge)",
                 server.address
             )
         );
@@ -639,12 +912,15 @@ fn pricing_plans_are_read_from_the_file_of_the_option_or_its_variable_and_said_b
             "--theme",
             &theme,
             "serve",
+            "--app",
+            app_dir,
             "--pricing-plans",
             path,
             "--port",
             "0",
         ])
         .env_remove("LSF_PRICING_PLANS")
+        .env_remove("LSF_ONLY")
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -670,7 +946,19 @@ fn the_plans_file_is_read_again_before_a_control_request_when_it_changed() {
     )
     .unwrap();
     let path = file.to_str().unwrap();
-    let server = Server::watching(&["--theme", &theme, "serve", "--pricing-plans", path], &[]);
+    let app = App::new("pricing-watch-app");
+    let server = Server::watching(
+        &[
+            "--theme",
+            &theme,
+            "serve",
+            "--app",
+            app.0.to_str().unwrap(),
+            "--pricing-plans",
+            path,
+        ],
+        &[],
+    );
     let price = |server: &Server| -> serde_json::Value {
         let status: serde_json::Value =
             serde_json::from_str(&server.get("/__lsf/admin/pricing-plans")).unwrap();

@@ -35,6 +35,9 @@ pub struct AdminSettings {
     pub fetch_local: bool,
     /// `--admin-source <url>=<file>`: the URLs lsf answers itself with a file, never fetched.
     pub sources: Vec<(String, std::path::PathBuf)>,
+    /// The app of `--app`, whose client id, scopes and webhooks the Admin API has. `None` takes
+    /// the app of the checkout, else none (a local client id, every scope).
+    pub app_dir: Option<std::path::PathBuf>,
     /// `--pricing-plans <file>` (`LSF_PRICING_PLANS`): the plans of the app's managed pricing,
     /// read from the file.
     pub pricing: Option<(
@@ -243,7 +246,17 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
         headers: incoming.headers.clone(),
         body: incoming.body.to_vec(),
     };
-    let response = admin.api.handle(&request)?;
+    let mut response = admin.api.handle(&request)?;
+    // What the server runs besides the Admin API (`--only`).
+    if incoming.method == "GET"
+        && path == "/__lsf/admin"
+        && response.status == 200
+        && let Ok(serde_json::Value::Object(mut status)) =
+            serde_json::from_slice::<serde_json::Value>(&response.body)
+    {
+        status.insert("parts".to_string(), state.parts().to_json());
+        response.body = serde_json::Value::Object(status).to_string().into_bytes();
+    }
     Some(Reply {
         status: response.status,
         headers: response.headers,

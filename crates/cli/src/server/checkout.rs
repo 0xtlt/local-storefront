@@ -156,15 +156,8 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
         }
         ("POST", ["checkouts", "cn", token, "update"]) => Some(update(state, incoming, token)),
         ("POST", ["checkouts", "cn", token, "complete"]) => Some(complete(state, incoming, token)),
+        // Without a theme, the home page is `/`; the rest is the theme's, which is not served.
         ("GET" | "HEAD", []) if options.standalone => Some(home(state, incoming)),
-        _ if options.standalone => Some(Reply::text(
-            404,
-            format!(
-                "Not found. This server shows the checkout of an app only: start `{} serve --app` \
-                 to serve a theme with it.",
-                lsf_core::util::command()
-            ),
-        )),
         _ => None,
     }?;
     Some(reply)

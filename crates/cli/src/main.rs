@@ -11,7 +11,7 @@ mod watch;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 // Rendering a page makes hundreds of thousands of small allocations. The system allocators
 // (macOS's and musl's in particular) make threads that allocate at the same time slow each
@@ -97,14 +97,33 @@ fn parse_preview(name: &str) -> Result<lsf_theme::Preview, String> {
     })
 }
 
+/// Where the options of `serve` or `app dev` got their values, when one of them runs.
+fn given(matches: &clap::ArgMatches) -> commands::serve::Given {
+    let serve = matches.subcommand_matches("serve").or_else(|| {
+        matches
+            .subcommand_matches("app")
+            .and_then(|app| app.subcommand_matches("dev"))
+    });
+    serve.map(commands::serve::Given::of).unwrap_or_default()
+}
+
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let given = given(&matches);
     let previews = cli.previews.as_slice();
     let result = match cli.command {
-        Command::Serve(args) => {
-            commands::serve::run(&cli.theme, cli.data.as_deref(), previews, args, false)
+        Command::Serve(args) => commands::serve::run(
+            &cli.theme,
+            cli.data.as_deref(),
+            previews,
+            args,
+            &given,
+            false,
+        ),
+        Command::App(args) => {
+            commands::app::run(&cli.theme, cli.data.as_deref(), previews, args, &given)
         }
-        Command::App(args) => commands::app::run(&cli.theme, cli.data.as_deref(), previews, args),
         Command::Render(args) => {
             commands::render::run(&cli.theme, cli.data.as_deref(), previews, args)
         }

@@ -94,9 +94,10 @@ pub fn run(
     data: Option<&Path>,
     previews: &[lsf_theme::Preview],
     args: Args,
+    given: &serve::Given,
 ) -> Result<ExitCode, String> {
     match args.command {
-        Subcommand::Dev(serve) => serve::run(theme, data, previews, serve, true),
+        Subcommand::Dev(serve) => serve::run(theme, data, previews, serve, given, true),
         Subcommand::Init(init) => app_init::run(theme, data, init),
         Subcommand::Build(args) => crate::checkout::run_build(
             args.app.as_deref(),

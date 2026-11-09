@@ -19,6 +19,7 @@ pub use home_check::{Unmet, run_with_expectations as check_scenarios};
 mod live_reload;
 mod minify;
 pub mod params;
+pub mod parts;
 pub mod polaris;
 pub mod reply;
 mod speedscope;
@@ -292,22 +293,28 @@ impl ServerState {
         let data_files = data_files_of(&app);
         let files = Loaded::of_files(&app);
         let diagnostics = files.diagnostics.clone();
+        // The app of the Admin API: its own setting, else the checkout's (`--only admin` has
+        // no checkout).
+        let admin_app_dir = |settings: &admin::AdminSettings| {
+            settings.app_dir.clone().or_else(|| {
+                options
+                    .checkout
+                    .as_ref()
+                    .map(|checkout| checkout.app_dir.clone())
+            })
+        };
         let admin = options.admin.as_ref().map(|settings| {
-            let app_dir = options
-                .checkout
-                .as_ref()
-                .map(|checkout| checkout.app_dir.as_path());
             admin::Admin::new(
                 &files.base,
                 settings,
-                app_dir,
+                admin_app_dir(settings).as_deref(),
                 app.theme.files().root(),
                 options.quiet,
             )
         });
         let app_proxy = options.admin.as_ref().and_then(|settings| {
-            let app_dir = options.checkout.as_ref()?.app_dir.as_path();
-            app_proxy::AppProxy::of_app(app_dir, settings.app_url.as_deref())
+            let app_dir = admin_app_dir(settings)?;
+            app_proxy::AppProxy::of_app(&app_dir, settings.app_url.as_deref())
         });
         let admin_changes = admin.as_ref().map_or(0, |admin| admin.api.store_changes());
         let polaris = polaris::Polaris::new(options.polaris);
@@ -761,7 +768,7 @@ impl ServerState {
 
     fn dispatch(&self, incoming: &Incoming) -> Reply {
         // Shopify's CDN for the app's pages: nothing of the store.
-        if incoming.path.starts_with(polaris::PREFIX) {
+        if incoming.path.starts_with(polaris::PREFIX) && self.admin.is_some() {
             return polaris::cdn(self, incoming);
         }
         // The plans of `--pricing-plans`, which every kind of request below reads.
@@ -770,6 +777,10 @@ impl ServerState {
         // never a page.
         if let Some(reply) = admin::route(self, incoming) {
             return reply;
+        }
+        // The routes of a part `--only` leaves out.
+        if let Some(part) = parts::off_part_of(self, incoming) {
+            return parts::not_served(self, part);
         }
         // What follows sees what the Admin API changed.
         self.sync_admin_changes(Some(incoming));
@@ -791,6 +802,10 @@ impl ServerState {
         }
         if let Some(reply) = checkout::route(self, incoming) {
             return reply;
+        }
+        // What is left is the theme's.
+        if !self.app.has_theme() {
+            return parts::not_served(self, parts::Part::Theme);
         }
         storefront::handle(self, incoming)
     }
@@ -857,9 +872,12 @@ async fn handle(
     .await
     .unwrap_or_else(|error| (Reply::text(500, format!("internal error: {error}")), None));
 
+    // Polaris's files, many per page of the app, are not logged; their `404` when the Admin API
+    // is not served is, with its reason.
+    let polaris = parts.uri.path().starts_with(polaris::PREFIX) && state.admin.is_some();
     if !quiet
         && !parts.uri.path().starts_with("/cdn/")
-        && !parts.uri.path().starts_with(polaris::PREFIX)
+        && !polaris
         && !parts.uri.path().starts_with("/__lsf/livereload")
     {
         let errors = reply
