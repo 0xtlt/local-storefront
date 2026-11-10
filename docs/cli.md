@@ -42,7 +42,7 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 
 | Option | Environment variable | What it does |
 |---|---|---|
-| `--port <port>`, `-p` | | Listens on this port and no other: the server does not start if it is taken. `0` picks a free one. Without the option: `9292`, or the next free port up to `9391`. |
+| `--port <port>`, `-p` | | Listens on this port and no other: the server does not start if it is taken. `0` picks a free one. Without the option: `9292`, or the next free port up to `9391`, which a line says (`port:   9292 is taken, using 9293`). |
 | `--host <address>` | | Address to listen on. Default `127.0.0.1`. `0.0.0.0` in a container. |
 | `--static` | | Reads the theme and the data once. The fastest mode, for tests. |
 | `--strict` | | Refuses to start when the store data has errors. |
@@ -58,13 +58,13 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--extension <handle>` | | With `--app`: uses only this extension of the app. Repeat it for several. Without it, every extension is used. |
 | `--build` | | With `--app`: runs the build command of each Function first. |
 | `--no-functions` | | With `--app`: serves the app's UI extensions and its Admin API, but runs none of its Functions. For a backend's tests, whose orders a Function that fails would block: a discount of the data whose Function is not run is left out. A Function named with `--extension` is refused; not with `--watch`. |
-| `--watch` | | With `--app`: builds a Function again when its files change, and reloads the open pages (it implies `--live-reload`). At start, builds only the Functions that have no module or changed since the last watch; with `--build`, all of them. See [watch mode](checkout.md#watch-mode). |
+| `--watch` | | With `--app`: builds a Function again when its files change, and reloads the open pages (it implies `--live-reload`). At start, builds only the Functions that have no module or changed since the last watch; with `--build`, all of them. Not with `--static`. See [watch mode](checkout.md#watch-mode). |
 | `--variant <standard\|shop>` | | With `--app`: the look of the checkout page, `standard` by default. |
 | `--app-url <url>` | `LSF_APP_URL` | Where the backend of the app listens (`http://localhost:3000`). The webhooks of `shopify.app.toml` go there (a relative `uri` is joined to it; an absolute one on the origin of `application_url` is moved to it), and so do the OAuth redirects and the launch of the embedded app. Without it, `application_url`. See [Admin API](admin.md). |
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret webhooks, OAuth and session tokens are signed with. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else `lsf-local-client-secret`, printed at start. |
 | `--admin-throttle <plan>` | `LSF_ADMIN_THROTTLE` | The cost bucket of the Admin API, per shop and app: `store` (the default: Plus for store data with companies, Standard otherwise), `standard` (2000 points, 100 a second), `advanced` (4000, 200), `plus` (20000, 1000), `enterprise` (40000, 2000), `legacy` (1000, 50), or `off`. |
 | `--admin-versions <list>` | `LSF_ADMIN_VERSIONS` | The versions of the Admin API served, comma-separated, among those lsf knows: `2026-10` alone by default, `2026-10,2027-01` with the release candidate. Another version answers `404`; one Shopify no longer supports is answered by the oldest stable version served, as Shopify does. See [API versions](admin.md#api-versions). |
-| `--admin-fetch-local` | `LSF_ADMIN_FETCH_LOCAL` | Lets `themeCreate`, the `URL` bodies of `themeFilesUpsert` and `urlRedirectImportCreate` download their source from this machine or its network (the loopback, private, link-local and unique-local addresses), for a theme ZIP served from localhost on purpose. Off by default: Shopify cannot reach them, and a backend could otherwise read what the machine serves. See [Sources from a URL](admin.md). |
+| `--admin-fetch-local` | `LSF_ADMIN_FETCH_LOCAL` | Lets `themeCreate`, the `URL` bodies of `themeFilesUpsert` and `urlRedirectImportCreate` download their source from this machine or its network (the loopback, private, link-local and unique-local addresses), for a theme ZIP served from localhost on purpose. Off by default: Shopify cannot reach them, and a backend could otherwise read what the machine serves. See [Sources from a URL](admin-reference.md#themes-script-tags-redirects-in-bulk-and-policies). |
 | `--admin-source <url>=<file>` | | Answers a URL with a file, never downloading it: what `themeCreate`, a `URL` body of `themeFilesUpsert` or `urlRedirectImportCreate` reads there. Repeatable. For your backend's own URLs (a theme ZIP on its CDN) that nothing serves in a test, wherever they point, `localhost` included. The file must exist when lsf starts, and is read at each use. `PUT /__lsf/admin/sources?url=` stubs others while lsf runs. See [Stubbed URLs](admin-reference.md#stubbed-urls). |
 | `--pricing-plans <file>` | `LSF_PRICING_PLANS` | The plans of the app's [managed pricing](admin.md#managed-pricing) (Shopify App Pricing), which Shopify keeps in the Partner Dashboard: a TOML file of `[[plans]]` (JSON for a `.json` file). lsf's admin shows them at `/admin/charges/<app handle>/pricing_plans`, where the merchant chooses one, and the Billing API creates no charge, as on Shopify. A wrong file stops the start. Read at start, and again when it changes unless `--static` ([when the data changes on disk](#when-the-data-changes-on-disk); a wrong file then keeps the plans it had, and says why); `PUT /__lsf/admin/pricing-plans` changes them while lsf runs. Printed before `ready:` as `pricing: <n> plans (<file>): <page>`, then `partner: <url>   (Partner API: …; token prtapi_lsf_…)`: where the app reads its plan ([Partner API](admin.md#read-the-plan-from-the-partner-api)). |
 | `--polaris <online\|offline>` | `LSF_POLARIS` | What `/__lsf/cdn/<path>` answers, where an embedded app loads Polaris from: `online` (the default) redirects to Shopify's CDN, `offline` serves lsf's copy. See [Polaris without the internet](admin.md#polaris-without-the-internet). |
@@ -85,8 +85,10 @@ a 404 above it.
 With `--app`, the lines of the app come before `ready:`: how many checkout scenarios the data
 has (when the checkout runs a Function), then, with the admin part, the [Admin API](admin.md)
 of the store and its token, the client secret it signs with and where that secret comes from,
-the webhooks of the app, and its proxy. After `ready:`, with the theme and the checkout, the
-address of the home page of the checkout, then `watch:` with `--watch`:
+the webhooks of the app, its proxy, the embedded app in lsf's admin (`embedded:`), with
+`--pricing-plans` the plans and the Partner API (`pricing:`, `partner:`), and with
+`--polaris offline` where Polaris is served (`polaris:`). After `ready:`, with the theme and the
+checkout, the address of the home page of the checkout, then `watch:` with `--watch`:
 
 ```text
 serving: theme, checkout, admin
@@ -194,7 +196,7 @@ and the store data defaults to the app's `shopify-local/`. Guide: [checkout](che
 
 | Command | What it does |
 |---|---|
-| [`app dev`](#app-dev) | Serves the app alone: its checkout and its customer account. |
+| [`app dev`](#app-dev) | Serves the app alone: its checkout, its customer account and its Admin API. |
 | [`app init`](#app-init) | Writes checkout scenarios made for the app. |
 | [`app build`](#app-build) | Builds its extensions, without Node. |
 | [`app check`](#app-check) | Runs the Functions of every scenario and checks their `expect`, for CI. |
@@ -281,6 +283,10 @@ counts it too, rather than saying that every Function ran:
 warning  volume-discount: ran in no scenario, so nothing checks it (a discount Function runs only for a discount that names it: …)
 checked 8 of 8 scenarios in 0.4 s: no Function failed, 1 Function ran in no scenario
 ```
+
+A payment or delivery customization, validation or cart transform Function gets
+``(it runs where the shop has an enabled owner of it, as on Shopify, or where a scenario names
+it: add it to the `extensions` of one)`` instead.
 
 An expectation that is not met prints the scenario and the assertion (the list and the rule,
 or the amount), what the scenario expects, and what the checkout has, as the scenario writes it.
@@ -708,6 +714,8 @@ on stderr, and exits with `0`:
 
 ```text
 ./shopify-local: wrote 16 files, kept 0 existing ones, refreshed schema/
+next: the `serve` command shows the theme, and `validate` checks the data after you edit it
+      for a Shopify app: `app init --app <dir>` writes checkout scenarios to try its Functions and extensions with
 ```
 
 | Option | What it does |
