@@ -341,7 +341,7 @@ of the app lands on a page that says so.
 | `locale` | The `locale` the app is opened with: the shop's primary locale by default. |
 
 The other parameters go to the app. `<handle>` is `handle` of `shopify.app.toml`, or the client
-id; `/admin/` and `/admin/apps` redirect there. An app with `embedded = false` gets a page that
+id; `/admin`, `/admin/` and `/admin/apps` redirect there. An app with `embedded = false` gets a page that
 links to its launch instead, as Shopify opens it in a tab of its own.
 
 ### Load lsf's App Bridge

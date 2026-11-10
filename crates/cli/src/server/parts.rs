@@ -131,11 +131,12 @@ pub fn off_part_of(state: &ServerState, incoming: &Incoming) -> Option<Part> {
     if !parts.checkout && is_checkout_control_path(path) {
         return Some(Part::Checkout);
     }
-    // Without a theme, nothing stands in for the checkout's pages.
+    // Without a theme, nothing stands in for the checkout's pages, nor for the app's home page
+    // at `/`, which the checkout part serves (`app dev`).
     if !parts.checkout && !parts.theme {
         let (_, _, local) = state.localize(&state.store_of(incoming), path);
         let first = local.trim_start_matches('/').split('/').next();
-        if matches!(first, Some("checkout" | "checkouts")) {
+        if matches!(first, Some("" | "checkout" | "checkouts")) {
             return Some(Part::Checkout);
         }
     }

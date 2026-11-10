@@ -304,6 +304,18 @@ the same data every run.
 
 ### Fixed
 
+- **`/admin` without its slash opens the app in lsf's admin**, as `/admin/` does. It answered
+  the storefront's 404.
+- **`lsf app webhook trigger --api-version` says what it sent.** The payload is built in that
+  version for every subscription, as the help now says. A subscription of another version gets
+  the note `the subscription asks for API version 2026-10: the payload is 2027-01's, the version
+  this webhook was triggered in`, not a hint about `--admin-versions`, an option `trigger` does
+  not have.
+- **`lsf docs | head` ends quietly.** A command that only prints (`docs`, `schema`, `render`,
+  `routes`, `validate`, `check`, `fmt`, `profile`) stops like `cat` when its reader leaves,
+  instead of panicking on the closed pipe.
+- **With `app dev --only admin`, `/` names the checkout part:** the app's home page belongs to
+  it. The `X-LSF-Reason` named the theme, which `app dev` does not serve.
 - **Uninstalling the app stops its Functions.** After `POST /__lsf/admin/uninstall` (or
   `appUninstall`), the app's payment customization stayed enabled and its Function kept hiding a
   payment method at the checkout. As Shopify removes an uninstalled app's Functions with their

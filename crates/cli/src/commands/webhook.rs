@@ -10,7 +10,7 @@ use std::time::Duration;
 use chrono::Utc;
 use lsf_app::admin::api::samples::ShopSamples;
 use lsf_app::admin::state::ShopState;
-use lsf_app::admin::version::{ApiVersion, Served};
+use lsf_app::admin::version::ApiVersion;
 use lsf_app::admin::webhooks::samples::Samples;
 use lsf_app::admin::webhooks::subscriptions::{is_local_http, off_machine_with};
 use lsf_app::admin::webhooks::{
@@ -50,9 +50,10 @@ pub struct TriggerArgs {
     #[arg(long, value_name = "TOPIC")]
     topic: String,
 
-    /// The API version of the payload sent to `--address`, one this build knows (the default
-    /// one without it). The subscriptions of shopify.app.toml get that of `[webhooks]
-    /// api_version`.
+    /// The API version of the payload, one this build knows (the default one without it), as
+    /// `shopify app webhook trigger` sends the sample of that version: to `--address` and to the
+    /// subscriptions of shopify.app.toml alike. A subscription whose `api_version` differs gets
+    /// it all the same, and a note says so.
     #[arg(long, value_name = "VERSION", default_value = API_VERSION)]
     api_version: String,
 
@@ -206,7 +207,7 @@ fn trigger(
     // The payload is built in `--api-version`, as Shopify's CLI sends the sample of that version;
     // a subscription that asks for another says so in its delivery's notes.
     let webhooks = Webhooks::for_app(&config, args.app_url.clone(), secret, options)
-        .with_versions(Served::new([version]));
+        .with_payload_version(version);
     let shop = samples.shop();
     // A subscription's address that is neither this machine nor `--app-url` is refused before
     // anything is sent: the webhook is signed with the app's secret.

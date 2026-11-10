@@ -163,8 +163,8 @@ A part that does not run answers `404` on its routes, with an `X-LSF-Reason` tha
 `--only` that serves it: ``the admin part is not served (serving: theme): `serve --app <dir>
 --only theme,admin` serves it`` ([control API](control-api.md)). With the theme and without the
 checkout, `/checkout` and `/account` are the theme's stand-ins, as without `--app`. Without the
-theme, the pages of the theme answer that `404`, `/` too unless the checkout runs (its home
-page). `GET /__lsf/status`, `GET /__lsf/admin` and the page of `/__lsf` say which parts run.
+theme, the pages of the theme answer that `404`. `/` is then the checkout's home page, and its
+`404` names the checkout part when the checkout does not run either. `GET /__lsf/status`, `GET /__lsf/admin` and the page of `/__lsf` say which parts run.
 
 The checkout without the admin part reads the owners of its Functions from the store data, and
 records no order in an Admin API. The theme with the admin part shows what the backend writes,
@@ -438,7 +438,7 @@ give lsf the backend's secret (--client-secret, or --app for the SHOPIFY_API_SEC
 |---|---|---|
 | `--topic <topic>` | | The topic, as Shopify writes it (`orders/create`) or as the GraphQL enum does (`ORDERS_CREATE`). Every topic of the API version (`--api-version`) and the compliance topics (`customers/data_request`, `customers/redact`, `shop/redact`). A topic close to an existing one is suggested. |
 | `--address <url>` | | Where to send it: `https://…`, or `http://localhost:<port>/<path>` (any address of this machine: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`). |
-| `--api-version <version>` | | The version the payload is built in: `2026-10` (the default) or another lsf knows (`2027-01`). A topic the version does not have is refused. |
+| `--api-version <version>` | | The version the payload is built in: `2026-10` (the default) or another lsf knows (`2027-01`), for `--address` and the subscriptions of `shopify.app.toml` alike, as Shopify's CLI sends the sample of that version. A subscription whose `api_version` differs gets it all the same, and a `note:` says so. A topic the version does not have is refused. |
 | `--delivery-method <method>` | | `http`, `google-pub-sub` or `event-bridge`; without it, what the address says. lsf delivers over HTTP only: the other two are refused. |
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret of the signature. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else lsf's local secret, `lsf-local-client-secret`. |
 | `--app <dir>`, `--path <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in; may be left out with `--address`. |

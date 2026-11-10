@@ -368,6 +368,13 @@ fn the_parts_served_are_said_before_ready_and_the_admin_lines_only_with_the_admi
             "the checkout part is not served (serving: admin): `serve --only checkout,admin` serves it"
         )
     );
+    // The app's home page is the checkout part's too.
+    assert_eq!(
+        server.reason_of_404("/").as_deref(),
+        Some(
+            "the checkout part is not served (serving: admin): `serve --only checkout,admin` serves it"
+        )
+    );
 }
 
 #[test]
