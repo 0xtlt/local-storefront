@@ -56,7 +56,7 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--app <dir>` | `LSF_APP` | A Shopify app. `/checkout` then runs its Functions and shows its checkout UI extensions, `/account` shows its customer account UI extensions, and its backend gets the [Admin API](admin.md). See [checkout](checkout.md). |
 | `--only <parts>` | `LSF_ONLY` | Runs only these parts: `theme`, `checkout`, `admin`, comma-separated or repeated. Without it, the theme, and all three with `--app`. `checkout` and `admin` need `--app`. See [what runs](#what-runs). |
 | `--extension <handle>` | | With `--app`: uses only this extension of the app. Repeat it for several. Without it, every extension is used. |
-| `--build` | | With `--app`: runs the build command of each Function first. |
+| `--build` | | With `--app`: builds the extensions first, as `app build` does: the Functions, then the UI extensions that name their sources. |
 | `--no-functions` | | With `--app`: serves the app's UI extensions and its Admin API, but runs none of its Functions. For a backend's tests, whose orders a Function that fails would block: a discount of the data whose Function is not run is left out. A Function named with `--extension` is refused; not with `--watch`. |
 | `--watch` | | With `--app`: builds a Function again when its files change, and reloads the open pages (it implies `--live-reload`). At start, builds only the Functions that have no module or changed since the last watch; with `--build`, all of them. Not with `--static`. See [watch mode](checkout.md#watch-mode). |
 | `--variant <standard\|shop>` | | With `--app`: the look of the checkout page, `standard` by default. |

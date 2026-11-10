@@ -76,11 +76,14 @@ struct RunArgs {
     #[arg(value_name = "HANDLE")]
     handles: Vec<String>,
 
-    /// The directory of a Shopify app (the one with shopify.app.toml).
+    /// The directory of a Shopify app (the one with shopify.app.toml). Defaults to the app the
+    /// current folder is in.
     #[arg(long, env = "LSF_APP", value_name = "DIR")]
     app: Option<std::path::PathBuf>,
 
-    /// Run the build command of each Function (`[extensions.build] command`) first.
+    /// Build the extensions first, as `lsf app build` does: each Function (its
+    /// `[extensions.build] command`, or lsf's own build of a JavaScript one), then each UI
+    /// extension that names its sources.
     #[arg(long)]
     build: bool,
 
