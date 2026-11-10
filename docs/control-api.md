@@ -32,6 +32,8 @@ serves it``. `GET /__lsf/status` lists the parts that run (`parts`).
 | `GET /__lsf/timings` | How long templates, sections and blocks took so far. See [performance](performance.md#many-requests). | JSON |
 | `DELETE /__lsf/timings` | Forgets those times. | `{ "ok": true }` |
 | `GET /__lsf/profile?path=<path>` | The profile of a page, as the session sees it. `points=1`, `html=1`, `lines=1`, `all=1`, `runs=<n>`, `section_id=<id>`, `cost=<rules>`, `format=speedscope`. See [performance](performance.md#in-the-browser). | Text, HTML or JSON |
+| `GET /__lsf/speedscope/<file>` | The files of the flame graph viewer `html=1` opens, which are in the binary. | The file |
+| `GET /__lsf/livereload` | What the pages of [`--live-reload`](storefront.md#reload-as-you-edit) listen on: a WebSocket, or without the upgrade a token of the files, which changes when they do. | A WebSocket, or text |
 | `GET /__lsf/schema/<kind>` | The JSON Schema of a kind of data file: `store`, `product`, `collection`, `page`, `blog`, `customer`, `menu`, `session`. | JSON Schema |
 | `GET /__lsf` | The status as a page for a browser, with a customer chooser and links to every page and its profiles. | HTML |
 
@@ -46,6 +48,7 @@ backend's tests use, then the rest. How a test uses them:
 |---|---|---|
 | `GET /__lsf/checkout?session=<id>` | The state of a session's [checkout](checkout.md#test-it), when the server runs with `--app`. The caller's session without `session`. Once the order is placed (`POST /checkouts/cn/<token>/complete`, which answers `{redirect, order: {id, number, name}}`), `status` is `completed` and `order` has its `id` (the `admin_graphql_api_id` of its `orders/create`), `number`, `processedAt`, `totalReceived`, `totalOutstanding`. **Here `number` is a string, `"#1004"`**: the session's number, as the thank-you page shows it. In the answer of `complete`, `number` is an integer, `1004`, and `name` is the string, `"#1004"`: the Admin API's, which can differ (`1005` when the shop has a `#1004` already). To match the two, use `id`, which both have. The state's `number` is a string since 0.2.0, and stays one. | JSON |
 | `GET /__lsf/checkouts` | The home page of the checkout: the extensions of the app and its [checkout scenarios](checkout.md#scenarios). `?format=json` for what it says, `?locale=fr` for a language. With `--app`. | HTML or JSON |
+| `GET /__lsf/checkouts/check` | Runs the Functions of every scenario, as the home page asks for them (or takes the last run on the same app and data): [the ones that fail](checkout.md#the-functions-that-fail). With `--app`. | JSON: `failures` (`handle`, `target`, `error`, `logs`, `scenarios`), and what the page shows of it |
 | `GET /checkout?scenario=<name>` | Opens a checkout for a scenario, in a new session whose cookie it sets. With `--app`. | A redirect |
 | `GET /__lsf/checkout/assets/<file>` | The files of the checkout page, which are in the binary. With `--app`. | The file |
 | `GET /__lsf/extensions/<handle>/<file>` | A file of the build (`dist/`) of a checkout UI extension. With `--app`. | The file |
@@ -184,7 +187,7 @@ A test runner can wait on this URL to know the server is up.
 | `webhooks` | `summary`, `appSubscriptions` (those of `shopify.app.toml`), `deliveries` (how many the log has). |
 | `mutations` | The mutations lsf simulates: every one of the versions it serves ([what simulated means](admin-reference.md#what-lsf-simulates)). |
 | `storeSync` | [What the storefront sees](admin.md#what-the-storefront-and-the-checkout-see) of the default shop's changes: `enabled`, `generation` (moves when the overlay does; `0` is the files), `pending` (a change waits for the next page), `overlay` (`written`: entities by section, `removed`: their keys; `null` while the storefront is the files), `built` (`generation`, `ms`, `diagnostics`: what the store data refused). |
-| `shops` | Per shop: `shop`, `installed`, `scopes`, `token` (the default one), `changed` (whether the Admin API changed it), `records`, `counts` (records by type), `tokens` (every valid token: `mode`, `source`, `scopes`, `expiresAt`, `user`), `subscriptions` (those the backend made), `outbox` (the shop's [outbox](admin-reference.md#the-outbox), as `GET /__lsf/admin/outbox` lists it). |
+| `shops` | Per shop: `shop`, `installed`, `scopes`, `token` (the default one), `changed` (whether the Admin API changed it), `records`, `counts` (records by type), `tokens` (every valid token: `mode`, `source`, `scopes`, `expiresAt`, `user`), `subscriptions` (those the backend made), `outbox` (the shop's [outbox](admin-reference.md#the-outbox), as `GET /__lsf/admin/outbox` lists it), `shippingPackages` (the shop's packages for shipping labels, Shopify's "Sample box" by default). |
 
 ## Webhook deliveries
 

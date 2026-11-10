@@ -72,6 +72,7 @@ Tests: unit tests next to the code, `tests/docs.rs` (the generated reference is 
 | `render/` | URL → template (`routes`), settings resolution, sections and blocks, layouts, the Section Rendering API, the compiled stylesheet and script bundles, and what Shopify injects into pages (`platform`). |
 | `assets/platform/` | The JavaScript counterparts of Shopify's own scripts (`Shopify.actions`, `Shopify.loadFeatures`), embedded in the binary and served from the local CDN, with Shopify's global assets (`themes_support/`, see its README). Tested with Node's test runner (`mise run test:js`). |
 | `images`, `fonts`, `urls` | Image transformations, the format an image is sent in (JPEG, PNG, WebP or AVIF, by what the client accepts) and placeholders, the blank fallback font, the local CDN URLs of a site. |
+| `previews` | Shopify's feature previews (`--preview liquid-july-26`): what a render adds when one is on. |
 | `site` | What one render sees: theme, store, request, session, clock. |
 
 A render is a pure function of `(theme, store, request, session, now)`: `Renderer::render`
@@ -105,6 +106,11 @@ Its design, and what each supported Shopify API release changes, are in
 | `input` | Builds the input of a Function: runs its GraphQL input query against the cart, the buyer and the store (a small executor over a resolver of the Function input graph). |
 | `runner` | Runs a Wasm module as Shopify's own `function-runner` runs it (`runner::host`, its engine ported, with the providers of `providers/`), runs every Function on one engine (a module is compiled once, whatever the number of runs at once; at most one run per CPU), caches the compiled modules by path, time and size, stops a Function after 10 seconds, and reports logs, instructions and errors. |
 | `pipeline` | `compute`: the Functions in the order Shopify runs them, applying each output, to a `CheckoutResult`. |
+| `schema` | A Function API's schema: the input query only asks for what it has, the output fits its result type. |
+| `fetch` | The HTTP request of a `.fetch` target, checked against Shopify's limits, and the answer its `.run` target reads. |
+| `javascript/`, `trampoline`, `providers` | Building a Function as Shopify's CLI does, without Node: a JavaScript one bundled and compiled with Javy, a Rust one linked by Shopify's trampoline; and the providers a module imports when it runs. `javascript/` also bundles the UI extensions that name their sources. |
+| `expect` | The `expect` of a checkout scenario, checked against what its Functions computed: what `lsf app check` fails on when a Function decides wrong. |
+| `placement`, `app_metafields` | Where the pages place each target of the checkout and customer account UI extensions, and the metafields `appMetafields` gives them. |
 | `types` | The state the buyer builds, the configuration (`CheckoutConfig`, which `lsf` maps from the `checkout` section of the store data) and the result, which is the JSON the page reads. |
 | `assets` | The page and the sandbox of its extensions, embedded in the binary: the files of `assets/`, except `tests/` and `preview/`. |
 
@@ -156,21 +162,26 @@ Tests: unit tests next to the code; `tests/golden.rs` formats the cases of
 
 ## `lsf-cli`: commands and server
 
-`commands/` holds one file per subcommand (`app.rs` is `lsf app`: `app dev` is `serve` without a theme, `App::open_without_theme`, and `app init` (`app_init.rs`) writes the checkout scenarios for an app; `app function run` runs the pipeline once). `server/` is the HTTP side:
+`commands/` holds one file per subcommand (`app.rs` is `lsf app`: `app dev` is `serve` without a theme, `App::open_without_theme`, and `app init` (`app_init.rs`) writes the checkout scenarios for an app; `function.rs` is `app function run`, which runs the pipeline once, and `app function build`, with `function/schema.rs` for `app function schema`; `webhook.rs` is `app webhook trigger`). `server/` is the HTTP side:
 
 | Module | Role |
 |---|---|
-| `mod` | State (the loaded store, sessions, caches), the request/response types handlers work with, reloading when files change. Handlers are plain functions from a request to a reply, so they are tested without a network (`tests.rs`). |
+| `mod` | State (the loaded store, sessions, caches), the request/response types handlers work with (`reply`, `params`), reloading when files change (`data_files`: a change of checkout scenarios alone keeps the shops of the Admin API). Handlers are plain functions from a request to a reply, so they are tested without a network (`tests.rs`, `tests/`). |
 | `storefront` | Pages, the Section Rendering API, product, search and recommendation JSON. |
 | `cart`, `forms` | The Cart Ajax API and form submissions. |
 | `account` | The page that stands in for the customer accounts Shopify hosts, and the B2B location switch. |
+| `throttle` | `--throttle` and the `throttle` of a session: answering some requests late. |
 | `cdn` | Theme assets, files, images and the variants of them kept in memory, bundles, fonts. |
 | `minify` | The stylesheets and the scripts of the theme, minified with a source map. |
 | `compress` | Brotli or gzip for the responses that gain from it, by what the client accepts. |
 | `control` | The `/__lsf` API. |
 | `parts` | The parts the server runs (`--only`): the theme when it was opened with one, the checkout and the Admin API when it was given them (`ServerState::parts`). `dispatch` answers the routes of a part that is off with a `404` and an `X-LSF-Reason` naming the `--only` that serves it; what nothing else answers is the theme's. `commands/serve.rs` picks the parts (the defaults, the errors of an option whose part is off). |
-| `home` | `--app`: the home page (`/` of `lsf app dev`, `/__lsf/checkouts`) and the notices that say why a scenario did not open: HTML in the look of the checkout, drawn from the JSON of `?format=json`. |
-| `checkout` | `--app`: the pages at `/checkouts/cn/<token>`, `/checkout?scenario=<name>`, the operations the page sends, the files of the page and of the extensions. What the buyer chose is in the session (`SessionEntry::checkout`), next to the cart they share with the theme. The options, the mapping from the store data to `lsf_app::checkout::CheckoutConfig` and the build of the Functions are in `src/checkout.rs`. |
+| `home` | `--app`: the home page (`/` of `lsf app dev`, `/__lsf/checkouts`) and the notices that say why a scenario did not open: HTML in the look of the checkout, drawn from the JSON of `?format=json`. `home_check` runs the Functions of every scenario for it (`/__lsf/checkouts/check`), as `lsf app check` does. |
+| `checkout` | `--app`: the pages at `/checkouts/cn/<token>`, `/checkout?scenario=<name>`, the operations the page sends, the files of the page and of the extensions. What the buyer chose is in the session (`SessionEntry::checkout`), next to the cart they share with the theme. The options, the mapping from the store data to `lsf_app::checkout::CheckoutConfig` and the build of the Functions are in `src/checkout.rs`. `checkout_account` logs the checkout in as a customer of the data. |
+| `customer_account` | `--app`: the customer account where the app's customer account UI extensions render (`/account`, its orders, its profile, the full pages of extensions), in place of `account`. |
+| `admin` | `--app`: `lsf_app::admin::AdminApi`, built from the store data and the app, routed before the storefront and the checkout: the GraphQL Admin API, OAuth, lsf's admin, `/__lsf/admin`, `/__lsf/webhooks`, the Partner API. It prints the `admin:` lines at start. |
+| `store_sync` | What the backend changes in the default shop of the Admin API shows in the storefront and the checkout: the store is built again from the files with those changes on top, on the next request that reads it. |
+| `polaris` | `/__lsf/cdn/<path>` and `/__lsf/polaris`: Polaris for the app's pages in lsf's admin, a redirect to Shopify's CDN (`online`) or the copy in the binary (`offline`, `assets/shopify-cdn/`). |
 | `app_proxy` | `--app` with an `[app_proxy]`: `/<prefix>/<subpath>` and below (a locale prefix too), routed after `/__lsf` and `/cdn` and before the theme's pages, forwarded with `ureq` to the backend from the blocking thread of the request, the query signed with `lsf_app::admin::auth::app_proxy_signature` and the client secret of the Admin API, the headers as Shopify forwards and strips them. An answer in `application/liquid` is rendered by `Renderer::render_source` of `lsf-theme`, as a Liquid template inside the theme's layout. While the default shop has the app uninstalled (`ServerState::app_uninstalled`), nothing is forwarded: the storefront answers the path (the theme's `404` page) with `X-LSF-Reason`. |
 | `../profile` | Shared by `lsf profile` and `/__lsf/profile`: renders a page several times with the profiler, keeps the render in the middle, and writes it as a tree of text or in the format of speedscope, in time or in points. `lsf-theme` adds the frames Liquid does not know (`render`, a JSON template, `section <id>`, `block <key>`) and the costs (`render/cost`): the objects charge for what they load where they are created. |
 | `speedscope` | The viewer of flame graphs, served from the binary for `/__lsf/profile?...&html=1`. Its files are in `assets/speedscope/`, with their licenses. |
@@ -183,7 +194,7 @@ thread with a large stack, because deeply nested snippets and blocks recurse.
 ## Development
 
 ```bash
-mise install               # Rust, and Ruby for the oracle
+mise install               # Rust, Node (the tests of the scripts, Prettier, the docs site), and Ruby for the oracle
 mise run check             # format check, clippy, tests
 mise run horizon:serve     # clone Shopify's Horizon theme and serve it
 mise run oracle:install    # install the reference liquid gem
@@ -197,16 +208,21 @@ mise run prettier:fixtures # download the tests of the plugin, which the formatt
 mise run prettier:compare -- path/to/theme   # list the files `lsf fmt` and Prettier disagree on
 mise run oracle:strict2-fixes                # check the fixes of `lsf check --fix` with the gem
 mise run admin:schema                        # regenerate the Admin API schema of lsf-app from the pinned @shopify/dev-mcp
+mise run partner:schema                      # regenerate the schema of its Partner API
 mise run admin:access-scopes                 # regenerate its access scopes and search filters
 mise run admin:topics                        # regenerate its webhook topics
 mise run admin:webhook-examples              # download Shopify's example webhook payloads the payload tests compare with
 mise run admin:version -- 2027-01            # everything a new Admin API version needs, then what is left to do by hand
 mise run admin:e2e                           # run examples/admin-backend (Shopify's libraries) end to end against lsf
 mise run admin:bench -- admin --bin target/release/lsf   # RAM and CPU of a release build, suite by suite (tools/admin/bench.mjs)
+mise run docs:site                           # the guides of docs/ as a site (VitePress), at http://localhost:5173
+mise run docs:site:build                     # build it; fails on a link of llms.txt to a page the site does not have
 ```
 
 Documentation: user-facing changes go into the guide of their task in `docs/` and into
-`CHANGELOG.md`; the README only lists the tasks. Tables that repeat values of the code are
+`CHANGELOG.md`; the README only lists the tasks. `docs/README.md` is the index of the guides,
+and the sidebar of the docs site (`tools/docs-site`): a new guide goes in its tables, and in
+`llms.txt`, the index an AI agent reads first. Tables that repeat values of the code are
 checked by tests (`throttle.rs` reads `docs/testing.md`, `fmt` reads `docs/formatting.md`,
 `profile.rs` reads `docs/performance.md`), `docs/data-reference.md` is generated from the JSON
 Schema (`UPDATE_SNAPSHOTS=1 cargo test -p lsf-core --test docs` rewrites it after a change to

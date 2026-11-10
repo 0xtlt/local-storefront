@@ -26,6 +26,7 @@ a script can test.
 | `profile <path>` | Text. `--json` is a speedscope profile for a flame graph, not a report. |
 | `schema [kind]` | A JSON Schema. |
 | `init`, `app init` | Text, on stderr. They take no `--format`: `init --format json` suggests `--force`, which overwrites the data. Do not follow it. |
+| `app function schema` | On stderr, the file it wrote (`wrote …/schema.graphql: the payment_customization API, 2027-01`). |
 | `serve`, `app dev` | Its lines on stderr; the state as JSON at `GET /__lsf/status`. |
 
 ## Tasks
@@ -327,10 +328,12 @@ npx local-storefront serve --port 0 --static --quiet
 - **Ready.** Run it in the background and read its stderr until a line matches
   `^ready:\s+(http://\S+)`: the URL is group 1. Every line of the server goes to stderr.
   `serving:` names the parts it runs (`theme`, `checkout`, `admin`: [what runs](cli.md#what-runs)).
-  With `--app`, the `admin:` lines (the token, the client secret), `webhooks:` and `proxy:` come
-  before `ready:`, `home:` and `watch:` after it; read the token from `GET /__lsf/admin` rather
-  than from the text. Without `--app`, or with `--only` leaving out the admin part, none of them
-  is printed, and the Admin API is not served: its routes answer `404` with an `X-LSF-Reason`.
+  With `--app`, the `admin:` lines (the token, the client secret), `webhooks:`, `proxy:`,
+  `embedded:` (the app in lsf's admin), `pricing:`, `partner:` and `polaris:` come before
+  `ready:`, each when it applies, `home:` and `watch:` after it; read the token from
+  `GET /__lsf/admin` rather than from the text. Without `--app`, or with `--only` leaving out
+  the admin part, none of them is printed, and the Admin API is not served: its routes answer
+  `404` with an `X-LSF-Reason`.
 - **Failed.** It exits with `2` before `ready:` when the port is taken (`error: cannot listen
   on …`), or with `--strict` when the data has errors (on stderr; `validate --format json` gives
   them as JSON).
