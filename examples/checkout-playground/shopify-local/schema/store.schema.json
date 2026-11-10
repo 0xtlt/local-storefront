@@ -2847,7 +2847,7 @@
       ]
     },
     "LocalizationInput": {
-      "description": "The countries and languages the store sells in (the `localization` object).\n\nThe first language is the primary one and is served at `/`; the others are served under\n`/<iso_code>/`. Defaults to one country (`US`) and the theme's default language.",
+      "description": "The countries and languages the store sells in (the `localization` object).\n\nThe first language is the primary one and is served at `/`; the others are served under\n`/<iso_code>/`. Defaults to one country, the shop's (`shop.address.country_code`, else `US`),\nand the theme's default language.",
       "type": "object",
       "properties": {
         "countries": {

@@ -31,6 +31,11 @@ npx local-storefront serve --customer default
 
 A link can log a browser in too: `/__lsf/login?customer=jane.doe@example.com&return_to=/cart`.
 
+With `--app`, `/account` is the customer account of the app instead: the orders of the customer
+logged in, their profile, and the pages where the app's customer account UI extensions render.
+Logged out, it lists the customers of your data too. See
+[checkout](checkout.md#customer-account).
+
 Classic customer accounts are not simulated: the theme's `templates/customers` are never
 rendered, and its login and register forms lead to `/account` too. See the
 [data guide](data-format.md#logging-in).

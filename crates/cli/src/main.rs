@@ -58,12 +58,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Serve the theme over HTTP. With `--app`, its `/checkout` runs the Functions and shows the
-    /// checkout UI extensions of a Shopify app, and its `/account` shows its customer account UI
-    /// extensions.
+    /// checkout UI extensions of a Shopify app, its `/account` shows its customer account UI
+    /// extensions, and a local Admin API serves the app's backend.
     Serve(commands::serve::Args),
-    /// The commands of a Shopify app: `dev` serves it alone (its checkout and its customer
-    /// account), `init` writes checkout scenarios to try it with, `build` builds its extensions,
-    /// `check` runs the scenarios for CI, `function run` and `function build` its Functions.
+    /// The commands of a Shopify app: `dev` serves it alone (its checkout, its customer account
+    /// and the Admin API of its backend), `init` writes checkout scenarios to try it with, `build`
+    /// builds its extensions, `check` runs the scenarios for CI, `function run`, `function build`
+    /// and `function schema` its Functions, and `webhook trigger` sends a webhook to its backend.
     App(commands::app::Args),
     /// Render one URL and print the HTML.
     Render(commands::render::Args),
@@ -107,9 +108,36 @@ fn given(matches: &clap::ArgMatches) -> commands::serve::Given {
     serve.map(commands::serve::Given::of).unwrap_or_default()
 }
 
+/// A command that only prints, piped into a reader that stops early (`lsf docs | head`), ends
+/// quietly as `cat` does, instead of panicking on the closed pipe. Only for those: a server or
+/// a client keeps the closed socket of a peer an error to answer, not a signal that kills it.
+fn end_quietly_on_a_closed_pipe(command: &Command) {
+    let prints_only = matches!(
+        command,
+        Command::Render(_)
+            | Command::Profile(_)
+            | Command::Validate(_)
+            | Command::Schema(_)
+            | Command::Routes
+            | Command::Check(_)
+            | Command::Fmt(_)
+            | Command::Docs(_)
+    );
+    #[cfg(unix)]
+    if prints_only {
+        // SAFETY: at the start of `main`, before any thread; SIG_DFL is the default action.
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = prints_only;
+}
+
 fn main() -> ExitCode {
     let matches = Cli::command().get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    end_quietly_on_a_closed_pipe(&cli.command);
     let given = given(&matches);
     let previews = cli.previews.as_slice();
     let result = match cli.command {

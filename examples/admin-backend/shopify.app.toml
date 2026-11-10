@@ -1,6 +1,6 @@
 # The app of the end-to-end test of lsf's Admin API: a backend written with Shopify's libraries
 # (server/), and a discount Function it configures. Nothing here is deployed. Run it with:
-#   examples/admin-backend/e2e.sh
+#   mise run admin:e2e
 client_id = "5e2e0a11c0ffee5e2e0a11c0ffee5e2e"
 name = "Admin backend"
 handle = "admin-backend"

@@ -23,6 +23,7 @@ LLMs:
   "ok": false,
   "errors": 1,
   "warnings": 0,
+  "data": "./shopify-local",
   "diagnostics": [
     {
       "severity": "error",
@@ -32,7 +33,8 @@ LLMs:
       "message": "unknown field \"titel\"",
       "hint": "did you mean \"title\"?"
     }
-  ]
+  ],
+  "app": null
 }
 ```
 
@@ -111,8 +113,11 @@ all, and a running server serves them at `/__lsf/schema/<kind>`.
 - **Money** is an integer number of cents (`1999`) or a decimal string (`"19.99"`). A JSON
   float (`19.99`) is rejected, because it is ambiguous. Liquid sees cents, as on Shopify.
 - **Dates** are ISO 8601 strings: a day, `"2024-05-01"`, or a day and a time,
-  `"2024-05-01T10:00:00Z"`, with `Z`, an offset (`+02:00`) or neither, for the shop's
-  `timezone`. Entities without dates get fixed ones, so renders are reproducible.
+  `"2024-05-01T10:00:00Z"` (or a space for the `T`), with `Z`, an offset (`+02:00`) or neither,
+  for the shop's `timezone`. `now` is a date too. Any other form (`"May 1, 2024"`,
+  `"2024/05/01"`, `"2024-5-1"`, an RFC 2822 date, a time alone) is an `invalid_date` error,
+  though the `date` filter of a theme still reads it. Entities without dates get fixed ones, so
+  renders are reproducible.
 - **References** between entities use handles (products, collections, pages, blogs), emails
   (customers) and SKUs or ids (variants). A reference to something that does not exist is an
   error, with a suggestion when a close match exists.
@@ -712,7 +717,8 @@ store has none: `npx local-storefront app init` writes a set.
 
 The first language is the primary one, served at `/`. The others are served under
 `/<iso_code>/` (`/fr/products/blue-shirt`) and use the theme's `locales/<iso_code>.json`.
-Names and currencies of countries default to built-in values. The localization form
+Names and currencies of countries default to built-in values. Without `countries`, the store
+sells in one country: the shop's (`shop.address.country_code`), or `US`. The localization form
 (`{% form 'localization' %}`) switches the session's country and language. A visitor who
 selected no country is in the shop's (`shop.address.country_code`), the one of its primary
 market, on the storefront as at the checkout; in the first country when the store does not sell
@@ -866,6 +872,9 @@ find them, whatever the id, since the store data does not know it.
 | `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
+| `unknown_return_line` | A return of an order names a variant that is not a line of the order. |
+| `expect_checks_nothing` (warning) | An `excludes` of a scenario's `expect` names a payment method, express button or delivery option the checkout does not offer, so it checks nothing. The hint lists what it offers. |
+| `invalid_throttle` | The `throttle` of a session sent to `PUT /__lsf/session` is not one `--throttle` takes. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
 | `invalid_color`, `empty_swatch` | A swatch whose color is not a CSS color, or that has neither a color nor an image. |
 | `missing_price` | A product without a price on itself or on its variants. |
@@ -1595,7 +1604,8 @@ A metaobject entry (`metaobjects.<type>.<handle>`).
 The countries and languages the store sells in (the `localization` object).
 
 The first language is the primary one and is served at `/`; the others are served under
-`/<iso_code>/`. Defaults to one country (`US`) and the theme's default language.
+`/<iso_code>/`. Defaults to one country, the shop's (`shop.address.country_code`, else `US`),
+and the theme's default language.
 
 | Field | Type | Description |
 |---|---|---|
@@ -1870,7 +1880,7 @@ depends on on top of the store data, and what it does not set stays as the store
 | `language` | string | The language of the buyer, by ISO code (`"fr"`): one of `localization.languages`. The checkout opens under its locale root. Defaults to the primary language. |
 | `checkout` | [Checkout](#checkout) | Overrides of the `checkout` section of the store data: every field that is present replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`, `tax_rate`), except `functions`, which replaces the settings of the Functions it names. |
 | `variant` | [ScenarioLook](#scenariolook) | The look of the page. Defaults to the one of the server (`--variant`). |
-| `extensions` | array of string | The handles of the extensions (Functions and checkout UI extensions) that run, among those of the app that `--extension` allows. Every one when omitted. |
+| `extensions` | array of string | The handles of the extensions (Functions and checkout UI extensions) that run, among those of the app that `--extension` allows. When omitted, every UI extension shows and the Functions run as at the shop's checkout: a payment or delivery customization, validation or cart transform Function only through an enabled owner of it. |
 | `expect` | [ScenarioExpect](#scenarioexpect) | What the checkout must look like once the Functions ran: `lsf app check` fails when it does not, and says what it expected and what it got. Without it, `app check` only checks that the Functions run without an error. |
 
 ### ScenarioEntered

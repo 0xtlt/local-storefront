@@ -84,7 +84,7 @@
       "default": null
     },
     "extensions": {
-      "description": "The handles of the extensions (Functions and checkout UI extensions) that run, among\nthose of the app that `--extension` allows. Every one when omitted.",
+      "description": "The handles of the extensions (Functions and checkout UI extensions) that run, among\nthose of the app that `--extension` allows. When omitted, every UI extension shows and the\nFunctions run as at the shop's checkout: a payment or delivery customization, validation or\ncart transform Function only through an enabled owner of it.",
       "type": [
         "array",
         "null"

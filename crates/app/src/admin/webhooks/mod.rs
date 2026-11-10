@@ -39,7 +39,7 @@ use delivery::SubscriptionRef;
 use sign::HeaderValues;
 
 use crate::admin::state::{Event, Record};
-use crate::admin::version::{Served, adapt};
+use crate::admin::version::{ApiVersion, Served, adapt};
 
 /// Evaluates the `filter` of a subscription: Shopify's search syntax over the fields of the
 /// payload, nested ones by a dot (`variants.price:>=100`), an array matching when one of its
@@ -85,6 +85,9 @@ pub struct Webhooks {
     deliveries: Deliveries,
     /// The versions payloads are built in: those the server serves.
     versions: Served,
+    /// The one version every payload is built in, whatever its subscription asks for:
+    /// `lsf app webhook trigger --api-version`.
+    payload_version: Option<ApiVersion>,
 }
 
 /// A webhook sent on demand: `lsf app webhook trigger`, `POST /__lsf/webhooks/trigger`.
@@ -114,6 +117,7 @@ impl Webhooks {
             filter: None,
             deliveries: Deliveries::new(settings.delivery),
             versions: Served::default(),
+            payload_version: None,
         }
     }
 
@@ -148,6 +152,15 @@ impl Webhooks {
     /// of them, else as [`Served::for_webhook`] says. [`Served::default`] otherwise.
     pub fn with_versions(mut self, versions: Served) -> Webhooks {
         self.versions = versions;
+        self
+    }
+
+    /// Builds every payload in `version`, as `shopify app webhook trigger --api-version` sends
+    /// the sample of that version: a subscription that asks for another gets it all the same,
+    /// and its delivery's notes say so.
+    pub fn with_payload_version(mut self, version: ApiVersion) -> Webhooks {
+        self.versions = Served::new([version]);
+        self.payload_version = Some(version);
         self
     }
 
@@ -347,7 +360,18 @@ impl Webhooks {
             resource,
         } = *occurrence;
         let mut notes = Vec::new();
-        let (version, note) = self.versions.for_webhook(&subscription.api_version);
+        let (version, note) = match self.payload_version {
+            Some(version) => (
+                version,
+                (subscription.api_version != version.name()).then(|| {
+                    format!(
+                        "the subscription asks for API version {}: the payload is {version}'s, the version this webhook was triggered in",
+                        subscription.api_version
+                    )
+                }),
+            ),
+            None => self.versions.for_webhook(&subscription.api_version),
+        };
         notes.extend(note);
         let destination = resolve_uri(&subscription.uri, &self.urls);
         let url = match &destination {

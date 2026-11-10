@@ -11,8 +11,9 @@ lsf app dev --app .
 Or, from the root of the repository, `mise run playground:checkout`. Open
 <http://127.0.0.1:9292/>: the home page lists what is wrong first (the broken extensions, and the
 Functions that fail when their scenario runs), then every scenario and every extension, and opens
-a checkout for each. The data folder is found from the current
-directory, so run lsf from this folder.
+a checkout for each. lsf finds the store data in the current folder, else in the app's own
+`shopify-local/`, so `lsf app dev --app examples/checkout-playground` from the root of the
+repository serves the same.
 
 The store data (`shopify-local/`) is the demo store that `lsf app init` writes, with what
 the Functions need on top:
@@ -32,9 +33,10 @@ The customers are the demo store's: `jane.doe@example.com` (tag `vip`), `alex.mo
 
 ## Functions
 
-52 Functions (`extensions/<handle>`): 50 Rust crates, written with the `shopify_function` crate,
+52 Functions (`extensions/<handle>`): 49 Rust crates, written with the `shopify_function` crate,
 `discount-typescript`, written in TypeScript the way `shopify app generate extension --flavor
-typescript` makes it, and `validation-javascript`, in plain JavaScript (`--flavor vanilla-js`).
+typescript` makes it, `validation-javascript`, in plain JavaScript (`--flavor vanilla-js`), and
+`broken-missing-build`, which has only its input query.
 The comment at the top of each `src/lib.rs` (`src/*.ts`, `src/*.js`) says what it does and what
 it shows. They are
 configured the way Shopify's are, by the JSON metafield `$app:config.settings` of the discount or
@@ -172,6 +174,16 @@ server of the test (its answers):
 
 ```bash
 cargo test -p lsf-cli playground
+```
+
+`lsf app check --app .` runs every scenario as CI would, and checks the `expect` of
+`fn-payment-hide-cod` and `fn-validation-street-number`
+([expected results](../../docs/checkout.md#expected-results)). Here it exits with `1` on purpose:
+five `broken-*` Functions fail in their scenarios, and `broken-api-version` and the `listed-*`
+Functions run in none.
+
+```text
+checked 86 of 86 scenarios in 3.4 s: 5 failures, 0 invalid scenarios, 0 of 8 expectations unmet, 5 Functions ran in no scenario
 ```
 
 ## Functions and checkout UI extensions together

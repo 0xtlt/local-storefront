@@ -236,7 +236,8 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
         let file = admin.api.association_file(path)?;
         return Some(Reply::new(200, "application/json", file.to_string()));
     }
-    let ours = path.starts_with("/admin/")
+    let ours = path == "/admin"
+        || path.starts_with("/admin/")
         || path == "/__lsf/admin"
         || path.starts_with("/__lsf/admin/")
         || path == "/__lsf/webhooks"

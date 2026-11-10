@@ -6,7 +6,7 @@ use lsf_core::store::validate::{FileKind, schema};
 #[derive(clap::Args)]
 pub struct Args {
     /// Which schema: store (a root data file), product, collection, page, blog, customer,
-    /// menu or session.
+    /// menu, session or checkout-scenario.
     #[arg(default_value = "store")]
     kind: String,
 

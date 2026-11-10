@@ -107,3 +107,28 @@ fn a_theme_is_still_opened_as_one() {
         text(&output)
     );
 }
+
+/// A command that only prints, piped into a reader that stops early (`lsf docs | head`), ends
+/// as `cat` does, by the signal of the closed pipe, without a panic.
+#[cfg(unix)]
+#[test]
+fn a_reader_that_stops_early_ends_a_printing_command_quietly() {
+    use std::io::Read;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_lsf"))
+        .arg("docs")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // The guide is longer than a pipe holds: lsf is still writing when the reader leaves.
+    let mut first = [0u8; 16];
+    child.stdout.take().unwrap().read_exact(&mut first).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(&first, b"# Store data for");
+    // SIGPIPE.
+    assert_eq!(output.status.signal(), Some(13), "{:?}", output.status);
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+}

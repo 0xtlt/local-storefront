@@ -362,7 +362,7 @@ impl std::fmt::Display for Throttle {
 pub fn classify(method: &str, path: &str, wants_sections: bool) -> Option<Kind> {
     // The control API, and the Admin API and OAuth of the backend: not the storefront, whose
     // latency the throttle simulates (the Admin API has its own cost bucket).
-    if path.starts_with("/__lsf") || path.starts_with("/admin/") {
+    if path.starts_with("/__lsf") || path == "/admin" || path.starts_with("/admin/") {
         return None;
     }
     if let Some(rest) = path.strip_prefix("/cdn/") {

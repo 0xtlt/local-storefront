@@ -232,6 +232,55 @@ api_version = "2026-10"
 }
 
 #[test]
+fn the_payload_is_built_in_the_api_version_asked_for_and_a_subscription_of_another_is_told() {
+    let (url, received) = backend(200);
+    let app = App::new(
+        "trigger-version",
+        r#"
+client_id = "abc"
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["products/update"]
+  uri = "/webhooks/products"
+"#,
+    );
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "products/update",
+            "--app-url",
+            &url,
+            "--api-version",
+            "2027-01",
+            "--client-secret",
+            "hush",
+        ],
+    );
+    let printed = text(&output);
+    assert!(output.status.success(), "{printed}");
+    assert!(
+        printed.contains(
+            "note: the subscription asks for API version 2026-10: the payload is 2027-01's, the version this webhook was triggered in"
+        ),
+        "{printed}"
+    );
+    assert!(!printed.contains("not served here"), "{printed}");
+    let received = received.lock().unwrap();
+    assert_eq!(received.len(), 1);
+    assert_eq!(
+        header(&received[0].1, "x-shopify-api-version"),
+        Some("2027-01")
+    );
+}
+
+#[test]
 fn format_json_prints_the_deliveries_and_json_is_its_old_name() {
     let (url, _) = backend(200);
     let address = format!("{url}/webhooks");

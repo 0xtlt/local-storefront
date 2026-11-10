@@ -1331,7 +1331,8 @@ pub struct LanguageInput {
 /// The countries and languages the store sells in (the `localization` object).
 ///
 /// The first language is the primary one and is served at `/`; the others are served under
-/// `/<iso_code>/`. Defaults to one country (`US`) and the theme's default language.
+/// `/<iso_code>/`. Defaults to one country, the shop's (`shop.address.country_code`, else `US`),
+/// and the theme's default language.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LocalizationInput {
@@ -1748,7 +1749,9 @@ pub struct CheckoutScenarioInput {
     #[serde(default)]
     pub variant: Option<ScenarioLook>,
     /// The handles of the extensions (Functions and checkout UI extensions) that run, among
-    /// those of the app that `--extension` allows. Every one when omitted.
+    /// those of the app that `--extension` allows. When omitted, every UI extension shows and the
+    /// Functions run as at the shop's checkout: a payment or delivery customization, validation or
+    /// cart transform Function only through an enabled owner of it.
     #[serde(default)]
     pub extensions: Option<Vec<String>>,
     /// What the checkout must look like once the Functions ran: `lsf app check` fails when it

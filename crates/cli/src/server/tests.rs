@@ -10104,6 +10104,16 @@ fn the_admin_opens_the_embedded_app_serves_its_app_bridge_and_is_linked_from_hom
         )
     );
 
+    // The admin, with or without its slash, opens the app.
+    for path in ["/admin", "/admin/"] {
+        let admin = get(&state, path, "embedded");
+        assert_eq!(admin.status, 302, "{path}: {}", text(&admin));
+        assert_eq!(
+            header(&admin, "location"),
+            Some("/admin/apps/checkout-fixtures"),
+            "{path}"
+        );
+    }
     let page = get(
         &state,
         "/admin/apps/checkout-fixtures/app?tab=1",

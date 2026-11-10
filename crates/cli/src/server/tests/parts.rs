@@ -204,12 +204,13 @@ fn without_a_theme_the_pages_and_the_profile_are_off_and_the_checkout_keeps_its_
     assert_eq!(get(&state, "/checkout", "parts").status, 302);
     assert_eq!(get(&state, "/account", "parts").status, 200);
 
-    // Neither the theme nor the checkout: the checkout's pages are the checkout's.
+    // Neither the theme nor the checkout: the checkout's pages are the checkout's, and so is
+    // the app's home page at `/` (`app dev --only admin`).
     let state = server_of(ADMIN);
-    for path in ["/checkout", "/fr/checkout", "/checkouts/cn/token"] {
+    for path in ["/", "/checkout", "/fr/checkout", "/checkouts/cn/token"] {
         assert_off(&state, path, "checkout", "checkout,admin");
     }
-    for path in ["/", "/account", "/apps/reviews"] {
+    for path in ["/account", "/apps/reviews"] {
         assert_off(&state, path, "theme", "theme,admin");
     }
 }

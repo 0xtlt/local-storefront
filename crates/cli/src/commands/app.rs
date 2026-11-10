@@ -18,9 +18,10 @@ pub struct Args {
 #[derive(clap::Subcommand)]
 enum Subcommand {
     /// Serve the app alone, without a theme: its home page, its checkout (`/checkout`), where
-    /// its Functions run and its checkout UI extensions show, and its customer account
-    /// (`/account`), where its customer account UI extensions show. `serve --app` serves them
-    /// with a theme. It takes the options of `serve`.
+    /// its Functions run and its checkout UI extensions show, its customer account
+    /// (`/account`), where its customer account UI extensions show, and the Admin API of its
+    /// backend, with OAuth, webhooks and lsf's admin. `serve --app` serves them with a theme.
+    /// It takes the options of `serve`.
     Dev(serve::Args),
     /// Write checkout scenarios to the `checkouts` folder of the store data, made for the
     /// Functions and checkout UI extensions of `--app` (a generic set without it), and create the
