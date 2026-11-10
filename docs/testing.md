@@ -223,6 +223,11 @@ export default defineConfig({
 });
 ```
 
+With `--app`, the server also runs the app's [Admin API](admin.md), which records each order and
+sends its webhooks. Tests of the checkout alone can leave it out: `--only theme,checkout`, or
+`app dev --only checkout` without a theme ([what runs](cli.md#what-runs)). The orders are then
+the session's only.
+
 **Put the session in a state, then open the checkout.** The cart, the customer and data for this
 test only go through `PUT /__lsf/session`, as above; `/checkout` opens the checkout of that cart
 (`/checkout?scenario=<name>` the one of a [scenario](checkout.md#scenarios), with its cart and
@@ -461,10 +466,10 @@ Everything a theme talks to on a storefront:
 | Product and search JSON | `/products/<handle>.js`, `/products.json`, `/collections/<handle>/products.json`, `/search/suggest.json`, `/search/suggest?section_id=`, `/recommendations/products.json`, `/recommendations/products?section_id=&product_id=`. |
 | Forms | Contact, newsletter (`customer`), blog comment, customer logout, localization (country and language), storefront password. The outcome shows in `form.posted_successfully?` and `form.errors` on the next page, once. A wrong storefront password comes back to `/password` with the error; the right one (`password`, or `shop.password`) goes to the home page. |
 | CDN | `/cdn/shop/t/1/assets/<file>` (including `.liquid` assets), `/cdn/shop/files/<path>` with image transformations, the compiled `{% stylesheet %}` and `{% javascript %}` bundles, fonts. |
-| Control | `/__lsf` (a status page), `/__lsf/status`, `/__lsf/session`, `/__lsf/login?customer=<email>`, `/__lsf/schema/<kind>`, `POST /__lsf/reload`, `GET` and `DELETE /__lsf/timings`, `/__lsf/profile?path=<path>`. |
+| Control | `/__lsf` (a status page), `/__lsf/status`, `/__lsf/session`, `DELETE /__lsf/sessions`, `/__lsf/login?customer=<email>`, `/__lsf/schema/<kind>`, `POST /__lsf/reload`, `GET` and `DELETE /__lsf/timings`, `/__lsf/profile?path=<path>`. With `--app`, those of the checkout and the Admin API too ([control API](control-api.md#apps-checkout-and-admin-api)). |
 
 Not simulated: Shopify's checkout (`/checkout` shows a summary of the cart, or, with `--app`,
-the local [checkout](checkout.md) of a Shopify app), classic customer accounts (the theme's `templates/customers`; its account forms lead to `/account`),
+the local [checkout](checkout.md) of a Shopify app, unless `--only` leaves the checkout out), classic customer accounts (the theme's `templates/customers`; its account forms lead to `/account`),
 and anything served by apps. See [compatibility.md](compatibility.md).
 
 ## Reproducibility

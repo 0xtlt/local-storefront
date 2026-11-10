@@ -185,8 +185,9 @@ module the build wrote is not reported missing.
 |---|---|
 | `--app <dir>` (`LSF_APP`) | The app. The commands of `lsf app` default to the app the current folder is in. |
 | `--extension <handle>` | Uses only this extension, a Function or a checkout UI extension. Repeat it for several. Without it, every extension of the app is used. |
-| `--build` | Builds each Function first: its build command, or lsf's build of a JavaScript Function. |
+| `--build` | Builds the extensions first, as `lsf app build` does: each Function (its build command, or lsf's build of a JavaScript Function) and the UI extensions that name their sources. With `--no-functions`, the UI extensions only. |
 | `--no-functions` | Serves the UI extensions and the Admin API, and runs no Function: for a backend's tests ([Admin API](admin.md#place-an-order)). |
+| `--only <parts>` (`LSF_ONLY`) | Runs only these parts of lsf: `app dev` runs `checkout,admin`, `serve --app` adds `theme` ([what runs](cli.md#what-runs)). Without `checkout`, the home page, `/__lsf/checkout` and `/__lsf/checkouts` answer `404` with an `X-LSF-Reason`, and so do `/checkout` and `/checkouts/…` without a theme; with one, `/checkout` is the theme's summary of the cart. Without `admin`, `complete` records no order in the Admin API and sends no webhook. |
 | `--watch` | Develops the app as `shopify app dev` does: builds a Function again when its files change, and reloads the open pages. With `--build`, builds every Function at start. See [watch mode](#watch-mode). |
 | `--variant <standard\|shop>` | The look of the page: Shopify's one-page checkout, or the Shop app's. A URL can ask for the other with `?variant=shop`. |
 
@@ -298,7 +299,10 @@ The standard look follows Shopify's one-page checkout, in lsf's own CSS: a heade
 of the shop and a cart icon over a rule that runs the page's width; on a screen of 1000px or more
 two columns (the form on white, 500px wide, and the order summary on a grey panel as tall as the
 page, 400px wide, that stays in view while the form scrolls); below that one column with the
-summary folded into a bar under the header that shows the total. Fields have their label inside
+summary folded into a bar under the header that shows the total. Above the contact section, the
+express buttons: the payment methods of the `ACCELERATED_CHECKOUT` placement that the payment
+customizations left (Shop Pay, PayPal, Apple Pay, Google Pay… in their colors), then "OR". A click
+says that lsf does not simulate the wallet. Fields have their label inside
 the box, which floats to the top once there is something to label; payment and shipping methods
 are one bordered box of rows, the chosen row tinted with its accent border; the order summary
 has 64px thumbnails with the quantity hanging off a corner, the discount field with its Apply
@@ -324,7 +328,9 @@ check them can call a server (see below).
 
 - **The bar**: the app and its store data, how many problems there are (a link to the Problems
   tab), "More" (a checkout with [every extension target](#every-extension-target), the Shop
-  look), the [customer account](#customer-account) and "Open the checkout".
+  look), "Admin" (the app in lsf's admin, when the Admin API runs:
+  [preview the embedded app](admin.md#preview-the-embedded-app)), the
+  [customer account](#customer-account) and "Open the checkout".
 - **Scenarios**: the groups on the left, the scenarios on the right (see below).
 - **Functions**, **Checkout UI extensions**, **Customer account UI extensions**: a tab for
   each kind of extension of the app.
@@ -596,11 +602,32 @@ checked 1 of 1 scenario in 0.0 s: 0 failures, 0 invalid scenarios, 2 of 5 expect
 
 `actual` shows each entry with the fields the expectation names, amounts as decimal strings, so
 that it can be pasted into the scenario. Each entry of `includes` and `excludes`, each `equals`
-and each amount is one expectation: when all are met, the summary ends with `5 expectations met`.
-`--format json` has them in `expectations` ([`app check`](cli.md#app-check)). A scenario
-without `expect` is checked as before: its Functions must run without an error. With
+and each amount is one expectation: when all are met, the summary says `5 expectations met`.
+`--format json` has them in `expectations` ([`app check`](cli.md#app-check)), where `expected`
+is the entry, the list or the amount as the scenario writes it:
+
+```json
+"expectations": {
+  "checked": 5,
+  "unchecked": [],
+  "unmet": [
+    {
+      "scenario": "express-buttons",
+      "file": "checkouts/express-buttons.json",
+      "step": "completion",
+      "assertion": "express_methods.excludes",
+      "expected": "paypal",
+      "actual": [{ "handle": "paypal", "name": "PayPal" }, { "handle": "shop_pay", "name": "Shop Pay" }]
+    }
+  ]
+}
+```
+
+A scenario without `expect` is checked as before: its Functions must run without an error. With
 `--extension`, the `expect` of a scenario that runs a Function left out is not checked (its
-checkout is another one), and the summary counts it.
+checkout is another one). The scenario still runs, its expectations are not counted in
+`checked`, `expectations.unchecked` names it, and the exit code does not change. The summary
+says so: ``the `expect` of 1 scenario not checked (--extension leaves out a Function it runs)``.
 
 A name in `excludes` that the checkout does not offer, such as `"paypall"`, is never in the list,
 so the expectation would always pass: `validate` warns about it (`expect_checks_nothing`), with
@@ -819,6 +846,10 @@ settings of your other Functions, and a tax rate.
 - A metafield is written `"namespace.key"`, with a [typed value](data-format.md#metafields-and-metaobjects).
   The input query of a Function reads it; `[extensions.input.variables]` of the Function says
   which one.
+- A **payment method** is in the list of the page by default (`PAYMENT_METHOD`). Its
+  `placements` can put it among the express buttons above the contact section
+  (`["ACCELERATED_CHECKOUT"]`), or in both, as PayPal with PayPal Express on
+  (`["PAYMENT_METHOD", "ACCELERATED_CHECKOUT"]`).
 - `tax_rate` is a percentage added to the discounted subtotal.
 - A line bought with a [selling plan](data-format.md#selling-plans) that defers a part of the
   price is [paid in two times](#deferred-payments).
@@ -1254,10 +1285,14 @@ instructions: 337817
   3 × Ceramic Mug (Oat)  66.00 USD → 59.40 USD
   2 × Linen Overshirt (S)  136.00 USD
   discount 10% off 3 or more: -21.00 USD (Product, volume-discount)
-  delivery * Standard (standard): 5.00 USD
+  delivery   Standard (standard): 5.00 USD
   payment: Credit card [PAYMENT_METHOD], Cash on Delivery [PAYMENT_METHOD], Bank Deposit [PAYMENT_METHOD]
-  subtotal 346.00 USD · discounts -21.00 USD · shipping 5.00 USD · tax 0.00 USD · total 330.00 USD
+  subtotal 346.00 USD · discounts -21.00 USD · shipping 0.00 USD · tax 0.00 USD · total 325.00 USD
 ```
+
+`*` marks the selected shipping rate: none until the address has a country (the scenario's
+`entered.shipping_address`, or `--checkout`), so the shipping is not in the total yet. Each
+payment method has its placements: `[ACCELERATED_CHECKOUT]` is an express button.
 
 | Option | What it does |
 |---|---|
@@ -1315,8 +1350,8 @@ Function that fails blocks `complete`.
 | `GET /__lsf/checkouts/check` | Runs the Functions of every scenario (or takes the last run on the same app and data): [the ones that fail](#the-functions-that-fail). | JSON: `failures` (`handle`, `target`, `error`, `logs`, `scenarios`), and what the page shows of it |
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |
-| `POST /checkouts/cn/<token>/update` | Applies `{"operations": [...]}`, in order. | `200` and the state, or `400` `{"error": "…"}` and nothing applied |
-| `POST /checkouts/cn/<token>/complete` | Places the order. | `200` `{"redirect": "…/thank-you", "order": {"id", "number", "name"}}`, the order as the Admin API recorded it: `number` is an integer (`1004`), `name` the string (`"#1004"`), `id` the `admin_graphql_api_id` of its `orders/create`. The state's `order.number` is a string, the session's, which can differ (below). Or `422` and the state with `errors`, or `409` and the fresh state when the cart changed meanwhile |
+| `POST /checkouts/cn/<token>/update` | Applies `{"operations": [...]}`, in order. | `200` and the state, or `400` `{"error": "…"}` and nothing applied, or `409` and the state as it is now when the order was placed meanwhile or the session changed under it |
+| `POST /checkouts/cn/<token>/complete` | Places the order. | `200` `{"redirect": "…/thank-you", "order": {"id", "number", "name"}}`, the order as the Admin API recorded it: `number` is an integer (`1004`), `name` the string (`"#1004"`), `id` the `admin_graphql_api_id` of its `orders/create` (without the Admin API, `--only checkout`: `gid://shopify/Order/<number>`, the session's number). The state's `order.number` is a string, the session's, which can differ (below). Or `422` and the state with `errors`, or `409` and the fresh state when the cart changed meanwhile. Asked again once the order is placed: `200` and the same `redirect` and `order` |
 | `GET /checkouts/cn/<token>/thank-you` | The page of the order. | HTML |
 | `GET /__lsf/checkout?session=<id>` | The state of a session's checkout, from outside its browser. | JSON |
 
@@ -1361,9 +1396,10 @@ sell to uses the first country of the store. The storefront shows the same count
 who selected none (Liquid's `localization.country`, `Shopify.country`), so the checkout opens in
 the country they browsed in.
 
-The state has the lines, discounts, discount codes, delivery groups, payment methods, errors and
-cost that the Functions produced, `runs` (a run of a `.fetch` target has its `exchange`, the
-request and the response), the buyer, the address, the note, the attributes and
+The state has the lines, discounts, discount codes, delivery groups, payment methods (each with
+its `placements`), express buttons (`expressMethods`), errors and cost that the Functions
+produced, `runs` (a run of a `.fetch` target has its `exchange`, the request and the response),
+the buyer, the address, the note, the attributes and
 the metafields (the cart's), `appMetafields` (the metafields the extensions declare of the shop,
 the products and variants of the lines and the buyer), the `extensions` to load and
 `diagnostics`. Money is `{"amount": 19.99}`.
@@ -1401,7 +1437,9 @@ are `1005` and `"#1005"` when the shop has a `#1004` already. To match the two, 
 both have; never compare the two `number`s. The state's `number` is a string since 0.2.0, and
 stays one. `complete` takes the cart only if the cart is still the one the Functions ran on: if
 it changed meanwhile (another tab), nothing is bought and the reply is `409`. Completing an order that was placed already leads to the same thank-you page, never to a
-second order.
+second order: `200`, with the same `redirect` and `order`. An `update` that comes once the order
+is placed (a line changed in another tab, a request sent late) changes nothing either: the reply
+is `409` and the state as it is now, whose `status` is `completed`.
 
 ### In CI
 
