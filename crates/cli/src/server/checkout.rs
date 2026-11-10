@@ -1191,12 +1191,14 @@ fn update(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
     let Some(operations) = incoming.params.get("operations").and_then(Json::as_array) else {
         return error(400, "The body must be {\"operations\": [...]}.");
     };
-    let reply = apply_update(state, incoming, &id, operations, || {});
+    let reply = apply_update(state, incoming, &id, operations, || {}, || {});
     with_cookie(reply, &id, is_new)
 }
 
-/// Applies the operations of an update to the session they were read from. `between` runs after
-/// they were applied and before they are written, where another request may change the session.
+/// Applies the operations of an update to the session they were read from. `before_read` runs
+/// after the checkout was found open and before the session is read. `between` runs after the
+/// operations were applied and before they are written, where another request may change the
+/// session.
 ///
 /// The write is one step of the session that checks the session is still what the operations
 /// were applied to: an update never reopens an order that was placed, restores lines the order
@@ -1207,16 +1209,23 @@ pub(super) fn apply_update(
     incoming: &Incoming,
     id: &str,
     operations: &[Json],
+    before_read: impl FnOnce(),
     between: impl FnOnce(),
 ) -> Reply {
     // An order that was placed is final: the cart it took is empty, and there is nothing to change.
-    if already_placed(state, id) {
+    let Some(before) = orders_before(state, id) else {
         return conflict(state, incoming, id);
-    }
+    };
+    before_read();
     let (mut session, store, mut checkout, basis) = read(state, id);
     let config = checkout_config(state, &store, checkout.scenario.as_deref());
     // The operations that run the Functions (a change of a line) see the checkout the buyer sees.
     let language = language_of(state, &store, incoming);
+    // The order was placed before the session was read: the operations were made on the
+    // checkout it completed, and a change of one of its lines would find no line.
+    if basis.placed != before {
+        return conflict(state, incoming, id);
+    }
     for (position, operation) in operations.iter().enumerate() {
         if let Err(problem) = apply(
             state,
@@ -1753,7 +1762,7 @@ fn complete(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
         Ok(session) => session,
         Err(reply) => return reply,
     };
-    let reply = place_order(state, incoming, &id, token, || {});
+    let reply = place_order(state, incoming, &id, token, || {}, || {});
     with_cookie(reply, &id, is_new)
 }
 
@@ -1768,32 +1777,52 @@ fn redirect_to_thanks(state: &ServerState, incoming: &Incoming, id: &str, token:
     Reply::json(200, &answer).cached(cache::PRIVATE)
 }
 
-/// Whether the order of this checkout was placed already, and its cart taken: asking again
-/// leads to the same thank-you page instead of placing another order.
-fn already_placed(state: &ServerState, id: &str) -> bool {
-    state.with_session(id, |entry| is_placed(entry))
+/// How many orders the session placed before its open checkout, or `None` when the order of
+/// this checkout was placed already and its cart taken.
+///
+/// A request reads the session later, in another step. If the count it reads then is not this
+/// one, an order was placed in between, and what it read is the session after that order (an
+/// empty cart, nothing entered), not the checkout the request was made on.
+fn orders_before(state: &ServerState, id: &str) -> Option<u64> {
+    state.with_session(id, |entry| {
+        (!is_placed(entry)).then_some(entry.checkout.placed)
+    })
 }
 
 fn is_placed(entry: &SessionEntry) -> bool {
     entry.checkout.completed.is_some() && entry.session.cart_lines.is_empty()
 }
 
-/// Places the order of the cart the Functions were run on. `between` runs after the session was
+/// Whether the session placed an order since it had placed `before`: another completion of the
+/// same checkout did, and this one leads to its thank-you page instead of placing another.
+fn placed_since(state: &ServerState, id: &str, before: u64) -> bool {
+    state.with_session(id, |entry| entry.checkout.placed != before)
+}
+
+/// Places the order of the cart the Functions were run on. `before_read` runs after the order
+/// was found not placed and before the session is read. `between` runs after the session was
 /// read and before the order takes the cart, where the Functions take their time.
 pub(super) fn place_order(
     state: &ServerState,
     incoming: &Incoming,
     id: &str,
     token: &str,
+    before_read: impl FnOnce(),
     between: impl FnOnce(),
 ) -> Reply {
-    if already_placed(state, id) {
+    // Asking again leads to the same thank-you page instead of placing another order.
+    let Some(before) = orders_before(state, id) else {
         return redirect_to_thanks(state, incoming, id, token);
-    }
+    };
+    before_read();
     let mut computed = match compute(state, id, incoming, BuyerJourneyStep::Completion) {
         Ok(computed) => computed,
         Err(problem) => return error(500, problem),
     };
+    // Another completion placed the order before the session was read.
+    if computed.basis.placed != before {
+        return redirect_to_thanks(state, incoming, id, token);
+    }
     between();
     if computed.result.lines.is_empty() {
         return error(422, "The cart is empty.");
@@ -1897,7 +1926,7 @@ pub(super) fn place_order(
         return redirect_to_thanks(state, incoming, id, token);
     }
     // Another request placed the order meanwhile.
-    if already_placed(state, id) {
+    if placed_since(state, id, before) {
         return redirect_to_thanks(state, incoming, id, token);
     }
     // The cart changed while the order was being priced: nothing was bought, and the buyer
