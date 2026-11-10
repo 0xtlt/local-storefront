@@ -1,8 +1,9 @@
 # local-storefront
 
-Run a Shopify theme on your machine, without Shopify. Its command, local-storefront, serves a
-theme rendered from JSON store data instead of the Shopify API: no network, no rate limit, and
-each test gets exactly the catalog, cart and customer it asks for.
+Run Shopify themes and Shopify apps on your machine, without Shopify. From your theme, your app
+and JSON store data, local-storefront serves the storefront, the checkout of your app and a local
+GraphQL Admin API. There is no development store, no network and no rate limit, and each test
+gets exactly the catalog, cart and customer it asks for.
 
 ```bash
 npm install --save-dev local-storefront
@@ -22,6 +23,8 @@ Inside the `scripts` of `package.json`, `local-storefront serve` is enough.
 | `npx local-storefront check --fix` | Fixes what Shopify's strict Liquid parser rejects. |
 | `npx local-storefront fmt` | Formats Liquid files as Prettier does. |
 | `npx local-storefront profile <path>` | Shows what makes a page slow. |
+| `npx local-storefront app dev --app <dir>` | Serves a Shopify app: its checkout, where its Functions run and its UI extensions show, and the Admin API of its backend. |
+| `npx local-storefront app check --app <dir>` | Runs the app's checkout scenarios and checks what each must look like, for CI. |
 
 With Playwright:
 
