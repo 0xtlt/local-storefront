@@ -288,10 +288,10 @@ The Functions run for it as the order is placed, unless the `expect` says
 `"step": "interaction"`, which the first line then names:
 
 ```text
-expect   paypal-express: express_methods.excludes
+expect   express-buttons: express_methods.excludes
          expected: no entry matching "paypal"
          actual:   [{"handle": "paypal", "name": "PayPal"}, {"handle": "shop_pay", "name": "Shop Pay"}]
-expect   paypal-express: totals.total
+expect   express-buttons: totals.total
          expected: "96.00"
          actual:   "86.40"
 ```

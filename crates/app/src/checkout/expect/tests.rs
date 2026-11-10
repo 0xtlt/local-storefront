@@ -131,7 +131,7 @@ fn nothing_expected_checks_nothing() {
 
 #[test]
 fn payment_methods_and_express_buttons_by_handle_or_name() {
-    // The app of PayPal Express: hidden from the express buttons, still in the list.
+    // A method hidden from the express buttons, still in the list.
     let met = check(json!({
         "express_methods": {"excludes": ["paypal", "PayPal"], "equals": ["shop_pay", "Apple Pay"]},
         "payment_methods": {"includes": ["paypal", {"handle": "card", "name": "Card (secure)"}], "excludes": ["Credit card"], "equals": ["card", "paypal"]}

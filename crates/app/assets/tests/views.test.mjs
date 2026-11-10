@@ -423,13 +423,13 @@ test('the dialog opens on the first run that failed, else on the first run, else
 
 test('the overview says which Functions the shop\'s owners leave out, and why', () => {
   const idle = [
-    { handle: 'hide-paypal', owner: 'PaymentCustomization', enabled: false, reason: 'its payment customization is disabled' },
+    { handle: 'payment-rules', owner: 'PaymentCustomization', enabled: false, reason: 'its payment customization is disabled' },
     { handle: 'limits', owner: 'Validation', enabled: null, reason: 'the shop has no validation that runs it' },
   ];
   const tree = page({ ...checkoutState(), runs: [], idle }, { functionsOpen: true, functionsView: 'overview' });
   const list = byClass(tree, 'lsf-fn-overview')[0];
   assert.match(text(list), /Functions not run/);
-  assert.match(text(list), /hide-paypal its payment customization is disabled\./);
+  assert.match(text(list), /payment-rules its payment customization is disabled\./);
   assert.match(text(list), /limits the shop has no validation that runs it\./);
   // Without any, nothing is said.
   const none = page({ ...checkoutState(), runs: [] }, { functionsOpen: true, functionsView: 'overview' });

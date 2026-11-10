@@ -1386,18 +1386,18 @@ mod tests {
         };
         write(
             &root,
-            "extensions/hide-paypal/shopify.extension.toml",
-            &function("hide-paypal", "t:name"),
+            "extensions/payment-rules/shopify.extension.toml",
+            &function("payment-rules", "t:name"),
         );
         write(
             &root,
-            "extensions/hide-paypal/locales/en.default.json",
-            r#"{"name": "Hide PayPal Express", "description": "t"}"#,
+            "extensions/payment-rules/locales/en.default.json",
+            r#"{"name": "Payment rules", "description": "t"}"#,
         );
         write(
             &root,
-            "extensions/hide-paypal/locales/fr.json",
-            r#"{"name": "Masquer PayPal Express"}"#,
+            "extensions/payment-rules/locales/fr.json",
+            r#"{"name": "Règles de paiement"}"#,
         );
         write(
             &root,
@@ -1421,7 +1421,7 @@ mod tests {
         );
         let app = load(&root).unwrap();
         let name = |handle: &str| app.function(handle).unwrap().name.clone();
-        assert_eq!(name("hide-paypal").as_deref(), Some("Hide PayPal Express"));
+        assert_eq!(name("payment-rules").as_deref(), Some("Payment rules"));
         assert_eq!(name("nested").as_deref(), Some("Verschachtelt"));
         assert_eq!(name("plain").as_deref(), Some("Plain name"));
         // A key without a value: no name (the handle stands for it), and a warning.

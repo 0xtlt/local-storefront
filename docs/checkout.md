@@ -120,9 +120,9 @@ JavaScript Function's graphql-codegen too. `shopify app function schema` writes 
 Shopify's servers; lsf writes it from the schemas it carries, offline:
 
 ```bash
-cd extensions/hide-paypal && npx local-storefront app function schema   # in the Function's folder
-npx local-storefront app function schema hide-paypal                    # or by handle, from the app
-npx local-storefront app function schema hide-paypal --stdout > other.graphql
+cd extensions/payment-rules && npx local-storefront app function schema   # in the Function's folder
+npx local-storefront app function schema payment-rules                    # or by handle, from the app
+npx local-storefront app function schema payment-rules --stdout > other.graphql
 ```
 
 lsf carries the schemas of the checkout's Function APIs (cart transform, discounts, delivery and
@@ -544,7 +544,7 @@ buttons, and only from them, asserts that PayPal is gone from the buttons and st
       { "handle": "shop_pay", "name": "Shop Pay", "placements": ["ACCELERATED_CHECKOUT"] }
     ]
   },
-  "extensions": ["hide-paypal-express"],
+  "extensions": ["payment-rules"],
   "expect": {
     "express_methods": { "excludes": ["paypal"], "equals": ["shop_pay"] },
     "payment_methods": { "includes": ["paypal"] },
@@ -585,10 +585,10 @@ Only a validation Function tells the two apart.
 scenario expects, and what the checkout has. With a Function that hides nothing:
 
 ```text
-expect   paypal-express: express_methods.excludes
+expect   express-buttons: express_methods.excludes
          expected: no entry matching "paypal"
          actual:   [{"handle": "paypal", "name": "PayPal"}, {"handle": "shop_pay", "name": "Shop Pay"}]
-expect   paypal-express: express_methods.equals
+expect   express-buttons: express_methods.equals
          expected: ["shop_pay"]
          actual:   [{"handle": "paypal", "name": "PayPal"}, {"handle": "shop_pay", "name": "Shop Pay"}]
 checked 1 of 1 scenario in 0.0 s: 0 failures, 0 invalid scenarios, 2 of 5 expectations unmet
@@ -965,7 +965,7 @@ The owners come from two places:
   settings alone: the shop has no owner of the Function.
 
 ```json
-{ "checkout": { "functions": { "hide-paypal": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": { "hide": ["paypal"] } } } } } } }
+{ "checkout": { "functions": { "payment-rules": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": { "hide": ["paypal"] } } } } } } }
 ```
 
 lsf creates no owner at install: `paymentCustomizations` answers none, as Shopify does, and an
