@@ -102,12 +102,15 @@ npx local-storefront serve --app ../my-app --only admin --app-url http://localho
 ```
 
 `--only checkout` runs the checkout without the Admin API, and `--only theme,admin` the theme
-and the Admin API without the checkout ([what runs](cli.md#what-runs)).
+and the Admin API without the checkout ([what runs](cli.md#what-runs)). An option of the Admin
+API (`--app-url`, `--pricing-plans`, …) with an `--only` that leaves it out stops the start:
+`error: --app-url needs the admin part, which --only leaves out`.
 
 [`examples/admin-backend`](https://github.com/0xtlt/local-storefront/tree/main/examples/admin-backend)
 is a backend written with Shopify's libraries (the React Router package and
-`@shopify/shopify-api`), with a script that runs it against lsf end to end: the JavaScript
-recipes of "[Point the backend at lsf](#point-the-backend-at-lsf)" are checked there.
+`@shopify/shopify-api`), with a script that runs it against lsf end to end
+(`mise run admin:e2e` from the root of the repository): the JavaScript recipes of "[Point the
+backend at lsf](#point-the-backend-at-lsf)" are checked there.
 
 ## Point the backend at lsf
 
@@ -327,7 +330,9 @@ Store** (`/`) with the theme, and **Checkout** (`/__lsf/checkouts`, the scenario
 extensions of the app) with the checkout. So a change the app makes, such as a payment
 customization created, is one click from the checkout that shows it. They are the default
 shop's: the admin of [another shop](#a-shop-per-test) has none, and `--only admin` has none
-([what runs](cli.md#what-runs)).
+([what runs](cli.md#what-runs)). The navigation has no other section of Shopify's admin
+(Orders, Products, Customers, Settings): lsf has no page for them, and a `shopify:admin/…` link
+of the app lands on a page that says so.
 
 | Query | What it does |
 |---|---|
@@ -336,7 +341,7 @@ shop's: the admin of [another shop](#a-shop-per-test) has none, and `--only admi
 | `locale` | The `locale` the app is opened with: the shop's primary locale by default. |
 
 The other parameters go to the app. `<handle>` is `handle` of `shopify.app.toml`, or the client
-id; `/admin` and `/admin/apps` redirect there. An app with `embedded = false` gets a page that
+id; `/admin/` and `/admin/apps` redirect there. An app with `embedded = false` gets a page that
 links to its launch instead, as Shopify opens it in a tab of its own.
 
 ### Load lsf's App Bridge
@@ -1480,11 +1485,11 @@ sync").
 - **Only the default shop syncs.** The shops of `POST /__lsf/admin/shops` exist to isolate tests:
   what they change stays in the Admin API.
 - **The files do not change.** lsf builds the store from the files with the Admin API's changes on
-  top; nothing is written to disk. `DELETE /__lsf/admin` (and the store data edited, with
-  `--watch`, or `POST /__lsf/reload`) puts the storefront back to the files, and the theme back
-  to the directory, without the files and script tags the Admin API added. With `--watch`, a
-  checkout scenario added or edited (`checkouts/`) is not store data: lsf reads the scenarios
-  again and keeps what the Admin API changed ([what reloads](cli.md#what---watch-reloads)).
+  top; nothing is written to disk. `DELETE /__lsf/admin` (and the store data edited, unless
+  `--static`, or `POST /__lsf/reload`) puts the storefront back to the files, and the theme back
+  to the directory, without the files and script tags the Admin API added. A checkout scenario
+  added or edited (`checkouts/`) is not store data: lsf reads the scenarios again and keeps what
+  the Admin API changed ([when the data changes on disk](cli.md#when-the-data-changes-on-disk)).
 - **A session with its own data** (`PUT /__lsf/session` with `data`) sees its data on top of the
   Admin API's changes.
 - **An order placed at the checkout** is recorded in the Admin API, and the store is not built
@@ -1515,8 +1520,8 @@ sync").
 - **What it costs**: a request of the backend only counts the change. The next request that
   reads the store builds it again, once for a burst of mutations: under 1 ms on the demo store,
   about 0.1 s for 3,000 products of 12 variants. It builds on the files as the server read them
-  at start (or at the last reload), never on the files on disk: with `--static`, or without
-  `--watch`, a data file edited since is not seen until a reload. Pages served without a change
+  at start (or at the last reload), never on the files on disk: with `--static`, a data file
+  edited since is not seen until a reload (`POST /__lsf/reload`). Pages served without a change
   in between cost nothing more. `GET /__lsf/admin` gives `storeSync`: the generation of the changes, whether a
   change waits for the next page (`pending`), what the overlay writes and removes, and how long
   the last build took.

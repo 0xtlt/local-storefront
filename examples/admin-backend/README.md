@@ -13,8 +13,9 @@ npm run e2e
 ```
 
 Or `mise run admin:e2e` from the root of the repository, which does the three and installs the
-headless Chromium the Polaris checks run in (`npx playwright-core install --only-shell chromium`,
-once). A run takes about 5 seconds and exits with `1` when a check fails.
+headless Chromium the Polaris checks run in (`npx playwright-core install --only-shell --no-remove
+chromium`, which does nothing once it is there). A run takes about 8 seconds and exits with `1`
+when a check fails.
 
 ```text
 result    check                                                                       detail
@@ -24,7 +25,7 @@ PASS      auth: OAuth authorize → callback → access token                   
 …
 KNOWN     billing: billing.require from a page (exit-iframe)                          the template's exit-iframe page only redirects to https admin URLs, …
 
-46 passed, 0 failed, 1 known gaps
+53 passed, 0 failed, 1 known gaps
 ```
 
 `E2E_VERBOSE=1` prints the logs of lsf and the backend, `E2E_ONLY=proxy` runs the checks whose
@@ -80,10 +81,12 @@ throttling checks use `@shopify/admin-api-client` directly.
   `plan_handle`. Then `/app/plans`, whose loader calls the template's
   `redirect("shopify://admin/charges/…", { target: "_top" })`: App Bridge opens
   `https://admin.shopify.com/store/…/pricing_plans`, which lsf's admin opens as its own page;
-  down to Free, Pro is cancelled, and both webhooks arrive. Then, with `legacy = false`, the
-  backend reads its plan from lsf's Partner API (`GET /api/billing/partner`: `activeSubscription`
-  and `events` for its app and shop GIDs, read from the Admin API), Pro in its trial, then `null`
-  once the plan ends, and the history `SUBSCRIPTION_CANCELED`, `SUBSCRIPTION_CREATED`.
+  down to Free, Pro is cancelled, and both webhooks arrive. With `legacy = false`, a plan ended
+  without the app (`POST /__lsf/admin/pricing-plans/cancel`) leaves the backend no active
+  subscription, and no webhook. Then the backend reads its plan from lsf's Partner API
+  (`GET /api/billing/partner`: `activeSubscription` and `events` for its app and shop GIDs, read
+  from the Admin API), Pro in its trial, then `null` once the plan ends, and the history
+  `SUBSCRIPTION_CANCELED`, `SUBSCRIPTION_CREATED`.
 - **Bulk operations and files**: `bulkOperationRunQuery` → poll → the JSONL; a staged JSONL →
   `bulkOperationRunMutation`; `stagedUploadsCreate` → multipart `POST` → `fileCreate` → the bytes
   back.
@@ -91,6 +94,8 @@ throttling checks use `@shopify/admin-api-client` directly.
   template does) and of `webhookSubscriptionCreate`, each verified by `authenticate.webhook`; a
   forged HMAC (`401`); `lsf app webhook trigger` for the three compliance topics;
   `POST /__lsf/webhooks/trigger`; uninstall and install again.
+- **Uninstall**: the checkout runs none of the app's Functions and loads none of its extensions,
+  and says why; a reinstall clears it.
 - **Embedded page**: lsf prints where the app opens in its admin; `/admin/apps/admin-backend`
   opens the app in a frame at a new launch; the page lets lsf's admin frame it (CSP
   `frame-ancestors`) and loads lsf's App Bridge before Shopify's; `fetch()` to `/api/settings`
@@ -104,10 +109,12 @@ throttling checks use `@shopify/admin-api-client` directly.
   CDN while lsf is online; in Chromium (`playwright-core`), with every request to
   `cdn.shopify.com` refused, once `PUT /__lsf/polaris` sets lsf offline: the components are
   defined and their icons and fonts come from lsf; a page still on the CDN's Polaris gets lsf's
-  copy from lsf's App Bridge; `DELETE /__lsf/polaris` puts lsf back online.
+  copy from lsf's App Bridge; lsf and the app on `localhost`, on two ports, with no CORS error;
+  `DELETE /__lsf/polaris` puts lsf back online.
 - **App proxy**: `/apps/reviews/*` through the storefront, verified by
   `authenticate.public.appProxy`, answered with `liquid(…)` in the theme, the logged-in customer;
-  a form `POST` through the proxy, then its redirect; a forged signature (`400`).
+  a form `POST` through the proxy, then its redirect; a forged signature (`400`); while the app
+  is uninstalled, the storefront's `404` and nothing to the backend, until a reinstall.
 
 ## Run the backend by hand
 
@@ -119,11 +126,12 @@ open http://127.0.0.1:9292/admin/apps/admin-backend                        # the
 ```
 
 In lsf's admin, the page's title bar and navigation are the admin's; "Show a toast", "Pick
-products" (the resource picker, with the shop's products), "About this app" (a `ui-modal`),
-Products (a `fetch()` behind `authenticate.admin`) and Settings (a `data-save-bar` form: change
-it, and the admin shows its save bar) use lsf's App Bridge. `http://127.0.0.1:9292/__lsf/admin/launch`
-opens the app's page alone, through token exchange; its App Bridge then sends it to the admin, as
-Shopify's does.
+products" (the resource picker, with the shop's products), "About this app" (a `ui-modal`), the
+app's Products page (a `fetch()` behind `authenticate.admin`) and its Settings page (a
+`data-save-bar` form: change it, and the admin shows its save bar) use lsf's App Bridge. Under
+**Preview**, the admin links to the checkout, and to the storefront with `serve --theme theme`.
+`http://127.0.0.1:9292/__lsf/admin/launch` opens the app's page alone, through token exchange;
+its App Bridge then sends it to the admin, as Shopify's does.
 
 The backend reads its client id and scopes from `shopify.app.toml` and its secret from `.env`, as
 lsf does; `SHOPIFY_API_KEY`, `SCOPES`, `SHOPIFY_APP_URL` and `PORT` (what `shopify app dev` sets)
