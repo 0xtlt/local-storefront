@@ -1,0 +1,1930 @@
+//! [`AdminApi`]: the shops, the tokens, the webhooks and the throttle of a server, and the one
+//! function that answers their HTTP requests.
+
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+
+use chrono::Utc;
+use indexmap::IndexMap;
+use lsf_core::Store;
+use serde::Deserialize;
+use serde_json::{Map, Value, json};
+
+use super::samples::{self, SampleError, ShopLookup};
+use super::sync::{StoreSync, Synced};
+use super::{HttpRequest, HttpResponse};
+use crate::admin::auth::oauth::{self, AppAuth};
+use crate::admin::auth::scopes::{self, ALL_SCOPES};
+use crate::admin::auth::tokens::{Grant, Revocation, TokenError, Tokens};
+use crate::admin::domains::app::pricing::Pricing;
+use crate::admin::domains::platform::{self, access::AuthEffect};
+use crate::admin::domains::{app as app_domain, orders};
+use crate::admin::graphql::{self, Bucket, Request};
+use crate::admin::resolve::{Registry, ShopResolver};
+use crate::admin::state::{Clock, Event, ShopState, Shops};
+use crate::admin::throttle::{self, Plan, Throttle};
+use crate::admin::version::{self, AdminPath, ApiVersion, Resolution, Served};
+use crate::admin::webhooks::{
+    AppUrls, DeliveryOptions, Settings, TriggerError, TriggerRequest, Webhooks,
+};
+use crate::config::App;
+
+/// The answer to a request without a valid access token: Shopify's, word for word.
+pub const INVALID_TOKEN: &str =
+    "[API] Invalid API key or access token (unrecognized login or wrong password)";
+
+/// The size of the cost bucket of every shop and app.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum ThrottleSetting {
+    /// The plan of the store data: Plus for a shop with companies (B2B is a Plus feature),
+    /// Standard otherwise.
+    #[default]
+    Store,
+    /// No throttle: a full bucket, nothing refused.
+    Off,
+    /// A plan's bucket.
+    Plan(Plan),
+}
+
+impl ThrottleSetting {
+    /// `off`, `store`, or a plan: `standard`, `advanced`, `plus`, `enterprise`, `legacy`.
+    pub fn parse(text: &str) -> Result<ThrottleSetting, String> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" => Ok(ThrottleSetting::Off),
+            "store" | "auto" | "" => Ok(ThrottleSetting::Store),
+            name => Plan::from_name(name).map(ThrottleSetting::Plan).ok_or_else(|| {
+                format!(
+                    "`{text}` is not a throttle plan: off, store, standard, advanced, plus, enterprise or legacy"
+                )
+            }),
+        }
+    }
+}
+
+/// A page of the server that lsf's admin links to, in a new tab: the storefront, the checkout
+/// ([`AdminApi::with_previews`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Preview {
+    /// What the link says: `Online Store`, `Checkout`.
+    pub label: String,
+    /// Where it leads, on the server's origin: `/`, `/__lsf/checkouts`.
+    pub path: String,
+}
+
+/// How the Admin API of a server is set up.
+#[derive(Clone, Debug, Default)]
+pub struct AdminOptions {
+    /// The app of `--app`: its client id, scopes, webhooks and redirect URLs. Without it, lsf's
+    /// local client id, every scope, and no subscription.
+    pub app: Option<App>,
+    /// What OAuth, session tokens and webhooks are signed with: [`crate::admin::auth::client_secret`].
+    pub client_secret: String,
+    /// `--app-url`: where the backend listens.
+    pub app_url: Option<String>,
+    pub throttle: ThrottleSetting,
+    pub delivery: DeliveryOptions,
+    /// Makes the tokens OAuth issues the same every run (tests). The default tokens are always.
+    pub token_seed: Option<u64>,
+}
+
+/// A shop of the server, behind its own lock.
+struct LiveShop {
+    state: ShopState,
+    /// Whether the Admin API changed it since it was seeded: a change emits an event.
+    changed: bool,
+    /// Whether it is the default shop, the one store sync projects. It stays the default one
+    /// when a reseed moves it to another domain.
+    default: bool,
+    /// Moves with every change of what the tokens of the shop grant (an uninstall, scopes
+    /// revoked or installed, a delegate destroyed, a reset, an OAuth grant): a request whose
+    /// token was looked up before it moved looks it up again before it runs ([`AdminApi::
+    /// authorized`]).
+    auth_generation: u64,
+    /// The changes of the tokens a request decided under this lock (its `AuthEffect`s) that are
+    /// not applied to them yet: they are applied once the shop is unlocked, the tokens coming
+    /// first in the order of the locks. No request runs while one is pending.
+    auth_pending: u32,
+}
+
+impl LiveShop {
+    fn new(state: ShopState, default: bool) -> LiveShop {
+        LiveShop {
+            state,
+            changed: false,
+            default,
+            auth_generation: 0,
+            auth_pending: 0,
+        }
+    }
+}
+
+/// What a reseed dropped, for the server to say.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Reseeded {
+    /// The shops the Admin API had changed, whose changes are gone.
+    pub dropped: Vec<String>,
+}
+
+/// The Admin API of a server: its shops (each behind a lock), the tokens, the webhooks of the
+/// app, the throttle, and [`AdminApi::handle`], which answers the HTTP requests of all of it.
+///
+/// Locks are taken in one order: the seed, the tokens, the map of the shops, a shop, the
+/// registry of the webhooks. None is taken while one that comes after it is held.
+pub struct AdminApi {
+    registry: &'static Registry,
+    /// The seed every shop is made from.
+    seed: Mutex<Shops>,
+    /// The shops, by domain, the default one first.
+    shops: RwLock<IndexMap<String, Arc<Mutex<LiveShop>>>>,
+    tokens: Mutex<Tokens>,
+    webhooks: Webhooks,
+    throttle: Throttle,
+    auth: AppAuth,
+    app: Option<App>,
+    /// The scopes the app is installed with: `[access_scopes] scopes`, every scope without an
+    /// app.
+    scopes: Vec<String>,
+    /// Store sync of the default shop, once the server turns it on ([`AdminApi::sync_store`]).
+    sync: StoreSync,
+    /// The versions of the Admin API it serves ([`AdminApi::with_versions`]).
+    versions: Served,
+    /// The directory of the theme the storefront serves: the shops' main theme
+    /// ([`AdminApi::with_theme`]).
+    theme: Option<std::path::PathBuf>,
+    /// What the sources of the mutations may reach.
+    fetch: crate::admin::sources::FetchOptions,
+    /// One set for every shop, kept when they are reset.
+    stubs: crate::admin::sources::Stubs,
+    /// The pages of the server lsf's admin links to ([`AdminApi::with_previews`]): none by
+    /// default.
+    previews: Vec<Preview>,
+    /// Where what the server should print goes ([`AdminApi::with_log`]): nowhere by default.
+    log: Option<Log>,
+    /// Where what the server says of a change of the app's installation goes
+    /// ([`AdminApi::with_notices`]): nowhere by default.
+    notices: Option<Log>,
+    /// The plans of managed pricing, every shop's: those of `--pricing-plans`, or those a request
+    /// set. Kept when the shops are reset.
+    pricing: RwLock<PricingPlans>,
+    /// What a test runs once at a point of a request ([`Hook`]).
+    #[cfg(test)]
+    test_hooks: TestHooks,
+}
+
+/// What prints a line the server's terminal should show ([`AdminApi::with_log`]).
+pub type Log = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// The plans of managed pricing ([`crate::admin::domains::app::pricing`]) and where they come
+/// from: a file (`--pricing-plans`), or `"request"` (`PUT /__lsf/admin/pricing-plans`).
+#[derive(Default)]
+struct PricingPlans {
+    /// Those of `--pricing-plans`, which `DELETE /__lsf/admin/pricing-plans` puts back.
+    configured: Option<(Arc<Pricing>, String)>,
+    /// Those that apply.
+    current: Option<(Arc<Pricing>, String)>,
+    /// The size and the modification time of the file of `configured` when it was last read:
+    /// a server without `--static` reads it again when they change.
+    stamp: Option<(u64, u128)>,
+}
+
+/// The size and the modification time of a file, to tell that it changed.
+fn file_stamp(path: &std::path::Path) -> Option<(u64, u128)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some((metadata.len(), modified))
+}
+
+/// A point of a GraphQL request a test runs code at.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Hook {
+    /// After the request looked its token up, before it locks the shop: the window of a
+    /// request that waits on a shop another holds.
+    LookedUp,
+    /// After the request unlocked the shop, before it applies its auth effects to the tokens.
+    Unlocked,
+}
+
+#[cfg(test)]
+type TestHooks = Mutex<std::collections::HashMap<Hook, Box<dyn FnOnce() + Send>>>;
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+impl AdminApi {
+    /// The Admin API of the store data and the app: the default shop seeded, the app installed
+    /// on it with its scopes and [`crate::admin::auth::default_token`], the webhooks' worker started.
+    pub fn new(store: &Store, options: AdminOptions) -> AdminApi {
+        let AdminOptions {
+            app,
+            client_secret,
+            app_url,
+            throttle: setting,
+            delivery,
+            token_seed,
+        } = options;
+        let client_id = app_domain::client_id(app.as_ref());
+        let scopes: Vec<String> = match &app {
+            Some(app) => app.config.scopes.clone(),
+            None => ALL_SCOPES.iter().map(|scope| scope.to_string()).collect(),
+        };
+        let auth = match &app {
+            Some(app) => {
+                AppAuth::from_app(&app.config, &client_id, &client_secret, app_url.as_deref())
+            }
+            None => AppAuth {
+                client_id: client_id.clone(),
+                client_secret: client_secret.clone(),
+                scopes: scopes.clone(),
+                redirect_urls: None,
+                application_url: None,
+                app_url: app_url.clone(),
+            },
+        };
+        let webhooks = match &app {
+            Some(app) => Webhooks::for_app(&app.config, app_url, client_secret, delivery),
+            None => Webhooks::new(
+                Vec::new(),
+                Settings {
+                    urls: AppUrls {
+                        app_url,
+                        application_url: None,
+                    },
+                    client_secret,
+                    delivery,
+                },
+            ),
+        };
+        // A relative date of a filter counts from the event, by the shop's clock.
+        let webhooks = webhooks.with_filter(Arc::new(|filter: &str, payload: &Value, now| {
+            crate::admin::search::filter::webhook_filter_matches(
+                filter,
+                payload,
+                &crate::admin::search::Options::utc(now),
+            )
+            .map_err(|error| error.to_string())
+        }));
+        let seed = Shops::new(store, app.as_ref());
+        let default = seed
+            .default_shop()
+            .cloned()
+            .unwrap_or_else(|| ShopState::seeded(store, app.as_ref()));
+        let plan = match setting {
+            ThrottleSetting::Plan(plan) => plan,
+            _ if is_plus(&default) => Plan::PLUS,
+            _ => Plan::STANDARD,
+        };
+        let throttle = Throttle::new(plan);
+        throttle.set_enabled(setting != ThrottleSetting::Off);
+        let mut tokens = token_seed.map_or_else(Tokens::new, Tokens::with_seed);
+        tokens.install(default.domain(), &client_id, &scopes, Utc::now());
+        let mut shops = IndexMap::new();
+        shops.insert(
+            default.domain().to_string(),
+            Arc::new(Mutex::new(LiveShop::new(default, true))),
+        );
+        AdminApi {
+            registry: Registry::standard(),
+            seed: Mutex::new(seed),
+            shops: RwLock::new(shops),
+            tokens: Mutex::new(tokens),
+            webhooks,
+            throttle,
+            auth,
+            app,
+            scopes,
+            sync: StoreSync::default(),
+            versions: Served::default(),
+            theme: None,
+            fetch: crate::admin::sources::FetchOptions::default(),
+            stubs: crate::admin::sources::Stubs::default(),
+            previews: Vec::new(),
+            log: None,
+            notices: None,
+            pricing: RwLock::new(PricingPlans::default()),
+            #[cfg(test)]
+            test_hooks: Mutex::new(Default::default()),
+        }
+    }
+
+    /// The pages of the server lsf's admin links to, under "Preview" in its navigation, each
+    /// opened in a new tab: the storefront and the checkout the server runs. They are the
+    /// default shop's, so the admin of another shop has none.
+    pub fn with_previews(mut self, previews: Vec<Preview>) -> AdminApi {
+        self.previews = previews;
+        self
+    }
+
+    /// The pages of the server lsf's admin links to.
+    pub fn previews(&self) -> &[Preview] {
+        &self.previews
+    }
+
+    /// The theme the storefront serves is `root`: the main theme of every shop, its files read
+    /// from the directory (`domains::themes`). Called once the API is made, before any request.
+    pub fn with_theme(mut self, root: std::path::PathBuf) -> AdminApi {
+        {
+            let mut seed = lock(&self.seed);
+            seed.amend(|state| crate::admin::domains::themes::attach(state, &root));
+        }
+        for (_, shop) in self.all_shops() {
+            crate::admin::domains::themes::attach(&mut lock(&shop).state, &root);
+        }
+        self.theme = Some(root);
+        self
+    }
+
+    /// What the storefront serves of the default shop's main theme beside the theme directory
+    /// (`domains::themes::storefront_overlay`): `None` for the directory alone. The files of
+    /// `previous`, the overlay served, are kept where they did not change.
+    pub fn storefront_overlay(
+        &self,
+        previous: Option<&lsf_core::theme::FileOverlay>,
+    ) -> Option<lsf_core::theme::FileOverlay> {
+        self.with_default_shop(|state| {
+            crate::admin::domains::themes::storefront_overlay_from(state, previous)
+        })
+        .flatten()
+    }
+
+    /// The generation of [`AdminApi::storefront_overlay`] without making it: `0` for the
+    /// directory alone. What a server compares before it asks for the overlay.
+    pub fn storefront_overlay_generation(&self) -> u64 {
+        self.with_default_shop(crate::admin::domains::themes::storefront_overlay_generation)
+            .unwrap_or(0)
+    }
+
+    /// Which theme of the default shop the storefront serves (`domains::themes::
+    /// storefront_identity`): `None` for the theme directory as its files name it.
+    pub fn storefront_theme(&self) -> Option<lsf_core::theme::ThemeIdentity> {
+        self.with_default_shop(crate::admin::domains::themes::storefront_identity)
+            .flatten()
+    }
+
+    /// What the sources of `themeCreate`, `themeFilesUpsert` and `urlRedirectImportCreate` may
+    /// reach (`--admin-fetch-local`, [`crate::admin::sources::FetchOptions`]): public addresses alone
+    /// otherwise, as Shopify reaches nothing else.
+    pub fn with_fetch(mut self, fetch: crate::admin::sources::FetchOptions) -> AdminApi {
+        self.fetch = fetch;
+        self
+    }
+
+    /// Prints with `log` what the server's terminal should say, a line at a time: a request
+    /// refused for a token a reset, a shop deletion or an uninstall revoked, once per token.
+    pub fn with_log(mut self, log: Log) -> AdminApi {
+        self.log = Some(log);
+        self
+    }
+
+    /// Prints with `notices` what the server's terminal says when the app is uninstalled from a
+    /// shop or installed on it again, a line each: what stops and what comes back
+    /// (`crate::config::NOT_INSTALLED`). The server leaves it out with `--quiet`.
+    pub fn with_notices(mut self, notices: Log) -> AdminApi {
+        self.notices = Some(notices);
+        self
+    }
+
+    /// Says what the change of the app's installation on `shop` does, when the server prints it:
+    /// on a reinstall, what `restored` brought back.
+    fn notice_installation(&self, shop: &str, installed: bool, restored: app_domain::Reinstalled) {
+        let Some(notices) = &self.notices else {
+            return;
+        };
+        notices(&if installed {
+            let mut definitions = match restored.metafield_definitions {
+                0 => String::new(),
+                1 => "; its metafield definition is back, under a new id".to_string(),
+                n => format!("; its {n} metafield definitions are back, under new ids"),
+            };
+            match restored.metaobject_definitions {
+                0 => {}
+                1 => definitions.push_str(
+                    "; its metaobject definition is back, under a new id, with its metaobjects",
+                ),
+                n => definitions.push_str(&format!(
+                    "; its {n} metaobject definitions are back, under new ids, with their metaobjects"
+                )),
+            }
+            let proxy = self
+                .proxied_path(shop)
+                .map(|path| format!("; {path} goes to its app proxy again"))
+                .unwrap_or_default();
+            format!(
+                "{shop}: the app is installed again: its UI extensions render again, and the \
+                 objects that ran its Functions, its script tags and its web pixel are gone, for \
+                 the app to create again{definitions}{proxy}"
+            )
+        } else {
+            format!("{shop}: {}", crate::config::uninstalled_app_reason())
+        });
+        if !installed && let Some(path) = self.proxied_path(shop) {
+            notices(&format!(
+                "{shop}: {}",
+                crate::config::uninstalled_proxy_reason(&path)
+            ));
+        }
+    }
+
+    /// The storefront path of the app proxy (`[app_proxy]`) when `shop` is the default shop, whose
+    /// storefront the server serves; `None` for another shop or an app without one.
+    fn proxied_path(&self, shop: &str) -> Option<String> {
+        let proxy = self.app.as_ref()?.config.app_proxy.as_ref()?;
+        (shop == self.default_shop()).then(|| proxy.path())
+    }
+
+    /// `--admin-source <url>=<file>`.
+    pub fn with_sources(mut self, stubs: crate::admin::sources::Stubs) -> AdminApi {
+        self.stubs = stubs;
+        self
+    }
+
+    /// The plans of managed pricing a file declared (`--pricing-plans`), `source` naming it:
+    /// those that apply until a request sets others.
+    pub fn with_pricing(self, pricing: Pricing, source: impl Into<String>) -> AdminApi {
+        {
+            let mut plans = self
+                .pricing
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let source: String = source.into();
+            plans.stamp = file_stamp(std::path::Path::new(&source));
+            let declared = (Arc::new(pricing), source);
+            plans.configured = Some(declared.clone());
+            plans.current = Some(declared);
+        }
+        self
+    }
+
+    /// Reads the file of `--pricing-plans` again (`DELETE /__lsf/admin/pricing-plans`, and
+    /// when it changed, unless `--static`): its plans become those of the file, and those that apply
+    /// unless a request set others (`PUT`). `Ok(None)` without a file, or when it is gone (the
+    /// plans read last stay); `Ok(Some(file))` once read. A file that no longer reads is the
+    /// error, and the plans stay as they were.
+    pub fn reload_pricing_file(&self) -> Result<Option<String>, String> {
+        let Some(source) = self.pricing_file() else {
+            return Ok(None);
+        };
+        let path = std::path::Path::new(&source);
+        let stamp = file_stamp(path);
+        let read = path.is_file().then(|| Pricing::read(path));
+        let mut plans = self
+            .pricing
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Read or not, this version of the file is seen: the server says so once.
+        plans.stamp = stamp;
+        let Some(read) = read else {
+            return Ok(None);
+        };
+        let declared = (Arc::new(read?), source.clone());
+        let from_file = plans
+            .current
+            .as_ref()
+            .is_none_or(|(_, current)| *current == source);
+        plans.configured = Some(declared.clone());
+        if from_file {
+            plans.current = Some(declared);
+        }
+        Ok(Some(source))
+    }
+
+    /// [`reload_pricing_file`](Self::reload_pricing_file) when the file changed since it was
+    /// last read (a server without `--static`): `Ok(None)` when it did not, or there is none.
+    pub fn reload_pricing_file_if_changed(&self) -> Result<Option<String>, String> {
+        let Some(source) = self.pricing_file() else {
+            return Ok(None);
+        };
+        let seen = self
+            .pricing
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .stamp;
+        if file_stamp(std::path::Path::new(&source)) == seen {
+            return Ok(None);
+        }
+        self.reload_pricing_file()
+    }
+
+    /// The file of `--pricing-plans`, when the plans come from one.
+    pub fn pricing_file(&self) -> Option<String> {
+        self.pricing
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .configured
+            .as_ref()
+            .map(|(_, source)| source.clone())
+    }
+
+    /// The plans of managed pricing that apply, and where they come from (a file, or
+    /// `"request"`). `None` when none are declared.
+    pub fn pricing(&self) -> Option<(Arc<Pricing>, String)> {
+        self.pricing
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .current
+            .clone()
+    }
+
+    /// Whether the app is on managed pricing: it declared at least one plan. The Billing API
+    /// then creates no charge.
+    pub fn managed_pricing(&self) -> bool {
+        self.billing().managed()
+    }
+
+    /// How the app bills: by the Billing API, or on managed pricing with or without the legacy
+    /// features (`legacy`), which decide the webhooks of a change of a subscription.
+    pub fn billing(&self) -> crate::admin::domains::app::pricing::Billing {
+        let pricing = self.pricing();
+        crate::admin::domains::app::pricing::Billing::of(
+            pricing.as_ref().map(|(pricing, _)| pricing.as_ref()),
+        )
+    }
+
+    /// Sets the plans that apply (`PUT /__lsf/admin/pricing-plans`), or puts back those of
+    /// `--pricing-plans` (`None`).
+    pub(super) fn set_pricing(&self, pricing: Option<Pricing>) {
+        let mut plans = self
+            .pricing
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        plans.current = match pricing {
+            Some(pricing) => Some((Arc::new(pricing), "request".to_string())),
+            None => plans.configured.clone(),
+        };
+    }
+
+    pub fn stubs(&self) -> &crate::admin::sources::Stubs {
+        &self.stubs
+    }
+
+    /// Serves these versions of the Admin API (`--admin-versions`), for requests and for the
+    /// payloads of webhooks: [`version::DEFAULT`] alone otherwise.
+    pub fn with_versions(mut self, versions: Served) -> AdminApi {
+        self.webhooks = self.webhooks.with_versions(versions.clone());
+        self.versions = versions;
+        self
+    }
+
+    /// The versions of the Admin API it serves.
+    pub fn versions(&self) -> &Served {
+        &self.versions
+    }
+
+    /// The path of the GraphQL Admin API of its primary version:
+    /// `/admin/api/2026-10/graphql.json`.
+    pub fn graphql_path(&self) -> String {
+        format!("/admin/api/{}/graphql.json", self.versions.primary())
+    }
+
+    /// The domain of the default shop: `shop.permanent_domain` of the store data.
+    pub fn default_shop(&self) -> String {
+        self.shops
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .keys()
+            .next()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The client id of the app.
+    pub fn client_id(&self) -> &str {
+        &self.auth.client_id
+    }
+
+    /// The app of `--app`, when the server has one.
+    pub fn app(&self) -> Option<&App> {
+        self.app.as_ref()
+    }
+
+    /// Where the admin opens the app: `--app-url` on the path of `application_url`, else
+    /// `application_url`; `None` when neither is known.
+    pub fn app_url(&self) -> Option<String> {
+        self.auth.app_url()
+    }
+
+    /// Whether lsf has the shop `domain`.
+    pub fn has_shop(&self, domain: &str) -> bool {
+        self.shop(domain).is_some()
+    }
+
+    /// The locale the admin of `shop` opens the app with: its primary locale.
+    pub fn admin_locale(&self, shop: &str) -> String {
+        oauth::Shops::locale(&ShopNames(self), shop)
+    }
+
+    /// The user `id` of `shop`, `None` when it has no such user.
+    pub fn admin_user(
+        &self,
+        shop: &str,
+        id: u64,
+    ) -> Option<crate::admin::auth::tokens::AssociatedUser> {
+        oauth::Shops::user(&ShopNames(self), shop, id)
+    }
+
+    /// The scopes the app is installed with on `shop`; `None` when it is not installed there.
+    pub fn installed_scopes(&self, shop: &str) -> Option<Vec<String>> {
+        lock(&self.tokens)
+            .installed_scopes(shop, &self.auth.client_id)
+            .map(<[String]>::to_vec)
+    }
+
+    /// The URL the admin opens the app at for `user` of `shop`, at `path` of the app, with a new
+    /// session token: [`oauth::launch_url`]. `None` without an app URL.
+    pub fn launch_url(&self, shop: &str, path: &str, user: u64, locale: &str) -> Option<String> {
+        let names = ShopNames(self);
+        let cx = oauth::Context {
+            app: &self.auth,
+            shops: &names,
+            now: Utc::now(),
+        };
+        let mut tokens = lock(&self.tokens);
+        oauth::launch_url(&cx, &mut tokens, shop, path, user, locale)
+    }
+
+    /// The token the app is installed with on `shop`: [`crate::admin::auth::default_token`].
+    pub fn token(&self, shop: &str) -> String {
+        crate::admin::auth::default_token(shop, &self.auth.client_id)
+    }
+
+    /// The scopes the app is installed with when the server starts.
+    pub fn scopes(&self) -> &[String] {
+        &self.scopes
+    }
+
+    /// The webhooks of the app.
+    pub fn webhooks(&self) -> &Webhooks {
+        &self.webhooks
+    }
+
+    /// The throttle of the shops.
+    pub fn throttle(&self) -> &Throttle {
+        &self.throttle
+    }
+
+    fn shop(&self, domain: &str) -> Option<Arc<Mutex<LiveShop>>> {
+        self.shops
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&domain.to_ascii_lowercase())
+            .cloned()
+    }
+
+    fn all_shops(&self) -> Vec<(String, Arc<Mutex<LiveShop>>)> {
+        self.shops
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .map(|(domain, shop)| (domain.clone(), shop.clone()))
+            .collect()
+    }
+
+    /// Reads every shop, the default one first, each locked in turn.
+    pub(super) fn read_shops<T>(&self, read: impl Fn(&ShopState) -> T) -> Vec<T> {
+        self.all_shops()
+            .into_iter()
+            .map(|(_, shop)| read(&lock(&shop).state))
+            .collect()
+    }
+
+    /// Reads the default shop.
+    pub fn with_default_shop<T>(&self, read: impl FnOnce(&ShopState) -> T) -> Option<T> {
+        self.with_shop(&self.default_shop(), read)
+    }
+
+    /// Reads a shop.
+    pub fn with_shop<T>(&self, domain: &str, read: impl FnOnce(&ShopState) -> T) -> Option<T> {
+        let shop = self.shop(domain)?;
+        let live = lock(&shop);
+        Some(read(&live.state))
+    }
+
+    /// Changes a shop, then delivers the webhooks of what it emitted, the payloads built from the
+    /// shop as the change left it. A change of the default shop is counted for store sync.
+    pub fn change_shop<T>(
+        &self,
+        domain: &str,
+        change: impl FnOnce(&mut ShopState) -> T,
+    ) -> Option<T> {
+        let shop = self.shop(domain)?;
+        let mut live = lock(&shop);
+        let before = (live.state.revision(), live.state.clock());
+        let start = live.state.event_count();
+        // A panic in the change or in what follows it puts the shop back as it was before
+        // (`ShopState::unwinding`), then goes on as the panic it is.
+        let result = live
+            .state
+            .unwinding(|state| {
+                let result = change(state);
+                crate::admin::domains::segments::follow(state, start, &|topic| {
+                    self.webhooks.subscribes(domain, topic)
+                });
+                result
+            })
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        self.count_change(&live, before);
+        let events = live.state.take_events();
+        if !events.is_empty() {
+            live.changed = true;
+            self.emit(&live.state, &events);
+        }
+        Some(result)
+    }
+
+    /// Does what the shop's clock passed since the last time (`domains::tick`), while the shop
+    /// is locked, and triggers the `customers/redact` of the data erasures it processed, at the
+    /// shop's time (a compliance topic: triggered, not emitted). The other events it emitted
+    /// are the caller's to take and deliver, with its own.
+    pub(super) fn tick(&self, state: &mut ShopState) -> crate::admin::domains::Ticked {
+        let ticked = crate::admin::domains::tick(state);
+        let lookup = samples::ShopLookup(state);
+        for customer in &ticked.erased {
+            if let Some(payload) =
+                crate::admin::webhooks::payload::payload("customers/redact", customer, &lookup)
+            {
+                self.webhooks.trigger(&crate::admin::webhooks::Trigger {
+                    topic: "customers/redact",
+                    shop: state.domain(),
+                    payload: &payload,
+                    address: None,
+                    at: state.now(),
+                });
+            }
+        }
+        ticked
+    }
+
+    /// Counts a change of the default shop for store sync, when a record of it was written since
+    /// `before` (its revision and its clock then), or its clock moved: what the storefront sees
+    /// depends on the time too (an app discount runs between its dates). Called while the shop
+    /// is locked.
+    fn count_change(&self, live: &LiveShop, before: (u64, Clock)) {
+        if live.default && (live.state.revision(), live.state.clock()) != before {
+            self.sync.changed();
+        }
+    }
+
+    /// Turns store sync on: from now on, what the Admin API changes in the default shop is
+    /// projected onto `base`, the store the shops were seeded from (the files, without any
+    /// overlay), when [`AdminApi::synced`] asks for it. A server calls it once the API is made,
+    /// and again after each [`AdminApi::reseed`], with the store it reseeded from.
+    pub fn sync_store(&self, base: Arc<Store>) {
+        let Some(shop) = self.shop(&self.default_shop()) else {
+            return;
+        };
+        let _live = lock(&shop);
+        self.sync.start(base);
+    }
+
+    /// How many times the default shop changed (an Admin API request or a recorded order that
+    /// wrote a record, a reset, a reseed): cheap, so that a server can ask it on every request,
+    /// and call [`AdminApi::synced`] only when it moved.
+    pub fn store_changes(&self) -> u64 {
+        self.sync.changes()
+    }
+
+    /// What the Admin API changed in the default shop, as an overlay of the store data, made
+    /// again (while the shop is locked) when the shop changed since it was last made. `None`
+    /// while store sync is off. The other shops never sync: they isolate tests.
+    pub fn synced(&self) -> Option<Synced> {
+        if !self.sync.is_on() {
+            return None;
+        }
+        let shop = self.shop(&self.default_shop())?;
+        let live = lock(&shop);
+        self.sync.update(&live.state)
+    }
+
+    /// Notes what the server built with the overlay of `generation`, for `GET /__lsf/admin`: how
+    /// long it took, and what the store data said of the overlay.
+    pub fn sync_built(
+        &self,
+        generation: u64,
+        took: std::time::Duration,
+        diagnostics: &lsf_core::diagnostics::Diagnostics,
+    ) {
+        self.sync.built(generation, took, diagnostics);
+    }
+
+    /// Records an order placed in the local checkout in the default shop, and delivers its
+    /// `orders/create` (and `orders/paid`) webhooks. Returns the GID and the number the shop
+    /// gave the order (its next one when the checkout gives none).
+    pub fn record_order(&self, placed: &orders::PlacedOrder) -> Option<orders::RecordedOrder> {
+        self.change_shop(&self.default_shop(), |state| {
+            let recorded = orders::record_placed_order(state, placed);
+            // A subscription bought at the checkout is a contract, as on Shopify.
+            crate::admin::domains::subscriptions::checkout::contracts_from_order(
+                state,
+                &recorded.id,
+                placed,
+            );
+            recorded
+        })
+    }
+
+    /// Seeds every shop again from new store data (the data changed on disk). The webhook
+    /// subscriptions the backend made stay: they are the app's setup of the shop, not data.
+    pub fn reseed(&self, store: &Store) -> Reseeded {
+        let mut seed = lock(&self.seed);
+        let old_default = seed.default_domain().to_string();
+        seed.reseed(store, self.app.as_ref());
+        if let Some(root) = &self.theme {
+            seed.amend(|state| crate::admin::domains::themes::attach(state, root));
+        }
+        let new_default = seed.default_domain().to_string();
+        let mut dropped = Vec::new();
+        let mut shops = self
+            .shops
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if new_default != old_default
+            && let Some(shop) = shops.shift_remove(&old_default)
+        {
+            if let Some(fresh) = seed.default_shop().cloned() {
+                let mut live = lock(&shop);
+                if live.changed {
+                    dropped.push(old_default.clone());
+                }
+                live.state = fresh;
+                live.changed = false;
+            }
+            shops.insert(new_default.clone(), shop);
+            let last = shops.len() - 1;
+            shops.move_index(last, 0);
+        }
+        for (domain, shop) in shops.iter() {
+            if *domain == new_default && new_default != old_default {
+                continue;
+            }
+            let mut live = lock(shop);
+            if live.changed {
+                dropped.push(domain.clone());
+            }
+            seed.reset_shop(&mut live.state);
+            live.changed = false;
+        }
+        drop(shops);
+        drop(seed);
+        if new_default != old_default {
+            lock(&self.tokens).install(
+                &new_default,
+                &self.auth.client_id,
+                &self.scopes,
+                Utc::now(),
+            );
+        }
+        // A shop the app is not installed on has no object that runs its Functions, whatever
+        // the store data declares: uninstalling removed them, and a new seed does not bring
+        // them back before the app is installed again.
+        let uninstalled: Vec<Arc<Mutex<LiveShop>>> = {
+            let tokens = lock(&self.tokens);
+            self.all_shops()
+                .into_iter()
+                .filter(|(domain, _)| {
+                    tokens
+                        .installed_scopes(domain, &self.auth.client_id)
+                        .is_none()
+                })
+                .map(|(_, shop)| shop)
+                .collect()
+        };
+        for shop in uninstalled {
+            let mut live = lock(&shop);
+            app_domain::reseed_uninstalled(&mut live.state);
+            live.state.take_events();
+        }
+        Reseeded { dropped }
+    }
+
+    /// Puts every shop back to the seed, forgets the subscriptions the backend made and the
+    /// tokens OAuth issued, and installs the app again on every shop: `DELETE /__lsf/admin`.
+    pub fn reset(&self) -> Vec<String> {
+        let seed = lock(&self.seed);
+        let mut tokens = lock(&self.tokens);
+        let mut domains = Vec::new();
+        for (domain, shop) in self.all_shops() {
+            let mut live = lock(&shop);
+            seed.reset_shop(&mut live.state);
+            live.changed = false;
+            if live.default {
+                self.sync.changed();
+            }
+            tokens.revoke_shop(&domain, Revocation::Reset);
+            tokens.install(&domain, &self.auth.client_id, &self.scopes, Utc::now());
+            live.auth_generation += 1;
+            domains.push(domain);
+        }
+        self.webhooks.registry().clear_all();
+        self.throttle.reset();
+        domains
+    }
+
+    /// Creates a shop seeded from the same data, with the app installed: its domain and token.
+    pub fn create_shop(&self, name: &str) -> Result<(String, String), (u16, String)> {
+        let shop = lock(&self.seed)
+            .new_shop(name)
+            .map_err(|error| (422, error))?;
+        let domain = shop.domain().to_string();
+        {
+            let mut shops = self
+                .shops
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if shops.contains_key(&domain) {
+                return Err((409, format!("the shop {domain} already exists")));
+            }
+            shops.insert(
+                domain.clone(),
+                Arc::new(Mutex::new(LiveShop::new(shop, false))),
+            );
+        }
+        // The map of the shops is released before the tokens are locked (see `AdminApi`).
+        let token =
+            lock(&self.tokens).install(&domain, &self.auth.client_id, &self.scopes, Utc::now());
+        Ok((domain, token))
+    }
+
+    /// Deletes a shop [`AdminApi::create_shop`] made, and frees what it held: its records, its
+    /// tokens and installation, the subscriptions the backend made on it, its throttle. A
+    /// request waiting on it looks its token up again, which is refused. The default shop is
+    /// the store data's, and stays. Answers its domain, the access tokens revoked and the
+    /// subscriptions deleted.
+    pub fn delete_shop(&self, name: &str) -> Result<(String, usize, usize), (u16, String)> {
+        let domain = oauth::normalize_shop(name);
+        let shop = {
+            let mut shops = self
+                .shops
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            match shops.get_index_of(&domain) {
+                None => return Err((404, format!("there is no shop {domain}"))),
+                // The default shop is the first.
+                Some(0) => {
+                    return Err((
+                        409,
+                        format!(
+                            "{domain} is the default shop, the store data's: it cannot be deleted \
+                             (`DELETE /__lsf/admin` puts it back to the store data)"
+                        ),
+                    ));
+                }
+                Some(_) => shops.shift_remove(&domain),
+            }
+        };
+        // The map of the shops is released before the tokens are locked (see `AdminApi`).
+        let revoked = lock(&self.tokens).revoke_shop(&domain, Revocation::ShopDeleted);
+        if let Some(shop) = shop {
+            lock(&shop).auth_generation += 1;
+        }
+        let deleted = {
+            let mut registry = self.webhooks.registry();
+            // A shop made again under the name starts installed, as a new one does.
+            registry.set_installed(&domain, true);
+            registry.clear(&domain)
+        };
+        self.throttle.forget_shop(&domain);
+        Ok((domain, revoked, deleted))
+    }
+
+    /// Tells the webhooks the shops the app was installed on again, as `tokens` has them: the
+    /// subscriptions of `shopify.app.toml` deliver for them again. Called with the tokens locked,
+    /// which come before the registry of the webhooks.
+    fn note_installs(&self, tokens: &Tokens) {
+        let mut installed = Vec::new();
+        {
+            let mut registry = self.webhooks.registry();
+            for shop in registry.uninstalled_shops() {
+                if tokens
+                    .installed_scopes(&shop, &self.auth.client_id)
+                    .is_some()
+                {
+                    registry.set_installed(&shop, true);
+                    installed.push(shop);
+                }
+            }
+        }
+        for shop in installed {
+            // The metafield definitions the uninstall deleted come back, under new ids.
+            let restored = self
+                .change_shop(&shop, app_domain::reinstall)
+                .unwrap_or_default();
+            self.notice_installation(&shop, true, restored);
+        }
+    }
+
+    /// Delivers the webhooks of events of a shop.
+    fn emit(&self, state: &ShopState, events: &[Event]) {
+        let lookup = ShopLookup(state);
+        for event in events {
+            self.webhooks.emit(event, &lookup);
+        }
+    }
+
+    /// The answer to a request of the Admin API, of OAuth, or of the control endpoints of the
+    /// Admin API and of the webhooks; `None` for any other path.
+    ///
+    /// | Path | What answers |
+    /// |---|---|
+    /// | `/admin/api/<version>/graphql.json` | the GraphQL Admin API of a version it serves; one Shopify no longer serves falls forward; another is a `404` |
+    /// | `/admin/api/<version>/<other>.json` | `404`: the REST Admin API is not served |
+    /// | `/admin/oauth/*`, `/__lsf/admin/session-token`, `/__lsf/admin/launch` | [`oauth::handle`] |
+    /// | `/admin`, `/admin/apps/<app>/*` and the other pages of `/admin`, `/__lsf/admin/app-bridge.js`, `/__lsf/admin/assets/*`, `/__lsf/admin/resources` | the admin an embedded app is previewed in (`embedded`) |
+    /// | `/__lsf/admin`, `/__lsf/admin/shops`, `/__lsf/admin/install`, `/__lsf/admin/uninstall` | the control endpoints |
+    /// | `/__lsf/webhooks`, `/__lsf/webhooks/trigger` | [`Webhooks::handle`] |
+    /// | `/{partner_id}/api/{version}/graphql.json` | the Partner API (`crate::admin::partner`) |
+    pub fn handle(&self, request: &HttpRequest) -> Option<HttpResponse> {
+        let path = request.path.as_str();
+        if let Some((partner_id, version)) = crate::admin::partner::parse_path(path) {
+            return Some(super::partner::handle(self, request, partner_id, version));
+        }
+        if let Some(admin) = version::parse_path(path) {
+            let primary = self.versions.primary();
+            return Some(match admin {
+                AdminPath::Graphql(asked) => match self.versions.resolve(asked) {
+                    Resolution::Served(version) => self.graphql(request, version),
+                    // As Shopify: the oldest supported version answers, and says so in
+                    // `X-Shopify-API-Version`.
+                    Resolution::FellForward { asked, served } => {
+                        let response = self.graphql(request, served);
+                        if response
+                            .headers
+                            .iter()
+                            .any(|(name, _)| name == "x-lsf-reason")
+                        {
+                            response
+                        } else {
+                            response.header(
+                                "x-lsf-reason",
+                                format!(
+                                    "API version {asked} is no longer supported: {served} answered, \
+                                     as Shopify falls forward to the oldest supported version"
+                                ),
+                            )
+                        }
+                    }
+                    Resolution::NotServed(body) => {
+                        Self::api_headers(HttpResponse::json(404, &body), primary)
+                    }
+                },
+                AdminPath::UnsupportedVersion(asked) => Self::api_headers(
+                    HttpResponse::json(404, &self.versions.refusal(asked)),
+                    primary,
+                ),
+                AdminPath::Rest { resource, .. } => Self::api_headers(
+                    HttpResponse::json(404, &version::rest_not_served_by(&self.versions, resource)),
+                    primary,
+                ),
+            });
+        }
+        if path.starts_with("/admin/oauth/")
+            || path.trim_end_matches('/') == "/__lsf/admin/session-token"
+            || path.trim_end_matches('/') == "/__lsf/admin/launch"
+        {
+            let names = ShopNames(self);
+            let cx = oauth::Context {
+                app: &self.auth,
+                shops: &names,
+                now: Utc::now(),
+            };
+            let response = {
+                let mut tokens = lock(&self.tokens);
+                let response = oauth::handle(request, &cx, &mut tokens);
+                // An authorization or a token exchange installs the app where it was not.
+                self.note_installs(&tokens);
+                response
+            };
+            // A grant may install the app again with fewer scopes, which narrows every token of
+            // the installation: the requests waiting on a shop look their token up again.
+            if path.trim_end_matches('/') == "/admin/oauth/access_token" {
+                for (domain, _) in self.all_shops() {
+                    self.auth_changed(&domain);
+                }
+            }
+            return response;
+        }
+        if let Some(response) = super::embedded::handle(self, request) {
+            return Some(response);
+        }
+        let trimmed = path.trim_end_matches('/');
+        if trimmed == "/__lsf/admin" || trimmed.starts_with("/__lsf/admin/") {
+            return Some(self.control(request, trimmed));
+        }
+        if trimmed == "/__lsf/webhooks" || trimmed.starts_with("/__lsf/webhooks/") {
+            return self
+                .webhooks
+                .handle(request, &|trigger| self.build_trigger(trigger), &|| {
+                    self.all_shops()
+                        .into_iter()
+                        .map(|(domain, _)| domain)
+                        .collect()
+                });
+        }
+        None
+    }
+
+    /// The headers of every answer of the Admin API: `X-Shopify-API-Version`, the version that
+    /// answered.
+    fn api_headers(response: HttpResponse, version: ApiVersion) -> HttpResponse {
+        response
+            .header("x-shopify-api-version", version.name())
+            .header("x-request-id", crate::admin::webhooks::sign::new_id())
+    }
+
+    /// `POST /admin/api/<version>/graphql.json`, in `version`: its schema, its access scopes, its
+    /// search filters, its adapters.
+    fn graphql(&self, request: &HttpRequest, version: ApiVersion) -> HttpResponse {
+        let method = request.method.to_ascii_uppercase();
+        if method != "POST" && method != "GET" {
+            return Self::api_headers(
+                HttpResponse::json(
+                    405,
+                    &json!({"errors": format!("{method} is not allowed: POST the query (or GET it with ?query=)")}),
+                ),
+                version,
+            );
+        }
+        let unauthorized = |reason: String| {
+            Self::api_headers(
+                HttpResponse::json(401, &json!({ "errors": INVALID_TOKEN })),
+                version,
+            )
+            .header("x-lsf-reason", reason)
+        };
+        let first = match self.grant_of(request) {
+            Ok(grant) => grant,
+            Err(reason) => return unauthorized(reason),
+        };
+        let query = match graphql_request(request) {
+            Ok(query) => query,
+            Err(reason) => {
+                return Self::api_headers(
+                    HttpResponse::json(
+                        400,
+                        &json!({"errors": {"query": "Required parameter missing or invalid"}}),
+                    ),
+                    version,
+                )
+                .header("x-lsf-reason", reason);
+            }
+        };
+        // The URLs its mutations read, fetched now: no shop is locked while they download.
+        let access = crate::admin::auth::scopes::for_version(version);
+        let may_run = |field: &str| {
+            access
+                .required_access(crate::admin::auth::scopes::Root::Mutation, field)
+                .is_none_or(|required| first.allows(&required))
+        };
+        let fetched = crate::admin::sources::prefetch(
+            &crate::admin::sources::urls(&query, &may_run),
+            self.fetch,
+            &self.stubs,
+        );
+        let ((grant, generation), shop) = match self.authorized(request) {
+            Ok(authorized) => authorized,
+            Err(reason) => return unauthorized(reason),
+        };
+        let live = lock(&shop);
+        // The token as of the last change of what the shop's tokens grant: one that moved since
+        // it was looked up (an uninstall, a revoke, a reset that ran while this request waited
+        // on the shop) is looked up again, which may now refuse it or narrow its scopes.
+        let (grant, mut live) = if live.auth_generation == generation && live.auth_pending == 0 {
+            (grant, live)
+        } else {
+            drop(live);
+            match self.authorized_again(request, &shop) {
+                Ok(authorized) => authorized,
+                Err(reason) => return unauthorized(reason),
+            }
+        };
+        let key = throttle::key(&grant.shop, &grant.client_id);
+        let before = (live.state.revision(), live.state.clock());
+        // What the shop's clock passed since the last request (a payment schedule that came due,
+        // a data erasure ten days old, a scheduled listing): a change like the request's own.
+        self.tick(&mut live.state);
+        let origin = origin_of(request);
+        let mut resolver = ShopResolver::new(&mut live.state, self.registry)
+            .with_version(version)
+            .with_grant(&grant)
+            .with_webhooks(&self.webhooks)
+            .with_origin(&origin)
+            .with_fetched(&fetched)
+            .with_billing(self.billing());
+        let bucket = Bucket {
+            throttle: &self.throttle,
+            key: &key,
+        };
+        let started = std::time::Instant::now();
+        let mut response = graphql::run(version.schema(), &mut resolver, &query, Some(bucket));
+        response.extensions.extend(resolver.extensions());
+        self.count_change(&live, before);
+        let events = live.state.take_events();
+        let effects = platform::access::effects(&events);
+        if !effects.is_empty() {
+            // Applied to the tokens once the shop is unlocked: no request runs on the shop
+            // until they are.
+            live.auth_generation += 1;
+            live.auth_pending += 1;
+        }
+        if !events.is_empty() {
+            live.changed = true;
+            // Built now from the shop as the request left it, queued for the worker: nothing
+            // waits on the backend while the shop is locked.
+            self.emit(&live.state, &events);
+        }
+        let app = live.state.all("App").next().map(|app| {
+            let text = |field: &str| {
+                app.get(field)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            (text("id"), text("title"))
+        });
+        drop(live);
+        // What the request changed of the tokens, now that the shop is unlocked (the tokens
+        // come first in the order of the locks), before the backend hears the answer.
+        if !effects.is_empty() {
+            #[cfg(test)]
+            self.hook(Hook::Unlocked);
+            self.apply_auth_effects(&grant.shop, &effects);
+            let mut live = lock(&shop);
+            live.auth_pending -= 1;
+            live.auth_generation += 1;
+        }
+        let answer = response.to_json();
+        super::audit::record(
+            self,
+            request,
+            &grant,
+            &query,
+            &answer,
+            version,
+            started.elapsed(),
+            app,
+        );
+        Self::api_headers(HttpResponse::json(200, &answer), version)
+    }
+
+    /// What the request's token grants, the shop it is for, and the shop's auth generation it
+    /// was looked up at: read first, once no change of the tokens is pending, so that every
+    /// change counted by then is in what the lookup finds.
+    #[allow(clippy::type_complexity)]
+    fn authorized(
+        &self,
+        request: &HttpRequest,
+    ) -> Result<((Grant, u64), Arc<Mutex<LiveShop>>), String> {
+        let grant = self.grant_of(request)?;
+        let shop = self
+            .shop(&grant.shop)
+            .ok_or_else(|| format!("the shop {} of this token is gone", grant.shop))?;
+        let generation = Self::settled_generation(&shop);
+        let grant = self.grant_of(request)?;
+        #[cfg(test)]
+        self.hook(Hook::LookedUp);
+        Ok(((grant, generation), shop))
+    }
+
+    /// [`AdminApi::authorized`] again, until the token is looked up at the generation the shop
+    /// has once it is locked: the grant, and the locked shop.
+    fn authorized_again<'s>(
+        &self,
+        request: &HttpRequest,
+        shop: &'s Arc<Mutex<LiveShop>>,
+    ) -> Result<(Grant, MutexGuard<'s, LiveShop>), String> {
+        loop {
+            let generation = Self::settled_generation(shop);
+            let grant = self.grant_of(request)?;
+            let live = lock(shop);
+            if live.auth_generation == generation && live.auth_pending == 0 {
+                return Ok((grant, live));
+            }
+        }
+    }
+
+    /// The auth generation of a shop once no change of its tokens is pending: those are applied
+    /// right after the request that made them unlocks the shop.
+    fn settled_generation(shop: &Mutex<LiveShop>) -> u64 {
+        loop {
+            {
+                let live = lock(shop);
+                if live.auth_pending == 0 {
+                    return live.auth_generation;
+                }
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    /// Counts a change of what the tokens of `domain` grant, made outside its lock (after the
+    /// change): a request that looked its token up before looks it up again.
+    fn auth_changed(&self, domain: &str) {
+        if let Some(shop) = self.shop(domain) {
+            lock(&shop).auth_generation += 1;
+        }
+    }
+
+    /// Runs what a test set at `at`, once.
+    #[cfg(test)]
+    fn hook(&self, at: Hook) {
+        let hook = lock(&self.test_hooks).remove(&at);
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
+    /// Runs `hook` once, when the next request reaches `at`.
+    #[cfg(test)]
+    pub(crate) fn at_next(&self, at: Hook, hook: impl FnOnce() + Send + 'static) {
+        lock(&self.test_hooks).insert(at, Box::new(hook));
+    }
+
+    /// What the request's `X-Shopify-Access-Token` grants, or why it grants nothing.
+    fn grant_of(&self, request: &HttpRequest) -> Result<Grant, String> {
+        let Some(token) = request
+            .header("x-shopify-access-token")
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+        else {
+            return Err("no X-Shopify-Access-Token header: send the token the server printed when it started".to_string());
+        };
+        let mut tokens = lock(&self.tokens);
+        let looked_up = tokens.lookup(token, Utc::now()).cloned();
+        match looked_up {
+            Ok(grant) => Ok(grant),
+            Err(TokenError::Expired) => Err("the access token expired".to_string()),
+            Err(TokenError::Unknown) => {
+                let Some(reason) = tokens.revocation(token).map(|revoked| revoked.reason()) else {
+                    return Err(
+                        "lsf did not issue this access token, or it was revoked (the app was uninstalled, or the server reset)"
+                            .to_string(),
+                    );
+                };
+                let first = tokens.first_refusal(token);
+                drop(tokens);
+                if first && let Some(log) = &self.log {
+                    log(&format!("401 for a revoked access token: {reason}"));
+                }
+                Err(reason)
+            }
+        }
+    }
+
+    /// The shop and the payload of `POST /__lsf/webhooks/trigger`: the payload from the shop's
+    /// records, unless the trigger gives its own. A given payload may be for a shop lsf does not
+    /// have (sent to an `address`).
+    fn build_trigger(&self, trigger: &TriggerRequest) -> Result<(String, Value), TriggerError> {
+        let domain = match &trigger.shop {
+            Some(shop) => oauth::normalize_shop(shop),
+            None => self.default_shop(),
+        };
+        if let Some(payload) = &trigger.payload {
+            return Ok((domain, payload.clone()));
+        }
+        let shop = self
+            .shop(&domain)
+            .ok_or_else(|| TriggerError::NotFound(format!("there is no shop {domain}")))?;
+        let live = lock(&shop);
+        samples::payload_of(&live.state, &trigger.topic, trigger.id.as_deref())
+            .map(|payload| (domain, payload))
+            .map_err(|error| match error {
+                SampleError::NotFound(message) => TriggerError::NotFound(message),
+                SampleError::NotBuilt(message) => TriggerError::NotBuilt(message),
+            })
+    }
+
+    /// The control endpoints under `/__lsf/admin`.
+    fn control(&self, request: &HttpRequest, path: &str) -> HttpResponse {
+        if let Some(response) = super::app::handle(self, request, path) {
+            return response;
+        }
+        if let Some(response) = super::subscriptions::handle(self, request, path) {
+            return response;
+        }
+        if let Some(response) = super::simulate::handle(self, request, path) {
+            return response;
+        }
+        let method = request.method.to_ascii_uppercase();
+        if let Some(name) = path
+            .strip_prefix("/__lsf/admin/shops/")
+            .filter(|name| !name.contains('/'))
+        {
+            if method != "DELETE" {
+                return HttpResponse::not_allowed(&method);
+            }
+            return match self.delete_shop(name) {
+                Ok((domain, revoked, deleted)) => HttpResponse::json(
+                    200,
+                    &json!({"ok": true, "shop": domain, "revoked": revoked, "deletedSubscriptions": deleted}),
+                ),
+                Err((status, error)) => HttpResponse::error(status, error),
+            };
+        }
+        match (method.as_str(), path) {
+            ("GET", "/__lsf/admin") => HttpResponse::json(200, &self.status()),
+            ("DELETE", "/__lsf/admin") => {
+                let shops = self.reset();
+                HttpResponse::json(200, &json!({"ok": true, "shops": shops}))
+            }
+            ("POST", "/__lsf/admin/shops") => {
+                let body: ShopBody = match body_of(request) {
+                    Ok(body) => body,
+                    Err(response) => return response,
+                };
+                let Some(name) = body.shop else {
+                    return HttpResponse::error(422, "the body is {\"shop\": \"test-1\"}");
+                };
+                match self.create_shop(&name) {
+                    Ok((domain, token)) => HttpResponse::json(
+                        201,
+                        &json!({
+                            "shop": domain,
+                            "token": token,
+                            "graphql": self.graphql_path(),
+                        }),
+                    ),
+                    Err((status, error)) => HttpResponse::error(status, error),
+                }
+            }
+            (_, "/__lsf/admin/partner") => super::partner::control(self, request),
+            ("POST", "/__lsf/admin/uninstall") => self.uninstall(request),
+            ("POST", "/__lsf/admin/install") => self.install(request),
+            (
+                _,
+                "/__lsf/admin"
+                | "/__lsf/admin/shops"
+                | "/__lsf/admin/uninstall"
+                | "/__lsf/admin/install",
+            ) => HttpResponse::not_allowed(&method),
+            _ => HttpResponse::error(404, format!("no control endpoint at {path}")),
+        }
+    }
+
+    /// `GET /__lsf/admin`.
+    pub fn status(&self) -> Value {
+        let now = Utc::now();
+        let all_shops = self.all_shops();
+        // What the tokens say of each shop, copied so the tokens are not locked while a shop
+        // is: a shop busy with a long mutation would hold up every request's authentication.
+        let mut tokens_of: std::collections::HashMap<String, (Option<Vec<String>>, Vec<Value>)> = {
+            let tokens = lock(&self.tokens);
+            all_shops
+                .iter()
+                .map(|(domain, _)| {
+                    let installed = tokens
+                        .installed_scopes(domain, &self.auth.client_id)
+                        .map(<[String]>::to_vec);
+                    let grants = tokens
+                        .grants()
+                        .filter(|(_, grant)| grant.shop == *domain && !grant.expired(now))
+                        .map(|(token, grant)| {
+                            json!({
+                                "token": token,
+                                "mode": grant.mode,
+                                "source": grant.source,
+                                "scopes": grant.scopes.join(","),
+                                "expiresAt": grant.expires_at.map(|at| at.to_rfc3339()),
+                                "user": grant.user.as_ref().map(|user| user.id),
+                            })
+                        })
+                        .collect();
+                    (domain.clone(), (installed, grants))
+                })
+                .collect()
+        };
+        let shops: Vec<Value> = all_shops
+            .into_iter()
+            .map(|(domain, shop)| {
+                let (installed, grants) = tokens_of.remove(&domain).unwrap_or_default();
+                let live = lock(&shop);
+                let mut counts: Vec<(&str, usize)> = live
+                    .state
+                    .types()
+                    .map(|type_name| (type_name, live.state.count(type_name)))
+                    .collect();
+                counts.sort();
+                let subscriptions: Vec<Value> = self
+                    .webhooks
+                    .registry()
+                    .list(&domain)
+                    .iter()
+                    .map(|subscription| json!(subscription))
+                    .collect();
+                json!({
+                    "shop": domain,
+                    "installed": installed.is_some(),
+                    "scopes": installed,
+                    "token": self.token(&domain),
+                    "changed": live.changed,
+                    "records": live.state.len(),
+                    "counts": counts.into_iter().collect::<IndexMap<_, _>>(),
+                    "tokens": grants,
+                    "subscriptions": subscriptions,
+                    // What Shopify would have sent the outside world, which lsf never sends.
+                    "outbox": crate::admin::outbox::entries(&live.state, None),
+                    "shippingPackages": crate::admin::domains::logistics::delivery::packages(&live.state),
+                })
+            })
+            .collect();
+        let plan = self.throttle.plan();
+        json!({
+            "apiVersion": self.versions.primary().name(),
+            "graphql": self.graphql_path(),
+            "apiVersions": ApiVersion::all()
+                .map(|version| json!({
+                    "version": version.name(),
+                    "status": version.status().as_str(),
+                    "served": self.versions.serves(version),
+                    "graphql": format!("/admin/api/{version}/graphql.json"),
+                }))
+                .collect::<Vec<_>>(),
+            "defaultShop": self.default_shop(),
+            "app": {
+                "clientId": self.auth.client_id,
+                "appUrl": self.auth.app_url(),
+                "scopes": self.scopes,
+                "pricingPlans": self.pricing().map(|(pricing, source)| json!({
+                    "plans": pricing.plans.len(),
+                    "legacy": pricing.legacy,
+                    "source": source,
+                })),
+            },
+            "partner": super::partner::summary(self),
+            "throttle": {
+                "enabled": self.throttle.is_enabled(),
+                "maximumAvailable": plan.maximum_available,
+                "restoreRate": plan.restore_rate,
+            },
+            "webhooks": {
+                "summary": self.webhooks.summary(),
+                "appSubscriptions": self.webhooks.app_subscriptions(),
+                "deliveries": self.webhooks.deliveries().list(&Default::default()).len(),
+            },
+            "mutations": self.registry.mutations(),
+            "storeSync": self.sync.status(),
+            "shops": shops,
+        })
+    }
+
+    /// `POST /__lsf/admin/uninstall`: the app's tokens on the shop are revoked, its subscription
+    /// cancelled, its Functions removed with every object that runs them (`app::uninstall`:
+    /// the shop's checkout runs none of them), `app/uninstalled` is delivered, then the
+    /// subscriptions the backend made on the shop are deleted and nothing more is delivered for
+    /// it until the app is installed again (`POST /__lsf/admin/install`, OAuth, a token
+    /// exchange), which brings back those of `shopify.app.toml`, and not the objects that ran
+    /// its Functions: the app creates them again.
+    ///
+    /// As Shopify does: "When an app uninstalls, Shopify automatically performs cleanup tasks,
+    /// such as deleting WebhookSubscription objects and admin links associated with the app"
+    /// (shopify.dev, `appUninstall`,
+    /// <https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/appUninstall>), and the
+    /// subscriptions of `shopify.app.toml` are "applied uniformly across every shop that
+    /// installs your app" (<https://shopify.dev/docs/apps/build/webhooks/subscribe>).
+    /// `shop/redact` comes "48 hours after a store owner uninstalls your app"
+    /// (<https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance>): lsf does not
+    /// wait, it is sent on demand (`POST /__lsf/webhooks/trigger`).
+    fn uninstall(&self, request: &HttpRequest) -> HttpResponse {
+        let body: InstallBody = match body_of(request) {
+            Ok(body) => body,
+            Err(response) => return response,
+        };
+        let domain = body
+            .shop
+            .as_deref()
+            .map_or_else(|| self.default_shop(), oauth::normalize_shop);
+        if self.shop(&domain).is_none() {
+            return HttpResponse::error(404, format!("there is no shop {domain}"));
+        }
+        let installed = lock(&self.tokens)
+            .installed_scopes(&domain, &self.auth.client_id)
+            .is_some();
+        let mut removed = app_domain::Uninstalled::default();
+        let (revoked, deleted) = self.finish_uninstall(&domain, installed, || {
+            if installed {
+                self.change_shop(&domain, |state| {
+                    // Shopify cancels the app's subscription when it is uninstalled, removes its
+                    // Functions with every object that runs them, its script tags and its web
+                    // pixel.
+                    removed = app_domain::uninstall(state);
+                    if let Some(shop) = state.shop_gid().map(str::to_string) {
+                        state.emit("app/uninstalled", &shop);
+                    }
+                });
+            }
+        });
+        HttpResponse::json(
+            200,
+            &json!({
+                "ok": true,
+                "shop": domain,
+                "revoked": revoked,
+                "deletedSubscriptions": deleted,
+                "removedFunctionOwners": removed.function_owners,
+                "removedScriptTags": removed.script_tags,
+                "removedWebPixels": removed.web_pixels,
+                "removedMetafieldDefinitions": removed.metafield_definitions,
+                "removedMetaobjectDefinitions": removed.metaobject_definitions,
+                "retainedMetaobjects": removed.retained_metaobjects,
+            }),
+        )
+    }
+
+    /// The uninstall of the app from a shop, whether the control endpoint or `appUninstall` asked
+    /// for it: its tokens revoked, then `delivered` (what delivers `app/uninstalled` through the
+    /// subscriptions the shop had, if it was not delivered already), then nothing more is
+    /// delivered for the shop and the subscriptions it made are deleted. An app that was
+    /// `installed` until now says so in the terminal ([`AdminApi::with_notices`]). Answers how many
+    /// tokens were revoked and subscriptions deleted.
+    fn finish_uninstall(
+        &self,
+        domain: &str,
+        installed: bool,
+        delivered: impl FnOnce(),
+    ) -> (usize, usize) {
+        let revoked = lock(&self.tokens).uninstall(domain, &self.auth.client_id);
+        self.auth_changed(domain);
+        // From now on only `app/uninstalled` is delivered for the shop, through the
+        // subscriptions it had; an app uninstalled already is not uninstalled again.
+        self.webhooks.registry().set_installed(domain, false);
+        delivered();
+        let deleted = self.webhooks.registry().clear(domain);
+        if installed {
+            self.notice_installation(domain, false, app_domain::Reinstalled::default());
+        }
+        (revoked, deleted)
+    }
+
+    /// Applies to the tokens what the mutations of a request changed of them
+    /// (`domains::platform::access`): an uninstall, the installation's new scopes, a delegate
+    /// token made or destroyed.
+    fn apply_auth_effects(&self, shop: &str, effects: &[AuthEffect]) {
+        for effect in effects {
+            match effect {
+                AuthEffect::Uninstall => {
+                    // `appUninstall` delivered `app/uninstalled` with the request's events.
+                    self.finish_uninstall(shop, true, || {});
+                }
+                AuthEffect::Scopes(scopes) => {
+                    lock(&self.tokens).set_scopes(shop, &self.auth.client_id, scopes);
+                }
+                AuthEffect::Delegate {
+                    token,
+                    scopes,
+                    expires_at,
+                } => lock(&self.tokens).delegate(
+                    token,
+                    shop,
+                    &self.auth.client_id,
+                    scopes,
+                    *expires_at,
+                    Utc::now(),
+                ),
+                AuthEffect::Destroy { token } => {
+                    lock(&self.tokens).revoke(token);
+                }
+            }
+        }
+    }
+
+    /// The association file the storefront serves at `path` (`/.well-known/assetlinks.json`,
+    /// `/.well-known/apple-app-site-association`) from the mobile platform applications of the
+    /// default shop: `None` when there is none to serve.
+    pub fn association_file(&self, path: &str) -> Option<Value> {
+        self.with_default_shop(|state| platform::mobile::association_file(state, path))
+            .flatten()
+    }
+
+    /// The `src` of the script tags of the default shop that the storefront loads, in order
+    /// (`domains::storefront::storefront_scripts`).
+    pub fn storefront_scripts(&self) -> Vec<String> {
+        self.with_default_shop(crate::admin::domains::storefront::storefront_scripts)
+            .unwrap_or_default()
+    }
+
+    /// `POST /__lsf/admin/install`: installs the app again (its token works again), with other
+    /// scopes when the body gives some; `app/scopes_update` is delivered when they changed.
+    fn install(&self, request: &HttpRequest) -> HttpResponse {
+        let body: InstallBody = match body_of(request) {
+            Ok(body) => body,
+            Err(response) => return response,
+        };
+        let domain = body
+            .shop
+            .as_deref()
+            .map_or_else(|| self.default_shop(), oauth::normalize_shop);
+        if self.shop(&domain).is_none() {
+            return HttpResponse::error(404, format!("there is no shop {domain}"));
+        }
+        let scopes = match body.scopes {
+            None => self.scopes.clone(),
+            Some(Value::String(list)) => scopes::parse_scopes(&list),
+            Some(Value::Array(items)) => items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
+            Some(_) => {
+                return HttpResponse::error(
+                    422,
+                    "`scopes` is a list of scopes, or a comma-separated string",
+                );
+            }
+        };
+        if let Some(bad) = scopes.iter().find(|scope| !scopes::is_scope_name(scope)) {
+            return HttpResponse::error(422, format!("`{bad}` is not an access scope"));
+        }
+        let (token, before) = {
+            let mut tokens = lock(&self.tokens);
+            let before = tokens
+                .installed_scopes(&domain, &self.auth.client_id)
+                .map(<[String]>::to_vec);
+            let token = tokens.install(&domain, &self.auth.client_id, &scopes, Utc::now());
+            self.note_installs(&tokens);
+            (token, before)
+        };
+        let changed = before
+            .as_ref()
+            .is_some_and(|before| scopes::expand(before) != scopes::expand(&scopes));
+        let handles: Vec<Value> = scopes
+            .iter()
+            .map(|scope| json!({"handle": scope}))
+            .collect();
+        if let Some(shop) = self.shop(&domain) {
+            let mut live = lock(&shop);
+            // The tokens carry the scopes installed now.
+            live.auth_generation += 1;
+            let installation = live
+                .state
+                .keys("AppInstallation")
+                .next()
+                .map(str::to_string);
+            if let Some(installation) = installation {
+                let previous = live.state.get(&installation).cloned();
+                if let Some(record) = live.state.get_mut(&installation) {
+                    record.insert("accessScopes".into(), Value::Array(handles));
+                }
+                if changed {
+                    live.state.emit("app/scopes_update", &installation);
+                    let mut events = live.state.take_events();
+                    // The payload reads the scopes before the change from the event's snapshot.
+                    if let Some(event) = events.last_mut() {
+                        event.snapshot = previous;
+                    }
+                    live.changed = true;
+                    self.emit(&live.state, &events);
+                }
+            }
+        }
+        HttpResponse::json(
+            200,
+            &json!({"ok": true, "shop": domain, "token": token, "scopes": scopes, "scopesChanged": changed}),
+        )
+    }
+}
+
+/// Where a request reached lsf, `http://<Host>`: the origin of the URLs lsf answers that point
+/// back at itself (a charge's confirmation page, an upload target, a bulk operation's file).
+/// `X-Forwarded-Proto` says the scheme behind a proxy; `X-Forwarded-Host` does not move the
+/// host, since clients send the shop's domain in it (`docs/admin.md`).
+pub(super) fn origin_of(request: &HttpRequest) -> String {
+    let host = request
+        .header("host")
+        .map(str::trim)
+        .filter(|host| !host.is_empty());
+    match host {
+        Some(host) => {
+            let scheme = request
+                .header("x-forwarded-proto")
+                .filter(|scheme| matches!(*scheme, "http" | "https"))
+                .unwrap_or("http");
+            format!("{scheme}://{host}")
+        }
+        None => crate::admin::resolve::DEFAULT_ORIGIN.to_string(),
+    }
+}
+
+/// Whether the shop is on Shopify Plus: its `plan.shopifyPlus`.
+fn is_plus(shop: &ShopState) -> bool {
+    shop.shop()
+        .and_then(|record| record.get("plan"))
+        .and_then(|plan| plan.get("shopifyPlus"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// The shops, as OAuth sees them.
+struct ShopNames<'a>(&'a AdminApi);
+
+impl oauth::Shops for ShopNames<'_> {
+    fn exists(&self, shop: &str) -> bool {
+        self.0.shop(shop).is_some()
+    }
+
+    fn default_shop(&self) -> String {
+        self.0.default_shop()
+    }
+
+    fn locale(&self, shop: &str) -> String {
+        self.0
+            .shop(shop)
+            .and_then(|shop| {
+                let live = lock(&shop);
+                live.state
+                    .all("ShopLocale")
+                    .find(|locale| locale.get("primary").and_then(Value::as_bool) == Some(true))
+                    .and_then(|locale| locale.get("locale").and_then(Value::as_str))
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "en".to_string())
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShopBody {
+    shop: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InstallBody {
+    shop: Option<String>,
+    scopes: Option<Value>,
+}
+
+/// The JSON body of a control request; an empty body is the default.
+fn body_of<T: Default + for<'de> Deserialize<'de>>(
+    request: &HttpRequest,
+) -> Result<T, HttpResponse> {
+    if request.body.iter().all(u8::is_ascii_whitespace) {
+        return Ok(T::default());
+    }
+    serde_json::from_slice(&request.body).map_err(|error| {
+        HttpResponse::error(
+            422,
+            format!("the body is not what this endpoint takes: {error}"),
+        )
+    })
+}
+
+/// The GraphQL request of an HTTP request: a JSON body `{"query", "variables",
+/// "operationName"}`, a body of `application/graphql` that is the query, or `?query=` (with
+/// `?variables=` and `?operationName=`) of a `GET`.
+pub(super) fn graphql_request(request: &HttpRequest) -> Result<Request, String> {
+    let content_type = request
+        .header("content-type")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let (query, variables, operation_name) = if request.method.eq_ignore_ascii_case("GET")
+        || (request.body.is_empty() && request.query_param("query").is_some())
+    {
+        let variables = match request.query_param("variables") {
+            Some(text) if !text.trim().is_empty() => serde_json::from_str(text)
+                .map_err(|error| format!("?variables= is not JSON: {error}"))?,
+            _ => Value::Null,
+        };
+        (
+            request.query_param("query").map(str::to_string),
+            variables,
+            request.query_param("operationName").map(str::to_string),
+        )
+    } else if content_type.starts_with("application/graphql") {
+        (
+            Some(String::from_utf8_lossy(&request.body).into_owned()),
+            Value::Null,
+            None,
+        )
+    } else {
+        let body: Value = serde_json::from_slice(&request.body)
+            .map_err(|error| format!("the body is not JSON: {error}"))?;
+        let field = |name: &str| body.get(name).and_then(Value::as_str).map(str::to_string);
+        (
+            field("query"),
+            body.get("variables").cloned().unwrap_or(Value::Null),
+            field("operationName"),
+        )
+    };
+    let query = query
+        .filter(|query| !query.trim().is_empty())
+        .ok_or_else(|| "no query: send {\"query\": \"...\"}".to_string())?;
+    let variables = match variables {
+        Value::Object(map) => map,
+        Value::String(text) if !text.trim().is_empty() => match serde_json::from_str(&text) {
+            Ok(Value::Object(map)) => map,
+            _ => return Err("`variables` is not a JSON object".to_string()),
+        },
+        Value::Null | Value::String(_) => Map::new(),
+        _ => return Err("`variables` is not a JSON object".to_string()),
+    };
+    Ok(Request {
+        query,
+        variables,
+        operation_name: operation_name.filter(|name| !name.is_empty()),
+    })
+}

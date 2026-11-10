@@ -1,17 +1,25 @@
-//! URLs of the things Shopify would serve from its CDN, pointed at the local server instead.
-//!
-//! The paths keep the shape of Shopify's (`/cdn/shop/files/...`, `/cdn/shop/t/<id>/assets/...`),
-//! so theme code that inspects or rewrites URLs behaves the same.
+//! The pieces of URLs: percent-encoding and decoding, query strings, and the `?v=` versions and
+//! size suffixes of the URLs Shopify serves from its CDN.
 
-use crate::site::Site;
 use crate::util::short_hash;
 
-/// The id of the theme in asset URLs.
+/// The id of the theme directory in asset URLs, when the Admin API says nothing of the theme
+/// served (`Theme::id`).
 pub const THEME_ID: u64 = 1;
 
 /// Percent-encodes a query component like Ruby's `CGI.escape`, with spaces as `+`.
 pub fn encode_component(input: &str) -> String {
-    lsf_liquid::filters::url_encode(input)
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        match byte {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'.' | b'-' | b'~' => {
+                out.push(byte as char)
+            }
+            b' ' => out.push('+'),
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
 }
 
 /// Percent-encodes a path, leaving `/` and the characters that are safe in a path.
@@ -28,54 +36,10 @@ pub fn encode_path(input: &str) -> String {
     out
 }
 
-/// `//host`, the protocol-relative origin Shopify prefixes CDN URLs with.
-pub fn cdn_origin(site: &Site) -> String {
-    format!("//{}", site.request.host)
-}
-
 /// A stable numeric version for `?v=`, in the range of a Unix timestamp like Shopify's.
 pub fn version_of(key: &str) -> u64 {
     let hash = u64::from_str_radix(&short_hash(key)[..12], 16).unwrap_or(0);
     1_600_000_000 + hash % 100_000_000
-}
-
-/// The version of `assets/<name>.liquid`, which is requested as `<name>` and rendered with
-/// the theme settings: it changes with the file and with the settings, as the URL of the
-/// compiled file does on Shopify.
-fn liquid_asset_version(site: &Site, name: &str) -> Option<u64> {
-    let files = site.theme.files();
-    let source = files.version(&format!("assets/{name}.liquid"));
-    if source == 0 {
-        return None;
-    }
-    let overrides = serde_json::to_string(&site.store.theme_settings).unwrap_or_default();
-    Some(version_of(&format!(
-        "{source}/{}/{overrides}",
-        files.version("config/settings_data.json")
-    )))
-}
-
-/// The URL of a theme asset: `//host/cdn/shop/t/1/assets/base.css?v=123`.
-pub fn asset_url(site: &Site, name: &str) -> String {
-    let version = match site.theme.files().version(&format!("assets/{name}")) {
-        0 => liquid_asset_version(site, name).unwrap_or_else(|| version_of(name)),
-        version => version,
-    };
-    format!(
-        "{}/cdn/shop/t/{THEME_ID}/assets/{}?v={version}",
-        cdn_origin(site),
-        encode_path(name),
-    )
-}
-
-/// The URL of a file in the data directory's `files/`: `//host/cdn/shop/files/shirt.jpg?v=123`.
-pub fn file_url(site: &Site, src: &str) -> String {
-    format!(
-        "{}/cdn/shop/files/{}?v={}",
-        cdn_origin(site),
-        encode_path(src),
-        version_of(src)
-    )
 }
 
 /// Builds a query string with the parameters sorted by name, as Shopify's image URLs have.
@@ -104,6 +68,40 @@ pub fn with_sorted_params(base: &str, params: &[(&str, String)]) -> String {
     format!("{path}?{}", query.join("&"))
 }
 
+/// Whether `text` is an `http://` or `https://` URL with a host (`https:///path` has none).
+pub fn is_http_url(text: &str) -> bool {
+    ["http://", "https://"].iter().any(|scheme| {
+        text.strip_prefix(scheme)
+            .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
+    })
+}
+
+/// Decodes the `%XX` escapes of a URL or a path (a `%` not followed by two hex digits stays as
+/// it is), the bytes read as UTF-8, an invalid sequence replaced by `\u{FFFD}`.
+pub fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let hex = |at: usize| {
+        bytes
+            .get(at)
+            .and_then(|byte| char::from(*byte).to_digit(16))
+    };
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match (bytes[index], hex(index + 1), hex(index + 2)) {
+            (b'%', Some(high), Some(low)) => {
+                out.push((high * 16 + low) as u8);
+                index += 3;
+            }
+            (byte, _, _) => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Inserts a size suffix before the extension, as the legacy `img_url` filter does:
 /// `shirt.jpg` + `large` → `shirt_large.jpg`.
 pub fn with_size_suffix(url: &str, suffix: &str) -> String {
@@ -125,6 +123,14 @@ pub fn with_size_suffix(url: &str, suffix: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_the_percent_escapes() {
+        assert_eq!(percent_decode("caf%C3%A9%20au%2flait"), "café au/lait");
+        // An escape needs two hex digits; a broken sequence is replaced.
+        assert_eq!(percent_decode("100%25 %zz %+1 %4"), "100% %zz %+1 %4");
+        assert_eq!(percent_decode("%FF."), "\u{FFFD}.");
+    }
 
     #[test]
     fn sorts_image_parameters() {

@@ -1,6 +1,7 @@
 //! Terminal output.
 
 use lsf_core::diagnostics::Diagnostics;
+pub use lsf_core::util::count;
 
 /// Prints diagnostics to stderr, followed by a one-line summary.
 pub fn print_diagnostics(diagnostics: &Diagnostics) {
@@ -12,8 +13,8 @@ pub fn print_diagnostics(diagnostics: &Diagnostics) {
         eprintln!("{item}\n");
     }
     eprintln!(
-        "{} error(s), {} warning(s) in the store data",
-        diagnostics.error_count(),
-        diagnostics.warning_count()
+        "{}, {} in the store data",
+        count(diagnostics.error_count(), "error", "errors"),
+        count(diagnostics.warning_count(), "warning", "warnings")
     );
 }

@@ -1,0 +1,238 @@
+{
+  "now": "2026-03-15T10:00:00Z",
+  "shop": {
+    "name": "Rich Fixture",
+    "email": "owner@rich.example",
+    "permanent_domain": "rich-fixture.myshopify.com",
+    "domain": "shop.rich.example",
+    "currency": "EUR",
+    "timezone": "Europe/Paris",
+    "taxes_included": true,
+    "address": { "company": "Rich SAS", "address1": "1 rue de Rivoli", "city": "Paris", "zip": "75001", "country_code": "FR" },
+    "policies": {
+      "refund_policy": { "body": "<p>30 days.</p>" },
+      "subscription_policy": { "body": "<p>Cancel any time.</p>" }
+    },
+    "metafields": { "custom": { "founded": 2019, "ratio": 1.5, "open": true } }
+  },
+  "localization": {
+    "countries": [
+      { "iso_code": "FR" },
+      { "iso_code": "DE" },
+      { "iso_code": "GB", "currency": "GBP" },
+      { "iso_code": "US", "currency": "USD", "unit_system": "imperial" }
+    ],
+    "languages": [{ "iso_code": "fr" }, { "iso_code": "en" }],
+    "markets": [
+      { "handle": "europe", "countries": ["FR", "DE"], "metafields": { "custom": { "free_shipping_over": 5000 } } }
+    ]
+  },
+  "locations": [
+    { "name": "Paris", "address": { "address1": "1 rue de Rivoli", "city": "Paris", "country_code": "FR", "zip": "75001" }, "pick_up_time": "Usually ready in 2 hours" },
+    { "name": "Berlin warehouse", "address": { "city": "Berlin", "country_code": "DE" }, "pick_up_enabled": false }
+  ],
+  "files": {
+    "docs/size-guide.pdf": { "alt": "Size guide" },
+    "lookbook/hero.jpg": { "alt": "Spring lookbook", "width": 1600, "height": 900 },
+    "lookbook/clip.mp4": { "width": 1280, "height": 720 }
+  },
+  "swatches": { "Red": "#c0392b", "Floral": { "image": "swatches/floral.png" } },
+  "products": [
+    {
+      "title": "Linen Dress",
+      "vendor": "Atelier",
+      "type": "Dresses",
+      "tags": ["linen", "summer"],
+      "description": "<p>Light &amp; airy.</p>",
+      "options": ["Size", "Color"],
+      "created_at": "2025-04-01T09:00:00Z",
+      "media": [
+        { "src": "products/dress-front.jpg", "alt": "Front", "width": 1000, "height": 1500 },
+        { "media_type": "video", "sources": [{ "url": "products/dress.mp4", "mime_type": "video/mp4", "format": "mp4", "width": 1920, "height": 1080 }], "duration": 12000, "preview_image": "products/dress-poster.jpg" },
+        { "media_type": "external_video", "host": "youtube", "external_id": "dQw4w9WgXcQ" },
+        { "media_type": "model", "sources": [{ "url": "products/dress.glb", "mime_type": "model/gltf-binary", "format": "glb" }], "preview_image": "products/dress-model.jpg" }
+      ],
+      "variants": [
+        { "options": ["S", "Red"], "price": "89.00", "compare_at_price": "120.00", "sku": "DRESS-S-RED", "barcode": "4006381333931", "inventory_quantity": 7, "weight": 400, "weight_unit": "g", "image": "products/dress-front.jpg", "store_availabilities": { "Paris": true, "Berlin warehouse": true } },
+        { "options": ["M", "Floral"], "price": "95.00", "sku": "DRESS-M-FLO", "inventory_quantity": 0, "inventory_policy": "continue", "unit_price": "9.50", "unit_price_measurement": { "measured_type": "weight", "quantity_value": 1, "quantity_unit": "kg", "reference_value": 100, "reference_unit": "g" } }
+      ],
+      "metafields": {
+        "custom": {
+          "care": { "type": "multi_line_text_field", "value": "Wash cold.\nHang dry." },
+          "related": { "type": "list.product_reference", "value": ["coffee-subscription", "gift-card"] },
+          "pairs_with": { "type": "product_reference", "value": "coffee-subscription" },
+          "size_guide": { "type": "file_reference", "value": "docs/size-guide.pdf" },
+          "designer": { "type": "metaobject_reference", "value": "designer/ines" },
+          "price_hint": { "type": "money", "value": { "amount": "80.00" } },
+          "rating": { "type": "rating", "value": { "value": "4.5", "scale_min": "1.0", "scale_max": "5.0" } },
+          "fabric_weight": { "type": "weight", "value": { "value": 0.4, "unit": "kg" } },
+          "launch": { "type": "date", "value": "2025-04-15" },
+          "specs": { "fit": "relaxed" }
+        },
+        "$app:config": { "hidden": { "type": "boolean", "value": false } }
+      }
+    },
+    {
+      "title": "Coffee Subscription",
+      "handle": "coffee-subscription",
+      "type": "Coffee",
+      "price": "18.00",
+      "requires_selling_plan": true,
+      "variants": [{ "options": [], "sku": "COFFEE", "inventory_tracked": false, "requires_shipping": true }]
+    },
+    {
+      "title": "Gift Card",
+      "handle": "gift-card",
+      "gift_card": true,
+      "options": ["Denomination"],
+      "variants": [{ "options": ["€50"], "price": 5000, "requires_shipping": false, "taxable": false }]
+    },
+    {
+      "title": "Preorder Boots",
+      "handle": "preorder-boots",
+      "price": "150.00",
+      "variants": [{ "options": [], "sku": "BOOTS", "inventory_quantity": -3, "inventory_policy": "continue" }],
+      "selling_plan_groups": ["Pre-order"]
+    }
+  ],
+  "collections": [
+    { "title": "Summer", "products": ["linen-dress", "coffee-subscription"], "sort_order": "price-descending", "image": "collections/summer.jpg", "metafields": { "custom": { "banner": "Sun's out" } } }
+  ],
+  "selling_plan_groups": [
+    {
+      "name": "Subscribe and save",
+      "app_id": "subscriptions-app",
+      "options": ["Delivery frequency"],
+      "selling_plans": [
+        { "name": "Every 2 weeks, 10% off", "options": ["Every 2 weeks"], "price_adjustments": [{ "value_type": "percentage", "value": 10, "order_count": 3 }, { "value_type": "price", "value": "15.00" }] }
+      ],
+      "products": ["coffee-subscription"]
+    },
+    {
+      "name": "Pre-order",
+      "selling_plans": [
+        { "name": "Ships in May, 20% deposit", "recurring_deliveries": false, "checkout_charge": { "value_type": "percentage", "value": 20 } }
+      ]
+    }
+  ],
+  "companies": [
+    {
+      "name": "Acme Retail",
+      "external_id": "ACME-1",
+      "created_at": "2025-01-10T08:00:00Z",
+      "locations": [
+        { "name": "Acme Lyon", "shipping_address": { "address1": "2 place Bellecour", "city": "Lyon", "country_code": "FR", "zip": "69002" }, "tax_registration_id": "FR123", "orders_count": 4, "total_spent": "1250.00", "metafields": { "custom": { "dock": "B" } } },
+        { "name": "Acme Berlin", "locale": "de" }
+      ],
+      "metafields": { "custom": { "tier": "gold" } }
+    }
+  ],
+  "customers": [
+    {
+      "email": "buyer@acme.example",
+      "first_name": "Bea",
+      "last_name": "Buyer",
+      "company": "Acme Retail",
+      "company_locations": ["Acme Lyon"],
+      "company_contact": { "title": "Purchasing manager", "locale": "fr" },
+      "tags": ["b2b"]
+    },
+    {
+      "email": "zoe@example.com",
+      "first_name": "Zoé",
+      "last_name": "Martin",
+      "phone": "+33612345678",
+      "accepts_marketing": true,
+      "addresses": [
+        { "first_name": "Zoé", "last_name": "Martin", "address1": "3 rue Oberkampf", "city": "Paris", "country_code": "FR", "zip": "75011" }
+      ],
+      "metafields": { "custom": { "shoe_size": 38, "vip": true } },
+      "orders": [
+        {
+          "created_at": "2026-01-05T12:00:00Z",
+          "financial_status": "paid",
+          "fulfillment_status": "fulfilled",
+          "line_items": [{ "variant": "DRESS-S-RED", "quantity": 2 }, { "variant": "coffee-subscription" }],
+          "shipping_price": "5.00",
+          "tax_price": "30.00",
+          "shipping_address": { "first_name": "Zoé", "last_name": "Martin", "address1": "3 rue Oberkampf", "city": "Paris", "country_code": "FR", "zip": "75011" },
+          "returns": [{ "status": "closed", "line_items": [{ "variant": "DRESS-S-RED", "quantity": 1 }] }]
+        },
+        {
+          "created_at": "2026-02-01T12:00:00Z",
+          "financial_status": "refunded",
+          "fulfillment_status": "partial",
+          "line_items": [{ "variant": "DRESS-M-FLO", "quantity": 3 }],
+          "note": "Leave at the door"
+        },
+        {
+          "created_at": "2026-02-20T12:00:00Z",
+          "financial_status": "pending",
+          "cancelled": true,
+          "line_items": [{ "variant": "gift-card" }],
+          "returns": [{ "status": "requested" }]
+        },
+        {
+          "created_at": "2026-03-01T12:00:00Z",
+          "financial_status": "authorized",
+          "line_items": [{ "variant": "BOOTS" }]
+        }
+      ]
+    }
+  ],
+  "gift_cards": [
+    { "code": "GIFT1234ABCD5678", "initial_value": "50.00", "balance": "20.00", "customer": "zoe@example.com", "product": "gift-card", "message": "Enjoy!", "recipient": { "name": "Zoé", "email": "zoe@example.com", "nickname": "Zo" } },
+    { "code": "DISABLED00000000", "initial_value": 2500, "enabled": false, "currency": "GBP" },
+    { "code": "OLDCARD000000000", "initial_value": 1000, "expires_on": "2025-12-31" }
+  ],
+  "metaobjects": {
+    "designer": [
+      { "handle": "ines", "fields": { "name": "Inès", "bio": { "type": "multi_line_text_field", "value": "Paris based.\nLinen lover." }, "portrait": { "type": "file_reference", "value": "lookbook/hero.jpg" }, "signature_piece": { "type": "product_reference", "value": "linen-dress" } } },
+      { "handle": "marc", "fields": { "name": "Marc", "years": 12 } }
+    ],
+    "faq": [
+      { "handle": "returns", "fields": { "question": "Can I return?", "answer": { "type": "rich_text_field", "value": { "type": "root", "children": [] } }, "designers": { "type": "list.metaobject_reference", "value": ["designer/ines", "designer/marc"] } } }
+    ]
+  },
+  "pages": [
+    { "title": "About", "content": "<p>Who we are.</p>", "metafields": { "custom": { "hero": { "type": "file_reference", "value": "lookbook/clip.mp4" } } } }
+  ],
+  "blogs": [
+    {
+      "title": "Journal",
+      "comments_enabled": true,
+      "moderated": true,
+      "articles": [
+        { "title": "Spring", "author": "Inès", "content": "<p>New season.</p>", "excerpt": "<p>New.</p>", "tags": ["news"], "image": "lookbook/hero.jpg", "published_at": "2026-03-01T08:00:00Z", "comments": [{ "author": "Zoé", "email": "zoe@example.com", "content": "<p>Love it</p>", "created_at": "2026-03-02T08:00:00Z" }] }
+      ]
+    }
+  ],
+  "menus": {
+    "main-menu": {
+      "links": [
+        { "title": "Home", "url": "/" },
+        { "title": "All", "collection": "all" },
+        { "title": "Summer", "collection": "summer", "links": [{ "title": "Dress", "product": "linen-dress" }] },
+        { "title": "Journal", "blog": "journal" },
+        { "title": "Spring", "article": "journal/spring" },
+        { "title": "About", "page": "about" },
+        { "title": "Refunds", "policy": "refund-policy" },
+        { "title": "Search", "url": "/search" }
+      ]
+    }
+  },
+  "checkout": {
+    "shipping_rates": [{ "handle": "colissimo", "title": "Colissimo", "price": "5.00" }],
+    "discounts": [
+      { "function": "volume-discount", "title": "Volume", "classes": ["PRODUCT", "ORDER"], "metafields": { "$app:config.settings": { "type": "json", "value": { "percent": 10 } } } },
+      { "function": "volume-discount", "title": "Welcome", "code": "WELCOME10", "metafields": { "custom.featured": { "type": "product_reference", "value": "linen-dress" } } }
+    ],
+    "functions": {
+      "payment-rules": { "enabled": true, "metafields": { "$app:config.rules": { "type": "json", "value": { "hide": ["cod"] } } } },
+      "order-limits": { "enabled": true, "metafields": { "$app:config.max": 5 } },
+      "delivery-rules": { "enabled": false },
+      "bundles": { "enabled": true }
+    },
+    "tax_rate": 20
+  }
+}

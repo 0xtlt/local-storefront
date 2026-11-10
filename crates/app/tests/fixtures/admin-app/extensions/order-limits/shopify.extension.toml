@@ -1,0 +1,11 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Order limits"
+handle = "order-limits"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "run"

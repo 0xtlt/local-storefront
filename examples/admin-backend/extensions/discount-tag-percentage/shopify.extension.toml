@@ -1,0 +1,21 @@
+# A copy of the discount Function of examples/checkout-playground (same source, same module):
+# the backend creates an automatic discount for it with discountAutomaticAppCreate.
+api_version = "2026-10"
+
+[[extensions]]
+name = "Tag and collection discount"
+handle = "discount-tag-percentage"
+type = "function"
+description = "A percentage off the lines whose product has one of the tags, or is in one of the collections, that the discount's settings list"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_lines_discounts_generate_run"
+
+  [extensions.build]
+  path = "dist/function.wasm"
+
+  [extensions.input.variables]
+  namespace = "$app:config"
+  key = "settings"

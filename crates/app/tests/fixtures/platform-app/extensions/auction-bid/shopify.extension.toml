@@ -1,0 +1,14 @@
+[[extensions]]
+name = "Auction Bid Placed"
+type = "flow_trigger"
+handle = "auction-bid-placed"
+description = "Trigger for auction bids."
+
+[settings]
+
+  [[settings.fields]]
+  type = "customer_reference"
+
+  [[settings.fields]]
+  type = "number_decimal"
+  key = "Amount"

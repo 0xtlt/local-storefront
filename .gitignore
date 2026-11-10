@@ -5,3 +5,9 @@
 .DS_Store
 *.swp
 /npm-dist/
+node_modules/
+
+# The documentation site (tools/docs-site): its packages, its cache and what it builds.
+tools/docs-site/node_modules/
+tools/docs-site/.vitepress/cache/
+tools/docs-site/.vitepress/dist/

@@ -15,8 +15,6 @@ pub enum Error {
     Theme(String),
     /// The store data is invalid. The diagnostics say where and why.
     Data(crate::diagnostics::Diagnostics),
-    /// A Liquid file could not be parsed.
-    Liquid(lsf_liquid::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -28,15 +26,8 @@ impl fmt::Display for Error {
             Error::Json { path, message } => write!(f, "{path}: {message}"),
             Error::Theme(message) => f.write_str(message),
             Error::Data(diagnostics) => write!(f, "{diagnostics}"),
-            Error::Liquid(error) => write!(f, "{error}"),
         }
     }
 }
 
 impl std::error::Error for Error {}
-
-impl From<lsf_liquid::Error> for Error {
-    fn from(error: lsf_liquid::Error) -> Self {
-        Error::Liquid(error)
-    }
-}

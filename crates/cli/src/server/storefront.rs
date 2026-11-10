@@ -2,12 +2,13 @@
 
 use std::sync::Arc;
 
-use lsf_core::drops::collection::CollectionDrop;
-use lsf_core::drops::product::ProductDrop;
-use lsf_core::drops::search::{predictive_search_value, recommendations_value};
-use lsf_core::render::page::{Page, Resource};
-use lsf_core::render::{Rendered, Target, seo};
-use lsf_core::{Request, Session, Site, Store};
+use lsf_core::{Session, Store};
+use lsf_theme::drops::collection::CollectionDrop;
+use lsf_theme::drops::product::ProductDrop;
+use lsf_theme::drops::search::{predictive_search_value, recommendations_value};
+use lsf_theme::render::page::{Page, Resource};
+use lsf_theme::render::{Rendered, Target, seo};
+use lsf_theme::{Request, Site};
 use serde_json::{Value as Json, json};
 
 use super::reply::{Reply, cache};
@@ -32,9 +33,35 @@ impl Visit<'_> {
             .with_session(&self.session_id, |entry| entry.session.clone())
     }
 
+    /// Changes the visitor's session. A change of the cart (its lines, note or attributes) is
+    /// reported to the Admin API, as the storefront's cart fires `carts/create` and
+    /// `carts/update` on Shopify.
     pub fn update_session(&self, change: impl FnOnce(&mut Session)) {
-        self.state
-            .with_session(&self.session_id, |entry| change(&mut entry.session));
+        if self.state.admin.is_none() {
+            self.state
+                .with_session(&self.session_id, |entry| change(&mut entry.session));
+            return;
+        }
+        let changed = self.state.with_session(&self.session_id, |entry| {
+            let cart = |session: &Session| {
+                (
+                    session.cart_lines.clone(),
+                    session.cart_note.clone(),
+                    session.cart_attributes.clone(),
+                )
+            };
+            let before = cart(&entry.session);
+            change(&mut entry.session);
+            (cart(&entry.session) != before).then(|| entry.session.clone())
+        });
+        if let Some(session) = changed {
+            let token = if session.cart_token.is_empty() {
+                super::cart_token_of(&self.session_id)
+            } else {
+                session.cart_token.clone()
+            };
+            super::admin::record_cart(self.state, &token, &session);
+        }
     }
 
     pub fn site(&self) -> Arc<Site> {
@@ -77,7 +104,7 @@ impl Visit<'_> {
                     .unwrap_or_else(|| "/".to_string()),
             ),
         };
-        let page = lsf_core::render::routes::resolve(&site);
+        let page = lsf_theme::render::routes::resolve(&site);
         let target = Target::Sections(ids.to_vec());
         let rendered = self.state.app.renderer.render_page(&site, page, &target);
         self.state.timings.add(&rendered, &target);
@@ -276,9 +303,9 @@ fn log_problems(state: &ServerState, rendered: &Rendered) {
     }
 }
 
-/// The reason of a 404 as a header value: printable ASCII only, since the URL it quotes can
-/// hold anything.
-fn header_text(reason: &str) -> String {
+/// A reason (of a 404, of an app proxy that got no answer) as a header value: printable ASCII
+/// only, since the URL it quotes can hold anything.
+pub(super) fn header_text(reason: &str) -> String {
     reason
         .chars()
         .map(|c| {
@@ -291,7 +318,7 @@ fn header_text(reason: &str) -> String {
         .collect()
 }
 
-fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
+pub(super) fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
     log_problems(visit.state, &rendered);
     // A missing page is easy to take for a working one: say why it is missing.
     if let Some(reason) = &rendered.not_found

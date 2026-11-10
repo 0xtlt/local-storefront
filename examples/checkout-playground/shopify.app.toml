@@ -1,4 +1,4 @@
-# A Shopify app to try lsf-checkout on: many Functions and checkout UI extensions, and a scenario
+# A Shopify app to try `lsf app dev` on: many Functions and checkout UI extensions, and a scenario
 # for each case. Nothing here is deployed. Run it with:
 #   lsf app dev --app examples/checkout-playground
 name = "Checkout playground"
@@ -9,3 +9,11 @@ embedded = true
 
 [access_scopes]
 scopes = ""
+
+# The cart metafield that `ui-preact`'s checkbox sets is copied onto the order when the buyer
+# pays, as Shopify copies a cart metafield whose order definition is cart-to-order copyable:
+# `ca-preact` reads it back on the order status page, as an `order` entry of `appMetafields`.
+[order.metafields.app.requestedFreeGift]
+name = "Free gift requested"
+type = "boolean"
+capabilities.cart_to_order_copyable = true

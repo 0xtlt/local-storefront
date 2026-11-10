@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use lsf_core::theme::Revalidate;
 
 use crate::app::App;
-use crate::output::print_diagnostics;
+use crate::output::{count, print_diagnostics};
 
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum Format {
@@ -35,7 +35,7 @@ fn looks_like_a_theme(directory: &Path) -> bool {
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
     // The app: `--app`, else the one the current folder is in.
@@ -66,16 +66,16 @@ pub fn run(
     };
     let (store, diagnostics) = app.load_store();
     let shopify_app = match &app_dir {
-        Some(dir) => Some(lsf_checkout::app::load(dir)?),
+        Some(dir) => Some(lsf_app::config::load(dir)?),
         None => None,
     };
-    let app_problems: Vec<&lsf_checkout::app::Diagnostic> = shopify_app
+    let app_problems: Vec<&lsf_app::config::Diagnostic> = shopify_app
         .iter()
         .flat_map(|app| &app.diagnostics)
         .collect();
     let app_errors = app_problems
         .iter()
-        .filter(|diagnostic| diagnostic.severity == lsf_checkout::app::Severity::Error)
+        .filter(|diagnostic| diagnostic.severity == lsf_app::config::Severity::Error)
         .count();
     let failed = diagnostics.has_errors() || app_errors > 0;
     match args.format {
@@ -89,7 +89,7 @@ pub fn run(
                 items.extend(app_problems.iter().map(|diagnostic| {
                     serde_json::json!({
                         "severity": match diagnostic.severity {
-                            lsf_checkout::app::Severity::Error => "error",
+                            lsf_app::config::Severity::Error => "error",
                             _ => "warning",
                         },
                         "code": "app",
@@ -114,7 +114,7 @@ pub fn run(
                     "warnings": app_problems.len() - app_errors,
                     "diagnostics": app_problems.iter().map(|diagnostic| serde_json::json!({
                         "severity": match diagnostic.severity {
-                            lsf_checkout::app::Severity::Error => "error",
+                            lsf_app::config::Severity::Error => "error",
                             _ => "warning",
                         },
                         "extension": diagnostic.extension,
@@ -134,28 +134,32 @@ pub fn run(
             }
             if let Some(app) = &shopify_app {
                 println!(
-                    "app {}: {} ({} error(s), {} warning(s))",
+                    "app {}: {} ({}, {})",
                     app.name.as_deref().unwrap_or("(no name)"),
                     if app_errors == 0 {
                         "valid"
                     } else {
                         "not valid"
                     },
-                    app_errors,
-                    app_problems.len() - app_errors
+                    count(app_errors, "error", "errors"),
+                    count(app_problems.len() - app_errors, "warning", "warnings")
                 );
             }
             if !diagnostics.has_errors() {
                 println!(
-                    "{}: valid ({} products, {} collections, {} pages, {} blogs, {} customers, {} menus, {} checkout scenarios)",
+                    "{}: valid ({}, {}, {}, {}, {}, {}, {})",
                     app.describe_source(),
-                    store.products.len(),
-                    store.collections.len(),
-                    store.pages.len(),
-                    store.blogs.len(),
-                    store.customers.len(),
-                    store.menus.len(),
-                    store.scenarios.len()
+                    count(store.products.len(), "product", "products"),
+                    count(store.collections.len(), "collection", "collections"),
+                    count(store.pages.len(), "page", "pages"),
+                    count(store.blogs.len(), "blog", "blogs"),
+                    count(store.customers.len(), "customer", "customers"),
+                    count(store.menus.len(), "menu", "menus"),
+                    count(
+                        store.scenarios.len(),
+                        "checkout scenario",
+                        "checkout scenarios"
+                    )
                 );
             }
         }

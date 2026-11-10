@@ -21,7 +21,14 @@ npx local-storefront serve
 Open <http://127.0.0.1:9292>: your theme runs with a demo store.
 
 > Write `npx local-storefront`, not `npx lsf`: `lsf` is another package on npm. In the
-> `scripts` of `package.json`, `local-storefront serve` is enough.
+> `scripts` of `package.json`, `local-storefront serve` is enough. Installed with npm, the hints
+> the tool prints say `npx local-storefront` too; the binary of a release says `lsf`.
+
+**Coming from `shopify theme dev`?** Add `--live-reload` to reload open pages as you edit; leave
+it off in tests. The store is your JSON files, not a development store: `init` (below) writes
+one to edit. `check` finds the Liquid that does not parse, what Shopify's strict parser rejects
+and unknown filters; the lint rules of Theme Check (performance, accessibility, translations)
+still need `shopify theme check`.
 
 ## What you can do
 
@@ -61,12 +68,14 @@ Each test gets its own cart and customer, so tests run in parallel. One request 
 session in the state a test needs:
 
 ```ts
-await page.request.put('/__lsf/session', {
+// The demo store's customer and SKU (npx local-storefront init): put your own.
+const response = await page.request.put('/__lsf/session', {
   data: {
     customer: 'jane.doe@example.com',
     cart: { items: [{ variant: 'TEE-BLK-M', quantity: 2 }] },
   },
 });
+expect(response.ok()).toBeTruthy(); // 422 when the data has no such customer or SKU
 await page.goto('/cart');
 ```
 
@@ -86,6 +95,33 @@ Function and extension of the app, and opens a checkout for each:
 `npx local-storefront app init --app ../my-app` writes a set made for the app.
 `npx local-storefront app function run --app ../my-app` runs the Functions once and prints their
 input and output. Guide: [checkout](docs/checkout.md).
+
+### Test an app's backend against a local Admin API
+
+```bash
+npx local-storefront app dev --app ../my-app --app-url http://localhost:3000
+```
+
+Serves a local GraphQL Admin API (version 2026-10, and the 2027-01 release candidate with
+`--admin-versions 2026-10,2027-01`) over the store data, at
+`/admin/api/2026-10/graphql.json`, with OAuth, token exchange and session tokens. Webhooks of
+the app reach its backend, signed as Shopify signs them. The backend runs offline, against the
+same data every run, and what it changes shows on the storefront and in the checkout at once.
+`npx local-storefront app webhook trigger --topic app/uninstalled --app ../my-app --app-url http://localhost:3000`
+sends one webhook on demand, of a topic the app's `shopify.app.toml` subscribes to (the React
+Router template's subscribes to `app/uninstalled`). Webhooks go to this machine, to `--app-url`
+or to the `--address` you give, and nowhere else. The app's embedded pages open in a local
+admin, `http://127.0.0.1:9292/admin/apps/<handle>`, with a local App Bridge: session tokens,
+title bar, navigation, save bar, toasts and the resource picker work offline
+([preview the embedded app](docs/admin.md#preview-the-embedded-app)), and so do Polaris's
+components, icons and fonts with `--polaris offline`, from lsf's copy
+([Polaris without the internet](docs/admin.md#polaris-without-the-internet)). An app on managed
+pricing declares its plans with `--pricing-plans pricing.toml`: the merchant picks one on the
+admin's plan selection page, and the backend gets the subscription, its webhook and the welcome
+link ([managed pricing](docs/admin.md#managed-pricing)), and reads its plan from lsf's Partner API
+([`activeSubscription`](docs/admin.md#read-the-plan-from-the-partner-api)). The Admin API runs
+with `--app`; `serve --app ../my-app --only admin` runs it alone, without the theme or the
+checkout ([what runs](docs/cli.md#what-runs)). Guide: [Admin API](docs/admin.md).
 
 ### Get ready for Shopify's strict Liquid parser
 
@@ -129,15 +165,16 @@ what it would cost Shopify. Guide: [performance](docs/performance.md).
 
 | Command | What it does |
 |---|---|
-| `npx local-storefront serve` | Serves the theme at <http://127.0.0.1:9292>. |
+| `npx local-storefront serve` | Serves the theme at <http://127.0.0.1:9292>. With `--app`, the checkout and the Admin API of the app too; `--only theme,checkout,admin` runs some of them ([what runs](docs/cli.md#what-runs)). |
 | `npx local-storefront init` | Creates `shopify-local/` with a demo store to edit. |
 | `npx local-storefront validate` | Checks the store data and the checkout scenarios, in a theme or in an app without one. `--format json` for tools. |
 | `npx local-storefront check` | Checks every Liquid file, and what Shopify's strict parser rejects. `--fix` rewrites it. `--format json` for tools. |
 | `npx local-storefront fmt [paths]` | Formats Liquid files as Prettier does. `--check` for CI. |
-| `npx local-storefront app dev --app <dir>` | Serves a Shopify app: its checkout, where its Functions run and its checkout UI extensions show, and its customer account, where its customer account UI extensions show. `serve --app` does it with the theme. |
+| `npx local-storefront app dev --app <dir>` | Serves a Shopify app: its checkout, where its Functions run and its checkout UI extensions show, its customer account, where its customer account UI extensions show, and the Admin API of its backend. `serve --app` does it with the theme. |
+| `npx local-storefront app webhook trigger --topic <topic> --app <dir> --app-url <url>` | Sends one webhook of an app to its backend, signed as Shopify signs it, as `shopify app webhook trigger` does. |
 | `npx local-storefront app init [--app <dir>]` | Writes checkout scenarios (`checkouts/` in the store data) made for the Functions and extensions of the app. |
 | `npx local-storefront app build [handle]... --app <dir>` | Builds the extensions of an app as `shopify app build` does, without Node: Functions, and UI extensions from their sources. |
-| `npx local-storefront app check [--app <dir>]` | Runs the Functions of every checkout scenario, for CI: exits with 1 when one fails. |
+| `npx local-storefront app check [--app <dir>]` | Runs the Functions of every checkout scenario and checks each scenario's `expect` (what its checkout must look like), for CI: exits with 1 when a Function fails or an expectation is not met. |
 | `npx local-storefront app function build [handle]... --app <dir>` | Builds the Functions of an app. A JavaScript or TypeScript Function is built by lsf, without Node, as `shopify app function build` builds it. |
 | `npx local-storefront app function run [handle]... --app <dir>` | Runs the Functions of an app once and prints each input, output and log. `--scenario <name>` runs a checkout scenario. `--format json` for tools. |
 | `npx local-storefront render <path>` | Prints the HTML of one page, without a server. |
@@ -158,6 +195,7 @@ Every option, exit code and output format: [CLI reference](docs/cli.md).
 | Format Liquid files | [Formatting](docs/formatting.md) |
 | Make a page faster | [Performance](docs/performance.md) |
 | Run the Functions and checkout extensions of a Shopify app | [Checkout](docs/checkout.md) |
+| Test the backend of an app: Admin API, OAuth, webhooks, app proxy | [Admin API](docs/admin.md) |
 | Use the storefront in a browser | [Storefront](docs/storefront.md): accounts, password page, live reload, previews |
 | Know an option or an exit code | [CLI reference](docs/cli.md) |
 | Drive local-storefront from an AI agent | [Agents](docs/agents.md) |
@@ -168,10 +206,12 @@ What changed in each version: [changelog](CHANGELOG.md).
 
 ## What it does not do
 
-local-storefront renders themes. It does not simulate Shopify's checkout, apps, B2B catalogs, or
-discounts and shipping rates in the theme's cart. The checkout of an app is a local stand-in: it
-runs its Functions and shows its extensions, and takes no payment. Customers can log in, but not
-register. The full list: [compatibility](docs/compatibility.md#known-differences).
+local-storefront does not run Shopify's own checkout or admin. A theme alone has no checkout
+(`/checkout` sums up the cart), and its cart has no discounts or shipping rates. With `--app`,
+the checkout is a local stand-in: it runs the app's Functions and shows its extensions, takes no
+payment, and has no B2B catalogs. The Admin API is a local simulation over the store data.
+Customers can log in, but not register. The full list:
+[compatibility](docs/compatibility.md#known-differences).
 
 ## Other ways to install
 

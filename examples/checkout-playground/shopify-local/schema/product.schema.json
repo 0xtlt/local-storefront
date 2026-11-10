@@ -195,6 +195,19 @@
       "description": "Whether the product can only be bought with a selling plan, like a product sold by\nsubscription only. Defaults to `false`.",
       "type": "boolean",
       "default": false
+    },
+    "status": {
+      "description": "`active`, `draft` or `archived`. Defaults to `active`. Only an active product that is\npublished is on the storefront: a draft, an archived product or one that is not\npublished has no page, is in no collection, and cannot be bought, but the Admin API\nlists it. What names it (a collection, a menu, an order of the data) leaves it out\nwithout an error.",
+      "$ref": "#/$defs/ProductStatus",
+      "default": "active"
+    },
+    "published": {
+      "description": "Whether the product is published on the Online Store. Defaults to `true`.",
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "default": null
     }
   },
   "additionalProperties": false,
@@ -923,6 +936,26 @@
       "enum": [
         "youtube",
         "vimeo"
+      ]
+    },
+    "ProductStatus": {
+      "description": "Where a product is in its life, as the Shopify admin shows it.",
+      "oneOf": [
+        {
+          "description": "For sale.",
+          "type": "string",
+          "const": "active"
+        },
+        {
+          "description": "Being prepared: not on the storefront yet.",
+          "type": "string",
+          "const": "draft"
+        },
+        {
+          "description": "No longer sold: not on the storefront.",
+          "type": "string",
+          "const": "archived"
+        }
       ]
     }
   }

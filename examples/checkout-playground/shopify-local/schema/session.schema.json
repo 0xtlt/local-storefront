@@ -32,7 +32,7 @@
       "default": null
     },
     "country": {
-      "description": "ISO code of the selected country. Defaults to the first country.",
+      "description": "ISO code of the selected country. When omitted, the visitor is in the shop's country\n(`shop.address.country_code`), the one of its primary market: the storefront shows it,\nand the checkout, until an address is entered, is in it (its Functions, its UI extensions\nand its address form read it). A shop in a country the store does not sell to uses the\nfirst country.",
       "type": [
         "string",
         "null"

@@ -29,5 +29,19 @@
   },
   "extensions": [
     "validation-street-number"
-  ]
+  ],
+  "expect": {
+    "errors": {
+      "equals": [
+        {
+          "message": "\"Harbor Way\" has no street number",
+          "target": "$.cart.deliveryGroups[0].deliveryAddress.address1"
+        }
+      ]
+    },
+    "totals": {
+      "shipping": "4.90",
+      "total": "28.90"
+    }
+  }
 }

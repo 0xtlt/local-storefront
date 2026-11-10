@@ -1,5 +1,5 @@
 [package]
-name = "lsf"
+name = "lsf-cli"
 description = "Serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API"
 version.workspace = true
 edition.workspace = true
@@ -13,9 +13,10 @@ path = "src/main.rs"
 [dependencies]
 chrono.workspace = true
 lsf-core.workspace = true
+lsf-theme.workspace = true
 lsf-fmt.workspace = true
 lsf-liquid.workspace = true
-lsf-checkout.workspace = true
+lsf-app.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -33,6 +34,8 @@ oxc_compat.workspace = true
 lightningcss = { version = "1.0.0-alpha.72", default-features = false, features = ["sourcemap"] }
 parcel_sourcemap = "2"
 multer = "3"
+# The requests of the app proxy to the backend of the app, as lsf-app sends its webhooks.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 form_urlencoded = "1"
 percent-encoding = "2"
 bytes = "1"
@@ -49,6 +52,9 @@ libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util"] }
+# The signature of the app proxy, computed again in its tests as Shopify's libraries compute it.
+hmac = "0.13"
+sha2 = "0.11"
 # Draws the images of the tests.
 image = { version = "0.25", default-features = false, features = ["png"] }
 # The modules of the tests' Functions, written as text.

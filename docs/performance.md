@@ -5,6 +5,15 @@ Both measure local-storefront on your machine, not Shopify. Use them to compare:
 after a change, one section with another. To see what a page would cost Shopify, profile it in
 [points](#what-the-page-would-cost-shopify).
 
+> **Find the slow snippet**
+>
+> 1. `npx local-storefront profile <path>`: read "Slowest on their own", the files that take
+>    the most time. Skip `render`, the page as a whole.
+> 2. `npx local-storefront profile <path> --lines`: the line, inside that file
+>    (`snippets/product-media:40`).
+> 3. `npx local-storefront profile <path> --points --lines`: what that line would cost Shopify,
+>    such as a loop over `collections` or a metafield read for each product of a loop.
+
 ## Profile a page
 
 ```bash
@@ -31,6 +40,7 @@ Times are in ms, for all the calls of a row. "own" leaves out what is under the 
 Slowest on their own:
 
      own  calls
+   0.201      1  render
    0.191     12  snippets/list-filter
    0.115     15  snippets/product-media
 ```
@@ -42,6 +52,8 @@ Each row is under the row that rendered it: a section, its file, its blocks, the
 - `calls` is how many times it was rendered. Both times are for all the calls.
 - `section <id>` and `block <key>` are a section and a block as the template places them:
   reading their settings, then their file, which is the row under them.
+- `render` is the page as a whole. Its own time is the work outside the theme's files, such as
+  setting up the objects of the page: no file accounts for it. Skip it and read the files.
 
 The page is rendered 3 times first, so that reading the files does not count. The profile is
 the one of the render in the middle, by how long they took.
@@ -104,28 +116,38 @@ npx local-storefront profile /collections/all --points
 ```
 
 ```text
-/collections/all · template collection · 15564 points
+/collections/all · template collection · 15566 points
+Points are a model of what the page costs a Shopify storefront, not a measure:
+what they are made of is at the end. They are the same at every render.
+Points are for all the calls of a row. "own" leaves out what is under the row.
 
    total      own  calls
-   15564        0      1  render
-   11556        0      1    templates/collection.json
-   11251        0      1      section template--8034641070597__main
-   11251      870      1        sections/main-collection
-    6865        0      8          block product-card
-    6865      112      8            blocks/_product-card
+   15566        0      1  render
+   11566        0      1    templates/collection.json
+   11261        0      1      section template--8034641070597__main
+   11261      870      1        sections/main-collection
+    6877        0      8          block product-card
+    6877      112      8            blocks/_product-card
+
+Costliest on their own:
+
+     own  calls
+    1520     12  snippets/list-filter
+    1276     33  snippets/spacing-style
 
 What the points are made of:
 
   points   count   each
-   14244   14244      1  liquid      A tag or an output rendered.
+   14246   14246      1  liquid      A tag or an output rendered.
      800       8    100  product     A product loaded.
      220      22     10  variant     A variant loaded.
      100       1    100  collection  A collection loaded.
      200       2    100  menu        A menu loaded.
 ```
 
-The report is the same tree, in points. A row has the points of everything that happened
-under it: a snippet that reads a metafield of 50 products has the points of 50 metafields.
+The report is the same tree, in points, then the costliest rows on their own. A row has the
+points of everything that happened under it: a snippet that reads a metafield of 50 products
+has the points of 50 metafields.
 
 | Kind | Points | Charged for |
 |---|---|---|

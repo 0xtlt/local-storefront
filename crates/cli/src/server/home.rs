@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 
-use lsf_checkout::app::{App, FunctionExtension, Selection, Severity, TargetKind, UiExtension};
-use lsf_checkout::placement::placement;
+use lsf_app::checkout::placement::placement;
+use lsf_app::config::{App, FunctionExtension, Selection, Severity, TargetKind, UiExtension};
 use lsf_core::diagnostics::Diagnostics;
 use lsf_core::store::model::ScenarioLook;
 use lsf_core::store::{CheckoutScenario, CheckoutSettings};
@@ -22,6 +22,7 @@ use super::home_check::Report;
 use super::reply::{Reply, cache};
 use super::{Incoming, ServerState};
 use crate::checkout::{CheckoutOptions, display_money, encoded_handle};
+use crate::output::count;
 use crate::watch::Failure;
 
 /// Where the files of the checkout page are served from.
@@ -157,7 +158,7 @@ fn anchor(prefix: &str, name: &str) -> String {
 fn diagnostics_of<'a>(
     app: &'a App,
     handle: &'a str,
-) -> impl Iterator<Item = &'a lsf_checkout::app::Diagnostic> {
+) -> impl Iterator<Item = &'a lsf_app::config::Diagnostic> {
     app.diagnostics
         .iter()
         .filter(move |diagnostic| diagnostic.extension.as_deref() == Some(handle))
@@ -245,6 +246,7 @@ fn extension_status(problems: &[(Level, String)], failures: &[Json], selected: b
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn function_json(
     app: &App,
     selection: &Selection,
@@ -253,6 +255,7 @@ fn function_json(
     build: Option<&Failure>,
     used_by: usize,
     discounted: &std::collections::HashSet<&str>,
+    owners: &indexmap::IndexMap<String, bool>,
 ) -> Json {
     let targets: Vec<Json> = function
         .targets
@@ -310,6 +313,32 @@ fn function_json(
             ),
         ));
     }
+    // Any other Function runs through an owner the app creates (a payment customization, …): a
+    // shop it was just installed on has none, and its checkout does not run the Function.
+    let owner_note = !store_note
+        && function.owner_type().is_some()
+        && owners.get(&function.handle) != Some(&true);
+    if let (true, Some(owner)) = (owner_note, function.owner_type()) {
+        let words = owner_words(owner);
+        let declared = owners.get(&function.handle) == Some(&false);
+        problems.push(problem(
+            Level::Warning,
+            format!(
+                "{}, so the store's checkout does not run it, as on Shopify: the app creates one \
+                 (`{}Create`), or the store data declares one, \
+                 `\"checkout\": {{\"functions\": {{\"{}\": {{\"enabled\": true}}}}}}`. The \
+                 scenarios that name it in `extensions` run it anyway",
+                if declared {
+                    format!("its {words} is disabled")
+                } else {
+                    format!("the shop has no {words} that runs it")
+                },
+                lower_first(owner),
+                function.handle
+            ),
+        ));
+    }
+    let store_note = store_note || owner_note;
     let failures = failures_json(report, &function.handle);
     let selected = selection.contains(&function.handle);
     json!({
@@ -351,6 +380,27 @@ fn function_json(
     })
 }
 
+/// `PaymentCustomization` in words: `payment customization`.
+fn owner_words(owner: &str) -> String {
+    let mut words = String::new();
+    for (index, char) in owner.char_indices() {
+        if char.is_uppercase() && index > 0 {
+            words.push(' ');
+        }
+        words.extend(char.to_lowercase());
+    }
+    words
+}
+
+/// `PaymentCustomization` → `paymentCustomization`, the name of its mutations.
+fn lower_first(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 fn ui_extension_json(
     app: &App,
     selection: &Selection,
@@ -365,7 +415,7 @@ fn ui_extension_json(
     // Where it renders: `checkout` (the checkout and the thank-you page), `customer-account`.
     let mut surfaces: Vec<&str> = Vec::new();
     for target in &extension.targets {
-        if let Some(surface) = lsf_checkout::placement::surface(&target.target)
+        if let Some(surface) = lsf_app::checkout::placement::surface(&target.target)
             && !surfaces.contains(&surface)
         {
             surfaces.push(surface);
@@ -428,10 +478,6 @@ fn names(settings: &CheckoutSettings, store: &Store) -> (String, String) {
         .collect::<Vec<_>>()
         .join(", ");
     (rates, methods)
-}
-
-fn count(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 /// What a scenario is: a few `(label, text)` lines (the cart, the buyer, the country and
@@ -550,14 +596,14 @@ fn describe(
         facts.push(country.clone());
     }
     facts.push(language.iso_code.clone());
-    lines.push((
-        "Country, language",
+    // With neither, the store's default: the shop's country, where the storefront opens too.
+    let country = country.unwrap_or_else(|| {
         format!(
-            "{}, {}",
-            country.as_deref().unwrap_or("the store's first country"),
-            language.name
-        ),
-    ));
+            "{} by default",
+            store.default_country().iso_code.to_ascii_uppercase()
+        )
+    });
+    lines.push(("Country, language", format!("{country}, {}", language.name)));
 
     let mut typed = Vec::new();
     if let Some(email) = &entered.email {
@@ -678,11 +724,20 @@ struct Context<'a> {
 fn uses<'a>(context: &'a Context, scenario: &'a CheckoutScenario) -> Vec<&'a str> {
     match &scenario.extensions {
         Some(handles) => handles.iter().map(String::as_str).collect(),
+        // The shop's checkout: a Function that needs an owner runs through an enabled one.
         None => context
             .app
             .handles()
             .into_iter()
             .filter(|handle| context.selection.contains(handle))
+            .filter(|handle| {
+                context
+                    .app
+                    .function(handle)
+                    .and_then(FunctionExtension::owner_type)
+                    .is_none()
+                    || scenario.checkout.owners.get(*handle) == Some(&true)
+            })
             .collect(),
     }
 }
@@ -692,8 +747,7 @@ fn uses<'a>(context: &'a Context, scenario: &'a CheckoutScenario) -> Vec<&'a str
 fn own_problems(context: &Context, scenario: &CheckoutScenario) -> Vec<String> {
     let mut problems = scenario.problems.clone();
     if problems.is_empty()
-        && let Err(problem) =
-            crate::checkout::selection_for(context.app, &context.options.extensions, Some(scenario))
+        && let Err(problem) = context.options.selection(context.app, Some(scenario))
     {
         problems.push(format!("{}: {problem}", scenario.file));
     }
@@ -986,6 +1040,16 @@ fn problem_list(
             );
         }
     }
+    if state.app_uninstalled() {
+        add(
+            &mut list,
+            Level::Warning,
+            "app",
+            None,
+            lsf_app::config::uninstalled_app_reason(),
+            None,
+        );
+    }
     for diagnostic in app
         .diagnostics
         .iter()
@@ -1214,6 +1278,7 @@ fn build(
                 build.as_ref(),
                 used(&function.handle),
                 &discounted,
+                &store.checkout.owners,
             )
         })
         .map(runs_in)
@@ -1235,6 +1300,18 @@ fn build(
             extension
         })
         .collect();
+    // While the app is not installed on the shop, none of its extensions renders or runs: each
+    // says so, and one with no problem of its own is off.
+    let uninstalled = state.app_uninstalled();
+    let mark = |mut extension: Json| {
+        extension["installed"] = json!(!uninstalled);
+        if uninstalled && extension["status"] == "ok" {
+            extension["status"] = json!("off");
+        }
+        extension
+    };
+    let functions: Vec<Json> = functions.into_iter().map(mark).collect();
+    let ui_extensions: Vec<Json> = ui_extensions.into_iter().map(mark).collect();
     // What a scenario reads of the extensions it uses: their own problems, not the runs that
     // fail (those are the scenario's own), nor what is the store's rather than the scenario's (a
     // discount Function no discount names).
@@ -1281,6 +1358,10 @@ fn build(
             "clientId": app.client_id,
             "directory": app.root.display().to_string(),
         },
+        // Whether the app is installed on the shop (`POST /__lsf/admin/uninstall` uninstalls it):
+        // while it is not, none of its extensions renders or runs, and `uninstalled` says why.
+        "installed": !uninstalled,
+        "uninstalled": uninstalled.then(lsf_app::config::uninstalled_app_reason),
         "data": state.app.describe_source(),
         "dataFolder": state.app.data_dir().map(|dir| dir.join("checkouts").display().to_string()),
         "storeDataProblems": state.loaded().diagnostics.error_count(),
@@ -1305,7 +1386,7 @@ fn build(
                 let opens = || {
                     store.scenarios.iter().filter(|scenario| {
                         scenario.problems.is_empty()
-                            && crate::checkout::selection_for(app, &options.extensions, Some(scenario)).is_ok()
+                            && options.selection(app, Some(scenario)).is_ok()
                     })
                 };
                 let scenario = opens()
@@ -1326,6 +1407,8 @@ fn build(
             "shop": format!("{root}/checkout?variant=shop"),
             // Where the customer account UI extensions render.
             "account": format!("{root}/account"),
+            // lsf's admin with the app open, for an embedded app.
+            "admin": state.admin.as_ref().and_then(|admin| admin.embedded_path()),
         },
     })
 }
@@ -1347,7 +1430,7 @@ pub fn page(
             let report = if incoming.query_param("check").is_some() {
                 Some(state.home_check.get_or_run(state, &app, &store))
             } else {
-                state.home_check.get(&app, &store)
+                state.home_check.get(&app, &store, state.app_uninstalled())
             };
             build(state, options, &store, &app, root, check, report.as_deref())
         }
@@ -1582,7 +1665,10 @@ fn problem_html(problem: &Json, dir: &str) -> String {
             more
         ),
         (None, None) if kind == "store" => {
-            "<span class=\"lsf-hp-where lsf-muted\"><code>lsf validate</code></span>".to_string()
+            format!(
+                "<span class=\"lsf-hp-where lsf-muted\"><code>{} validate</code></span>",
+                esc(&lsf_core::util::command())
+            )
         }
         (None, None) => String::new(),
     };
@@ -1689,7 +1775,8 @@ fn check_line(home: &Json, check_now: &str) -> String {
             let seconds = check["elapsedMs"].as_u64().unwrap_or(0) as f64 / 1000.0;
             let mut text = if checked < total {
                 format!(
-                    "Checked {checked} of {total} scenarios ({seconds:.1} s): out of time for the others"
+                    "Checked {checked} of {} ({seconds:.1} s): out of time for the others",
+                    count(total, "scenario", "scenarios")
                 )
             } else {
                 format!(
@@ -2210,10 +2297,15 @@ fn extension_row(
     // What the page needs to load the bundle of a checkout UI extension on its own.
     let probe = match extension["script"].as_str() {
         Some(script) => format!(
-            " data-probe=\"{}\" data-api=\"{}\" data-targets=\"{}\"",
+            " data-probe=\"{}\" data-api=\"{}\" data-targets=\"{}\" data-build=\"{}\"",
             esc(script),
             esc(text_of(&extension["apiVersion"])),
-            esc(&targets.join(" "))
+            esc(&targets.join(" ")),
+            esc(&format!(
+                "{} app build {}",
+                lsf_core::util::command(),
+                text_of(&extension["handle"])
+            ))
         ),
         None => String::new(),
     };
@@ -2269,6 +2361,9 @@ fn function_html(function: &Json, dir: &str) -> String {
     if function["selected"] != true {
         meta.push("left out by --extension".to_string());
     }
+    if function["installed"] == false {
+        meta.push("app not installed".to_string());
+    }
     meta.push(used_by(function));
     let targets_list = function["targets"].as_array().cloned().unwrap_or_default();
     let targets: Vec<&str> = targets_list
@@ -2302,13 +2397,16 @@ fn function_html(function: &Json, dir: &str) -> String {
         .collect();
     let mut body = format!("<ul class=\"lsf-h-tlist\">{rows}</ul>");
     if function["built"] != true {
+        let handle = text_of(&function["handle"]);
         body.push_str(&match function["buildCommand"].as_str() {
-            Some(command) => format!(
-                "<p class=\"lsf-muted\">Build it with {} (or <code>shopify app build</code>), or start with <code>--build</code>.</p>",
-                code(command)
+            Some(_) => format!(
+                "<p class=\"lsf-muted\">Build it with {}, or start with <code>--build</code>.</p>",
+                code(&format!("{} app build {handle}", lsf_core::util::command()))
             ),
-            None => "<p class=\"lsf-muted\">Build it with <code>shopify app build</code>.</p>"
-                .to_string(),
+            None => format!(
+                "<p class=\"lsf-muted\">It has no <code>[extensions.build] command</code> for lsf to build it with: add one, then run {}.</p>",
+                code(&format!("{} app build {handle}", lsf_core::util::command()))
+            ),
         });
     }
     extension_row(function, dir, "data-function", &meta, &targets, &body)
@@ -2324,6 +2422,9 @@ fn ui_extension_html(extension: &Json, dir: &str) -> String {
     }
     if extension["selected"] != true {
         meta.push("left out by --extension".to_string());
+    }
+    if extension["installed"] == false {
+        meta.push("app not installed".to_string());
     }
     if only_in_account(extension) {
         meta.push("in the customer account".to_string());
@@ -2545,7 +2646,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
          <div class=\"lsf-h-top-actions\" data-section=\"open\">{}\
          <details class=\"lsf-h-more\"><summary class=\"lsf-h-btn\" aria-label=\"More ways to open a checkout\">More</summary>\
          <div class=\"lsf-h-menu\"><a href=\"{}\">Every extension target</a><a href=\"{}\">Shop look</a></div></details>\
-         <a class=\"lsf-h-btn\" href=\"{}\" data-link=\"account\">Customer account</a>\
+         {}<a class=\"lsf-h-btn\" href=\"{}\" data-link=\"account\">Customer account</a>\
          <a class=\"lsf-h-btn is-primary\" href=\"{}\">Open the checkout</a></div></div>\
          <nav class=\"lsf-h-tabs\" role=\"tablist\" aria-label=\"Home\">{}{}{}{}</nav></header>",
         esc(title),
@@ -2554,6 +2655,13 @@ pub fn render(home: &Json, check_now: &str) -> String {
         problem_pill(home),
         esc(text_of(&links["allTargets"])),
         esc(text_of(&links["shop"])),
+        links["admin"]
+            .as_str()
+            .map(|admin| format!(
+                "<a class=\"lsf-h-btn\" href=\"{}\" data-link=\"admin\" title=\"The app in lsf's admin\">Admin</a>",
+                esc(admin)
+            ))
+            .unwrap_or_default(),
         esc(account_link),
         esc(text_of(&links["checkout"])),
         tab_html("scenarios", "Scenarios", n(scenarios.len()), true),
@@ -2581,6 +2689,12 @@ pub fn render(home: &Json, check_now: &str) -> String {
         ),
     );
     body.push_str("<main class=\"lsf-home-main\">");
+    if let Some(reason) = home["uninstalled"].as_str() {
+        body.push_str(&format!(
+            "<div class=\"lsf-banner is-warning\" role=\"status\" data-banner=\"uninstalled\"><div><p>{}</p></div></div>",
+            message_html(&capitalized(reason), dir)
+        ));
+    }
 
     // Scenarios: the groups on the left, the scenarios on the right.
     body.push_str(
@@ -2592,8 +2706,9 @@ pub fn render(home: &Json, check_now: &str) -> String {
     if scenarios.is_empty() {
         body.push_str(&format!(
             "<div class=\"lsf-h-card\"><p class=\"lsf-muted lsf-h-empty\">None yet. A scenario is a file in {}: a cart, a buyer, what they entered. \
-             <code>lsf app init --app {}</code> writes a set to start from.</p></div>",
+             <code>{} app init --app {}</code> writes a set to start from.</p></div>",
             code(folder),
+            esc(&lsf_core::util::command()),
             esc(text_of(&app["directory"])),
         ));
     } else {
@@ -2639,7 +2754,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
              <button type=\"button\" data-filter-chip=\"problems\" aria-pressed=\"false\" disabled>With problems</button>\
              <button type=\"button\" data-filter-chip=\"functions\" aria-pressed=\"false\" disabled>Functions</button>\
              <button type=\"button\" data-filter-chip=\"ui\" aria-pressed=\"false\" disabled>UI</button></div>\
-             <p class=\"lsf-h-shown\"><span class=\"lsf-h-shown-size\" aria-hidden=\"true\">{total} of {total} scenarios shown</span>\
+             <p class=\"lsf-h-shown\"><span class=\"lsf-h-shown-size\" aria-hidden=\"true\">{total} of {all} shown</span>\
              <span data-filter-count aria-live=\"polite\">{}</span></p></div></div>",
             count(scenarios.len(), "scenario", "scenarios"),
             match troubled {
@@ -2650,6 +2765,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
             esc(&shorten(folder, dir)),
             count(scenarios.len(), "scenario", "scenarios"),
             total = scenarios.len(),
+            all = count(scenarios.len(), "scenario", "scenarios"),
         ));
         if grouped {
             for (name, list) in &groups {
@@ -2718,9 +2834,14 @@ pub fn render(home: &Json, check_now: &str) -> String {
                 .collect();
             body.push_str(&format!(
                 "<div class=\"lsf-h-others\" data-section=\"other\"><h3>Other extensions <span class=\"lsf-h-n\">{}</span></h3>\
-                 <p class=\"lsf-muted lsf-h-note\">Not part of the checkout or the customer account, so not used here.</p>\
+                 <p class=\"lsf-muted lsf-h-note\">Not part of the checkout or the customer account, so not used here.{}</p>\
                  <ul class=\"lsf-h-plain\">{items}</ul></div>",
-                others.len()
+                others.len(),
+                if home["installed"] == false {
+                    " The app is not installed on the shop: on Shopify, they are gone with it."
+                } else {
+                    ""
+                }
             ));
         }
         body.push_str("</div></section>");
@@ -2763,6 +2884,41 @@ pub fn render(home: &Json, check_now: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_function_that_is_not_built_says_how_lsf_builds_it() {
+        let function = |build: Json| {
+            function_html(
+                &json!({
+                    "handle": "volume-discount",
+                    "name": "Volume discount",
+                    "apiVersion": "2026-10",
+                    "built": false,
+                    "buildCommand": build,
+                    "selected": true,
+                    "targets": [],
+                }),
+                "/app",
+            )
+        };
+        let buildable = function(json!("cargo build --release"));
+        assert!(
+            buildable.contains(
+                "Build it with <code>lsf app build volume-discount</code>, or start with <code>--build</code>."
+            ),
+            "{buildable}"
+        );
+        let bare = function(Json::Null);
+        assert!(
+            bare.contains(
+                "It has no <code>[extensions.build] command</code> for lsf to build it with"
+            ),
+            "{bare}"
+        );
+        for html in [buildable, bare] {
+            assert!(!html.contains("shopify app build"), "{html}");
+        }
+    }
 
     #[test]
     fn only_targets_the_checkout_does_not_know_are_unknown() {
@@ -2856,10 +3012,10 @@ mod tests {
         );
         assert_eq!(
             message_html(
-                "no Wasm module at /Users/someone/app/extensions/x/dist/function.wasm: build the Function (`shopify app build`)",
+                "no Wasm module at /Users/someone/app/extensions/x/dist/function.wasm: build it with `lsf app build x` (or `--build`)",
                 dir
             ),
-            "no Wasm module at extensions/x/dist/function.wasm: build the Function (<code>shopify app build</code>)"
+            "no Wasm module at extensions/x/dist/function.wasm: build it with <code>lsf app build x</code> (or <code>--build</code>)"
         );
         // Escaped before the code is drawn: nothing the message says becomes HTML.
         assert_eq!(

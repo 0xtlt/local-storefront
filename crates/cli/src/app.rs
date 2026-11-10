@@ -3,10 +3,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use lsf_core::Store;
 use lsf_core::diagnostics::Diagnostics;
-use lsf_core::store::load::{DataSource, LoadOptions, load};
+use lsf_core::store::load::{DataSource, LoadOptions, SourceData, load};
 use lsf_core::theme::Revalidate;
-use lsf_core::{Preview, Renderer, Store, Theme};
+use lsf_theme::{Preview, Renderer, Theme};
 
 /// The data directory looked for inside the theme when `--data` is not given.
 pub const DEFAULT_DATA_DIRECTORY: &str = "shopify-local";
@@ -90,7 +91,7 @@ impl App {
         revalidate: Revalidate,
         previews: &[Preview],
     ) -> Result<App, String> {
-        let env = Arc::new(lsf_core::environment_with(previews));
+        let env = Arc::new(lsf_theme::environment_with(previews));
         let theme =
             Arc::new(Theme::open(theme_dir, env, revalidate).map_err(|error| error.to_string())?);
         let source = data_source(theme_dir, data_dir)?;
@@ -122,7 +123,7 @@ impl App {
         std::fs::create_dir_all(scratch.join("layout"))
             .map_err(|error| format!("cannot create {}: {error}", scratch.display()))?;
         let scratch = Scratch(scratch);
-        let env = Arc::new(lsf_core::environment_with(previews));
+        let env = Arc::new(lsf_theme::environment_with(previews));
         let theme = Arc::new(
             Theme::open(&scratch.0, env, Revalidate::Never).map_err(|error| error.to_string())?,
         );
@@ -133,6 +134,11 @@ impl App {
             pending: pending_data(theme_dir, data_dir),
             _scratch: Some(scratch),
         })
+    }
+
+    /// Whether the app was opened with a theme: without one, the server renders no page.
+    pub fn has_theme(&self) -> bool {
+        self._scratch.is_none()
     }
 
     /// Where the store data is read from now: the demo store gives way to the directory that
@@ -176,6 +182,13 @@ impl App {
         load(&self.source(), &self.load_options())
     }
 
+    /// The store data as the files give it now, read once: what a server builds its store
+    /// from, and builds it again from with what the Admin API changed, without reading the
+    /// files again.
+    pub fn read_store(&self) -> SourceData {
+        SourceData::read(&self.source())
+    }
+
     pub fn describe_source(&self) -> String {
         match &self.source() {
             DataSource::Directory(directory) => directory.display().to_string(),
@@ -214,10 +227,16 @@ pub fn classic_accounts_note(theme: &Theme) -> Option<String> {
         .filter(|name| name.ends_with(".json") || name.ends_with(".liquid"))
         .count();
     (pages > 0).then(|| {
+        let (is, they) = if pages == 1 {
+            ("is", "it is")
+        } else {
+            ("are", "they are")
+        };
         format!(
-            "the {pages} page(s) of templates/customers/ are for classic customer accounts, which \
-             lsf does not have: they are never rendered. Every account link leads to `/account`, \
-             which stands for Shopify's new customer accounts."
+            "the {} of templates/customers/ {is} for classic customer accounts, which lsf does \
+             not have: {they} never rendered. Every account link leads to `/account`, which \
+             stands for Shopify's new customer accounts.",
+            crate::output::count(pages, "page", "pages")
         )
     })
 }

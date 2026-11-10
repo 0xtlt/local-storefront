@@ -30,16 +30,18 @@ With Playwright:
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
-  use: { baseURL: 'http://127.0.0.1:9292' },
+  // A port of its own, so that a local run never reuses your dev server.
+  use: { baseURL: 'http://127.0.0.1:9393' },
   webServer: {
-    command: 'npx local-storefront serve --port 9292 --static --quiet --strict',
-    url: 'http://127.0.0.1:9292/__lsf/status',
+    command: 'npx local-storefront serve --port 9393 --static --quiet --strict',
+    url: 'http://127.0.0.1:9393/__lsf/status',
     reuseExistingServer: !process.env.CI,
   },
 });
 ```
 
-This package only contains a launcher. The local-storefront binary comes from a platform package
-that npm installs alongside it: macOS, Linux and Windows, on x64 and arm64.
+This package holds a launcher and the docs. The local-storefront binary comes from a platform
+package that npm installs alongside it: macOS, Linux and Windows, on x64 and arm64.
 
-Documentation: <https://github.com/0xtlt/local-storefront>
+The docs of this version are in the package: `node_modules/local-storefront/docs/`, listed by
+`node_modules/local-storefront/llms.txt`. Online: <https://github.com/0xtlt/local-storefront>

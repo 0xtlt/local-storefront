@@ -12,12 +12,29 @@ use super::throttle::Throttle;
 use super::{Incoming, SESSION_HEADER, ServeOptions, ServerState};
 use crate::app::App;
 
+mod parts;
+mod polaris;
+mod store_base;
+mod store_sync;
+mod themes;
+
 fn server() -> ServerState {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let (state, diagnostics) = fixture_server(None);
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    state
+}
+
+/// The fixture theme's server, serving the Admin API with `admin`.
+fn fixture_server(
+    admin: Option<super::admin::AdminSettings>,
+) -> (ServerState, lsf_core::diagnostics::Diagnostics) {
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
-    let (state, diagnostics) = ServerState::new(
+    ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
+            admin,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -28,9 +45,7 @@ fn server() -> ServerState {
             customer: None,
             checkout: None,
         },
-    );
-    assert!(diagnostics.is_empty(), "{diagnostics}");
-    state
+    )
 }
 
 /// A request from the session named `session`.
@@ -48,8 +63,10 @@ fn request(method: &str, path_and_query: &str, body: Json, session: &str) -> Inc
         method: method.to_string(),
         path: path.to_string(),
         query: super::params::query_pairs(query),
+        raw_query: query.to_string(),
         headers,
         params: body,
+        body: Default::default(),
         host: "shop.test".to_string(),
     }
 }
@@ -760,7 +777,7 @@ fn pages_carry_the_scripts_shopify_injects() {
     );
     assert!(text(&actions).contains("Object.defineProperty(window.Shopify, 'actions'"));
     // The feature loader is where the page says, at a URL that carries a hash of its content.
-    let loader_path = format!("/cdn/{}", lsf_core::render::platform::load_features_path());
+    let loader_path = format!("/cdn/{}", lsf_theme::render::platform::load_features_path());
     assert!(
         loader_path.starts_with("/cdn/shopifycloud/storefront/assets/storefront/load_feature-")
             && loader_path.ends_with(".js"),
@@ -780,11 +797,13 @@ fn pages_carry_the_scripts_shopify_injects() {
 
 /// A server whose options were given on the command line.
 fn server_with_throttle(rules: &str) -> ServerState {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -1097,11 +1116,13 @@ fn b2b_customers_buy_for_a_company_location() {
 
 #[test]
 fn the_server_can_start_logged_in() {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -1210,6 +1231,8 @@ fn robots_and_sitemaps_are_served() {
     let (plain, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -1610,6 +1633,8 @@ fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -1694,6 +1719,8 @@ fn a_video_is_served_in_the_parts_the_browser_asks_for() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -1756,11 +1783,13 @@ fn a_theme_with_partials_gets_their_runtime_with_the_preview() {
         "{% partial 'count' %}<p>1</p>{% endpartial %}",
     )
     .unwrap();
-    let serve = |previews: &[lsf_core::Preview]| {
+    let serve = |previews: &[lsf_theme::Preview]| {
         let app = App::open(&root, None, Revalidate::Never, previews).unwrap();
         ServerState::new(
             app,
             ServeOptions {
+                polaris: Default::default(),
+                admin: None,
                 live_reload: false,
                 watch: false,
                 quiet: true,
@@ -1780,7 +1809,7 @@ fn a_theme_with_partials_gets_their_runtime_with_the_preview() {
     assert!(live.contains("Unknown tag 'partial'"), "{live}");
     assert!(!live.contains("importmap"), "{live}");
 
-    let state = serve(&[lsf_core::Preview::LiquidJuly26]);
+    let state = serve(&[lsf_theme::Preview::LiquidJuly26]);
     let page = text(&get(&state, "/", "partials"));
     let module = page
         .split("\"@shopify/partial-rendering\":\"//")
@@ -1835,6 +1864,8 @@ fn preloads_are_one_link_header_written_as_shopify_writes_it() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -2008,6 +2039,8 @@ fn stylesheets_and_scripts_are_minified_as_on_shopify() {
         let (state, _) = ServerState::new(
             app,
             ServeOptions {
+                polaris: Default::default(),
+                admin: None,
                 live_reload: false,
                 watch: false,
                 quiet: true,
@@ -2169,6 +2202,8 @@ async fn live_reload_tells_pages_about_changes_over_a_websocket() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
+            admin: None,
             live_reload: true,
             watch: true,
             quiet: true,
@@ -2271,11 +2306,13 @@ fn head_value<'a>(head: &'a str, name: &str) -> Option<&'a str> {
 }
 
 async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -2305,6 +2342,8 @@ async fn a_part_of_a_file_is_sent_as_it_is_even_to_a_browser_that_accepts_compre
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -2511,7 +2550,7 @@ fn responses_say_how_long_to_keep_them_as_shopify_does() {
     assert_eq!(
         policy(&format!(
             "/cdn/{}",
-            lsf_core::render::platform::load_features_path()
+            lsf_theme::render::platform::load_features_path()
         ))
         .as_deref(),
         Some("public, max-age=31536000")
@@ -2569,11 +2608,13 @@ fn what_is_rendered_says_how_long_it_took() {
     // With `--timings`, every section in the order they were rendered: the template's, then
     // the layout's. Each one by its type and its id on the page, and followed by its theme
     // blocks: a dash for each level, the type, then the key when it is another word.
-    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (naming, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -2585,8 +2626,8 @@ fn what_is_rendered_says_how_long_it_took() {
             checkout: None,
         },
     );
-    let of_template = |key: &str| lsf_core::render::template_section_id("index", key);
-    let of_group = lsf_core::tags::group_id_prefix("header-group");
+    let of_template = |key: &str| lsf_theme::render::template_section_id("index", key);
+    let of_group = lsf_theme::tags::group_id_prefix("header-group");
     assert_eq!(
         entries(&naming, "/"),
         [
@@ -2645,7 +2686,7 @@ fn the_control_api_adds_up_what_was_rendered() {
     let hero = find(
         "sections",
         "id",
-        &lsf_core::render::template_section_id("index", "hero"),
+        &lsf_theme::render::template_section_id("index", "hero"),
     );
     assert_eq!((&hero["type"], &hero["count"]), (&json!("hero"), &json!(2)));
     assert_eq!(find("sections", "id", "footer")["count"], 5);
@@ -2774,7 +2815,7 @@ fn the_control_api_profiles_a_page() {
         .take_while(|line| !line.is_empty())
         .map(|line| line.split_at(26).1)
         .collect();
-    let hero = lsf_core::render::template_section_id("index", "hero");
+    let hero = lsf_theme::render::template_section_id("index", "hero");
     // The slowest first under each row: the template or the layout, whichever took longer.
     assert_eq!(names[0], "render", "{report}");
     assert!(names.contains(&"  templates/index.json"), "{report}");
@@ -2996,10 +3037,10 @@ fn a_profile_is_drawn_as_a_flame_graph() {
 // --- The checkout of a Shopify app ---
 
 fn fixture_app() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app")
 }
 
-/// A server whose checkout runs the fixture app of `lsf-checkout`.
+/// A server whose checkout runs the fixture app of `lsf-app`.
 fn checkout_server(extensions: &[&str], standalone: bool) -> ServerState {
     checkout_server_of(fixture_app(), extensions, standalone)
 }
@@ -3021,10 +3062,23 @@ fn checkout_server_with_data(
     standalone: bool,
     data: Option<&Path>,
 ) -> ServerState {
+    checkout_server_with(app_dir, extensions, standalone, data, None)
+}
+
+/// [`checkout_server_with_data`], serving the Admin API with `admin`.
+fn checkout_server_with(
+    app_dir: std::path::PathBuf,
+    extensions: &[&str],
+    standalone: bool,
+    data: Option<&Path>,
+    admin: Option<super::admin::AdminSettings>,
+) -> ServerState {
     let options = |app: App| {
         ServerState::new(
             app,
             ServeOptions {
+                polaris: Default::default(),
+                admin,
                 live_reload: false,
                 watch: false,
                 quiet: true,
@@ -3038,6 +3092,7 @@ fn checkout_server_with_data(
                     extensions: extensions.iter().map(|handle| handle.to_string()).collect(),
                     variant: crate::checkout::Variant::Standard,
                     standalone,
+                    no_functions: false,
                 }),
             },
         )
@@ -3046,7 +3101,7 @@ fn checkout_server_with_data(
     if standalone {
         options(App::open_without_theme(Path::new("."), data, &[]).expect("no theme"))
     } else {
-        let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+        let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
         options(App::open(&theme, data, Revalidate::Never, &[]).expect("fixture theme"))
     }
 }
@@ -3416,7 +3471,8 @@ fn the_state_describes_the_checkout() {
     // The manifest declares the settings; nothing sets them.
     assert_eq!(extensions[0]["settings"], json!({}));
     assert_eq!(extensions[0]["capabilities"]["block_progress"], true);
-    // The metafields they declare: `owner_type` is `ownerType`, absent when not written.
+    // The metafields they declare: `owner_type` is `ownerType`, absent when not written, with
+    // the `target.type` of the entries it reads (`targetType`).
     assert_eq!(extensions[0]["apiVersion"], "2026-10");
     assert_eq!(
         extensions[0]["metafields"],
@@ -3425,7 +3481,7 @@ fn the_state_describes_the_checkout() {
     assert_eq!(extensions[1]["apiVersion"], "2027-01");
     assert_eq!(
         extensions[1]["metafields"],
-        json!([{"namespace": "$app:notice", "key": "dismissed", "ownerType": "CART"}])
+        json!([{"namespace": "$app:notice", "key": "dismissed", "ownerType": "CART", "targetType": "cart"}])
     );
     // The fixture keeps one legacy target on purpose: it still runs, with a warning.
     assert_eq!(
@@ -3808,7 +3864,7 @@ fn the_functions_read_the_language_of_the_buyer() {
     state.dispatch(&request(
         "PUT",
         "/__lsf/session",
-        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}, "data": owned(&["payment-rules"])}),
         "co-fn-fr",
     ));
     let path = header(&get(&state, "/fr/checkout", "co-fn-fr"), "location")
@@ -3837,7 +3893,7 @@ fn the_functions_read_the_language_of_the_buyer() {
     state.dispatch(&request(
         "PUT",
         "/__lsf/session",
-        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}, "data": owned(&["payment-rules"])}),
         "co-fn-en",
     ));
     let path = header(&get(&state, "/checkout", "co-fn-en"), "location")
@@ -3921,7 +3977,7 @@ fn bundle_in_french_checkout(state: &ServerState, session: &str) -> String {
         json!({"cart": {"items": [
             {"variant": "TEE-BLK-M", "quantity": 1},
             {"variant": "TOTE-NAT", "quantity": 1}
-        ]}}),
+        ]}, "data": owned(&["bundle-transform"])}),
         session,
     ));
     assert_eq!(reply.status, 200, "{}", text(&reply));
@@ -3977,7 +4033,7 @@ fn a_line_the_cart_transform_merges_in_french_is_changed_in_french() {
 
 /// The part of the state JSON that the Buyer Identity and Localization APIs read, for a
 /// logged-in customer of the demo data buying in French. The sandbox of the extensions reads the
-/// same file (`crates/checkout/assets/tests/sandbox-api.test.mjs`): when the server writes
+/// same file (`crates/app/assets/tests/sandbox-api.test.mjs`): when the server writes
 /// something else, both fail, so the two sides cannot drift apart. Run with `UPDATE_SNAPSHOTS=1`
 /// to write the file again after a change meant to be.
 #[test]
@@ -4017,8 +4073,8 @@ fn the_state_gives_extensions_the_buyer_and_the_localization_of_the_store() {
     }
     let seen = Json::Object(seen);
 
-    let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../checkout/tests/fixtures/server-buyer-state.json");
+    let golden =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/server-buyer-state.json");
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
         std::fs::write(&golden, serde_json::to_string_pretty(&seen).unwrap() + "\n").unwrap();
     }
@@ -4222,6 +4278,16 @@ fn operations_change_the_cart_lines() {
     assert_eq!(cart["item_count"], 0);
 }
 
+/// Store data in which the shop has an enabled owner of each of `handles` (a cart transform, a
+/// payment customization, …), as an app creates it: the store's checkout runs them.
+fn owned(handles: &[&str]) -> Json {
+    let functions: serde_json::Map<String, Json> = handles
+        .iter()
+        .map(|handle| (handle.to_string(), json!({"enabled": true})))
+        .collect();
+    json!({"checkout": {"functions": functions}})
+}
+
 /// A checkout where the cart transform of the fixture app does what `operations` says.
 fn transformed_checkout(
     state: &ServerState,
@@ -4233,7 +4299,7 @@ fn transformed_checkout(
         state,
         session,
         items,
-        json!({"checkout": {"functions": {"bundle-transform": {"metafields": {
+        json!({"checkout": {"functions": {"bundle-transform": {"enabled": true, "metafields": {
             "$app:config.settings": {"type": "json", "value": {"operations": operations}}
         }}}}}),
     )
@@ -4392,10 +4458,10 @@ fn a_merged_line_of_several_bundles_is_scaled_by_bundles() {
 fn partly_merged() -> (
     std::sync::Arc<lsf_core::Store>,
     lsf_core::Session,
-    lsf_checkout::ResultLine,
-    lsf_checkout::ResultLine,
+    lsf_app::checkout::ResultLine,
+    lsf_app::checkout::ResultLine,
 ) {
-    use lsf_checkout::{ResultLine, SourceLine};
+    use lsf_app::checkout::{ResultLine, SourceLine};
     use lsf_core::store::CartLine;
 
     let state = checkout_server(&["bundle-transform"], false);
@@ -4827,6 +4893,7 @@ fn a_cart_change_while_completing_is_kept_and_buys_nothing() {
         &request("POST", &format!("{path}/complete"), json!({}), "co-race"),
         "co-race",
         token,
+        || {},
         || {
             let reply = post(
                 &state,
@@ -4887,6 +4954,7 @@ fn completion_buys_nothing_when(session: &str, own_store: bool, change: impl FnO
         &request("POST", &format!("{path}/complete"), json!({}), session),
         session,
         token,
+        || {},
         || change(&state),
     );
     assert_eq!(reply.status, 409, "{session}: {}", text(&reply));
@@ -4927,6 +4995,26 @@ fn what_the_functions_read_of_the_session_cannot_change_while_completing() {
         ));
         assert_eq!(reply.status, 200, "{}", text(&reply));
     });
+}
+
+/// `order.number` has two shapes, and both stay: the state's, a string since 0.2.0, which tests
+/// read; and the Admin API's in the answer of `complete`, an integer beside `name`.
+#[test]
+fn the_order_number_is_a_string_in_the_state_and_an_integer_in_complete() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-number");
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-number");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let completed = body_json(&reply)["order"].clone();
+    assert_eq!(completed["number"], json!(1004), "{completed}");
+    assert_eq!(completed["name"], json!("#1004"), "{completed}");
+
+    let control = body_json(&get(&state, "/__lsf/checkout?session=co-number", "other"));
+    assert_eq!(control["status"], "completed");
+    assert_eq!(control["order"]["number"], json!("#1004"), "{control}");
+    assert_eq!(control["order"]["id"], completed["id"]);
+    // The state's `number` is the `name` of `complete`.
+    assert_eq!(control["order"]["number"], completed["name"]);
 }
 
 #[test]
@@ -4973,6 +5061,7 @@ fn an_update_that_read_the_cart_before_the_completion_writes_nothing() {
         &request("POST", &format!("{path}/update"), json!({}), "co-stale"),
         "co-stale",
         &update,
+        || {},
         || {
             let reply = post(&state, &format!("{path}/complete"), json!({}), "co-stale");
             assert_eq!(reply.status, 200, "{}", text(&reply));
@@ -5006,6 +5095,7 @@ fn an_update_does_not_overwrite_a_cart_change_made_meanwhile() {
         &request("POST", &format!("{path}/update"), json!({}), "co-lost"),
         "co-lost",
         &[json!({"type": "email", "value": "other@example.com"})],
+        || {},
         || {
             let reply = post(
                 &state,
@@ -5024,6 +5114,40 @@ fn an_update_does_not_overwrite_a_cart_change_made_meanwhile() {
 }
 
 #[test]
+fn a_line_change_that_reads_the_session_after_the_order_is_refused() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-late-line");
+
+    // The update found the checkout open. The order was placed before the update read the
+    // session, so the line it changes is gone: the answer is the order, as for any update after
+    // it, not a missing line.
+    let reply = super::checkout::apply_update(
+        &state,
+        &request("POST", &format!("{path}/update"), json!({}), "co-late-line"),
+        "co-late-line",
+        &[json!({"type": "cartLines", "change": {
+            "type": "updateCartLine", "id": "gid://shopify/CartLine/1", "quantity": 3
+        }})],
+        || {
+            let reply = post(
+                &state,
+                &format!("{path}/complete"),
+                json!({}),
+                "co-late-line",
+            );
+            assert_eq!(reply.status, 200, "{}", text(&reply));
+        },
+        || {},
+    );
+    assert_eq!(reply.status, 409, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["order"]["number"], "#1004");
+    assert_eq!(cart_count(&state, "co-late-line"), 0);
+    assert_eq!(state.placed_orders(), 1);
+}
+
+#[test]
 fn completing_again_places_no_second_order() {
     let state = checkout_server(&[], false);
     let path = ready_checkout(&state, "co-twice");
@@ -5035,6 +5159,7 @@ fn completing_again_places_no_second_order() {
         &request("POST", &format!("{path}/complete"), json!({}), "co-twice"),
         "co-twice",
         token,
+        || {},
         || {
             let reply = post(&state, &format!("{path}/complete"), json!({}), "co-twice");
             assert_eq!(reply.status, 200, "{}", text(&reply));
@@ -5050,6 +5175,41 @@ fn completing_again_places_no_second_order() {
     assert_eq!(state.placed_orders(), 1);
     let json = body_json(&get(&state, &format!("{path}.json"), "co-twice"));
     assert_eq!(json["order"]["number"], "#1004");
+}
+
+#[test]
+fn a_completion_that_reads_the_session_after_the_order_places_none() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-late-read");
+    let token = path.rsplit('/').next().unwrap();
+
+    // This completion found the order not placed yet. Another one placed it before this one
+    // read the session, so it reads an empty cart: it leads to the same thank-you page.
+    let reply = super::checkout::place_order(
+        &state,
+        &request(
+            "POST",
+            &format!("{path}/complete"),
+            json!({}),
+            "co-late-read",
+        ),
+        "co-late-read",
+        token,
+        || {
+            let reply = post(
+                &state,
+                &format!("{path}/complete"),
+                json!({}),
+                "co-late-read",
+            );
+            assert_eq!(reply.status, 200, "{}", text(&reply));
+        },
+        || {},
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+    assert_eq!(state.placed_orders(), 1);
+    assert_eq!(cart_count(&state, "co-late-read"), 0);
 }
 
 #[test]
@@ -5075,6 +5235,45 @@ fn concurrent_completions_place_one_order() {
 }
 
 #[test]
+fn with_no_functions_none_runs_and_a_discount_of_the_data_is_left_out() {
+    // `--no-functions`: the UI extensions are served, no Function runs.
+    let mut state = checkout_server(&[], false);
+    if let Some(options) = state.options.checkout.as_mut() {
+        options.no_functions = true;
+    }
+    let path = start_checkout(
+        &state,
+        "co-no-fn",
+        json!([{"variant": "TEE-BLK-M", "quantity": 3}]),
+        json!({"checkout": {"discounts": [{
+            "function": "volume-discount",
+            "title": "Volume",
+            "classes": ["PRODUCT"],
+            "metafields": {"$app:config.settings": {
+                "type": "json", "value": {"minimumQuantity": 3, "percentage": 10}
+            }}
+        }]}}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-no-fn"));
+    assert_eq!(json["runs"], json!([]), "{json}");
+    assert_eq!(json["errors"], json!([]), "{json}");
+    let line = &json["lines"][0];
+    assert_eq!(line["total"], line["subtotal"], "{line}");
+    let extensions: Vec<&str> = json["extensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|extension| extension["handle"].as_str().unwrap())
+        .collect();
+    assert!(extensions.contains(&"gift-message"), "{extensions:?}");
+
+    // The order is placed, with nothing to block it.
+    operations(&state, &path, "co-no-fn", buyer_details());
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-no-fn");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+}
+
+#[test]
 fn the_functions_of_the_app_apply() {
     let state = checkout_server(&[], false);
     let path = start_checkout(
@@ -5090,7 +5289,7 @@ fn the_functions_of_the_app_apply() {
                     "type": "json", "value": {"minimumQuantity": 3, "percentage": 10}
                 }}
             }],
-            "functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+            "functions": {"quantity-limit": {"enabled": true, "metafields": {"$app:config.settings": {
                 "type": "json", "value": {"maxQuantity": 2}
             }}}}
         }}),
@@ -5154,7 +5353,7 @@ fn a_validation_function_sees_the_step_of_the_buyer_journey() {
         &state,
         "co-step",
         json!([{"variant": "TEE-BLK-M", "quantity": 3}]),
-        json!({"checkout": {"functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+        json!({"checkout": {"functions": {"quantity-limit": {"enabled": true, "metafields": {"$app:config.settings": {
             "type": "json", "value": {"maxQuantity": 2, "onlyAtCompletion": true}
         }}}}}}),
     );
@@ -5213,7 +5412,7 @@ fn a_validation_function_sees_the_step_of_the_buyer_journey() {
         &state,
         "co-step-all",
         json!([{"variant": "TEE-BLK-M", "quantity": 3}]),
-        json!({"checkout": {"functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+        json!({"checkout": {"functions": {"quantity-limit": {"enabled": true, "metafields": {"$app:config.settings": {
             "type": "json", "value": {"maxQuantity": 2}
         }}}}}}),
     );
@@ -5544,7 +5743,7 @@ fn a_checkout_needs_a_payment_method_to_complete() {
         json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
         json!({"checkout": {
             "payment_methods": [{"handle": "card", "name": "Card"}],
-            "functions": {"payment-rules": {"metafields": {"$app:config.settings": {
+            "functions": {"payment-rules": {"enabled": true, "metafields": {"$app:config.settings": {
                 "type": "json", "value": {"hideName": "Card", "hideAbove": 0}
             }}}}
         }}),
@@ -5625,6 +5824,40 @@ const TEES: &str = r#"{
         "tax_rate": 20
     }
 }"#;
+
+const GUEST: &str = r#"{
+    "title": "A guest, nothing entered",
+    "session": {"customer": "none", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}
+}"#;
+
+#[test]
+fn a_guest_without_an_address_is_in_the_shop_country_and_pays_no_shipping_yet() {
+    let data = ScenarioData::new("guest", &[("guest.json", GUEST)]);
+    let state = data.server(&[], true);
+    let reply = get(&state, "/checkout?scenario=guest", "viewer");
+    let id = session_cookie(&reply);
+    let location = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{location}.json"), &id));
+    assert_eq!(json["shippingAddress"], Json::Null);
+    // The extensions read the country and the market the Functions read: the shop's, in Canada.
+    let (_, store) = state.snapshot(&id);
+    assert_eq!(store.shop.address.country_code, "CA");
+    let (market_id, market_handle) = lsf_app::checkout::input::market_of(&store, "CA");
+    assert_eq!(
+        json["localization"]["country"],
+        json!({"isoCode": "CA", "name": "Canada"})
+    );
+    assert_eq!(
+        json["localization"]["market"],
+        json!({"id": market_id, "handle": market_handle})
+    );
+    // No rate is selected yet, and the shipping is in no total.
+    assert_eq!(json["deliveryGroups"][0]["selected"], Json::Null);
+    assert_eq!(json["cost"]["shipping"]["amount"], 0.0);
+    let amount = |name: &str| json["cost"][name]["amount"].as_f64().unwrap();
+    assert_eq!(amount("total"), amount("subtotal") + amount("tax"));
+    assert_eq!(amount("dueNow"), amount("total"));
+}
 
 #[test]
 fn a_scenario_opens_a_new_checkout_set_up_as_it_says() {
@@ -6337,7 +6570,12 @@ fn the_functions_read_the_customer_the_checkout_switched_to() {
     .unwrap();
     let state = checkout_server_of(root.clone(), &["payment-rules"], false);
     let session = "co-fn-buyer";
-    let path = guest_checkout(&state, session);
+    let path = start_checkout(
+        &state,
+        session,
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        owned(&["payment-rules"]),
+    );
     let buyer = |json: &Json| {
         let run = json["runs"]
             .as_array()
@@ -6937,7 +7175,7 @@ fn a_check_whose_app_changed_while_it_ran_is_not_kept() {
         )],
     );
     let state = checkout_server_with_data(app_dir.clone(), &[], true, Some(&data.0));
-    let app = lsf_checkout::app::load(&app_dir).unwrap();
+    let app = lsf_app::config::load(&app_dir).unwrap();
     let store = state.loaded().store.clone();
     let wasm = app_dir.join("extensions/broken-wasm/dist/function.wasm");
     let cache = super::home_check::Cache::default();
@@ -6949,23 +7187,28 @@ fn a_check_whose_app_changed_while_it_ran_is_not_kept() {
 
     // The module is rebuilt after the check ran it, before the check ends: what it found is
     // about the old module, and is not kept.
-    let report = cache.get_or_run_with(&app, &store, || {
+    let report = cache.get_or_run_with(&app, &store, false, || {
         std::fs::write(&wasm, b"another module, of another size").unwrap();
         found(1)
     });
     assert_eq!(report.checked, 1, "the answer is still given");
-    assert!(cache.get(&app, &store).is_none(), "kept for the new module");
+    assert!(
+        cache.get(&app, &store, false).is_none(),
+        "kept for the new module"
+    );
 
     // A check that nothing changed under is kept, and the next request takes it.
-    let report = cache.get_or_run_with(&app, &store, || found(1));
-    let again = cache.get_or_run_with(&app, &store, || panic!("ran again"));
+    let report = cache.get_or_run_with(&app, &store, false, || found(1));
+    let again = cache.get_or_run_with(&app, &store, false, || panic!("ran again"));
     assert!(std::sync::Arc::ptr_eq(&report, &again));
+    // Not while the app is uninstalled: none of its Functions runs then.
+    assert!(cache.get(&app, &store, true).is_none());
 
     // A check that ran out of time is not kept.
     std::fs::write(&wasm, b"a third module").unwrap();
-    cache.get_or_run_with(&app, &store, || found(0));
+    cache.get_or_run_with(&app, &store, false, || found(0));
     std::fs::remove_dir_all(&app_dir).ok();
-    assert!(cache.get(&app, &store).is_none());
+    assert!(cache.get(&app, &store, false).is_none());
 }
 
 /// The checkout playground, with the store data in a copy of its own that keeps the scenarios
@@ -7063,7 +7306,7 @@ fn a_check_past_its_budget_says_how_many_scenarios_it_checked() {
         "http://127.0.0.1:9",
     );
     let state = checkout_server_with_data(app_dir.clone(), &[], true, Some(&data));
-    let app = lsf_checkout::app::load(&app_dir).unwrap();
+    let app = lsf_app::config::load(&app_dir).unwrap();
     let store = state.loaded().store.clone();
     let report = super::home_check::run(&state, &app, &store, Duration::ZERO);
     assert_eq!((report.checked, report.total), (0, 3));
@@ -7083,6 +7326,32 @@ fn a_check_past_its_budget_says_how_many_scenarios_it_checked() {
         "{}",
         &html[..html.len().min(3000)]
     );
+}
+
+/// The `expect` of the playground's scenarios, as `lsf app check` checks it: the payment
+/// customization hides Cash on Delivery, and the validation refuses the address as the order is
+/// placed (the step `expect` runs the Functions for by default, a second run after the one of
+/// the page).
+#[test]
+fn the_scenarios_of_the_playground_get_what_they_expect() {
+    let (app_dir, data) = playground_with(
+        "expect",
+        &["fn-payment-hide-cod", "fn-validation-street-number"],
+        "http://127.0.0.1:9",
+    );
+    let state = checkout_server_with_data(app_dir.clone(), &[], true, Some(&data));
+    let app = lsf_app::config::load(&app_dir).unwrap();
+    let store = state.loaded().store.clone();
+    // The check of the home page leaves them aside.
+    let report = super::home_check::run(&state, &app, &store, Duration::from_secs(60));
+    assert_eq!((report.expectations, report.unmet.len()), (0, 0));
+    let report =
+        super::home_check::run_with_expectations(&state, &app, &store, Duration::from_secs(60));
+    std::fs::remove_dir_all(&data).ok();
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!((report.checked, report.total), (2, 2));
+    assert_eq!(report.expectations, 8);
+    assert!(report.unmet.is_empty(), "{:#?}", report.unmet);
 }
 
 #[test]
@@ -7271,6 +7540,30 @@ fn a_scenario_lists_the_discounts_only_when_it_has_its_own() {
     let store = scenario("store");
     assert!(discounts(&store).starts_with("the store's "), "{store}");
     assert!(!discounts(&store).contains("Bulk deal"));
+}
+
+#[test]
+fn a_scenario_with_no_country_says_it_opens_in_the_shops() {
+    let data = ScenarioData::new(
+        "home-country",
+        &[(
+            "plain.json",
+            r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}}"#,
+        )],
+    );
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let plain = &json["scenarios"][0];
+    let country = plain["summary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["label"] == "Country, language")
+        .map(|row| row["text"].as_str().unwrap())
+        .unwrap();
+    // The demo shop is in Canada, the first country of its data the United States.
+    assert_eq!(country, "CA by default, English", "{plain}");
+    assert!(!plain["facts"].as_array().unwrap().contains(&json!("CA")));
 }
 
 #[test]
@@ -7481,10 +7774,11 @@ fn a_problem_of_the_home_page_opens_the_checkout_where_it_shows() {
                 "a a.json",
                 r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["quantity-limit", "volume-discount"]}"#,
             ),
-            // Runs every extension: one that names it wins over it.
+            // Runs every extension the shop has an enabled owner of (and its UI extensions): one
+            // that names it wins over it.
             (
                 "aaa-all.json",
-                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}}"#,
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "checkout": {"functions": {"remote-rules": {"enabled": true}, "quantity-limit": {"enabled": true}}}}"#,
             ),
             (
                 "a b&c.json",
@@ -7932,6 +8226,72 @@ fn the_customer_account_shows_the_orders_of_the_customer_logged_in() {
     std::fs::remove_dir_all(&app).ok();
 }
 
+/// Uninstalling the app removes its customer account UI extensions, as Shopify removes an
+/// uninstalled app's extensions: the pages load none and say why, its full page is not there,
+/// and a reinstall brings them back.
+#[test]
+fn an_uninstalled_app_renders_no_customer_account_extension() {
+    let app = app_with_account("uninstalled");
+    let state = checkout_server_with(app.clone(), &[], true, None, Some(Default::default()));
+    get(
+        &state,
+        "/__lsf/login?customer=jane.doe@example.com&return_to=/account",
+        "ca-un",
+    );
+    let handles = |list: &Json| -> Vec<String> {
+        list.as_array()
+            .into_iter()
+            .flatten()
+            .map(|extension| extension["handle"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let orders = account_state(&get(&state, "/account", "ca-un"));
+    assert_eq!(handles(&orders["extensions"]), ["ca-test"]);
+    assert_eq!(orders["uninstalled"], Json::Null);
+    assert_eq!(get(&state, "/account/pages/ca-test", "ca-un").status, 200);
+
+    let uninstalled = admin_request(&state, "POST", "/__lsf/admin/uninstall", "{}");
+    assert_eq!(uninstalled.status, 200, "{}", text(&uninstalled));
+    let id = orders["orders"][0]["legacyId"].to_string();
+    for path in [
+        "/account".to_string(),
+        format!("/account/orders/{id}"),
+        "/account/profile".to_string(),
+    ] {
+        let page = account_state(&get(&state, &path, "ca-un"));
+        assert_eq!(page["extensions"], json!([]), "{path}");
+        assert_eq!(
+            handles(&page["uninstalled"]["extensions"]),
+            ["ca-test"],
+            "{path}"
+        );
+        assert!(
+            page["uninstalled"]["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("the app is not installed on the shop"),
+            "{path}"
+        );
+    }
+    let full = get(&state, "/account/pages/ca-test", "ca-un");
+    assert_eq!(full.status, 404);
+    assert!(
+        text(&full).contains(
+            "The full page of ca-test is not there: the app is not installed on the shop"
+        ),
+        "{}",
+        text(&full)
+    );
+
+    let installed = admin_request(&state, "POST", "/__lsf/admin/install", "{}");
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let back = account_state(&get(&state, "/account", "ca-un"));
+    assert_eq!(handles(&back["extensions"]), ["ca-test"]);
+    assert_eq!(back["uninstalled"], Json::Null);
+    assert_eq!(get(&state, "/account/pages/ca-test", "ca-un").status, 200);
+    let _ = std::fs::remove_dir_all(app);
+}
+
 #[test]
 fn a_full_page_of_the_customer_account_is_the_page_of_an_extension() {
     let app = app_with_account("pages");
@@ -8060,6 +8420,651 @@ fn an_order_of_the_store_data_has_its_returns_and_its_shipments() {
         order["returns"][0]["lines"],
         json!([{"lineId": lines[0]["id"], "quantity": 1}])
     );
+    std::fs::remove_dir_all(&app).ok();
+}
+
+/// An app with one UI extension of the checkout and the customer account (`metafield-reader`)
+/// that declares a metafield of each owner: the shop's `$app.gift-codes`, which the session data
+/// sets, and the demo store's own of the product, the customer, the company and its location.
+fn app_with_metafield_reader(label: &str) -> std::path::PathBuf {
+    let root =
+        std::env::temp_dir().join(format!("lsf-metafields-app-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let directory = root.join("extensions").join("metafield-reader");
+    std::fs::create_dir_all(directory.join("dist")).unwrap();
+    std::fs::write(
+        directory.join("shopify.extension.toml"),
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Metafield reader"
+handle = "metafield-reader"
+type = "ui_extension"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+    [[extensions.targeting.metafields]]
+    namespace = "$app:gift"
+    key = "wrapped"
+    owner_type = "CART"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.block.render"
+
+  [[extensions.metafields]]
+  namespace = "$app"
+  key = "gift-codes"
+
+  [[extensions.metafields]]
+  namespace = "custom"
+  key = "care"
+  owner_type = "PRODUCT"
+
+  [[extensions.metafields]]
+  namespace = "custom"
+  key = "job_title"
+  owner_type = "CUSTOMER"
+
+  [[extensions.metafields]]
+  namespace = "custom"
+  key = "payment_terms"
+  owner_type = "COMPANY"
+
+  [[extensions.metafields]]
+  namespace = "custom"
+  key = "delivery_notes"
+  owner_type = "COMPANY_LOCATION"
+
+  # The shop has one, the products do not.
+  [[extensions.metafields]]
+  namespace = "custom"
+  key = "announcement"
+  owner_type = "PRODUCT"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("dist").join("metafield-reader.js"),
+        "// built",
+    )
+    .unwrap();
+    root
+}
+
+#[test]
+fn app_metafields_are_the_declared_ones_of_the_shop_the_lines_and_the_buyer() {
+    let app = app_with_metafield_reader("checkout");
+    let state = checkout_server_of(app.clone(), &[], true);
+    let session = "co-app-metafields";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "customer": "alex.morgan@example.com",
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]},
+            "data": {"shop": {"metafields": {"$app": {
+                "gift-codes": {"type": "json", "value": ["GIFT-1", "GIFT-2"]}
+            }}}}
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let path = header(&get(&state, "/checkout", session), "location")
+        .expect("a checkout")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+
+    let buyer = &json["buyer"];
+    let company = &buyer["purchasingCompany"];
+    let entry = |kind: &str, id: &Json, namespace: &str, key: &str, value: &str| {
+        json!({
+            "target": {"type": kind, "id": id},
+            "metafield": {"namespace": namespace, "key": key, "type": if key == "gift-codes" { "json" } else { "single_line_text_field" }, "value": value}
+        })
+    };
+    let product = json!(format!(
+        "gid://shopify/Product/{}",
+        json["lines"][0]["productId"]
+    ));
+    assert!(
+        json["shop"]["id"]
+            .as_str()
+            .unwrap()
+            .starts_with("gid://shopify/Shop/")
+    );
+    let expected = json!([
+        entry(
+            "shop",
+            &json["shop"]["id"],
+            "$app",
+            "gift-codes",
+            r#"["GIFT-1","GIFT-2"]"#
+        ),
+        entry(
+            "product",
+            &product,
+            "custom",
+            "care",
+            "Machine wash cold. Tumble dry low."
+        ),
+        entry(
+            "customer",
+            &buyer["customer"]["id"],
+            "custom",
+            "job_title",
+            "Purchasing manager"
+        ),
+        entry(
+            "company",
+            &company["company"]["id"],
+            "custom",
+            "payment_terms",
+            "Net 30"
+        ),
+        entry(
+            "companyLocation",
+            &company["location"]["id"],
+            "custom",
+            "delivery_notes",
+            "Loading dock B, weekdays 8am to 4pm"
+        ),
+    ]);
+    assert_eq!(json["appMetafields"], expected);
+    // The page hands each frame the declarations, with the target of a target's own.
+    let declared = json["extensions"][0]["metafields"].as_array().unwrap();
+    assert_eq!(
+        declared[0],
+        json!({"namespace": "$app", "key": "gift-codes"})
+    );
+    assert_eq!(
+        declared.last().unwrap(),
+        &json!({
+            "namespace": "$app:gift", "key": "wrapped", "ownerType": "CART", "targetType": "cart",
+            "target": "purchase.checkout.block.render"
+        })
+    );
+    // With an `owner_type`, the `target.type` of the entries it reads, which the page compares.
+    assert_eq!(
+        declared[3],
+        json!({
+            "namespace": "custom", "key": "payment_terms", "ownerType": "COMPANY",
+            "targetType": "company"
+        })
+    );
+
+    // The cart's are the checkout's `metafields`: the frames add them as they change.
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "metafield", "change": {
+            "type": "updateCartMetafield", "namespace": "$app:gift", "key": "wrapped",
+            "valueType": "boolean", "value": "true"
+        }}]),
+    );
+    let json = body_json(&reply);
+    assert_eq!(json["metafields"][0]["key"], "wrapped");
+    assert_eq!(json["appMetafields"], expected);
+
+    // The order status page of the order reads the same, and the order keeps its cart's.
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let orders = account_state(&get(&state, "/account", session));
+    let placed = &orders["orders"][0];
+    let order = account_state(&get(
+        &state,
+        &format!("/account/orders/{}", placed["legacyId"]),
+        session,
+    ));
+    assert_eq!(order["shop"]["id"], json["shop"]["id"]);
+    assert_eq!(order["appMetafields"], expected);
+    assert_eq!(order["order"]["metafields"][0]["key"], "wrapped");
+    assert_eq!(order["order"]["token"], json["token"]);
+    // Another session has neither this customer nor the shop's metafield of this session's data.
+    let guest = account_state(&get(&state, "/account", "ca-guest"));
+    assert_eq!(guest["appMetafields"], json!([]));
+    std::fs::remove_dir_all(&app).ok();
+}
+
+/// The `appMetafields` entries of `json` (a checkout, thank-you or account state) whose target
+/// is of `kind`: `(id, namespace.key, value)`.
+fn app_metafields_of(json: &Json, kind: &str) -> Vec<(String, String, String)> {
+    json["appMetafields"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no appMetafields: {json}"))
+        .iter()
+        .filter(|entry| entry["target"]["type"] == kind)
+        .map(|entry| {
+            let metafield = &entry["metafield"];
+            (
+                entry["target"]["id"].as_str().unwrap().to_string(),
+                format!(
+                    "{}.{}",
+                    metafield["namespace"].as_str().unwrap(),
+                    metafield["key"].as_str().unwrap()
+                ),
+                metafield["value"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn app_metafields_have_the_products_of_the_components_of_a_bundle() {
+    // The metafield reader, and the cart transform of the fixture app, which merges the tee and
+    // the tote into a bundle whose parent is the mug.
+    let app = app_with_metafield_reader("bundle");
+    copy_directory(
+        &fixture_app().join("extensions/bundle-transform"),
+        &app.join("extensions/bundle-transform"),
+    );
+    let state = checkout_server_of(app.clone(), &[], true);
+    let session = "co-app-metafields-bundle";
+    let mug = variant_id(&state, "MUG-OAT");
+    let tee_product = {
+        let loaded = state.loaded();
+        let tee = variant_id(&state, "TEE-BLK-M");
+        loaded.store.variant(tee).unwrap().0.id
+    };
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "customer": "alex.morgan@example.com",
+            "cart": {"items": [
+                {"variant": "TEE-BLK-M", "quantity": 1},
+                {"variant": "TOTE-NAT", "quantity": 1}
+            ]},
+            "data": {"checkout": {"functions": {"bundle-transform": {"enabled": true, "metafields": {
+                "$app:config.settings": {"type": "json", "value": {"operations": [
+                    {"type": "merge", "lines": [1, 2], "parentVariant": mug, "title": "Set"}
+                ]}}
+            }}}}}
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let path = header(&get(&state, "/checkout", session), "location")
+        .expect("a checkout")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    let lines = json["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), 1, "{json}");
+    assert_eq!(lines[0]["transformedBy"], "merge");
+    // The tee is a component of the bundle only: its product's care instructions are read.
+    let care = vec![(
+        format!("gid://shopify/Product/{tee_product}"),
+        "custom.care".to_string(),
+        "Machine wash cold. Tumble dry low.".to_string(),
+    )];
+    assert_eq!(app_metafields_of(&json, "product"), care, "the checkout");
+
+    // The thank-you page, and the order status page of the order.
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let thanks = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(thanks["status"], "completed");
+    assert_eq!(
+        app_metafields_of(&thanks, "product"),
+        care,
+        "the thank-you page"
+    );
+    let orders = account_state(&get(&state, "/account", session));
+    let order = account_state(&get(
+        &state,
+        &format!("/account/orders/{}", orders["orders"][0]["legacyId"]),
+        session,
+    ));
+    assert_eq!(order["order"]["lines"][0]["transformedBy"], "merge");
+    assert_eq!(
+        app_metafields_of(&order, "product"),
+        care,
+        "the order status page"
+    );
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn app_metafields_have_what_the_backend_sets_through_the_admin_api() {
+    // The store data writes a metafield of the app's namespace on the shop, `$app`; the backend
+    // sets another key of it through the Admin API (which keeps it as `app--<id>`, and the store
+    // gives back as `$app`), and one of the tee. The extension declares the backend's key: it
+    // reads the shop's and the product's, next to the data's own.
+    let data =
+        std::env::temp_dir().join(format!("lsf-metafields-admin-data-{}", std::process::id()));
+    std::fs::remove_dir_all(&data).ok();
+    crate::checkout::write_demo_scenarios(&data, &[]);
+    let store_file = data.join("store.json");
+    let mut store_json: Json =
+        serde_json::from_str(&std::fs::read_to_string(&store_file).unwrap()).unwrap();
+    store_json["shop"]["metafields"]["$app"] = json!({"note": "from the store data"});
+    std::fs::write(&store_file, store_json.to_string()).unwrap();
+    let app = app_with_metafield_reader("admin-api");
+    let state = checkout_server_with(
+        app.clone(),
+        &[],
+        true,
+        Some(&data),
+        Some(Default::default()),
+    );
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "write_products"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let shop = admin_query(&state, "{ shop { id } }")["data"]["shop"]["id"].clone();
+    let tee = admin_query(
+        &state,
+        r#"{ productVariants(first: 1, query: "sku:TEE-BLK-M") { nodes { product { id } } } }"#,
+    )["data"]["productVariants"]["nodes"][0]["product"]["id"]
+        .clone();
+    let set = admin_query(
+        &state,
+        &format!(
+            r#"mutation {{ metafieldsSet(metafields: [
+                {{ownerId: {shop}, namespace: "$app", key: "gift-codes", type: "json", value: "[\"ADMIN-1\"]"}},
+                {{ownerId: {tee}, namespace: "$app", key: "gift-codes", type: "json", value: "[\"TEE-1\"]"}}
+            ]) {{ metafields {{ namespace }} userErrors {{ message }} }} }}"#
+        ),
+    );
+    let set = &set["data"]["metafieldsSet"];
+    assert_eq!(set["userErrors"], json!([]), "{set}");
+    assert!(
+        set["metafields"][0]["namespace"]
+            .as_str()
+            .unwrap()
+            .starts_with("app--"),
+        "{set}"
+    );
+
+    let session = "co-app-metafields-admin";
+    let path = start_checkout(
+        &state,
+        session,
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(
+        app_metafields_of(&json, "shop"),
+        [(
+            shop.as_str().unwrap().to_string(),
+            "$app.gift-codes".to_string(),
+            r#"["ADMIN-1"]"#.to_string()
+        )]
+    );
+    assert_eq!(
+        app_metafields_of(&json, "product")
+            .into_iter()
+            .filter(|(_, name, _)| name == "$app.gift-codes")
+            .collect::<Vec<_>>(),
+        [(
+            tee.as_str().unwrap().to_string(),
+            "$app.gift-codes".to_string(),
+            r#"["TEE-1"]"#.to_string()
+        )]
+    );
+    std::fs::remove_dir_all(&app).ok();
+    std::fs::remove_dir_all(&data).ok();
+}
+
+#[test]
+fn the_order_status_page_reads_the_metafields_of_the_order() {
+    // The extension declares `$app:gift.message` of the order, and `$app:gift.note` of any
+    // owner. The backend defines `$app:gift.message` on orders, copied from the cart.
+    let app = app_with_metafield_reader("order");
+    let manifest = app.join("extensions/metafield-reader/shopify.extension.toml");
+    let mut toml = std::fs::read_to_string(&manifest).unwrap();
+    toml.push_str(
+        r#"
+  [[extensions.metafields]]
+  namespace = "$app:gift"
+  key = "message"
+  owner_type = "ORDER"
+
+  [[extensions.metafields]]
+  namespace = "$app:gift"
+  key = "note"
+"#,
+    );
+    std::fs::write(&manifest, toml).unwrap();
+    let state = checkout_server_with(app.clone(), &[], true, None, Some(Default::default()));
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "write_orders,write_products"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let defined = admin_query(
+        &state,
+        r#"mutation { metafieldDefinitionCreate(definition: {
+            name: "Gift message", ownerType: ORDER, namespace: "$app:gift", key: "message",
+            type: "single_line_text_field", capabilities: {cartToOrderCopyable: {enabled: true}}
+        }) { createdDefinition { id } userErrors { message } } }"#,
+    );
+    assert_eq!(
+        defined["data"]["metafieldDefinitionCreate"]["userErrors"],
+        json!([]),
+        "{defined}"
+    );
+
+    // Jane checks out with a gift message on her cart.
+    let session = "ca-order-metafields";
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"customer": "jane.doe@example.com", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let path = header(&get(&state, "/checkout", session), "location")
+        .expect("a checkout")
+        .to_string();
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "metafield", "change": {
+            "type": "updateCartMetafield", "namespace": "$app:gift", "key": "message",
+            "valueType": "single_line_text_field", "value": "Happy birthday"
+        }}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    // The checkout has no order: no `order` entry.
+    assert_eq!(
+        app_metafields_of(&body_json(&reply), "order"),
+        Vec::<(String, String, String)>::new()
+    );
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    // Nor has the thank-you page.
+    let thanks = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(thanks["status"], "completed");
+    assert_eq!(
+        app_metafields_of(&thanks, "order"),
+        Vec::<(String, String, String)>::new()
+    );
+
+    // The order status page of the order has its metafield, copied from the cart.
+    let orders = account_state(&get(&state, "/account", session));
+    let placed = orders["orders"][0].clone();
+    assert_eq!(placed["placedHere"], true);
+    let order_id = placed["id"].as_str().unwrap().to_string();
+    let page = format!("/account/orders/{}", placed["legacyId"]);
+    let order = account_state(&get(&state, &page, session));
+    let message = |value: &str| {
+        (
+            order_id.clone(),
+            "$app:gift.message".to_string(),
+            value.to_string(),
+        )
+    };
+    assert_eq!(
+        app_metafields_of(&order, "order"),
+        [message("Happy birthday")]
+    );
+    // The cart's is there too, for a declaration without `owner_type`.
+    assert_eq!(order["order"]["metafields"][0]["key"], "message");
+    // The Admin API reads it on the order.
+    let read = admin_query(
+        &state,
+        &format!(
+            r#"{{ order(id: "{order_id}") {{ metafield(namespace: "$app:gift", key: "message") {{ value }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        read["data"]["order"]["metafield"]["value"], "Happy birthday",
+        "{read}"
+    );
+
+    // The backend changes it, and sets another: the page reads both.
+    let set = admin_query(
+        &state,
+        &format!(
+            r#"mutation {{ metafieldsSet(metafields: [
+                {{ownerId: "{order_id}", namespace: "$app:gift", key: "message", value: "Happy 30th"}},
+                {{ownerId: "{order_id}", namespace: "$app:gift", key: "note", type: "number_integer", value: "3"}}
+            ]) {{ userErrors {{ message }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        set["data"]["metafieldsSet"]["userErrors"],
+        json!([]),
+        "{set}"
+    );
+    let order = account_state(&get(&state, &page, session));
+    assert_eq!(
+        app_metafields_of(&order, "order"),
+        [
+            message("Happy 30th"),
+            (
+                order_id.clone(),
+                "$app:gift.note".to_string(),
+                "3".to_string()
+            ),
+        ]
+    );
+    assert_eq!(
+        order["appMetafields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["metafield"]["key"] == "note")
+            .unwrap()["metafield"]["type"],
+        "number_integer"
+    );
+
+    // An order of the store data is a record of the Admin API too, under its GID.
+    let stored = orders["orders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|order| order["placedHere"].is_null())
+        .expect("Jane has orders in the demo store")
+        .clone();
+    let stored_id = stored["id"].as_str().unwrap();
+    let set = admin_query(
+        &state,
+        &format!(
+            r#"mutation {{ metafieldsSet(metafields: [
+                {{ownerId: "{stored_id}", namespace: "$app:gift", key: "message", type: "single_line_text_field", value: "Old order"}}
+            ]) {{ userErrors {{ message }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        set["data"]["metafieldsSet"]["userErrors"],
+        json!([]),
+        "{set}"
+    );
+    let order = account_state(&get(
+        &state,
+        &format!("/account/orders/{}", stored["legacyId"]),
+        session,
+    ));
+    assert_eq!(
+        app_metafields_of(&order, "order"),
+        [(
+            stored_id.to_string(),
+            "$app:gift.message".to_string(),
+            "Old order".to_string()
+        )]
+    );
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn the_order_status_page_reads_the_location_the_order_was_placed_for() {
+    let app = app_with_metafield_reader("order-location");
+    let state = checkout_server_of(app.clone(), &[], false);
+    let session = "co-app-metafields-location";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "customer": "alex.morgan@example.com",
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]},
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let path = header(&get(&state, "/checkout", session), "location")
+        .expect("a checkout")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    let locations = json["account"]["locations"].as_array().unwrap();
+    assert_eq!(locations[0]["current"], true, "Portland, the first");
+    let portland = json["buyer"]["purchasingCompany"]["location"]["id"].clone();
+    let notes = vec![(
+        portland.as_str().unwrap().to_string(),
+        "custom.delivery_notes".to_string(),
+        "Loading dock B, weekdays 8am to 4pm".to_string(),
+    )];
+    assert_eq!(app_metafields_of(&json, "companyLocation"), notes);
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+
+    // The buyer now buys for Seattle, which has no delivery notes.
+    let seattle = locations[1]["id"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_string();
+    let reply = get(
+        &state,
+        &format!("/company_location/update?location_id={seattle}&return_to=/account"),
+        session,
+    );
+    assert_eq!(reply.status, 302, "{}", text(&reply));
+    let account = account_state(&get(&state, "/account", session));
+    assert_eq!(
+        account["buyer"]["purchasingCompany"]["location"]["name"],
+        "Northwind Seattle"
+    );
+    // The order placed for Portland still reads Portland's.
+    let order = account_state(&get(
+        &state,
+        &format!("/account/orders/{}", account["orders"][0]["legacyId"]),
+        session,
+    ));
+    assert_eq!(
+        order["order"]["buyer"]["purchasingCompany"]["location"]["id"],
+        portland
+    );
+    assert_eq!(app_metafields_of(&order, "companyLocation"), notes);
     std::fs::remove_dir_all(&app).ok();
 }
 
@@ -8230,4 +9235,1048 @@ fn the_home_page_says_what_never_runs() {
     for scenario in json["scenarios"].as_array().unwrap() {
         assert_ne!(scenario["status"], "warning", "{scenario}");
     }
+}
+
+// --- The Admin API ---
+
+/// The fixture theme's server, serving the Admin API.
+fn admin_server() -> ServerState {
+    fixture_server(Some(Default::default())).0
+}
+
+#[test]
+fn the_admin_api_serves_the_versions_it_is_told() {
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            polaris: Default::default(),
+            admin: Some(super::admin::AdminSettings {
+                versions: lsf_app::admin::version::Served::parse("2026-10,2027-01").unwrap(),
+                ..Default::default()
+            }),
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            compress: true,
+            minify: true,
+            throttle: Default::default(),
+            timings: false,
+            customer: None,
+            checkout: None,
+        },
+    );
+    let query = json!({"query": "{ shop { name } }"}).to_string();
+    for version in ["2026-10", "2027-01"] {
+        let reply = admin_request(
+            &state,
+            "POST",
+            &format!("/admin/api/{version}/graphql.json"),
+            &query,
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        assert_eq!(header(&reply, "x-shopify-api-version"), Some(version));
+    }
+    let admin = state.admin.as_ref().unwrap();
+    let banner = admin.banner("http://127.0.0.1:9292");
+    assert_eq!(
+        banner[0],
+        "admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json"
+    );
+    assert_eq!(
+        banner[1],
+        "        also API version 2027-01 (release candidate)"
+    );
+    // Without the option, the release candidate is not served.
+    let default = admin_server();
+    let reply = admin_request(&default, "POST", "/admin/api/2027-01/graphql.json", &query);
+    assert_eq!(reply.status, 404);
+    assert!(text(&reply).contains("--admin-versions 2026-10,2027-01"));
+}
+
+/// A request to the Admin API with a raw body, as a backend sends it.
+fn admin_request(state: &ServerState, method: &str, path: &str, body: &str) -> Reply {
+    let admin = state
+        .admin
+        .as_ref()
+        .expect("the server serves the Admin API");
+    let token = admin.api.token(&admin.api.default_shop());
+    let mut incoming = request(method, path, json!({}), "admin");
+    incoming
+        .headers
+        .insert("x-shopify-access-token".to_string(), token);
+    incoming
+        .headers
+        .insert("content-type".to_string(), "application/json".to_string());
+    incoming.body = bytes::Bytes::from(body.to_string());
+    state.dispatch(&incoming)
+}
+
+/// A GraphQL query to the Admin API of the server.
+fn admin_query(state: &ServerState, query: &str) -> Json {
+    let reply = admin_request(
+        state,
+        "POST",
+        "/admin/api/2026-10/graphql.json",
+        &json!({ "query": query }).to_string(),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    body_json(&reply)
+}
+
+/// `productUpdate` of the title of the product with `handle`.
+fn retitle(state: &ServerState, handle: &str, title: &str) {
+    let found = admin_query(
+        state,
+        &format!(r#"{{ productByHandle(handle: "{handle}") {{ id }} }}"#),
+    );
+    let id = found["data"]["productByHandle"]["id"].as_str().unwrap();
+    let updated = admin_query(
+        state,
+        &format!(
+            r#"mutation {{ productUpdate(product: {{id: "{id}", title: "{title}"}}) {{ userErrors {{ message }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        updated["data"]["productUpdate"]["userErrors"],
+        json!([]),
+        "{updated}"
+    );
+}
+
+/// The `<h1>` of a product page, as `session` sees it.
+fn title_on_page(state: &ServerState, handle: &str, session: &str) -> String {
+    let page = text(&get(state, &format!("/products/{handle}"), session));
+    page.split_once("<h1>")
+        .and_then(|(_, rest)| rest.split_once("</h1>"))
+        .map(|(title, _)| title.to_string())
+        .unwrap_or_else(|| panic!("no title in {page}"))
+}
+
+#[test]
+fn the_admin_api_is_served_before_the_storefront() {
+    let state = admin_server();
+    let answer = admin_query(
+        &state,
+        "{ shop { myshopifyDomain } products(first: 1) { nodes { id } } }",
+    );
+    assert!(
+        answer["data"]["shop"]["myshopifyDomain"].is_string(),
+        "{answer}"
+    );
+    let reply = admin_request(&state, "POST", "/admin/api/2026-10/graphql.json", "{}");
+    assert_eq!(header(&reply, "x-shopify-api-version"), Some("2026-10"));
+    let rest = admin_request(&state, "GET", "/admin/api/2026-10/products.json", "");
+    assert_eq!(rest.status, 404);
+    assert!(
+        body_json(&rest)["errors"]
+            .as_str()
+            .unwrap()
+            .contains("REST")
+    );
+    let status = admin_request(&state, "GET", "/__lsf/admin", "");
+    assert_eq!(body_json(&status)["apiVersion"], "2026-10");
+    let webhooks = admin_request(&state, "GET", "/__lsf/webhooks", "");
+    assert_eq!(body_json(&webhooks)["count"], 0);
+    // The rest of the control API, and the storefront, are where they were.
+    assert_eq!(get(&state, "/__lsf/status", "admin").status, 200);
+    assert_eq!(get(&state, "/", "admin").status, 200);
+    // A server without the Admin API leaves its paths to the storefront.
+    assert_eq!(
+        server()
+            .dispatch(&request(
+                "POST",
+                "/admin/api/2026-10/graphql.json",
+                json!({}),
+                "x"
+            ))
+            .status,
+        404
+    );
+}
+
+#[test]
+fn reloading_the_store_data_seeds_the_shops_again() {
+    let state = admin_server();
+    let count = |state: &ServerState| {
+        admin_query(state, "{ productsCount { count } }")["data"]["productsCount"]["count"]
+            .as_u64()
+            .unwrap()
+    };
+    let before = count(&state);
+    let created = admin_query(
+        &state,
+        r#"mutation { productCreate(product: {title: "Made by the backend"}) { product { id } userErrors { message } } }"#,
+    );
+    assert_eq!(created["data"]["productCreate"]["userErrors"], json!([]));
+    assert_eq!(count(&state), before + 1);
+    let reply = post(&state, "/__lsf/reload", json!({}), "admin");
+    assert_eq!(reply.status, 200);
+    assert_eq!(count(&state), before);
+}
+
+/// What a test backend received: the path, the headers (lowercase names), the body.
+/// A request as the backend received it.
+pub(super) struct Seen {
+    pub(super) method: String,
+    /// The path and the query, as sent.
+    pub(super) target: String,
+    pub(super) headers: HashMap<String, String>,
+    pub(super) body: Vec<u8>,
+}
+
+impl Seen {
+    pub(super) fn path(&self) -> &str {
+        self.target.split('?').next().unwrap_or_default()
+    }
+
+    /// The query, decoded as `URLSearchParams` decodes it, in order.
+    pub(super) fn query(&self) -> Vec<(String, String)> {
+        let query = self.target.split_once('?').map_or("", |(_, query)| query);
+        form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect()
+    }
+
+    pub(super) fn param(&self, name: &str) -> Option<String> {
+        self.query()
+            .into_iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value)
+    }
+}
+
+/// A backend on a port of its own: each request is answered with the raw HTTP `answer`
+/// writes for it, then sent to the channel.
+pub(super) fn backend(
+    answer: impl Fn(&Seen) -> String + Send + 'static,
+) -> (String, std::sync::mpsc::Receiver<Seen>) {
+    use std::io::{BufRead, Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (sender, received) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            if reader.read_line(&mut line).is_err() {
+                continue;
+            }
+            let mut parts = line.split(' ');
+            let method = parts.next().unwrap_or_default().to_string();
+            let target = parts.next().unwrap_or_default().to_string();
+            let mut headers = HashMap::new();
+            loop {
+                line.clear();
+                if reader.read_line(&mut line).is_err() {
+                    break;
+                }
+                match line.trim_end().split_once(':') {
+                    Some((name, value)) => {
+                        headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
+                    }
+                    None => break,
+                }
+            }
+            let length = headers
+                .get("content-length")
+                .and_then(|length| length.parse().ok())
+                .unwrap_or(0);
+            let mut body = vec![0; length];
+            let _ = reader.read_exact(&mut body);
+            let seen = Seen {
+                method,
+                target,
+                headers,
+                body,
+            };
+            let _ = stream.write_all(answer(&seen).as_bytes());
+            if sender.send(seen).is_err() {
+                break;
+            }
+        }
+    });
+    (url, received)
+}
+
+/// A raw HTTP answer.
+pub(super) fn http(status: &str, headers: &[(&str, &str)], body: &str) -> String {
+    let mut answer = format!(
+        "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n",
+        body.len()
+    );
+    for (name, value) in headers {
+        answer.push_str(&format!("{name}: {value}\r\n"));
+    }
+    answer.push_str("\r\n");
+    answer.push_str(body);
+    answer
+}
+
+/// A backend that answers `200` to every request and hands over what it received.
+fn webhook_receiver() -> (String, std::sync::mpsc::Receiver<Seen>) {
+    backend(|_| http("200 OK", &[], ""))
+}
+
+#[test]
+fn an_order_placed_at_the_checkout_is_an_order_of_the_admin_api() {
+    let (url, received) = webhook_receiver();
+    let state = checkout_server_with(
+        fixture_app(),
+        &[],
+        false,
+        None,
+        Some(super::admin::AdminSettings {
+            app_url: Some(url.clone()),
+            ..Default::default()
+        }),
+    );
+    // The fixture app asks for no scope: the backend gets the one it needs to read orders.
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "read_orders"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let subscribed = admin_query(
+        &state,
+        &format!(
+            r#"mutation {{ webhookSubscriptionCreate(topic: ORDERS_CREATE, webhookSubscription: {{uri: "{url}/webhooks/orders"}}) {{ userErrors {{ message }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        subscribed["data"]["webhookSubscriptionCreate"]["userErrors"],
+        json!([]),
+        "{subscribed}"
+    );
+
+    let path = start_checkout(
+        &state,
+        "co-admin",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+    assert_eq!(
+        operations(&state, &path, "co-admin", buyer_details()).status,
+        200
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-admin");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let completed = body_json(&reply);
+
+    let Seen {
+        target: webhook_path,
+        headers,
+        body,
+        ..
+    } = received
+        .recv_timeout(Duration::from_secs(10))
+        .expect("orders/create was delivered");
+    assert_eq!(webhook_path, "/webhooks/orders");
+    assert_eq!(headers["x-shopify-topic"], "orders/create");
+    let payload: Json = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["email"], "buyer@example.com");
+    let id = payload["admin_graphql_api_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let order = admin_query(
+        &state,
+        &format!(
+            r#"{{ order(id: "{id}") {{ name email lineItems(first: 5) {{ nodes {{ sku quantity }} }} }} }}"#
+        ),
+    );
+    assert_eq!(order["data"]["order"]["email"], "buyer@example.com");
+    assert_eq!(
+        order["data"]["order"]["lineItems"]["nodes"],
+        json!([{"sku": "TEE-BLK-M", "quantity": 2}])
+    );
+    assert_eq!(order["data"]["order"]["name"], payload["name"]);
+    // `complete` names the order as its `orders/create` does.
+    assert_eq!(
+        completed,
+        json!({
+            "redirect": format!("{path}/thank-you"),
+            "order": {
+                "id": payload["admin_graphql_api_id"],
+                "number": payload["order_number"],
+                "name": payload["name"],
+            },
+        })
+    );
+    // Asked again, the same order.
+    let again = post(&state, &format!("{path}/complete"), json!({}), "co-admin");
+    assert_eq!(body_json(&again), completed);
+}
+
+/// When the shop has an order of the session's number already, the Admin API records the
+/// checkout's order under its next one: `complete` answers that one, the one of the webhooks.
+#[test]
+fn complete_answers_the_order_the_admin_api_recorded() {
+    let state = checkout_server_with(fixture_app(), &[], true, None, Some(Default::default()));
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "write_orders"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    admin_query(
+        &state,
+        r#"mutation { orderCreate(order: {lineItems: [{title: "Service", quantity: 1, priceSet: {shopMoney: {amount: "5.00", currencyCode: USD}}}]}) { order { name } } }"#,
+    );
+    let path = start_checkout(
+        &state,
+        "co-numbered",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    assert_eq!(
+        operations(&state, &path, "co-numbered", buyer_details()).status,
+        200
+    );
+    let reply = post(
+        &state,
+        &format!("{path}/complete"),
+        json!({}),
+        "co-numbered",
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let order = body_json(&reply)["order"].clone();
+    assert_eq!(order["number"], 1005, "{order}");
+    assert_eq!(order["name"], "#1005");
+    let id = order["id"].as_str().unwrap();
+    assert!(id.starts_with("gid://shopify/Order/"), "{id}");
+    let recorded = admin_query(
+        &state,
+        &format!(r#"{{ order(id: "{id}") {{ name number }} }}"#),
+    );
+    assert_eq!(
+        recorded["data"]["order"],
+        json!({"name": "#1005", "number": 1005}),
+        "{recorded}"
+    );
+    // The session's own number, which the thank-you page shows, is still #1004.
+    let state_json = body_json(&get(&state, &format!("{path}.json"), "co-numbered"));
+    assert_eq!(state_json["order"]["number"], "#1004");
+    assert_eq!(state_json["order"]["id"], order["id"]);
+}
+
+/// With the Admin API, the checkout's orders and the Admin API's share one numbering: the
+/// shop numbers a checkout order when it records it, and the thank-you page shows that number.
+#[test]
+fn the_checkout_and_the_admin_api_number_orders_as_one() {
+    let state = checkout_server_with(fixture_app(), &[], true, None, Some(Default::default()));
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "write_orders"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let created = admin_query(
+        &state,
+        r#"mutation { orderCreate(order: {lineItems: [{title: "Service", quantity: 1, priceSet: {shopMoney: {amount: "5.00", currencyCode: USD}}}]}) { order { name } userErrors { message } } }"#,
+    );
+    assert_eq!(
+        created["data"]["orderCreate"]["order"]["name"], "#1004",
+        "{created}"
+    );
+    // Two sessions after it: each numbers its order after the store data's, whatever the
+    // others do (a test reads the same number every run), and the Admin API, where #1004 is
+    // taken, records each under its next number: no two of its orders share a name.
+    let a = place_an_order(&state, "numbered-a", json!({}));
+    let b = place_an_order(&state, "numbered-b", json!({}));
+    assert_eq!(a["order"]["number"], "#1004");
+    assert_eq!(b["order"]["number"], "#1004");
+    let name = |order: &Json| {
+        admin_query(
+            &state,
+            &format!(
+                r#"{{ order(id: "{}") {{ name }} }}"#,
+                order["order"]["id"].as_str().unwrap()
+            ),
+        )["data"]["order"]["name"]
+            .clone()
+    };
+    assert_eq!(name(&a), "#1005");
+    assert_eq!(name(&b), "#1006");
+    // Its id is the Admin API's, of the counter `orderCreate` takes ids from: not its number.
+    assert_ne!(b["order"]["id"], "gid://shopify/Order/1006");
+    let created_id = admin_query(
+        &state,
+        r#"{ orders(first: 1, query: "name:#1004") { nodes { id } } }"#,
+    );
+    let created_id = created_id["data"]["orders"]["nodes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    let b_id = b["order"]["id"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    assert!(b_id > created_id, "{b_id} after {created_id}");
+    let next = admin_query(
+        &state,
+        r#"mutation { orderCreate(order: {lineItems: [{title: "Service", quantity: 1, priceSet: {shopMoney: {amount: "5.00", currencyCode: USD}}}]}) { order { name } userErrors { message } } }"#,
+    );
+    assert_eq!(next["data"]["orderCreate"]["order"]["name"], "#1007");
+}
+
+/// The storefront's cart and the local checkout fire the webhooks of carts and checkouts, and a
+/// checkout left without an order is an abandoned checkout the backend reads, once the shop's
+/// clock is ten minutes past the buyer's contact.
+#[test]
+fn the_cart_and_the_checkout_fire_their_webhooks_and_abandon() {
+    let (url, received) = webhook_receiver();
+    let state = checkout_server_with(
+        fixture_app(),
+        &[],
+        false,
+        None,
+        Some(super::admin::AdminSettings {
+            app_url: Some(url.clone()),
+            ..Default::default()
+        }),
+    );
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "read_orders,read_customers"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    for topic in [
+        "CARTS_CREATE",
+        "CARTS_UPDATE",
+        "CHECKOUTS_CREATE",
+        "CHECKOUTS_UPDATE",
+    ] {
+        let subscribed = admin_query(
+            &state,
+            &format!(
+                r#"mutation {{ webhookSubscriptionCreate(topic: {topic}, webhookSubscription: {{uri: "{url}/webhooks"}}) {{ userErrors {{ message }} }} }}"#
+            ),
+        );
+        assert_eq!(
+            subscribed["data"]["webhookSubscriptionCreate"]["userErrors"],
+            json!([]),
+            "{subscribed}"
+        );
+    }
+    let next = || {
+        let Seen { headers, body, .. } = received
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a webhook was delivered");
+        let payload: Json = serde_json::from_slice(&body).unwrap();
+        (headers["x-shopify-topic"].clone(), payload)
+    };
+
+    // Add to cart: the cart is created; a change of it is an update.
+    let tote = variant_id(&state, "TOTE-NAT");
+    let added = post(
+        &state,
+        "/cart/add.js",
+        json!({"id": tote, "quantity": 2}),
+        "abandon",
+    );
+    assert_eq!(added.status, 200, "{}", text(&added));
+    let (topic, cart) = next();
+    assert_eq!(topic, "carts/create");
+    assert_eq!(cart["line_items"][0]["variant_id"], tote);
+    assert_eq!(cart["line_items"][0]["quantity"], 2);
+    let token = cart["token"].as_str().unwrap().to_string();
+    assert_eq!(
+        body_json(&get(&state, "/cart.js", "abandon"))["token"],
+        json!(token)
+    );
+    post(
+        &state,
+        "/cart/change.js",
+        json!({"line": 1, "quantity": 3}),
+        "abandon",
+    );
+    let (topic, cart) = next();
+    assert_eq!(topic, "carts/update");
+    assert_eq!(cart["line_items"][0]["quantity"], 3);
+
+    // The checkout's steps: created when it opens, updated when the buyer fills it in.
+    let reply = get(&state, "/checkout", "abandon");
+    assert_eq!(reply.status, 302);
+    let path = header(&reply, "location").unwrap().to_string();
+    assert_eq!(get(&state, &path, "abandon").status, 200);
+    let (topic, checkout) = next();
+    assert_eq!(topic, "checkouts/create");
+    assert_eq!(checkout["cart_token"], json!(token));
+    assert_eq!(checkout["line_items"][0]["quantity"], 3);
+    assert_eq!(checkout["email"], Json::Null);
+    let reply = operations(
+        &state,
+        &path,
+        "abandon",
+        json!([{"type": "email", "value": "jane.doe@example.com"}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let (topic, checkout) = next();
+    assert_eq!(topic, "checkouts/update");
+    assert_eq!(checkout["email"], "jane.doe@example.com");
+    assert_eq!(checkout["customer"]["email"], "jane.doe@example.com");
+    // Reading it again changes nothing: no webhook.
+    assert_eq!(get(&state, &format!("{path}.json"), "abandon").status, 200);
+
+    // No order: not abandoned yet, then abandoned once the clock is ten minutes on.
+    let abandoned = |state: &ServerState| {
+        admin_query(
+            state,
+            r#"{ abandonedCheckouts(first: 5) { nodes { id completedAt customer { email }
+                lineItems(first: 5) { nodes { quantity } } } } abandonedCheckoutsCount { count } }"#,
+        )
+    };
+    assert_eq!(
+        abandoned(&state)["data"]["abandonedCheckoutsCount"]["count"],
+        0
+    );
+    let moved = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/clock",
+        r#"{"advance": "11m"}"#,
+    );
+    assert_eq!(moved.status, 200, "{}", text(&moved));
+    let answer = abandoned(&state);
+    assert_eq!(
+        answer["data"]["abandonedCheckoutsCount"]["count"], 1,
+        "{answer}"
+    );
+    let node = &answer["data"]["abandonedCheckouts"]["nodes"][0];
+    assert_eq!(node["customer"]["email"], "jane.doe@example.com");
+    assert_eq!(node["lineItems"]["nodes"][0]["quantity"], 3);
+    let abandonment = admin_query(
+        &state,
+        &format!(
+            r#"{{ abandonmentByAbandonedCheckoutId(abandonedCheckoutId: "{}") {{ abandonmentType customer {{ email }} customerHasNoOrderSinceAbandonment }} }}"#,
+            node["id"].as_str().unwrap()
+        ),
+    );
+    assert_eq!(
+        abandonment["data"]["abandonmentByAbandonedCheckoutId"],
+        json!({"abandonmentType": "CHECKOUT", "customer": {"email": "jane.doe@example.com"}, "customerHasNoOrderSinceAbandonment": true})
+    );
+    assert!(received.try_recv().is_err(), "no other webhook");
+    // The status lists the mutations of the area, and each shop's outbox.
+    let status = body_json(&admin_request(&state, "GET", "/__lsf/admin", ""));
+    let mutations: Vec<&str> = status["mutations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Json::as_str)
+        .collect();
+    for mutation in [
+        "abandonmentUpdateActivitiesDeliveryStatuses",
+        "customerMerge",
+        "customerSegmentMembersQueryCreate",
+        "marketingActivityUpsertExternal",
+        "segmentCreate",
+        "shopifyqlQuery",
+    ] {
+        assert_eq!(
+            mutations.contains(&mutation),
+            mutation != "shopifyqlQuery",
+            "{mutation}"
+        );
+    }
+    assert!(status["shops"][0]["outbox"].is_array(), "{status}");
+}
+
+/// An order placed at the checkout completes its checkout: `checkouts/update` with
+/// `completed_at`, and a checkout completed before it was abandoned is not listed.
+#[test]
+fn placing_the_order_completes_the_checkout() {
+    let state = checkout_server_with(fixture_app(), &[], false, None, Some(Default::default()));
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "read_orders"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let path = start_checkout(
+        &state,
+        "completed",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    assert_eq!(
+        operations(&state, &path, "completed", buyer_details()).status,
+        200
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "completed");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let admin = state.admin.as_ref().unwrap();
+    let completed = admin
+        .api
+        .with_default_shop(|shop| {
+            shop.all("AbandonedCheckout")
+                .map(|checkout| checkout["completedAt"].clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert_eq!(completed.len(), 1);
+    assert!(completed[0].is_string(), "{completed:?}");
+    admin_request(&state, "POST", "/__lsf/admin/clock", r#"{"advance": "1h"}"#);
+    let answer = admin_query(&state, "{ abandonedCheckoutsCount { count } }");
+    assert_eq!(answer["data"]["abandonedCheckoutsCount"]["count"], 0);
+}
+
+/// A body over the limit was read as an empty one: a 40 MB `PUT` to a staged upload target
+/// answered `200` and stored nothing. The target takes it now, and a body over a limit is `413`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_body_over_the_limit_is_refused_and_an_upload_takes_more() {
+    use axum::extract::State;
+
+    let state = std::sync::Arc::new(admin_server());
+    let staged = admin_query(
+        &state,
+        r#"mutation { stagedUploadsCreate(input: {resource: FILE, filename: "big.bin", mimeType: "application/octet-stream"}) { stagedTargets { url resourceUrl } } }"#,
+    );
+    let target = &staged["data"]["stagedUploadsCreate"]["stagedTargets"][0];
+    let url = target["url"].as_str().unwrap().to_string();
+    let resource = target["resourceUrl"].as_str().unwrap().to_string();
+    let path = &url[url.find("/__lsf/").unwrap()..];
+    let send = |method: &str, path: &str, length: Option<usize>, body: Vec<u8>| {
+        let mut request = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", "127.0.0.1:9292");
+        if let Some(length) = length {
+            request = request.header("content-length", length.to_string());
+        }
+        let request = request.body(axum::body::Body::from(body)).unwrap();
+        super::handle(State(state.clone()), request)
+    };
+
+    let size = 40 << 20;
+    let response = send("PUT", path, None, vec![7; size]).await;
+    assert_eq!(response.status(), 200);
+    let stored = state
+        .admin
+        .as_ref()
+        .unwrap()
+        .api
+        .with_default_shop(|shop| {
+            lsf_app::admin::domains::app::uploads::bytes(shop, &resource)
+                .map(|blob| blob.bytes.len())
+        })
+        .flatten();
+    assert_eq!(stored, Some(size), "every byte is stored");
+
+    // Elsewhere, 32 MiB at most: refused, not read as nothing.
+    let response = send(
+        "POST",
+        "/admin/api/2026-10/graphql.json",
+        None,
+        vec![b' '; super::BODY_LIMIT + 1],
+    )
+    .await;
+    assert_eq!(response.status(), 413);
+    // A body that says it is larger than the limit is refused before it is read.
+    let response = send("PUT", path, Some(super::UPLOAD_BODY_LIMIT + 1), Vec::new()).await;
+    assert_eq!(response.status(), 413);
+
+    // A stubbed source is over the 32 MiB of other requests.
+    let stub = "/__lsf/admin/sources?url=https%3A%2F%2Fcdn.example.com%2Ftheme.zip";
+    let response = send("PUT", stub, None, vec![7; size]).await;
+    assert_eq!(response.status(), 200);
+    let stubbed = state
+        .admin
+        .as_ref()
+        .unwrap()
+        .api
+        .stubs()
+        .get("https://cdn.example.com/theme.zip");
+    assert_eq!(
+        stubbed.and_then(Result::ok).map(|bytes| bytes.len()),
+        Some(size)
+    );
+    let response = send("PUT", stub, Some(super::SOURCE_BODY_LIMIT + 1), Vec::new()).await;
+    assert_eq!(response.status(), 413);
+}
+
+/// A `layout/theme.liquid` the Admin API wrote, with nested `(1..1000000000)` loops, never
+/// answered `/` and pinned a core: the render stops at its budget, and the page says why.
+#[test]
+fn a_theme_file_that_never_ends_answers_the_render_limit() {
+    let state = admin_server();
+    let upsert = admin_query(
+        &state,
+        r#"mutation { themeFilesUpsert(themeId: "gid://shopify/OnlineStoreTheme/1", files: [{filename: "layout/theme.liquid", body: {type: TEXT, value: "<html><body>{% for i in (1..1000000000) %}{% for j in (1..1000000000) %}{{ j }}{% endfor %}{% endfor %}</body></html>"}}]) { userErrors { message } } }"#,
+    );
+    assert_eq!(
+        upsert["data"]["themeFilesUpsert"]["userErrors"],
+        json!([]),
+        "{upsert}"
+    );
+    let started = std::time::Instant::now();
+    let reply = get(&state, "/", "visitor");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(reply.status, 500);
+    let page = text(&reply);
+    assert!(
+        page.contains("Liquid error: Memory limits exceeded"),
+        "{page}"
+    );
+    assert_eq!(header(&reply, "x-lsf-liquid-errors"), Some("1"));
+    // The other pages of the theme are not held up.
+    let reset = admin_request(&state, "DELETE", "/__lsf/admin", "");
+    assert_eq!(reset.status, 200);
+    assert_eq!(get(&state, "/", "visitor").status, 200);
+}
+
+/// After SIGTERM, a server with a request that did not end was still alive 12 minutes later:
+/// the requests still running at the shutdown deadline are abandoned.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_server_does_not_wait_for_a_request_that_does_not_end() {
+    // A page held for a minute by the throttle stands for a request that does not end.
+    let state = std::sync::Arc::new(server_with_throttle("page=60s"));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(super::run_until(
+        state,
+        listener,
+        async move {
+            let _ = stopped.await;
+        },
+        std::time::Duration::from_millis(300),
+    ));
+    let waiting = tokio::spawn(async move { http_request(address, "/", &[]).await });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let asked = std::time::Instant::now();
+    stop.send(()).unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("the server stopped at its deadline");
+    assert!(result.unwrap().is_ok());
+    let took = asked.elapsed();
+    assert!(
+        took >= std::time::Duration::from_millis(300) && took < std::time::Duration::from_secs(2),
+        "{took:?}"
+    );
+    waiting.abort();
+}
+
+#[test]
+fn the_admin_opens_the_embedded_app_serves_its_app_bridge_and_is_linked_from_home() {
+    let state = checkout_server_with(
+        fixture_app(),
+        &[],
+        false,
+        None,
+        Some(super::admin::AdminSettings {
+            app_url: Some("http://localhost:3000".to_string()),
+            ..Default::default()
+        }),
+    );
+    let admin = state.admin.as_ref().expect("the Admin API");
+    assert_eq!(
+        admin.embedded_path().as_deref(),
+        Some("/admin/apps/checkout-fixtures")
+    );
+    assert_eq!(
+        admin.embedded_banner("http://127.0.0.1:9292").as_deref(),
+        Some(
+            "embedded: http://127.0.0.1:9292/admin/apps/checkout-fixtures   (the app in lsf's admin; its pages load http://127.0.0.1:9292/__lsf/admin/app-bridge.js)"
+        )
+    );
+
+    let page = get(
+        &state,
+        "/admin/apps/checkout-fixtures/app?tab=1",
+        "embedded",
+    );
+    assert_eq!(page.status, 200, "{}", text(&page));
+    let html = text(&page);
+    assert!(html.contains("class=\"lsf-frame\""), "{html}");
+    assert!(
+        html.contains("src=\"http://localhost:3000/app?embedded=1&amp;"),
+        "{html}"
+    );
+    assert!(html.contains("tab=1"));
+
+    let script = get(&state, "/__lsf/admin/app-bridge.js", "embedded");
+    assert_eq!(script.status, 200);
+    assert!(text(&script).contains("lsf's App Bridge"));
+    // Loaded by the app's pages, from their origin: a preflight is answered.
+    let preflight = state.dispatch(&polaris::preflight("/__lsf/admin/app-bridge.js"));
+    assert_eq!(preflight.status, 204);
+    assert_eq!(
+        header(&preflight, "access-control-allow-headers"),
+        Some("authorization,x-requested-with")
+    );
+
+    // A page of the admin lsf does not have is said so, before the storefront's 404.
+    let products = get(&state, "/admin/products", "embedded");
+    assert_eq!(products.status, 404);
+    assert!(text(&products).contains("lsf has no page here"));
+
+    let home = text(&get(&state, "/__lsf/checkouts", "embedded"));
+    assert!(
+        home.contains("href=\"/admin/apps/checkout-fixtures\" data-link=\"admin\""),
+        "{home}"
+    );
+}
+
+#[test]
+fn an_app_that_is_not_embedded_has_no_admin_to_open() {
+    let directory = std::env::temp_dir().join(format!("lsf-not-embedded-{}", std::process::id()));
+    std::fs::remove_dir_all(&directory).ok();
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("shopify.app.toml"),
+        "name = \"Standalone\"\nclient_id = \"22222222222222222222222222222222\"\nhandle = \"standalone\"\napplication_url = \"https://example.com\"\nembedded = false\n",
+    )
+    .unwrap();
+    let state = checkout_server_with(
+        directory.clone(),
+        &[],
+        false,
+        None,
+        Some(super::admin::AdminSettings::default()),
+    );
+    let admin = state.admin.as_ref().expect("the Admin API");
+    assert_eq!(admin.embedded_path(), None);
+    assert_eq!(admin.embedded_banner("http://127.0.0.1:9292"), None);
+    assert!(!text(&get(&state, "/__lsf/checkouts", "standalone")).contains("data-link=\"admin\""));
+    std::fs::remove_dir_all(&directory).ok();
+}
+
+#[test]
+fn the_home_page_says_which_functions_the_shop_has_no_enabled_owner_of() {
+    let state = checkout_server(&[], false);
+    let json = body_json(&get(&state, "/__lsf/checkouts?format=json", "home-owners"));
+    let function = |handle: &str| {
+        json["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|function| function["handle"] == handle)
+            .cloned()
+            .unwrap_or_else(|| panic!("{handle}: {json}"))
+    };
+    let payment = function("payment-rules");
+    let note = payment["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|problem| {
+            problem["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("the shop has no payment customization"))
+        })
+        .unwrap_or_else(|| panic!("{payment}"));
+    // The store's, not of the scenarios that name it.
+    assert_eq!(note["store"], true, "{note}");
+    assert!(
+        note["message"]
+            .as_str()
+            .unwrap()
+            .contains("`paymentCustomizationCreate`"),
+        "{note}"
+    );
+    // A discount Function says what it always said.
+    let discount = function("volume-discount");
+    assert!(
+        discount
+            .to_string()
+            .contains("no discount of the store data runs it"),
+        "{discount}"
+    );
+
+    // With an enabled owner in the store data, nothing to say.
+    let data = std::env::temp_dir().join(format!("lsf-home-owners-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&data);
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(
+        data.join("store.json"),
+        r#"{"checkout": {"functions": {"payment-rules": {"enabled": true}}}}"#,
+    )
+    .unwrap();
+    let state = checkout_server_with_data(fixture_app(), &[], false, Some(&data));
+    let json = body_json(&get(&state, "/__lsf/checkouts?format=json", "home-owners"));
+    std::fs::remove_dir_all(&data).ok();
+    let payment = json["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|function| function["handle"] == "payment-rules")
+        .cloned()
+        .unwrap();
+    assert!(
+        !payment
+            .to_string()
+            .contains("payment customization that runs it"),
+        "{payment}"
+    );
+}
+
+#[test]
+fn the_express_buttons_are_the_methods_still_offered_there_once_the_functions_ran() {
+    let state = checkout_server(&["payment-rules"], false);
+    let methods = json!([
+        {"handle": "card", "name": "Credit card"},
+        {"handle": "paypal", "name": "PayPal", "placements": ["PAYMENT_METHOD", "ACCELERATED_CHECKOUT"]},
+        {"handle": "shop_pay", "name": "Shop Pay", "placements": ["ACCELERATED_CHECKOUT"]},
+    ]);
+    let names = |json: &Json, key: &str| -> Vec<String> {
+        json[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|method| method["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let path = start_checkout(
+        &state,
+        "co-express",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {"payment_methods": methods.clone()}}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-express"));
+    assert_eq!(names(&json, "paymentMethods"), ["Credit card", "PayPal"]);
+    assert_eq!(names(&json, "expressMethods"), ["PayPal", "Shop Pay"]);
+    assert_eq!(
+        json["expressMethods"][0]["placements"],
+        json!(["PAYMENT_METHOD", "ACCELERATED_CHECKOUT"])
+    );
+
+    // A payment customization that hides PayPal: gone from both, the page's express row too.
+    let path = start_checkout(
+        &state,
+        "co-express-hidden",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {
+            "payment_methods": methods,
+            "functions": {"payment-rules": {"enabled": true, "metafields": {"$app:config.settings": {
+                "type": "json", "value": {"hideName": "PayPal", "hideAbove": 0}
+            }}}}
+        }}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-express-hidden"));
+    assert_eq!(names(&json, "paymentMethods"), ["Credit card"]);
+    assert_eq!(names(&json, "expressMethods"), ["Shop Pay"]);
 }

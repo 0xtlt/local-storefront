@@ -3,11 +3,13 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use lsf_core::Theme;
 use lsf_core::theme::Revalidate;
-use lsf_core::theme::liquid_settings::{holds_settings, string_literal, string_span};
 use lsf_liquid::strict2::{self, BROKEN_TODAY, Finding, IssueKind};
+use lsf_theme::Theme;
+use lsf_theme::theme::liquid_settings::{holds_settings, string_literal, string_span};
 use serde::Serialize;
+
+use crate::output::count;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum Format {
@@ -189,6 +191,44 @@ fn filters_used(source: &str) -> Vec<(String, usize)> {
 }
 
 /// For an unknown tag that a feature preview has, how to turn the preview on.
+/// Filters of other template languages, and the filter of Shopify that does the same: a theme
+/// written from memory uses them.
+const OTHER_FILTERS: &[(&str, &str)] = &[
+    ("uppercase", "upcase"),
+    ("upper", "upcase"),
+    ("lowercase", "downcase"),
+    ("lower", "downcase"),
+    ("length", "size"),
+    ("trim", "strip"),
+    ("ltrim", "lstrip"),
+    ("rtrim", "rstrip"),
+    ("json_encode", "json"),
+];
+
+/// The filter an unknown one probably is: a filter (or a name of [`OTHER_FILTERS`]) one or two
+/// edits away, one for a short name, or with the same letters. The closest wins.
+fn meant_filter(env: &lsf_liquid::Environment, unknown: &str) -> Option<String> {
+    let letters = |name: &str| {
+        let mut letters: Vec<char> = name.chars().collect();
+        letters.sort_unstable();
+        letters
+    };
+    let mut names = env.filter_names();
+    names.sort_unstable();
+    let known = names.into_iter().map(|name| (name, name));
+    let other = OTHER_FILTERS.iter().copied();
+    let most = if unknown.chars().count() < 5 { 1 } else { 2 };
+    known
+        .chain(other)
+        .filter_map(|(name, filter)| {
+            let distance = lsf_core::util::edit_distance(unknown, name);
+            let close = distance <= most || letters(unknown) == letters(name);
+            close.then_some((distance, filter))
+        })
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, filter)| filter.to_string())
+}
+
 fn preview_hint(error: &str) -> String {
     let Some(tag) = error
         .split("Unknown tag '")
@@ -197,7 +237,7 @@ fn preview_hint(error: &str) -> String {
     else {
         return String::new();
     };
-    match lsf_core::Preview::of_tag(tag) {
+    match lsf_theme::Preview::of_tag(tag) {
         Some(preview) => format!(
             " (`{tag}` is part of Shopify's \"{}\" feature preview: run with `--preview {}`)",
             preview.title(),
@@ -363,6 +403,9 @@ struct Diagnostic {
     /// Why there is no fix.
     #[serde(skip_serializing_if = "Option::is_none")]
     no_fix: Option<String>,
+    /// What was probably meant: `did you mean "upcase"?`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hint: Option<String>,
 }
 
 impl Diagnostic {
@@ -381,6 +424,7 @@ impl Diagnostic {
             markup: None,
             fix: None,
             no_fix: None,
+            hint: None,
         }
     }
 
@@ -394,6 +438,9 @@ impl Diagnostic {
         };
         let Some(markup) = &self.markup else {
             println!("{}: {warning}{}", self.location, self.message);
+            if let Some(hint) = &self.hint {
+                println!("  hint: {hint}");
+            }
             return;
         };
         let written = self.fix.as_ref().is_some_and(|fix| fix.written);
@@ -490,8 +537,21 @@ impl Tally {
 
     /// An error that has no fix.
     fn problem(&mut self, code: &'static str, location: Location, message: String) {
+        self.problem_with_hint(code, location, message, None);
+    }
+
+    /// An error that has no fix, with what was probably meant.
+    fn problem_with_hint(
+        &mut self,
+        code: &'static str,
+        location: Location,
+        message: String,
+        hint: Option<String>,
+    ) {
         self.problems += 1;
-        self.report(Diagnostic::new("error", code, location, message));
+        let mut diagnostic = Diagnostic::new("error", code, location, message);
+        diagnostic.hint = hint;
+        self.report(diagnostic);
     }
 
     /// Reports what Shopify's strict parser does not read in a piece of Liquid (`source`): a
@@ -691,7 +751,7 @@ fn json_report(files: usize, tally: &Tally) -> serde_json::Value {
 
 pub fn run(
     theme_dir: &Path,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
     let (files, tally) = check_theme(theme_dir, previews, &args)?;
@@ -702,13 +762,15 @@ pub fn run(
                 .map_err(|error| error.to_string())?
         );
     } else {
+        let checked = format!(
+            "{} checked, {}",
+            count(files, "file", "files"),
+            count(tally.problems, "problem", "problems")
+        );
         if tally.fixed > 0 {
-            eprintln!(
-                "{files} file(s) checked, {} problem(s), {} fixed",
-                tally.problems, tally.fixed
-            );
+            eprintln!("{checked}, {} fixed", tally.fixed);
         } else {
-            eprintln!("{files} file(s) checked, {} problem(s)", tally.problems);
+            eprintln!("{checked}");
         }
         if tally.fixable > 0 {
             eprintln!(
@@ -718,8 +780,13 @@ pub fn run(
         }
         if tally.changes > 0 {
             eprintln!(
-                "{} of the fixes change the output, where the code now does what it says: review the diff",
-                tally.changes
+                "{} of the fixes {} the output, where the code now does what it says: review the diff",
+                tally.changes,
+                if tally.changes == 1 {
+                    "changes"
+                } else {
+                    "change"
+                }
             );
         }
     }
@@ -733,10 +800,10 @@ pub fn run(
 /// Checks the theme: how many files were read, and what was found.
 fn check_theme(
     theme_dir: &Path,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: &Args,
 ) -> Result<(usize, Tally), String> {
-    let env = Arc::new(lsf_core::environment_with(previews));
+    let env = Arc::new(lsf_theme::environment_with(previews));
     let theme = Theme::open(theme_dir, env.clone(), Revalidate::Never)
         .map_err(|error| error.to_string())?;
     let mut files = 0;
@@ -807,12 +874,13 @@ fn check_theme(
             let mut reported = Vec::new();
             for (filter, line) in filters_used(&source) {
                 if env.filter(&filter).is_none() && !reported.contains(&filter) {
-                    tally.problem(
+                    tally.problem_with_hint(
                         "unknown_filter",
                         Location::file(&path, Some(line)),
                         format!(
                             "unknown filter `{filter}` (Shopify ignores unknown filters; this one is not implemented here)"
                         ),
+                        meant_filter(&env, &filter).map(|name| format!("did you mean \"{name}\"?")),
                     );
                     reported.push(filter);
                 }
@@ -852,8 +920,27 @@ fn check_theme(
 mod tests {
     use super::{
         Args, Format, block_call_line, changed_words, check_theme, filters_used, json_report,
-        preview_hint, run,
+        meant_filter, preview_hint, run,
     };
+
+    #[test]
+    fn an_unknown_filter_close_to_one_of_shopify_says_which() {
+        let env = lsf_theme::environment_with(&[]);
+        let meant = |name: &str| meant_filter(&env, name);
+        // One letter off, two, the same letters, a name of another language.
+        assert_eq!(meant("upcse").as_deref(), Some("upcase"));
+        assert_eq!(meant("dwoncase").as_deref(), Some("downcase"));
+        assert_eq!(
+            meant("money_with_currancy").as_deref(),
+            Some("money_with_currency")
+        );
+        assert_eq!(meant("uppercas").as_deref(), Some("upcase"));
+        assert_eq!(meant("uppercase").as_deref(), Some("upcase"));
+        assert_eq!(meant("length").as_deref(), Some("size"));
+        // Nothing close: no guess.
+        assert_eq!(meant("frobnicate"), None);
+        assert_eq!(meant("nope"), None);
+    }
 
     #[test]
     fn a_report_shows_the_words_that_change() {
@@ -923,6 +1010,7 @@ mod tests {
         assert!(find("strict_liquid_rejected", 3)["fix"]["changes_output"].is_null());
         assert_eq!(find("liquid_syntax", 2)["file"], "snippets/broken.liquid");
         assert_eq!(find("unknown_filter", 5)["severity"], "error");
+        assert!(find("unknown_filter", 5).get("hint").is_none());
         let after = report(true);
         assert_eq!(after["fixed"], 3);
         assert_eq!(after["fixable"], 0);

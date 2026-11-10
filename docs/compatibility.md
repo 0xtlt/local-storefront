@@ -40,6 +40,15 @@ page says how that is checked, what is covered, and where the local server knowi
 - **Real themes.** Shopify's Horizon and Dawn themes render every page type without a Liquid
   error, and their JavaScript (variant pickers, cart drawer, predictive search, filters, section
   rendering, pickup availability) runs against the local endpoints unchanged.
+- **Functions and checkout extensions.** A JavaScript Function is built in the steps of Shopify's
+  CLI (Javy writes the same bytes for the same JavaScript), and its module costs the instructions
+  the CLI's would, within a few hundred: `crates/app/src/checkout/javascript/tests.rs` compares them
+  with those of Shopify's CLI 5.0.0. A Rust module is linked by Shopify's own trampoline, to the
+  byte. A Function's input is built from its input query, and its
+  output checked, against the schema of its API version. The checkout UI extensions lsf bundles
+  are drawn next to the CLI's bundles of the same sources, acted on and compared
+  (`crates/app/assets/tests/built-extensions.test.mjs`). What the local checkout leaves out
+  or decides on its own: [what to test on a real store](checkout.md#what-to-test-on-a-real-store).
 
 `npx local-storefront check` reports what a theme uses that is not implemented: Liquid that does
 not parse, and filters that do not exist here.
@@ -53,6 +62,31 @@ not parse, and filters that do not exist here.
 
 With `--preview liquid-july-26`: `block` and `partial`. Without it they are unknown tags, as
 on a live store.
+
+### The render budget
+
+A render that does not end (nested `{% for i in (1..1000000000) %}`, in a file of the theme or
+one the Admin API wrote) would hold a thread of the server, and its page, for ever. A render
+stops once it spends its budget, as Ruby Liquid's resource limits stop it:
+
+- a **render score** of 10,000,000: each body rendered counts its nodes (Ruby Liquid's
+  `increment_render_score`), and a loop over a range counts its items before it takes them;
+- **10 seconds** of wall time.
+
+The page then answers `500` with Liquid's error, `Liquid error: Memory limits exceeded`, and what
+lsf counted; what was rendered is not shown, and nothing more renders. The pages of lsf's
+fixture themes score 11 to 310 (a collection page the most): the limit is tens of thousands
+of times what they need. Counting costs what it does not show: release builds before and after
+it, the fixture theme and the demo store, 1000 renders a page interleaved by batches of 25,
+medians of `Server-Timing: render` (2026-11-01, alternated twice): `/` 173 → 176 and
+174 → 175 µs, a collection 291 → 295 and 291 → 292 µs, a product 232 → 231 and 230 → 231 µs, a
+search 139 → 141 and 139 → 139 µs.
+
+Shopify documents neither number. What it documents: "You can do a maximum of 50 iterations
+with a `for` loop" over a paginated array (`collection.products` and the others of `paginate`),
+pages of 1 to 250 items, and no further than the 25,000th item. Its renderer stops a page that
+takes too long, without publishing the time. lsf's limits are set far above what a real page
+needs, so that only a render that would never end is stopped.
 
 ## Liquid filters
 
@@ -148,6 +182,7 @@ server:
 | `Shopify.customerPrivacy` | after `loadFeatures` | Consent is kept in the browser. It has to be collected in the EEA, the United Kingdom and Switzerland (by `Shopify.country`): there, nothing is allowed and `shouldShowBanner()` is true until `setTrackingConsent` is called. A real store decides this in its privacy settings. |
 | Import map for `@shopify/partial-rendering` | first in `content_for_header` | Only with `--preview liquid-july-26`, when a Liquid file of the theme has a `{% partial %}`. The module is served by local-storefront, see [Theme architecture](#theme-architecture). |
 | `Shopify.PaymentButton` | `content_for_header` | Present; `init()` does nothing, since dynamic checkout buttons are drawn by Shopify. |
+| The app's script tags (`asyncLoad`) | `content_for_header` | With the Admin API: each script tag of `scriptTagCreate` shown on the online store, loaded once the page has loaded, `shop=<domain>` added to its URL, as on Shopify. |
 | `ShopifyAnalytics.meta` (`currency`, `page`, `product`), `trekkie` | before `</head>` | Same shape. Nothing is sent anywhere. |
 | `Shopify.analytics.publish` | before `</head>` | Calls are kept in `Shopify.analytics.replayQueue`, which a test can read. |
 | `Shopify.actions` (`getCart`, `updateCart`, `openCart`) | before `</body>` | The [standard storefront actions](https://shopify.dev/docs/api/storefront-events-and-actions), with `configure`, `isDefault`, the `shopify:cart:*` events and the default refresh of Horizon- and Dawn-style carts. They write to the local cart instead of the Storefront API. |
@@ -383,7 +418,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Area | Difference |
 |---|---|
 | Checkout | Not part of a theme. `/checkout` shows a summary of the cart. With `--app <dir>`, it is a local checkout that runs the Functions and shows the checkout UI extensions of a Shopify app: [checkout](checkout.md#what-it-does-not-do) lists what it leaves out (payments, pickup points, discount conditions and combinations, tax lines, the Storefront API). It supports API versions 2026-10 and 2027-01. |
-| Apps | App blocks and app embeds render nothing. `content_for_header` contains the scripts a theme relies on (`Shopify.*` globals, routes, the compiled asset tags), not Shopify's analytics and app scripts. |
+| Apps | App blocks and app embeds render nothing, whether the app is installed or not. `content_for_header` contains the scripts a theme relies on (`Shopify.*` globals, routes, the compiled asset tags) and the script tags apps created through the Admin API (an uninstall deletes them, as on Shopify), not Shopify's analytics scripts nor web pixels. |
 | Customer accounts | New customer accounts are hosted by Shopify, outside the theme. `/account` is a page of local-storefront that stands in for them: it shows who is logged in and lets you become anyone in the data. Every account URL (`/account/login`, `/account/register`, `/customer_authentication/login`, ...) leads to it. Classic customer accounts are not simulated: the theme's `templates/customers` are never rendered, and its account forms (login, register, password reset, addresses) lead to `/account`. |
 | Password page | `/password` always shows the theme's password page, and accepts `shop.password` (`password` by default). The storefront is never locked: nothing redirects to that page. On Shopify, a protected store redirects every page to it, and an open store redirects it to the home page. |
 | Discounts | Carts and orders have no discounts: discount arrays are empty and totals are undiscounted (the checkout of an app applies the discounts its Functions give, nowhere else). `Shopify.actions.updateCart` reports every discount code as not applicable. |

@@ -2,6 +2,7 @@
 //! into a form that is cheap to query while rendering.
 
 pub mod build;
+mod date;
 pub mod demo;
 pub mod docs;
 pub mod load;
@@ -16,7 +17,7 @@ use chrono_tz::Tz;
 use indexmap::IndexMap;
 use serde_json::Value as Json;
 
-pub use model::{InventoryPolicy, MediaType, SortOrder, VideoHost};
+pub use model::{InventoryPolicy, MediaType, ProductStatus, SortOrder, VideoHost};
 
 #[derive(Clone, Debug)]
 pub struct Image {
@@ -300,6 +301,17 @@ pub struct Variant {
     pub metafields: Metafields,
 }
 
+/// The weight of a variant expressed in its display unit.
+pub fn weight_in_unit(grams: u64, unit: &str) -> f64 {
+    let grams = grams as f64;
+    match unit {
+        "g" => grams,
+        "oz" => grams / 28.349_523_125,
+        "lb" => grams / 453.592_37,
+        _ => grams / 1000.0,
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Product {
     pub id: u64,
@@ -325,9 +337,17 @@ pub struct Product {
     /// Indexes of the selling plan groups the product is sold with.
     pub selling_plan_groups: Vec<usize>,
     pub requires_selling_plan: bool,
+    pub status: ProductStatus,
+    /// Whether the product is published on the Online Store.
+    pub published: bool,
 }
 
 impl Product {
+    /// Whether the product is on the storefront: active and published.
+    pub fn listed(&self) -> bool {
+        self.status == ProductStatus::Active && self.published
+    }
+
     pub fn has_only_default_variant(&self) -> bool {
         self.options.len() == 1
             && self.options[0].name == "Title"
@@ -770,6 +790,32 @@ pub struct Metaobject {
     pub template_suffix: Option<String>,
 }
 
+impl Metaobject {
+    /// Whether the entry is of the type `kind` names: [`same_metaobject_type`].
+    pub fn is_of(&self, kind: &str) -> bool {
+        same_metaobject_type(&self.kind, kind)
+    }
+}
+
+/// Whether two metaobject types name the same one. An app's own types are `$app:<type>` in the
+/// store data and in the app's code (its Function input queries, its theme app extension), and
+/// `app--<app id>--<type>` where Shopify writes them in full (a theme's Liquid, the Admin API):
+/// either names the other, whatever the id, which the store data does not know.
+pub fn same_metaobject_type(a: &str, b: &str) -> bool {
+    a == b || app_metaobject_type(a).is_some_and(|name| app_metaobject_type(b) == Some(name))
+}
+
+/// The name of an app's own metaobject type: `author` for `$app:author` and
+/// `app--1234--author`.
+fn app_metaobject_type(kind: &str) -> Option<&str> {
+    if let Some(name) = kind.strip_prefix("$app:") {
+        return (!name.is_empty()).then_some(name);
+    }
+    let (id, name) = kind.strip_prefix("app--")?.split_once("--")?;
+    (!id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()) && !name.is_empty())
+        .then_some(name)
+}
+
 /// A cart line as stored in a session.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CartLine {
@@ -820,6 +866,8 @@ pub struct CheckoutPaymentMethod {
 
 #[derive(Clone, Debug)]
 pub struct CheckoutDiscount {
+    /// The number of its GID: `gid://shopify/DiscountAutomaticNode/<id>`.
+    pub id: u64,
     pub function: String,
     pub title: String,
     pub code: Option<String>,
@@ -835,6 +883,9 @@ pub struct CheckoutSettings {
     pub discounts: Vec<CheckoutDiscount>,
     /// Function handle → the metafields of its owner.
     pub functions: IndexMap<String, Vec<CheckoutMetafield>>,
+    /// The Functions of `functions` the shop has an owner of (`"enabled"`), by handle: whether
+    /// it is enabled. Only those that are run at the checkout, unless a scenario names them.
+    pub owners: IndexMap<String, bool>,
     /// Basis points: 2000 is 20 %.
     pub tax_rate_bps: i64,
 }
@@ -863,6 +914,7 @@ impl Default for CheckoutSettings {
             .collect(),
             discounts: Vec::new(),
             functions: IndexMap::new(),
+            owners: IndexMap::new(),
             tax_rate_bps: 0,
         }
     }
@@ -893,13 +945,21 @@ pub struct CheckoutScenario {
     /// What the scenario overrides of the `checkout` section: `shipping_rates`,
     /// `payment_methods`, `discounts`, `functions`, `tax_rate`.
     pub overrides: Vec<&'static str>,
+    /// What the checkout must look like once the Functions ran, which `lsf app check` checks.
+    /// Its amounts are valid: those that are not are in `problems`.
+    pub expect: Option<model::ScenarioExpectInput>,
     /// What stops the scenario from opening, as the diagnostics `validate` prints them.
     pub problems: Vec<String>,
 }
 
 pub struct Store {
     pub shop: Shop,
+    /// The products on the storefront: active and published.
     pub products: Vec<Product>,
+    /// The products of the data that are not on the storefront: drafts, archived products and
+    /// those not published on the Online Store. Neither the storefront nor the checkout sees
+    /// them; the Admin API lists them.
+    pub unlisted_products: Vec<Product>,
     pub collections: Vec<Collection>,
     pub pages: Vec<Page>,
     pub blogs: Vec<Blog>,
@@ -1075,6 +1135,14 @@ impl Store {
         self.scenarios.iter().find(|scenario| scenario.name == name)
     }
 
+    /// The country of a visitor who selected none, on the storefront and, until they enter an
+    /// address, at the checkout: the shop's (`shop.address.country_code`), the country of its
+    /// primary market, when the store sells to it; otherwise the first country.
+    pub fn default_country(&self) -> &Country {
+        self.country(&self.shop.address.country_code)
+            .unwrap_or(&self.countries[0])
+    }
+
     pub fn country(&self, iso_code: &str) -> Option<&Country> {
         self.countries
             .iter()
@@ -1091,10 +1159,11 @@ impl Store {
         })
     }
 
+    /// The entry of a type (an app's in either spelling: [`same_metaobject_type`]) and a handle.
     pub fn metaobject(&self, kind: &str, handle: &str) -> Option<&Metaobject> {
         self.metaobjects
             .iter()
-            .find(|entry| entry.kind == kind && entry.handle == handle)
+            .find(|entry| entry.is_of(kind) && entry.handle == handle)
     }
 
     /// The metaobject a setting value points to: `<type>/<handle>`, `<type>.<handle>`, a
@@ -1216,6 +1285,18 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_app_metaobject_type_is_named_either_way() {
+        assert!(same_metaobject_type("$app:author", "app--1234--author"));
+        assert!(same_metaobject_type("app--99--author", "$app:author"));
+        assert!(same_metaobject_type("app--1--author", "app--2--author"));
+        assert!(same_metaobject_type("designer", "designer"));
+        assert!(!same_metaobject_type("$app:author", "author"));
+        assert!(!same_metaobject_type("$app:author", "app--x1--author"));
+        assert!(!same_metaobject_type("$app:author", "$app:book"));
+        assert!(!same_metaobject_type("app--12", "$app:"));
+    }
 
     fn variant(price: i64, compare_at_price: Option<i64>, unit_price: Option<i64>) -> Variant {
         Variant {

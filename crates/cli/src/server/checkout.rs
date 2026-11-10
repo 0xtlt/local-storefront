@@ -3,17 +3,18 @@
 //!
 //! What the buyer chose lives in the session (`SessionEntry::checkout`), next to the cart, which
 //! the checkout shares with the theme. Every request computes the checkout again, running the
-//! Functions of the app: `lsf_checkout::pipeline::compute`.
+//! Functions of the app: `lsf_app::checkout::pipeline::compute`.
 
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use lsf_checkout::app::{App, Selection};
-use lsf_checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
-use lsf_checkout::{
+use lsf_app::checkout::app_metafields::{OrderOwner, app_metafields, target_type};
+use lsf_app::checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
+use lsf_app::checkout::{
     Address, BuyerJourneyStep, CheckoutResult, CheckoutState, Metafield, ResultLine,
 };
-use lsf_core::drops::cart::line_key;
+use lsf_app::config::{App, Selection};
+use lsf_core::cart::line_key;
 use lsf_core::store::model::ScenarioLook;
 use lsf_core::store::{CartLine, Customer, Language};
 use lsf_core::{Session, Store};
@@ -23,8 +24,7 @@ use super::checkout_account::{self, Identity};
 use super::reply::{Reply, cache, content_type};
 use super::{Incoming, SESSION_COOKIE, ServerState, SessionEntry, cart_token_of, home};
 use crate::checkout::{
-    CheckoutOptions, Variant, apply_scenario, config_for, scenario_named, selection_for,
-    translations,
+    CheckoutOptions, Variant, apply_scenario, config_for, scenario_named, translations,
 };
 
 /// Where the files of the page are served from.
@@ -39,6 +39,9 @@ pub struct CheckoutSession {
     pub variant: Option<Variant>,
     /// The state of the order the buyer completed, which the thank-you page shows.
     pub completed: Option<Json>,
+    /// The last order placed, as the Admin API recorded it: `{id, number, name}`, what `complete`
+    /// answers with so that a test can tell its order's webhooks from the others.
+    pub placed_order: Option<Json>,
     /// How many orders this session placed: a completion that started before one finished
     /// must not place another.
     pub placed: u64,
@@ -153,12 +156,8 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
         }
         ("POST", ["checkouts", "cn", token, "update"]) => Some(update(state, incoming, token)),
         ("POST", ["checkouts", "cn", token, "complete"]) => Some(complete(state, incoming, token)),
+        // Without a theme, the home page is `/`; the rest is the theme's, which is not served.
         ("GET" | "HEAD", []) if options.standalone => Some(home(state, incoming)),
-        _ if options.standalone => Some(Reply::text(
-            404,
-            "Not found. This server shows the checkout of an app only: start `lsf serve --app` \
-             to serve a theme with it.",
-        )),
         _ => None,
     }?;
     Some(reply)
@@ -332,13 +331,9 @@ fn start(state: &ServerState, incoming: &Incoming) -> Reply {
             .and_then(|address| address.country_code.as_ref())
             .is_none()
         {
-            let country = entry.session.country.clone().or_else(|| {
-                Some(store.shop.address.country_code.clone()).filter(|code| !code.is_empty())
-            });
-            if let Some(code) = country {
-                address.get_or_insert_with(Default::default).country_code =
-                    Some(code.to_ascii_uppercase());
-            }
+            address.get_or_insert_with(Default::default).country_code = Some(
+                lsf_app::checkout::input::buyer_country(&store, &entry.session),
+            );
         }
     });
     let root = request_root(state, &id, incoming);
@@ -431,7 +426,10 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
             .map(|scenario| scenario.name.as_str())
             .collect();
         let hint = if known.is_empty() {
-            "There are no scenarios: `lsf app init` writes a set in the `checkouts` folder of the store data.".to_string()
+            format!(
+                "There are no scenarios: `{} app init` writes a set in the `checkouts` folder of the store data.",
+                lsf_core::util::command()
+            )
         } else {
             format!("The scenarios are: {}.", known.join(", "))
         };
@@ -449,7 +447,7 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
         Ok(app) => app,
         Err(problem) => return notice(500, "The app cannot be read", &[problem], &[]),
     };
-    if let Err(problem) = selection_for(&app, &options.extensions, Some(scenario)) {
+    if let Err(problem) = options.selection(&app, Some(scenario)) {
         return notice(
             422,
             &format!("The scenario {name} has errors"),
@@ -527,15 +525,18 @@ fn scenario_start(
     Ok((session, entered, prepared))
 }
 
-/// What the Functions of the app compute for a scenario as it opens, in its language: what the
-/// home page looks at to find the Functions that fail. `app` is the app as loaded once for
-/// every scenario; `runs` says how the requests of the `.fetch` targets go out and when to stop.
+/// What the Functions of the app compute for a scenario as it opens, in its language, at `step`
+/// of the buyer journey: what the home page looks at to find the Functions that fail
+/// (`Interaction`, the checkout as it opens), and what `lsf app check` checks the `expect` of
+/// the scenario against. `app` is the app as loaded once for every scenario; `runs` says how
+/// the requests of the `.fetch` targets go out and when to stop.
 pub(super) fn run_scenario(
     state: &ServerState,
     app: &App,
     store: &Store,
     scenario: &lsf_core::store::CheckoutScenario,
     runs: pipeline::RunOptions,
+    step: BuyerJourneyStep,
 ) -> Result<CheckoutResult, String> {
     let (session, mut checkout, _) =
         scenario_start(state, store, scenario).map_err(|problems| problems.join("; "))?;
@@ -544,15 +545,16 @@ pub(super) fn run_scenario(
         .as_deref()
         .and_then(|iso| store.language(iso))
         .unwrap_or_else(|| store.primary_language());
-    let selection = selection_for(app, &options(state).extensions, Some(scenario))?;
+    let selection = options(state).selection(app, Some(scenario))?;
     Ok(price_with(
+        state,
         app,
         &selection,
         &session,
         store,
         &mut checkout,
         language,
-        BuyerJourneyStep::Interaction,
+        step,
         runs,
     ))
 }
@@ -633,8 +635,9 @@ fn price(
     let app = state.load_app(&options.app_dir)?;
     // The scenario the checkout opened from sets it up, as long as it exists and is valid.
     let scenario = scenario_named(store, checkout.scenario.as_deref());
-    let selection = selection_for(&app, &options.extensions, scenario)?;
+    let selection = options.selection(&app, scenario)?;
     let result = price_with(
+        state,
         &app,
         &selection,
         session,
@@ -650,6 +653,7 @@ fn price(
 /// [`price`] with the app loaded and the extensions selected.
 #[allow(clippy::too_many_arguments)]
 fn price_with(
+    state: &ServerState,
     app: &App,
     selection: &Selection,
     session: &Session,
@@ -670,7 +674,7 @@ fn price_with(
             .map(|customer| customer.phone.clone())
             .filter(|phone| !phone.is_empty());
     }
-    let config = config_for(store, checkout.scenario.as_deref());
+    let config = checkout_config(state, store, checkout.scenario.as_deref());
     pipeline::compute_with_options(
         app,
         selection,
@@ -678,9 +682,22 @@ fn price_with(
         session,
         checkout,
         &config,
-        &lsf_checkout::input::build,
+        &lsf_app::checkout::input::build,
         runs,
     )
+}
+
+/// The settings a checkout of the server runs with ([`config_for`]): none of the app's
+/// Functions runs while the Admin API has it uninstalled from the shop, whatever the owners or
+/// the scenario say ([`lsf_app::checkout::CheckoutConfig::uninstalled`]).
+fn checkout_config(
+    state: &ServerState,
+    store: &Store,
+    scenario: Option<&str>,
+) -> lsf_app::checkout::CheckoutConfig {
+    let mut config = config_for(store, scenario);
+    config.uninstalled = state.app_uninstalled();
+    config
 }
 
 /// The checkout as the Functions compute it for `step`: `Interaction` for everything the buyer
@@ -718,6 +735,7 @@ fn compute(
     object.insert(
         "shop".into(),
         json!({
+            "id": format!("gid://shopify/Shop/{}", store.shop.id),
             "name": store.shop.name,
             "currencyCode": store.shop.currency,
             "moneyFormat": store.shop.money_format,
@@ -768,6 +786,20 @@ fn compute(
         ),
     );
     object.insert("metafields".into(), json!(checkout.metafields));
+    // What the extensions read as `appMetafields` besides the metafields of the cart.
+    let variants = line_variants(&result.lines);
+    object.insert(
+        "appMetafields".into(),
+        app_metafields_json(
+            &app,
+            &selection,
+            &store,
+            customer,
+            session.company_location,
+            &variants,
+            None,
+        ),
+    );
     // A method a Function hid is not selected any more.
     let selected = checkout.selected_payment.as_ref().filter(|handle| {
         result
@@ -777,6 +809,9 @@ fn compute(
     });
     object.insert("selectedPayment".into(), json!(selected));
     object.insert("extensions".into(), extensions_json(&app, &selection));
+    // None renders while the app is not installed on the shop.
+    place_extensions(&mut json, state.app_uninstalled());
+    let object = json.as_object_mut().expect("a result is an object");
     // The Functions whose last build of `--watch` failed: they run their last module.
     object.insert("builds".into(), state.builds.to_json());
     object.insert(
@@ -793,6 +828,25 @@ fn compute(
                 .map(|diagnostic| json!(diagnostic.to_string()))
                 .collect(),
         ),
+    );
+    // The checkout as the buyer sees it, for the Admin API: `checkouts/create`, then
+    // `checkouts/update` when it changes.
+    let attributes = super::admin::pairs(&session.cart_attributes);
+    super::admin::record_checkout(
+        state,
+        &lsf_app::admin::domains::checkouts::Checkout {
+            cart_token: &session.cart_token,
+            generation: basis.placed,
+            result: &result,
+            customer_id: session.customer_id,
+            email: checkout.email.as_deref(),
+            phone: checkout.phone.as_deref(),
+            shipping_address: checkout.shipping_address.as_ref(),
+            note: &session.cart_note,
+            attributes: &attributes,
+            payment: payment_name(&checkout, &result),
+            locale: Some(language.iso_code.as_str()),
+        },
     );
     Ok(Computed {
         json,
@@ -848,32 +902,102 @@ fn language_json(language: &Language) -> Json {
 }
 
 /// What the Localization API reads: the language of the buyer (not the primary one of the
-/// store), the country of the shipping address or else the one the visitor selected, the
-/// currency and the market.
+/// store), the country of the shipping address or else the one the Functions read (the one the
+/// visitor selected, else the shop's), the currency and the market of that country, as the
+/// Functions read it.
 pub(super) fn localization_json(
     store: &Store,
     language: &Language,
     session: &Session,
     checkout: &CheckoutState,
 ) -> Json {
-    let country = checkout
-        .shipping_address
-        .as_ref()
-        .and_then(|address| address.country_code.clone())
-        .or_else(|| session.country.clone())
-        .map(|code| code.to_ascii_uppercase());
+    let code = checkout
+        .shipping_country()
+        .map(str::to_ascii_uppercase)
+        .unwrap_or_else(|| lsf_app::checkout::input::buyer_country(store, session));
+    let (market_id, market_handle) = lsf_app::checkout::input::market_of(store, &code);
     json!({
         "language": language_json(language),
         // Where the storefront of this language lives: `/fr`, nothing for the primary one.
         "rootUrl": root_of(language),
-        "country": country.map(|code| json!({
+        "country": {
             "isoCode": code,
             "name": store.country(&code).map_or(code.as_str(), |country| country.name.as_str()),
-        })),
+        },
         "currency": {"isoCode": store.shop.currency},
-        // The same market as `localization.market` of the theme.
-        "market": {"id": "gid://shopify/Market/1", "handle": "primary"},
+        "market": {"id": market_id, "handle": market_handle},
     })
+}
+
+/// The variants of `lines`, and of the components of their bundles (a line a cart transform
+/// merged or expanded), whose products and variants `appMetafields` reads.
+pub(super) fn line_variants(lines: &[ResultLine]) -> Vec<u64> {
+    lines
+        .iter()
+        .flat_map(|line| std::iter::once(line.variant_id).chain(line_variants(&line.components)))
+        .collect()
+}
+
+/// The metafields the selected extensions declare, of the shop, of the products and variants
+/// in `variants`, of the customer and of the company and location they buy for, and of the
+/// order of the order status page (`order`; the checkout has none). The frame of each extension
+/// keeps the ones it declares for its target, and adds the cart's (`assets/sandbox-api.js`).
+pub(super) fn app_metafields_json(
+    app: &App,
+    selection: &Selection,
+    store: &Store,
+    customer: Option<&Customer>,
+    company_location: Option<u64>,
+    variants: &[u64],
+    order: Option<OrderOwner<'_>>,
+) -> Json {
+    let declared: Vec<_> = selection
+        .ui_extensions(app)
+        .flat_map(|extension| &extension.metafields)
+        .collect();
+    json!(app_metafields(
+        store,
+        &declared,
+        customer,
+        company_location,
+        variants,
+        order
+    ))
+}
+
+/// Puts the UI extensions of a page's state where the page reads them, as the app is installed
+/// on the shop now or not: in `extensions`, which the page loads, while it is installed; in
+/// `uninstalled.extensions`, with why none renders (`uninstalled.reason`), while the Admin API
+/// has it uninstalled ([`ServerState::app_uninstalled`]), as Shopify removes an uninstalled app's
+/// extensions. `uninstalled` is `null` while it is installed. Done again on each read of an order
+/// placed earlier, so that its thank-you page follows the installation as it is now.
+pub(super) fn place_extensions(json: &mut Json, uninstalled: bool) {
+    let Some(object) = json.as_object_mut() else {
+        return;
+    };
+    let take = |value: Option<&mut Json>| match value.map(Json::take) {
+        Some(Json::Array(items)) => items,
+        _ => Vec::new(),
+    };
+    let mut extensions = take(object.get_mut("extensions"));
+    extensions.extend(take(
+        object
+            .get_mut("uninstalled")
+            .and_then(|uninstalled| uninstalled.get_mut("extensions")),
+    ));
+    if uninstalled {
+        object.insert("extensions".into(), json!([]));
+        object.insert(
+            "uninstalled".into(),
+            json!({
+                "reason": lsf_app::config::uninstalled_extensions_reason(),
+                "extensions": extensions,
+            }),
+        );
+    } else {
+        object.insert("extensions".into(), Json::Array(extensions));
+        object.insert("uninstalled".into(), Json::Null);
+    }
 }
 
 /// The checkout UI extensions to load: the built ones on a supported API version.
@@ -899,6 +1023,8 @@ pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
                     "handle": extension.handle,
                     "apiVersion": extension.api_version,
                     "script": format!("/__lsf/extensions/{}/{file}", extension.handle),
+                    // What builds it, for the error of a bundle that cannot be loaded.
+                    "build": format!("{} app build {}", lsf_core::util::command(), extension.handle),
                     "targets": targets,
                     "capabilities": extension.capabilities,
                     "settings": setting_values(&extension.settings),
@@ -906,6 +1032,13 @@ pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
                         let mut entry = json!({"namespace": declared.namespace, "key": declared.key});
                         if let Some(owner_type) = &declared.owner_type {
                             entry["ownerType"] = json!(owner_type);
+                            // The `target.type` of the entries it reads, which the page
+                            // compares (null for an `owner_type` that names no resource).
+                            entry["targetType"] = json!(target_type(owner_type));
+                        }
+                        // A declaration of `[[extensions.targeting.metafields]]`.
+                        if let Some(target) = &declared.target {
+                            entry["target"] = json!(target);
                         }
                         entry
                     }).collect::<Vec<_>>(),
@@ -951,7 +1084,8 @@ fn current(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
 }
 
 /// An order that was placed, read in the language of the request: the order is the one that was
-/// placed, the language it is read in is not the one it was placed in.
+/// placed, the language it is read in is not the one it was placed in. Its thank-you page shows
+/// the app's UI extensions only while the app is installed now ([`place_extensions`]).
 fn in_request_language(
     state: &ServerState,
     session_id: &str,
@@ -962,6 +1096,7 @@ fn in_request_language(
     let language = language_of(state, &store, incoming);
     completed["localization"]["language"] = language_json(language);
     completed["localization"]["rootUrl"] = json!(root_of(language));
+    place_extensions(&mut completed, state.app_uninstalled());
     completed
 }
 
@@ -1000,7 +1135,7 @@ fn shell(server: &ServerState, json: &Json) -> Reply {
 pub(super) fn shell_of(server: &ServerState, json: &Json, template: &str) -> Reply {
     let mut json = json.clone();
     json["builds"] = server.builds.to_json();
-    let template = lsf_checkout::assets::get(template).expect("the page is embedded");
+    let template = lsf_app::checkout::assets::get(template).expect("the page is embedded");
     let template = String::from_utf8_lossy(template);
     // Inside a script element: nothing in the JSON may close it or open a comment.
     let state = json
@@ -1056,12 +1191,14 @@ fn update(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
     let Some(operations) = incoming.params.get("operations").and_then(Json::as_array) else {
         return error(400, "The body must be {\"operations\": [...]}.");
     };
-    let reply = apply_update(state, incoming, &id, operations, || {});
+    let reply = apply_update(state, incoming, &id, operations, || {}, || {});
     with_cookie(reply, &id, is_new)
 }
 
-/// Applies the operations of an update to the session they were read from. `between` runs after
-/// they were applied and before they are written, where another request may change the session.
+/// Applies the operations of an update to the session they were read from. `before_read` runs
+/// after the checkout was found open and before the session is read. `between` runs after the
+/// operations were applied and before they are written, where another request may change the
+/// session.
 ///
 /// The write is one step of the session that checks the session is still what the operations
 /// were applied to: an update never reopens an order that was placed, restores lines the order
@@ -1072,16 +1209,23 @@ pub(super) fn apply_update(
     incoming: &Incoming,
     id: &str,
     operations: &[Json],
+    before_read: impl FnOnce(),
     between: impl FnOnce(),
 ) -> Reply {
     // An order that was placed is final: the cart it took is empty, and there is nothing to change.
-    if already_placed(state, id) {
+    let Some(before) = orders_before(state, id) else {
         return conflict(state, incoming, id);
-    }
+    };
+    before_read();
     let (mut session, store, mut checkout, basis) = read(state, id);
-    let config = config_for(&store, checkout.scenario.as_deref());
+    let config = checkout_config(state, &store, checkout.scenario.as_deref());
     // The operations that run the Functions (a change of a line) see the checkout the buyer sees.
     let language = language_of(state, &store, incoming);
+    // The order was placed before the session was read: the operations were made on the
+    // checkout it completed, and a change of one of its lines would find no line.
+    if basis.placed != before {
+        return conflict(state, incoming, id);
+    }
     for (position, operation) in operations.iter().enumerate() {
         if let Err(problem) = apply(
             state,
@@ -1154,7 +1298,7 @@ fn apply(
     session: &mut Session,
     checkout: &mut CheckoutState,
     store: &Store,
-    config: &lsf_checkout::CheckoutConfig,
+    config: &lsf_app::checkout::CheckoutConfig,
     language: &Language,
 ) -> Result<(), String> {
     let kind = operation
@@ -1618,46 +1762,67 @@ fn complete(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
         Ok(session) => session,
         Err(reply) => return reply,
     };
-    let reply = place_order(state, incoming, &id, token, || {});
+    let reply = place_order(state, incoming, &id, token, || {}, || {});
     with_cookie(reply, &id, is_new)
 }
 
-/// The way to the thank-you page, in the language of the request.
+/// The way to the thank-you page, in the language of the request, and the order placed:
+/// `{"redirect", "order": {"id", "number", "name"}}`.
 fn redirect_to_thanks(state: &ServerState, incoming: &Incoming, id: &str, token: &str) -> Reply {
     let root = request_root(state, id, incoming);
-    Reply::json(
-        200,
-        &json!({"redirect": format!("{}/thank-you", checkout_path(&root, token))}),
-    )
-    .cached(cache::PRIVATE)
+    let mut answer = json!({"redirect": format!("{}/thank-you", checkout_path(&root, token))});
+    if let Some(order) = state.with_session(id, |entry| entry.checkout.placed_order.clone()) {
+        answer["order"] = order;
+    }
+    Reply::json(200, &answer).cached(cache::PRIVATE)
 }
 
-/// Whether the order of this checkout was placed already, and its cart taken: asking again
-/// leads to the same thank-you page instead of placing another order.
-fn already_placed(state: &ServerState, id: &str) -> bool {
-    state.with_session(id, |entry| is_placed(entry))
+/// How many orders the session placed before its open checkout, or `None` when the order of
+/// this checkout was placed already and its cart taken.
+///
+/// A request reads the session later, in another step. If the count it reads then is not this
+/// one, an order was placed in between, and what it read is the session after that order (an
+/// empty cart, nothing entered), not the checkout the request was made on.
+fn orders_before(state: &ServerState, id: &str) -> Option<u64> {
+    state.with_session(id, |entry| {
+        (!is_placed(entry)).then_some(entry.checkout.placed)
+    })
 }
 
 fn is_placed(entry: &SessionEntry) -> bool {
     entry.checkout.completed.is_some() && entry.session.cart_lines.is_empty()
 }
 
-/// Places the order of the cart the Functions were run on. `between` runs after the session was
+/// Whether the session placed an order since it had placed `before`: another completion of the
+/// same checkout did, and this one leads to its thank-you page instead of placing another.
+fn placed_since(state: &ServerState, id: &str, before: u64) -> bool {
+    state.with_session(id, |entry| entry.checkout.placed != before)
+}
+
+/// Places the order of the cart the Functions were run on. `before_read` runs after the order
+/// was found not placed and before the session is read. `between` runs after the session was
 /// read and before the order takes the cart, where the Functions take their time.
 pub(super) fn place_order(
     state: &ServerState,
     incoming: &Incoming,
     id: &str,
     token: &str,
+    before_read: impl FnOnce(),
     between: impl FnOnce(),
 ) -> Reply {
-    if already_placed(state, id) {
+    // Asking again leads to the same thank-you page instead of placing another order.
+    let Some(before) = orders_before(state, id) else {
         return redirect_to_thanks(state, incoming, id, token);
-    }
+    };
+    before_read();
     let mut computed = match compute(state, id, incoming, BuyerJourneyStep::Completion) {
         Ok(computed) => computed,
         Err(problem) => return error(500, problem),
     };
+    // Another completion placed the order before the session was read.
+    if computed.basis.placed != before {
+        return redirect_to_thanks(state, incoming, id, token);
+    }
     between();
     if computed.result.lines.is_empty() {
         return error(422, "The cart is empty.");
@@ -1673,7 +1838,10 @@ pub(super) fn place_order(
     let mut order = computed.json;
     // The orders of a session are numbered after the last one of the store data (#1001 when it
     // has none), one after the other, whatever the other sessions do: a test reads the same
-    // number every time. They are placed at the frozen clock of the data, if it has one.
+    // number every time on the thank-you page and the account. The Admin API records the order
+    // under that number when no order of the shop has it, else under its next one (that of
+    // `orderCreate`): no two of its orders share a name. They are placed at the frozen clock of
+    // the data, if it has one.
     let (_, store) = state.snapshot(id);
     let last = store
         .customers
@@ -1682,21 +1850,59 @@ pub(super) fn place_order(
         .max()
         .unwrap_or(1000)
         .max(1000);
-    let placed_at = store.now.unwrap_or_else(chrono::Utc::now).to_rfc3339();
+    let processed_at = store.now.unwrap_or_else(chrono::Utc::now);
+    let placed_at = processed_at.to_rfc3339();
     // The cart is taken only if it is still the one that was priced; the check and the take are
     // one step of the session.
     let taken = state.with_session(id, |entry| {
         if !computed.basis.matches(entry, &state.loaded().store) {
             return false;
         }
+        // The company location a B2B buyer orders for, as the checkout shows it.
+        let company_location = entry.session.customer_id.and_then(|customer_id| {
+            let customer = store
+                .customers
+                .iter()
+                .find(|customer| customer.id == customer_id)?;
+            let company = store.companies.get(customer.company?)?;
+            let index = customer.current_location(entry.session.company_location, &store)?;
+            company.locations.get(index).map(|location| location.id)
+        });
+        let own = Placed {
+            customer_id: entry.session.customer_id,
+            company_location,
+            note: entry.session.cart_note.clone(),
+            attributes: super::admin::pairs(&entry.session.cart_attributes),
+        };
         let number = last + entry.checkout.placed + 1;
+        // Recorded while the cart is taken, so that the page links to the order the Admin API
+        // keeps. The Admin API never takes a session's lock: holding this one while it records
+        // cannot deadlock.
+        // The Admin API's number is the session's unless an order of the shop has it already.
+        let (order_id, recorded_number) = match record_in_admin(
+            state,
+            &computed.result,
+            &computed.checkout,
+            &own,
+            number,
+            processed_at,
+        ) {
+            Some(recorded) => (recorded.id, recorded.number),
+            None => (format!("gid://shopify/Order/{number}"), number),
+        };
+        // As its `orders/create` names it: `admin_graphql_api_id`, `order_number`, `name`.
+        entry.checkout.placed_order = Some(json!({
+            "id": order_id,
+            "number": recorded_number,
+            "name": format!("#{recorded_number}"),
+        }));
         order["status"] = json!("completed");
         // The order costs the whole price: what is paid now is received, and what a selling
         // plan defers is outstanding (`totalReceivedSet` and `totalOutstandingSet` of Shopify's
         // Order).
         let (received, outstanding) = (&order["cost"]["dueNow"], &order["cost"]["dueLater"]);
         order["order"] = json!({
-            "id": format!("gid://shopify/Order/{number}"),
+            "id": order_id,
             "number": format!("#{number}"),
             "totalReceived": received,
             "totalOutstanding": outstanding,
@@ -1716,10 +1922,11 @@ pub(super) fn place_order(
         true
     });
     if taken {
+        super::admin::complete_checkout(state, token, computed.basis.placed);
         return redirect_to_thanks(state, incoming, id, token);
     }
     // Another request placed the order meanwhile.
-    if already_placed(state, id) {
+    if placed_since(state, id, before) {
         return redirect_to_thanks(state, incoming, id, token);
     }
     // The cart changed while the order was being priced: nothing was bought, and the buyer
@@ -1727,9 +1934,59 @@ pub(super) fn place_order(
     conflict(state, incoming, id)
 }
 
+/// What the session held of an order when it was placed.
+struct Placed {
+    customer_id: Option<u64>,
+    company_location: Option<u64>,
+    note: String,
+    attributes: Vec<(String, String)>,
+}
+
+/// Records a placed order in the default shop of the Admin API, under the session's `number`
+/// unless an order of the shop has it (then under the shop's next one), and delivers its
+/// `orders/create` webhook (and `orders/paid`, when it is paid in full) to the backend of the
+/// app. `None` without the Admin API.
+fn record_in_admin(
+    state: &ServerState,
+    result: &lsf_app::checkout::CheckoutResult,
+    checkout: &CheckoutState,
+    placed: &Placed,
+    number: u64,
+    processed_at: chrono::DateTime<chrono::Utc>,
+) -> Option<lsf_app::admin::domains::orders::RecordedOrder> {
+    let admin = state.admin.as_ref()?;
+    admin
+        .api
+        .record_order(&lsf_app::admin::domains::orders::PlacedOrder {
+            id: None,
+            number: Some(number),
+            processed_at,
+            result,
+            customer_id: placed.customer_id,
+            company_location_id: placed.company_location,
+            email: checkout.email.as_deref(),
+            phone: checkout.phone.as_deref(),
+            shipping_address: checkout.shipping_address.as_ref(),
+            note: Some(placed.note.as_str()).filter(|note| !note.is_empty()),
+            attributes: &placed.attributes,
+            payment: payment_name(checkout, result),
+            metafields: &checkout.metafields,
+        })
+}
+
+/// The name of the payment method the buyer selected, as the checkout offered it.
+fn payment_name<'a>(checkout: &CheckoutState, result: &'a CheckoutResult) -> Option<&'a str> {
+    let handle = checkout.selected_payment.as_ref()?;
+    result
+        .payment_methods
+        .iter()
+        .find(|method| &method.handle == handle)
+        .map(|method| method.name.as_str())
+}
+
 /// A file of the page, from the binary.
 fn asset(file: &str) -> Reply {
-    match lsf_checkout::assets::get(file) {
+    match lsf_app::checkout::assets::get(file) {
         Some(content) => Reply::new(200, content_type(file), content).cached(cache::RENDERED),
         None => Reply::not_found(),
     }
@@ -1824,7 +2081,7 @@ mod tests {
         // What comes from the request does not count, as when the state was compared as JSON.
         let mut from_request = base.clone();
         from_request.language = Some("fr".into());
-        from_request.step = lsf_checkout::BuyerJourneyStep::Completion;
+        from_request.step = lsf_app::checkout::BuyerJourneyStep::Completion;
         from_request.scenario = Some("other".into());
         assert!(same_entered(&base, &from_request));
         assert_eq!(json!(base), json!(from_request));
@@ -1840,7 +2097,7 @@ mod tests {
             |state| state.selected_payment = Some("card".into()),
             |state| state.discount_codes.push("SAVE".into()),
             |state| {
-                state.metafields.push(lsf_checkout::Metafield {
+                state.metafields.push(lsf_app::checkout::Metafield {
                     namespace: "n".into(),
                     key: "k".into(),
                     kind: "single_line_text_field".into(),

@@ -25,9 +25,9 @@ snippets/card.liquid:1: Shopify's strict Liquid parser rejects this {% render %}
 snippets/card.liquid:8: Shopify's strict Liquid parser rejects this {% when %}: Expected end_of_string but found id
   was: 'collection' and collection.handle
   fix: 'collection'
-2 file(s) checked, 2 problem(s)
+2 files checked, 2 problems
 2 of them can be fixed: run again with `--fix`
-1 of the fixes change the output, where the code now does what it says: review the diff
+1 of the fixes changes the output, where the code now does what it says: review the diff
 ```
 
 Each problem gives the message Shopify gives, the markup, and the fix. `changes the output`
@@ -37,6 +37,19 @@ in the [CLI reference](cli.md#check).
 `npx local-storefront check` reads every `.liquid` file of `layout/`, `templates/`, `sections/`,
 `blocks/` and `snippets/`, and the `liquid` settings stored in JSON: a "Custom Liquid" section
 of a template, a section group, `config/settings_data.json`.
+
+The report lists unknown filters too:
+
+```text
+snippets/title.liquid:5: unknown filter `uppercas` (Shopify ignores unknown filters; this one is not implemented here)
+  hint: did you mean "upcase"?
+```
+
+Either it is a typo: Shopify skips a filter it does not know, and prints the value unchanged, so
+the page looks almost right. Fix the name: the `hint` gives it when a filter of Shopify is one or
+two letters away, has the same letters, or does what a filter of another template language
+does (`uppercase`). Or it is a filter of Shopify that local-storefront lacks:
+[report it](https://github.com/0xtlt/local-storefront/issues).
 
 ## Fix it
 
@@ -126,8 +139,15 @@ Where the intent is not clear, the fix keeps exactly what renders today:
   `image_alt_2` if the file already has an `image_alt`.
 - **A file is written only if it has not changed** since `npx local-storefront check` read it.
 
-Some markup has no fix, and the report says why. `{% assign a.b = 1 %}`, for example, names a
-variable the strict parser cannot write.
+## Fix by hand
+
+Some markup has no fix, and the report says why after `no automatic fix:`. Fix it by hand:
+
+| The report says | Write instead |
+|---|---|
+| `` `a.b` is not a name the strict parser reads `` | For `{% assign a.b = 1 %}`, a plain name: `{% assign a_b = 1 %}`, and read `a_b`. A theme cannot write into `settings` or into an object. |
+| `` `=<` is read as an operator, which renders an error today `` | The condition never worked: write the operator it meant (`<=`), or remove it. |
+| Another reason | Rewrite the markup so that `check` accepts it, then compare the page before and after: `npx local-storefront render <path>`, into a file each time, and `diff`. |
 
 ## In CI
 
@@ -136,7 +156,9 @@ variable the strict parser cannot write.
 ```
 
 `npx local-storefront check` exits with `1` while a problem is left, so the build fails before
-Shopify refuses the upload.
+Shopify refuses the upload. It reads the files and renders none: an error at render time (a
+division by zero) needs `render --strict`. A complete workflow:
+[agents](agents.md#run-the-checks-in-ci); with browser tests: [testing](testing.md#in-ci).
 
 ## How it is checked
 

@@ -6,13 +6,14 @@ api_version = "2027-01"
 name = "UI broken: bad-owner-type"
 handle = "ui-broken-bad-owner-type"
 type = "ui_extension"
-description = "Declares a metafield whose owner_type is not one of the seven: not loaded."
+description = "Declares a metafield whose owner_type is not one of the eight: not loaded."
 
   [[extensions.targeting]]
   target = "purchase.checkout.block.render"
 
-  # Wrong on purpose: ORDER is not an owner type checkout UI extensions can read.
+  # Wrong on purpose: COLLECTION is a metafield owner of the Admin API, not one a UI extension
+  # can declare.
   [[extensions.metafields]]
   namespace = "$app:playground"
   key = "bad_owner"
-  owner_type = "ORDER"
+  owner_type = "COLLECTION"

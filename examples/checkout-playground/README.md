@@ -143,14 +143,15 @@ tools/checkout/build_functions.sh examples/checkout-playground discount-codes  #
 ```
 
 It copies the schema of each Function (its `api_version` and Function API, from
-`crates/checkout/schemas`, not committed here), builds the Cargo workspace of this folder for
-`wasm32-unknown-unknown` and links each module with `shopify-function-trampoline`, as `shopify
-app build` does. `discount-typescript` and `validation-javascript`, which have no build command
-as Shopify's templates, are built by lsf (`lsf app function build`), without Node: their types
+`crates/app/schemas/functions`, not committed here), builds the Cargo workspace of this folder for
+`wasm32-unknown-unknown` and links each module with `shopify-function-trampoline`, as `shopify app
+build` does. `discount-typescript` and `validation-javascript`, which have no build command as
+Shopify's templates, are built by lsf (`lsf app function build`), without Node: their types
 (`generated/api.ts`, not committed), `dist/function.js`, then their module. Their modules do what
-those Shopify's CLI builds do, in as many instructions: `crates/checkout/src/javascript/tests.rs`
-compares them with the CLI's (`crates/checkout/tests/fixtures/shopify-cli`). `lsf app dev --app . --build` runs the same command for each Function.
-`broken-missing-build` has no build command and stays unbuilt.
+those Shopify's CLI builds do, in as many instructions:
+`crates/app/src/checkout/javascript/tests.rs` compares them with the CLI's
+(`crates/app/tests/fixtures/shopify-cli`). `lsf app dev --app . --build` runs the same command for
+each Function. `broken-missing-build` has no build command and stays unbuilt.
 
 To change a Function and see it at once, `mise run playground:dev` (`lsf app dev --app .
 --watch`) serves the committed modules, then builds a Function again when you save it and
@@ -170,7 +171,7 @@ runs on a copy of the store data whose network Functions call a closed port (502
 server of the test (its answers):
 
 ```bash
-cargo test -p lsf playground
+cargo test -p lsf-cli playground
 ```
 
 ## Functions and checkout UI extensions together
@@ -189,13 +190,25 @@ The `mix-*` scenarios run Functions and checkout UI extensions on the same check
 
 ## Checkout UI extensions built from their sources
 
-`ui-preact` (Shopify's template in Preact, as it comes: JSX) and `ui-preact-typescript` (TSX,
-the hooks of `@shopify/ui-extensions/checkout/preact` and a signal) name their sources
-(`module`): lsf bundles them, without Node and without `node_modules`, into their
+`ui-preact` (Shopify's template in Preact, its sources as they come: JSX) and
+`ui-preact-typescript` (TSX, the hooks of `@shopify/ui-extensions/checkout/preact` and a signal)
+name their sources (`module`): lsf bundles them, without Node and without `node_modules`, into their
 `dist/<handle>.js` (`lsf app build ui-preact --app .`, `--build`, or `--watch` when they
-change). The scenario `ui-preact` shows both. `crates/checkout/assets/tests/built-extensions.test.mjs`
+change). The scenario `ui-preact` shows both. `crates/app/assets/tests/built-extensions.test.mjs`
 draws each bundle next to the one Shopify's CLI 5.0.0 builds from the same sources
-(`crates/checkout/tests/fixtures/shopify-cli`), acts on them, and compares.
+(`crates/app/tests/fixtures/shopify-cli`), acts on them, and compares.
+
+An extension reads through `shopify.appMetafields` only the metafields it declares, as on
+Shopify, the cart's too. The template's checkbox reads the cart metafield `$app.requestedFreeGift`
+it writes, which the template does not declare: the toml of `ui-preact` adds the
+`[[extensions.metafields]]` (`owner_type = "CART"`) that keeps the box ticked.
+
+The box's metafield goes on to the order: `shopify.app.toml` defines the order metafield
+`app.requestedFreeGift` with `capabilities.cart_to_order_copyable`, so when the buyer pays, lsf
+copies the cart's value onto the order, as Shopify does. `ca-preact` declares it
+(`owner_type = "ORDER"`) and shows "Free gift requested at checkout" on the order status page.
+Try it: open the `ui-preact` scenario logged in as `jane.doe@example.com`, tick the box, complete
+the order, then open it in the customer account (`/account`).
 
 ## Customer account UI extensions
 
@@ -207,7 +220,7 @@ with two locations on the profile.
 | Extension | API | Targets | What it shows |
 |---|---|---|---|
 | `ca-every-target` | 2026-10 | the 24 targets of customer accounts | A badge naming each target and what it is for (order, shipment, return, location); a full page with a route of its own (`/account/pages/ca-every-target`); an order action, "Ask about this order", whose dialog shows a toast |
-| `ca-preact` | 2026-10 | `order-status.block.render`, `profile.block.render` | Built from its sources in Preact with the hooks of `@shopify/ui-extensions/customer-account/preact`: the order, its items and total; the customer logged in, and a toast |
+| `ca-preact` | 2026-10 | `order-status.block.render`, `profile.block.render` | Built from its sources in Preact with the hooks of `@shopify/ui-extensions/customer-account/preact`: the order, its items and total, and the free gift the order's `$app.requestedFreeGift` records; the customer logged in, and a toast |
 
 Add `?targets=all` to a page of the account for the list of every target and where it renders.
 
@@ -273,10 +286,13 @@ The `ui-broken-*` extensions fail on purpose. They are in no scenario but their 
 | `ui-broken-no-api-version` | none | No `api_version` | `ui-broken-loader` |
 | `ui-broken-not-built` | 2026-10 | No `dist/` bundle | `ui-broken-loader` |
 | `ui-broken-missing-owner-type` | 2027-01 | A metafield without the `owner_type` 2027-01 requires | `ui-broken-loader` |
-| `ui-broken-bad-owner-type` | 2027-01 | `owner_type = "ORDER"`, not one of the seven | `ui-broken-loader` |
+| `ui-broken-bad-owner-type` | 2027-01 | `owner_type = "COLLECTION"`, not one of the eight | `ui-broken-loader` |
 | `ui-broken-tall` | 2026-10 | 150 rows, far taller than the window | `ui-broken-layout` |
 | `ui-broken-long-text` | 2026-10 | Long unbroken words, URLs and codes in a banner, badge, button, field, link and under each line | `ui-broken-layout` |
 
-A scenario without an `extensions` list runs every extension of the app, the broken ones
-included. `crates/checkout/assets/tests/playground.test.mjs` (`mise run test:js`) checks that
+A scenario without an `extensions` list shows the shop's checkout: its checkout UI extensions,
+the broken ones included, and only the Functions the shop has an enabled owner of (a payment
+customization, …), of which the playground's store data declares none, as on a shop the app was
+just installed on. Every scenario here names its Functions, which run whether or not the shop
+has an owner of them ([what runs](../../docs/checkout.md#owners-and-scenarios)). `crates/app/assets/tests/playground.test.mjs` (`mise run test:js`) checks that
 every bundle registers the targets of its toml and that the working ones draw without an error.

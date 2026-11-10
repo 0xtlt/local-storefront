@@ -1,0 +1,14 @@
+# A Shopify app for the tests of the Admin API's app platform: a web pixel extension, a Flow
+# trigger, and optional scopes to revoke and downgrade. Nothing here is built or run.
+name = "Platform fixtures"
+client_id = "22222222222222222222222222222222"
+handle = "platform-fixtures"
+application_url = "https://platform.example.com"
+embedded = true
+
+[access_scopes]
+scopes = "read_products,write_products,write_script_tags,write_pixels,read_customer_events,unauthenticated_read_product_listings,unauthenticated_read_checkouts"
+optional_scopes = ["write_customers", "read_discounts", "write_orders"]
+
+[webhooks]
+api_version = "2026-10"

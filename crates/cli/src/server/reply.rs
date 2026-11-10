@@ -71,6 +71,33 @@ impl Reply {
         Reply::text(404, "Not found")
     }
 
+    /// The answer to a CORS preflight (`OPTIONS` with `Access-Control-Request-Method`) for a
+    /// file a page of another origin loads: an embedded app's page, on its own port, fetching
+    /// lsf's copy of Polaris with the headers lsf's App Bridge adds. As Shopify's CDN: any
+    /// origin, `GET` and `HEAD`, kept a day; the headers asked for are allowed by name, since
+    /// the `*` of the CDN does not cover `Authorization`.
+    pub fn preflight(requested_headers: Option<&str>) -> Reply {
+        let reply = Reply {
+            status: 204,
+            headers: Vec::new(),
+            body: Vec::new(),
+        }
+        .header("access-control-allow-origin", "*")
+        .header("access-control-allow-methods", "GET, HEAD, OPTIONS")
+        .header("access-control-max-age", "86400")
+        .header("allow", "GET, HEAD, OPTIONS")
+        .header("vary", "Access-Control-Request-Headers");
+        match requested_headers.map(str::trim).filter(|asked| {
+            !asked.is_empty()
+                && asked.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b',' | b' ')
+                })
+        }) {
+            Some(asked) => reply.header("access-control-allow-headers", asked),
+            None => reply,
+        }
+    }
+
     pub fn header(mut self, name: &str, value: impl Into<String>) -> Reply {
         self.headers.push((name.to_string(), value.into()));
         self

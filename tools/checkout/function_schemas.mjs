@@ -1,39 +1,35 @@
 #!/usr/bin/env node
-// Writes the Function API schemas of lsf-checkout (crates/checkout/schemas/<since>/<api>.graphql).
+// Writes the Function API schemas of lsf-app (crates/app/schemas/functions/<since>/<api>.graphql).
 // A release gets a file for an API only when its schema differs from the release before: the
-// releases that share a schema share its file (its first line lists them), and lsf-checkout parses
-// it once. The files are listed in `SCHEMA_FILES` (crates/checkout/src/version.rs), which a test
+// releases that share a schema share its file (its first line lists them), and lsf-app parses
+// it once. The files are listed in `SCHEMA_FILES` (crates/app/src/config/version.rs), which a test
 // checks against this folder.
 //
-// Source: the npm package @shopify/dev-mcp (ISC, Shopify), pinned below. It ships the
-// introspection of every Function API for each API release; no login is needed (`shopify app
+// Source: the npm package @shopify/dev-mcp (ISC, Shopify), pinned in tools/dev_mcp.mjs. It ships
+// the introspection of every Function API for each API release; no login is needed (`shopify app
 // function schema` needs one). The tarball is checked against the pinned SHA-256, so the
 // result is reproducible. Needs network access and `npm`.
 //
-// To add a version: add it to the releases of crates/checkout/assets/api.json, pin a
+// To add a version: add it to the releases of crates/app/assets/api.json, pin a
 // @shopify/dev-mcp release that has it, run `mise run checkout:schemas`, then add the files the
-// run wrote for it (if any) to `SCHEMA_FILES` in crates/checkout/src/version.rs.
+// run wrote for it (if any) to `SCHEMA_FILES` in crates/app/src/config/version.rs.
 //
 // The introspection carries no `@oneOf`, which the Rust Function typegen needs to turn an
 // operation into an enum: an input object whose fields are all optional is a `@oneOf`, but for
 // NOT_ONE_OF (checked against Shopify's examples and the docs).
-import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 
-const PACKAGE = "@shopify/dev-mcp@1.17.0";
-const SHA256 = "f651c221109dbc55601ab7a85353f3b82fec8ec9bbf9f260440139e28c7e8a7a";
+import { PACKAGE, devMcp } from "../dev_mcp.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-// The releases lsf-checkout runs, oldest first.
-const VERSIONS = JSON.parse(readFileSync(join(root, "crates/checkout/assets/api.json"), "utf8")).releases.map(
+// The releases lsf-app runs, oldest first.
+const VERSIONS = JSON.parse(readFileSync(join(root, "crates/app/assets/api.json"), "utf8")).releases.map(
   (release) => release.version,
 );
-// The file name in the package -> the name in lsf-checkout (`FunctionApi`).
+// The file name in the package -> the name in lsf-app (`FunctionApi`).
 const APIS = {
   cart_checkout_validation: "cart_checkout_validation",
   cart_transform: "cart_transform",
@@ -53,56 +49,37 @@ const NOT_ONE_OF = new Set([
 ]);
 const isFetchResult = (name) => name.endsWith("FetchResult");
 
-const PLACEHOLDER = "_noField"; // also in crates/checkout/src/schema.rs
+const PLACEHOLDER = "_noField"; // also in crates/app/src/checkout/schema.rs
 
-const out = join(root, "crates/checkout/schemas");
+const out = join(root, "crates/app/schemas/functions");
 
-const work = mkdtempSync(join(tmpdir(), "lsf-function-schemas-"));
-try {
-  execFileSync("npm", ["pack", PACKAGE, "--silent", "--pack-destination", work], {
-    stdio: ["ignore", "ignore", "inherit"],
-  });
-  const tarball = join(work, readdirSingle(work));
-  const sha = createHash("sha256").update(readFileSync(tarball)).digest("hex");
-  if (sha !== SHA256) throw new Error(`${PACKAGE}: SHA-256 is ${sha}, expected ${SHA256}`);
-  const unpacked = join(work, "unpacked");
-  mkdirSync(unpacked);
-  execFileSync("tar", ["xzf", tarball, "-C", unpacked]);
+const unpacked = devMcp();
 
-  // For each API, the releases in runs that share one schema: `{since, versions, body}`.
-  const files = [];
-  for (const [file, api] of Object.entries(APIS)) {
-    let last = null;
-    for (const version of VERSIONS) {
-      const path = join(unpacked, "package/dist/data", `functions_${file}_${version}.json.gz`);
-      const body = print(JSON.parse(gunzipSync(readFileSync(path))).data.__schema);
-      if (last && last.body === body) {
-        last.versions.push(version);
-      } else {
-        last = { file, api, since: version, versions: [version], body };
-        files.push(last);
-      }
+// For each API, the releases in runs that share one schema: `{since, versions, body}`.
+const files = [];
+for (const [file, api] of Object.entries(APIS)) {
+  let last = null;
+  for (const version of VERSIONS) {
+    const path = join(unpacked, "dist/data", `functions_${file}_${version}.json.gz`);
+    const body = print(JSON.parse(gunzipSync(readFileSync(path))).data.__schema);
+    if (last && last.body === body) {
+      last.versions.push(version);
+    } else {
+      last = { file, api, since: version, versions: [version], body };
+      files.push(last);
     }
   }
-  rmSync(out, { recursive: true, force: true });
-  for (const { file, api, since, versions, body } of files) {
-    mkdirSync(join(out, since), { recursive: true });
-    const header = [
-      `# Shopify Function API schema: ${file}, API versions ${versions.join(", ")}.`,
-      `# Generated by tools/checkout/function_schemas.mjs from ${PACKAGE}: do not edit.`,
-      "",
-    ];
-    writeFileSync(join(out, since, `${api}.graphql`), `${header.join("\n")}\n${body}`);
-    console.log(`${since}/${api}.graphql: ${versions.join(", ")}`);
-  }
-} finally {
-  rmSync(work, { recursive: true, force: true });
 }
-
-function readdirSingle(dir) {
-  const names = execFileSync("ls", [dir]).toString().trim().split("\n");
-  if (names.length !== 1) throw new Error(`expected one tarball in ${dir}, got ${names}`);
-  return names[0];
+rmSync(out, { recursive: true, force: true });
+for (const { file, api, since, versions, body } of files) {
+  mkdirSync(join(out, since), { recursive: true });
+  const header = [
+    `# Shopify Function API schema: ${file}, API versions ${versions.join(", ")}.`,
+    `# Generated by tools/checkout/function_schemas.mjs from ${PACKAGE}: do not edit.`,
+    "",
+  ];
+  writeFileSync(join(out, since, `${api}.graphql`), `${header.join("\n")}\n${body}`);
+  console.log(`${since}/${api}.graphql: ${versions.join(", ")}`);
 }
 
 function typeRef(type) {
@@ -185,7 +162,7 @@ function print(schema) {
         for (const field of type.inputFields) lines.push(`  ${input(field)}`);
         // SDL has no input object without a field. Shopify empties the legacy operations it no
         // longer takes (`DeprecatedOperation` of the delivery customization API): the
-        // placeholder keeps the schema valid, lsf-checkout ignores it.
+        // placeholder keeps the schema valid, lsf-app ignores it.
         if (type.inputFields.length === 0) lines.push(`  ${PLACEHOLDER}: Void`);
         lines.push("}");
         break;

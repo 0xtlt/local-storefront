@@ -13,8 +13,10 @@
 //! - A change in a Function that has a build command (`[extensions.build] command`) builds it
 //!   again, in its folder. One build at a time per Function; what changes during a build
 //!   builds it once more after it. Several Functions build at once, up to [`PARALLEL`].
-//! - A change to the other files of the app (a Cargo workspace's `Cargo.toml` and
-//!   `Cargo.lock`, a `package.json`, a crate the Functions share) builds every Function.
+//! - A change to the other files of the app the builds read (a Cargo workspace's `Cargo.toml`
+//!   and `Cargo.lock`, a `package.json`, a crate or a package the Functions share) builds every
+//!   Function. The rest of the app's own folder is the app's (its sources, its web front end and
+//!   what its dev server builds in `dist/` or `build/`): it is not followed.
 //! - The checkout never runs the module a build writes: it runs a copy of the last one that
 //!   built ([`Modules`]), outside the app, replaced in one step once a build is over and its
 //!   module compiles as a run compiles it. A build that fails (or writes a module that does not
@@ -36,10 +38,11 @@ use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
-use lsf_checkout::app::{self, App, Selection};
+use lsf_app::config::{self, App, Selection};
 use serde_json::{Value as Json, json};
 
 use crate::checkout::encoded_handle;
+use crate::output::count;
 
 use lock::{Lock, Locks};
 
@@ -290,7 +293,7 @@ fn remove_stale(base: &Path) {
 /// engine and settings, and export a function. Says why not. A module cut short (a build still
 /// writing it), one whose sections are not what they say, and an empty one are not.
 pub fn check_module(bytes: &[u8]) -> Result<(), String> {
-    lsf_checkout::runner::check_module(bytes)
+    lsf_app::checkout::runner::check_module(bytes)
 }
 
 /// How the watcher looks at the files and runs the builds.
@@ -707,10 +710,10 @@ pub fn ignored(relative: &Path, outputs: &[PathBuf]) -> bool {
 
 /// What the build of a Function writes, in its folder: `dist/`, the module wherever
 /// `[extensions.build] path` puts it, and for a JavaScript Function, the types of its typegen.
-fn outputs_of(function: &app::FunctionExtension) -> Vec<PathBuf> {
+fn outputs_of(function: &config::FunctionExtension) -> Vec<PathBuf> {
     let mut outputs = vec![PathBuf::from("dist")];
-    if function.build() == Some(app::Build::JavaScript) {
-        outputs.extend(lsf_checkout::javascript::outputs(&function.dir));
+    if function.build() == Some(config::Build::JavaScript) {
+        outputs.extend(lsf_app::checkout::javascript::outputs(&function.dir));
     }
     if let Ok(module) = function.wasm_path.strip_prefix(&function.dir) {
         match module
@@ -760,8 +763,8 @@ fn rules_of(app: &App, selection: &Selection) -> BTreeMap<String, Rules> {
         };
         // A JavaScript Function is built by lsf itself, in a process of its own as any build.
         let command = build.map(|build| match build {
-            app::Build::Command(command) => command.to_string(),
-            app::Build::JavaScript => {
+            config::Build::Command(command) => command.to_string(),
+            config::Build::JavaScript => {
                 crate::checkout::javascript_build_command(&app.root, &function.handle)
             }
         });
@@ -802,7 +805,7 @@ fn rules_of(app: &App, selection: &Selection) -> BTreeMap<String, Rules> {
 
 /// Whether the bundle of a checkout UI extension is missing, or older than a file of its folder
 /// (but `dist/`, `node_modules/` and hidden ones).
-fn stale(extension: &lsf_checkout::app::UiExtension) -> bool {
+fn stale(extension: &lsf_app::config::UiExtension) -> bool {
     let Some(built) = std::fs::metadata(&extension.bundle)
         .and_then(|metadata| metadata.modified())
         .ok()
@@ -1056,16 +1059,86 @@ impl Snapshot {
     }
 }
 
+/// The folders of an app's own folder that hold what a build writes or what the tools fetch
+/// (the app's web front end built by trunk or Vite in `dist/`, React Router's `build/`), never
+/// what a Function reads: a change there builds nothing. Hidden folders (`.git/`, `.shopify/`)
+/// and `node_modules/` are left alone everywhere ([`ignored`]).
+const OUTPUT_FOLDERS: [&str; 4] = ["dist", "build", "target", "node_modules"];
+
+/// The files of an app's own folder that the builds of its Functions read: the manifests and
+/// lock files of a Cargo or npm workspace, the toolchain.
+const BUILD_FILES: [&str; 13] = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+    "tsconfig.json",
+];
+
+/// How deep in a folder of the app's own folder a crate or a package is looked for:
+/// `crates/common/Cargo.toml`, `packages/shared/utils/package.json`.
+const MANIFEST_DEPTH: usize = 3;
+
 /// Whether a file or folder of the app's own folder (`name`, at `path`) is one the builds may
-/// read: not the extensions, the tools' folders, the store data, or a Markdown document.
+/// read: a manifest of [`BUILD_FILES`], or a folder that holds a crate or a package (a
+/// `Cargo.toml` or a `package.json`) the Functions may share. Not the extensions, the store
+/// data, the build and dependency folders ([`OUTPUT_FOLDERS`]), nor the rest of an app that is
+/// more than its Functions: its own sources (`src/`, `app/`), its pages, its documents. Those
+/// are the app's business, whose dev server rebuilds them: following them would build every
+/// Function and reload the pages each time it does.
 fn shared_input(name: &Path, path: &Path, root: &Path, data: Option<&Path>) -> bool {
-    if ignored(name, &[]) || name == Path::new(crate::app::DEFAULT_DATA_DIRECTORY) {
+    if ignored(name, &[])
+        || name == Path::new(crate::app::DEFAULT_DATA_DIRECTORY)
+        || OUTPUT_FOLDERS
+            .iter()
+            .any(|folder| name == Path::new(folder))
+    {
         return false;
     }
-    match data {
-        Some(data) => data != path && data != root.join(name),
-        None => true,
+    if data.is_some_and(|data| data == path || data == root.join(name)) {
+        return false;
     }
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => holds_manifest(path, MANIFEST_DEPTH),
+        Ok(_) => BUILD_FILES.iter().any(|file| name == Path::new(file)),
+        Err(_) => false,
+    }
+}
+
+/// Whether `dir`, or a folder in it at most `depth` levels down, holds a `Cargo.toml` or a
+/// `package.json`. The build, dependency and hidden folders are not looked into.
+fn holds_manifest(dir: &Path, depth: usize) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut folders = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = Path::new(&name);
+        if name == Path::new("Cargo.toml") || name == Path::new("package.json") {
+            return true;
+        }
+        if depth > 1
+            && !ignored(name, &[])
+            && !OUTPUT_FOLDERS
+                .iter()
+                .any(|folder| name == Path::new(folder))
+            && entry.file_type().is_ok_and(|kind| kind.is_dir())
+        {
+            folders.push(entry.path());
+        }
+    }
+    folders
+        .iter()
+        .any(|folder| holds_manifest(folder, depth - 1))
 }
 
 /// The files that changed.
@@ -1378,7 +1451,7 @@ fn build(
             // As `shopify app build`: a module that calls the Function Wasm API by name is linked
             // to the provider, in place.
             if job.module.is_file()
-                && let Err(error) = lsf_checkout::trampoline::apply(&job.module)
+                && let Err(error) = lsf_app::checkout::trampoline::apply(&job.module)
             {
                 return Outcome::Failed(Failure {
                     reason: error,
@@ -1685,7 +1758,7 @@ impl Coordinator {
         // The checkout UI extensions lsf bundles: those whose bundle is missing or older than
         // their files (all with `--build`), at once.
         let ui: Vec<String> = self.ui_handles().into_iter().collect();
-        if let Ok(app) = app::load(&self.root) {
+        if let Ok(app) = config::load(&self.root) {
             for handle in ui {
                 let stale = app
                     .ui_extension(&handle)
@@ -1779,7 +1852,7 @@ impl Coordinator {
     /// Functions it builds now run their published module; with `adopt`, one that was built
     /// before it is watched is published as it is, when its module is whole.
     fn reload_app(&mut self, adopt: bool) -> bool {
-        let rules = match app::load(&self.root) {
+        let rules = match config::load(&self.root) {
             Ok(app) => rules_of(&app, &self.selection),
             // The app cannot be read: the pages say why. Its folders are watched as they were.
             Err(_) => return false,
@@ -1901,11 +1974,11 @@ impl Coordinator {
     /// the build of a Function does, and has the pages reload.
     fn build_ui(&mut self, handle: &str) {
         let started = Instant::now();
-        let built = app::load(&self.root).and_then(|app| {
+        let built = config::load(&self.root).and_then(|app| {
             let extension = app
                 .ui_extension(handle)
                 .ok_or_else(|| format!("{handle} is not an extension of the app"))?;
-            lsf_checkout::javascript::build_extension(extension, &self.root)
+            lsf_app::checkout::javascript::build_extension(extension, &self.root)
         });
         match built {
             Ok(_) => {
@@ -2092,10 +2165,6 @@ fn seconds(duration: Duration) -> String {
     } else {
         format!("{:.1}s", duration.as_secs_f64())
     }
-}
-
-fn count(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 #[cfg(test)]

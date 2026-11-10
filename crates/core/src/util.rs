@@ -1,5 +1,25 @@
 //! Small helpers shared across the crate.
 
+/// The command that runs lsf, as the hints of the tool write it (`` `lsf app build x` ``):
+/// `LSF_COMMAND`, which the npm launcher sets to `npx local-storefront`, else `lsf`.
+pub fn command() -> String {
+    command_of(std::env::var("LSF_COMMAND").ok().as_deref())
+}
+
+/// [`command`] for a value of `LSF_COMMAND`: blank is unset.
+pub fn command_of(variable: Option<&str>) -> String {
+    variable
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+        .unwrap_or("lsf")
+        .to_string()
+}
+
+/// `1 Function`, `2 Functions`: a number and what it counts, in the singular or the plural.
+pub fn count(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
 /// Turns a string into a Shopify handle: lowercase ASCII letters and digits separated by
 /// single hyphens. Accented Latin letters are transliterated (`Crème brûlée` → `creme-brulee`).
 pub fn handleize(input: &str) -> String {
@@ -112,7 +132,8 @@ pub fn closest_match<'a>(
     (distance <= threshold).then_some(candidate)
 }
 
-fn edit_distance(a: &str, b: &str) -> usize {
+/// The Levenshtein distance between two strings, in characters.
+pub fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let mut previous: Vec<usize> = (0..=b.len()).collect();
@@ -130,6 +151,23 @@ fn edit_distance(a: &str, b: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_command_is_lsf_unless_the_launcher_names_another() {
+        assert_eq!(command_of(None), "lsf");
+        assert_eq!(command_of(Some("  ")), "lsf");
+        assert_eq!(
+            command_of(Some("npx local-storefront")),
+            "npx local-storefront"
+        );
+    }
+
+    #[test]
+    fn a_count_is_singular_for_one_only() {
+        assert_eq!(count(0, "Function", "Functions"), "0 Functions");
+        assert_eq!(count(1, "Function", "Functions"), "1 Function");
+        assert_eq!(count(2, "UI extension", "UI extensions"), "2 UI extensions");
+    }
 
     #[test]
     fn handleizes() {

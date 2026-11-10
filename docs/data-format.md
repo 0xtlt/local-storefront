@@ -61,6 +61,21 @@ shopify-local/
   README.md             this document
 ```
 
+**Starting from your own data.** The files of the demo store name each other:
+`collections.json`, `menus.json` and the `selling_plan_groups` of `store.json` name its
+products, `menus.json` names its pages and its blog, and `gift_cards.json` names a product and
+a customer. Replace `products/` and `customers.json` with yours, and edit `collections.json`
+and `menus.json`. Delete what you don't need: `gift_cards.json`, the `selling_plan_groups` of
+`store.json`. Then run `npx local-storefront validate`: each name left over is an error
+(`unknown_product`, `unknown_reference`, `unknown_customer`) with its file and pointer. Keep
+`schema/`, for your editor.
+
+No error points at the rest of the demo content, so replace it too: the shop's name in
+`store.json` (`Local Supply Co.`), the pages of `pages.json` and the articles of `blogs.json`
+(or delete them, with their links in `menus.json`). The demo's automated
+[collections](#collections) pick products by `type` and by the tag `sale`: give yours a `type`
+and `tags`, or these collections stay empty.
+
 Every `*.json` file at the root is a **data file**: an object with any of the keys `shop`,
 `products`, `collections`, `pages`, `blogs`, `menus`, `customers`, `companies`, `gift_cards`,
 `selling_plan_groups`, `locations`, `swatches`, `metaobjects`, `localization`, `files`,
@@ -95,8 +110,9 @@ all, and a running server serves them at `/__lsf/schema/<kind>`.
   explicitly only to reproduce a specific Shopify id.
 - **Money** is an integer number of cents (`1999`) or a decimal string (`"19.99"`). A JSON
   float (`19.99`) is rejected, because it is ambiguous. Liquid sees cents, as on Shopify.
-- **Dates** are ISO 8601 strings: `"2024-05-01"` or `"2024-05-01T10:00:00Z"`. Entities without
-  dates get fixed ones, so renders are reproducible.
+- **Dates** are ISO 8601 strings: a day, `"2024-05-01"`, or a day and a time,
+  `"2024-05-01T10:00:00Z"`, with `Z`, an offset (`+02:00`) or neither, for the shop's
+  `timezone`. Entities without dates get fixed ones, so renders are reproducible.
 - **References** between entities use handles (products, collections, pages, blogs), emails
   (customers) and SKUs or ids (variants). A reference to something that does not exist is an
   error, with a suggestion when a close match exists.
@@ -152,6 +168,11 @@ product with options lists its variants; each gives one value per option:
 - `recommendations` lists the handles returned by product recommendations; by default they are
   other products of the same collections.
 - `template_suffix` selects an alternate template (`templates/product.<suffix>.json`).
+- `status` (`active`, `draft`, `archived`) and `published` (on the Online Store, `true` by
+  default) say whether the product is on the storefront: only an active, published product is.
+  The others have no page, are in no collection, cannot be bought, and what names them (a
+  collection, a menu, an order) leaves them out without an error; the Admin API lists them with
+  their status.
 
 ## Collections
 
@@ -556,7 +577,7 @@ Each gift card has a page rendered by `templates/gift_card.liquid`. Its URL is l
 ## Checkout
 
 The `checkout` section sets up the local checkout of a Shopify app (`npx local-storefront
-checkout --app <dir>`, see [checkout](checkout.md)). Every field has a default, and the section
+app dev --app <dir>`, see [checkout](checkout.md)). Every field has a default, and the section
 changes nothing for a theme.
 
 ```json
@@ -572,7 +593,7 @@ changes nothing for a theme.
         "metafields": { "$app:config.settings": { "type": "json", "value": { "percentage": 10 } } }
       }
     ],
-    "functions": { "delivery-rules": { "metafields": { "$app:config.settings": { "type": "json", "value": {} } } } },
+    "functions": { "delivery-rules": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": {} } } } },
     "tax_rate": 20
   }
 }
@@ -583,14 +604,24 @@ changes nothing for a theme.
 - `payment_methods`: without it, "Credit card", "Cash on Delivery" and "Bank Deposit".
   `placements` says where a method is offered, which payment customization Functions read:
   `["PAYMENT_METHOD"]` (the list of the checkout, the default) and/or `["ACCELERATED_CHECKOUT"]`
-  (the express buttons). A method that is only an express button is not in the list the page
-  shows.
+  (the express buttons). The page shows the methods of `PAYMENT_METHOD` in its list, and those of
+  `ACCELERATED_CHECKOUT` as express buttons above the contact section, once the payment
+  customizations ran (one can hide a method in one placement and leave it in the other). PayPal
+  with PayPal Express on is in both.
 - `discounts`: each one uses a discount Function of the app by its handle. A `code` makes it a
   code discount; without one it is automatic. `classes` (`PRODUCT`, `ORDER`, `SHIPPING`) says
   what it may reduce, all three by default. `metafields` are those of the discount, by
-  `"namespace.key"`, in the same shorthand as other metafields.
-- `functions`: the metafields of the other Functions (cart transform, delivery or payment
-  customization, validation), by the handle of the Function.
+  `"namespace.key"`, in the same shorthand as other metafields. `id` is the number of the id
+  its Function reads (`gid://shopify/DiscountAutomaticNode/<id>`), its position in the list from
+  1 by default.
+- `functions`: the other Functions (cart transform, delivery or payment customization,
+  validation), by the handle of the Function: `metafields`, their settings, and `enabled`, whether
+  the shop has an owner of it (the payment customization, … the app creates) and it is on. As on
+  Shopify, the shop's checkout runs such a Function only through an enabled owner: `true` runs
+  it, `false` is an owner turned off, and without `enabled` the shop has none (as after an
+  install, until the app creates one through the Admin API). A scenario that names the Function
+  in `extensions` runs it anyway, with these metafields
+  ([what runs](checkout.md#owners-and-scenarios)).
 - `tax_rate`: a percentage, added to the discounted subtotal.
 
 ### Checkout scenarios
@@ -649,10 +680,18 @@ Every field is optional.
 - `checkout` overrides the [`checkout` section](#checkout) of the store data. Every field that is
   present replaces the store's: `shipping_rates`, `payment_methods`, `discounts` (`[]` runs no
   discount), `tax_rate`. `functions` replaces the settings of the Functions it names and keeps
-  those of the others.
+  those of the others; an entry without `enabled` keeps the store's owner of it.
 - `variant` is the look: `standard` or `shop`. `?variant=` in the URL still wins.
 - `extensions` lists the handles of the extensions (Functions and checkout UI extensions) that
-  run. The others of the app are left out. It narrows what `--extension` allows.
+  run. The others of the app are left out. It narrows what `--extension` allows. The Functions it
+  names run whether or not the shop has an owner of them: a scenario that names none shows the
+  shop's checkout, where only those with an enabled owner run. A Function you add to the app
+  later is not in the `extensions` of the scenarios written before it: add its handle.
+- `expect` is what the checkout must look like once the Functions ran, which `app check`
+  checks: the payment methods, express buttons, delivery options, discounts, lines and errors,
+  each with `includes`, `excludes` and `equals`, and exact `totals`
+  (`"expect": { "express_methods": { "excludes": ["paypal"] }, "totals": { "total": "96.00" } }`).
+  See [expected results](checkout.md#expected-results).
 
 A scenario that does not validate is still listed, with its errors, and cannot be opened.
 `validate` reports it with the file `checkouts/<name>.json` and a pointer into it
@@ -674,7 +713,10 @@ store has none: `npx local-storefront app init` writes a set.
 The first language is the primary one, served at `/`. The others are served under
 `/<iso_code>/` (`/fr/products/blue-shirt`) and use the theme's `locales/<iso_code>.json`.
 Names and currencies of countries default to built-in values. The localization form
-(`{% form 'localization' %}`) switches the session's country and language.
+(`{% form 'localization' %}`) switches the session's country and language. A visitor who
+selected no country is in the shop's (`shop.address.country_code`), the one of its primary
+market, on the storefront as at the checkout; in the first country when the store does not sell
+to the shop's.
 
 `markets` groups countries the way Shopify's markets do. The checkout Functions read the
 market of the buyer (`localization.market`) and of an address (`MailingAddress.market`):
@@ -790,6 +832,11 @@ in a `url` setting leads to the page.
 The Functions of the [local checkout](checkout.md) read the same metaobjects as
 `shop.metaobject(handle: {type: "designer", handle: "sam"})`, with their `field(key:)`.
 
+The types an app owns are written `$app:<type>` (`"$app:author"`), as its reserved metafield
+namespaces are (`$app:config`). Shopify writes them in full, `app--<app id>--author`, which a
+theme's Liquid uses: `metaobjects['app--1234--author']` and `metaobjects['$app:author']` both
+find them, whatever the id, since the store data does not know it.
+
 
 ## Time and theme settings
 
@@ -811,12 +858,12 @@ The Functions of the [local checkout](checkout.md) read the same metaobjects as
 | `classic_customer_accounts` | A warning: `shop.customer_accounts` or a customer's `password`, which classic customer accounts had. The field is ignored. |
 | `missing_field` | A required field is absent. |
 | `wrong_type` | A value of the wrong JSON type. |
-| `invalid_value`, `invalid_format` | A value outside what the field accepts. |
-| `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. |
+| `invalid_value`, `invalid_format` | A value outside what the field accepts, or not in its format. Money as a JSON float (`19.99`) is an `invalid_value`, and a string that is not an amount (`"19.999"`) an `invalid_format`; the hint says what the field takes. |
+| `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. `invalid_money` is a shipping rate below zero. |
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
 | `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
-| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. |
+| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
@@ -829,6 +876,12 @@ The Functions of the [local checkout](checkout.md) read the same metaobjects as
 | `gift_card_balance` (warning) | A gift card whose balance is above its initial value. |
 
 `path` is always a JSON pointer into `file`, so the value to fix can be located mechanically.
+
+A product or a customer with a value that cannot be read (a `wrong_type`, an `invalid_value`,
+an `invalid_format`, a `missing_field`) is left out, so each reference to it is an error too:
+an `unknown_product`, `unknown_variant`, `unknown_customer` or `unknown_reference` in another
+file. Fix the errors in `products/` and `customers.json` first, and run `validate` again before
+you edit a reference.
 
 ## Field reference
 

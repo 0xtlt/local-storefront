@@ -284,7 +284,7 @@ type = "ui_extension"
 
     /// The app as the checkout reads it with these builds.
     fn load(&self, builds: &Builds) -> App {
-        let mut app = app::load(&self.root()).unwrap();
+        let mut app = config::load(&self.root()).unwrap();
         builds.apply(&mut app);
         app
     }
@@ -459,7 +459,7 @@ type = "function"
   "generates": { "./generated/api.ts": { "plugins": ["typescript", "typescript-operations"] } } } }"#,
     );
     app.write("extensions/bulk/src/index.ts", "export function run() {}\n");
-    let shopify_app = app::load(&app.root()).unwrap();
+    let shopify_app = config::load(&app.root()).unwrap();
     let rules = rules_of(&shopify_app, &Selection::all());
     let rules = &rules["bulk"];
     let job = rules.build.as_ref().expect("a build");
@@ -480,31 +480,110 @@ type = "function"
 }
 
 #[test]
-fn what_every_build_may_read_is_the_rest_of_the_app() {
-    let root = Path::new("/app");
-    let data = Path::new("/app/fixtures");
-    let shared = |name: &str| shared_input(Path::new(name), &root.join(name), root, Some(data));
+fn what_every_build_may_read_is_the_manifests_and_the_shared_crates_of_the_app() {
+    let app = TempApp::new("shared-inputs");
+    let root = app.root();
+    for file in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "rust-toolchain.toml",
+        "crates/common/Cargo.toml",
+        "packages/shared/utils/package.json",
+        // The app's own sources and what its dev server builds.
+        "src/main.rs",
+        "app/routes/app.tsx",
+        "index.html",
+        "Trunk.toml",
+        "dist/index.html",
+        "build/server/index.js",
+        "target/debug/app",
+        "node_modules/react/package.json",
+        ".git/HEAD",
+        ".shopify/project.json",
+        ".env",
+        "fixtures/store.json",
+        "shopify-local/store.json",
+        "README.md",
+        "tools/run.sh",
+        "deep/a/b/c/Cargo.toml",
+    ] {
+        app.write(file, "x");
+    }
+    let data = app.path("fixtures");
+    let shared = |name: &str| shared_input(Path::new(name), &root.join(name), &root, Some(&data));
     for name in [
         "Cargo.toml",
         "Cargo.lock",
         "package.json",
         "package-lock.json",
         "pnpm-lock.yaml",
+        "rust-toolchain.toml",
         "crates",
-        "tools",
+        "packages",
     ] {
         assert!(shared(name), "{name}");
     }
     for name in [
-        "shopify-local",
-        "fixtures",
+        "src",
+        "app",
+        "index.html",
+        "Trunk.toml",
+        "dist",
+        "build",
         "target",
         "node_modules",
         ".git",
+        ".shopify",
+        ".env",
+        "fixtures",
+        "shopify-local",
         "README.md",
+        "tools",
+        // A crate deeper than lsf looks.
+        "deep",
+        "missing",
     ] {
         assert!(!shared(name), "{name}");
     }
+}
+
+#[test]
+fn what_the_app_builds_at_its_root_builds_no_function_and_reloads_nothing() {
+    // An app with a web front end built at its root (openshop's trunk: `src/` → `dist/`), and
+    // dependencies installed there: its dev server writes there on every save.
+    let app = TempApp::new("frontend");
+    app.write("Cargo.toml", "[workspace]\nmembers = [\"extensions/*\"]\n");
+    app.write("index.html", "<html></html>");
+    app.write("src/main.rs", "fn main() {}");
+    app.write("dist/index.html", "<html></html>");
+    app.write("dist/app-1.wasm", "1");
+    app.write(".shopify/project.json", "{}");
+    app.function("fn-a");
+    let watching = Watching::start(&app, |_| {});
+    let reloads = watching.reloads();
+    for round in 0..3 {
+        app.write("src/main.rs", &format!("fn main() {{ {round}; }}"));
+        app.write("index.html", &format!("<html>{round}</html>"));
+        app.write("dist/index.html", &format!("<html>{round}</html>"));
+        app.write(&format!("dist/app-{round}.wasm"), "2");
+        app.write("build/client/assets/entry.js", &format!("{round}"));
+        app.write("node_modules/.vite/deps/react.js", &format!("{round}"));
+        app.write(".shopify/project.json", &format!("{{\"round\": {round}}}"));
+        watching.settle();
+    }
+    assert_eq!(app.builds("fn-a"), 0, "{}", watching.said());
+    assert_eq!(watching.reloads(), reloads, "{}", watching.said());
+
+    // The workspace's manifest still builds it.
+    app.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"extensions/*\"]\nresolver = \"2\"\n",
+    );
+    watching.settle();
+    assert_eq!(app.builds("fn-a"), 1, "{}", watching.said());
 }
 
 #[test]
@@ -968,6 +1047,7 @@ fn what_a_build_writes_does_not_build_again() {
 fn a_change_to_the_files_the_builds_share_builds_every_function() {
     let app = TempApp::new("shared");
     app.write("Cargo.toml", "[workspace]\nmembers = [\"extensions/*\"]\n");
+    app.write("crates/common/Cargo.toml", "[package]\nname = \"common\"\n");
     app.write("crates/common/src/lib.rs", "pub fn x() {}");
     app.write("shopify-local/store.json", "{}");
     app.write("README.md", "# App");
@@ -1096,7 +1176,7 @@ fn a_change_to_an_extension_without_a_build_reloads_the_pages_at_once() {
 #[test]
 fn what_a_build_command_wrote_is_linked_to_the_function_wasm_api_before_it_runs() {
     let raw = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../checkout/tests/fixtures/trampoline/quantity-limit.raw.wasm");
+        .join("../app/tests/fixtures/trampoline/quantity-limit.raw.wasm");
     let app = TempApp::new("link");
     // A Rust Function's build: the module `cargo build` writes.
     app.function_with(
@@ -1106,7 +1186,7 @@ fn what_a_build_command_wrote_is_linked_to_the_function_wasm_api_before_it_runs(
     let watching = Watching::start(&app, |options| options.build_first = true);
     let published = std::fs::read(watching.builds.module_path("rust").unwrap()).unwrap();
     assert_eq!(
-        lsf_checkout::trampoline::unlinked(&published),
+        lsf_app::checkout::trampoline::unlinked(&published),
         None,
         "{}",
         watching.said()
@@ -1114,9 +1194,8 @@ fn what_a_build_command_wrote_is_linked_to_the_function_wasm_api_before_it_runs(
     assert_eq!(
         published,
         std::fs::read(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join(
-                "../checkout/tests/fixtures/app/extensions/quantity-limit/dist/function.wasm"
-            )
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../app/tests/fixtures/app/extensions/quantity-limit/dist/function.wasm")
         )
         .unwrap()
     );
@@ -1766,6 +1845,7 @@ fn a_record_that_cannot_be_read_builds_again() {
 fn markdown_documents_build_nothing_wherever_they_are() {
     let app = TempApp::new("markdown");
     app.function("fn-a");
+    app.write("crates/shared/Cargo.toml", "[package]\nname = \"shared\"\n");
     app.write("crates/shared/src/lib.rs", "pub fn shared() {}\n");
     let watching = Watching::start(&app, |_| {});
     let reloads = watching.reloads();
@@ -1780,8 +1860,8 @@ fn markdown_documents_build_nothing_wherever_they_are() {
     assert_eq!(app.builds("fn-a"), 0, "{}", watching.said());
     assert_eq!(watching.reloads(), reloads);
 
-    // What else is in those folders is watched.
-    app.write("docs/schema.json", "{}\n");
+    // What else is in the crate is watched.
+    app.write("crates/shared/src/lib.rs", "pub fn shared() -> u8 { 1 }\n");
     watching.settle();
     assert_eq!(app.builds("fn-a"), 1, "{}", watching.said());
 }

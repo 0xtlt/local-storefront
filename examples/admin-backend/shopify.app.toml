@@ -1,0 +1,39 @@
+# The app of the end-to-end test of lsf's Admin API: a backend written with Shopify's libraries
+# (server/), and a discount Function it configures. Nothing here is deployed. Run it with:
+#   examples/admin-backend/e2e.sh
+client_id = "5e2e0a11c0ffee5e2e0a11c0ffee5e2e"
+name = "Admin backend"
+handle = "admin-backend"
+# The tunnel of a `shopify app dev` that is not running: lsf moves what goes there to --app-url.
+application_url = "https://admin-backend.example.com"
+embedded = true
+
+[access_scopes]
+scopes = "read_products,write_products,write_inventory,read_locations,write_publications,write_customers,write_orders,write_merchant_managed_fulfillment_orders,write_discounts,write_files,write_metaobjects,write_metaobject_definitions"
+
+[auth]
+redirect_urls = ["https://admin-backend.example.com/auth/callback"]
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled", "app/scopes_update", "app_subscriptions/update"]
+  uri = "/webhooks/app"
+
+  [[webhooks.subscriptions]]
+  topics = ["products/create", "products/update"]
+  uri = "/webhooks/products"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "https://admin-backend.example.com/webhooks/orders"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "/webhooks/compliance"
+
+[app_proxy]
+url = "/proxy"
+prefix = "apps"
+subpath = "reviews"

@@ -6,9 +6,9 @@ use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use lsf_core::Site;
-use lsf_core::render::{ProfileOptions, Rendered, Renderer, Target, cost, routes};
 use lsf_liquid::profiler::{Event, Frame, Profile};
+use lsf_theme::Site;
+use lsf_theme::render::{ProfileOptions, Rendered, Renderer, Target, cost, routes};
 use serde_json::{Value as Json, json};
 
 /// The renders that come before the ones that are measured: the first ones read and parse
@@ -144,8 +144,12 @@ pub fn text(path: &str, measured: &Measured, unit: Unit, all: bool) -> String {
     if !measured.rendered.errors.is_empty() {
         let _ = writeln!(
             out,
-            "The page has {} Liquid error(s).",
-            measured.rendered.errors.len()
+            "The page has {}.",
+            crate::output::count(
+                measured.rendered.errors.len(),
+                "Liquid error",
+                "Liquid errors"
+            )
         );
     }
     out.push('\n');

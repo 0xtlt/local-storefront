@@ -17,8 +17,9 @@
 //! addresses), so that the page and the sandbox read it the same way; shipments come from its
 //! `fulfillment_status`, returns from its `returns`.
 
-use lsf_checkout::app::Selection;
-use lsf_core::store::{Customer, Order, Store};
+use lsf_app::checkout::app_metafields::OrderOwner;
+use lsf_app::config::Selection;
+use lsf_core::store::{Customer, Metafields, Order, Store};
 use serde_json::{Value as Json, json};
 
 use super::checkout::{self, origin_of};
@@ -159,11 +160,46 @@ fn state_json(
                     format!("No extension of the app has a full page named {handle}."),
                 ));
             }
+            // An uninstalled app's pages go with it, as its other extensions do.
+            if state.app_uninstalled() {
+                return Err(Reply::text(
+                    404,
+                    format!(
+                        "The full page of {handle} is not there: {}.",
+                        lsf_app::config::uninstalled_extensions_reason()
+                    ),
+                ));
+            }
             Some(json!({"handle": handle, "path": rest}))
         }
         _ => None,
     };
 
+    // What the order status targets read as `appMetafields`: the products and variants are the
+    // ones of the order, with the components of its bundles; the cart's metafields are the
+    // order's own (`metafields`), and the order's are those of its record in the Admin API.
+    let variants = order
+        .as_ref()
+        .map_or_else(Vec::new, |order| line_variants(&order["lines"]));
+    // The company location is the one the order was placed for, whichever the buyer buys for now.
+    let location = match &order {
+        Some(order) => order_location(order),
+        None => session.company_location,
+    };
+    let order_id = order.as_ref().and_then(|order| order["id"].as_str());
+    let order_metafields = order_id.and_then(|id| admin_order_metafields(state, id));
+    let order_owner = order_id
+        .zip(order_metafields.as_ref())
+        .map(|(id, metafields)| OrderOwner { id, metafields });
+    let app_metafields = checkout::app_metafields_json(
+        &app,
+        &selection,
+        &store,
+        customer,
+        location,
+        &variants,
+        order_owner,
+    );
     let company = customer.and_then(|customer| company_json(&store, customer, identity.location));
     let profiles: Vec<Json> = store
         .customers
@@ -183,6 +219,7 @@ fn state_json(
         "extensionPage": extension_page,
         "home": checkout::home_path(state, root),
         "shop": {
+            "id": format!("gid://shopify/Shop/{}", store.shop.id),
             "name": store.shop.name,
             "currencyCode": store.shop.currency,
             "moneyFormat": store.shop.money_format,
@@ -203,11 +240,12 @@ fn state_json(
         "company": company,
         "orders": orders,
         "order": order,
+        "appMetafields": app_metafields,
         "localization": checkout::localization_json(
             &store,
             language,
             &session,
-            &lsf_checkout::CheckoutState::default(),
+            &lsf_app::checkout::CheckoutState::default(),
         ),
         "profiles": profiles,
         // The checkout's extensions have nothing to show here.
@@ -229,8 +267,25 @@ fn state_json(
             .map(|diagnostic| json!(diagnostic.to_string()))
             .collect::<Vec<_>>(),
     });
+    // None renders while the app is not installed on the shop.
+    checkout::place_extensions(&mut json, state.app_uninstalled());
     json["builds"] = state.builds.to_json();
     Ok(json)
+}
+
+/// The metafields of an order as the default shop of the Admin API keeps them: those the
+/// definitions of the shop copied from its cart when it was placed here, and those the backend
+/// set (`metafieldsSet`). The orders of the store data are records of the shop too, under the
+/// same GID. `None` without the Admin API, or for an order it has no record of.
+fn admin_order_metafields(state: &ServerState, order: &str) -> Option<Metafields> {
+    let admin = state.admin.as_ref()?;
+    admin
+        .api
+        .with_default_shop(|shop| {
+            shop.contains(order)
+                .then(|| lsf_app::admin::domains::content::metafields::of_owner(shop, order))
+        })
+        .flatten()
 }
 
 /// Whether an extension of the state has a target of the customer account.
@@ -245,6 +300,32 @@ fn has_account_target(extension: &Json) -> bool {
 }
 
 /// Whether an order the session placed is the customer's: the checkout was logged in as them.
+/// The id of the company location an order was placed for: the one the local checkout recorded
+/// in its buyer (`buyer.purchasingCompany`). An order of the store data records none: the
+/// customer's first location stands for it.
+fn order_location(order: &Json) -> Option<u64> {
+    order["buyer"]["purchasingCompany"]["location"]["id"]
+        .as_str()?
+        .strip_prefix("gid://shopify/CompanyLocation/")?
+        .parse()
+        .ok()
+}
+
+/// The variants of the lines of an order (`lines`), and of the components of its bundles.
+fn line_variants(lines: &Json) -> Vec<u64> {
+    lines
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|line| {
+            line["variantId"]
+                .as_u64()
+                .into_iter()
+                .chain(line_variants(&line["components"]))
+        })
+        .collect()
+}
+
 fn belongs_to(order: &Json, customer: Option<&Customer>) -> bool {
     let Some(customer) = customer else {
         return false;
@@ -330,7 +411,8 @@ fn order_json(store: &Store, order: &Order) -> Json {
         .enumerate()
         .filter_map(|(index, item)| {
             let variant = &store.products[item.variant.0].variants[item.variant.1];
-            let mut line = lsf_checkout::pipeline::order_line(store, variant.id, item.quantity)?;
+            let mut line =
+                lsf_app::checkout::pipeline::order_line(store, variant.id, item.quantity)?;
             line.id = format!("gid://shopify/LineItem/{}{:02}", order.id, index + 1);
             serde_json::to_value(line).ok()
         })
@@ -419,8 +501,18 @@ fn placed_order_json(placed: Json) -> Json {
     let ids: Vec<Json> = lines.iter().map(|line| line["id"].clone()).collect();
     let object = order.as_object_mut().expect("an order is an object");
     let name = object["order"]["number"].clone();
-    object.insert("id".into(), json!(format!("gid://shopify/Order/{number}")));
-    object.insert("legacyId".into(), json!(number));
+    // The id the order was placed with: the Admin API's when it recorded it (an id of its
+    // counter, as `orderCreate` gives), else one made of the number.
+    let id = object["order"]["id"]
+        .as_str()
+        .map_or_else(|| format!("gid://shopify/Order/{number}"), str::to_string);
+    let legacy = id
+        .rsplit('/')
+        .next()
+        .and_then(|id| id.parse::<u64>().ok())
+        .unwrap_or(number);
+    object.insert("id".into(), json!(id));
+    object.insert("legacyId".into(), json!(legacy));
     object.insert("name".into(), name);
     object.insert(
         "confirmationNumber".into(),

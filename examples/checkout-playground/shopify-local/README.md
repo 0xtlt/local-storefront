@@ -61,6 +61,21 @@ shopify-local/
   README.md             this document
 ```
 
+**Starting from your own data.** The files of the demo store name each other:
+`collections.json`, `menus.json` and the `selling_plan_groups` of `store.json` name its
+products, `menus.json` names its pages and its blog, and `gift_cards.json` names a product and
+a customer. Replace `products/` and `customers.json` with yours, and edit `collections.json`
+and `menus.json`. Delete what you don't need: `gift_cards.json`, the `selling_plan_groups` of
+`store.json`. Then run `npx local-storefront validate`: each name left over is an error
+(`unknown_product`, `unknown_reference`, `unknown_customer`) with its file and pointer. Keep
+`schema/`, for your editor.
+
+No error points at the rest of the demo content, so replace it too: the shop's name in
+`store.json` (`Local Supply Co.`), the pages of `pages.json` and the articles of `blogs.json`
+(or delete them, with their links in `menus.json`). The demo's automated
+[collections](#collections) pick products by `type` and by the tag `sale`: give yours a `type`
+and `tags`, or these collections stay empty.
+
 Every `*.json` file at the root is a **data file**: an object with any of the keys `shop`,
 `products`, `collections`, `pages`, `blogs`, `menus`, `customers`, `companies`, `gift_cards`,
 `selling_plan_groups`, `locations`, `swatches`, `metaobjects`, `localization`, `files`,
@@ -95,8 +110,9 @@ all, and a running server serves them at `/__lsf/schema/<kind>`.
   explicitly only to reproduce a specific Shopify id.
 - **Money** is an integer number of cents (`1999`) or a decimal string (`"19.99"`). A JSON
   float (`19.99`) is rejected, because it is ambiguous. Liquid sees cents, as on Shopify.
-- **Dates** are ISO 8601 strings: `"2024-05-01"` or `"2024-05-01T10:00:00Z"`. Entities without
-  dates get fixed ones, so renders are reproducible.
+- **Dates** are ISO 8601 strings: a day, `"2024-05-01"`, or a day and a time,
+  `"2024-05-01T10:00:00Z"`, with `Z`, an offset (`+02:00`) or neither, for the shop's
+  `timezone`. Entities without dates get fixed ones, so renders are reproducible.
 - **References** between entities use handles (products, collections, pages, blogs), emails
   (customers) and SKUs or ids (variants). A reference to something that does not exist is an
   error, with a suggestion when a close match exists.
@@ -152,6 +168,11 @@ product with options lists its variants; each gives one value per option:
 - `recommendations` lists the handles returned by product recommendations; by default they are
   other products of the same collections.
 - `template_suffix` selects an alternate template (`templates/product.<suffix>.json`).
+- `status` (`active`, `draft`, `archived`) and `published` (on the Online Store, `true` by
+  default) say whether the product is on the storefront: only an active, published product is.
+  The others have no page, are in no collection, cannot be bought, and what names them (a
+  collection, a menu, an order) leaves them out without an error; the Admin API lists them with
+  their status.
 
 ## Collections
 
@@ -222,7 +243,7 @@ Plans come in groups, which is what a subscription app creates.
   plan's name.
 - `checkout_charge` is what is paid at checkout, for a deposit:
   `{ "value_type": "percentage", "value": 50 }`. It defaults to the whole price. The checkout
-  of an [app](checkout.md#deferred-payments) charges only that today, and shows the rest as due
+  of an [app](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#deferred-payments) charges only that today, and shows the rest as due
   later.
 - `recurring_deliveries` defaults to `true`. Ids are generated and stable; set `id` on a plan
   to reproduce a Shopify id.
@@ -441,7 +462,7 @@ with a warning to remove them.
 `npx local-storefront serve --customer <email>` starts every visitor logged in as that customer.
 It also accepts `default` and `none`.
 
-At the [checkout of an app](checkout.md#log-in-as-a-customer), the customers are the login
+At the [checkout of an app](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#log-in-as-a-customer), the customers are the login
 profiles: "Log in" in the Contact section lists them, and picking one logs the checkout (and the
 session) in as them, with their saved addresses (the first one is the default) and, for a B2B
 customer, the locations they buy for. Give the data a customer of each kind you test: a new one
@@ -489,7 +510,7 @@ name it in the customer:
 - In Liquid, `customer.b2b?` is true, and `customer.current_company`,
   `customer.current_location` and `customer.company_available_locations` are filled.
 - `location.url_to_set_as_current` changes the location, as on Shopify.
-- The [local checkout](checkout.md) shows what Shopify's Functions read of a B2B buyer
+- The [local checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md) shows what Shopify's Functions read of a B2B buyer
   (`purchasingCompany`), and you can set it. A company has `created_at` and `updated_at`, a
   location the same plus `locale` (`"fr"`), `orders_count` and `total_spent` (`"1250.00"`). The
   customer is the contact of their company: `company_contact` holds their `title`, `locale`,
@@ -556,7 +577,7 @@ Each gift card has a page rendered by `templates/gift_card.liquid`. Its URL is l
 ## Checkout
 
 The `checkout` section sets up the local checkout of a Shopify app (`npx local-storefront
-checkout --app <dir>`, see [checkout](checkout.md)). Every field has a default, and the section
+app dev --app <dir>`, see [checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md)). Every field has a default, and the section
 changes nothing for a theme.
 
 ```json
@@ -572,7 +593,7 @@ changes nothing for a theme.
         "metafields": { "$app:config.settings": { "type": "json", "value": { "percentage": 10 } } }
       }
     ],
-    "functions": { "delivery-rules": { "metafields": { "$app:config.settings": { "type": "json", "value": {} } } } },
+    "functions": { "delivery-rules": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": {} } } } },
     "tax_rate": 20
   }
 }
@@ -583,14 +604,24 @@ changes nothing for a theme.
 - `payment_methods`: without it, "Credit card", "Cash on Delivery" and "Bank Deposit".
   `placements` says where a method is offered, which payment customization Functions read:
   `["PAYMENT_METHOD"]` (the list of the checkout, the default) and/or `["ACCELERATED_CHECKOUT"]`
-  (the express buttons). A method that is only an express button is not in the list the page
-  shows.
+  (the express buttons). The page shows the methods of `PAYMENT_METHOD` in its list, and those of
+  `ACCELERATED_CHECKOUT` as express buttons above the contact section, once the payment
+  customizations ran (one can hide a method in one placement and leave it in the other). PayPal
+  with PayPal Express on is in both.
 - `discounts`: each one uses a discount Function of the app by its handle. A `code` makes it a
   code discount; without one it is automatic. `classes` (`PRODUCT`, `ORDER`, `SHIPPING`) says
   what it may reduce, all three by default. `metafields` are those of the discount, by
-  `"namespace.key"`, in the same shorthand as other metafields.
-- `functions`: the metafields of the other Functions (cart transform, delivery or payment
-  customization, validation), by the handle of the Function.
+  `"namespace.key"`, in the same shorthand as other metafields. `id` is the number of the id
+  its Function reads (`gid://shopify/DiscountAutomaticNode/<id>`), its position in the list from
+  1 by default.
+- `functions`: the other Functions (cart transform, delivery or payment customization,
+  validation), by the handle of the Function: `metafields`, their settings, and `enabled`, whether
+  the shop has an owner of it (the payment customization, … the app creates) and it is on. As on
+  Shopify, the shop's checkout runs such a Function only through an enabled owner: `true` runs
+  it, `false` is an owner turned off, and without `enabled` the shop has none (as after an
+  install, until the app creates one through the Admin API). A scenario that names the Function
+  in `extensions` runs it anyway, with these metafields
+  ([what runs](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#owners-and-scenarios)).
 - `tax_rate`: a percentage, added to the discounted subtotal.
 
 ### Checkout scenarios
@@ -598,7 +629,7 @@ changes nothing for a theme.
 A scenario is a named setup of the local checkout: one file in `checkouts/`, named after the
 scenario (`checkouts/b2b-seattle.json` is `b2b-seattle`). The home page of the checkout lists
 them and opens a fresh checkout for each; `app function run --scenario <name>` runs the Functions
-for one ([checkout](checkout.md#scenarios)). A scenario is a set of overrides on top of the
+for one ([checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#scenarios)). A scenario is a set of overrides on top of the
 store data: what it does not set stays as the data says.
 
 ```json
@@ -649,10 +680,18 @@ Every field is optional.
 - `checkout` overrides the [`checkout` section](#checkout) of the store data. Every field that is
   present replaces the store's: `shipping_rates`, `payment_methods`, `discounts` (`[]` runs no
   discount), `tax_rate`. `functions` replaces the settings of the Functions it names and keeps
-  those of the others.
+  those of the others; an entry without `enabled` keeps the store's owner of it.
 - `variant` is the look: `standard` or `shop`. `?variant=` in the URL still wins.
 - `extensions` lists the handles of the extensions (Functions and checkout UI extensions) that
-  run. The others of the app are left out. It narrows what `--extension` allows.
+  run. The others of the app are left out. It narrows what `--extension` allows. The Functions it
+  names run whether or not the shop has an owner of them: a scenario that names none shows the
+  shop's checkout, where only those with an enabled owner run. A Function you add to the app
+  later is not in the `extensions` of the scenarios written before it: add its handle.
+- `expect` is what the checkout must look like once the Functions ran, which `app check`
+  checks: the payment methods, express buttons, delivery options, discounts, lines and errors,
+  each with `includes`, `excludes` and `equals`, and exact `totals`
+  (`"expect": { "express_methods": { "excludes": ["paypal"] }, "totals": { "total": "96.00" } }`).
+  See [expected results](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#expected-results).
 
 A scenario that does not validate is still listed, with its errors, and cannot be opened.
 `validate` reports it with the file `checkouts/<name>.json` and a pointer into it
@@ -674,7 +713,10 @@ store has none: `npx local-storefront app init` writes a set.
 The first language is the primary one, served at `/`. The others are served under
 `/<iso_code>/` (`/fr/products/blue-shirt`) and use the theme's `locales/<iso_code>.json`.
 Names and currencies of countries default to built-in values. The localization form
-(`{% form 'localization' %}`) switches the session's country and language.
+(`{% form 'localization' %}`) switches the session's country and language. A visitor who
+selected no country is in the shop's (`shop.address.country_code`), the one of its primary
+market, on the storefront as at the checkout; in the first country when the store does not sell
+to the shop's.
 
 `markets` groups countries the way Shopify's markets do. The checkout Functions read the
 market of the buyer (`localization.market`) and of an address (`MailingAddress.market`):
@@ -787,8 +829,13 @@ page and `system.url` is blank. `"template_suffix": "alt"` on an entry renders i
 title is the entry's `title` or `name` field, or its handle. `shopify://metaobjects/<type>/<handle>`
 in a `url` setting leads to the page.
 
-The Functions of the [local checkout](checkout.md) read the same metaobjects as
+The Functions of the [local checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md) read the same metaobjects as
 `shop.metaobject(handle: {type: "designer", handle: "sam"})`, with their `field(key:)`.
+
+The types an app owns are written `$app:<type>` (`"$app:author"`), as its reserved metafield
+namespaces are (`$app:config`). Shopify writes them in full, `app--<app id>--author`, which a
+theme's Liquid uses: `metaobjects['app--1234--author']` and `metaobjects['$app:author']` both
+find them, whatever the id, since the store data does not know it.
 
 
 ## Time and theme settings
@@ -811,12 +858,12 @@ The Functions of the [local checkout](checkout.md) read the same metaobjects as
 | `classic_customer_accounts` | A warning: `shop.customer_accounts` or a customer's `password`, which classic customer accounts had. The field is ignored. |
 | `missing_field` | A required field is absent. |
 | `wrong_type` | A value of the wrong JSON type. |
-| `invalid_value`, `invalid_format` | A value outside what the field accepts. |
-| `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. |
+| `invalid_value`, `invalid_format` | A value outside what the field accepts, or not in its format. Money as a JSON float (`19.99`) is an `invalid_value`, and a string that is not an amount (`"19.999"`) an `invalid_format`; the hint says what the field takes. |
+| `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. `invalid_money` is a shipping rate below zero. |
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
 | `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
-| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. |
+| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
@@ -829,6 +876,12 @@ The Functions of the [local checkout](checkout.md) read the same metaobjects as
 | `gift_card_balance` (warning) | A gift card whose balance is above its initial value. |
 
 `path` is always a JSON pointer into `file`, so the value to fix can be located mechanically.
+
+A product or a customer with a value that cannot be read (a `wrong_type`, an `invalid_value`,
+an `invalid_format`, a `missing_field`) is left out, so each reference to it is an error too:
+an `unknown_product`, `unknown_variant`, `unknown_customer` or `unknown_reference` in another
+file. Fix the errors in `products/` and `customers.json` first, and run `validate` again before
+you edit a reference.
 
 ## Field reference
 
@@ -1035,6 +1088,8 @@ default variant, like a product without options in the Shopify admin.
 | `recommendations` | array of string | Handles of the products returned by product recommendations for this product. Defaults to other products from the same collections. |
 | `selling_plan_groups` | array of string | Names of the selling plan groups (from `selling_plan_groups`) this product is sold with, in addition to the groups that list it in their own `products`. |
 | `requires_selling_plan` | boolean | Whether the product can only be bought with a selling plan, like a product sold by subscription only. Defaults to `false`. |
+| `status` | [ProductStatus](#productstatus) | `active`, `draft` or `archived`. Defaults to `active`. Only an active product that is published is on the storefront: a draft, an archived product or one that is not published has no page, is in no collection, and cannot be bought, but the Admin API lists it. What names it (a collection, a menu, an order of the data) leaves it out without an error. |
+| `published` | boolean | Whether the product is published on the Online Store. Defaults to `true`. |
 
 ### Option
 
@@ -1217,6 +1272,16 @@ One file of a video or 3D model.
 Where an external video is hosted.
 
 One of: `"youtube"`, `"vimeo"`.
+
+### ProductStatus
+
+Where a product is in its life, as the Shopify admin shows it.
+
+One of:
+
+- `"active"`: For sale.
+- `"draft"`: Being prepared: not on the storefront yet.
+- `"archived"`: No longer sold: not on the storefront.
 
 ### Collection
 
@@ -1675,7 +1740,7 @@ control API (`PUT /__lsf/session`).
 | `$schema` | string | Lets editors validate and autocomplete the file, e.g. `"../schema/session.schema.json"`. |
 | `customer` | string | Who is logged in: the email of a customer, `"default"` for the first customer of the data, or `"none"`. Nobody is logged in when omitted. |
 | `cart` | [Cart](#cart) | The content of the cart. Empty when omitted. |
-| `country` | string | ISO code of the selected country. Defaults to the first country. |
+| `country` | string | ISO code of the selected country. When omitted, the visitor is in the shop's country (`shop.address.country_code`), the one of its primary market: the storefront shows it, and the checkout, until an address is entered, is in it (its Functions, its UI extensions and its address form read it). A shop in a country the store does not sell to uses the first country. |
 | `company_location` | string | For a B2B customer: the name of the company location they buy for. Defaults to the first one they have access to. |
 
 ### Cart
@@ -1767,6 +1832,7 @@ A discount backed by a discount Function of the app.
 
 | Field | Type | Description |
 |---|---|---|
+| `id` | integer | The number of the discount's id, which its Function reads (`gid://shopify/DiscountAutomaticNode/<id>`, or `DiscountCodeNode` with a code) and the Admin API gives it. Defaults to its position in the list, from 1. |
 | `function` | string | **Required.** The handle of the discount Function in the app. |
 | `title` | string | What the buyer sees. Defaults to the handle of the Function. |
 | `code` | string | The code that triggers the discount. Without one the discount is automatic. |
@@ -1781,11 +1847,12 @@ One of: `"PRODUCT"`, `"ORDER"`, `"SHIPPING"`.
 
 ### CheckoutFunction
 
-The settings of a Function that is not a discount: cart transform, delivery or payment
-customization, validation.
+A Function that is not a discount (cart transform, delivery or payment customization,
+validation): its owner in the shop, and its settings.
 
 | Field | Type | Description |
 |---|---|---|
+| `enabled` | boolean | Whether the shop has an owner of the Function (the payment or delivery customization, validation or cart transform an app creates for it), and it is enabled. As on Shopify, the Function runs at the checkout only through an enabled owner: `true` runs it, `false` is an owner that is turned off. Without it, the shop has no owner of it, as after an install: the Function runs only for a scenario that names it in `extensions`, or for `app function run <handle>`, with these metafields. |
 | `metafields` | map of [Metafield](#metafield) | The metafields of the object the Function belongs to, by `"namespace.key"`. |
 
 ### Checkout scenario
@@ -1804,6 +1871,7 @@ depends on on top of the store data, and what it does not set stays as the store
 | `checkout` | [Checkout](#checkout) | Overrides of the `checkout` section of the store data: every field that is present replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`, `tax_rate`), except `functions`, which replaces the settings of the Functions it names. |
 | `variant` | [ScenarioLook](#scenariolook) | The look of the page. Defaults to the one of the server (`--variant`). |
 | `extensions` | array of string | The handles of the extensions (Functions and checkout UI extensions) that run, among those of the app that `--extension` allows. Every one when omitted. |
+| `expect` | [ScenarioExpect](#scenarioexpect) | What the checkout must look like once the Functions ran: `lsf app check` fails when it does not, and says what it expected and what it got. Without it, `app check` only checks that the Functions run without an error. |
 
 ### ScenarioEntered
 
@@ -1843,3 +1911,160 @@ One of:
 
 - `"standard"`: Shopify's one-page checkout.
 - `"shop"`: The look of the Shop app and Shop Pay.
+
+### ScenarioExpect
+
+What the checkout of a scenario must look like once its Functions ran, which
+`lsf app check` checks. Each list (`payment_methods`, `express_methods`, `delivery_options`,
+`discounts`, `lines`, `errors`) takes `includes`, `excludes` and `equals`; `totals` takes
+exact amounts:
+
+```json
+"expect": {
+  "express_methods": { "excludes": ["paypal"] },
+  "payment_methods": { "includes": ["paypal"] },
+  "totals": { "total": "120.00" }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `step` | [ScenarioStep](#scenariostep) | The step of the buyer journey the Functions run for: `completion` (the default), the order being placed, as `lsf app function run` runs them; `interaction`, the page as the buyer sees it before. Only a validation Function tells them apart (`buyerJourney.step`). |
+| `payment_methods` | [ExpectedPaymentMethods](#expectedpaymentmethods) | The payment methods of the list of the checkout (`PAYMENT_METHOD`), in order, once the payment customizations ran. A string matches the handle or the name. |
+| `express_methods` | [ExpectedPaymentMethods](#expectedpaymentmethods) | The express buttons (`ACCELERATED_CHECKOUT`), in order, once the payment customizations ran. A method can be in both lists. A string matches the handle or the name. |
+| `delivery_options` | [ExpectedDeliveryOptions](#expecteddeliveryoptions) | The delivery options, in the order the buyer sees them, once the delivery customizations and the shipping discounts ran. A string matches the handle or the title. |
+| `discounts` | [ExpectedDiscounts](#expecteddiscounts) | The discounts applied, product, order and shipping ones. A string matches the title (the message the Function gave) or the code. |
+| `lines` | [ExpectedLines](#expectedlines) | The lines of the checkout once the cart transforms ran. A string matches the SKU or the title. |
+| `errors` | [ExpectedErrors](#expectederrors) | The errors that block the order: those validation Functions report, and those of Functions that failed. A string matches the message. `{"equals": []}`: no error. |
+| `totals` | [ExpectedTotals](#expectedtotals) | The amounts of the checkout, each exactly. |
+
+### ScenarioStep
+
+The step of the buyer journey the Functions run for.
+
+One of:
+
+- `"completion"`: The buyer places the order (`CHECKOUT_COMPLETION`).
+- `"interaction"`: The buyer is on the page (`CHECKOUT_INTERACTION`).
+
+### ExpectedPaymentMethods
+
+What a list of the checkout must hold. Each entry is a string, which matches an entry of the
+list by its name (see the list), or an object of the fields the entry must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `includes` | array of string or [ExpectedPaymentMethod](#expectedpaymentmethod) | Each of these matches an entry of the list, in any order. |
+| `excludes` | array of string or [ExpectedPaymentMethod](#expectedpaymentmethod) | None of these matches an entry of the list. |
+| `equals` | array of string or [ExpectedPaymentMethod](#expectedpaymentmethod) | The whole list, in order: as many entries, the first matching the first, and so on. `[]` is an empty list. |
+
+### ExpectedPaymentMethod
+
+A payment method of `expect`: the fields it must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `handle` | string | Its handle (`checkout.payment_methods`). |
+| `name` | string | Its name, as the buyer sees it: the one a payment customization gave it, if any. |
+
+### ExpectedDeliveryOptions
+
+What a list of the checkout must hold. Each entry is a string, which matches an entry of the
+list by its name (see the list), or an object of the fields the entry must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `includes` | array of string or [ExpectedDeliveryOption](#expecteddeliveryoption) | Each of these matches an entry of the list, in any order. |
+| `excludes` | array of string or [ExpectedDeliveryOption](#expecteddeliveryoption) | None of these matches an entry of the list. |
+| `equals` | array of string or [ExpectedDeliveryOption](#expecteddeliveryoption) | The whole list, in order: as many entries, the first matching the first, and so on. `[]` is an empty list. |
+
+### ExpectedDeliveryOption
+
+A delivery option of `expect`: the fields it must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `handle` | string | Its handle (`checkout.shipping_rates`). |
+| `title` | string | Its title, as the buyer sees it: the one a delivery customization gave it, if any. |
+| `cost` | [Money](#money) | What it costs once the shipping discounts ran. |
+
+### ExpectedDiscounts
+
+What a list of the checkout must hold. Each entry is a string, which matches an entry of the
+list by its name (see the list), or an object of the fields the entry must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `includes` | array of string or [ExpectedDiscount](#expecteddiscount) | Each of these matches an entry of the list, in any order. |
+| `excludes` | array of string or [ExpectedDiscount](#expecteddiscount) | None of these matches an entry of the list. |
+| `equals` | array of string or [ExpectedDiscount](#expecteddiscount) | The whole list, in order: as many entries, the first matching the first, and so on. `[]` is an empty list. |
+
+### ExpectedDiscount
+
+A discount of `expect`: the fields it must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `title` | string | Its title: the message the Function gave, or the title of the discount. |
+| `code` | string | The code it applied with. An automatic discount has none. |
+| `class` | [CheckoutDiscountClass](#checkoutdiscountclass) | What it reduced: `PRODUCT`, `ORDER` or `SHIPPING`. |
+| `amount` | [Money](#money) | What it took off. |
+
+### ExpectedLines
+
+What a list of the checkout must hold. Each entry is a string, which matches an entry of the
+list by its name (see the list), or an object of the fields the entry must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `includes` | array of string or [ExpectedLine](#expectedline) | Each of these matches an entry of the list, in any order. |
+| `excludes` | array of string or [ExpectedLine](#expectedline) | None of these matches an entry of the list. |
+| `equals` | array of string or [ExpectedLine](#expectedline) | The whole list, in order: as many entries, the first matching the first, and so on. `[]` is an empty list. |
+
+### ExpectedLine
+
+A line of `expect`: the fields it must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `sku` | string | The SKU of its variant. |
+| `title` | string | Its title: the product's, or the one a cart transform gave it. |
+| `quantity` | integer | How many units it has. |
+| `price` | [Money](#money) | The price of one unit, before discounts. |
+| `total` | [Money](#money) | What the line costs once its discounts ran. |
+| `components` | array of string | The lines a cart transform made it of (merge) or split it into (expand), in order, each by its SKU or title. `[]`: none. |
+| `attributes` | map of string | Attributes it must have, by key; it can have others. |
+
+### ExpectedErrors
+
+What a list of the checkout must hold. Each entry is a string, which matches an entry of the
+list by its name (see the list), or an object of the fields the entry must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `includes` | array of string or [ExpectedError](#expectederror) | Each of these matches an entry of the list, in any order. |
+| `excludes` | array of string or [ExpectedError](#expectederror) | None of these matches an entry of the list. |
+| `equals` | array of string or [ExpectedError](#expectederror) | The whole list, in order: as many entries, the first matching the first, and so on. `[]` is an empty list. |
+
+### ExpectedError
+
+An error of `expect`: the fields it must have.
+
+| Field | Type | Description |
+|---|---|---|
+| `message` | string | The message, exactly. |
+| `target` | string | The target the Function gave (`$.cart`, `$.cart.buyerIdentity.email`). |
+
+### ExpectedTotals
+
+The amounts of the checkout `expect` checks, each exactly. Those left out are not checked.
+
+| Field | Type | Description |
+|---|---|---|
+| `subtotal` | [Money](#money) | The lines before discounts. |
+| `discounts` | [Money](#money) | The product and order discounts (the shipping discounts are in `shipping`). |
+| `shipping` | [Money](#money) | The selected delivery option, once the shipping discounts ran. 0 before the address has a country. |
+| `tax` | [Money](#money) | The tax (`checkout.tax_rate`). |
+| `total` | [Money](#money) | What the order costs in all, the part paid later included. |
+| `due_now` | [Money](#money) | What the buyer pays now. |
+| `due_later` | [Money](#money) | What the selling plans leave to pay later. |

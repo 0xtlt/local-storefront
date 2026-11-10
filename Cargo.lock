@@ -649,6 +649,7 @@ checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
  "num-traits",
+ "serde",
  "windows-link",
 ]
 
@@ -2315,50 +2316,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "lsf"
+name = "lsf-app"
 version = "0.2.0"
 dependencies = [
- "axum",
- "blake3",
+ "base64 0.23.1",
  "brotli",
- "bytes",
  "chrono",
- "clap",
+ "chrono-tz",
+ "deterministic-wasi-ctx",
  "flate2",
  "form_urlencoded",
- "futures-util",
- "image",
- "indexmap 2.14.2",
- "libc",
- "lightningcss",
- "lsf-checkout",
- "lsf-core",
- "lsf-fmt",
- "lsf-liquid",
- "mimalloc",
- "multer",
- "notify",
- "oxc",
- "oxc_compat",
- "parcel_sourcemap",
- "percent-encoding",
- "serde",
- "serde_json",
- "tokio",
- "wasmtime",
-]
-
-[[package]]
-name = "lsf-checkout"
-version = "0.2.0"
-dependencies = [
- "brotli",
- "chrono",
- "deterministic-wasi-ctx",
  "graphql-parser",
+ "hmac",
  "indexmap 2.14.2",
  "lsf-core",
+ "md-5",
  "oxc",
+ "regex",
  "rmp-serde",
  "rustls",
  "serde",
@@ -2374,24 +2348,55 @@ dependencies = [
 ]
 
 [[package]]
-name = "lsf-core"
+name = "lsf-cli"
 version = "0.2.0"
 dependencies = [
+ "axum",
  "blake3",
+ "brotli",
+ "bytes",
  "chrono",
- "chrono-tz",
+ "clap",
+ "flate2",
+ "form_urlencoded",
+ "futures-util",
  "hmac",
  "image",
  "indexmap 2.14.2",
- "jsonschema",
- "libwebp-sys",
+ "libc",
+ "lightningcss",
+ "lsf-app",
+ "lsf-core",
+ "lsf-fmt",
  "lsf-liquid",
- "md-5",
+ "lsf-theme",
+ "mimalloc",
+ "multer",
+ "notify",
+ "oxc",
+ "oxc_compat",
+ "parcel_sourcemap",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tokio",
+ "ureq",
+ "wasmtime",
+]
+
+[[package]]
+name = "lsf-core"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "image",
+ "indexmap 2.14.2",
+ "jsonschema",
  "schemars",
  "serde",
  "serde_json",
- "sha1 0.11.0",
- "sha2 0.11.1",
 ]
 
 [[package]]
@@ -2415,6 +2420,24 @@ dependencies = [
  "regex",
  "rust_decimal",
  "serde_json",
+]
+
+[[package]]
+name = "lsf-theme"
+version = "0.2.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "hmac",
+ "image",
+ "indexmap 2.14.2",
+ "libwebp-sys",
+ "lsf-core",
+ "lsf-liquid",
+ "md-5",
+ "serde_json",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
 ]
 
 [[package]]

@@ -9,12 +9,14 @@ use crate::server::{ServeOptions, ServerState, routes};
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
 ) -> Result<ExitCode, String> {
     let app = App::open(theme, data, Revalidate::Never, previews)?;
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            polaris: Default::default(),
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,

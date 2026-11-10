@@ -1,31 +1,35 @@
 # local-storefront
 
-> local-storefront runs a Shopify theme locally, rendered from JSON store data instead of the Shopify API, with the HTML Shopify renders. It serves the storefront for end-to-end tests, validates store data, finds and fixes what Shopify's strict Liquid parser rejects, formats Liquid as Prettier does, and profiles pages. Install with `npm install --save-dev local-storefront`; run it as `npx local-storefront <command>` (never `npx lsf`, another package).
+> local-storefront runs a Shopify theme locally, rendered from JSON store data instead of the Shopify API, with the HTML Shopify renders. It serves the storefront for end-to-end tests, validates store data, finds and fixes what Shopify's strict Liquid parser rejects, formats Liquid as Prettier does, and profiles pages. For a Shopify app, it runs the Functions and checkout UI extensions on a local checkout, and serves a local GraphQL Admin API (2026-10) with OAuth and signed webhooks, to test the app's backend offline. Install with `npm install --save-dev local-storefront`, then `npx local-storefront init` writes store data to edit; run it as `npx local-storefront <command>` (never `npx lsf`, another package).
 
-Commands are non-interactive. Exit codes: 0 nothing to report, 1 something to fix, 2 the command could not run. `npx local-storefront validate --format json` and `npx local-storefront check --format json` print machine-readable diagnostics.
+Commands are non-interactive. Exit codes: 0 nothing to report, 1 something to fix, 2 the command could not run. Results go to stdout, messages to stderr. `--format json` prints one JSON document for `validate`, `check`, `app check`, `app function run` and `app webhook trigger`; `routes` prints one path per line, `render` the HTML; the other commands print text.
+
+The links below are relative to this file. Read the docs of the version you run (`npx local-storefront --version`): installed from npm, they are in `node_modules/local-storefront/` (`llms.txt`, `docs/`); 0.2.0 and earlier ship none, so read them at the tag, `https://raw.githubusercontent.com/0xtlt/local-storefront/v0.2.0/docs/agents.md`. An `lsf` built from a checkout of the repository, not installed from npm, has the docs of that checkout, in its `docs/`, whatever `--version` says.
 
 ## Start here
 
-- [Agents](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/agents.md): how a tool or an AI agent drives local-storefront, task by task
-- [CLI reference](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/cli.md): every command, option, exit code and output format
+- [Agents](docs/agents.md): how a tool or an AI agent drives local-storefront, task by task: set up, store data, checks, CI, a server, an app's backend
+- [CLI reference](docs/cli.md): every command, option, exit code and output format; what runs (`--only theme,checkout,admin`: `serve` runs the theme, all three with `--app`; `app dev` the checkout and the Admin API; a part left out answers 404 with `X-LSF-Reason`); what a change of the data on disk reloads (a checkout scenario keeps the Admin API's state, store data seeds it again)
 
 ## Guides
 
-- [Data format](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/data-format.md): how to write the store data
-- [Testing](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/testing.md): end-to-end tests, sessions, per-test data, slow networks, CI
-- [Strict Liquid](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/strict-liquid.md): `npx local-storefront check` and `npx local-storefront check --fix`
-- [Formatting](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/formatting.md): `npx local-storefront fmt` and its options
-- [Performance](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/performance.md): `npx local-storefront profile`, points, Server-Timing
-- [Checkout](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/checkout.md): `npx local-storefront app dev --app`, `app init` (scenarios) and `app function run`: the Functions and checkout UI extensions of a Shopify app
-- [Storefront](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/storefront.md): accounts, password page, images, feature previews
+- [Data format](docs/data-format.md): how to write the store data
+- [Testing](docs/testing.md): end-to-end tests, sessions, per-test data, slow networks, CI
+- [Strict Liquid](docs/strict-liquid.md): `npx local-storefront check` and `npx local-storefront check --fix`
+- [Formatting](docs/formatting.md): `npx local-storefront fmt` and its options
+- [Performance](docs/performance.md): `npx local-storefront profile`, points, Server-Timing
+- [Checkout](docs/checkout.md): `npx local-storefront app dev --app`, `app init` (scenarios), `app check` (for CI: the Functions of every scenario run, and each scenario's `expect` holds: payment methods and express buttons, delivery options, discounts, lines, errors and totals, with `includes`, `excludes` and `equals`), `app function run` and `app function schema` (a Function's `schema.graphql`, offline): the Functions and checkout UI extensions of a Shopify app
+- [Admin API](docs/admin.md): the local GraphQL Admin API (2026-10), OAuth, token exchange, webhooks and the app proxy, for the backend of a Shopify app; a local admin and App Bridge to preview its embedded pages, and Polaris served offline (`--polaris offline`, `/__lsf/cdn/shopifycloud/polaris-2.js`); managed pricing, its plans declared with `--pricing-plans`, picked on the admin's plan selection page (`legacy = false`: no subscription webhook), a plan ended without the app (`POST /__lsf/admin/pricing-plans/cancel`: `CANCELLED`, a test's stand-in, Shopify's page has no such button); the Partner API where the app reads its plan (`/{partner_id}/api/2026-10/graphql.json`: `activeSubscription`, `events`, `app { events }`; URL and token in `GET /__lsf/admin/partner`); an uninstall (`POST /__lsf/admin/uninstall`) that removes the app's Functions with every object that runs them, its script tags and web pixel, the metafield definitions of its reserved namespaces (their metafields stay; a reinstall creates the definitions again under new ids), the metaobject definitions of its reserved types (their metaobjects are kept for a reinstall), and its app proxy (the storefront's 404, nothing reaches the backend), and stops rendering its UI extensions (checkout, thank-you page, customer account) until it is installed again, as Shopify does
+- [Storefront](docs/storefront.md): accounts, password page, images, feature previews
 
 ## Reference
 
-- [Control API](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/control-api.md): `/__lsf` endpoints, sessions, response headers
-- [Field reference](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/data-reference.md): every field of the store data
-- [Compatibility](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/compatibility.md): what matches Shopify, and the known differences
+- [Control API](docs/control-api.md): `/__lsf` endpoints, sessions, response headers
+- [Admin API reference](docs/admin-reference.md): what the local Admin API simulates, family by family: billing (and managed pricing: plans from `--pricing-plans` or `PUT /__lsf/admin/pricing-plans`, the plan selection page at `/admin/charges/<app handle>/pricing_plans`), bulk operations, discounts, staged uploads
+- [Field reference](docs/data-reference.md): every field of the store data
+- [Compatibility](docs/compatibility.md): what matches Shopify, and the known differences
 
 ## Optional
 
-- [Architecture](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/architecture.md): how the code is organised, for contributors
-- [Changelog](https://raw.githubusercontent.com/0xtlt/local-storefront/main/CHANGELOG.md): what changed in each version
+- [Architecture](docs/architecture.md): how the code is organised, for contributors
+- [Changelog](CHANGELOG.md): what changed in each version

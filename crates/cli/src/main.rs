@@ -11,7 +11,7 @@ mod watch;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 // Rendering a page makes hundreds of thousands of small allocations. The system allocators
 // (macOS's and musl's in particular) make threads that allocate at the same time slow each
@@ -49,7 +49,7 @@ struct Cli {
         value_name = "NAME",
         value_parser = parse_preview
     )]
-    previews: Vec<lsf_core::Preview>,
+    previews: Vec<lsf_theme::Preview>,
 
     #[command(subcommand)]
     command: Command,
@@ -87,9 +87,9 @@ enum Command {
     Docs(commands::docs::Args),
 }
 
-fn parse_preview(name: &str) -> Result<lsf_core::Preview, String> {
-    lsf_core::Preview::from_name(name).ok_or_else(|| {
-        let known: Vec<&str> = lsf_core::Preview::ALL
+fn parse_preview(name: &str) -> Result<lsf_theme::Preview, String> {
+    lsf_theme::Preview::from_name(name).ok_or_else(|| {
+        let known: Vec<&str> = lsf_theme::Preview::ALL
             .iter()
             .map(|preview| preview.name())
             .collect();
@@ -97,14 +97,33 @@ fn parse_preview(name: &str) -> Result<lsf_core::Preview, String> {
     })
 }
 
+/// Where the options of `serve` or `app dev` got their values, when one of them runs.
+fn given(matches: &clap::ArgMatches) -> commands::serve::Given {
+    let serve = matches.subcommand_matches("serve").or_else(|| {
+        matches
+            .subcommand_matches("app")
+            .and_then(|app| app.subcommand_matches("dev"))
+    });
+    serve.map(commands::serve::Given::of).unwrap_or_default()
+}
+
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let given = given(&matches);
     let previews = cli.previews.as_slice();
     let result = match cli.command {
-        Command::Serve(args) => {
-            commands::serve::run(&cli.theme, cli.data.as_deref(), previews, args, false)
+        Command::Serve(args) => commands::serve::run(
+            &cli.theme,
+            cli.data.as_deref(),
+            previews,
+            args,
+            &given,
+            false,
+        ),
+        Command::App(args) => {
+            commands::app::run(&cli.theme, cli.data.as_deref(), previews, args, &given)
         }
-        Command::App(args) => commands::app::run(&cli.theme, cli.data.as_deref(), previews, args),
         Command::Render(args) => {
             commands::render::run(&cli.theme, cli.data.as_deref(), previews, args)
         }
@@ -132,8 +151,9 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::CommandFactory;
+
+    use super::*;
 
     #[test]
     fn the_command_line_is_consistent() {
@@ -157,6 +177,14 @@ mod tests {
         assert!(parse(&["app", "check", "--format", "json"]).is_ok());
         assert!(parse(&["app", "function", "run", "discount", "--scenario", "vip"]).is_ok());
         assert!(parse(&["app", "function", "build", "discount"]).is_ok());
+        assert!(parse(&["app", "webhook", "trigger", "--topic", "orders/create"]).is_ok());
+        assert!(
+            parse(&[
+                "app", "webhook", "trigger", "--path", "app", "--topic", "x", "--json"
+            ])
+            .is_ok()
+        );
+        assert!(parse(&["app", "webhook", "trigger"]).is_err());
         // `app` alone does nothing, and the options of `dev` are its own.
         assert!(parse(&["app"]).is_err());
         assert!(parse(&["app", "--port", "0"]).is_err());

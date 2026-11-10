@@ -1,0 +1,1892 @@
+//! End-to-end rendering of a small fixture theme against the demo store.
+//!
+//! The expected HTML lives in `tests/snapshots/`. After an intentional change, regenerate the
+//! snapshots with `UPDATE_SNAPSHOTS=1 cargo test -p lsf-theme --test render` and review the diff.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use lsf_core::session::{FormResult, Session};
+use lsf_core::store::load::{DataSource, LoadOptions, load};
+use lsf_core::store::{CartLine, Store};
+use lsf_core::theme::Revalidate;
+use lsf_theme::render::cost::Costs;
+use lsf_theme::render::page::{Page, Resource};
+use lsf_theme::render::{ProfileOptions, Target};
+use lsf_theme::{Rendered, Renderer, Request, Theme};
+
+struct Fixture {
+    renderer: Renderer,
+    store: Arc<Store>,
+}
+
+fn fixture() -> Fixture {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/theme");
+    let env = Arc::new(lsf_theme::environment());
+    let theme = Arc::new(Theme::open(&directory, env, Revalidate::Never).expect("fixture theme"));
+    let options = LoadOptions {
+        theme_locales: vec!["en".to_string(), "fr".to_string()],
+    };
+    let (mut store, diagnostics) = load(&DataSource::Demo, &options);
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    // A fixed instant: the page says the shop's UTC offset, which daylight saving time moves
+    // (New York, -4 h in summer, -5 h in winter), so that the snapshots hold all year.
+    store.now = Some("2026-07-01T12:00:00Z".parse().expect("an RFC 3339 date"));
+    Fixture {
+        renderer: Renderer::new(theme),
+        store: Arc::new(store),
+    }
+}
+
+fn request(path_and_query: &str) -> Request {
+    let (path, query) = path_and_query
+        .split_once('?')
+        .unwrap_or((path_and_query, ""));
+    let mut request = Request::new("shop.test", path);
+    request.query = query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (key.to_string(), value.to_string())
+        })
+        .collect();
+    request
+}
+
+impl Fixture {
+    fn render_with(&self, request: Request, session: Session, target: &Target) -> Rendered {
+        self.renderer
+            .render(self.store.clone(), request, session, target)
+    }
+
+    fn page(&self, path: &str) -> Rendered {
+        self.render_with(request(path), Session::initial(&self.store), &Target::Page)
+    }
+
+    /// Renders a piece of Liquid as if it were part of the page at `path`.
+    fn liquid(&self, path: &str, session: Session, source: &str) -> String {
+        let site = self
+            .renderer
+            .site(self.store.clone(), request(path), session);
+        let page = lsf_theme::render::routes::resolve(&site);
+        let (output, errors) = self
+            .renderer
+            .render_liquid(&site, page, source, &[])
+            .expect("the template parses");
+        assert!(errors.is_empty(), "{errors:?}");
+        output
+    }
+}
+
+/// Compares with (or, with `UPDATE_SNAPSHOTS=1`, writes) a snapshot file.
+fn assert_snapshot(name: &str, actual: &str) {
+    let path: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/snapshots")
+        .join(name);
+    if std::env::var("UPDATE_SNAPSHOTS").is_ok() {
+        std::fs::write(&path, actual).expect("write snapshot");
+        return;
+    }
+    let expected = std::fs::read_to_string(&path)
+        .unwrap_or_else(|_| panic!("missing snapshot {name}: run with UPDATE_SNAPSHOTS=1"));
+    assert!(
+        expected == actual,
+        "snapshot {name} differs.\n--- expected\n{expected}\n--- actual\n{actual}"
+    );
+}
+
+fn assert_clean(rendered: &Rendered) {
+    let errors: Vec<String> = rendered.errors.iter().map(ToString::to_string).collect();
+    assert!(errors.is_empty(), "Liquid errors: {errors:#?}");
+}
+
+#[test]
+fn home_page() {
+    let rendered = fixture().page("/");
+    assert_clean(&rendered);
+    assert_eq!(rendered.status, 200);
+    assert_eq!(rendered.template, "index");
+    assert_snapshot("index.html", &rendered.body);
+}
+
+#[test]
+fn product_page() {
+    let rendered = fixture().page("/products/organic-cotton-t-shirt");
+    assert_clean(&rendered);
+    assert_snapshot("product.html", &rendered.body);
+}
+
+#[test]
+fn product_page_selects_the_variant_from_the_url() {
+    let fixture = fixture();
+    let tee = fixture
+        .store
+        .product_by_handle("organic-cotton-t-shirt")
+        .unwrap();
+    let black_m = tee
+        .variants
+        .iter()
+        .find(|variant| variant.title == "Black / M")
+        .unwrap();
+    let rendered = fixture.page(&format!(
+        "/products/organic-cotton-t-shirt?variant={}",
+        black_m.id
+    ));
+    assert_clean(&rendered);
+    assert!(rendered.body.contains(&format!(
+        "<option value=\"{}\" selected>Black / M</option>",
+        black_m.id
+    )));
+    assert!(rendered.body.contains("Color: White, Black*, Sage"));
+}
+
+#[test]
+fn collection_page_paginates_sorts_and_filters() {
+    let fixture = fixture();
+    let rendered = fixture.page("/collections/all?page=2&sort_by=price-ascending");
+    assert_clean(&rendered);
+    assert_snapshot("collection-page-2.html", &rendered.body);
+
+    let filtered = fixture.page("/collections/all?filter.v.availability=0");
+    assert_clean(&filtered);
+    // Availability is a variant-level filter: a product matches when one of its variants does.
+    assert!(
+        filtered.body.contains("<h1>Products (2/8)</h1>"),
+        "{}",
+        filtered.body
+    );
+    assert!(filtered.body.contains("Out of stock: 2 active"));
+}
+
+#[test]
+fn search_results_follow_sort_by() {
+    // `sort_by` takes `relevance`, `price-ascending` or `price-descending`. Under a price sort the
+    // non-product results (pages, articles) go to the end of the results, and `paginate` slices
+    // the sorted list.
+    // https://shopify.dev/docs/api/liquid/objects/search
+    // https://shopify.dev/docs/storefronts/themes/navigation-search/search
+    let fixture = fixture();
+    let list =
+        |path: &str, source: &str| fixture.liquid(path, Session::initial(&fixture.store), source);
+    let prices = "{{ search.sort_by }}|{% for result in search.results %}\
+                  {{ result.object_type }}:{{ result.price | default: 0 }} {% endfor %}";
+
+    // Pages are asked for first: they still come after the products.
+    let relevance = list("/search?q=a&type=page,product", prices);
+    assert_eq!(
+        relevance,
+        "relevance|page:0 page:0 page:0 product:3200 product:6800 product:2400 product:2200 \
+         product:2800 product:3400 product:1600 product:2500 "
+    );
+    // Without `sort_by`, or with a value the search page does not know, the order is relevance.
+    assert_eq!(
+        list("/search?q=a&type=page,product&sort_by=relevance", prices),
+        relevance
+    );
+    assert_eq!(
+        list(
+            "/search?q=a&type=page,product&sort_by=title-ascending",
+            prices
+        ),
+        relevance
+    );
+    assert_eq!(
+        list(
+            "/search?q=a&type=page,product&sort_by=price-ascending",
+            prices
+        ),
+        "price-ascending|product:1600 product:2200 product:2400 product:2500 product:2800 \
+         product:3200 product:3400 product:6800 page:0 page:0 page:0 "
+    );
+    assert_eq!(
+        list(
+            "/search?q=a&type=page,product&sort_by=price-descending",
+            prices
+        ),
+        "price-descending|product:6800 product:3400 product:3200 product:2800 product:2500 \
+         product:2400 product:2200 product:1600 page:0 page:0 page:0 "
+    );
+
+    // The page is cut out of the sorted list.
+    assert_eq!(
+        list(
+            "/search?q=a&type=product&sort_by=price-descending&page=2",
+            "{% paginate search.results by 3 %}{% for result in search.results %}\
+             {{ result.price }} {% endfor %}{% endpaginate %}"
+        ),
+        "2800 2500 2400 "
+    );
+
+    assert_eq!(
+        list(
+            "/search?q=a",
+            "{% for option in search.sort_options %}{{ option.value }}={{ option.name }}; {% endfor %}\
+             default {{ search.default_sort_by }}"
+        ),
+        "relevance=Relevance; price-ascending=Price, low to high; \
+         price-descending=Price, high to low; default relevance"
+    );
+}
+
+#[test]
+fn liquid_template_with_translations_and_dates() {
+    let rendered = fixture().page("/pages/about");
+    assert_clean(&rendered);
+    assert_snapshot("page.html", &rendered.body);
+}
+
+#[test]
+fn translations_follow_the_locale() {
+    let fixture = fixture();
+    let mut request = request("/pages/about");
+    request.locale = "fr".to_string();
+    request.root = "/fr".to_string();
+    let rendered = fixture.render_with(request, Session::initial(&fixture.store), &Target::Page);
+    assert_clean(&rendered);
+    assert!(rendered.body.contains("<html lang=\"fr\">"));
+    assert!(rendered.body.contains("Bonjour Shop owner"));
+    // Keys missing from the locale fall back to the theme's default language.
+    assert!(rendered.body.contains("Tom &amp; &lt;b&gt;Jerry&lt;/b&gt;"));
+    assert!(
+        rendered
+            .body
+            .contains("href=\"http://shop.test/fr/pages/about\"")
+    );
+    // In French zero is singular.
+    assert!(rendered.body.contains("|0 article</footer>"));
+}
+
+#[test]
+fn a_visitor_who_selected_no_country_is_in_the_shops_country() {
+    // The demo shop is in Ottawa, and the United States come first in its countries: the
+    // storefront opens in Canada, the country the checkout opens in.
+    let fixture = fixture();
+    assert_eq!(fixture.store.shop.address.country_code, "CA");
+    assert_eq!(fixture.store.countries[0].iso_code, "US");
+    assert_eq!(fixture.store.default_country().iso_code, "CA");
+    let country = "{{ localization.country.iso_code }}";
+    let output = fixture.liquid("/", Session::initial(&fixture.store), country);
+    assert_eq!(output, "CA");
+    assert!(fixture.page("/").body.contains("Shopify.country = \"CA\";"));
+    // A selected country wins.
+    let mut session = Session::initial(&fixture.store);
+    session.country = Some("FR".to_string());
+    assert_eq!(fixture.liquid("/", session, country), "FR");
+}
+
+#[test]
+fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
+    let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    store.shop.address.country_code = "JP".to_string();
+    assert!(store.country("JP").is_none());
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{{ localization.country.iso_code }}",
+    );
+    assert_eq!(output, "US");
+}
+
+#[test]
+fn forms_show_the_outcome_of_a_submission() {
+    let fixture = fixture();
+    let mut session = Session::initial(&fixture.store);
+    session.form_result = Some(FormResult {
+        form_type: "contact".to_string(),
+        posted_successfully: false,
+        errors: vec![("email".to_string(), "is invalid".to_string())],
+        values: [("email".to_string(), "nope".to_string())]
+            .into_iter()
+            .collect(),
+    });
+    let rendered = fixture.render_with(request("/pages/contact"), session, &Target::Page);
+    assert_clean(&rendered);
+    assert_eq!(rendered.template, "page.contact");
+    assert_snapshot("contact-with-errors.html", &rendered.body);
+}
+
+#[test]
+fn contact_forms_come_back_to_their_own_id() {
+    let fixture = fixture();
+    let site = fixture.renderer.site(
+        fixture.store.clone(),
+        request("/"),
+        Session::initial(&fixture.store),
+    );
+    let (output, errors) = fixture
+        .renderer
+        .render_liquid(
+            &site,
+            Page::new("index", Resource::Index),
+            "{% form 'contact', id: 'ContactForm', class: 'isolate' %}{% endform %}\n\
+             {% form 'customer', id: 'ContactFooter', class: 'newsletter-form' %}{% endform %}\n\
+             {% form 'contact' %}{% endform %}",
+            &[],
+        )
+        .expect("the forms parse");
+    assert!(errors.is_empty(), "{errors:?}");
+    // The first two are what Shopify renders for the contact and newsletter forms of Dawn.
+    for form in [
+        r#"<form method="post" action="/contact#ContactForm" id="ContactForm" accept-charset="UTF-8" class="isolate">"#,
+        r#"<form method="post" action="/contact#ContactFooter" id="ContactFooter" accept-charset="UTF-8" class="newsletter-form">"#,
+        r#"<form method="post" action="/contact#contact_form" id="contact_form" accept-charset="UTF-8" class="contact-form">"#,
+    ] {
+        assert!(output.contains(form), "{form} is not in {output}");
+    }
+}
+
+#[test]
+fn cart_reflects_the_session() {
+    let fixture = fixture();
+    let tote = fixture.store.product_by_handle("canvas-tote-bag").unwrap();
+    let socks = fixture
+        .store
+        .product_by_handle("merino-crew-socks")
+        .unwrap();
+    let mut session = Session::initial(&fixture.store);
+    session.cart_lines = vec![
+        CartLine {
+            variant_id: tote.variants[0].id,
+            quantity: 2,
+            properties: Default::default(),
+            selling_plan: None,
+        },
+        // Six pairs reach the second quantity price break.
+        CartLine {
+            variant_id: socks.variants[0].id,
+            quantity: 6,
+            properties: Default::default(),
+            selling_plan: None,
+        },
+    ];
+    let rendered = fixture.render_with(request("/cart"), session, &Target::Page);
+    assert_clean(&rendered);
+    assert_eq!(
+        rendered.body,
+        "\n2 x Canvas Tote Bag = $48.00\n6 x Merino Crew Socks - 36-40 = $72.00\ntotal $120.00 USD (8)\n"
+    );
+}
+
+#[test]
+fn section_rendering_api() {
+    let fixture = fixture();
+    let page = fixture.page("/");
+    let id = page
+        .body
+        .split("id=\"shopify-section-")
+        .find_map(|rest| rest.split('"').next().filter(|id| id.ends_with("__hero")))
+        .expect("hero section id")
+        .to_string();
+
+    let one = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &Target::Section(id.clone()),
+    );
+    assert_eq!(one.status, 200);
+    assert!(one.body.starts_with(&format!(
+        "<div id=\"shopify-section-{id}\" class=\"shopify-section hero\">"
+    )));
+    assert!(
+        page.body.contains(&one.body),
+        "a section renders the same alone as in the page"
+    );
+
+    let many = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &Target::Sections(vec![id.clone(), "footer".to_string(), "nope".to_string()]),
+    );
+    let json: serde_json::Value = serde_json::from_str(&many.body).unwrap();
+    assert_eq!(json[&id], one.body);
+    assert!(
+        json["footer"]
+            .as_str()
+            .unwrap()
+            .starts_with("<div id=\"shopify-section-footer\"")
+    );
+    assert!(json["nope"].is_null());
+
+    // The id of a template section names its template, so another page can ask for it: a
+    // cart drawer on a product page loads a section of the cart template this way.
+    let elsewhere = fixture.render_with(
+        request("/pages/about"),
+        Session::initial(&fixture.store),
+        &Target::Section(id.clone()),
+    );
+    assert_eq!(elsewhere.status, 200);
+    assert!(elsewhere.body.starts_with(&format!(
+        "<div id=\"shopify-section-{id}\" class=\"shopify-section hero\">"
+    )));
+}
+
+#[test]
+fn unknown_urls_render_the_404_template() {
+    let fixture = fixture();
+    for path in [
+        "/nope",
+        "/products/nope",
+        "/collections/nope",
+        "/pages/nope",
+        "/blogs/journal/nope",
+    ] {
+        let rendered = fixture.page(path);
+        assert_eq!(rendered.status, 404, "{path}");
+        assert!(rendered.body.contains("<h1>Not here</h1>"), "{path}");
+        assert!(rendered.body.contains("data-page-type=\"404\""), "{path}");
+    }
+    // The countries of the store, as the options of a selector.
+    let body = fixture.page("/nope").body;
+    assert!(
+        body.contains(
+            "<select><option value=\"United States\" data-provinces=\"[]\">United States</option>\n\
+             <option value=\"Canada\" data-provinces=\"[]\">Canada</option>\n\
+             <option value=\"France\" data-provinces=\"[]\">France</option></select>"
+        ),
+        "{body}"
+    );
+}
+
+#[test]
+fn stylesheet_and_javascript_tags_are_bundled() {
+    let fixture = fixture();
+    assert_eq!(
+        fixture.renderer.compiled_stylesheet(),
+        "/* sections/hero.liquid */\n.hero { display: block }\n"
+    );
+    assert_eq!(
+        fixture.renderer.compiled_javascript(),
+        "/* sections/hero.liquid */\n(function() {\nconsole.log('hero');\n})();\n"
+    );
+}
+
+#[test]
+fn gift_cards_have_a_page() {
+    let fixture = fixture();
+    let shop = fixture.store.shop.id;
+    let card = &fixture.store.gift_cards[0];
+    let rendered = fixture.page(&card.path(shop));
+    assert_clean(&rendered);
+    assert_eq!(rendered.template, "gift_card");
+    let body = &rendered.body;
+    assert!(
+        body.contains("<p class=\"code\">WCGX-7X97-G74J-GDGC|GDGC</p>"),
+        "{body}"
+    );
+    assert!(
+        body.contains("<p class=\"balance\">$32.50 of $50.00 USD</p>"),
+        "{body}"
+    );
+    assert!(
+        body.contains("enabled=true expired=false expires=never"),
+        "{body}"
+    );
+    assert!(
+        body.contains("<p class=\"owner\">Jane / Jane / Gift Card</p>"),
+        "{body}"
+    );
+    assert!(
+        body.contains(&format!("href=\"http://shop.test{}\"", card.path(shop))),
+        "{body}"
+    );
+
+    let expired = fixture.page(&fixture.store.gift_cards[1].path(shop));
+    assert!(
+        expired
+            .body
+            .contains("enabled=true expired=true expires=2020-12-31"),
+        "{}",
+        expired.body
+    );
+    assert!(
+        expired
+            .body
+            .contains("<p class=\"owner\">nobody / nobody / no product</p>")
+    );
+
+    assert_eq!(
+        fixture.page(&format!("/gift_cards/{shop}/unknown")).status,
+        404
+    );
+}
+
+#[test]
+fn option_values_and_filter_values_have_swatches() {
+    let fixture = fixture();
+    let session = || Session::initial(&fixture.store);
+    let output = fixture.liquid(
+        "/products/organic-cotton-t-shirt",
+        session(),
+        "{% for option in product.options_with_values %}{{ option.name }}:\
+         {% for value in option.values %} {{ value }}={{ value.swatch.color }}/{{ value.swatch.color.rgb }}\
+         {% if value.swatch.image %}+image{% endif %}{% endfor %}\n{% endfor %}",
+    );
+    assert_eq!(
+        output,
+        "Color: White=#f4f1ea/244 241 234 Black=#1c1c1c/28 28 28 Sage=#9caf88/156 175 136\n\
+         Size: S=/ M=/ L=/ XL=/\n"
+    );
+
+    // A filter whose values have swatches is presented with them.
+    let output = fixture.liquid(
+        "/collections/all",
+        session(),
+        "{% for filter in collection.filters %}{% if filter.presentation == 'swatch' %}{{ filter.label }}:\
+         {% for value in filter.values %} {{ value.label }}={{ value.swatch.color }}{% endfor %}\n\
+         {% endif %}{% endfor %}\
+         {{ collection.filters | where: 'presentation', 'text' | map: 'label' | join: ', ' }}",
+    );
+    assert_eq!(
+        output,
+        "Color: White=#f4f1ea Black=#1c1c1c Sage=#9caf88 Navy=#1f2a44 Ochre=#c98a2b\n\
+         Glaze: Oat=#d9c7a7 Slate=#5b6770 Rust=#a4502f\n\
+         Availability, Price, Product type, Size, Denomination"
+    );
+}
+
+#[test]
+fn variants_can_be_picked_up_at_the_locations_that_stock_them() {
+    let fixture = fixture();
+    let mug = fixture.store.product_by_handle("ceramic-mug").unwrap();
+    let template = "{% assign variant = product.selected_or_first_available_variant %}\
+        {% for availability in variant.store_availabilities %}\
+        {{ availability.location.name }}|{{ availability.available }}|{{ availability.pick_up_enabled }}|\
+        {{ availability.pick_up_time }}|{{ availability.location.address.city }}|\
+        {{ availability.location.latitude }}\n{% endfor %}\
+        {% for variant in product.variants %}{{ variant.store_availabilities.size }}{% endfor %}";
+    // Every location stocks the first available variant. As on Shopify, the other variants
+    // have no store availabilities.
+    assert_eq!(
+        fixture.liquid(
+            "/products/ceramic-mug",
+            Session::initial(&fixture.store),
+            template
+        ),
+        "Ottawa flagship|true|true|Usually ready in 2 hours|Ottawa|45.4201\n\
+         Montreal studio|true|true|Usually ready in 24 hours|Montreal|\n\
+         200"
+    );
+    // The selected variant has them too. This one is out of stock in Montreal.
+    assert_eq!(
+        fixture.liquid(
+            &format!("/products/ceramic-mug?variant={}", mug.variants[1].id),
+            Session::initial(&fixture.store),
+            template
+        ),
+        "Ottawa flagship|true|true|Usually ready in 2 hours|Ottawa|45.4201\n\
+         Montreal studio|false|true|Usually ready in 24 hours|Montreal|\n\
+         220"
+    );
+}
+
+#[test]
+fn products_are_sold_with_selling_plans() {
+    let fixture = fixture();
+    let socks = fixture
+        .store
+        .product_by_handle("merino-crew-socks")
+        .unwrap();
+    let quarterly = fixture.store.selling_plan_groups[0].plans[1].id;
+    let template = "{{ product.requires_selling_plan }} {{ product.selling_plan_groups.size }} \
+        {{ product.selling_plan_groups.first.name }}|{{ product.selected_selling_plan.name }}|\
+        {{ product.selected_selling_plan_allocation.price }}|\
+        {{ product.selected_or_first_available_selling_plan_allocation.price }}|\
+        {{ product.selling_plan_groups.first.selling_plan_selected }}|\
+        {{ product.selling_plan_groups.first.options.first.selected_value }}\n\
+        {% for allocation in product.variants.last.selling_plan_allocations %}\
+        {{ allocation.selling_plan.name }}: {{ allocation.price | money }} instead of \
+        {{ allocation.compare_at_price | money }}\
+        {% if allocation.selling_plan.selected %} (selected){% endif %}\n{% endfor %}";
+    assert_eq!(
+        fixture.liquid(
+            "/products/merino-crew-socks",
+            Session::initial(&fixture.store),
+            template
+        ),
+        "false 1 Subscribe and save|||1440|false|\n\
+         Deliver every month, 10% off: $14.40 instead of $16.00\n\
+         Deliver every 3 months, 5% off: $15.20 instead of $16.00\n"
+    );
+    // `?selling_plan=` selects a plan; with `?variant=` it selects an allocation.
+    assert_eq!(
+        fixture.liquid(
+            &format!(
+                "/products/merino-crew-socks?selling_plan={quarterly}&variant={}",
+                socks.variants[1].id
+            ),
+            Session::initial(&fixture.store),
+            template
+        ),
+        "false 1 Subscribe and save|Deliver every 3 months, 5% off|1520|1520|true|Every 3 months\n\
+         Deliver every month, 10% off: $14.40 instead of $16.00\n\
+         Deliver every 3 months, 5% off: $15.20 instead of $16.00 (selected)\n"
+    );
+
+    // The `json` filter describes plans as `/products/<handle>.js` does.
+    let json: serde_json::Value = serde_json::from_str(&fixture.liquid(
+        "/products/merino-crew-socks",
+        Session::initial(&fixture.store),
+        "{{ product | json }}",
+    ))
+    .expect("JSON");
+    let group = &json["selling_plan_groups"][0];
+    assert_eq!(group["id"], fixture.store.selling_plan_groups[0].id);
+    assert_eq!(
+        group["options"],
+        serde_json::json!([{"name": "Delivery frequency", "position": 1, "values": ["Every month", "Every 3 months"]}])
+    );
+    assert_eq!(
+        group["selling_plans"][1],
+        serde_json::json!({
+            "id": quarterly,
+            "name": "Deliver every 3 months, 5% off",
+            "description": null,
+            "options": [{"name": "Delivery frequency", "position": 1, "value": "Every 3 months"}],
+            "recurring_deliveries": true,
+            "price_adjustments": [{"order_count": null, "position": 1, "value_type": "percentage", "value": 5}],
+            "checkout_charge": {"value_type": "percentage", "value": 100}
+        })
+    );
+    assert_eq!(
+        json["variants"][0]["selling_plan_allocations"][1],
+        serde_json::json!({
+            "price_adjustments": [{"position": 1, "price": 1520}],
+            "price": 1520,
+            "compare_at_price": 1600,
+            "per_delivery_price": 1520,
+            "selling_plan_id": quarterly,
+            "selling_plan_group_id": fixture.store.selling_plan_groups[0].id
+        })
+    );
+
+    // A product sold without selling plans.
+    assert_eq!(
+        fixture.liquid(
+            &format!("/products/ceramic-mug?selling_plan={quarterly}"),
+            Session::initial(&fixture.store),
+            "{{ product.selling_plan_groups.size }}|{{ product.selected_selling_plan }}|\
+             {{ product.selected_or_first_available_selling_plan_allocation }}|\
+             {{ product.variants.first.selling_plan_allocations.size }}"
+        ),
+        "0|||0"
+    );
+}
+
+#[test]
+fn cart_lines_are_priced_by_their_selling_plan() {
+    let fixture = fixture();
+    let socks = fixture
+        .store
+        .product_by_handle("merino-crew-socks")
+        .unwrap();
+    let monthly = fixture.store.selling_plan_groups[0].plans[0].id;
+    let mut session = Session::initial(&fixture.store);
+    session.cart_lines = vec![
+        // Quantity price breaks do not apply to a subscription: its plan sets the price.
+        CartLine {
+            variant_id: socks.variants[0].id,
+            quantity: 6,
+            properties: Default::default(),
+            selling_plan: Some(monthly),
+        },
+        CartLine {
+            variant_id: socks.variants[0].id,
+            quantity: 1,
+            properties: Default::default(),
+            selling_plan: None,
+        },
+    ];
+    assert_ne!(
+        lsf_core::cart::line_key(&session.cart_lines[0]),
+        lsf_core::cart::line_key(&session.cart_lines[1])
+    );
+    assert_eq!(
+        fixture.liquid(
+            "/cart",
+            session,
+            "{% for item in cart.items %}{{ item.quantity }} x {{ item.price }}/{{ item.original_price }} = \
+             {{ item.line_price }} [{{ item.selling_plan_allocation.selling_plan.name }}]\n{% endfor %}\
+             {{ cart.total_price }} {{ cart.total_discount }} {{ cart.checkout_charge_amount }}"
+        ),
+        "6 x 1440/1440 = 8640 [Deliver every month, 10% off]\n\
+         1 x 1600/1600 = 1600 []\n\
+         10240 0 10240"
+    );
+}
+
+#[test]
+fn robots_txt_keeps_the_line_breaks_of_its_template() {
+    let fixture = fixture();
+    let site = fixture.renderer.site(
+        fixture.store.clone(),
+        request("/robots.txt"),
+        Session::initial(&fixture.store),
+    );
+    let rendered = fixture.renderer.render_robots(&site);
+    assert_clean(&rendered);
+    let body = rendered.body;
+
+    // The objects print without a line break, as on Shopify. The lines are those of the
+    // template: where `{{-` and `{%-` trim text that is only whitespace, a storefront keeps
+    // its first character, here the line break.
+    assert!(
+        body.starts_with(
+            "# we use Shopify as our ecommerce platform\n\n\
+             User-agent: *\nDisallow: /a/downloads/-/*\nDisallow: /admin\n"
+        ),
+        "{body}"
+    );
+    // The rules the template adds, written with and without `-`, then the next group.
+    assert!(
+        body.contains(
+            "-remote\nDisallow: /*?q=*\nDisallow: /*?view=\nDisallow: /*?pr_\n\
+             Sitemap: http://shop.test/sitemap.xml\n\n\
+             User-agent: adsbot-google\nDisallow: /checkouts/\n"
+        ),
+        "{body}"
+    );
+    // A group without a sitemap.
+    assert!(
+        body.contains(
+            "Disallow: /services/login_with_shop\n\n\
+             User-agent: Nutch\nDisallow: /\n\n\
+             User-agent: AhrefsBot\nCrawl-delay: 10\nDisallow: /a/downloads/-/*\n"
+        ),
+        "{body}"
+    );
+    assert!(
+        body.ends_with("User-agent: Pinterest\nCrawl-delay: 1\n\n"),
+        "{body}"
+    );
+    // The rule the template leaves out.
+    assert!(!body.contains("Disallow: /policies/\n"), "{body}");
+    assert!(body.contains("Disallow: /*/policies/\n"), "{body}");
+    // Never two rules on a line.
+    for line in body.lines() {
+        let directives: usize = ["User-agent: ", "Disallow: ", "Crawl-delay: ", "Sitemap: "]
+            .iter()
+            .map(|directive| line.matches(directive).count())
+            .sum();
+        assert!(directives <= 1, "{line}");
+    }
+}
+
+#[test]
+fn a_liquid_asset_gets_a_new_url_when_the_settings_change() {
+    let fixture = fixture();
+    let url = |store: Arc<Store>| {
+        let site = fixture
+            .renderer
+            .site(store.clone(), request("/"), Session::initial(&store));
+        let (output, errors) = fixture
+            .renderer
+            .render_liquid(
+                &site,
+                Page::new("index", Resource::Index),
+                "{{ 'colors.css' | asset_url }} {{ 'base.css' | asset_url }}",
+                &[],
+            )
+            .expect("the template parses");
+        assert!(errors.is_empty(), "{errors:?}");
+        let (colors, base) = output.split_once(' ').expect("two URLs");
+        (colors.to_string(), base.to_string())
+    };
+    let (colors, base) = url(fixture.store.clone());
+    assert!(
+        colors.starts_with("//shop.test/cdn/shop/t/1/assets/colors.css?v="),
+        "{colors}"
+    );
+
+    // `assets/colors.css.liquid` is rendered with the settings: the same settings, the same
+    // URL; other settings, another URL, so that the file can be kept for a year.
+    assert_eq!(url(fixture.store.clone()).0, colors);
+    let options = LoadOptions {
+        theme_locales: vec!["en".to_string(), "fr".to_string()],
+    };
+    let overlay = serde_json::json!({"theme_settings": {"page_size": 3}});
+    let (other, diagnostics) =
+        lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let (other_colors, other_base) = url(Arc::new(other));
+    assert_ne!(other_colors, colors);
+    // A plain file only follows its own content.
+    assert_eq!(other_base, base);
+}
+
+#[test]
+fn a_render_says_how_long_its_parts_took() {
+    let fixture = fixture();
+    let kinds = |rendered: &Rendered| -> Vec<String> {
+        let sections = &rendered.timings.sections;
+        sections
+            .iter()
+            .map(|section| section.kind.clone())
+            .collect()
+    };
+
+    // A page: its template, then its layout, and the sections of both as they come.
+    let page = fixture.page("/");
+    let timings = &page.timings;
+    assert_eq!(
+        kinds(&page),
+        ["hero", "announcement", "announcement", "footer"]
+    );
+    assert_eq!(
+        timings.sections[0].id,
+        lsf_theme::render::template_section_id("index", "hero")
+    );
+    assert_eq!(timings.sections[3].id, "footer");
+    let (template, layout) = (timings.template.unwrap(), timings.layout.unwrap());
+    assert!(template + layout <= timings.total, "{timings:?}");
+    // The sections are part of the template or of the layout.
+    let of = |range: std::ops::Range<usize>| -> std::time::Duration {
+        timings.sections[range]
+            .iter()
+            .map(|section| section.duration)
+            .sum()
+    };
+    assert!(of(0..2) <= template && of(2..4) <= layout, "{timings:?}");
+    assert!(
+        timings
+            .sections
+            .iter()
+            .all(|section| !section.duration.is_zero())
+    );
+
+    // The theme blocks of a section, each one before the blocks it holds. An app block and
+    // a disabled one are not rendered.
+    let hero = &timings.sections[0];
+    let blocks: Vec<(&str, &str, usize)> = hero
+        .blocks
+        .iter()
+        .map(|block| (block.kind.as_str(), block.key.as_str(), block.depth))
+        .collect();
+    assert_eq!(
+        blocks,
+        [
+            ("_title", "title", 1),
+            ("text", "intro", 1),
+            ("group", "group", 1),
+            ("text", "nested", 2)
+        ]
+    );
+    // The id is the one the page gives the block.
+    let group = &hero.blocks[2];
+    assert!(
+        page.body
+            .contains(&format!("id=\"shopify-block-{}\"", group.id)),
+        "{group:?}"
+    );
+    let took = |index: usize| -> std::time::Duration {
+        let block = &hero.blocks[index];
+        assert_eq!(block.durations.len(), 1, "{block:?}");
+        block.durations[0]
+    };
+    // A block is part of the one it is in, and the blocks of a section are part of it.
+    assert!(took(3) <= took(2), "{hero:?}");
+    assert!(took(0) + took(1) + took(2) <= hero.duration, "{hero:?}");
+    assert!(
+        timings.sections[1..]
+            .iter()
+            .all(|section| section.blocks.is_empty())
+    );
+
+    // Sections asked for alone: no template, no layout.
+    let footer = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &Target::Section("footer".to_string()),
+    );
+    assert_eq!(kinds(&footer), ["footer"]);
+    assert!(footer.timings.template.is_none() && footer.timings.layout.is_none());
+    assert!(footer.timings.sections[0].duration <= footer.timings.total);
+}
+
+/// The frames of a profile as they nest: `a(b c(d))`. Checks that they close in order.
+fn profile_shape(profile: &lsf_liquid::Profile) -> String {
+    let mut shape = String::new();
+    let mut open = Vec::new();
+    for event in &profile.events {
+        if event.open {
+            if !shape.is_empty() && !shape.ends_with('(') {
+                shape.push(' ');
+            }
+            let frame = &profile.frames[event.frame];
+            shape.push_str(&frame.name);
+            if let Some(line) = frame.line {
+                shape.push_str(&format!(":{line}"));
+            }
+            shape.push('(');
+            open.push(event.frame);
+        } else {
+            assert_eq!(open.pop(), Some(event.frame), "{shape}");
+            shape.push(')');
+        }
+    }
+    assert!(open.is_empty(), "{shape}");
+    shape.replace("()", "")
+}
+
+#[test]
+fn a_profile_records_what_rendered_what() {
+    let fixture = fixture();
+    let site = fixture.renderer.site(
+        fixture.store.clone(),
+        request("/"),
+        Session::initial(&fixture.store),
+    );
+    let page = || lsf_theme::render::routes::resolve(&site);
+    let plain = fixture.renderer.render_page(&site, page(), &Target::Page);
+    let (rendered, profile) =
+        fixture
+            .renderer
+            .profile_page(&site, page(), &Target::Page, &ProfileOptions::default());
+    // Profiling changes nothing of what is rendered.
+    assert_eq!(rendered.body, plain.body);
+    assert!(rendered.errors.is_empty(), "{:?}", rendered.errors);
+
+    let hero = lsf_theme::render::template_section_id("index", "hero");
+    let second = lsf_theme::render::template_section_id("index", "second");
+    let group = lsf_theme::tags::group_id_prefix("header-group");
+    // The template, then the layout: under each one its sections, under a section its file,
+    // and under a file the blocks and the snippets it renders.
+    assert_eq!(
+        profile_shape(&profile),
+        format!(
+            "render(\
+               templates/index.json(\
+                 section {hero}(sections/hero(\
+                   block title(blocks/_title) \
+                   block intro(blocks/text(snippets/meta)) \
+                   block group(blocks/group(block nested(blocks/text(snippets/meta)))) \
+                   snippets/meta)) \
+                 section {second}(sections/announcement)) \
+               layout/theme(\
+                 section {group}announcement(sections/announcement) \
+                 section footer(sections/footer)))"
+        )
+    );
+    assert!(profile.frames.iter().all(|frame| frame.line.is_none()));
+
+    // With lines, the tags and the outputs of each file, under the file.
+    let with_lines_options = ProfileOptions {
+        lines: true,
+        ..ProfileOptions::default()
+    };
+    let (with_lines, lines) =
+        fixture
+            .renderer
+            .profile_page(&site, page(), &Target::Page, &with_lines_options);
+    assert_eq!(with_lines.body, plain.body);
+    let shape = profile_shape(&lines);
+    assert!(
+        shape.contains("section footer(sections/footer(sections/footer:1"),
+        "{shape}"
+    );
+    assert!(shape.contains("layout/theme(layout/theme:2 "), "{shape}");
+
+    // A section asked for alone.
+    let (_, footer) = fixture.renderer.profile_page(
+        &site,
+        page(),
+        &Target::Section("footer".to_string()),
+        &ProfileOptions::default(),
+    );
+    assert_eq!(
+        profile_shape(&footer),
+        "render(section footer(sections/footer))"
+    );
+}
+
+/// How many things of each kind a profile was charged for, without the kinds that were not.
+fn charged(profile: &lsf_liquid::Profile) -> Vec<(&str, u64)> {
+    let total: u64 = profile
+        .charges
+        .iter()
+        .map(|charge| charge.count * charge.each)
+        .sum();
+    assert_eq!(profile.points, total, "{:?}", profile.charges);
+    profile
+        .charges
+        .iter()
+        .filter(|charge| charge.count > 0)
+        .map(|charge| (charge.kind.as_str(), charge.count))
+        .collect()
+}
+
+#[test]
+fn a_profile_counts_what_a_page_loads() {
+    let fixture = fixture();
+    let profile_with = |path: &str, options: &ProfileOptions| {
+        let site = fixture.renderer.site(
+            fixture.store.clone(),
+            request(path),
+            Session::initial(&fixture.store),
+        );
+        let page = lsf_theme::render::routes::resolve(&site);
+        let (_, profile) = fixture
+            .renderer
+            .profile_page(&site, page, &Target::Page, options);
+        profile
+    };
+    let profile = |path: &str| profile_with(path, &ProfileOptions::default());
+    // What was loaded, without the tags and the outputs, which every page has.
+    let loaded = |profile: &lsf_liquid::Profile| -> Vec<(String, u64)> {
+        let charges = charged(profile);
+        assert_eq!(charges[0].0, "liquid");
+        assert!(charges[0].1 > 10, "{charges:?}");
+        charges[1..]
+            .iter()
+            .map(|(kind, count)| (kind.to_string(), *count))
+            .collect()
+    };
+    let of = |pairs: &[(&str, u64)]| -> Vec<(String, u64)> {
+        pairs
+            .iter()
+            .map(|(kind, count)| (kind.to_string(), *count))
+            .collect()
+    };
+
+    // The home page: the product of a section setting, and the one of a block setting.
+    let home = profile("/");
+    assert_eq!(loaded(&home), of(&[("product", 2)]));
+    // A product page reads the variants of its product.
+    assert_eq!(
+        loaded(&profile("/products/ceramic-mug")),
+        of(&[("product", 1), ("variant", 3)])
+    );
+    // A collection page: the collection and the products of the page.
+    assert_eq!(
+        loaded(&profile("/collections/all")),
+        of(&[("product", 8), ("collection", 1)])
+    );
+    assert_eq!(loaded(&profile("/pages/about")), of(&[("page", 1)]));
+
+    // The same render is charged the same every time.
+    let again = profile("/");
+    assert_eq!(again.points, home.points);
+    assert_eq!(again.charges, home.charges);
+    // The points of a frame are what was charged while it was open: the two products of
+    // the home page are inside the section that asks for them.
+    let hero = format!(
+        "section {}",
+        lsf_theme::render::template_section_id("index", "hero")
+    );
+    let frame = home
+        .frames
+        .iter()
+        .position(|frame| frame.name == hero)
+        .unwrap();
+    let at: Vec<u64> = home
+        .events
+        .iter()
+        .filter(|event| event.frame == frame)
+        .map(|event| event.points)
+        .collect();
+    assert!(at[1] - at[0] >= 200, "{at:?}");
+    assert!(at[1] - at[0] < home.points, "{at:?}");
+
+    // Other costs, other points for the same things.
+    let cheap = Costs::default().with("product=1,liquid=0").unwrap();
+    let options = ProfileOptions {
+        costs: cheap,
+        ..ProfileOptions::default()
+    };
+    let cheaper = profile_with("/", &options);
+    assert_eq!(cheaper.points, 2);
+    assert_eq!(charged(&cheaper), charged(&home));
+}
+
+#[test]
+fn a_video_file_in_a_metaobject_is_a_video() {
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "look": [{
+                "handle": "summer",
+                "fields": {
+                    "clip": { "type": "file_reference", "value": "looks/summer.mp4" },
+                    "clips": { "type": "list.file_reference", "value": ["looks/summer.mp4"] }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{% assign clip = metaobjects.look.summer.clip.value %}\
+         {{ clip.media_type }}|{{ clip.sources.size }}|{{ clip.sources.first.mime_type }}|\
+         {{ clip.preview_image.src }}|{{ metaobjects.look.summer.clips.value.first.media_type }}|\
+         {{ clip | video_tag }}",
+    );
+    let (fields, tag) = output.rsplit_once('|').unwrap();
+    assert_eq!(fields, "video|1|video/mp4|files/looks/summer.jpg|video");
+    assert!(tag.starts_with("<video"), "{tag}");
+    assert!(tag.contains("/cdn/shop/files/looks/summer.mp4"), "{tag}");
+    // `metafield_tag` prints the same video, as Shopify does.
+    let tag = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{{ metaobjects.look.summer.clip | metafield_tag }}",
+    );
+    assert!(tag.starts_with("<video playsinline"), "{tag}");
+    assert!(tag.contains("type=\"video/mp4\""), "{tag}");
+}
+
+#[test]
+fn an_apps_own_metaobject_type_is_found_by_either_name() {
+    // The store data writes an app's own type `$app:author`. A theme names it with the app's id
+    // (its real one, which lsf does not know), an app's extension with `$app`: both find the
+    // entry, and so does a reference to it.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "$app:author": [{
+                "handle": "jane",
+                "fields": { "name": { "type": "single_line_text_field", "value": "Jane Austen" } }
+            }],
+            "book": [{
+                "handle": "emma",
+                "fields": { "author": { "type": "metaobject_reference", "value": "$app:author/jane" } }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{{ metaobjects['app--123456--author'].jane.name }}|\
+         {% for author in metaobjects['$app:author'].values %}{{ author.name }}{% endfor %}|\
+         {{ metaobjects.book.emma.author.value.name }}",
+    );
+    assert_eq!(output, "Jane Austen|Jane Austen|Jane Austen");
+}
+
+#[test]
+fn metafield_values_are_the_objects_shopify_gives() {
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "spec": [{
+                "handle": "tent",
+                "fields": {
+                    "shade": { "type": "color", "value": "#ff8000" },
+                    "story": { "type": "article_reference", "value": "journal/how-to-care-for-linen" },
+                    "same_story": { "type": "article_reference", "value": "how-to-care-for-linen" },
+                    "length": { "type": "distance", "value": { "value": "2.5", "unit": "m" } },
+                    "price": { "type": "money", "value": { "amount": "17.96", "currency_code": "USD" } },
+                    "price_eur": { "type": "money", "value": { "amount": "5", "currency_code": "eur" } },
+                    "width": { "type": "dimension", "value": { "value": "2.555", "unit": "cm" } }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render = |source: &str| fixture.liquid("/", Session::initial(&fixture.store), source);
+    let tent = "{% assign tent = metaobjects.spec.tent %}";
+
+    // A color, with its channels.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.shade.value }}}} {{{{ tent.shade.value.red }}}} {{{{ tent.shade.value.rgb }}}}"
+        )),
+        "#ff8000 255 255 128 0"
+    );
+    // An article, by blog and handle or by its handle alone.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.story.value.title }}}}|{{{{ tent.same_story.value.title }}}}|{{{{ tent.story | metafield_text }}}}"
+        )),
+        "How to care for linen|How to care for linen|How to care for linen"
+    );
+    // Every measurement type, not only weight, volume and dimension.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.length.value.type }}}} {{{{ tent.length.value.value }}}} {{{{ tent.length.value.unit }}}}|{{{{ tent.length | metafield_text }}}}"
+        )),
+        "distance 2.5 m|2.5 m"
+    );
+    // Money prints and computes as cents, and has the currency.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.price.value }}}}|{{{{ tent.price.value | money }}}}|{{{{ tent.price.value | plus: 4 }}}}|\
+             {{% if tent.price.value > 1000 %}}more{{% endif %}}|{{{{ tent.price.value.currency.iso_code }}}}"
+        )),
+        "1796|$17.96|1800|more|USD"
+    );
+    // A money keeps the currency it is written in, and is printed in it.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.price_eur.value }}}} {{{{ tent.price_eur.value.currency.iso_code }}}}|\
+             {{{{ tent.price_eur | metafield_text }}}}|{{{{ tent.price_eur.value | money }}}}|\
+             {{{{ tent.price_eur.value | money_without_trailing_zeros }}}}|\
+             {{{{ tent.price.value | money_with_currency }}}}"
+        )),
+        "500 EUR|€5,00 EUR|€5,00|€5|$17.96 USD"
+    );
+    // A measurement is printed with two decimals at most.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.width | metafield_text }}}}|{{{{ tent.width | metafield_tag }}}}"
+        )),
+        "2.56 cm|<span class=\"metafield-dimension\"><span class=\"metafield-dimension_value\">2.56 </span><span class=\"metafield-dimension_unit\">cm</span></span>"
+    );
+}
+
+#[test]
+fn what_is_loaded_is_charged_once() {
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "designer": [
+                { "handle": "sam", "fields": { "name": "Sam" } },
+                { "handle": "kim", "fields": { "name": "Kim" } }
+            ]
+        }
+    });
+    let options = LoadOptions {
+        theme_locales: vec!["en".to_string(), "fr".to_string()],
+    };
+    let (store, diagnostics) =
+        lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    // What a piece of Liquid is charged for, on a page.
+    let charges = |path: &str, source: &str| -> Vec<(String, u64)> {
+        let profiler = lsf_liquid::Profiler::with_costs(false, Costs::default().pairs());
+        {
+            let _active = profiler.activate();
+            fixture.liquid(path, Session::initial(&fixture.store), source);
+        }
+        charged(&profiler.finish())
+            .into_iter()
+            .map(|(kind, count)| (kind.to_string(), count))
+            .collect()
+    };
+    let of = |pairs: &[(&str, u64)]| -> Vec<(String, u64)> {
+        pairs
+            .iter()
+            .map(|(kind, count)| (kind.to_string(), *count))
+            .collect()
+    };
+    let tee = "/products/organic-cotton-t-shirt";
+
+    // A metafield is read once, however many times the template prints it. One that is not
+    // there is looked for all the same, in a namespace that exists or not.
+    assert_eq!(
+        charges(
+            tee,
+            "{{ product.metafields.custom.care }}{{ product.metafields.custom.care }}\
+             {{ product.metafields.reviews.rating_count }}\
+             {{ product.metafields.custom.nothing }}{{ product.metafields.nowhere.nothing }}\
+             {{ product.metafields.nowhere.nothing }}"
+        ),
+        of(&[("product", 1), ("metafield", 4)])
+    );
+    // The same metafield of another product is another one.
+    assert_eq!(
+        charges(
+            "/collections/all",
+            "{% for product in collection.products %}{{ product.metafields.custom.care }}{% endfor %}"
+        ),
+        of(&[("product", 8), ("collection", 1), ("metafield", 8)])
+    );
+    // A product named by its handle, twice.
+    assert_eq!(
+        charges(
+            "/",
+            "{{ all_products['ceramic-mug'].title }}{{ all_products['ceramic-mug'].price }}"
+        ),
+        of(&[("product", 1)])
+    );
+    // Metaobjects: each one once, and their fields are not metafields to load.
+    assert_eq!(
+        charges(
+            "/",
+            "{{ metaobjects.designer.sam.name }}\
+             {% for designer in metaobjects.designer.values %}{{ designer.name }}{% endfor %}"
+        ),
+        of(&[("metaobject", 2)])
+    );
+    assert_eq!(
+        charges(
+            "/",
+            "{{ linklists.main-menu.title }}{{ linklists['main-menu'].links.size }}"
+        ),
+        of(&[("menu", 1)])
+    );
+    // A search is charged, and so is each thing it finds.
+    let search = charges("/search?q=mug", "{{ search.results_count }}");
+    assert_eq!(search[search.len() - 1], ("search".to_string(), 1));
+    assert!(search.contains(&("product".to_string(), 1)), "{search:?}");
+    // What a template does not ask for costs nothing.
+    assert_eq!(charges("/search?q=mug", "{{ shop.name }}"), of(&[]));
+}
+
+/// A fixture of a theme written in a temporary directory, `files` being `(path, content)`,
+/// rendered with the given feature previews.
+fn theme_of(name: &str, previews: &[lsf_theme::Preview], files: &[(&str, &str)]) -> Fixture {
+    let directory = std::env::temp_dir().join(format!("lsf-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    for (path, content) in files {
+        let path = directory.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+    let env = Arc::new(lsf_theme::environment_with(previews));
+    let theme = Arc::new(Theme::open(&directory, env, Revalidate::Never).expect("theme"));
+    Fixture {
+        renderer: Renderer::new(theme),
+        ..fixture()
+    }
+}
+
+#[test]
+fn a_template_composes_its_page_from_blocks() {
+    let fixture = theme_of(
+        "block-tag",
+        &[lsf_theme::Preview::LiquidJuly26],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>\
+                 {% block 'box', tag: 'header' %}<b>{{ shop.name }}</b>{% endblock %}\
+                 {{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.liquid",
+                "{% assign greeting = 'hi' %}\
+                 {% block 'box', alignment: 'center', items: ['a', 'b', shop.name] %}\
+                 {{ greeting }}{% block 'box' %}inner{% endblock %}\
+                 {% endblock %}",
+            ),
+            (
+                "blocks/box.liquid",
+                "{% assign tag = tag | default: 'section' %}\
+                 <{{ tag }} data-align=\"{{ block.settings.alignment }}\" data-also=\"{{ alignment }}\" \
+                 data-items=\"{{ items | join: '+' }}\" data-greeting=\"{{ greeting }}\">{{ content }}</{{ tag }}>\
+                 {% if block.content != content %}block.content differs{% endif %}\
+                 {% schema %}{\"name\": \"Box\", \"settings\": [{\"type\": \"select\", \"id\": \"alignment\", \
+                 \"label\": \"Alignment\", \"options\": [{\"value\": \"left\", \"label\": \"Left\"}, \
+                 {\"value\": \"center\", \"label\": \"Center\"}], \"default\": \"left\"}]}{% endschema %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    // The page's body, before what the platform adds at its end.
+    let body = rendered.body.split("<body>").nth(1).unwrap();
+    let body = body.split("<script src=").next().unwrap();
+    // No wrapper: the block's own element is the outermost. A parameter named after a setting
+    // sets it, the others have their default; an array can be written in place; the body is
+    // rendered where it is written, and the block does not see the caller's variables.
+    assert_eq!(
+        body,
+        "<header data-align=\"left\" data-also=\"\" data-items=\"\" data-greeting=\"\"><b>Local Supply Co.</b></header>\
+         <section data-align=\"center\" data-also=\"center\" data-items=\"a+b+Local Supply Co.\" data-greeting=\"\">\
+         hi<section data-align=\"left\" data-also=\"\" data-items=\"\" data-greeting=\"\">inner</section>\
+         </section>"
+    );
+    // Without a partial, the page gets no import map.
+    assert!(!rendered.body.contains("importmap"));
+}
+
+#[test]
+fn a_partial_marks_a_region_and_brings_its_runtime() {
+    let fixture = theme_of(
+        "partial-tag",
+        &[lsf_theme::Preview::LiquidJuly26],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.liquid",
+                "{% partial 'count' %}<p>{{ shop.name }}</p>{% endpartial %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    assert!(
+        rendered.body.contains(
+            "<body><!--shopify-partial name=\"count\"--><p>Local Supply Co.</p><!--/shopify-partial-->"
+        ),
+        "{}",
+        rendered.body
+    );
+    // The import map comes first, so that every module of the page can use it.
+    let head = rendered.body.split("<head>").nth(1).unwrap();
+    assert!(
+        head.starts_with("<script type=\"importmap\">{\"imports\":{\"@shopify/partial-rendering\":\"//shop.test/cdn/shopifycloud/storefront/assets/partial-rendering-"),
+        "{head}"
+    );
+    let path = lsf_theme::render::platform::partial_rendering_path();
+    let script = lsf_theme::render::platform::asset(path).expect("the runtime is served");
+    assert!(script.content.contains("export const partials"));
+}
+
+#[test]
+fn without_their_preview_block_and_partial_fail_as_on_a_live_store() {
+    let files = [
+        (
+            "layout/theme.liquid",
+            "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+        ),
+        (
+            "templates/index.liquid",
+            "{% partial 'count' %}{% block 'box' %}{% endblock %}{% endpartial %}",
+        ),
+        ("blocks/box.liquid", "<div>{{ content }}</div>"),
+    ];
+    let rendered = theme_of("no-preview", &[], &files).page("/");
+    assert!(
+        rendered
+            .body
+            .contains("Liquid syntax error (templates/index line 1): Unknown tag 'partial'"),
+        "{}",
+        rendered.body
+    );
+    assert!(!rendered.body.contains("importmap"));
+}
+
+#[test]
+fn a_video_setting_is_the_video_of_its_file() {
+    let fixture = theme_of(
+        "video-setting",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.json",
+                r#"{"sections": {"hero": {"type": "hero", "settings": {"clip": "shopify://files/videos/Clip.MOV"}}}, "order": ["hero"]}"#,
+            ),
+            (
+                "sections/hero.liquid",
+                "{% assign clip = section.settings.clip %}\
+                 {{ clip.media_type }}|{{ clip.sources.first.mime_type }}|{{ clip.sources.first.format }}|\
+                 {{ clip.preview_image.src }}|{{ clip.aspect_ratio }}\
+                 {% schema %}{\"name\": \"Hero\", \"settings\": [{\"type\": \"video\", \"id\": \"clip\", \"label\": \"Clip\"}]}{% endschema %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    // A `.mov` is announced as the MP4 Shopify makes of it; its poster is the `.jpg` of the
+    // same name, whatever the case of the extension.
+    assert!(
+        rendered
+            .body
+            .contains("video|video/mp4|mp4|files/videos/Clip.jpg|1.7777777777777777"),
+        "{}",
+        rendered.body
+    );
+}
+
+#[test]
+fn a_called_block_takes_its_parameters_when_the_tag_opens() {
+    let liquid_july = [lsf_theme::Preview::LiquidJuly26];
+    let layout = (
+        "layout/theme.liquid",
+        "<html><body>{{ content_for_layout }}</body></html>",
+    );
+    // A setting called `content` keeps its default: only parameters set settings, and the
+    // body is not one. The parameters are read before the body runs.
+    let text = (
+        "blocks/text.liquid",
+        "[{{ block.settings.content }}|{{ n }}|{{ items | join: ',' }}|{{ content }}|{% content_for 'blocks' %}]\
+         {% schema %}{\"name\": \"Text\", \"settings\": [{\"type\": \"text\", \"id\": \"content\", \"label\": \"Content\", \"default\": \"Hello\"}]}{% endschema %}",
+    );
+    let fixture = theme_of(
+        "called-block",
+        &liquid_july,
+        &[
+            layout,
+            text,
+            (
+                "templates/index.liquid",
+                "{% assign n = 1 %}{% block 'text', n: n, items: [['a', 'b'], 'c'] %}{% assign n = 2 %}{{ n }}{% endblock %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    assert!(
+        rendered.body.contains("<body>[Hello|1|a,b,c|2|]"),
+        "{}",
+        rendered.body
+    );
+
+    // A block nested in the body of another is part of it in a profile.
+    let nested = theme_of(
+        "called-block-profile",
+        &liquid_july,
+        &[
+            layout,
+            text,
+            (
+                "templates/index.liquid",
+                "{% block 'text' %}{% block 'text' %}{% endblock %}{% endblock %}",
+            ),
+        ],
+    );
+    let site = nested.renderer.site(
+        nested.store.clone(),
+        request("/"),
+        Session::initial(&nested.store),
+    );
+    let (_, profile) = nested.renderer.profile_page(
+        &site,
+        lsf_theme::render::routes::resolve(&site),
+        &Target::Page,
+        &ProfileOptions::default(),
+    );
+    assert_eq!(
+        profile_shape(&profile),
+        "render(templates/index(block text(block text(blocks/text) blocks/text)) layout/theme)"
+    );
+}
+
+#[test]
+fn a_called_block_is_refused_where_shopify_refuses_it() {
+    let liquid_july = [lsf_theme::Preview::LiquidJuly26];
+    let fixture = theme_of(
+        "called-block-errors",
+        &liquid_july,
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.liquid",
+                "{% block 'outer' %}{% endblock %}|{% block 'missing' %}{% endblock %}",
+            ),
+            ("blocks/outer.liquid", "{% block 'inner' %}{% endblock %}"),
+            ("blocks/inner.liquid", "inner"),
+        ],
+    );
+    let rendered = fixture.page("/");
+    // Only layouts and templates may call a block; and the block has to exist.
+    assert!(
+        rendered.body.contains(
+            "Liquid error (blocks/outer line 1): the block tag can only be used in layout/ and templates/ files"
+        ),
+        "{}",
+        rendered.body
+    );
+    assert!(
+        rendered.body.contains(
+            "Liquid error (templates/index line 1): Could not find asset blocks/missing.liquid"
+        ),
+        "{}",
+        rendered.body
+    );
+    // An array written in place is a value, not the start of a lookup.
+    let env = Arc::new(lsf_theme::environment_with(&liquid_july));
+    let Err(error) =
+        lsf_liquid::Template::parse(&env, "{% block 'x', a: ['b'].first %}{% endblock %}")
+    else {
+        panic!("an array followed by a lookup parses");
+    };
+    assert!(
+        error.to_string().contains("cannot be followed by"),
+        "{error}"
+    );
+}
+
+#[test]
+fn an_article_handle_that_two_blogs_have_names_neither() {
+    let overlay = serde_json::json!({
+        "blogs": [{
+            "title": "News",
+            "articles": [{
+                "title": "How to care for linen",
+                "author": "Sam",
+                "published_at": "2024-01-10T09:00:00Z",
+                "content": "<p>Again.</p>"
+            }]
+        }],
+        "metaobjects": {
+            "note": [{
+                "handle": "n",
+                "fields": {
+                    "loose": { "type": "article_reference", "value": "how-to-care-for-linen" },
+                    "exact": { "type": "article_reference", "value": "news/how-to-care-for-linen" }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{% assign n = metaobjects.note.n %}[{{ n.loose.value.title }}]{{ n.exact.value.url }}",
+    );
+    assert_eq!(output, "[]/blogs/news/how-to-care-for-linen");
+}
+
+#[test]
+fn a_block_cannot_be_called_from_the_liquid_of_a_setting() {
+    let fixture = theme_of(
+        "called-block-setting",
+        &[lsf_theme::Preview::LiquidJuly26],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.json",
+                r#"{"sections": {"c": {"type": "custom", "settings": {"code": "{% block 'b' %}{% endblock %}"}}}, "order": ["c"]}"#,
+            ),
+            (
+                "sections/custom.liquid",
+                "{{ section.settings.code }}{% schema %}{\"name\": \"Custom\", \"settings\": [{\"type\": \"liquid\", \"id\": \"code\", \"label\": \"Code\"}]}{% endschema %}",
+            ),
+            ("blocks/b.liquid", "<b>called</b>"),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert!(
+        !rendered.body.contains("<b>called</b>"),
+        "{}",
+        rendered.body
+    );
+    assert!(
+        rendered
+            .body
+            .contains("the block tag can only be used in layout/ and templates/ files"),
+        "{}",
+        rendered.body
+    );
+}
+
+/// A theme in a temporary directory rendered against the demo store plus `overlay` (store data).
+fn theme_with_data(name: &str, overlay: &serde_json::Value, files: &[(&str, &str)]) -> Fixture {
+    let fixture = theme_of(name, &[], files);
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    Fixture {
+        store: Arc::new(store),
+        ..fixture
+    }
+}
+
+#[test]
+fn metaobject_settings_are_metaobjects() {
+    // https://shopify.dev/docs/storefronts/themes/architecture/settings/input-settings#metaobject
+    // and #metaobject_list: the setting gives a `metaobject` (or an array of them), and
+    // `metaobject_type` says which type the picker offers. Themes store the handle alone.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "recipe": [
+                { "handle": "pancakes", "fields": { "name": { "type": "single_line_text_field", "value": "Pancakes" } } },
+                { "handle": "waffles", "fields": { "name": { "type": "single_line_text_field", "value": "Waffles" } } }
+            ]
+        }
+    });
+    let gid = format!(
+        "gid://shopify/Metaobject/{}",
+        lsf_core::util::stable_id("metaobject", "recipe/waffles")
+    );
+    let template = serde_json::json!({
+        "sections": { "main": { "type": "recipes", "blocks": {
+            "handle": { "type": "card", "settings": { "recipe": "pancakes" } },
+            "dotted": { "type": "card", "settings": { "recipe": "recipe.waffles" } },
+            "slashed": { "type": "card", "settings": { "recipe": "recipe/pancakes" } },
+            "gid": { "type": "card", "settings": { "recipe": gid } },
+            "unknown": { "type": "card", "settings": { "recipe": "nope" } },
+            "list": { "type": "card", "settings": { "recipes": ["waffles", "nope", gid, "pancakes"] } },
+            "dynamic": { "type": "card", "settings": {
+                "recipe": "{{ metaobjects.recipe.waffles }}",
+                "recipes": "{{ metaobjects.recipe.values }}"
+            } }
+        }, "block_order": ["handle", "dotted", "slashed", "gid", "unknown", "list", "dynamic"] } },
+        "order": ["main"]
+    })
+    .to_string();
+    let fixture = theme_with_data(
+        "metaobject-settings",
+        &overlay,
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            ("templates/index.json", &template),
+            ("sections/recipes.liquid", "{% content_for 'blocks' %}\n"),
+            (
+                "blocks/card.liquid",
+                "[{{ block.settings.recipe.name.value }}|{{ block.settings.recipe.system.handle }}|\
+                 {% for p in block.settings.recipes %}{{ p.name.value }},{% endfor %}]\
+                 {% schema %}{\"name\": \"Card\", \"tag\": null, \"settings\": [\
+                 {\"type\": \"metaobject\", \"id\": \"recipe\", \"label\": \"Recipe\", \"metaobject_type\": \"recipe\"},\
+                 {\"type\": \"metaobject_list\", \"id\": \"recipes\", \"label\": \"Recipes\", \"metaobject_type\": \"recipe\"}\
+                 ]}{% endschema %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    let body = rendered.body.split("<body>").nth(1).unwrap();
+    let cards: Vec<&str> = body
+        .split('[')
+        .skip(1)
+        .map(|card| card.split(']').next().unwrap())
+        .collect();
+    assert_eq!(
+        cards,
+        [
+            // A handle, `type.handle`, `type/handle` and the id of the entry; an unknown one is blank.
+            "Pancakes|pancakes|",
+            "Waffles|waffles|",
+            "Pancakes|pancakes|",
+            "Waffles|waffles|",
+            "||",
+            // The list keeps its order and leaves out what it does not find.
+            "||Waffles,Waffles,Pancakes,",
+            // A dynamic source gives the entries themselves, which are kept as they are.
+            "Waffles|waffles|Pancakes,Waffles,",
+        ]
+    );
+}
+
+#[test]
+fn the_entries_of_a_metaobject_type_have_pages() {
+    // https://shopify.dev/docs/storefronts/themes/architecture/templates/metaobject: a type
+    // whose definition has the online store capability has `templates/metaobject/<type>.json`,
+    // rendered with the entry as `metaobject` at `/pages/<type>/<handle>`. Without the
+    // capability (here: without that template) the entry has no page and no `system.url`.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "event": [
+                { "handle": "summer", "fields": { "title": { "type": "single_line_text_field", "value": "Summer fair" } } },
+                { "handle": "winter", "template_suffix": "alt", "fields": { "title": { "type": "single_line_text_field", "value": "Winter fair" } } }
+            ],
+            "note": [{ "handle": "n", "fields": {} }]
+        }
+    });
+    let section = "<h1>{{ metaobject.title.value }}</h1><i>{{ metaobject.system.handle }}</i>\
+                   <u>{{ metaobject.system.url }}</u><s>{{ request.page_type }}|{{ template.directory }}|{{ template.name }}|{{ template.suffix }}</s>\
+                   <a href=\"{{ section.settings.link }}\">{{ page_title }}</a>\n\
+                   {% schema %}{\"name\": \"Event\", \"settings\": [{\"type\": \"url\", \"id\": \"link\"}]}{% endschema %}";
+    let template = serde_json::json!({
+        "sections": { "main": { "type": "event", "settings": { "link": "shopify://metaobjects/event/winter" } } },
+        "order": ["main"]
+    })
+    .to_string();
+    let fixture = theme_with_data(
+        "metaobject-pages",
+        &overlay,
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            ("sections/event.liquid", section),
+            ("templates/metaobject/event.json", &template),
+            (
+                "templates/metaobject/event.alt.json",
+                &template.replace("winter", "summer"),
+            ),
+        ],
+    );
+    let body = |path: &str| {
+        let rendered = fixture.page(path);
+        (rendered.status, rendered.template.clone(), rendered.body)
+    };
+    let (status, template, html) = body("/pages/event/summer");
+    assert_eq!(status, 200, "{html}");
+    assert_eq!(template, "metaobject/event");
+    assert!(
+        html.contains(
+            "<h1>Summer fair</h1><i>summer</i><u>/pages/event/summer</u>\
+             <s>metaobject|metaobject|event|</s>\
+             <a href=\"/pages/event/winter\">Summer fair</a>"
+        ),
+        "{html}"
+    );
+    // The entry's template suffix, and `?view=`.
+    let (status, template, html) = body("/pages/event/winter");
+    assert_eq!((status, template.as_str()), (200, "metaobject/event.alt"));
+    assert!(
+        html.contains("<s>metaobject|metaobject|event|alt</s>"),
+        "{html}"
+    );
+    assert!(html.contains("<a href=\"/pages/event/summer\">"), "{html}");
+    assert_eq!(
+        body("/pages/event/summer?view=alt").1,
+        "metaobject/event.alt"
+    );
+    // An unknown entry, and a type without a template, are not found.
+    assert_eq!(body("/pages/event/nope").0, 404);
+    assert_eq!(body("/pages/note/n").0, 404);
+    assert_eq!(body("/pages/nope/summer").0, 404);
+    // `system.url` is blank for the type without pages, and follows the locale.
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "[{{ metaobjects.note.n.system.url }}][{{ metaobjects.event.summer.system.url }}]",
+    );
+    assert_eq!(output, "[][/pages/event/summer]");
+    let mut french = request("/pages/event/summer");
+    french.root = "/fr".to_string();
+    let rendered = fixture.render_with(french, Session::initial(&fixture.store), &Target::Page);
+    assert_eq!(rendered.status, 200);
+    assert!(
+        rendered.body.contains("<u>/fr/pages/event/summer</u>"),
+        "{}",
+        rendered.body
+    );
+}

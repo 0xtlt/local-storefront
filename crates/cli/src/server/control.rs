@@ -4,19 +4,21 @@
 use std::sync::Arc;
 
 use lsf_core::diagnostics::Diagnostics;
-use lsf_core::render::cost::Costs;
-use lsf_core::render::{ProfileOptions, Target};
-use lsf_core::store::load::{OVERLAY_FILE, load_with_overlay};
+use lsf_core::store::load::OVERLAY_FILE;
 use lsf_core::store::model::SessionInput;
 use lsf_core::store::validate::{FileKind, schema, validate};
 use lsf_core::{Session, Store};
 use lsf_liquid::filters::escape_html;
+use lsf_theme::render::cost::Costs;
+use lsf_theme::render::{ProfileOptions, Target};
 use serde_json::{Value as Json, json};
 
 use super::reply::Reply;
+use super::store_sync::SessionData;
 use super::storefront::Visit;
 use super::throttle::Throttle;
 use super::{Incoming, SESSION_COOKIE, ServerState, speedscope};
+use crate::output::count;
 use crate::profile::Unit;
 
 pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
@@ -27,6 +29,9 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
         path.split('/').collect()
     };
     if let Some(reply) = super::checkout::control(state, incoming, &segments) {
+        return reply;
+    }
+    if let Some(reply) = super::polaris::control(state, incoming, &segments) {
         return reply;
     }
     match (incoming.method.as_str(), segments.as_slice()) {
@@ -85,6 +90,7 @@ fn status(state: &ServerState) -> Json {
     let loaded = state.loaded();
     let store = &loaded.store;
     json!({
+        "parts": state.parts().to_json(),
         "theme": state.app.theme.files().root().display().to_string(),
         "data": state.app.describe_source(),
         "data_diagnostics": diagnostics_json(&loaded.diagnostics),
@@ -107,7 +113,10 @@ fn status(state: &ServerState) -> Json {
     })
 }
 
-/// Every storefront URL the current data gives a page to.
+/// Every storefront URL the current data gives a page of the theme to: what `lsf render`
+/// renders. The pages only the server answers are left out: `/account` stands in for the
+/// customer accounts Shopify hosts, which are not part of a theme (`server::account`), and
+/// `lsf render /account` is the theme's 404.
 pub fn routes(state: &ServerState) -> Vec<String> {
     let loaded = state.loaded();
     let store = &loaded.store;
@@ -116,7 +125,6 @@ pub fn routes(state: &ServerState) -> Vec<String> {
         "/collections".to_string(),
         "/cart".to_string(),
         "/search".to_string(),
-        "/account".to_string(),
     ];
     if ["json", "liquid"].iter().any(|extension| {
         state
@@ -158,7 +166,7 @@ pub fn routes(state: &ServerState) -> Vec<String> {
             .metaobjects
             .iter()
             .filter(|entry| {
-                lsf_core::render::routes::has_metaobject_page(&state.app.theme, &entry.kind)
+                lsf_theme::render::routes::has_metaobject_page(&state.app.theme, &entry.kind)
             })
             .map(|entry| format!("/pages/{}/{}", entry.kind, entry.handle)),
     );
@@ -373,16 +381,13 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
         Err(error) => return Reply::json(422, &json!({"ok": false, "error": error.to_string()})),
     };
 
-    // Session-specific data: the files plus the overlay. What it says of the data without
-    // refusing it (a field it ignores) comes back with the session.
+    // Session-specific data: the files, what the Admin API changed, then the overlay. What it
+    // says of the data without refusing it (a field it ignores) comes back with the session.
     let mut warnings = Vec::new();
-    let custom_store = match &overlay {
+    let loaded = state.loaded();
+    let custom_store = match overlay {
         Some(overlay) => {
-            let (store, overlay_diagnostics) = load_with_overlay(
-                &state.app.source(),
-                &state.app.load_options(),
-                Some(overlay),
-            );
+            let (store, overlay_diagnostics) = state.session_store(&loaded, &overlay);
             let mut relevant = Diagnostics::new();
             relevant.items = overlay_diagnostics
                 .items
@@ -393,13 +398,17 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
                 return Reply::json(422, &diagnostics_json(&relevant));
             }
             warnings = relevant.items;
-            Some(Arc::new(store))
+            let data = SessionData {
+                data: Arc::new(overlay),
+                generation: loaded.synced.generation,
+            };
+            Some((Arc::new(store), data))
         }
         None => None,
     };
     let store = custom_store
-        .clone()
-        .unwrap_or_else(|| state.loaded().store.clone());
+        .as_ref()
+        .map_or_else(|| loaded.store.clone(), |(store, _)| store.clone());
 
     let mut session = state.initial_session(&store);
     apply_session_input(&store, &input, &mut session, &mut diagnostics, OVERLAY_FILE);
@@ -412,7 +421,7 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
             cart_token: std::mem::take(&mut entry.session.cart_token),
             ..session
         };
-        entry.store = custom_store;
+        (entry.store, entry.data) = custom_store.unzip();
         entry.throttle = throttle;
     });
     let reply = Reply::json(
@@ -444,12 +453,19 @@ fn dashboard(state: &ServerState, incoming: &Incoming) -> Reply {
             .map(|item| format!("<li><pre>{}</pre></li>", escape_html(&item.to_string())))
             .collect();
         format!(
-            "<p class=\"bad\">{} error(s), {} warning(s) in the store data.</p><ul>{items}</ul>",
-            diagnostics.error_count(),
-            diagnostics.warning_count()
+            "<p class=\"bad\">{}, {} in the store data.</p><ul>{items}</ul>",
+            count(diagnostics.error_count(), "error", "errors"),
+            count(diagnostics.warning_count(), "warning", "warnings")
         )
     };
-    let links: String = routes(state)
+    let parts = state.parts();
+    // Without a theme, no page of the list is served.
+    let routes = if parts.theme {
+        routes(state)
+    } else {
+        Vec::new()
+    };
+    let links: String = routes
         .iter()
         .map(|route| {
             let path =
@@ -463,6 +479,16 @@ fn dashboard(state: &ServerState, incoming: &Incoming) -> Reply {
             )
         })
         .collect();
+    let pages = if parts.theme {
+        format!("<h2>Pages</h2><ul>{links}</ul>")
+    } else {
+        String::new()
+    };
+    let serving = if parts == super::parts::Parts::default() {
+        "nothing".to_string()
+    } else {
+        parts.describe()
+    };
     Reply::html(
         200,
         format!(
@@ -474,10 +500,11 @@ fn dashboard(state: &ServerState, incoming: &Incoming) -> Reply {
              .muted{{color:#666}}.badge{{font-size:.75rem;border:1px solid #bbb;border-radius:99px;padding:.05rem .5rem}}\
              .people{{list-style:none;padding:0}}</style></head><body>\
              <h1>lsf · local storefront</h1>\
-             <dl><dt>Theme</dt><dd><code>{}</code></dd><dt>Store data</dt><dd><code>{}</code></dd></dl>\
+             <dl><dt>Serving</dt><dd data-lsf-parts>{serving} <span class=\"muted\">(<code>--only</code>)</span></dd>\
+             <dt>Theme</dt><dd><code>{}</code></dd><dt>Store data</dt><dd><code>{}</code></dd></dl>\
              <h2>Store data</h2>{problems}\
              <h2>Customer</h2><p>Choose who this browser is logged in as.</p>{customers}\
-             <h2>Pages</h2><ul>{links}</ul>\
+             {pages}\
              <h2>Control API</h2><ul>\
              <li><code>GET /__lsf/status</code>: this page as JSON</li>\
              <li><code>GET|PUT|DELETE /__lsf/session</code>: read, set or reset the session (cart, customer, per-session data)</li>\
@@ -487,7 +514,11 @@ fn dashboard(state: &ServerState, incoming: &Incoming) -> Reply {
              <li><code>GET|DELETE /__lsf/timings</code>: how long the templates, the sections and the blocks took to render so far, or forget it</li>\
              <li><code>POST /__lsf/reload</code>: reload the data files</li></ul>\
              </body></html>",
-            escape_html(&state.app.theme.files().root().display().to_string()),
+            if parts.theme {
+                escape_html(&state.app.theme.files().root().display().to_string())
+            } else {
+                "none".to_string()
+            },
             escape_html(&state.app.describe_source()),
         ),
     )

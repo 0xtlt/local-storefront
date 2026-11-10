@@ -14,8 +14,8 @@ use super::model::{
 use super::reference;
 use super::*;
 use crate::Session;
-use crate::diagnostics::Diagnostics;
-use crate::util::{closest_match, handleize, humanize, short_hash, stable_id};
+use crate::diagnostics::{Diagnostics, Severity};
+use crate::util::{closest_match, count, handleize, humanize, short_hash, stable_id};
 
 /// Where a piece of data was written, for diagnostics.
 #[derive(Clone, Debug, Default)]
@@ -48,7 +48,7 @@ pub struct Sourced<T> {
 }
 
 /// Every data file merged together, each entity remembering where it came from.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct MergedInput {
     pub shop: Option<Sourced<model::ShopInput>>,
     pub products: Vec<Sourced<model::ProductInput>>,
@@ -88,11 +88,20 @@ fn epoch() -> DateTime<Utc> {
         .expect("valid date")
 }
 
+/// The date of an undated product, collection, page or company: one day after
+/// [`epoch`] per entity before it of its kind, so that their order is that of the data.
+pub(super) fn undated(index: usize) -> DateTime<Utc> {
+    epoch() + Duration::days(index as i64)
+}
+
 struct Builder<'a> {
     options: &'a BuildOptions<'a>,
     diagnostics: Diagnostics,
     timezone: Tz,
     files: IndexMap<String, FileMeta>,
+    /// The handles of the products that are not on the storefront: what names one leaves it
+    /// out without an error.
+    unlisted: HashSet<String>,
 }
 
 impl Builder<'_> {
@@ -130,8 +139,8 @@ impl Builder<'_> {
         let Some(text) = input else {
             return default;
         };
-        match lsf_liquid::time::parse_time(&text.to_lowercase(), self.timezone, epoch()) {
-            Some(date) => date.with_timezone(&Utc),
+        match super::date::parse(text, self.timezone) {
+            Some(date) => date,
             None => {
                 self.error("invalid_date", origin, format!("\"{text}\" is not a date"))
                     .hint("use ISO 8601, e.g. \"2024-05-01\" or \"2024-05-01T10:00:00Z\"");
@@ -198,7 +207,7 @@ impl Builder<'_> {
             ),
         };
         let color = color.filter(|color| {
-            let valid = crate::drops::color::Color::parse(color).is_some();
+            let valid = crate::color::Color::parse(color).is_some();
             if !valid {
                 self.error(
                     "invalid_color",
@@ -354,6 +363,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
                 )
             })
             .collect(),
+        unlisted: HashSet::new(),
     };
 
     if let Some(timezone) = &shop_input.timezone {
@@ -382,16 +392,30 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
             Some((name.to_lowercase(), swatch))
         })
         .collect();
-    let products = build_products(
+    let built = build_products(
         &mut builder,
         &input.products,
         shop_input.name.as_deref(),
         &locations,
         &swatches,
     );
+    // The products not on the storefront are set apart, with their data: what follows only
+    // sees the others.
+    let (mut products, mut unlisted_products, mut product_inputs) =
+        (Vec::new(), Vec::new(), Vec::new());
+    for (product, product_input) in built.into_iter().zip(input.products) {
+        if product.listed() {
+            products.push(product);
+            product_inputs.push(product_input);
+        } else {
+            builder.unlisted.insert(product.handle.clone());
+            unlisted_products.push(product);
+        }
+    }
     let mut store = Store {
         shop,
         products,
+        unlisted_products,
         collections: Vec::new(),
         pages: Vec::new(),
         blogs: Vec::new(),
@@ -426,14 +450,14 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         &mut builder,
         &mut store,
         &input.collections,
-        &input.products,
+        &product_inputs,
     );
-    build_recommendations(&mut builder, &mut store, &input.products);
+    build_recommendations(&mut builder, &mut store, &product_inputs);
     build_selling_plans(
         &mut builder,
         &mut store,
         &input.selling_plan_groups,
-        &input.products,
+        &product_inputs,
     );
     build_pages(&mut builder, &mut store, &input.pages);
     build_blogs(&mut builder, &mut store, &input.blogs);
@@ -690,7 +714,7 @@ fn build_products(
             origin,
             &mut seen_handles,
         );
-        let created_default = epoch() + Duration::days(index as i64);
+        let created_default = undated(index);
 
         // Media: `images` is shorthand for image-only `media`.
         if !input.images.is_empty() && !input.media.is_empty() {
@@ -804,9 +828,9 @@ fn build_products(
                         "option_mismatch",
                         &variant_origin.child("options"),
                         format!(
-                            "the variant gives {} option value(s) but the product has {} option(s): {}",
-                            options.len(),
-                            option_names.len(),
+                            "the variant gives {} but the product has {}: {}",
+                            count(options.len(), "option value", "option values"),
+                            count(option_names.len(), "option", "options"),
                             option_names.join(", ")
                         ),
                     )
@@ -1055,6 +1079,8 @@ fn build_products(
             recommendations: Vec::new(),
             selling_plan_groups: Vec::new(),
             requires_selling_plan: input.requires_selling_plan,
+            status: input.status,
+            published: input.published.unwrap_or(true),
             handle,
         });
     }
@@ -1247,6 +1273,7 @@ fn build_collections(
             match store.product_index(product_handle) {
                 Some(product) if !products.contains(&product) => products.push(product),
                 Some(_) => {}
+                None if builder.unlisted.contains(product_handle) => {}
                 None => {
                     let known: Vec<&str> = store
                         .products
@@ -1282,7 +1309,7 @@ fn build_collections(
         let published_at = builder.date(
             &input.published_at,
             &origin.child("published_at"),
-            epoch() + Duration::days(index as i64),
+            undated(index),
         );
         let updated_at = builder.date(&input.updated_at, &origin.child("updated_at"), published_at);
         store.collections.push(Collection {
@@ -1372,6 +1399,9 @@ fn build_collections(
     }
 }
 
+/// How many products a product recommends when the data does not say which.
+const RECOMMENDATIONS: usize = 10;
+
 fn build_recommendations(
     builder: &mut Builder<'_>,
     store: &mut Store,
@@ -1391,7 +1421,7 @@ fn build_recommendations(
                 .enumerate()
                 .filter_map(|(position, handle)| {
                     let found = store.product_index(handle);
-                    if found.is_none() {
+                    if found.is_none() && !builder.unlisted.contains(handle) {
                         let known: Vec<&str> = store
                             .products
                             .iter()
@@ -1409,22 +1439,24 @@ fn build_recommendations(
                     found
                 })
                 .collect(),
-            // By default: the other products of the same collections, then everything else.
+            // By default: the other products of the same collections, then everything else, ten
+            // at most. Looking no further than the tenth keeps a store of thousands of products
+            // from comparing each with all the others.
             None => {
-                let mut related: Vec<usize> = Vec::new();
-                for &collection in &store.products[index].collections {
-                    for &product in &store.collections[collection].products {
-                        if product != index && !related.contains(&product) {
-                            related.push(product);
-                        }
+                let candidates = store.products[index]
+                    .collections
+                    .iter()
+                    .flat_map(|&collection| store.collections[collection].products.iter().copied())
+                    .chain(0..store.products.len());
+                let mut related: Vec<usize> = Vec::with_capacity(RECOMMENDATIONS);
+                for product in candidates {
+                    if related.len() == RECOMMENDATIONS {
+                        break;
                     }
-                }
-                for product in 0..store.products.len() {
                     if product != index && !related.contains(&product) {
                         related.push(product);
                     }
                 }
-                related.truncate(10);
                 related
             }
         };
@@ -1543,9 +1575,9 @@ fn build_selling_plans(
                         "option_mismatch",
                         &plan_origin.child("options"),
                         format!(
-                            "the selling plan gives {} option value(s) but the group has {} option(s): {}",
-                            plan_options.len(),
-                            options.len(),
+                            "the selling plan gives {} but the group has {}: {}",
+                            count(plan_options.len(), "option value", "option values"),
+                            count(options.len(), "option", "options"),
                             options.join(", ")
                         ),
                     )
@@ -1619,6 +1651,7 @@ fn build_selling_plans(
                         groups.push(group_index);
                     }
                 }
+                None if builder.unlisted.contains(handle) => {}
                 None => {
                     let known: Vec<&str> = store
                         .products
@@ -1724,7 +1757,7 @@ fn build_pages(builder: &mut Builder<'_>, store: &mut Store, inputs: &[Sourced<m
         let published_at = builder.date(
             &input.published_at,
             &origin.child("published_at"),
-            epoch() + Duration::days(index as i64),
+            undated(index),
         );
         let updated_at = builder.date(&input.updated_at, &origin.child("updated_at"), published_at);
         store.pages.push(Page {
@@ -1910,6 +1943,9 @@ fn build_link(
     } else if let Some(handle) = &input.product {
         match store.product_index(handle) {
             Some(index) => (format!("/products/{handle}"), LinkTarget::Product(index)),
+            None if builder.unlisted.contains(handle) => {
+                (format!("/products/{handle}"), LinkTarget::Http)
+            }
             None => {
                 unknown(
                     builder,
@@ -2104,6 +2140,24 @@ fn build_menus(
     }
 }
 
+/// Whether a reference names a variant of a product that is not on the storefront, which an
+/// order of the data leaves out without an error.
+fn names_unlisted(store: &Store, reference: &VariantRef) -> bool {
+    store
+        .unlisted_products
+        .iter()
+        .any(|product| match reference {
+            VariantRef::Id(id) => product.variants.iter().any(|variant| variant.id == *id),
+            VariantRef::SkuOrHandle(text) => {
+                product.handle == *text
+                    || product
+                        .variants
+                        .iter()
+                        .any(|variant| !variant.sku.is_empty() && variant.sku == *text)
+            }
+        })
+}
+
 fn resolve_variant(store: &Store, reference: &VariantRef) -> Option<(usize, usize)> {
     match reference {
         VariantRef::Id(id) => store.variant_location(*id),
@@ -2269,7 +2323,7 @@ fn build_companies(
         let created_at = builder.date(
             &input.created_at,
             &origin.child("created_at"),
-            epoch() + Duration::days(store.companies.len() as i64),
+            undated(store.companies.len()),
         );
         let updated_at = builder.date(&input.updated_at, &origin.child("updated_at"), created_at);
         let mut names = HashSet::new();
@@ -2489,7 +2543,7 @@ fn build_customers(
                     .enumerate()
                     .filter_map(|(line_position, line)| {
                         let variant = resolve_variant(store, &line.variant);
-                        if variant.is_none() {
+                        if variant.is_none() && !names_unlisted(store, &line.variant) {
                             unknown_variant(
                                 builder,
                                 store,
@@ -2527,7 +2581,7 @@ fn build_customers(
                                     let index = variant.and_then(|variant| {
                                         line_items.iter().position(|item| item.variant == variant)
                                     });
-                                    if index.is_none() {
+                                    if index.is_none() && !names_unlisted(store, &line.variant) {
                                         builder
                                             .error(
                                                 "unknown_return_line",
@@ -2680,7 +2734,7 @@ fn build_gift_cards(
         });
         let product = input.product.as_ref().and_then(|handle| {
             let found = store.product_index(handle);
-            if found.is_none() {
+            if found.is_none() && !builder.unlisted.contains(handle) {
                 let handles: Vec<&str> = store.products.iter().map(|p| p.handle.as_str()).collect();
                 let diagnostic = builder.error(
                     "unknown_product",
@@ -3085,9 +3139,21 @@ fn override_checkout(
     if input.discounts.is_some() {
         settings.discounts = Vec::new();
     }
+    let mut seen_ids = HashSet::new();
     for (position, discount) in input.discounts.iter().flatten().enumerate() {
         let discount_origin = origin.child("discounts").child(position);
+        let id = discount.id.unwrap_or(position as u64 + 1);
+        if !seen_ids.insert(id) {
+            builder
+                .error(
+                    "duplicate_id",
+                    &discount_origin.child("id"),
+                    format!("another discount already has the id {id}"),
+                )
+                .hint("a discount without an id takes its position in the list, from 1");
+        }
         settings.discounts.push(CheckoutDiscount {
+            id,
             function: discount.function.clone(),
             title: discount
                 .title
@@ -3109,6 +3175,10 @@ fn override_checkout(
             &origin.child("functions").child(handle).child("metafields"),
         );
         settings.functions.insert(handle.clone(), metafields);
+        // A scenario that says nothing of the owner keeps the store's.
+        if let Some(enabled) = function.enabled {
+            settings.owners.insert(handle.clone(), enabled);
+        }
     }
     if let Some(rate) = input.tax_rate {
         if rate.is_finite() && (0.0..=100.0).contains(&rate) {
@@ -3127,6 +3197,7 @@ fn override_checkout(
 }
 
 /// A file of `checkouts/`, read.
+#[derive(Clone)]
 pub struct MergedScenario {
     /// The name of the file without its extension.
     pub name: String,
@@ -3156,15 +3227,17 @@ fn build_scenarios(builder: &mut Builder<'_>, store: &mut Store, merged: &[Merge
             extensions: None,
             checkout: store.checkout.clone(),
             overrides: Vec::new(),
+            expect: None,
             problems: entry.problems.clone(),
         };
         if let Some(input) = &entry.input {
             let first_new = builder.diagnostics.items.len();
             resolve_scenario(builder, store, entry, input, &mut scenario);
+            // A warning (an `expect` that checks nothing) does not stop the scenario.
             scenario.problems.extend(
                 builder.diagnostics.items[first_new..]
                     .iter()
-                    .filter(|item| item.file == entry.file)
+                    .filter(|item| item.file == entry.file && item.severity == Severity::Error)
                     .map(ToString::to_string),
             );
         }
@@ -3280,6 +3353,10 @@ fn resolve_scenario(
             scenario.overrides.push("tax_rate");
         }
     }
+    if let Some(expect) = &input.expect {
+        check_expect(builder, scenario, expect, &origin.child("expect"));
+        scenario.expect = Some(expect.clone());
+    }
     // What the buyer chose must be offered by the checkout the scenario sets up.
     let rates: Vec<&str> = scenario
         .checkout
@@ -3319,6 +3396,170 @@ fn resolve_scenario(
                     offered.join(", ")
                 )),
                 None => diagnostic.hint(format!("the checkout offers: {}", offered.join(", "))),
+            };
+        }
+    }
+}
+
+/// The amounts of the `expect` of a scenario must be amounts, and what its `excludes` name for a
+/// payment method or a delivery option must be one the checkout offers: one it does not offer is
+/// never in the list, so the expectation checks nothing (a warning: the scenario still opens).
+fn check_expect(
+    builder: &mut Builder<'_>,
+    scenario: &CheckoutScenario,
+    expect: &model::ScenarioExpectInput,
+    origin: &Origin,
+) {
+    use model::Expected;
+    fn amounts<T>(
+        list: &Option<model::ExpectList<T>>,
+        origin: &Origin,
+        fields: impl Fn(&T) -> Vec<(&'static str, &Money)>,
+        mut each: impl FnMut(&Money, Origin),
+    ) {
+        let Some(list) = list else {
+            return;
+        };
+        for (name, items) in [
+            ("includes", Some(&list.includes)),
+            ("excludes", Some(&list.excludes)),
+            ("equals", list.equals.as_ref()),
+        ] {
+            for (index, item) in items.into_iter().flatten().enumerate() {
+                if let Expected::Fields(item) = item {
+                    for (field, money) in fields(item) {
+                        each(money, origin.child(name).child(index).child(field));
+                    }
+                }
+            }
+        }
+    }
+    let mut check = |money: &Money, at: Origin| {
+        builder.money(money, &at);
+    };
+    amounts(
+        &expect.delivery_options,
+        &origin.child("delivery_options"),
+        |option| option.cost.iter().map(|cost| ("cost", cost)).collect(),
+        &mut check,
+    );
+    amounts(
+        &expect.discounts,
+        &origin.child("discounts"),
+        |discount| {
+            discount
+                .amount
+                .iter()
+                .map(|amount| ("amount", amount))
+                .collect()
+        },
+        &mut check,
+    );
+    amounts(
+        &expect.lines,
+        &origin.child("lines"),
+        |line| {
+            [("price", &line.price), ("total", &line.total)]
+                .into_iter()
+                .filter_map(|(field, money)| Some((field, money.as_ref()?)))
+                .collect()
+        },
+        &mut check,
+    );
+    if let Some(totals) = &expect.totals {
+        for (field, money) in [
+            ("subtotal", &totals.subtotal),
+            ("discounts", &totals.discounts),
+            ("shipping", &totals.shipping),
+            ("tax", &totals.tax),
+            ("total", &totals.total),
+            ("due_now", &totals.due_now),
+            ("due_later", &totals.due_later),
+        ] {
+            if let Some(money) = money {
+                check(money, origin.child("totals").child(field));
+            }
+        }
+    }
+
+    let methods: Vec<(&str, &str)> = scenario
+        .checkout
+        .payment_methods
+        .iter()
+        .map(|method| (method.handle.as_str(), method.name.as_str()))
+        .collect();
+    let rates: Vec<(&str, &str)> = scenario
+        .checkout
+        .shipping_rates
+        .iter()
+        .map(|rate| (rate.handle.as_str(), rate.title.as_str()))
+        .collect();
+    /// What `excludes` names an entry by: a string, or the handle of an object.
+    fn excluded<T>(
+        list: &Option<model::ExpectList<T>>,
+        handle: fn(&T) -> Option<&str>,
+    ) -> Vec<Option<&str>> {
+        list.iter()
+            .flat_map(|list| list.excludes.iter())
+            .map(|item| match item {
+                Expected::Name(name) => Some(name.as_str()),
+                Expected::Fields(fields) => handle(fields),
+            })
+            .collect()
+    }
+    let method_handle: fn(&model::ExpectedPaymentMethod) -> Option<&str> =
+        |method| method.handle.as_deref();
+    let option_handle: fn(&model::ExpectedDeliveryOption) -> Option<&str> =
+        |option| option.handle.as_deref();
+    for (list, excluded, offered, what) in [
+        (
+            "payment_methods",
+            excluded(&expect.payment_methods, method_handle),
+            &methods,
+            "payment method",
+        ),
+        (
+            "express_methods",
+            excluded(&expect.express_methods, method_handle),
+            &methods,
+            "payment method",
+        ),
+        (
+            "delivery_options",
+            excluded(&expect.delivery_options, option_handle),
+            &rates,
+            "delivery option",
+        ),
+    ] {
+        for (index, name) in excluded.into_iter().enumerate() {
+            let Some(name) = name else {
+                continue;
+            };
+            if offered
+                .iter()
+                .any(|(handle, title)| *handle == name || *title == name)
+            {
+                continue;
+            }
+            let at = origin.child(list).child("excludes").child(index);
+            let diagnostic = builder.diagnostics.warning(
+                "expect_checks_nothing",
+                &at.file,
+                &at.pointer,
+                format!(
+                    "the checkout offers no {what} \"{name}\": it is never in the list, so excluding it checks nothing"
+                ),
+            );
+            let handles: Vec<&str> = offered.iter().map(|(handle, _)| *handle).collect();
+            match closest_match(
+                name,
+                offered.iter().flat_map(|(handle, title)| [*handle, *title]),
+            ) {
+                Some(suggestion) => diagnostic.hint(format!(
+                    "did you mean \"{suggestion}\"? The checkout offers: {}",
+                    handles.join(", ")
+                )),
+                None => diagnostic.hint(format!("the checkout offers: {}", handles.join(", "))),
             };
         }
     }

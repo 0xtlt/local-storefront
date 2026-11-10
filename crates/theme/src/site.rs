@@ -1,0 +1,169 @@
+//! Everything a render needs to know that does not change while it runs: the theme, the store,
+//! the request and the visitor's session.
+
+use std::sync::{Arc, OnceLock};
+
+use chrono::{DateTime, Utc};
+use lsf_core::session::Session;
+use lsf_core::store::Store;
+
+use crate::theme::{Theme, Translations};
+
+/// The request being rendered.
+#[derive(Clone, Debug)]
+pub struct Request {
+    /// `localhost:9292`: the host the visitor used, which generated URLs point back to.
+    pub host: String,
+    /// `http` or `https`.
+    pub scheme: String,
+    /// The path without the locale prefix: `/products/shirt`.
+    pub path: String,
+    /// Decoded query parameters, in order.
+    pub query: Vec<(String, String)>,
+    /// The language being served, e.g. `en`.
+    pub locale: String,
+    /// The prefix of every storefront URL in this language: empty, or `/fr`.
+    pub root: String,
+}
+
+impl Request {
+    pub fn new(host: impl Into<String>, path: impl Into<String>) -> Self {
+        Request {
+            host: host.into(),
+            scheme: "http".to_string(),
+            path: path.into(),
+            query: Vec::new(),
+            locale: "en".to_string(),
+            root: String::new(),
+        }
+    }
+
+    /// The first value of a query parameter.
+    pub fn param(&self, name: &str) -> Option<&str> {
+        self.query
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// Every value of a repeated query parameter.
+    pub fn params<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
+        self.query
+            .iter()
+            .filter(move |(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// `http://localhost:9292`.
+    pub fn origin(&self) -> String {
+        format!("{}://{}", self.scheme, self.host)
+    }
+
+    /// Prefixes a storefront path with the locale root: `/cart` → `/fr/cart`.
+    pub fn localized(&self, path: &str) -> String {
+        if self.root.is_empty() {
+            path.to_string()
+        } else if path == "/" {
+            self.root.clone()
+        } else {
+            format!("{}{path}", self.root)
+        }
+    }
+
+    /// The path and query as requested, e.g. `/fr/search?q=mug`.
+    pub fn path_with_query(&self) -> String {
+        let path = self.localized(&self.path);
+        if self.query.is_empty() {
+            return path;
+        }
+        let query: Vec<String> = self
+            .query
+            .iter()
+            .map(|(key, value)| {
+                format!(
+                    "{}={}",
+                    lsf_core::urls::encode_component(key),
+                    lsf_core::urls::encode_component(value)
+                )
+            })
+            .collect();
+        format!("{path}?{}", query.join("&"))
+    }
+}
+
+pub struct Site {
+    pub theme: Arc<Theme>,
+    pub store: Arc<Store>,
+    pub request: Request,
+    pub session: Session,
+    /// The instant `'now'` resolves to for this render.
+    pub now: DateTime<Utc>,
+    // A page translates hundreds of keys. The theme's translations are looked up once per
+    // render, because asking the theme takes locks that every other render takes too.
+    translations: OnceLock<[(String, Arc<Translations>); 2]>,
+    schema_translations: OnceLock<Arc<Translations>>,
+}
+
+impl Site {
+    pub fn new(
+        theme: Arc<Theme>,
+        store: Arc<Store>,
+        request: Request,
+        session: Session,
+        now: DateTime<Utc>,
+    ) -> Site {
+        Site {
+            theme,
+            store,
+            request,
+            session,
+            now,
+            translations: OnceLock::new(),
+            schema_translations: OnceLock::new(),
+        }
+    }
+
+    /// The storefront translations a key is looked up in, in order: those of the request's
+    /// locale, then those of the theme's default locale. Each comes with its locale.
+    pub fn translations(&self) -> &[(String, Arc<Translations>)] {
+        self.translations.get_or_init(|| {
+            [self.request.locale.clone(), self.theme.default_locale()].map(|locale| {
+                let translations = self.theme.translations(&locale);
+                (locale, translations)
+            })
+        })
+    }
+
+    /// Translations for the `t:` keys used in schemas, in the request's locale.
+    pub fn schema_translations(&self) -> &Translations {
+        self.schema_translations
+            .get_or_init(|| self.theme.schema_translations(&self.request.locale))
+    }
+
+    /// The country the visitor shops in: the one they selected, else the store's default
+    /// ([`lsf_core::Store::default_country`]), the one the checkout opens in.
+    pub fn country(&self) -> &lsf_core::store::Country {
+        self.session
+            .country
+            .as_deref()
+            .and_then(|code| self.store.country(code))
+            .unwrap_or_else(|| self.store.default_country())
+    }
+
+    /// The currency prices are displayed in.
+    pub fn currency(&self) -> &str {
+        &self.store.shop.currency
+    }
+
+    pub fn language(&self) -> &lsf_core::store::Language {
+        self.store
+            .language(&self.request.locale)
+            .unwrap_or_else(|| self.store.primary_language())
+    }
+
+    pub fn customer(&self) -> Option<&lsf_core::store::Customer> {
+        self.session
+            .customer_id
+            .and_then(|id| self.store.customer_by_id(id))
+    }
+}

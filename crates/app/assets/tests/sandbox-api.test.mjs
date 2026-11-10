@@ -1,0 +1,891 @@
+// The `shopify` global: what an extension reads, calls and is called with.
+
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { assets, checkoutState, declaration, engineCheckout, init, pageState, plain, sandboxWindow, settle } from './harness.mjs';
+import { update } from '../preview/mock-engine.mjs';
+
+function runtime(options = {}) {
+  const win = sandboxWindow();
+  const posted = [];
+  const created = win.context.LsfSandbox.createRuntime({
+    post: (message) => posted.push(plain(message)),
+    init: init({ handle: 'x', target: 'purchase.checkout.block.render', ...options }),
+  });
+  return { ...created, posted, win };
+}
+
+const ADDRESS = { lastName: 'Martin', address1: '1 rue de Rivoli', city: 'Paris', countryCode: 'FR' };
+const next = (...operations) => pageState(update(engineCheckout(), operations).state);
+
+test('reads the checkout as signals', () => {
+  const { shopify } = runtime();
+  assert.equal(shopify.lines.value.length, 2);
+  const [shirt] = shopify.lines.value;
+  assert.equal(shirt.id, 'gid://shopify/CartLine/1');
+  assert.equal(shirt.merchandise.id, 'gid://shopify/ProductVariant/101');
+  assert.equal(shirt.merchandise.title, 'M / Sand', 'the title of the variant, not of the product');
+  assert.equal(shirt.merchandise.subtitle, undefined, 'the store has no secondary description of a variant');
+  assert.equal(shirt.merchandise.sku, 'LIN-SH-M-SAND');
+  assert.deepEqual(plain(shirt.cost.totalAmount), { amount: 49, currencyCode: 'EUR' });
+  assert.deepEqual(plain(shopify.cost.totalAmount.value), { amount: 73, currencyCode: 'EUR' });
+  assert.equal(shopify.checkoutToken.value, 'preview');
+  assert.equal(shopify.shippingAddress.value, undefined);
+  assert.equal(shopify.buyerIdentity.email.value, undefined);
+  assert.equal(shopify.extensionPoint, 'purchase.checkout.block.render');
+  assert.equal(shopify.extension.target, 'purchase.checkout.block.render');
+  assert.equal(shopify.extension.apiVersion, '2026-10');
+  assert.deepEqual(plain(shopify.extension.capabilities.value), ['api_access', 'block_progress']);
+});
+
+test('merchandise carries what the Cart Lines API documents, for lines and bundle components', () => {
+  const base = checkoutState();
+  const component = {
+    ...base.lines[1],
+    id: 'gid://shopify/CartLine/9',
+    vendor: 'Acme',
+    productType: 'Gifts',
+    selectedOptions: [{ name: 'Size', value: 'L' }],
+    sellingPlan: { id: 'gid://shopify/SellingPlan/7', recurringDeliveries: true },
+    image: '/cdn/a.png',
+    imageAlt: 'A bag',
+    requiresShipping: false,
+  };
+  const state = { ...base, lines: [{ ...base.lines[0], components: [component] }, base.lines[1]] };
+  const { shopify } = runtime({ state });
+  const [shirt, tote] = shopify.lines.value;
+  assert.equal(shirt.merchandise.product.vendor, 'Northline');
+  assert.equal(shirt.merchandise.product.productType, 'Shirts');
+  assert.deepEqual(plain(shirt.merchandise.selectedOptions), [
+    { name: 'Size', value: 'M' },
+    { name: 'Color', value: 'Sand' },
+  ]);
+  assert.equal(shirt.merchandise.sellingPlan, undefined, 'no plan: no key');
+  assert.equal('sellingPlan' in tote.merchandise, false);
+  const part = shirt.lineComponents[0].merchandise;
+  assert.equal(part.product.vendor, 'Acme');
+  assert.equal(part.product.productType, 'Gifts');
+  assert.equal(part.product.id, 'gid://shopify/Product/22');
+  assert.deepEqual(plain(part.selectedOptions), [{ name: 'Size', value: 'L' }]);
+  assert.deepEqual(plain(part.sellingPlan), { id: 'gid://shopify/SellingPlan/7', recurringDeliveries: true });
+  assert.deepEqual(plain(part.image), { url: '/cdn/a.png', altText: 'A bag' });
+  assert.equal(part.requiresShipping, false);
+  assert.equal(part.sku, 'TOTE-01');
+  assert.equal(part.subtitle, undefined);
+  assert.equal(part.title, 'Default Title', 'a product with a single variant has the title of Shopify for it');
+  assert.equal(tote.merchandise.title, 'Default Title');
+  for (const merchandise of [shirt.merchandise, tote.merchandise, part]) {
+    assert.deepEqual(Object.keys(plain(merchandise.product)).sort(), ['id', 'productType', 'vendor'], 'a product has no title');
+  }
+  assert.equal(shirt.lineComponents[0].merchandise.title, 'Default Title', 'a component reads like a line');
+});
+
+test('signals tell subscribers about changes, and only changes', () => {
+  const { shopify, refresh } = runtime();
+  const seen = [];
+  const unsubscribe = shopify.cost.totalAmount.subscribe((value) => seen.push(value.amount));
+  assert.deepEqual(seen, [73], 'a signal calls back at once');
+  refresh(next({ type: 'discountCode', action: 'add', code: 'SAVE10' }));
+  refresh(next({ type: 'discountCode', action: 'add', code: 'SAVE10' }));
+  assert.deepEqual(seen, [73, 65.7], 'the same value twice is one change');
+  unsubscribe();
+  refresh(checkoutState());
+  assert.deepEqual(seen, [73, 65.7]);
+  assert.equal(shopify.cost.totalAmount.value.amount, 73);
+});
+
+test('maps address, buyer, delivery and payment', () => {
+  const state = next(
+    { type: 'email', value: 'a@b.c' },
+    { type: 'shippingAddress', address: { ...ADDRESS, firstName: 'Ada' } },
+    { type: 'deliveryOption', group: 'shipping', handle: 'express' },
+    { type: 'paymentMethod', handle: 'cod' },
+    { type: 'note', change: { type: 'updateNote', note: 'ring' } },
+    { type: 'attribute', change: { type: 'updateAttribute', key: 'k', value: 'v' } },
+  );
+  const { shopify } = runtime({ state });
+  assert.equal(shopify.buyerIdentity.email.value, 'a@b.c');
+  assert.equal(shopify.shippingAddress.value.name, 'Ada Martin');
+  assert.equal(shopify.shippingAddress.value.countryCode, 'FR');
+  assert.equal(shopify.localization.country.value.isoCode, 'FR');
+  assert.equal(shopify.note.value, 'ring');
+  assert.deepEqual(plain(shopify.attributes.value), [{ key: 'k', value: 'v' }]);
+  const [group] = shopify.deliveryGroups.value;
+  assert.equal(group.selectedDeliveryOption.handle, 'express');
+  assert.deepEqual(group.targetedCartLines.map((line) => line.id), ['gid://shopify/CartLine/1', 'gid://shopify/CartLine/2']);
+  const express = group.deliveryOptions.find((option) => option.handle === 'express');
+  assert.equal(express.type, 'shipping');
+  assert.deepEqual(plain(express.cost), { amount: 12, currencyCode: 'EUR' });
+  assert.deepEqual(plain(shopify.selectedPaymentOptions.value), [{ type: 'paymentOnDelivery', handle: 'cod' }]);
+  assert.deepEqual(plain(shopify.availablePaymentOptions.value).map((option) => option.type), ['creditCard', 'paymentOnDelivery', 'manualPayment']);
+});
+
+test('discount codes, allocations and cart metafields', () => {
+  const state = next(
+    { type: 'discountCode', action: 'add', code: 'SAVE10' },
+    { type: 'metafield', change: { type: 'updateCartMetafield', namespace: 'n', key: 'k', valueType: 'boolean', value: 'true' } },
+  );
+  const { shopify } = runtime({ state, ext: { metafields: [{ namespace: 'n', key: 'k' }] } });
+  assert.deepEqual(plain(shopify.discountCodes.value), [{ code: 'SAVE10' }]);
+  const [line] = shopify.lines.value;
+  assert.deepEqual(plain(line.discountAllocations), [{ type: 'code', code: 'SAVE10', discountedAmount: { amount: 4.9, currencyCode: 'EUR' } }]);
+  assert.equal(next({ type: 'discountCode', action: 'add', code: 'SAVE10' }).lines[0].discountAllocations[0].class, 'PRODUCT', 'the state tells the class of each allocation');
+  assert.deepEqual(plain(shopify.appMetafields.value), [{
+    target: { type: 'cart', id: 'gid://shopify/Cart/preview' },
+    metafield: { namespace: 'n', key: 'k', value: 'true', type: 'boolean', valueType: 'boolean' },
+  }]);
+  assert.deepEqual(plain(shopify.metafields.value), [{ namespace: 'n', key: 'k', value: 'true', valueType: 'boolean' }]);
+  // `appMetafields` has the declared ones only; `metafields` (the cart's) has them all.
+  const undeclared = runtime({ state }).shopify;
+  assert.deepEqual(plain(undeclared.appMetafields.value), []);
+  assert.equal(undeclared.metafields.value.length, 1);
+});
+
+test('a code whose discount takes 0 off reads as an applied code, with its allocation of 0', () => {
+  const base = checkoutState();
+  const zero = { amount: 0, currencyCode: 'EUR' };
+  const state = {
+    ...base,
+    lines: [{ ...base.lines[0], discountAllocations: [{ title: 'Gift', code: 'GIFT', amount: zero, class: 'PRODUCT', discount: 0 }] }, base.lines[1]],
+    discounts: [{ title: 'Gift', code: 'GIFT', class: 'PRODUCT', amount: zero, function: 'gift-code' }],
+    discountCodes: [{ code: 'GIFT', applicable: true }],
+  };
+  const { shopify } = runtime({ state });
+  assert.deepEqual(plain(shopify.discountCodes.value), [{ code: 'GIFT' }]);
+  const [line] = shopify.lines.value;
+  assert.deepEqual(plain(line.discountAllocations), [{ type: 'code', code: 'GIFT', discountedAmount: zero }]);
+  assert.equal(line.cost.totalAmount.amount, 49, 'the line costs what it did');
+  assert.equal(shopify.cost.totalAmount.value.amount, 73);
+});
+
+/** Metafields of the store data, as the server reads them for the declarations (`appMetafields`). */
+const gid = (kind, id) => `gid://shopify/${kind}/${id}`;
+const entry = (type, id, namespace, key, metafieldType, value) => ({ target: { type, id }, metafield: { namespace, key, type: metafieldType, value } });
+const OWNED = [
+  entry('shop', gid('Shop', 9), '$app', 'gift-codes', 'json', '["GIFT-1","GIFT-2"]'),
+  entry('product', gid('Product', 11), '$app', 'energy', 'single_line_text_field', 'A'),
+  entry('variant', gid('ProductVariant', 101), '$app', 'energy', 'single_line_text_field', 'A+'),
+  entry('customer', gid('Customer', 7), 'custom', 'tier', 'number_integer', '2'),
+  entry('company', gid('Company', 1), 'custom', 'terms', 'single_line_text_field', 'Net 30'),
+  entry('companyLocation', gid('CompanyLocation', 2), 'custom', 'dock', 'boolean', 'true'),
+];
+
+test('appMetafields has the declared metafields of the shop, the products, the buyer and the cart', () => {
+  const gift = { type: 'metafield', change: { type: 'updateCartMetafield', namespace: '$app:gift', key: 'wrapped', valueType: 'boolean', value: 'true' } };
+  const base = next(gift);
+  const state = { ...base, shop: { ...base.shop, id: gid('Shop', 9) }, appMetafields: OWNED };
+  const metafields = [
+    { namespace: '$app', key: 'gift-codes' },
+    // `owner_type` keeps one owner: the product has the same metafield.
+    { namespace: '$app', key: 'energy', ownerType: 'PRODUCTVARIANT' },
+    { namespace: 'custom', key: 'tier', ownerType: 'CUSTOMER' },
+    { namespace: 'custom', key: 'terms', ownerType: 'COMPANY' },
+    { namespace: 'custom', key: 'dock', ownerType: 'COMPANY_LOCATION' },
+    // `[[extensions.targeting.metafields]]`: for that target only.
+    { namespace: '$app:gift', key: 'wrapped', ownerType: 'CART', target: 'purchase.checkout.block.render' },
+  ].map(declaration);
+  const { shopify } = runtime({ state, ext: { metafields } });
+  const entries = plain(shopify.appMetafields.value);
+  assert.deepEqual(entries.map(({ target, metafield }) => [target.type, target.id, `${metafield.namespace}.${metafield.key}`]), [
+    ['shop', 'gid://shopify/Shop/9', '$app.gift-codes'],
+    ['variant', 'gid://shopify/ProductVariant/101', '$app.energy'],
+    ['customer', 'gid://shopify/Customer/7', 'custom.tier'],
+    ['company', 'gid://shopify/Company/1', 'custom.terms'],
+    ['companyLocation', 'gid://shopify/CompanyLocation/2', 'custom.dock'],
+    ['cart', 'gid://shopify/Cart/preview', '$app:gift.wrapped'],
+  ]);
+  assert.deepEqual(entries[0], {
+    target: { type: 'shop', id: 'gid://shopify/Shop/9' },
+    metafield: { namespace: '$app', key: 'gift-codes', value: '["GIFT-1","GIFT-2"]', type: 'json', valueType: 'json_string' },
+  });
+  assert.deepEqual(entries.map((each) => each.metafield.valueType), ['json_string', 'string', 'integer', 'string', 'boolean', 'boolean']);
+  assert.equal(shopify.shop.id, entries[0].target.id, 'the shop of the Shop API is the one of its entries');
+
+  // Another target of the extension does not have the cart's, declared for the block only.
+  const footer = runtime({ state, target: 'purchase.checkout.footer.render-after', ext: { metafields } }).shopify;
+  assert.deepEqual(plain(footer.appMetafields.value).map((each) => each.target.type), ['shop', 'variant', 'customer', 'company', 'companyLocation']);
+  // An extension that declares nothing reads nothing.
+  assert.deepEqual(plain(runtime({ state }).shopify.appMetafields.value), []);
+  // The address autocomplete reads them as a plain property.
+  const autocomplete = runtime({ state, target: 'purchase.address-autocomplete.suggest', ext: { metafields } }).shopify;
+  assert.deepEqual(plain(autocomplete.appMetafields).map((each) => each.target.type), ['shop', 'variant', 'customer', 'company', 'companyLocation']);
+});
+
+test('calls of the API become messages to the page and resolve with the answer', async () => {
+  const { shopify, posted, receive } = runtime();
+  const pending = shopify.applyCartLinesChange({ type: 'addCartLine', merchandiseId: 'gid://shopify/ProductVariant/202', quantity: 1 });
+  assert.deepEqual(posted, [{ type: 'change', id: 1, method: 'applyCartLinesChange', change: { type: 'addCartLine', merchandiseId: 'gid://shopify/ProductVariant/202', quantity: 1 } }]);
+  const second = shopify.applyNoteChange({ type: 'updateNote', note: 'x' });
+  receive({ type: 'result', id: 2, result: { type: 'error', message: 'no' } });
+  receive({ type: 'result', id: 1, result: { type: 'success' } });
+  assert.deepEqual(plain(await pending), { type: 'success' });
+  assert.deepEqual(plain(await second), { type: 'error', message: 'no' });
+  for (const method of ['applyAttributeChange', 'applyDiscountCodeChange', 'applyMetafieldChange', 'applyShippingAddressChange', 'applyGiftCardChange']) {
+    assert.equal(typeof shopify[method], 'function', method);
+  }
+});
+
+test('storage, session token and the Storefront API', async () => {
+  const { shopify, posted, receive } = runtime();
+  const read = shopify.storage.read('k');
+  assert.deepEqual(posted.at(-1), { type: 'storage', id: 1, op: 'read', key: 'k' });
+  receive({ type: 'result', id: 1, result: { a: 1 } });
+  assert.deepEqual(plain(await read), { a: 1 });
+  const write = shopify.storage.write('k', [1]);
+  assert.deepEqual(posted.at(-1), { type: 'storage', id: 2, op: 'write', key: 'k', value: [1] });
+  receive({ type: 'result', id: 2, result: null });
+  assert.equal(await write, undefined);
+  const token = shopify.sessionToken.get();
+  assert.equal(posted.at(-1).type, 'sessionToken');
+  receive({ type: 'result', id: 3, result: 'a.b.c' });
+  assert.equal(await token, 'a.b.c');
+  await assert.rejects(() => shopify.query('{ shop { name } }'), /Storefront API is not available/);
+  assert.equal(await shopify.analytics.publish('event', { a: 1 }), true);
+  assert.deepEqual(posted.at(-1), { type: 'analytics', name: 'event', data: { a: 1 } });
+});
+
+test('targets add their own members', () => {
+  const state = next({ type: 'shippingAddress', address: ADDRESS }, { type: 'deliveryOption', group: 'shipping', handle: 'standard' });
+  const line = runtime({ target: 'purchase.checkout.cart-line-item.render-after', ctx: { lineId: 'gid://shopify/CartLine/2' }, state }).shopify;
+  assert.equal(line.target.value.merchandise.title, 'Default Title');
+  assert.equal(line.target.value.quantity, 2);
+  assert.equal(typeof line.applyCartLinesChange, 'function');
+
+  const item = runtime({ target: 'purchase.checkout.shipping-option-item.render-after', ctx: { group: 'shipping', option: 'standard' }, state }).shopify;
+  assert.equal(item.target.value.handle, 'standard');
+  assert.equal(item.isTargetSelected.value, true);
+  assert.deepEqual(plain(item.renderMode), { overlay: false });
+  const other = runtime({ target: 'purchase.checkout.shipping-option-item.render-after', ctx: { group: 'shipping', option: 'express' }, state }).shopify;
+  assert.equal(other.isTargetSelected.value, false);
+
+  const list = runtime({ target: 'purchase.checkout.shipping-option-list.render-after', state }).shopify;
+  assert.equal(list.target.value.deliveryGroups.length, 1);
+  assert.deepEqual(plain(list.deliverySelectionGroups.value).map((group) => [group.handle, group.selected]), [['standard', true], ['express', false]]);
+});
+
+test('thank-you targets see the order and cannot change the checkout', () => {
+  const state = pageState({ ...engineCheckout(), status: 'completed', order: { id: 'gid://shopify/Order/9', number: '#1001' } });
+  const { shopify } = runtime({ target: 'purchase.thank-you.block.render', state });
+  assert.deepEqual(plain(shopify.orderConfirmation.value), { order: { id: 'gid://shopify/Order/9' }, number: '#1001', isFirstOrder: true });
+  assert.equal(shopify.buyerJourney.completed.value, true);
+  assert.equal(shopify.applyNoteChange, undefined);
+  assert.equal(shopify.applyCartLinesChange, undefined);
+});
+
+test('a thank-you announcement can close itself', () => {
+  const { shopify, posted } = runtime({ target: 'purchase.thank-you.announcement.render' });
+  let closed = 0;
+  shopify.announcement.addEventListener('close', () => closed++);
+  shopify.announcement.close();
+  assert.equal(closed, 1);
+  assert.deepEqual(posted, [{ type: 'dismiss' }]);
+});
+
+test('buyer journey interceptors answer the page and are told the outcome', async () => {
+  const { shopify, posted, receive } = runtime();
+  const performed = [];
+  const stop = await shopify.buyerJourney.intercept(({ canBlockProgress }) => ({
+    behavior: canBlockProgress ? 'block' : 'allow',
+    reason: 'No gifts today',
+    errors: [{ message: 'Pick again', target: '$.cart' }],
+    perform: (result) => performed.push(result.behavior),
+  }));
+  assert.deepEqual(posted.at(-1), { type: 'interceptors', count: 1 });
+  receive({ type: 'intercept', id: 'a', canBlockProgress: true });
+  await settle();
+  assert.deepEqual(posted.at(-1), { type: 'intercepted', id: 'a', results: [{ behavior: 'block', reason: 'No gifts today', errors: [{ message: 'Pick again', target: '$.cart' }] }] });
+  receive({ type: 'perform', behavior: 'block' });
+  await settle();
+  assert.deepEqual(performed, ['block']);
+
+  receive({ type: 'intercept', id: 'b', canBlockProgress: false });
+  await settle();
+  assert.deepEqual(posted.at(-1).results.map((result) => result.behavior), ['allow'], 'asked not to block: the interceptor allows');
+  assert.equal(posted.some((message) => message.type === 'log' && message.level === 'warn'), false, 'asked not to block: nothing to warn about');
+
+  await stop();
+  assert.deepEqual(posted.at(-1), { type: 'interceptors', count: 0 });
+});
+
+test('an extension that blocks without the capability is overruled and warned', async () => {
+  const { shopify, posted, receive } = runtime();
+  await shopify.buyerJourney.intercept(() => ({ behavior: 'block', reason: 'Nope' }));
+  receive({ type: 'intercept', id: 'a', canBlockProgress: false });
+  await settle();
+  assert.deepEqual(posted.at(-1).results, [{ behavior: 'allow' }]);
+  assert.match(posted.find((message) => message.type === 'log').args[0], /block_progress/);
+});
+
+test('an interceptor that throws does not stop the others', async () => {
+  const { shopify, posted, receive } = runtime();
+  await shopify.buyerJourney.intercept(() => {
+    throw new Error('boom');
+  });
+  await shopify.buyerJourney.intercept(() => ({ behavior: 'allow' }));
+  receive({ type: 'intercept', id: 'a', canBlockProgress: true });
+  await settle();
+  assert.deepEqual(posted.at(-1).results.map((result) => result.behavior), ['allow']);
+  assert.match(posted.find((message) => message.type === 'log').args[0], /boom/);
+});
+
+test('uses the Signal class the extension hands over', () => {
+  const { shopify, refresh } = runtime();
+  const early = shopify.note;
+  class Signal {
+    constructor(value) {
+      this.value = value;
+      Signal.made.push(this);
+    }
+  }
+  Signal.made = [];
+  shopify.setSignals(Signal);
+  const lines = shopify.lines;
+  assert.ok(lines instanceof Signal, 'signals made after setSignals are of that class');
+  assert.notEqual(shopify.note, early, 'signals read before are made again');
+  assert.equal(lines.value.length, 2);
+  refresh(next({ type: 'cartLines', change: { type: 'removeCartLine', id: 'gid://shopify/CartLine/2', quantity: 2 } }));
+  assert.equal(lines.value.length, 1, 'the extension\'s own signal is the one that is updated');
+});
+
+test('settings and translations', () => {
+  const { shopify } = runtime({
+    ext: { settings: { max_length: 80 }, translations: { en: { greeting: 'Hello {{name}}', items: { one: '{{count}} item', other: '{{count}} items' }, nested: { deep: 'Deep' } }, fr: { greeting: 'Bonjour {{name}}' } } },
+  });
+  assert.deepEqual(plain(shopify.settings.value), { max_length: 80 });
+  assert.equal(shopify.i18n.translate('greeting', { name: 'Ada' }), 'Hello Ada');
+  assert.equal(shopify.i18n.translate('items', { count: 1 }), '1 item');
+  assert.equal(shopify.i18n.translate('items', { count: 3 }), '3 items');
+  assert.equal(shopify.i18n.translate('nested.deep'), 'Deep');
+  assert.equal(shopify.i18n.translate('missing'), 'missing');
+  assert.equal(shopify.i18n.formatCurrency(12.5), '€12.50');
+  assert.equal(shopify.i18n.formatNumber(1234.5), '1,234.5');
+});
+
+test('a translation with an element among its replacements is its pieces, as on Shopify', () => {
+  const { shopify } = runtime({
+    ext: { translations: { en: { welcome: 'Welcome to the {{target}} extension!', twice: '{{a}}{{b}} and {{ a }}', open: '{{missing}} {{name}}' } } },
+  });
+  // An element of the extension's JSX (a Preact vnode): kept as it is, between the text around it.
+  const element = { type: 's-text', props: { children: 'block' } };
+  const welcome = shopify.i18n.translate('welcome', { target: element });
+  assert.ok(Array.isArray(welcome));
+  assert.equal(welcome.length, 3);
+  assert.equal(welcome[0], 'Welcome to the ');
+  assert.equal(welcome[1], element, 'the same element, not a copy');
+  assert.equal(welcome[2], ' extension!');
+  // Strings and numbers next to it stay pieces of their own; no empty piece.
+  assert.deepEqual(plain(shopify.i18n.translate('twice', { a: element, b: 2 })), [plain(element), '2', ' and ', plain(element)]);
+  // Strings and numbers only: one string; a placeholder without a replacement stays as written.
+  assert.equal(shopify.i18n.translate('twice', { a: 'x', b: 1 }), 'x1 and x');
+  assert.equal(shopify.i18n.translate('open', { name: 'Ada' }), '{{missing}} Ada');
+});
+
+function inLocale(locale, translations, defaultLocale) {
+  const state = structuredClone(checkoutState());
+  state.shop = { ...state.shop, locale };
+  return runtime({ state, ext: { translations, defaultLocale } }).shopify;
+}
+
+test('translations fall back from the locale to its language to the declared default', () => {
+  const translations = { fr: { hello: 'Bonjour' }, en: { hello: 'Hello' }, 'pt-BR': { hello: 'Oi' } };
+  // fr.default.json, en.json and a buyer in German: the default is French, not English.
+  const german = inLocale('de', translations, 'fr');
+  assert.equal(german.i18n.translate('hello'), 'Bonjour');
+  assert.equal(german.localization.extensionLanguage.value.isoCode, 'fr');
+  assert.equal(german.localization.language.value.isoCode, 'de', 'the language of the buyer is still theirs');
+  // The exact locale, then the language of the locale.
+  const brazil = inLocale('pt-BR', translations, 'fr');
+  assert.equal(brazil.i18n.translate('hello'), 'Oi');
+  assert.equal(brazil.localization.extensionLanguage.value.isoCode, 'pt-BR');
+  const english = inLocale('en-GB', translations, 'fr');
+  assert.equal(english.i18n.translate('hello'), 'Hello');
+  assert.equal(english.localization.extensionLanguage.value.isoCode, 'en');
+  // A key that no locale has is the key.
+  assert.equal(german.i18n.translate('missing'), 'missing');
+  // No declared default: English, as before.
+  assert.equal(inLocale('de', translations).localization.extensionLanguage.value.isoCode, 'en');
+  // No translations at all: the language of the buyer.
+  assert.equal(inLocale('de', {}).localization.extensionLanguage.value.isoCode, 'de');
+});
+
+test('translations are resolved key by key: locale, language, default, key', () => {
+  const translations = {
+    'fr-CA': { a: 'a fr-CA' },
+    fr: { a: 'a fr', b: 'b fr' },
+    en: { a: 'a en', b: 'b en', c: 'c en' },
+  };
+  const buyer = inLocale('fr-CA', translations, 'en');
+  assert.equal(buyer.i18n.translate('a'), 'a fr-CA');
+  assert.equal(buyer.i18n.translate('b'), 'b fr', 'only in the language');
+  assert.equal(buyer.i18n.translate('c'), 'c en', 'only in the default');
+  assert.equal(buyer.i18n.translate('d'), 'd');
+  // The extension is still rendered in the best dictionary.
+  assert.equal(buyer.localization.extensionLanguage.value.isoCode, 'fr-CA');
+  // A dictionary without the key does not hide it from the next one, nested keys included.
+  const nested = inLocale('fr-CA', { 'fr-CA': { x: { y: 'y fr-CA' } }, en: { x: { y: 'y en', z: 'z en' } } }, 'en');
+  assert.equal(nested.i18n.translate('x.y'), 'y fr-CA');
+  assert.equal(nested.i18n.translate('x.z'), 'z en');
+});
+
+test('a declared default ends the fallback, and no default is what the server sends as null', () => {
+  const translations = { fr: { hello: 'Bonjour' }, en: { hello: 'Hello', only: 'English only' } };
+  // French is the default: a key it lacks is the key, not the English string.
+  const german = inLocale('de', translations, 'fr');
+  assert.equal(german.i18n.translate('only'), 'only');
+  // No `.default.json`: the server sends `defaultLocale: null`, and English stands in.
+  const none = inLocale('de', { en: { hello: 'Hello' } }, null);
+  assert.equal(none.i18n.translate('hello'), 'Hello');
+  assert.equal(none.localization.extensionLanguage.value.isoCode, 'en');
+});
+
+test('plurals follow the language of the string, numbers the locale of the buyer', () => {
+  const translations = {
+    fr: { items: { one: '{{count}} article', other: '{{count}} articles' } },
+    en: { items: { one: '{{count}} item', other: '{{count}} items' } },
+  };
+  // French counts 0 as `one`, German and English as `other`.
+  const german = inLocale('de', translations, 'fr');
+  assert.equal(german.i18n.translate('items', { count: 0 }), '0 article');
+  assert.equal(german.i18n.translate('items', { count: 2 }), '2 articles');
+  assert.equal(german.i18n.formatNumber(1234.5), '1.234,5');
+  // The string of a partial dictionary that falls back to another language: that one's rules.
+  const partial = inLocale('de', { de: { hello: 'Hallo' }, ...translations }, 'fr');
+  assert.equal(partial.i18n.translate('items', { count: 0 }), '0 article');
+  const english = inLocale('en', translations, 'fr');
+  assert.equal(english.i18n.translate('items', { count: 0 }), '0 items');
+  // Strings with no locale at all use the rules of the buyer.
+  const flat = inLocale('fr', { items: { one: '{{count}} one', other: '{{count}} other' } });
+  assert.equal(flat.i18n.translate('items', { count: 0 }), '0 one');
+});
+
+test('the one-page checkout is the step `checkout`, the thank-you page `thank-you`', () => {
+  const { shopify } = runtime();
+  assert.equal(shopify.buyerJourney.activeStep.value.handle, 'checkout');
+  assert.deepEqual(plain(shopify.buyerJourney.steps.value).map((step) => step.handle), ['checkout']);
+  const state = pageState({ ...engineCheckout(), status: 'completed', order: { id: 'gid://shopify/Order/9', number: '#1001' } });
+  const done = runtime({ target: 'purchase.thank-you.block.render', state }).shopify;
+  assert.equal(done.buyerJourney.activeStep.value.handle, 'thank-you');
+  assert.deepEqual(plain(done.buyerJourney.steps.value).map((step) => step.handle), ['thank-you']);
+});
+
+test('registers targets with extend and offers the rest of the global', () => {
+  const { shopify, registered, posted } = runtime();
+  const render = () => {};
+  shopify.extend('purchase.checkout.block.render', render);
+  assert.equal(registered.get('purchase.checkout.block.render'), render);
+  shopify.reload();
+  assert.deepEqual(posted.at(-1), { type: 'reload' });
+  assert.equal(shopify.localization.currency.value.isoCode, 'EUR');
+  assert.equal(shopify.shop.name, 'Local Store');
+  assert.equal(shopify.shop.myshopifyDomain, 'local-store.myshopify.com');
+  assert.equal(shopify.experimentalIsShopAppStyle, false);
+});
+
+test('the myshopify domain is the one of the store, or one made of its name without a hyphen at either end', () => {
+  const { myshopifyDomainOf } = runtime().win.context.LsfSandbox;
+  assert.equal(myshopifyDomainOf('Local Supply Co.'), 'local-supply-co.myshopify.com');
+  assert.equal(myshopifyDomainOf('  ¡Café & Co!  '), 'caf-co.myshopify.com');
+  assert.equal(myshopifyDomainOf(''), 'shop.myshopify.com');
+  const state = pageState(engineCheckout());
+  state.shop = { ...state.shop, myshopifyDomain: 'the-real-one.myshopify.com' };
+  assert.equal(runtime({ state }).shopify.shop.myshopifyDomain, 'the-real-one.myshopify.com');
+});
+
+test('capabilities become names', () => {
+  const { capabilityNames } = runtime().win.context.LsfSandbox;
+  assert.deepEqual(plain(capabilityNames({ api_access: true, network_access: false, collect_buyer_consent: { sms_marketing: true, customer_personal_data: false } })), ['api_access', 'collect_buyer_consent.sms_marketing']);
+});
+
+test('the cost of a line is before order discounts, after product ones', () => {
+  const state = structuredClone(checkoutState());
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  // 49.00 - 2.00 (product) - 5.00 (order) = 42.00 in the state.
+  state.lines[0].total = eur(42);
+  state.lines[0].discountAllocations = [
+    { title: 'Summer', amount: eur(2), class: 'PRODUCT' },
+    { title: 'Welcome', code: 'WELCOME', amount: eur(5), class: 'ORDER' },
+  ];
+  // A line without any order discount keeps its total, and so does one that has no class at all.
+  state.lines[1].total = eur(22);
+  state.lines[1].discountAllocations = [{ title: 'Old', amount: eur(2) }];
+  const { shopify } = runtime({ state });
+  const [shirt, mug] = shopify.lines.value;
+  assert.deepEqual(plain(shirt.cost.totalAmount), eur(47), 'the order discount is not taken off');
+  assert.deepEqual(plain(mug.cost.totalAmount), eur(22));
+  assert.deepEqual(plain(shirt.discountAllocations).map((entry) => entry.discountedAmount.amount), [2, 5], 'the allocations still list both');
+  assert.equal(shopify.cost.totalAmount.value.amount, 73, 'the cart total is not a line cost');
+});
+
+test('a deferred payment is not in the Cost API: shopify has no due-today amount, and the plan shows its id only', () => {
+  // Shopify's Cost API (2026-10, 2027-01) has the subtotal, shipping, tax and total, and a
+  // selling plan has `id` and `recurringDeliveries`: what the page shows as due today, the
+  // balance and the name of the plan stay out of the global.
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  const state = structuredClone(checkoutState());
+  state.cost = { ...state.cost, dueNow: eur(20), dueLater: eur(53), checkoutChargeAmount: eur(20) };
+  state.lines[0].sellingPlan = { id: 'gid://shopify/SellingPlan/5', name: 'Pre-order', recurringDeliveries: false };
+  state.lines[0].dueLater = eur(49);
+  const { shopify } = runtime({ state });
+  assert.deepEqual(Object.keys(shopify.cost).sort(), ['subtotalAmount', 'totalAmount', 'totalShippingAmount', 'totalTaxAmount']);
+  assert.equal(shopify.cost.totalAmount.value.amount, 73, 'the total is the whole order');
+  const [line] = shopify.lines.value;
+  assert.deepEqual(plain(line.merchandise.sellingPlan), { id: 'gid://shopify/SellingPlan/5', recurringDeliveries: false });
+  assert.deepEqual(Object.keys(line.cost), ['totalAmount']);
+  assert.equal(line.cost.totalAmount.amount, 49);
+});
+
+test('the shipping is undefined until a rate is selected, and in no total before', () => {
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  const group = { handle: 'group-1', lineIds: [], options: [{ handle: 'standard', title: 'Standard', kind: 'SHIPPING', originalCost: eur(4.9), cost: eur(4.9) }] };
+  const before = structuredClone(checkoutState());
+  before.deliveryGroups = [{ ...group, selected: null }];
+  before.cost = { ...before.cost, shipping: eur(0), total: eur(68), dueNow: eur(68) };
+  const { shopify } = runtime({ state: before });
+  assert.equal(shopify.cost.totalShippingAmount.value, undefined);
+  assert.equal(shopify.cost.totalAmount.value.amount, 68);
+  const chosen = structuredClone(before);
+  chosen.deliveryGroups = [{ ...group, selected: 'standard' }];
+  chosen.cost = { ...chosen.cost, shipping: eur(4.9), total: eur(72.9), dueNow: eur(72.9) };
+  assert.equal(runtime({ state: chosen }).shopify.cost.totalShippingAmount.value.amount, 4.9);
+});
+
+test('the cost of a line adds order discounts up in cents', () => {
+  const state = structuredClone(checkoutState());
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  state.lines[0].total = eur(10.1);
+  state.lines[0].discountAllocations = [
+    { title: 'A', amount: eur(0.1), class: 'ORDER' },
+    { title: 'B', amount: eur(0.1), class: 'ORDER' },
+  ];
+  const { shopify } = runtime({ state });
+  assert.equal(shopify.lines.value[0].cost.totalAmount.amount, 10.3);
+});
+
+test('the components of a bundle line are costed the same way', () => {
+  const state = structuredClone(checkoutState());
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  state.lines[0].components = [{
+    id: 'c1', variantId: 1, productId: 1, title: 'Part', quantity: 1, total: eur(8),
+    discountAllocations: [{ title: 'Welcome', amount: eur(2), class: 'ORDER' }],
+  }];
+  const { shopify } = runtime({ state });
+  assert.equal(shopify.lines.value[0].lineComponents[0].cost.totalAmount.amount, 10);
+});
+
+// The state the server wrote for a logged-in customer buying in French
+// (`crates/cli/src/server/tests.rs` checks the server still writes exactly this file).
+const SERVER = JSON.parse(readFileSync(join(assets, '..', 'tests', 'fixtures', 'server-buyer-state.json'), 'utf8'));
+
+function serverRuntime(name) {
+  const state = structuredClone(checkoutState());
+  state.buyer = { ...state.buyer, ...SERVER[name].buyer };
+  state.localization = SERVER[name].localization;
+  return runtime({ state }).shopify;
+}
+
+test('the Buyer Identity API reads the customer the server serialized', () => {
+  const { buyerIdentity } = serverRuntime('customer');
+  assert.equal(buyerIdentity.email.value, 'jane.doe@example.com');
+  assert.equal(buyerIdentity.phone.value, '+1 555 010 9988');
+  assert.deepEqual(plain(buyerIdentity.customer.value), {
+    id: 'gid://shopify/Customer/6523834743460',
+    email: 'jane.doe@example.com',
+    phone: '+1 555 010 9988',
+    fullName: 'Jane Doe',
+    firstName: 'Jane',
+    lastName: 'Doe',
+    image: { url: '' },
+    acceptsMarketing: true,
+    acceptsEmailMarketing: true,
+    acceptsSmsMarketing: false,
+    storeCreditAccounts: [],
+    ordersCount: 2,
+  });
+  assert.equal(buyerIdentity.purchasingCompany.value, undefined);
+});
+
+test('the Buyer Identity API reads the company a B2B customer buys for', () => {
+  const { buyerIdentity } = serverRuntime('company');
+  const customer = buyerIdentity.customer.value;
+  assert.equal(customer.phone, undefined, 'a customer without a phone has none');
+  assert.equal(customer.acceptsMarketing, false);
+  assert.equal(customer.ordersCount, 0);
+  assert.deepEqual(plain(buyerIdentity.purchasingCompany.value), {
+    company: { id: 'gid://shopify/Company/8662601194560', name: 'Northwind Hotels', externalId: 'NW-001' },
+    location: { id: 'gid://shopify/CompanyLocation/3095219877716', name: 'Northwind Seattle', externalId: 'NW-SEA' },
+  });
+});
+
+test('the Localization API reads the language, country, currency and market of the server', () => {
+  const { localization, i18n } = serverRuntime('customer');
+  // The shop is in English: the buyer reads French.
+  assert.equal(localization.language.value.isoCode, 'fr');
+  assert.equal(localization.extensionLanguage.value.isoCode, 'fr');
+  // The visitor selected Canada; the customer ships to their default address, in the US.
+  assert.equal(localization.country.value.isoCode, 'US', 'the country of the address the customer ships to');
+  assert.equal(localization.currency.value.isoCode, 'EUR', 'the currency of the checkout');
+  assert.deepEqual(plain(localization.market.value), { id: 'gid://shopify/Market/4654684647651', handle: 'united-states' }, 'the market of that country, as the Functions read it');
+  // Numbers follow the language of the buyer.
+  assert.equal(i18n.formatNumber(1234.5), '1\u202f234,5');
+});
+
+test('the country of the shipping address wins over the one the visitor selected', () => {
+  const state = structuredClone(checkoutState());
+  state.localization = { ...SERVER.customer.localization, country: { isoCode: 'GB', name: 'United Kingdom' } };
+  assert.equal(runtime({ state }).shopify.localization.country.value.isoCode, 'GB');
+});
+
+// --- Pickup, payment apps and the address autocomplete ---
+
+const PICKUP_GROUP = {
+  handle: 'g1',
+  lineIds: ['gid://shopify/CartLine/1'],
+  selected: 'pickup',
+  options: [
+    { handle: 'standard', title: 'Standard', kind: 'SHIPPING', cost: { amount: 5 }, originalCost: { amount: 5 } },
+    { handle: 'pickup', title: 'Pick up in store', kind: 'PICK_UP', cost: { amount: 0 }, originalCost: { amount: 0 } },
+  ],
+};
+
+test('a pickup location target reads its location and whether it is selected', () => {
+  const state = checkoutState({ deliveryGroups: [PICKUP_GROUP] });
+  const { shopify } = runtime({ target: 'purchase.checkout.pickup-location-option-item.render-after', state, ctx: { group: 'g1', option: 'pickup' } });
+  assert.equal(shopify.target.value.type, 'pickup');
+  assert.equal(shopify.target.value.title, 'Pick up in store');
+  assert.equal(shopify.isTargetSelected.value, true);
+  const list = runtime({ target: 'purchase.checkout.pickup-point-list.render-after', state }).shopify;
+  assert.equal(list.isLocationFormVisible.value, false);
+});
+
+test('a payment method target reads its method, and has no attributes', () => {
+  const { shopify } = runtime({ target: 'purchase.checkout.payment-option-item.details.render', ctx: { payment: 'cod' } });
+  assert.deepEqual(plain(shopify.target.value), { type: 'paymentOnDelivery', handle: 'cod' });
+  assert.equal(shopify.paymentMethodAttributes.value, undefined);
+  assert.equal(typeof shopify.applyPaymentMethodAttributesChange, 'function');
+});
+
+test('the address autocomplete runs with what the buyer typed, and reads plain values', async () => {
+  const { shopify, registered, run } = runtime({ target: 'purchase.address-autocomplete.suggest', ext: { settings: { limit: 3 } } });
+  assert.equal(shopify.lines, undefined, 'no cart lines for the autocomplete');
+  assert.equal(shopify.applyShippingAddressChange, undefined);
+  assert.deepEqual(plain(shopify.settings), { limit: 3 }, 'a value, not a signal');
+  assert.equal(typeof shopify.checkoutToken, 'string');
+  const seen = [];
+  registered.set('purchase.address-autocomplete.suggest', () => {
+    seen.push([shopify.target.value, Boolean(shopify.signal)]);
+    return { suggestions: [{ label: shopify.target.value.toUpperCase() }] };
+  });
+  assert.deepEqual(plain(await run({ value: 'harb', field: 'address1' })), { suggestions: [{ label: 'HARB' }] });
+  const first = shopify.signal;
+  await run({ value: 'harbo', field: 'address1' });
+  assert.equal(first.aborted, true, 'a new request aborts the one before');
+  assert.deepEqual(seen.map(([value]) => value), ['harb', 'harbo']);
+});
+
+test('the frame of a target that renders nothing answers each run', async () => {
+  const win = sandboxWindow({ scripts: ['sandbox-api.js', 'sandbox-account-api.js', 'sandbox.js'], bundles: {
+    'http://localhost/__lsf/extensions/auto/auto.js':
+      "shopify.extend('purchase.address-autocomplete.suggest', async () => ({ suggestions: [{ label: shopify.target.value + '!' }] }));",
+  } });
+  win.receive({ ...init({ handle: 'auto', target: 'purchase.address-autocomplete.suggest' }), runnable: true });
+  win.receive({ type: 'run', id: 'r1', payload: { value: 'oak' } });
+  await settle();
+  await settle();
+  assert.deepEqual(win.posts('ran'), [{ lsf: true, type: 'ran', id: 'r1', result: { suggestions: [{ label: 'oak!' }] } }]);
+  assert.equal(win.posts('error').length, 0, 'nothing to render, nothing missing');
+});
+
+// --- Customer accounts ---
+
+const ORDER = {
+  id: 'gid://shopify/Order/42',
+  legacyId: 42,
+  name: '#1042',
+  confirmationNumber: 'ABC123XYZ',
+  processedAt: '2024-03-04T00:00:00+00:00',
+  lines: checkoutState().lines,
+  cost: { subtotal: { amount: 73, currencyCode: 'USD' }, shipping: { amount: 5, currencyCode: 'USD' }, tax: { amount: 0, currencyCode: 'USD' }, total: { amount: 78, currencyCode: 'USD' } },
+  shippingAddress: { firstName: 'Jane', lastName: 'Doe', address1: '12 Maple Street', city: 'Portland', countryCode: 'US' },
+  discountCodes: [],
+  discounts: [],
+};
+
+function account(target, { order = ORDER, ctx = {}, ext = {}, appMetafields } = {}) {
+  const state = {
+    appMetafields,
+    surface: 'customer-account',
+    shop: checkoutState().shop,
+    localization: checkoutState().localization,
+    buyer: {
+      customer: { id: 'gid://shopify/Customer/7', email: 'jane@example.com', firstName: 'Jane', lastName: 'Doe' },
+      purchasingCompany: { company: { id: 'gid://shopify/Company/1', name: 'Northwind' }, location: { id: 'gid://shopify/CompanyLocation/2', name: 'Portland' } },
+    },
+    order,
+  };
+  const win = sandboxWindow({ scripts: ['sandbox-api.js', 'sandbox-account-api.js'] });
+  const posted = [];
+  const created = win.context.LsfSandbox.createRuntime({ post: (message) => posted.push(plain(message)), init: init({ handle: 'ca', target, state, ctx, ext }) });
+  return { ...created, posted, win };
+}
+
+test('a customer account target reads the account and has its own platform APIs', async () => {
+  const { shopify, posted } = account('customer-account.profile.block.render');
+  assert.deepEqual(plain(shopify.authenticatedAccount.customer.value), { id: 'gid://shopify/Customer/7' });
+  assert.deepEqual(plain(shopify.authenticatedAccount.purchasingCompany.value), {
+    company: { id: 'gid://shopify/Company/1' },
+    location: { id: 'gid://shopify/CompanyLocation/2' },
+  });
+  // None of the checkout's.
+  for (const name of ['lines', 'buyerJourney', 'applyCartLinesChange', 'order', 'cost']) assert.equal(shopify[name], undefined, name);
+  await assert.rejects(shopify.query('{ shop { name } }'), /Storefront API is not available in the local customer account/);
+  const toast = await shopify.toast.show('Saved');
+  toast.hide();
+  shopify.navigation.navigate('shopify:customer-account/orders');
+  const activity = await shopify.intents.invoke({ action: 'create', type: 'shopify/Product' });
+  assert.deepEqual(plain(await activity.complete), { code: 'closed' });
+  assert.deepEqual(posted.filter((message) => message.type !== 'log'), [
+    { type: 'toast', content: 'Saved' },
+    { type: 'toast', hide: true },
+    { type: 'navigate', url: 'shopify:customer-account/orders' },
+  ]);
+  assert.equal(shopify.navigation.currentEntry.url, null, 'only a full page has an entry');
+});
+
+test('an order status target reads the order as the Order Status API', () => {
+  const { shopify } = account('customer-account.order-status.block.render', { ctx: { orderId: ORDER.id } });
+  assert.deepEqual(plain(shopify.order.value), { id: ORDER.id, name: '#1042', confirmationNumber: 'ABC123XYZ', processedAt: '2024-03-04T00:00:00+00:00' });
+  assert.equal(shopify.lines.value.length, 2);
+  assert.equal(shopify.lines.value[0].merchandise.id, 'gid://shopify/ProductVariant/101');
+  assert.deepEqual(plain(shopify.cost.totalAmount.value), { amount: 78, currencyCode: 'USD' });
+  assert.equal(shopify.shippingAddress.value.city, 'Portland');
+  assert.equal(shopify.billingAddress.value.city, 'Portland', 'the shipping address when the order has no billing one');
+  assert.equal(shopify.buyerIdentity.customer.value.email, 'jane@example.com');
+  assert.equal(shopify.authenticationState.value, 'fully_authenticated');
+  assert.equal(shopify.orderId, ORDER.id);
+  assert.deepEqual(plain(shopify.appMetafields.value), [], 'nothing declared');
+});
+
+test('an order status target reads the metafields it declares of the shop, the products, the buyer and the cart', () => {
+  // An order placed in the local checkout keeps the metafields of its cart.
+  const placed = { ...ORDER, token: 'c1-abc', metafields: [{ namespace: '$app:gift', key: 'wrapped', type: 'boolean', value: 'true' }] };
+  const metafields = [
+    { namespace: '$app', key: 'gift-codes', ownerType: 'SHOP' },
+    { namespace: '$app', key: 'energy' },
+    { namespace: 'custom', key: 'terms' },
+    { namespace: '$app:gift', key: 'wrapped', ownerType: 'CART' },
+  ].map(declaration);
+  const target = 'customer-account.order-status.block.render';
+  const { shopify } = account(target, { order: placed, ext: { metafields }, appMetafields: OWNED });
+  assert.deepEqual(plain(shopify.appMetafields.value).map(({ target, metafield }) => [target.type, target.id, metafield.key]), [
+    ['shop', 'gid://shopify/Shop/9', 'gift-codes'],
+    ['product', 'gid://shopify/Product/11', 'energy'],
+    ['variant', 'gid://shopify/ProductVariant/101', 'energy'],
+    ['company', 'gid://shopify/Company/1', 'terms'],
+    ['cart', 'gid://shopify/Cart/c1-abc', 'wrapped'],
+  ]);
+  // An order of the store data has no cart.
+  const stored = account(target, { ext: { metafields }, appMetafields: OWNED }).shopify;
+  assert.equal(plain(stored.appMetafields.value).some((each) => each.target.type === 'cart'), false);
+});
+
+test('owner_type ORDER reads the order of the order status page, not its cart, and nothing in the checkout', () => {
+  // The order has the cart's `$app:gift.message` (copied by its definition) and one its backend
+  // set; its cart has the same key.
+  const order = gid('Order', 4501);
+  const owned = OWNED.concat([
+    entry('order', order, '$app:gift', 'message', 'single_line_text_field', 'Happy birthday'),
+    entry('order', order, '$app', 'delivery-promise', 'number_integer', '3'),
+  ]);
+  const placed = { ...ORDER, id: order, token: 'c1-abc', metafields: [{ namespace: '$app:gift', key: 'message', type: 'single_line_text_field', value: 'Happy birthday' }] };
+  const metafields = [
+    { namespace: '$app:gift', key: 'message', ownerType: 'ORDER' },
+    { namespace: '$app', key: 'delivery-promise' },
+  ].map(declaration);
+  assert.equal(metafields[0].targetType, 'order');
+  const target = 'customer-account.order-status.block.render';
+  const { shopify } = account(target, { order: placed, ext: { metafields }, appMetafields: owned });
+  const read = (shopify) => plain(shopify.appMetafields.value).map(({ target, metafield }) => [target.type, target.id, metafield.key, metafield.value]);
+  assert.deepEqual(read(shopify), [
+    ['order', order, 'message', 'Happy birthday'],
+    // Without `owner_type`, every owner: typed as on the order status page.
+    ['order', order, 'delivery-promise', 3],
+  ]);
+  // Without `owner_type`, the cart's is read too.
+  const any = [{ namespace: '$app:gift', key: 'message' }].map(declaration);
+  assert.deepEqual(read(account(target, { order: placed, ext: { metafields: any }, appMetafields: owned }).shopify), [
+    ['order', order, 'message', 'Happy birthday'],
+    ['cart', 'gid://shopify/Cart/c1-abc', 'message', 'Happy birthday'],
+  ]);
+
+  // The checkout has no order: the declaration reads nothing, not the cart's.
+  const gift = { type: 'metafield', change: { type: 'updateCartMetafield', namespace: '$app:gift', key: 'message', valueType: 'single_line_text_field', value: 'Hi' } };
+  const checkout = runtime({ state: { ...next(gift), appMetafields: OWNED }, ext: { metafields } }).shopify;
+  assert.deepEqual(plain(checkout.appMetafields.value), []);
+});
+
+test('the order status page types the values of appMetafields, the checkout keeps their text', () => {
+  // Shopify's `AppMetafield`: in the customer account, `value` is a boolean, a number or text by
+  // its `valueType`; in the checkout, it is the text whatever the type.
+  const owned = [
+    entry('shop', gid('Shop', 9), 'custom', 'closed', 'boolean', 'false'),
+    entry('shop', gid('Shop', 9), 'custom', 'open', 'boolean', 'true'),
+    entry('shop', gid('Shop', 9), 'custom', 'count', 'number_integer', '2'),
+    entry('shop', gid('Shop', 9), 'custom', 'ratio', 'number_decimal', '1.50'),
+    entry('shop', gid('Shop', 9), 'custom', 'config', 'json', '{"a":1}'),
+    entry('shop', gid('Shop', 9), 'custom', 'title', 'single_line_text_field', 'Hello'),
+  ];
+  const placed = { ...ORDER, token: 'c1-abc', metafields: [{ namespace: '$app:gift', key: 'wrapped', type: 'boolean', value: 'false' }] };
+  const metafields = ['closed', 'open', 'count', 'ratio', 'config', 'title'].map((key) => ({ namespace: 'custom', key }))
+    .concat([{ namespace: '$app:gift', key: 'wrapped' }]);
+  const target = 'customer-account.order-status.block.render';
+  const values = (shopify) => plain(shopify.appMetafields.value).map(({ metafield }) => [metafield.key, metafield.value, metafield.valueType]);
+  const { shopify } = account(target, { order: placed, ext: { metafields }, appMetafields: owned });
+  assert.deepEqual(values(shopify), [
+    ['closed', false, 'boolean'],
+    ['open', true, 'boolean'],
+    ['count', 2, 'integer'],
+    ['ratio', 1.5, 'float'],
+    ['config', '{"a":1}', 'json_string'],
+    ['title', 'Hello', 'string'],
+    ['wrapped', false, 'boolean'],
+  ]);
+  assert.equal(plain(shopify.appMetafields.value)[0].metafield.type, 'boolean', 'the type of the metafield stays');
+
+  // The checkout keeps the text.
+  const checkout = runtime({ state: { ...checkoutState(), appMetafields: owned }, ext: { metafields } }).shopify;
+  assert.deepEqual(values(checkout), [
+    ['closed', 'false', 'boolean'],
+    ['open', 'true', 'boolean'],
+    ['count', '2', 'integer'],
+    ['ratio', '1.50', 'float'],
+    ['config', '{"a":1}', 'json_string'],
+    ['title', 'Hello', 'string'],
+  ]);
+});
+
+test('what a slot of the customer account is for comes with the target', () => {
+  const line = account('customer-account.order-status.cart-line-item.render-after', { ctx: { lineId: 'gid://shopify/CartLine/2' } }).shopify;
+  assert.equal(line.target.value.id, 'gid://shopify/CartLine/2');
+  assert.equal(account('customer-account.order-status.fulfillment-details.render-after', { ctx: { fulfillmentId: 'gid://shopify/Fulfillment/1' } }).shopify.fulfillmentId, 'gid://shopify/Fulfillment/1');
+  assert.equal(account('customer-account.order-status.return-details.render-after', { ctx: { returnId: 'gid://shopify/Return/1' } }).shopify.returnId, 'gid://shopify/Return/1');
+  assert.equal(account('customer-account.profile.company-location-staff.render-after', { ctx: { locationId: 'gid://shopify/CompanyLocation/2' } }).shopify.locationId, 'gid://shopify/CompanyLocation/2');
+  const page = account('customer-account.page.render', { ctx: { handle: 'loyalty', path: '/rewards' } }).shopify;
+  assert.equal(page.navigation.currentEntry.url, 'extension:loyalty/rewards');
+  const dialog = account('customer-account.order.action.render', { ctx: { orderId: ORDER.id } });
+  dialog.shopify.close();
+  assert.deepEqual(dialog.posted, [{ type: 'close' }]);
+});
+
+test('pressing the button of an order action menu item opens its dialog, a link does not', () => {
+  const { win, posted } = account('customer-account.order.action.menu-item.render', { ctx: { orderId: ORDER.id } });
+  const button = win.document.createElement('s-button');
+  const link = win.document.createElement('s-button');
+  link.setAttribute('href', 'https://example.com');
+  win.document.body.append(button, link);
+  link.click();
+  assert.deepEqual(posted, []);
+  button.click();
+  assert.deepEqual(posted, [{ type: 'action' }]);
+});

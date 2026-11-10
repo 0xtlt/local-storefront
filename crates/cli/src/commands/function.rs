@@ -1,9 +1,9 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use lsf_checkout::app::Selection;
-use lsf_checkout::pipeline;
-use lsf_checkout::{BuyerJourneyStep, CheckoutResult};
+use lsf_app::checkout::pipeline;
+use lsf_app::checkout::{BuyerJourneyStep, CheckoutResult};
+use lsf_app::config::Selection;
 use lsf_core::Session;
 use lsf_core::diagnostics::{Diagnostics, Severity};
 use lsf_core::store::load::{OVERLAY_FILE, load_with_overlay};
@@ -34,6 +34,11 @@ enum Subcommand {
     /// (`dist/function.js`), then its Wasm module. The others run their
     /// `[extensions.build] command`.
     Build(BuildArgs),
+    /// Write the GraphQL schema of a Function's API, at the API version its
+    /// `shopify.extension.toml` declares, to its `schema.graphql`, as `shopify app function
+    /// schema` does: from the schemas lsf carries, without the network. Run it in the Function's
+    /// folder, or name the Function (or give `--path`).
+    Schema(schema::SchemaArgs),
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -136,18 +141,21 @@ fn read_json(what: &str, value: &str) -> Result<Json, String> {
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
     let args = match args.command {
         Subcommand::Run(args) => args,
         Subcommand::Build(args) => return build(&args),
+        Subcommand::Schema(args) => return schema::run(&args),
     };
     let Ran {
         app: shopify_app,
         result,
         scenario,
         discounted,
+        named,
+        forced,
     } = compute(theme, data, previews, &args)?;
     let failed = result.runs.iter().any(|run| run.error.is_some());
     // A Function asked for by name that did not run is a failure, with why.
@@ -157,10 +165,15 @@ pub fn run(
         .filter_map(|handle| shopify_app.function(handle))
         .filter(|function| !result.runs.iter().any(|run| run.handle == function.handle))
         .map(|function| {
-            (
-                function.handle.clone(),
-                why_not_run(&shopify_app, function, &discounted, result.lines.is_empty()),
-            )
+            let reason = match &named {
+                Some((file, handles)) if !handles.contains(&function.handle) => format!(
+                    "the scenario's `extensions` leaves it out: add \"{}\" to the `extensions` \
+                     of {file}, or remove the list to run every extension",
+                    function.handle
+                ),
+                _ => why_not_run(&shopify_app, function, &discounted, result.lines.is_empty()),
+            };
+            (function.handle.clone(), reason)
         })
         .collect();
 
@@ -178,6 +191,12 @@ pub fn run(
                     .map(|diagnostic| Json::String(diagnostic.to_string()))
                     .collect(),
             );
+            json["forced"] = Json::Array(
+                forced
+                    .iter()
+                    .map(|(handle, reason)| serde_json::json!({"handle": handle, "reason": reason}))
+                    .collect(),
+            );
             json["notRun"] = Json::Array(
                 not_run
                     .iter()
@@ -192,6 +211,15 @@ pub fn run(
         Format::Text => {
             if let Some((name, title)) = &scenario {
                 println!("== scenario {name}: {title}\n");
+            }
+            for (handle, reason) in &forced {
+                println!(
+                    "Named: {handle} runs because this run names it, but the checkout of the store data does not run it: {reason}. This command reads the store data on disk, not a running lsf, where the app may have created or enabled one; `{}` runs what the store data's checkout runs.",
+                    checkout::as_typed("lsf app function run")
+                );
+            }
+            if !forced.is_empty() {
+                println!();
             }
             print_text(&result);
         }
@@ -208,26 +236,32 @@ pub fn run(
 
 /// What a run of the Functions comes to.
 struct Ran {
-    app: lsf_checkout::app::App,
+    app: lsf_app::config::App,
     result: CheckoutResult,
     /// The name and the title of the scenario it ran for.
     scenario: Option<(String, String)>,
     /// The discount Functions a discount of the checkout runs.
     discounted: Vec<String>,
+    /// The file of the scenario (`checkouts/b2b.json`) and its `extensions`, when it names
+    /// them: the Functions it leaves out do not run.
+    named: Option<(String, Vec<String>)>,
+    /// The Functions named on the command line that the shop's checkout would not run, for want
+    /// of an enabled owner, and why: they ran anyway, as named, and the output says so.
+    forced: Vec<(String, String)>,
 }
 
 /// Why a Function asked for by name did not run: what the app says is wrong with it, a
 /// discount Function no discount names, or targets the local checkout does not run.
 fn why_not_run(
-    app: &lsf_checkout::app::App,
-    function: &lsf_checkout::app::FunctionExtension,
+    app: &lsf_app::config::App,
+    function: &lsf_app::config::FunctionExtension,
     discounted: &[String],
     empty_cart: bool,
 ) -> String {
-    use lsf_checkout::app::TargetKind;
+    use lsf_app::config::TargetKind;
     if let Some(diagnostic) = app.diagnostics.iter().find(|diagnostic| {
         diagnostic.extension.as_deref() == Some(function.handle.as_str())
-            && diagnostic.severity == lsf_checkout::app::Severity::Error
+            && diagnostic.severity == lsf_app::config::Severity::Error
     }) {
         return diagnostic.message.clone();
     }
@@ -265,7 +299,7 @@ fn why_not_run(
 fn compute(
     theme: &Path,
     data: Option<&Path>,
-    previews: &[lsf_core::Preview],
+    previews: &[lsf_theme::Preview],
     args: &RunArgs,
 ) -> Result<Ran, String> {
     // The app the current folder is in when `--app` is not given.
@@ -282,7 +316,8 @@ fn compute(
         .find(|handle| shopify_app.ui_extension(handle).is_some())
     {
         return Err(format!(
-            "`{handle}` is a UI extension, not a Function: `lsf app function run` runs Functions"
+            "`{handle}` is a UI extension, not a Function: `{} app function run` runs Functions",
+            lsf_core::util::command()
         ));
     }
     checkout::print_app_diagnostics(&shopify_app, &selection);
@@ -395,7 +430,40 @@ fn compute(
         Step::Completion => BuyerJourneyStep::Completion,
     };
 
-    let config = checkout::config_for(&store, scenario.map(|scenario| scenario.name.as_str()));
+    let mut config = checkout::config_for(&store, scenario.map(|scenario| scenario.name.as_str()));
+    // The Functions named on the command line run, whether or not the shop has an owner of
+    // them, as `shopify app function run` runs one: without them, the checkout's. Each one the
+    // checkout of the store data would leave out is said, so that this run is not taken for the
+    // checkout. The store data is the files: an owner the app created in a running lsf, through
+    // the Admin API, is not in them.
+    let mut forced = Vec::new();
+    if !args.handles.is_empty()
+        && let Some(owners) = config.owners.take()
+    {
+        for handle in &args.handles {
+            let Some(owner) = shopify_app
+                .function(handle)
+                .and_then(|function| function.owner_type())
+            else {
+                continue;
+            };
+            // `PaymentCustomization` → `payment customization`.
+            let owner = owner
+                .chars()
+                .enumerate()
+                .flat_map(|(index, c)| {
+                    let space = (index > 0 && c.is_ascii_uppercase()).then_some(' ');
+                    space.into_iter().chain(c.to_lowercase())
+                })
+                .collect::<String>();
+            let reason = match owners.get(handle) {
+                Some(true) => continue,
+                Some(false) => format!("its {owner} is disabled"),
+                None => format!("it has no {owner} of it"),
+            };
+            forced.push((handle.clone(), reason));
+        }
+    }
     let functions_only =
         Selection::only(selection.functions(&shopify_app).map(|f| f.handle.clone()));
     let result = pipeline::compute(
@@ -406,6 +474,10 @@ fn compute(
         &state,
         &config,
     );
+    let named = scenario.and_then(|scenario| {
+        let handles = scenario.extensions.clone()?;
+        Some((scenario.file.clone(), handles))
+    });
     let scenario = scenario.map(|scenario| (scenario.name.clone(), scenario.title.clone()));
     let discounted = config
         .discounts
@@ -417,6 +489,8 @@ fn compute(
         result,
         scenario,
         discounted,
+        named,
+        forced,
     })
 }
 
@@ -429,7 +503,8 @@ fn scenario_to_run<'a>(
         let known: Vec<&str> = store.scenarios.iter().map(|s| s.name.as_str()).collect();
         if known.is_empty() {
             format!(
-                "--scenario {name}: the store data has no scenario (`lsf app init` writes a set in `checkouts/`)"
+                "--scenario {name}: the store data has no scenario (`{} app init` writes a set in `checkouts/`)",
+                lsf_core::util::command()
             )
         } else {
             match lsf_core::util::closest_match(name, known.iter().copied()) {
@@ -465,6 +540,18 @@ fn print_text(result: &CheckoutResult) {
     let currency = result.cost.currency_code.as_str();
     if result.runs.is_empty() {
         println!("No Function ran.");
+    }
+    // What the shop's owners leave out: name a Function to run it anyway.
+    for idle in &result.idle {
+        println!(
+            "Not run: {}: {} (name it to run it anyway: `{}`)",
+            idle.handle,
+            idle.reason,
+            checkout::as_typed(&format!("lsf app function run {}", idle.handle))
+        );
+    }
+    if !result.idle.is_empty() {
+        println!();
     }
     for run in &result.runs {
         println!("== {} · {} ({})", run.handle, run.target, run.export);
@@ -568,13 +655,28 @@ fn print_text(result: &CheckoutResult) {
             );
         }
     }
-    if !result.payment_methods.is_empty() {
-        let names: Vec<&str> = result
-            .payment_methods
+    // Each method with where it is still offered once the Functions ran: the list of the
+    // checkout (`PAYMENT_METHOD`), the express buttons (`ACCELERATED_CHECKOUT`), or both.
+    let mut methods: Vec<&lsf_app::checkout::PaymentMethod> =
+        result.payment_methods.iter().collect();
+    for method in &result.express_methods {
+        if !methods.iter().any(|known| known.handle == method.handle) {
+            methods.push(method);
+        }
+    }
+    if !methods.is_empty() {
+        let described: Vec<String> = methods
             .iter()
-            .map(|method| method.name.as_str())
+            .map(|method| {
+                let placements: Vec<&str> = method
+                    .placements
+                    .iter()
+                    .map(|placement| placement.graphql())
+                    .collect();
+                format!("{} [{}]", method.name, placements.join(", "))
+            })
             .collect();
-        println!("  payment: {}", names.join(", "));
+        println!("  payment: {}", described.join(", "));
     }
     for error in &result.errors {
         println!(
@@ -606,13 +708,16 @@ fn print_text(result: &CheckoutResult) {
     }
 }
 
+mod schema;
+
 #[cfg(test)]
 mod playground;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::Parser;
+
+    use super::*;
 
     #[test]
     fn json_comes_from_the_argument_or_from_a_file() {
@@ -640,7 +745,7 @@ mod tests {
 
     #[test]
     fn the_locale_is_one_of_the_languages_of_the_store() {
-        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app");
         let root = std::env::temp_dir().join(format!("lsf-function-locale-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let data = root.join("data");
@@ -677,7 +782,7 @@ mod tests {
 
     #[test]
     fn the_step_is_what_a_validation_function_reads() {
-        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app");
         let root = std::env::temp_dir().join(format!("lsf-function-step-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let data = root.join("data");
@@ -753,10 +858,10 @@ mod tests {
         assert!(matches!(step(&["--step", "completion"]), Step::Completion));
     }
 
-    /// Runs `lsf app function run` on the fixture app of lsf-checkout, for a store with one product
+    /// Runs `lsf app function run` on the fixture app of lsf-app, for a store with one product
     /// (4 at 32.00 in the cart) and the given discount, and says whether it exits with 1.
     fn run_fails(discount: Json, handle: &str, function_settings: Option<Json>) -> bool {
-        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app");
         run_fails_in(app, discount, handle, function_settings)
     }
 
@@ -859,7 +964,7 @@ mod tests {
         let extension = root.join("extensions/spin");
         std::fs::create_dir_all(extension.join("src")).unwrap();
         std::fs::create_dir_all(extension.join("dist")).unwrap();
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app");
         std::fs::copy(
             fixture.join("shopify.app.toml"),
             root.join("shopify.app.toml"),
@@ -912,7 +1017,7 @@ mod tests {
     fn run_args(handles: &[&str], scenario: Option<&str>) -> RunArgs {
         RunArgs {
             handles: handles.iter().map(|handle| handle.to_string()).collect(),
-            app: Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app")),
+            app: Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app")),
             build: false,
             session: None,
             scenario: scenario.map(str::to_string),
@@ -934,7 +1039,7 @@ mod tests {
                 "shipping_rates": [{"handle": "pallet", "price": "45.00"}],
                 "discounts": [{"function": "volume-discount", "code": "SAVE", "classes": ["PRODUCT"],
                     "metafields": {"$app:config.settings": {"type": "json", "value": {"minimumQuantity": 1, "percentage": 50}}}}],
-                "functions": {"quantity-limit": {"metafields": {"$app:config.settings": {"type": "json", "value": {"maxQuantity": 3}}}}}
+                "functions": {"quantity-limit": {"enabled": true, "metafields": {"$app:config.settings": {"type": "json", "value": {"maxQuantity": 3}}}}}
             }
         }"#;
         let narrow = r#"{

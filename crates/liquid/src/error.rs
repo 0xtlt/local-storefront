@@ -16,6 +16,9 @@ pub enum ErrorKind {
     StackLevel,
     /// A tag was used where it is not allowed (e.g. `include` inside `render`).
     Disabled,
+    /// The render spent its budget ([`crate::context::RenderLimits`]): Ruby Liquid's
+    /// `MemoryError`, which stops the whole render.
+    ResourceLimit,
     Standard,
     Internal,
 }
@@ -65,6 +68,12 @@ impl Error {
 
     pub fn stack_level() -> Self {
         Error::new(ErrorKind::StackLevel, "Nesting too deep")
+    }
+
+    /// What a render that spent its budget answers: the message of Ruby Liquid's
+    /// `MemoryError`, which its resource limits raise.
+    pub fn resource_limit() -> Self {
+        Error::new(ErrorKind::ResourceLimit, "Memory limits exceeded")
     }
 
     pub fn internal() -> Self {
