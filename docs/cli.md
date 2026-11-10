@@ -345,7 +345,7 @@ npx local-storefront app function run volume-discount --app ../my-app --session 
 |---|---|---|
 | `[handle]...` | | The Functions to run, whether or not the shop has an owner of them (a payment customization, …): one the checkout of the store data would leave out is said first (`Named: …`, `forced` in JSON). It reads the store data on disk, not a running lsf. Without them, what the checkout runs: the Functions with an enabled owner, those of a discount, or those the scenario names; the others are listed as not run, with why. |
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in; the store data to its `shopify-local/` when the current folder has none. |
-| `--build` | | Builds each Function first, as `app function build` does. |
+| `--build` | | Builds the extensions first, as `app build` does: the Functions, then the UI extensions that name their sources. |
 | `--scenario <name>` | | A [checkout scenario](data-format.md#checkout-scenarios) of the store data (`checkouts/<name>.json`): its cart, buyer, language, `checkout` settings and the extensions it names. `--session`, `--checkout` and `--locale` go on top of it. |
 | `--session <file or JSON>` | | The session to run for, as `PUT /__lsf/session` takes it: its `data` goes on top of the store data for this run (a discount for a discount Function, settings in `checkout.functions`). Defaults to the `session` of the store data. |
 | `--checkout <file or JSON>` | | What the buyer entered: `email`, `phone`, `shippingAddress`, `selectedDelivery`, `selectedPayment`, `discountCodes`, `metafields`. |

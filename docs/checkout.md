@@ -1302,7 +1302,7 @@ payment method has its placements: `[ACCELERATED_CHECKOUT]` is an express button
 | `--locale <iso>` | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |
 | `--step interaction\|completion` | The step of the buyer journey, which validation Functions read as `buyerJourney.step`: `completion` (default) is the placing of the order, `interaction` is the page and its updates. |
 | `--format json` | The checkout as the page reads it, with every run in `runs`. For tools. |
-| `--build` | Builds each Function first: its build command, or lsf's build of a JavaScript Function. |
+| `--build` | Builds the extensions first, as `lsf app build` does: each Function (its build command, or lsf's build of a JavaScript Function), then each UI extension that names its sources. |
 
 It exits with `1` when a Function fails to run (no module, a trap, an output that does not
 parse), or when a Function named on the command line did not run: it says why (no discount
