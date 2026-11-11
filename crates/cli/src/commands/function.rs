@@ -246,6 +246,8 @@ pub fn run(
         discounted,
         named,
         forced,
+        addressed,
+        country,
     } = compute(theme, data, previews, &args)?;
     if let Some(file) = &args.save_input {
         save_input(&result, &args, file)?;
@@ -314,7 +316,7 @@ pub fn run(
             if !forced.is_empty() {
                 println!();
             }
-            print_text(&result);
+            print_text(&result, addressed, &country);
         }
     }
     for (handle, reason) in &not_run {
@@ -881,6 +883,10 @@ struct Ran {
     /// The Functions named on the command line that the shop's checkout would not run, for want
     /// of an enabled owner, and why: they ran anyway, as named, and the output says so.
     forced: Vec<(String, String)>,
+    /// Whether the buyer gave a shipping address (before one, no rate is selected), and the
+    /// country of the shop, for the hint that gives one.
+    addressed: bool,
+    country: String,
 }
 
 /// Why a Function asked for by name did not run: what the app says is wrong with it, a
@@ -1131,6 +1137,8 @@ fn compute(
         discounted,
         named,
         forced,
+        addressed: state.shipping_address.is_some(),
+        country: store.shop.address.country_code.clone(),
     })
 }
 
@@ -1212,7 +1220,7 @@ fn print_run(run: &lsf_app::checkout::FunctionRun) {
     }
 }
 
-fn print_text(result: &CheckoutResult) {
+fn print_text(result: &CheckoutResult, addressed: bool, country: &str) {
     let currency = result.cost.currency_code.as_str();
     if result.runs.is_empty() {
         println!("No Function ran.");
@@ -1295,6 +1303,26 @@ fn print_text(result: &CheckoutResult) {
                 option.title,
                 option.handle,
                 display_money(option.cost, currency)
+            );
+        }
+        // Rates offered, none chosen: the shipping of the totals is 0, as on Shopify before
+        // the buyer gives an address. Said, for the totals not to look wrong.
+        if group.selected.is_none() && !group.options.is_empty() {
+            println!(
+                "  delivery: {}",
+                if addressed {
+                    format!(
+                        "no rate selected, so shipping is {}",
+                        display_money(0, currency)
+                    )
+                } else {
+                    format!(
+                        "no rate selected before a shipping address, as on Shopify, so shipping is {} \
+                         (`--checkout '{{\"shippingAddress\": {{\"countryCode\": \"{}\"}}}}'` gives one)",
+                        display_money(0, currency),
+                        if country.is_empty() { "US" } else { country }
+                    )
+                }
             );
         }
     }

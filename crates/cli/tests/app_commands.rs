@@ -1265,6 +1265,18 @@ fn installed_with_npm_the_hints_say_npx_local_storefront() {
         text(&output)
     );
     let output = lsf_as(&app.0, &["app", "init"], npx);
+    // In the app's folder, `app dev` finds the app: no `--app`.
+    assert!(
+        text(&output).contains("next: `npx local-storefront app dev` lists them"),
+        "{}",
+        text(&output)
+    );
+    // Elsewhere, the app is named.
+    let elsewhere = std::env::temp_dir().join(format!("lsf-init-elsewhere-{}", std::process::id()));
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let app_arg = app.0.display().to_string();
+    let output = lsf_as(&elsewhere, &["app", "init", "--app", &app_arg], npx);
+    let _ = std::fs::remove_dir_all(&elsewhere);
     assert!(
         text(&output).contains("next: `npx local-storefront app dev --app "),
         "{}",
@@ -1770,6 +1782,12 @@ fn save_input_creates_the_folders_of_its_file() {
         ],
     );
     assert!(output.status.success(), "{}", text(&output));
+    // No address, no rate selected, as on Shopify: the shipping of 0 is explained.
+    assert!(
+        text(&output).contains("  delivery: no rate selected before a shipping address, as on Shopify, so shipping is 0.00 "),
+        "{}",
+        text(&output)
+    );
     let saved: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(app.0.join("tests/fixtures/q1.json")).unwrap(),
     )
