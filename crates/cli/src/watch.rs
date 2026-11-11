@@ -69,6 +69,9 @@ pub struct Builds {
     modules: Option<Modules>,
     /// The Functions the watcher builds, whose copy the checkout runs.
     owned: Mutex<BTreeSet<String>>,
+    /// The checkout UI extensions whose last bundle failed, and whether a bundle of them is
+    /// there all the same (`dist/<handle>.js`, of a build before), which the pages load.
+    bundles: Mutex<BTreeMap<String, bool>>,
 }
 
 /// Why a build failed.
@@ -119,6 +122,19 @@ impl Builds {
         };
     }
 
+    /// How the last bundle of the checkout UI extension `handle` went: `failure`, and whether
+    /// a bundle of an earlier build is there, which the pages load meanwhile.
+    pub(crate) fn set_bundle(&self, handle: &str, failure: Option<Failure>, built: bool) {
+        let mut bundles = self.bundles.lock().expect("builds poisoned");
+        if failure.is_some() {
+            bundles.insert(handle.to_string(), built);
+        } else {
+            bundles.remove(handle);
+        }
+        drop(bundles);
+        self.set(handle, failure);
+    }
+
     /// Forgets the Functions that are not in `handles` any more.
     fn retain(&self, handles: &BTreeSet<String>) {
         let mut failures = self.failures.lock().expect("builds poisoned");
@@ -133,12 +149,26 @@ impl Builds {
             self.failures()
                 .into_iter()
                 .map(|(handle, failure)| {
-                    let built = self
-                        .modules
-                        .as_ref()
-                        .is_none_or(|modules| modules.path(&handle).is_file());
+                    let bundle = self
+                        .bundles
+                        .lock()
+                        .expect("builds poisoned")
+                        .get(&handle)
+                        .copied();
+                    // A UI extension runs the bundle of its last build that worked, when there
+                    // is one; a Function, the module published.
+                    let (kind, built) = match bundle {
+                        Some(built) => ("ui", built),
+                        None => (
+                            "function",
+                            self.modules
+                                .as_ref()
+                                .is_none_or(|modules| modules.path(&handle).is_file()),
+                        ),
+                    };
                     json!({
                         "handle": handle,
+                        "kind": kind,
                         "reason": failure.reason,
                         "output": failure.output,
                         "built": built,
@@ -488,6 +518,7 @@ impl Watcher {
             looked: 0,
             shared_content: None,
             typegen: BTreeMap::new(),
+            sources: BTreeMap::new(),
         };
         let first = coordinator.prepare();
         let thread = std::thread::Builder::new()
@@ -695,7 +726,7 @@ pub fn ignored(relative: &Path, outputs: &[PathBuf]) -> bool {
 
 /// What the build of a Function writes, in its folder: `dist/`, the module wherever
 /// `[extensions.build] path` puts it, and for a JavaScript Function, the types of its typegen.
-fn outputs_of(function: &config::FunctionExtension) -> Vec<PathBuf> {
+pub(crate) fn outputs_of(function: &config::FunctionExtension) -> Vec<PathBuf> {
     let mut outputs = vec![PathBuf::from("dist")];
     if function.build() == Some(config::Build::JavaScript) {
         outputs.extend(lsf_app::checkout::javascript::outputs(&function.dir));
@@ -813,7 +844,7 @@ fn stale(extension: &lsf_app::config::UiExtension) -> bool {
 /// gets each one's path in `dir`, its path and its metadata, `folder` each folder walked. A
 /// symbolic link is followed, to what it leads to, once; one that leads into `dir` or above it
 /// is not (what is in `dir` is walked anyway).
-fn walk(
+pub(crate) fn walk(
     dir: &Path,
     skip: &dyn Fn(&Path) -> bool,
     file: &mut dyn FnMut(&Path, &Path, &std::fs::Metadata),
@@ -1681,6 +1712,10 @@ struct Coordinator {
     /// The Rust Functions whose build follows a change of a `.graphql` file, with the
     /// [`module_hash`] of their module before it: one that comes out the same is said.
     typegen: BTreeMap<String, String>,
+    /// What each running build builds from, as it started: recorded once it built
+    /// ([`crate::freshness`]), for `lsf app check` and `lsf app function run` to know the
+    /// module is up to date.
+    sources: BTreeMap<String, crate::freshness::Sources>,
 }
 
 impl Coordinator {
@@ -1962,10 +1997,12 @@ impl Coordinator {
     /// the build of a Function does, and has the pages reload.
     fn build_ui(&mut self, handle: &str) {
         let started = Instant::now();
+        let mut bundle = None;
         let built = config::load(&self.root).and_then(|app| {
             let extension = app
                 .ui_extension(handle)
                 .ok_or_else(|| format!("{handle} is not an extension of the app"))?;
+            bundle = Some(extension.bundle.clone());
             lsf_app::checkout::javascript::build_extension(extension, &self.root)
         });
         match built {
@@ -1974,16 +2011,17 @@ impl Coordinator {
                     "✓ {handle} built in {:.1}s",
                     started.elapsed().as_secs_f64()
                 ));
-                self.builds.set(handle, None);
+                self.builds.set_bundle(handle, None, true);
             }
             Err(error) => {
                 (self.log)(&format!("✗ {handle}: {error}"));
-                self.builds.set(
+                self.builds.set_bundle(
                     handle,
                     Some(Failure {
                         reason: error,
                         output: String::new(),
                     }),
+                    bundle.is_some_and(|bundle| bundle.is_file()),
                 );
             }
         }
@@ -2084,6 +2122,10 @@ impl Coordinator {
         }
         // What it builds from, as it starts: what changes later builds again.
         let inputs = self.inputs(&job);
+        self.sources.insert(
+            handle.clone(),
+            crate::freshness::sources_in(&job.dir, &job.outputs),
+        );
         let sender = self.sender.clone();
         let shared = self.shared.clone();
         let builds = self.builds.clone();
@@ -2119,8 +2161,14 @@ impl Coordinator {
     }
 
     fn finished(&mut self, handle: &str, outcome: Outcome, inputs: u64) {
+        let sources = self.sources.remove(handle);
         match outcome {
             Outcome::Built(took, output) => {
+                if let (Some(sources), Some(job)) =
+                    (sources, self.jobs().find(|job| job.handle == handle))
+                {
+                    crate::freshness::record(&self.root, handle, &job.module, &sources);
+                }
                 let unchanged = self.typegen.remove(handle).as_ref() == Some(&output);
                 self.builds.set(handle, None);
                 if self.builds.owns(handle) {

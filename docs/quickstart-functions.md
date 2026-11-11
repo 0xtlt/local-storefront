@@ -10,6 +10,11 @@ discount Function in TypeScript (`discount-typescript`) and a checkout UI extens
 [playground](https://github.com/0xtlt/local-storefront/tree/main/examples/checkout-playground/extensions)
 into the `extensions/` of a folder that has a `shopify.app.toml`.
 
+lsf runs the extensions whose `api_version` is `2026-10` or `2027-01`. On another version, a
+Function does not run and a UI extension is not offered to the checkout: `validate` says so, and
+`app check` fails with the reason (`api_version "2026-07" is not supported (supported: 2026-10,
+2027-01)`). Change the `api_version` of its `shopify.extension.toml` to one of the two.
+
 ## 1. Install and write scenarios
 
 In the app's folder:
@@ -89,6 +94,10 @@ It prints the input, the output, the logs and the instructions of the run, then 
   subtotal 346.00 USD · discounts -21.00 USD · shipping 0.00 USD · tax 0.00 USD · total 325.00 USD
 ```
 
+When a file of the Function changed after its module was built, `app function run` builds it
+first, as `shopify app function run` does (`build:  discount-typescript: … changed after its
+module was built: building it first`).
+
 Keep the input lsf built, and run the Function on it later, as `shopify app function run
 --input` does:
 
@@ -98,8 +107,26 @@ npx local-storefront app function run discount-typescript --scenario discount-au
 npx local-storefront app function run discount-typescript --input tests/fixtures/six-totes.json
 ```
 
-`--input -` reads the input from stdin, and `--format json` prints the run as JSON. A Function
-with several targets needs `--export <name>`.
+`--save-input` creates the folders of its file. `--input -` reads the input from stdin, and
+`--format json` prints the run as JSON. A Function with several targets needs `--export <name>`.
+In an app with one Function, the handle can be left out.
+
+A fixture of the unit tests of Shopify's templates (`{"payload": {"export", "target", "input",
+"output"}}`) is checked: its `output` must be the run's, and its `target` and `export` the
+Function's. `--input` with a folder runs each of its `*.json` fixtures:
+
+```bash
+npx local-storefront app function run --input tests/fixtures
+```
+
+```text
+pass     tests/fixtures/six-totes.json
+fails    tests/fixtures/fifteen.json: the output is not the one the fixture expects:
+           operations[0].productDiscountsAdd.candidates[0].value.percentage.value
+             expected: 15
+             actual:   10
+ran 2 fixtures of discount-typescript: 1 passed, 1 failed
+```
 
 ## 5. Say what the checkout must look like
 
@@ -157,12 +184,16 @@ jobs:
 ```
 
 `app check` fails on a Function that traps, runs past Shopify's instruction limit or answers an
-output its schema refuses, and on an `expect` that is not met. It needs no store and no network.
+output its schema refuses, and on an `expect` that is not met. It also fails on an extension
+the checkout does not offer (an `api_version` lsf does not run, no module or bundle), on a
+Function whose files changed after its module was built (`stale`: give `--build`), and on what
+Shopify rejects in a theme app extension. It needs no store and no network.
 
 ## Coming from Shopify's CLI
 
 `lsf app dev --watch` stands for `shopify app dev`, `lsf app build` for `shopify app build`, and
-`lsf app function run --input` for `shopify app function run`. `app function typegen` and
+`lsf app function run --input` for `shopify app function run` (which builds a changed Function
+first too). `app function typegen` and
 `app function schema` work offline. There is no development store, tunnel or deploy. The full
 table, with what lsf does not do: [coming from Shopify's CLI](checkout.md#coming-from-shopifys-cli).
 

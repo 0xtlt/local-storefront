@@ -132,9 +132,16 @@ pub fn run(
             problem.message,
         );
     }
-    let app_problems: Vec<&lsf_app::config::Diagnostic> = shopify_app
+    // What the app gets wrong, and what Shopify rejects in its theme app extensions when it
+    // deploys them (`lsf app build` checks them the same way).
+    let app_problems: Vec<lsf_app::config::Diagnostic> = shopify_app
         .iter()
-        .flat_map(|app| &app.diagnostics)
+        .flat_map(|app| {
+            app.diagnostics
+                .iter()
+                .cloned()
+                .chain(crate::theme_extensions::diagnostics(app, &[]))
+        })
         .collect();
     let app_errors = app_problems
         .iter()

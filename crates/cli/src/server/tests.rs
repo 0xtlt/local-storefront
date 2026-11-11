@@ -5928,6 +5928,33 @@ fn a_scenario_sets_the_settings_of_a_ui_extension() {
             .contains("the app has no UI extension `nope`"),
         "{home}"
     );
+    // The settings of typo.json are its problem: the scenario that gives right ones has none,
+    // and the page counts one scenario with problems, not every one that runs the extension.
+    let scenario = |name: &str| {
+        home["scenarios"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|scenario| scenario["name"] == name)
+            .cloned()
+            .unwrap_or_else(|| panic!("{home}"))
+    };
+    assert_eq!(scenario("gift")["status"], "ok", "{}", scenario("gift"));
+    assert_eq!(
+        scenario("typo")["status"],
+        "warning",
+        "{}",
+        scenario("typo")
+    );
+    assert!(
+        scenario("typo")["warnings"]
+            .to_string()
+            .contains("has no setting `max_lenght`"),
+        "{}",
+        scenario("typo")
+    );
+    let page = text(&get(&state, "/__lsf/checkouts", "home"));
+    assert!(page.contains("2 scenarios · 1 with problems"), "{page}");
 }
 
 #[test]

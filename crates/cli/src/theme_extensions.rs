@@ -183,6 +183,38 @@ fn gzipped(bytes: &[u8]) -> usize {
     encoder.finish().map_or(bytes.len(), |out| out.len())
 }
 
+/// What [`validate_app`] finds in the theme app extensions of `app` (those of `handles`, or
+/// all), as diagnostics of the app: `theme-ext: blocks/stars.liquid:3: …`, an error for what
+/// Shopify rejects. For `lsf validate` and `lsf app check`, which print them their own way.
+pub fn diagnostics(app: &App, handles: &[String]) -> Vec<lsf_app::config::Diagnostic> {
+    let env = lsf_theme::environment();
+    let mut diagnostics = Vec::new();
+    for extension in &app.theme_extensions {
+        if !handles.is_empty() && !handles.contains(&extension.handle) {
+            continue;
+        }
+        let report: Report = validate::validate(&extension.dir, &env, &gzipped);
+        let label = label(app, &extension.dir);
+        for problem in report.problems {
+            let place = match (problem.file.is_empty(), problem.line) {
+                (true, _) => label.clone(),
+                (false, Some(line)) => format!("{label}/{}:{line}", problem.file),
+                (false, None) => format!("{label}/{}", problem.file),
+            };
+            diagnostics.push(lsf_app::config::Diagnostic {
+                severity: if problem.error {
+                    lsf_app::config::Severity::Error
+                } else {
+                    lsf_app::config::Severity::Warning
+                },
+                extension: Some(extension.handle.clone()),
+                message: format!("{place}: {}", problem.message),
+            });
+        }
+    }
+    diagnostics
+}
+
 /// Checks the theme app extensions of `app` (those of `handles`, or all) as Shopify does when it
 /// builds and deploys them, and prints what it found. Answers how many were checked and whether
 /// one has an error.
