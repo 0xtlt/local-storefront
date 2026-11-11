@@ -1288,6 +1288,19 @@ fn a_bulk_mutation_runs_once_per_line_of_its_staged_upload() {
         data(&missing, "bulkOperationRunMutation")["userErrors"][0]["code"],
         json!("NO_SUCH_FILE")
     );
+    // One mutation field selected twice, directly and through a fragment, merges into one, as
+    // GraphQL merges fields of one response key.
+    let merged = run(
+        &mut shop,
+        r#"mutation($mutation: String!, $path: String!) { bulkOperationRunMutation(mutation: $mutation, stagedUploadPath: $path) { bulkOperation { id } userErrors { field message code } } }"#,
+        json!({
+            "mutation": "mutation($product: ProductCreateInput!) { productCreate(product: $product) { product { id } } ...errors } fragment errors on Mutation { productCreate(product: $product) { userErrors { message } } }",
+            "path": key,
+        }),
+    );
+    let payload = data(&merged, "bulkOperationRunMutation");
+    assert_eq!(payload["userErrors"], json!([]), "{merged}");
+    assert!(payload["bulkOperation"]["id"].is_string(), "{merged}");
     // A mutation the schema refuses, or one with no mutation field or two, starts nothing.
     for (invalid, says) in [
         ("mutation { shop { id } }", "Invalid mutation: "),
