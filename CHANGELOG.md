@@ -7,12 +7,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 lsf now serves a local GraphQL Admin API (version 2026-10) and delivers an app's webhooks to its
 backend: the backend of a Shopify app runs and is tested offline, against the store data, with
-the same data every run. Some store data, extensions and tests written for 0.2.0 need a change:
-see Breaking changes.
+the same data every run. The embedded app opens in a local admin, and the theme renders the app's
+theme app extensions. Some store data, extensions and tests written for 0.2.0 need a change: see
+Breaking changes.
 
 ### Breaking changes
 
-What to change when you upgrade from 0.2.0. Each one is told in full under Changed or Fixed.
+What to change when you upgrade from 0.2.0. Each one is told in full below.
 
 - **A Function runs only when the shop has an enabled owner of it, as on Shopify.** At the
   shop's checkout and in a scenario without `extensions`, a payment or delivery customization, a
@@ -69,245 +70,19 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 
 ### Added
 
-- **GraphiQL for the Admin API** at `/__lsf/graphiql`: the shops, their tokens and the served
-  API versions filled in, the schema's docs, the cost debug header. It works offline. The start
-  lines and the app's home page link to it. A browser that opens the GraphQL endpoint is
-  pointed there.
-- **A local GraphQL Admin API, version 2026-10, with every mutation.** A server with `--app`
-  answers `POST /admin/api/2026-10/graphql.json` over the store data, with the ids the storefront, the
-  checkout and the Function inputs use. Queries follow Shopify's 2026-10 schema (its
-  introspection matches Shopify's), with its validation errors, query costs (`extensions.cost`),
-  throttling (`THROTTLED`, `MAX_COST_EXCEEDED`), cursors, the `query:` search syntax, and
-  `ACCESS_DENIED` for a scope the token lacks. All 496 mutations of 2026-10 are simulated,
-  the deprecated ones included, with their user errors, side effects and webhooks:
-  - the catalog: products, variants, media, `productSet`, collections and their sources,
-    bundles, combined listings, inventory, transfers and shipments, locations, publications,
-    channels, product feeds, selling plans, gift cards;
-  - orders: payments and payment terms, fulfillments and fulfillment orders (split, merge,
-    reroute), fulfillment services, shipping labels, refunds, returns and exchanges, order
-    edits, draft orders, disputes, store credit, risk, tax;
-  - customers and B2B companies, segments (their query language is evaluated over the
-    customers), saved searches, merges, data erasure, consent, marketing, analytics and a
-    ShopifyQL subset;
-  - the Subscriptions API: contracts, drafts, billing cycles and attempts (test cards decide the
-    outcome), and customers' payment methods;
-  - markets, catalogs, price lists and contextual prices, quantity rules, locales, web presences;
-  - metafields and their definitions, metaobjects, pages, blogs, menus, redirects (in bulk and by
-    CSV import), files, translations, policies;
-  - themes and theme files (written over the theme directory in memory, never to disk), script
-    tags (loaded by `content_for_header`), pixels, storefront tokens, delegate tokens;
-  - the app: billing, discounts and Function settings, bulk operations, staged uploads,
-    `appUninstall`, scope revocation, Flow triggers, point of sale.
+#### Getting started
 
-  A failed mutation changes nothing. `crates/app/tests/coverage.rs` fails if a mutation of a
-  version lsf serves is not simulated. Guide: [Admin API](docs/admin.md).
-- **API version 2027-01, the release candidate, on demand.** `--admin-versions 2026-10,2027-01`
-  serves it next to 2026-10, each at its own `/admin/api/<version>/graphql.json`, with its own
-  schema, introspection, access scopes, search filters and webhook topics:
-  - a field or a mutation of one version is refused in the other with Shopify's error;
-  - a webhook subscription is delivered in the version that made it (`X-Shopify-API-Version`);
-  - the records are shared, and 2027-01 reads what it removed the way Shopify says to replace it.
-
-  A version Shopify no longer supports (`2025-10`) is answered by 2026-10, as Shopify falls
-  forward, and `X-Shopify-API-Version` says so. Another answers `404` saying which versions are
-  served. `lsf app webhook trigger --api-version 2027-01` builds the payload in 2027-01.
-  [API versions](docs/admin.md#api-versions).
-- **The storefront and the checkout show what the backend changes.** A product it creates is on
-  the theme's pages at once, and a draft leaves them. A customer it creates can log in at the
-  checkout. A metafield it sets is read by Liquid and by the Functions, and an app discount it
-  creates runs its Function at the checkout. Open pages reload. An order placed in the local
-  checkout is an order of the Admin API, and its `orders/create` webhook reaches the backend.
-- **OAuth, token exchange and session tokens**, answered as Shopify answers them:
-  - the authorization code grant, and token exchange from a session token (embedded apps);
-  - expiring offline tokens and their refresh, and client credentials;
-  - a launch URL that opens the backend as Shopify's admin opens an embedded app.
-
-  Tokens have the scopes of `shopify.app.toml`. The guide says what Shopify's libraries need to
-  reach lsf.
-- **An admin to preview the embedded app in, with a local App Bridge.**
-  `http://127.0.0.1:9292/admin/apps/<handle>` shows the app in a frame, at a new launch URL on
-  every load, with the shop's name, the app's navigation and its title bar around it; `serve`
-  and `app dev` print its URL, and the home page links to it. Its navigation links to the
-  storefront and to the checkout the server runs (**Preview**: Online Store, Checkout), each
-  in a new tab, and lists no section of the admin lsf does not simulate (Orders, Products…). The app's pages load lsf's App
-  Bridge (`/__lsf/admin/app-bridge.js`) before Shopify's, which then does nothing:
-  - `shopify.idToken()` and `fetch()` with the session token, as App Bridge v4 adds it;
-  - the title bar (`ui-title-bar`, `s-page`), the navigation (`s-app-nav`, `ui-nav-menu`), the
-    save bar (`ui-save-bar`, `data-save-bar` forms), toasts, the loading bar, `shopify.user()`;
-  - the resource picker, with the shop's products, variants and collections;
-  - modals (`ui-modal`, `s-app-window`), `shopify:admin/…` links.
-
-  What lsf does not simulate (the scanner, POS, Sidekick, …) rejects or warns and says so. The
-  admin says when the app runs Shopify's App Bridge instead. In the React Router template, three
-  lines behind `APP_BRIDGE_URL` switch to lsf's. [Preview the embedded
-  app](docs/admin.md#preview-the-embedded-app).
-- **Polaris without the internet.** lsf serves the paths of Shopify's CDN at `/__lsf/cdn/<path>`:
-  an app's pages load Polaris from `/__lsf/cdn/shopifycloud/polaris-2.js` (`polarisUrl` of the
-  React Router template, in `AppProvider` and `shopifyApp`). `--polaris online`, the default,
-  redirects to the CDN; `--polaris offline` (or `PUT /__lsf/polaris` while lsf runs) serves lsf's
-  copy of Polaris 2.0.0 and 1.1.0, its icons and its fonts, pointed at lsf, so that the
-  components, icons and fonts render with no request to `cdn.shopify.com`. Offline, a page that
-  still loads Polaris from the CDN gets lsf's copy from lsf's App Bridge when the CDN's fails.
-  [Polaris without the internet](docs/admin.md#polaris-without-the-internet).
-- **Webhooks, signed as Shopify signs them.** The subscriptions of `shopify.app.toml` and those
-  the backend makes with `webhookSubscriptionCreate` are delivered to the backend:
-  - with Shopify's headers and HMAC;
-  - retried after 1, 5 and 15 s;
-  - filtered by `filter` and `include_fields`;
-  - refused by the backend (`401`, `403`): the delivery's `reason`, one line of the server and
-    `lsf app webhook trigger` name the secret lsf signed it with, as `client secret:` does.
-
-  Payloads follow Shopify's 2026-10 examples, for every topic Shopify publishes an example of
-  (224 of the 227); the other three are logged, never sent with a made-up body. The storefront's
-  cart and the local checkout send `carts/*` and `checkouts/*`, and a checkout left without an
-  order becomes an abandoned checkout the backend reads. `lsf app webhook trigger` sends one on
-  demand, compliance topics included, as `shopify app webhook trigger` does (`--format json`
-  for a tool). After an uninstall, nothing is delivered for the shop but `app/uninstalled`.
-- **Webhooks stay on this machine.** lsf sends one to this machine (`localhost`,
-  `*.localhost`, `127.0.0.0/8`, `::1`), to `--app-url`, or to the `--address` you give, nowhere
-  else: a subscription that points at your production backend or a stale tunnel is logged
-  `not_sent`, with why, and `lsf app webhook trigger` sends nothing and exits with `2`. Give
-  `--app-url http://localhost:<port>`: the start lines say when it is missing. A name under
-  `localhost` (`app.localhost`) goes to the loopback whatever your system's resolver says.
-- **The webhook log, for tests.** `GET /__lsf/webhooks` lists the deliveries, filtered by
-  `topic`, `state`, `shop` (`test-1` or `test-1.myshopify.com`), `resource` (the GID of a
-  record: the order a test placed) and `since` (a delivery's id). `?wait=1` waits for one that
-  matches every filter. Every answer has `last`, the newest id, to pass as `since` next time:
-  a test no longer gets another test's webhook. A wait that could only time out (a shop lsf
-  does not have, a topic no subscription covers) answers `422` at once.
-  [Control API](docs/control-api.md#webhook-deliveries).
-- **The start lines of an app.** With `--app`, the Admin API's URL and token, where the client
-  secret came from, where the webhooks go and the app proxy are printed before `ready:`: a tool
-  that reads up to `ready:` has the token. Without the Admin API, none of them. An app without
-  an `extensions` directory is said to be a backend, in one line.
-- **The app proxy.** A storefront request under the prefix of `[app_proxy]` goes to the backend
-  with Shopify's parameters and signature. A Liquid answer is rendered in the theme's layout.
-- **Billing.** `appSubscriptionCreate` and `appPurchaseOneTimeCreate` lead to a local approval
-  page. Approving goes to the `returnUrl`, and the charge is active.
-- **Managed pricing (Shopify App Pricing).** Declare the app's plans in a file
-  (`--pricing-plans pricing.toml`) or through `PUT /__lsf/admin/pricing-plans`. lsf's admin shows
-  them at `/admin/charges/<app handle>/pricing_plans`, where a `shopify:admin/charges/…` link
-  and the template's `redirect(…, { target: "_top" })` land. The merchant picks a plan: a test
-  subscription with the plan's `planHandle` replaces the current one, `app_subscriptions/update`
-  is delivered, and the browser goes to the plan's welcome link with `charge_id` and
-  `plan_handle`. The Billing API then refuses to create charges, as Shopify does. With
-  `legacy = false` (Shopify App Pricing since April 2026), no change of the subscription sends a
-  webhook, `appSubscriptionCancel` from the app included.
-  [Managed pricing](docs/admin.md#managed-pricing).
-- **A test ends the merchant's plan: `POST /__lsf/admin/pricing-plans/cancel`.** The shop's
-  subscription of managed pricing is `CANCELLED` at once, without the app's token, and
-  `app_subscriptions/update` is delivered, none with `legacy = false`: the case of an app that has
-  to notice by itself that the plan ended. Shopify's plan page has no button for it (the merchant
-  chooses another plan or uninstalls), so lsf's page has none either: the route stands for a plan
-  that ends while the app stays installed. [Managed pricing](docs/admin.md#managed-pricing).
-- **A local Partner API: an app on Shopify App Pricing reads its plan.** Since April 2026 such an
-  app learns its plan from the Partner API's `activeSubscription`, not from a webhook. lsf serves
-  it at Shopify's path on its own origin, `POST /{partner_id}/api/2026-10/graphql.json` (also
-  2026-07 and 2027-01), with Shopify's schema: the app changes only the origin of
-  `partners.shopify.com`. `activeSubscription` answers the shop's plan, its trial and its billing
-  cycle by the shop's clock; `events` and `app { events }` answer the history: installs,
-  uninstalls, plans chosen, changed and ended, and every change of a charge. Both `legacy` modes
-  feed it. The Partner ID and the `prtapi_lsf_` token are printed at start (`partner:`, with the
-  plans) and in `GET /__lsf/admin/partner`; they are the same every run. A wrong token is
-  Shopify's `401`. The rest of the Partner API answers `LSF_NOT_SIMULATED`.
-  [Read the plan from the Partner API](docs/admin.md#read-the-plan-from-the-partner-api).
-- **`lsf app function run <handle>` says when the checkout of the store data would not run the
-  Function.** A named Function runs whatever its owner, as before; when its payment customization
-  (or other owner) is disabled in the store data, or there is none, the output says so first
-  (`Named: …`, `forced` in JSON), and that it reads the files, not a running lsf.
-- **`pricing.toml` is read again when it changes** (unless `--static`, before the next request of
-  any kind), and `DELETE
-  /__lsf/admin/pricing-plans` reads it again rather than putting back the copy read at start (a
-  file that no longer reads is a `422`). Plans a `PUT` set stay until the `DELETE`.
-- **The plan selection page takes the app's handle only.** `/admin/charges/<client id>/pricing_plans`
-  is a `404` with `X-LSF-Reason` when `shopify.app.toml` has a handle: on Shopify a client id there
-  fails, so a link built with it no longer passes locally. An app with no handle keeps its page at
-  its client id, and the `pricing:` start line says Shopify's page needs a handle.
-- **Control endpoints under `/__lsf/admin`:** reset the shop, make and delete extra shops for
-  isolated tests, install and uninstall the app, and make session tokens for a test to call the
-  backend's routes. [Control API](docs/control-api.md).
-- **The shop's clock and its outbox.** `POST /__lsf/admin/clock` moves a shop's time: payment
-  schedules come due, store credit expires, payouts are made, scheduled listings go live,
-  checkouts are abandoned, data erasures run, each with its webhooks. What Shopify would send
-  the outside world (emails, labels, Flow triggers, point-of-sale messages) is never sent: it is
-  in `GET /__lsf/admin/outbox`.
-- **`--only theme,checkout,admin` runs some parts of lsf** (also `LSF_ONLY`), on `serve` and
-  `app dev`: the storefront of the theme, the checkout of the app (its Functions, UI
-  extensions, scenarios), its Admin API (OAuth, webhooks, the app proxy, lsf's admin, managed
-  pricing). `serve` runs the theme, all three with `--app`; `app dev` the checkout and the Admin
-  API. `serve --app ../my-app --only admin` is the Admin API alone, for a backend's tests, without
-  a theme folder. A part left out answers `404` on its routes, with an `X-LSF-Reason` that names
-  the `--only` serving it; a line before `ready:` says what runs (`serving: theme, checkout,
-  admin`), and `GET /__lsf/status` and `GET /__lsf/admin` list it (`parts`). An option of a part
-  left out (`--pricing-plans` without the admin part, `--variant` without the checkout) stops the
-  start when given on the command line; set by its variable (`LSF_APP_URL`), it is ignored and
-  said. `serve` without `--app` serves no Admin API: it was new in this version, and costs
-  memory a theme does not use. [What runs](docs/cli.md#what-runs).
-- **New options:**
-  - `--app-url`: where the backend listens.
-  - `--no-functions`: the app's UI extensions and Admin API, and none of its Functions, for a
-    backend's tests.
-  - `--client-secret`: else `SHOPIFY_API_SECRET`, else the app's `.env`.
-  - `--admin-throttle`.
-  - `--admin-versions`: the API versions served.
-  - `--admin-fetch-local`: sources from a URL (`themeCreate`, `themeFilesUpsert`,
-    `urlRedirectImportCreate`) may be on this machine. Off by default, as Shopify cannot reach
-    it.
-  - `--admin-source <url>=<file>`: a URL of your backend's own answered with a file, never
-    downloaded; `PUT /__lsf/admin/sources?url=` stubs one from a test.
-- **Expected results in checkout scenarios: `lsf app check` fails when a Function decides
-  wrong,** not only when it fails to run. A scenario's `expect` says what its checkout must look
-  like once the Functions ran: the payment methods, the express buttons, the delivery options,
-  the discounts, the lines and the errors, each with `includes`, `excludes` and `equals` (an
-  entry by its handle or name, or by the fields it must have, such as
-  `{"handle": "standard", "cost": "0.00"}`), and exact `totals`.
-  `"express_methods": {"excludes": ["paypal"]}` with `"payment_methods": {"includes": ["paypal"]}`
-  replaces piping `app function run --format json` into `jq`. Each expectation that is not met
-  prints the scenario, the assertion, what was expected and what the checkout has, and makes the
-  check exit with `1`; `--format json` has them in `expectations`. The Functions run as the
-  order is placed (`"step": "interaction"`: the page before it). `validate` warns about a name in
-  `excludes` that the checkout does not offer, which would check nothing. With `--extension`, the
-  `expect` of a scenario that runs a Function left out is not checked, and the summary says so:
-  its checkout is not the one it describes. The scenario schema has `expect`, and two scenarios
-  of the playground use it.
-  [Expected results](docs/checkout.md#expected-results).
-- **`lsf app check --build`** builds the extensions first, for a clone where `dist/` is not
-  committed. `app check` also warns about a Function that ran in no scenario, so that nothing
-  checks it (`ranInNoScenario` in JSON), and its summary counts it (`no Function failed, 1
-  Function ran in no scenario`); the exit code does not change. `app check --help` describes
-  the JSON it prints. A missing build says
-  to run `lsf app build <handle>`.
+- **Four quickstarts**, one page each from the first command to a test in CI: a theme
+  ([quickstart-theme](docs/quickstart-theme.md)), Functions and checkout UI extensions
+  ([quickstart-functions](docs/quickstart-functions.md)), an Admin API backend
+  ([quickstart-admin-api](docs/quickstart-admin-api.md)) and a public app made from the React
+  Router template ([quickstart-app](docs/quickstart-app.md)).
 - **The docs ship in the npm package.** `node_modules/local-storefront/` has the `llms.txt`,
   `docs/` and `CHANGELOG.md` of the version you installed, for a tool or an agent to read
   offline.
-- **Order metafields on the order status page of the customer account.** A customer account UI
-  extension declares them with `owner_type = "ORDER"`, which lsf refused as an unknown owner
-  type. `shopify.appMetafields` of the order status targets now has them as `order` entries
-  (`target: {type: 'order', id: 'gid://shopify/Order/…'}`), read from the order in the Admin
-  API: what the backend sets with `metafieldsSet`, on an order placed in the local checkout or
-  on one of the store data, and the cart metafields copied onto an order placed here. As on
-  Shopify since 2026-04, a cart metafield is copied when the order is placed if an ORDER
-  definition with its namespace and key has `cartToOrderCopyable` enabled, made with
-  `metafieldDefinitionCreate` or declared in `shopify.app.toml`
-  (`[order.metafields.app.gift_message]` with `capabilities.cart_to_order_copyable = true`,
-  which lsf now reads). The checkout and its thank-you page have no `order` entry, as on
-  Shopify: an `ORDER` declaration reads nothing there. [Checkout](docs/checkout.md),
-  [Admin API](docs/admin.md#what-the-storefront-and-the-checkout-see).
-- **`examples/admin-backend`:** a backend written with Shopify's libraries
-  (`@shopify/shopify-app-react-router`, `@shopify/shopify-api`), with a script that runs it
-  against lsf end to end (`mise run admin:e2e`).
-- **`lsf app function schema`** writes a Function's `schema.graphql`, the GraphQL schema of its
-  API at its `api_version`, as `shopify app function schema` does, from the schemas lsf
-  carries, without the network: in the Function's folder, by handle, or with `--path`;
-  `--stdout` prints it. [The schema of a Function](docs/checkout.md#the-schema-of-a-function).
-- **Express checkout buttons.** The checkout shows the payment methods of the
-  `ACCELERATED_CHECKOUT` placement as express buttons above the contact section (Shop Pay,
-  PayPal, Apple Pay, Google Pay… in their colors, then "OR"), once the payment customizations
-  ran: a Function that hides a method there (`paymentMethodHide` with `placements`) now has a
-  visible effect. A click says lsf does not simulate the wallet. The page's JSON has
-  `expressMethods`, and every method its `placements`; `lsf app function run` prints each method
-  with its placements. The `payment-methods` scenario of `app init` has PayPal in both
-  placements, as Shopify offers it with PayPal Express on.
+
+#### Themes and the storefront
+
 - **Theme app extensions render in the theme.** With `serve --app`, the app blocks a JSON
   template or a section group names (`shopify://apps/<app>/blocks/<block>/<id>`) render where the
   theme renders blocks: `{% render block %}` for a `@app` block of `section.blocks`,
@@ -343,42 +118,329 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   (`missing_translation`). Each has its file, its line and the closest name, in text and in
   `--format json`. Horizon and Dawn have none.
 
+#### Checkout and Functions
+
+- **Expected results in checkout scenarios: `lsf app check` fails when a Function decides
+  wrong,** not only when it fails to run. A scenario's `expect` says what its checkout must look
+  like once the Functions ran: the payment methods, the express buttons, the delivery options,
+  the discounts, the lines and the errors, each with `includes`, `excludes` and `equals` (an
+  entry by its handle or name, or by the fields it must have, such as
+  `{"handle": "standard", "cost": "0.00"}`), and exact `totals`.
+  `"express_methods": {"excludes": ["paypal"]}` with `"payment_methods": {"includes": ["paypal"]}`
+  replaces piping `app function run --format json` into `jq`. Each expectation that is not met
+  prints the scenario, the assertion, what was expected and what the checkout has, and makes the
+  check exit with `1`; `--format json` has them in `expectations`. The Functions run as the
+  order is placed (`"step": "interaction"`: the page before it). `validate` warns about a name in
+  `excludes` that the checkout does not offer, which would check nothing. With `--extension`, the
+  `expect` of a scenario that runs a Function left out is not checked, and the summary says so:
+  its checkout is not the one it describes. The scenario schema has `expect`, and two scenarios
+  of the playground use it.
+  [Expected results](docs/checkout.md#expected-results).
+- **`lsf app check --build`** builds the extensions first, for a clone where `dist/` is not
+  committed. `app check` also warns about a Function that ran in no scenario, so that nothing
+  checks it (`ranInNoScenario` in JSON), and its summary counts it (`no Function failed, 1
+  Function ran in no scenario`); the exit code does not change. `app check --help` describes
+  the JSON it prints. A missing build says to run `lsf app build <handle>`.
 - **`lsf app function run --input <file>`** runs one Function on a JSON input (`-` for stdin),
   as `shopify app function run --input` does, without the store data. A fixture of the unit
   tests of Shopify's templates (`{"payload": {"target", "input", "output"}}`) runs as it is,
   and its `output` is checked. `--export <name>` picks the target of a Function that has several,
   as Shopify's `--export` does, and `--save-input <file>` writes the input lsf built for a
   scenario's run. [Checkout](docs/checkout.md#run-a-function-on-an-input).
+- **`lsf app function run <handle>` says when the checkout of the store data would not run the
+  Function.** A named Function runs whatever its owner, as before; when its payment customization
+  (or other owner) is disabled in the store data, or there is none, the output says so first
+  (`Named: …`, `forced` in JSON), and that it reads the files, not a running lsf.
 - **`lsf app function typegen`** writes a JavaScript Function's GraphQL types
   (`generated/api.ts`), offline, as `shopify app function typegen` does: the `typegen` script of
   Shopify's templates works.
+- **`lsf app function schema`** writes a Function's `schema.graphql`, the GraphQL schema of its
+  API at its `api_version`, as `shopify app function schema` does, from the schemas lsf
+  carries, without the network: in the Function's folder, by handle, or with `--path`;
+  `--stdout` prints it. [The schema of a Function](docs/checkout.md#the-schema-of-a-function).
 - **A Shopify CLI to lsf table** in [checkout](docs/checkout.md#coming-from-shopifys-cli): each
   `shopify app` command, lsf's, and what lsf does not do.
-
 - **The settings of a UI extension can be set.** `checkout.extensions.<handle>.settings` of
   the store data or of a scenario are the values `shopify.settings` (`useSettings`) reads, in
   the checkout and the customer account, as a merchant fills them in. `validate` and the home
   page warn about a key the extension's `[extensions.settings]` does not declare, a value of the
   wrong type, or one not among its `choices`. `shopify.settings.value` was always empty.
   [Checkout](docs/checkout.md#set-up-the-checkout).
+- **Express checkout buttons.** The checkout shows the payment methods of the
+  `ACCELERATED_CHECKOUT` placement as express buttons above the contact section (Shop Pay,
+  PayPal, Apple Pay, Google Pay… in their colors, then "OR"), once the payment customizations
+  ran: a Function that hides a method there (`paymentMethodHide` with `placements`) now has a
+  visible effect. A click says lsf does not simulate the wallet. The page's JSON has
+  `expressMethods`, and every method its `placements`; `lsf app function run` prints each method
+  with its placements. The `payment-methods` scenario of `app init` has PayPal in both
+  placements, as Shopify offers it with PayPal Express on.
+- **Order metafields on the order status page of the customer account.** A customer account UI
+  extension declares them with `owner_type = "ORDER"`, which lsf refused as an unknown owner
+  type. `shopify.appMetafields` of the order status targets now has them as `order` entries
+  (`target: {type: 'order', id: 'gid://shopify/Order/…'}`), read from the order in the Admin
+  API: what the backend sets with `metafieldsSet`, on an order placed in the local checkout or
+  on one of the store data, and the cart metafields copied onto an order placed here. As on
+  Shopify since 2026-04, a cart metafield is copied when the order is placed if an ORDER
+  definition with its namespace and key has `cartToOrderCopyable` enabled, made with
+  `metafieldDefinitionCreate` or declared in `shopify.app.toml`
+  (`[order.metafields.app.gift_message]` with `capabilities.cart_to_order_copyable = true`,
+  which lsf now reads). The checkout and its thank-you page have no `order` entry, as on
+  Shopify: an `ORDER` declaration reads nothing there. [Checkout](docs/checkout.md),
+  [Admin API](docs/admin.md#what-the-storefront-and-the-checkout-see).
 
-- **The embedded app opens in lsf's admin as the React Router template ships it.** The admin's
-  frame goes through a proxy on a port of its own. It lets lsf's admin frame every page, the
-  library's bounce page and `redirect(…, {target: "_top"})` page included, and gives the pages
-  lsf's App Bridge and Polaris. The `entry.server.tsx`, `app.tsx` and `polarisUrl` edits are no
-  longer needed. `LSF_ADMIN_FRAME=direct` opens the backend itself
-  ([preview the embedded app](docs/admin.md#preview-the-embedded-app)).
+#### The Admin API, for the backend of an app
+
+- **A local GraphQL Admin API, version 2026-10, with every mutation.** A server with `--app`
+  answers `POST /admin/api/2026-10/graphql.json` over the store data, with the ids the
+  storefront, the checkout and the Function inputs use. Queries follow Shopify's 2026-10 schema
+  (its introspection matches Shopify's), with its validation errors, query costs
+  (`extensions.cost`, and the cost of each field with `Shopify-GraphQL-Cost-Debug: 1`),
+  throttling (`THROTTLED`, `MAX_COST_EXCEEDED`), cursors, the `query:` search syntax, and
+  `ACCESS_DENIED` for a scope the token lacks. All 496 mutations of 2026-10 are simulated,
+  the deprecated ones included, with their user errors, side effects and webhooks:
+  - the catalog: products, variants, media, `productSet`, collections and their sources,
+    bundles, combined listings, inventory, transfers and shipments, locations, publications,
+    channels, product feeds, selling plans, gift cards;
+  - orders: payments and payment terms, fulfillments and fulfillment orders (split, merge,
+    reroute), fulfillment services, shipping labels, refunds, returns and exchanges, order
+    edits, draft orders, disputes, store credit, risk, tax;
+  - customers and B2B companies, segments (their query language is evaluated over the
+    customers), saved searches, merges, data erasure, consent, marketing, analytics and a
+    ShopifyQL subset;
+  - the Subscriptions API: contracts, drafts, billing cycles and attempts (test cards decide the
+    outcome), and customers' payment methods;
+  - markets, catalogs, price lists and contextual prices, quantity rules, locales, web presences;
+  - metafields and their definitions, metaobjects, pages, blogs, menus, redirects (in bulk and by
+    CSV import), files, translations, policies;
+  - themes and theme files (written over the theme directory in memory, never to disk), script
+    tags (loaded by `content_for_header`), pixels, storefront tokens, delegate tokens;
+  - the app: billing, discounts and Function settings, bulk operations, staged uploads,
+    `appUninstall`, scope revocation, Flow triggers, point of sale.
+
+  A failed mutation changes nothing. New records have 13-digit ids, as Shopify's do, the same
+  every run. Discount summaries read like the admin's (`$5.00 off entire order • Minimum
+  purchase of $50.00`), a completed draft order keeps its discounts, a deprecated field reads
+  what its replacement has, `productSet` refuses an option value `productOptions` does not
+  declare, the `shop/update` and `app/uninstalled` payloads have the shop's `domain`, and an
+  image uploaded to a staged target has its `width` and `height`. A product created without
+  `write_publications`, or a `fileCreate` source lsf does not download, gets a note in
+  `extensions.lsf.notes`. `GET /admin/oauth/access_scopes.json` lists the token's scopes; the
+  other REST paths answer JSON that says lsf does not simulate the REST Admin API.
+  `crates/app/tests/coverage.rs` fails if a mutation of a version lsf serves is not simulated.
+  Guide: [Admin API](docs/admin.md).
+- **GraphiQL for the Admin API** at `/__lsf/graphiql`: the shops, their tokens and the served
+  API versions filled in, the schema's docs, the cost debug header. It works offline. The start
+  lines and the app's home page link to it. A browser that opens the GraphQL endpoint is
+  pointed there.
+- **API version 2027-01, the release candidate, on demand.** `--admin-versions 2026-10,2027-01`
+  serves it next to 2026-10, each at its own `/admin/api/<version>/graphql.json`, with its own
+  schema, introspection, access scopes, search filters and webhook topics:
+  - a field or a mutation of one version is refused in the other with Shopify's error;
+  - a webhook subscription is delivered in the version that made it (`X-Shopify-API-Version`);
+  - the records are shared, and 2027-01 reads what it removed the way Shopify says to replace it.
+
+  A version Shopify no longer supports (`2025-10`) is answered by 2026-10, as Shopify falls
+  forward, and `X-Shopify-API-Version` says so. Another answers `404` saying which versions are
+  served. `lsf app webhook trigger --api-version 2027-01` builds the payload in 2027-01 for
+  every subscription, and says so of a subscription of another version.
+  [API versions](docs/admin.md#api-versions).
+- **The storefront and the checkout show what the backend changes.** A product it creates is on
+  the theme's pages at once, and a draft leaves them. A customer it creates can log in at the
+  checkout. A metafield it sets is read by Liquid and by the Functions, and an app discount it
+  creates runs its Function at the checkout. Open pages reload. An order placed in the local
+  checkout is an order of the Admin API, and its `orders/create` webhook reaches the backend.
+  A checkout scenario added or changed on disk keeps what the backend set up; only a change of
+  the store's own data seeds the shops again, and the server names the files
+  ([when the data changes on disk](docs/cli.md#when-the-data-changes-on-disk)).
+- **OAuth, token exchange and session tokens**, answered as Shopify answers them:
+  - the authorization code grant, and token exchange from a session token (embedded apps);
+  - expiring offline tokens and their refresh, and client credentials;
+  - a launch URL that opens the backend as Shopify's admin opens an embedded app.
+
+  Tokens have the scopes of `shopify.app.toml`. They are derived from the client id, the client
+  secret, the shop and their rank: the same every run, so a backend's stored session works
+  after lsf restarts ([tokens](docs/admin.md#tokens)). With `client_id = ""`, as the template
+  ships it, lsf takes `SHOPIFY_API_KEY` of the environment or of the app's `.env`, and warns when
+  it has to use its own. The guide says what Shopify's libraries need to reach lsf.
+- **Webhooks, signed as Shopify signs them.** The subscriptions of `shopify.app.toml` and those
+  the backend makes with `webhookSubscriptionCreate` are delivered to the backend:
+  - with Shopify's headers and HMAC;
+  - retried after 1, 5 and 15 s;
+  - filtered by `filter` and `include_fields`;
+  - refused by the backend (`401`, `403`): the delivery's `reason`, one line of the server and
+    `lsf app webhook trigger` name the secret lsf signed it with, as `client secret:` does.
+
+  Payloads follow Shopify's 2026-10 examples, for every topic Shopify publishes an example of
+  (224 of the 227); the other three are logged, never sent with a made-up body. The storefront's
+  cart and the local checkout send `carts/*` and `checkouts/*`, and a checkout left without an
+  order becomes an abandoned checkout the backend reads. `lsf app webhook trigger` sends one on
+  demand, compliance topics included, as `shopify app webhook trigger` does (`--format json`
+  for a tool). After an uninstall, nothing is delivered for the shop but `app/uninstalled`.
 - **Shopify's Events of `[events]` in `shopify.app.toml`.** lsf delivers the `Product` Events
   (`create`, `update`, `delete`) when a product or a variant changes through the Admin API, with
   their triggers, their `query`, their `query_filter` and Shopify's `Shopify-*` headers. The
-  template's `webhooks.products.update.tsx` receives them ([webhooks](docs/admin.md#webhooks)).
-- **App subscriptions renew on the shop's clock.** Past `currentPeriodEnd`, the period moves on
-  by its interval, the usage balance starts again, and a limited discount has an interval less.
-- **lsf warns about what the React Router template lacks:** no fetch function for lsf in
-  `app/shopify.server.ts`, no `headers` export in `app/routes/app.tsx`. The warnings are on the
-  home page and in lsf's admin.
+  template's `webhooks.products.update.tsx` receives them. `GET /__lsf/webhooks?topic=Product`
+  lists them, and `lsf app webhook trigger` names them for a topic that has no webhook
+  subscription ([webhooks](docs/admin.md#webhooks)).
+- **Webhooks stay on this machine.** lsf sends one to this machine (`localhost`,
+  `*.localhost`, `127.0.0.0/8`, `::1`), to `--app-url`, or to the `--address` you give, nowhere
+  else: a subscription that points at your production backend or a stale tunnel is logged
+  `not_sent`, with why, and `lsf app webhook trigger` sends nothing and exits with `2`. Give
+  `--app-url http://localhost:<port>`: the start lines say when it is missing. A name under
+  `localhost` (`app.localhost`) goes to the loopback whatever your system's resolver says.
+- **The webhook log, for tests.** `GET /__lsf/webhooks` lists the deliveries, filtered by
+  `topic`, `state`, `shop` (`test-1` or `test-1.myshopify.com`), `resource` (the GID of a
+  record: the order a test placed) and `since` (a delivery's id). `?wait=1` waits for one that
+  matches every filter. Every answer has `last`, the newest id, to pass as `since` next time:
+  a test no longer gets another test's webhook. A wait that could only time out (a shop lsf
+  does not have, a topic no subscription covers) answers `422` at once.
+  [Control API](docs/control-api.md#webhook-deliveries).
+- **The start lines of an app.** With `--app`, the Admin API's URL and token, where the client
+  secret came from, where the webhooks go and the app proxy are printed before `ready:`: a tool
+  that reads up to `ready:` has the token. Without the Admin API, none of them. An app without
+  an `extensions` directory is said to be a backend, in one line.
+- **The app proxy.** A storefront request under the prefix of `[app_proxy]` goes to the backend
+  with Shopify's parameters and signature. A Liquid answer is rendered in the theme's layout.
+  [App proxy](docs/admin.md#app-proxy).
+- **Control endpoints under `/__lsf/admin`:** reset the shop, make and delete extra shops for
+  isolated tests, install and uninstall the app, and make session tokens for a test to call the
+  backend's routes. [Control API](docs/control-api.md).
+- **An uninstall does what Shopify does** (`POST /__lsf/admin/uninstall`, or `appUninstall`).
+  It revokes the app's tokens on the shop, cancels its subscription and delivers
+  `app/uninstalled`, then:
+  - **its Functions stop.** Every object that runs one of them goes, with its metafields:
+    payment and delivery customizations, validations, cart transforms, fulfillment constraint
+    rules and app discounts, those of the store data included (`removedFunctionOwners`). While
+    the app is uninstalled, the shop's checkout runs none of its Functions, even one a scenario
+    names in `extensions`. A reinstall finds none of them, as on Shopify: the app creates them
+    again;
+  - **its UI extensions no longer render**: the checkout, the thank-you page (of an order placed
+    before included) and the customer account load none, and an extension's full page answers
+    `404`. Each place says why, "the app is not installed on the shop", and so do the home page
+    (`"installed": false` in its JSON) and the terminal. Its script tags and web pixel are
+    deleted (`removedScriptTags`, `removedWebPixels`). A reinstall renders the UI extensions
+    again (lsf has no checkout editor); the app creates its script tags and pixel again. Theme
+    app blocks and embeds are files of the theme, and still render;
+  - **its app proxy no longer forwards**: `/apps/<subpath>` is the theme's `404` page, nothing
+    reaches the backend, and `X-LSF-Reason` and the terminal say why. A reinstall forwards it
+    again;
+  - **its own metafield and metaobject definitions go**, those of its reserved namespaces
+    (`$app`, `$app:<name>`) and types (`$app:<type>`), declared in `shopify.app.toml`, in the
+    store data or made through the Admin API (`removedMetafieldDefinitions`,
+    `removedMetaobjectDefinitions`). Their metafields keep their values and their metaobjects
+    are kept aside (`retainedMetaobjects`); a reinstall creates the definitions again under new
+    ids, and gives them back. Definitions of other namespaces and types are the merchant's and
+    stay.
+
+  [Uninstall](docs/admin.md#tokens).
+- **The shop's clock and its outbox.** `POST /__lsf/admin/clock` moves a shop's time: payment
+  schedules come due, store credit expires, payouts are made, scheduled listings go live,
+  checkouts are abandoned, data erasures run, each with its webhooks. What Shopify would send
+  the outside world (emails, labels, Flow triggers, point-of-sale messages) is never sent: it is
+  in `GET /__lsf/admin/outbox`.
+- **`--only theme,checkout,admin` runs some parts of lsf** (also `LSF_ONLY`), on `serve` and
+  `app dev`: the storefront of the theme, the checkout of the app (its Functions, UI
+  extensions, scenarios), its Admin API (OAuth, webhooks, the app proxy, lsf's admin, managed
+  pricing). `serve` runs the theme, all three with `--app`; `app dev` the checkout and the Admin
+  API. `serve --app ../my-app --only admin` is the Admin API alone, for a backend's tests, without
+  a theme folder. A part left out answers `404` on its routes, with an `X-LSF-Reason` that names
+  the `--only` serving it; a line before `ready:` says what runs (`serving: theme, checkout,
+  admin`), and `GET /__lsf/status` and `GET /__lsf/admin` list it (`parts`). An option of a part
+  left out (`--pricing-plans` without the admin part, `--variant` without the checkout) stops the
+  start when given on the command line; set by its variable (`LSF_APP_URL`), it is ignored and
+  said. `serve` without `--app` serves no Admin API: it costs memory a theme does not use.
+  [What runs](docs/cli.md#what-runs).
+- **New options:**
+  - `--app-url`: where the backend listens.
+  - `--no-functions`: the app's UI extensions and Admin API, and none of its Functions, for a
+    backend's tests.
+  - `--client-secret`: else `SHOPIFY_API_SECRET`, else the app's `.env`.
+  - `--admin-throttle`.
+  - `--admin-versions`: the API versions served.
+  - `--admin-fetch-local`: sources from a URL (`themeCreate`, `themeFilesUpsert`,
+    `urlRedirectImportCreate`) may be on this machine. Off by default, as Shopify cannot reach
+    it.
+  - `--admin-source <url>=<file>`: a URL of your backend's own answered with a file, never
+    downloaded; `PUT /__lsf/admin/sources?url=` stubs one from a test.
+- **`examples/admin-backend`:** a backend written with Shopify's libraries
+  (`@shopify/shopify-app-react-router`, `@shopify/shopify-api`), with a script that runs it
+  against lsf end to end (`mise run admin:e2e`).
+
+#### The embedded admin and billing
+
+- **An admin to preview the embedded app in, with a local App Bridge.**
+  `http://127.0.0.1:9292/admin/apps/<handle>` (`/admin` too) shows the app in a frame, at a new
+  launch URL on every load, with the shop's name, the app's navigation and its title bar around
+  it; `serve` and `app dev` print its URL, and the home page links to it. Its navigation links to
+  the storefront and to the checkout the server runs (**Preview**: Online Store, Checkout), each
+  in a new tab, and lists no section of the admin lsf does not simulate (Orders, Products…).
+  lsf's App Bridge (`/__lsf/admin/app-bridge.js`) runs in the app's pages:
+  - `shopify.idToken()` and `fetch()` with the session token, as App Bridge v4 adds it;
+  - the title bar (`ui-title-bar`, `s-page`), the navigation (`s-app-nav`, `ui-nav-menu`), the
+    save bar (`ui-save-bar`, `data-save-bar` forms), toasts, the loading bar, `shopify.user()`;
+  - the resource picker, with the shop's products, variants and collections;
+  - modals (`ui-modal`, `s-app-window`), `shopify:admin/…` links.
+
+  What lsf does not simulate (the scanner, POS, Sidekick, …) rejects or warns and says so.
+  [Preview the embedded app](docs/admin.md#preview-the-embedded-app).
+- **The embedded app opens in lsf's admin as the React Router template ships it.** The admin's
+  frame goes through a proxy on a port of its own. It lets lsf's admin frame every page, the
+  library's bounce page and `redirect(…, {target: "_top"})` page included, gives the pages lsf's
+  App Bridge and Polaris, and says Chrome to the template's bot check, so that Playwright's
+  headless Chromium gets no `410 Gone`. The template's one edit is the fetch function, for the
+  Admin API: lsf warns, on the home page and in its admin, when `app/shopify.server.ts` has none
+  or `app/routes/app.tsx` has no `headers` export. `LSF_ADMIN_FRAME=direct` opens the backend
+  itself, and the admin says when the app runs Shopify's App Bridge instead
+  ([preview the embedded app](docs/admin.md#preview-the-embedded-app)).
+- **Polaris without the internet.** lsf serves the paths of Shopify's CDN at `/__lsf/cdn/<path>`:
+  in lsf's frame, an app's pages load Polaris from there. `--polaris online`, the default,
+  redirects to the CDN; `--polaris offline` (or `PUT /__lsf/polaris` while lsf runs) serves lsf's
+  copy of Polaris 2.0.0 and 1.1.0, its icons and its fonts, pointed at lsf, so that the
+  components, icons and fonts render with no request to `cdn.shopify.com`. Offline, a page that
+  still loads Polaris from the CDN gets lsf's copy from lsf's App Bridge when the CDN's fails.
+  The app and lsf can share a host on two ports: lsf answers the CORS preflights.
+  [Polaris without the internet](docs/admin.md#polaris-without-the-internet).
+- **Billing.** `appSubscriptionCreate` and `appPurchaseOneTimeCreate` answer a
+  `confirmationUrl` on the shop's admin, as Shopify's, which the library's exit-iframe page
+  accepts: `billing.require` and `billing.request` work in the loader of a page. lsf's admin
+  serves that path and shows a local approval page. Approving goes to the `returnUrl`, and the
+  charge is active. Subscriptions renew on the shop's clock: past `currentPeriodEnd`, the
+  period moves on by its interval, the usage balance starts again, and a limited discount has
+  an interval less. [Approve a charge](docs/admin.md#approve-a-charge).
+- **Managed pricing (Shopify App Pricing).** Declare the app's plans in a file
+  (`--pricing-plans pricing.toml`) or through `PUT /__lsf/admin/pricing-plans`. lsf's admin shows
+  them at `/admin/charges/<app handle>/pricing_plans`, where a `shopify:admin/charges/…` link
+  and the template's `redirect(…, { target: "_top" })` land. The merchant picks a plan: a test
+  subscription with the plan's `planHandle` replaces the current one, `app_subscriptions/update`
+  is delivered, and the browser goes to the plan's welcome link with `charge_id` and
+  `plan_handle`. The Billing API then refuses to create charges, as Shopify does. With
+  `legacy = false` (Shopify App Pricing since April 2026), no change of the subscription sends a
+  webhook, `appSubscriptionCancel` from the app included. The page takes the app's handle only:
+  a client id there is a `404`, as on Shopify, unless `shopify.app.toml` has no handle.
+  `pricing.toml` is read again when it changes (unless `--static`), and `DELETE
+  /__lsf/admin/pricing-plans` reads it again; plans a `PUT` set stay until the `DELETE`.
+  [Managed pricing](docs/admin.md#managed-pricing).
+- **A test ends the merchant's plan: `POST /__lsf/admin/pricing-plans/cancel`.** The shop's
+  subscription of managed pricing is `CANCELLED` at once, without the app's token, and
+  `app_subscriptions/update` is delivered, none with `legacy = false`: the case of an app that has
+  to notice by itself that the plan ended. Shopify's plan page has no button for it (the merchant
+  chooses another plan or uninstalls), so lsf's page has none either: the route stands for a plan
+  that ends while the app stays installed. [Managed pricing](docs/admin.md#managed-pricing).
+- **A local Partner API: an app on Shopify App Pricing reads its plan.** Since April 2026 such an
+  app learns its plan from the Partner API's `activeSubscription`, not from a webhook. lsf serves
+  it at Shopify's path on its own origin, `POST /{partner_id}/api/2026-10/graphql.json` (also
+  2026-07 and 2027-01), with Shopify's schema: the app changes only the origin of
+  `partners.shopify.com`. `activeSubscription` answers the shop's plan, its trial and its billing
+  cycle by the shop's clock; `events` and `app { events }` answer the history: installs,
+  uninstalls, plans chosen, changed and ended, and every change of a charge. Both `legacy` modes
+  feed it. The Partner ID and the `prtapi_lsf_` token are printed at start (`partner:`, with the
+  plans) and in `GET /__lsf/admin/partner`; they are the same every run. A wrong token is
+  Shopify's `401`. The rest of the Partner API answers `LSF_NOT_SIMULATED`.
+  [Read the plan from the Partner API](docs/admin.md#read-the-plan-from-the-partner-api).
 
 ### Changed
+
+#### Checkout and Functions
 
 - **A Function runs only through an enabled owner, as on Shopify.** At the shop's checkout (no
   scenario, or a scenario without `extensions`), a payment or delivery customization, validation
@@ -398,15 +460,35 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   declares (`enabled`) are there. Extension names written as a locale key (`name = "t:name"`)
   are read from the extension's default locale (`locales/en.default.json`), for the Functions'
   titles and wherever lsf shows a name.
+- **`shopify.appMetafields` has the metafields an extension declares, of every resource, and no
+  others.** As on Shopify, it holds the metafields of `[[extensions.metafields]]` (and of
+  `[[extensions.targeting.metafields]]` at their target): those of the shop, of the products and
+  variants of the lines (and of the components of a bundle), of the customer logged in, of the
+  company and location they buy for and of the cart, each with its `target` (`shop`, `product`,
+  `variant`, …) and the GID of the resource, read from the store data and what the backend sets
+  through the Admin API. An `owner_type` keeps one resource. It held only the cart's, each one
+  whether declared or not: an extension that writes a cart metafield with
+  `applyMetafieldChange` and reads it back now declares it (`owner_type = "CART"`). Shopify's
+  checkout UI template in Preact reads `$app.requestedFreeGift` without declaring it: its
+  checkbox does not stay ticked until the declaration is added, as the playground's `ui-preact`
+  now does. The order status page of the customer account reads them too (it had none), with
+  the company location the order was placed for and the values typed as its `AppMetafield`
+  types them (`false`, `2`). A namespace written `app--<id>--<name>` in the toml reads nothing,
+  as on Shopify, and the loader warns with the `$app:<name>` to write. `shopify.shop.id` is the
+  id of the shop of the store data
+  ([#25](https://github.com/0xtlt/local-storefront/issues/25)).
+- **`POST /checkouts/cn/<token>/complete` answers the order it placed:**
+  `{"redirect", "order": {"id", "number", "name"}}`, as the Admin API recorded it. Match a
+  webhook by `order.id`. The thank-you page keeps the session's number, which can differ
+  (`#1004` there, `#1005` in the Admin API when the shop has a `#1004` already).
+
+#### Store data and the storefront
+
 - **Store data:** products gain `status` (`active`, `draft`, `archived`) and `published`. Only
   an active, published product is on the storefront. Entries of `checkout.discounts` gain an
   `id`. [Data format](docs/data-format.md).
 - **Two companies with the same name** are both kept, and reported (`duplicate_company`). The
   second used to replace the first.
-- **`POST /checkouts/cn/<token>/complete` answers the order it placed:**
-  `{"redirect", "order": {"id", "number", "name"}}`, as the Admin API recorded it. Match a
-  webhook by `order.id`. The thank-you page keeps the session's number, which can differ
-  (`#1004` there, `#1005` in the Admin API when the shop has a `#1004` already).
 - **The dates of the store data are ISO 8601 only:** a day (`2024-05-01`), or a day and a time
   (`2024-05-01T10:00:00`, or a space for the `T`) with `Z`, an offset or neither, for the shop's
   `timezone`; `now` too. The other forms that Liquid's `date` filter reads were accepted as well,
@@ -420,201 +502,37 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   first country when the store does not sell to it: `localization.country`, `Shopify.country`
   and the localization form say so. The storefront used to show the first country and the
   checkout the shop's: the demo store showed the United States, then checked out in Canada.
+
+#### The command line
+
+- **`lsf serve --help` lists the theme's options first.** The options of an app are under
+  "App (with --app)", those of the Admin API and lsf's admin under their own heading.
 - **For contributors, the crates are split along what they need.** `lsf-core` is the store data
   and what the storefront and the app share of it, `lsf-theme` the renderer (the old `lsf-core`),
   `lsf-app` the app (`lsf-checkout` and `lsf-admin` in one crate: `config`, `checkout`, `admin`)
   and `lsf-cli` the command line: `cargo build -p lsf-cli` builds `lsf`. `lsf-app` and
   `lsf-core` build without Liquid or the renderer. Nothing else changes for someone who uses
   `lsf`. [Architecture](docs/architecture.md).
-- **An extension must declare the metafields it reads through `shopify.appMetafields`.** As on
-  Shopify, `appMetafields` has only what `[[extensions.metafields]]` declares, the cart's too: an
-  extension that writes a cart metafield with `applyMetafieldChange` and reads it back declares it
-  (`owner_type = "CART"`). Shopify's checkout UI template in Preact reads
-  `$app.requestedFreeGift` without declaring it: its checkbox does not stay ticked until the
-  declaration is added, as the playground's `ui-preact` now does.
-- **`lsf serve --help` lists the theme's options first.** The options of an app are under
-  "App (with --app)", those of the Admin API and lsf's admin under their own heading.
 
 ### Fixed
 
-- **A product created without `write_publications` says it is not on the storefront.**
-  `productCreate` and `productSet` add a note to `extensions.lsf.notes`: publishing a product
-  needs that scope.
-- **`GET /admin/oauth/access_scopes.json` lists the token's scopes**, in Shopify's shape. It
-  answered `404`, and so did the other REST paths with a reason about the theme part: they now
-  answer JSON that says lsf does not simulate the REST Admin API.
-- **New Admin API records have 13-digit ids**, as Shopify's do, the same every run: a draft
-  order, a discount, a refund or a webhook subscription was `…/1`, `…/2`.
-- **Discount summaries read like the admin's**: `$5.00 off entire order • Minimum purchase of
-  $50.00`, in the shop's money format, where lsf wrote `5.0 off entire order`.
-- **`Shopify-GraphQL-Cost-Debug: 1` lists the cost of each field** in `extensions.cost.fields`,
-  as Shopify does. The header was ignored.
-- **A completed draft order keeps its discounts.** `draftOrderComplete` made an order without
-  discount applications: each applied discount of the draft is now a `ManualDiscountApplication`
-  of the order, with its allocations on the lines, in the API and in the `orders/create` payload.
-- **Deprecated Admin API fields read their data.** A deprecated field that Shopify replaced
-  (`DraftOrderLineItem.originalUnitPrice`, `Order.totalPrice`, `Customer.email`, …) answered a
-  default (`"0.00"`) where its replacement had the value: it now reads the replacement's.
-- **`productSet` refuses an option value that `productOptions` does not declare**, with
-  `OPTION_VALUE_DOES_NOT_EXIST`, as Shopify does. It added the value to the option.
-- **The `shop/update` and `app/uninstalled` payloads have the shop's `domain`**, the host of its
-  primary domain. It was `null`.
-- **An image uploaded to a staged target has its `width` and `height`**, read from its PNG, JPEG,
-  GIF or WebP header. A `fileCreate` source lsf does not download is still `READY`, and
-  `extensions.lsf.notes` now says it was not downloaded.
+#### Themes and the storefront
 
-- **`/admin` without its slash opens the app in lsf's admin**, as `/admin/` does. It answered
-  the storefront's 404.
-- **`lsf app webhook trigger --api-version` says what it sent.** The payload is built in that
-  version for every subscription, as the help now says. A subscription of another version gets
-  the note `the subscription asks for API version 2026-10: the payload is 2027-01's, the version
-  this webhook was triggered in`, not a hint about `--admin-versions`, an option `trigger` does
-  not have.
-- **`lsf docs | head` ends quietly.** A command that only prints (`docs`, `schema`, `render`,
-  `routes`, `validate`, `check`, `fmt`, `profile`) stops like `cat` when its reader leaves,
-  instead of panicking on the closed pipe.
-- **With `app dev --only admin`, `/` names the checkout part:** the app's home page belongs to
-  it. The `X-LSF-Reason` named the theme, which `app dev` does not serve.
-- **Uninstalling the app stops its Functions.** After `POST /__lsf/admin/uninstall` (or
-  `appUninstall`), the app's payment customization stayed enabled and its Function kept hiding a
-  payment method at the checkout. As Shopify removes an uninstalled app's Functions with their
-  owners, the uninstall now deletes every object that runs one of them, with its metafields: payment
-  and delivery customizations, validations, cart transforms, fulfillment constraint rules and app
-  discounts, those of the store data included (`removedFunctionOwners` counts them). While the app
-  is uninstalled, the shop's checkout runs none of its Functions, even one a scenario names in
-  `extensions`, and the Functions dialog says "the app is not installed on the shop". A reinstall
-  finds none of them, as on Shopify: the app creates them again.
-  [Uninstall](docs/admin.md#tokens).
-- **An uninstalled app's extensions no longer render.** After an uninstall, the checkout, the
-  thank-you page and the customer account still loaded the app's UI extensions, and the
-  storefront still loaded its script tags. As Shopify removes an uninstalled app's extensions,
-  lsf now renders none of its UI extensions while the app is not installed on the shop, the
-  thank-you page of an order placed before included, and an extension's full page answers `404`.
-  Each place says why, "the app is not installed on the shop": a banner on the checkout and the
-  customer account, the Functions dialog ("Extensions not loaded"), `?targets=all`, the home page
-  (a banner, a problem, `app not installed` on each extension, `"installed": false` in its
-  JSON) and the terminal, which also says when the app is installed again. The uninstall
-  deletes its script tags and web pixel too (`removedScriptTags`, `removedWebPixels`), as
-  Shopify does. A reinstall renders the UI extensions again (Shopify restores the active ones
-  within 24 hours; lsf has no checkout editor); the app creates its script tags and pixel again.
-  Theme app blocks and embeds render nothing in lsf, installed or not.
-  [Uninstall](docs/admin.md#tokens).
-- **An uninstalled app's proxy no longer forwards.** After an uninstall, `/apps/<subpath>` still
-  went to the app's backend. A store gets the app's proxy with the app (shopify.dev: a change of
-  `prefix` or `subpath` reaches only new installations, or a store that uninstalls and reinstalls
-  the app), so the uninstall removes it: while the app is not installed, the storefront answers
-  the path as a page it does not have (the theme's `404` page) and nothing reaches the backend.
-  `X-LSF-Reason` and the terminal say why (`app proxy: the app is not installed on the shop:
-  uninstalling it removed its app proxy, so /apps/reviews is the storefront's 404 …`). A reinstall
-  forwards it again. [App proxy](docs/admin.md#app-proxy).
-- **An uninstall deletes the app's own metafield definitions; a reinstall brings them back.**
-  shopify.dev: "When a user uninstalls your app, Shopify deletes its app-owned metafield
-  definitions and temporarily retains the metafields and their values without a definition", and
-  a reinstall "recreates the definitions and associates the existing metafields with them", under
-  new ids. lsf now does the same for the definitions of the app's reserved namespaces (`$app`,
-  `$app:<name>`), declared in `shopify.app.toml` or made with `metafieldDefinitionCreate`
-  (`removedMetafieldDefinitions`): their metafields keep their values, and the reinstall creates
-  the definitions again with new ids, so an app that kept a definition id finds it gone, as on
-  Shopify. While uninstalled, an order no longer copies the cart metafields of a deleted `$app`
-  definition. Definitions of any other namespace (`custom`, or one the app chose) are the
-  merchant's and stay, ids included. [Uninstall](docs/admin.md#tokens).
-- **An uninstall deletes the app's own metaobject definitions; a reinstall brings them back.**
-  shopify.dev says the same of metaobjects ("Manage metaobject definitions", "App uninstall and
-  reinstall"). The definitions of the app's reserved types (`$app:<type>`), from the store data
-  or `metaobjectDefinitionCreate`, are deleted (`removedMetaobjectDefinitions`), and their
-  metaobjects are kept aside (`retainedMetaobjects`). A reinstall creates each definition again
-  under a new id and gives it back its metaobjects, ids unchanged. Other types are the merchant's
-  and stay. [Uninstall](docs/admin.md#tokens).
-- **Adding a checkout scenario no longer throws away what the backend set up.** Without
-  `--static`, a file added or changed in `checkouts/` re-seeded the shops of the Admin API,
-  dropping the app's subscription, customizations and other writes. Scenarios are checkout
-  inputs: lsf now reads them again on top of the same store data and keeps the Admin API's state
-  (`checkout scenarios reloaded (checkouts/b2b.json added): the store and what the Admin API
-  changed are kept (no re-seed)`). Only a change of the store's own data seeds the shops again,
-  and its line names the files (`store data reloaded (products/tee.json changed): the shops of the
-  Admin API were seeded again, …`); `schema/` and `README.md` change nothing.
-  [When the data changes on disk](docs/cli.md#when-the-data-changes-on-disk).
-- **`appSubscriptionCancel` sends no webhook under Shopify App Pricing.** With `legacy = false`
-  in the plans file, it still delivered `app_subscriptions/update` (`CANCELLED`), which Shopify
-  App Pricing "no longer sends" for any subscription change after April 28, 2026. An uninstall
-  sends none in either mode. [Managed pricing](docs/admin.md#managed-pricing).
-- **`--watch` no longer rebuilds the Functions when the app's web front end builds.** In the
-  app's own folder, `--watch` now follows only what the builds of the Functions read: the
-  workspace's manifests and lock files (`Cargo.toml`, `Cargo.lock`, `package.json`, …) and the
-  folders that hold a crate or a package (`crates/common/Cargo.toml`). An openshop project, whose
-  trunk writes `dist/` at its root on every save of `src/`, built every Function and reloaded the
-  pages each time. `dist/`, `build/`, `target/`, `node_modules/`, dot folders (`.git/`,
-  `.shopify/`) and the app's own sources are left alone.
-- **Polaris offline with the app and lsf on one host.** With the app on `localhost:3000` and lsf
-  on `localhost:9393`, Polaris's icons (`/__lsf/cdn/…/icons/<id>.svg`) failed with "blocked by
-  CORS policy", and an `s-button slot="secondary-actions"` of an `s-banner` took no room: lsf's
-  App Bridge gave its session token to lsf's own origin, and lsf answered the preflight `405`.
-  lsf's App Bridge no longer adds the token, `X-Requested-With` or `Accept-Language` to requests
-  to lsf's origin (on Shopify the admin and the CDN are never the app's host), and `/__lsf/cdn/`,
-  `/__lsf/polaris`, `/__lsf/admin/app-bridge.js` and `/cdn/` answer `OPTIONS` preflights
-  (`204`, any origin, the headers asked for, `Max-Age` a day).
-- **A control API body that is JSON is read as JSON** without `Content-Type: application/json`
-  (`fetch` sends a string as `text/plain`): `PUT /__lsf/session` used to read it as a form.
-- **`lsf routes` no longer lists `/account`**, a page of lsf's that `render --strict` refuses:
-  a loop of `render --strict` over `routes` passes on a stock theme. `GET /__lsf/status` lists
-  the same routes.
 - **A large store loads much faster.** The default product recommendations took a time cubic in
   the number of products: 3,000 products took 5 to 6 s to load, and now take 0.3 s. This speeds
   up startup and `--watch` too.
-- **No shipping in any total before an address.** Without an address with a country, no
-  shipping rate is selected: `cost.shipping` is 0, and `cost.total`, `cost.dueNow` and
-  `shopify.cost.totalAmount` leave it out, as the page does ("Enter shipping address").
-  `shopify.cost.totalShippingAmount` is undefined, and the Functions read
-  `selectedDeliveryOption: null` and a `cart.cost.totalAmount` without shipping, as on Shopify.
-- **One country for a buyer with no address.** With no address and no selected country, the
-  Functions, the checkout UI extensions and the address form all read the shop's country
-  (`shop.address.country_code`), the one of its primary market. The extensions used to read no
-  country, and the market `primary`; they now read the market the Functions read.
-- **`--build` then no "no Wasm module".** `app function run`, `app dev` and `serve` printed
-  the diagnostics of the app as it was before `--build` built it.
-- **`app check` says what a trapped Function threw:** `the Function trapped: Error: boom (in
-  b2b)`, the last message it logged. Each JSON failure has the `logs` of the first scenario it
-  failed in.
-- **The hints say `npx local-storefront` when it was installed with npm**, where `lsf` is not
-  on the PATH: ``build it with `npx local-storefront app build x` ``, the `next:` lines, the home
-  page. The launcher sets `LSF_COMMAND`; the binary of a release says `lsf`.
-- **An unknown filter close to one of Shopify has a hint:** `{{ x | uppercas }}` gives
-  `hint: did you mean "upcase"?`, in the text and the JSON of `check`.
-- **`app init`'s `discount-code` scenario** says that one Function "applies as a code
-  discount".
-- **One is in the singular, everywhere lsf counts:** `1 Liquid error · 0 warnings` (`render`),
-  `wrote 1 file, kept 15 existing ones` (`init`, `app init`), `1 file formatted` (`fmt`),
-  `validate`, `check`, the banner, the store data's errors and the status page. No more `(s)`.
-- **`shopify.appMetafields` has the metafields an extension declares, of every resource.** As on
-  Shopify, it holds the metafields of `[[extensions.metafields]]` (and of
-  `[[extensions.targeting.metafields]]` at their target): those of the shop, of the products and
-  variants of the lines (and of the components of a bundle), of the customer logged in, of the
-  company and location they buy for and of the cart, each with its `target` (`shop`, `product`,
-  `variant`, …) and the GID of the resource, read from the store data and what the backend sets
-  through the Admin API. An `owner_type` keeps one resource. It held only the cart's, each one
-  whether declared or not: an extension now reads a metafield of the cart only if it declares it.
-  The order status page of the customer account reads them too (it had none), with the company
-  location the order was placed for and the values typed as its `AppMetafield` types them
-  (`false`, `2`). A namespace written `app--<id>--<name>` in the toml reads nothing, as on
-  Shopify, and the loader warns with the `$app:<name>` to write. `shopify.shop.id` is the id of
-  the shop of the store data
-  ([#25](https://github.com/0xtlt/local-storefront/issues/25)).
-- **A code whose discount Function answers a candidate of 0 is applied, at 0.** A candidate of
-  0 % (or a fixed 0.00), which a Function answers to accept a code before the gift it stands for
-  reaches the cart, made the code "not applicable". As on Shopify, the code is now accepted and
-  its discount shows at 0 on the lines it targets: in the page, `discounts`, `discountCodes`,
-  the extensions' `discountAllocations` and the output of `lsf app function run`. An order or a
-  shipping candidate of 0 applies the same way; a shipping one gives way to a shipping discount
-  that takes something off the option the buyer selected. An automatic discount of 0 shows too,
-  at 0 (a Function that reads its percentage from settings that are not set)
-  ([#26](https://github.com/0xtlt/local-storefront/issues/26)).
-- **`--live-reload` no longer breaks a template that writes JSON.** Its script went at the end
-  of every response, `{% layout none %}` ones included (`?view=json-data`). It now goes only in
-  HTML pages with a `</body>` or an `</html>`.
+- **`validate` reports every problem in one run.** A data file with an error was left out whole,
+  so the problems of the rest of it showed only once that error was fixed. Its entries without
+  errors are now read and checked. A reference to an entity left out because of its errors says
+  so (`the product "a" is left out because products/a.json has errors`), rather than suggesting
+  another.
 - **A JSON template that is not valid JSON, or names a section type the theme does not have, is
   an error of the page.** It counts in `x-lsf-liquid-errors`, makes `render --strict` fail and is
   in the log of `serve`, with the template, its line and the closest section type. The page
   showed it with a 200 and 0 errors.
+- **`--live-reload` no longer breaks a template that writes JSON.** Its script went at the end
+  of every response, `{% layout none %}` ones included (`?view=json-data`). It now goes only in
+  HTML pages with a `</body>` or an `</html>`.
 - **`?section_id=` and `?sections=` say which section is missing.** `x-lsf-not-found` names the
   ids the page does not have, the closest one, and the ids it has. The 404 had no reason.
 - **`/de/` says the store has no German language**, when the theme has `locales/de.json` and
@@ -624,72 +542,104 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 - **`payment_button` speaks the language of the storefront.** "Buy it now" was English on
   `/fr/` too; it is in the language of the page, for the languages of Shopify's checkout, and in
   English for the others.
-- **`validate` reports every problem in one run.** A data file with an error was left out whole,
-  so the problems of the rest of it showed only once that error was fixed. Its entries without
-  errors are now read and checked. A reference to an entity left out because of its errors says
-  so (`the product "a" is left out because products/a.json has errors`), rather than suggesting
-  another.
+- **An unknown filter close to one of Shopify has a hint:** `{{ x | uppercas }}` gives
+  `hint: did you mean "upcase"?`, in the text and the JSON of `check`.
+- **`lsf routes` no longer lists `/account`**, a page of lsf's that `render --strict` refuses:
+  a loop of `render --strict` over `routes` passes on a stock theme. `GET /__lsf/status` lists
+  the same routes.
+- **A control API body that is JSON is read as JSON** without `Content-Type: application/json`
+  (`fetch` sends a string as `text/plain`): `PUT /__lsf/session` used to read it as a form.
 - **The docs no longer promise classic customer account pages.** `/account/login` and the
   other account URLs lead to `/account`, as [storefront](docs/storefront.md) says;
   [testing](docs/testing.md) said otherwise.
+
+#### Checkout and Functions
+
+- **No shipping in any total before an address.** Without an address with a country, no
+  shipping rate is selected: `cost.shipping` is 0, and `cost.total`, `cost.dueNow` and
+  `shopify.cost.totalAmount` leave it out, as the page does ("Enter shipping address").
+  `shopify.cost.totalShippingAmount` is undefined, and the Functions read
+  `selectedDeliveryOption: null` and a `cart.cost.totalAmount` without shipping, as on Shopify.
+- **One country for a buyer with no address.** With no address and no selected country, the
+  Functions, the checkout UI extensions and the address form all read the shop's country
+  (`shop.address.country_code`), the one of its primary market. The extensions used to read no
+  country, and the market `primary`; they now read the market the Functions read.
+- **A code whose discount Function answers a candidate of 0 is applied, at 0.** A candidate of
+  0 % (or a fixed 0.00), which a Function answers to accept a code before the gift it stands for
+  reaches the cart, made the code "not applicable". As on Shopify, the code is now accepted and
+  its discount shows at 0 on the lines it targets: in the page, `discounts`, `discountCodes`,
+  the extensions' `discountAllocations` and the output of `lsf app function run`. An order or a
+  shipping candidate of 0 applies the same way; a shipping one gives way to a shipping discount
+  that takes something off the option the buyer selected. An automatic discount of 0 shows too,
+  at 0 (a Function that reads its percentage from settings that are not set)
+  ([#26](https://github.com/0xtlt/local-storefront/issues/26)).
+- **The metafields of a discount or a Function's owner take Shopify's forms.** Besides
+  `"namespace.key"`, a list of `{namespace, key, type, value}`, as `metafieldsSet` takes it, is
+  read. The docs write them as Shopify's templates do, `"$app.function-configuration"` for
+  `metafield(namespace: "$app", key: "function-configuration")`, and `"$app:function-configuration"`
+  says to write a dot.
 - **JavaScript, TypeScript and Preact builds no longer break after macOS empties the temporary
   folder.** lsf's copy of the npm packages lived in `$TMPDIR`; once macOS's cleaner deleted its
   files and kept its folders, every build failed with `cannot write lsf's npm packages` until
   the folder was deleted by hand. The packages now live in the user's cache folder
   (`~/Library/Caches/lsf/` on macOS, `~/.cache/lsf/` on Linux). A folder with a file missing or
   changed is written again, safely when several lsf run at once.
-- **`lsf app check` prints each way a Function fails.** A Function that threw in one scenario
-  and answered a wrong output in another was printed with the first error for both, and the
-  JSON had the logs of the first. Each error is now a failure of its own, with its scenarios and
-  its logs, in the text, in `--format json` and on the home page.
-- **An endless loop in a Function stops in a moment.** It ran for 10 s (some 35 billion
-  instructions) before it was stopped, and three of them took the 20 s of the home page's check.
-  A run now stops at 110 million instructions, ten times Shopify's limit:
-  `exceeded Shopify's limit of 11,000,000 instructions: stopped at 110,000,000 (an endless
-  loop?)`. A run under that keeps its exact count.
 - **A change to a Rust Function's query builds it again.** The `typegen` macro reads the
   `.graphql` files without telling cargo: after a change to one of them alone, `--watch` said
   `✓ delivery-rules built` while cargo compiled nothing, and the old module ran on the new
   query's input. lsf now touches `src/main.rs` (its time only) before the build when a
   `.graphql` file is newer than the module, and the watch says when a module came out the same
   (a compiler cache that does not see the change).
-- **`lsf app function run` says what a Function threw**: `error: the Function trapped: Error:
-  boom`, as `app check` does, where it said `the Function trapped` alone. The checkout's
-  Functions dialog and the JSON have the message too.
-- **An extension that does not build exits with `1`**, as the exit codes say of something to
-  fix (`app build`, `app function build`, `--build`). It exited with `2`, "could not run".
-- **`lsf app init` counts customer account UI extensions apart**: `for 5 Functions, 1 checkout
-  UI extension and 1 customer account UI extension`, not `2 checkout UI extensions`.
-- **`lsf app function run` prints no discount as `discounts 0.00`**, not `-0.00`.
+- **`--watch` no longer rebuilds the Functions when the app's web front end builds.** In the
+  app's own folder, `--watch` now follows only what the builds of the Functions read: the
+  workspace's manifests and lock files (`Cargo.toml`, `Cargo.lock`, `package.json`, …) and the
+  folders that hold a crate or a package (`crates/common/Cargo.toml`). A project whose web build
+  writes `dist/` at its root on every save of `src/` built every Function and reloaded the pages
+  each time. `dist/`, `build/`, `target/`, `node_modules/`, dot folders (`.git/`, `.shopify/`)
+  and the app's own sources are left alone.
+- **`--build` then no "no Wasm module".** `app function run`, `app dev` and `serve` printed
+  the diagnostics of the app as it was before `--build` built it.
+- **An endless loop in a Function stops in a moment.** It ran for 10 s (some 35 billion
+  instructions) before it was stopped, and three of them took the 20 s of the home page's check.
+  A run now stops at 110 million instructions, ten times Shopify's limit:
+  `exceeded Shopify's limit of 11,000,000 instructions: stopped at 110,000,000 (an endless
+  loop?)`. A run under that keeps its exact count.
+- **`app check` says what a trapped Function threw:** `the Function trapped: Error: boom (in
+  b2b)`, the last message it logged. Each JSON failure has the `logs` of the first scenario it
+  failed in. `lsf app function run`, the checkout's Functions dialog and their JSON have the
+  message too, where they said `the Function trapped` alone.
+- **`lsf app check` prints each way a Function fails.** A Function that threw in one scenario
+  and answered a wrong output in another was printed with the first error for both, and the
+  JSON had the logs of the first. Each error is now a failure of its own, with its scenarios and
+  its logs, in the text, in `--format json` and on the home page.
 - **`lsf app check` prints a scenario that does not validate once**, its problems indented under
   it, and no longer says `no scenario to check` when the only scenarios are invalid.
   `app function run --scenario` prints them once too.
+- **An extension that does not build exits with `1`**, as the exit codes say of something to
+  fix (`app build`, `app function build`, `--build`). It exited with `2`, "could not run".
 - **The home page has no warnings right after `lsf app init`.** It warned, for each Function
   that is not a discount, that the shop has no customization that runs it, while the scenarios
   `app init` wrote run each of them. It now warns only about a Function no scenario runs.
 - **`app init`'s `all-extensions` scenario runs the discount Functions.** It entered the code
   `WELCOME`, which no discount had, and named the discount Functions, which then never ran. It
   now has a discount of each, with the code `SAVE10` entered, as `discount-code` does.
-- **The metafields of a discount or a Function's owner take Shopify's forms.** Besides
-  `"namespace.key"`, a list of `{namespace, key, type, value}`, as `metafieldsSet` takes it, is
-  read. The docs write them as Shopify's templates do, `"$app.function-configuration"` for
-  `metafield(namespace: "$app", key: "function-configuration")`, and `"$app:function-configuration"`
-  says to write a dot.
+- **`app init`'s `discount-code` scenario** says that one Function "applies as a code
+  discount".
+- **`lsf app init` counts customer account UI extensions apart**: `for 5 Functions, 1 checkout
+  UI extension and 1 customer account UI extension`, not `2 checkout UI extensions`.
+- **`lsf app function run` prints no discount as `discounts 0.00`**, not `-0.00`.
 
-- **A backend's stored tokens work after lsf restarts.** Tokens are now derived from the
-  client id, the client secret, the shop and their rank, and lsf takes back one of an earlier run.
-  A token revoked in the run stays revoked ([tokens](docs/admin.md#tokens)).
-- **`billing.require` and `billing.request` work in the loader of a page.** `confirmationUrl` is
-  now Shopify's, on the shop's admin, which the library's exit-iframe page accepts. lsf's admin
-  serves that path. After the approval, a `returnUrl` on Shopify's admin or on the app comes back
-  to the app in lsf's admin.
-- **`client_id = ""` is no longer replaced without a word.** lsf takes `SHOPIFY_API_KEY` of the
-  environment or of the app's `.env`, and warns when it has to use `lsf-local-client-id` or when
-  the two keys differ. The admin names the app by its `handle`, else its `name`.
-- **Playwright's headless Chromium no longer gets `410 Gone` in lsf's admin.** The frame's proxy
-  says Chrome to the template's bot check.
-- **`lsf app webhook trigger` names the `[events]` subscriptions** of a topic that has no
-  webhook subscription, and `GET /__lsf/webhooks?topic=Product` lists Events.
+#### The command line
+
+- **The hints say `npx local-storefront` when it was installed with npm**, where `lsf` is not
+  on the PATH: ``build it with `npx local-storefront app build x` ``, the `next:` lines, the home
+  page. The launcher sets `LSF_COMMAND`; the binary of a release says `lsf`.
+- **`lsf docs | head` ends quietly.** A command that only prints (`docs`, `schema`, `render`,
+  `routes`, `validate`, `check`, `fmt`, `profile`) stops like `cat` when its reader leaves,
+  instead of panicking on the closed pipe.
+- **One is in the singular, everywhere lsf counts:** `1 Liquid error · 0 warnings` (`render`),
+  `wrote 1 file, kept 15 existing ones` (`init`, `app init`), `1 file formatted` (`fmt`),
+  `validate`, `check`, the banner, the store data's errors and the status page. No more `(s)`.
 
 ## 0.2.0 - 2026-10-30
 

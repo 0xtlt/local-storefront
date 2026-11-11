@@ -84,7 +84,7 @@ export default defineConfig({
 ```ts
 test('the app opens in lsf\'s admin', async ({ page }) => {
   await page.goto('http://127.0.0.1:9393/admin/apps/my-app/app');
-  await expect(page.frameLocator('iframe').getByText('Generate a product')).toBeVisible();
+  await expect(page.frameLocator('iframe').getByText('Get started with products')).toBeVisible();
 });
 ```
 
@@ -513,7 +513,7 @@ Everything a theme talks to on a storefront:
 
 Not simulated: Shopify's checkout (`/checkout` shows a summary of the cart, or, with `--app`,
 the local [checkout](checkout.md) of a Shopify app, unless `--only` leaves the checkout out), classic customer accounts (the theme's `templates/customers`; its account forms lead to `/account`),
-and anything served by apps. See [compatibility.md](compatibility.md).
+and what other apps serve (with `--app`, the [theme app extensions](storefront.md#theme-app-extensions) of that app render). See [compatibility.md](compatibility.md).
 
 ## Reproducibility
 

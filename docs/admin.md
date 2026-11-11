@@ -668,13 +668,14 @@ the Admin API. A metafield definition whose validation names the deleted definit
 after a reinstall, as shopify.dev advises.
 
 **The app's extensions go with it too.** While the app is not installed on the default shop, lsf
-renders none of its extensions, as Shopify removes an uninstalled app's extensions:
+renders none of its UI extensions, as Shopify removes an uninstalled app's extensions. Its theme
+app blocks are files of the theme, which lsf leaves as they are:
 
 | Extension | On Shopify | In lsf while uninstalled | After a reinstall |
 |---|---|---|---|
 | Checkout UI extensions, thank-you and order status targets | They stop rendering; a reinstall within 24 hours restores the active ones with their settings ([staff on community.shopify.dev](https://community.shopify.dev/t/activated-checkout-extensions-do-not-deactivate-after-app-uninstall/35571)); later, the merchant places them again in the checkout editor | The checkout and its thank-you page load none, an order placed before the uninstall included | They render again: lsf has no checkout editor, so it always restores them |
 | Customer account UI extensions | Placed in the same checkout and accounts editor | The customer account loads none; an extension's full page (`/account/pages/<handle>`) answers `404` with the reason | They render again |
-| Theme app extensions (app blocks, app embeds) | "Blocks associated with the apps are automatically and entirely removed from online store themes" ([UX guidelines](https://shopify.dev/docs/apps/build/online-store/theme-app-extensions/ux)); app embeds are off after an install until the merchant turns them on | lsf renders no app block or app embed, installed or not ([compatibility](compatibility.md)), and never writes the theme directory | Nothing changes |
+| Theme app extensions (app blocks, app embeds) | "Blocks associated with the apps are automatically and entirely removed from online store themes" ([UX guidelines](https://shopify.dev/docs/apps/build/online-store/theme-app-extensions/ux)); app embeds are off after an install until the merchant turns them on | They still render: they are the theme's files (and `app.embeds` of the store data), which lsf never writes ([theme app extensions](storefront.md#theme-app-extensions)) | Nothing changes |
 | Web pixel | Removed with the app; a reinstalled app calls `webPixelCreate` again | The uninstall deletes the `WebPixel` record (`removedWebPixels`); the storefront runs no web pixel anyway | The app creates it again |
 | Script tags | "When an app is uninstalled from a shop, all of the script tags that it created are automatically removed" ([`ScriptTag`](https://shopify.dev/docs/api/admin-graphql/2026-10/objects/ScriptTag)) | The uninstall deletes them (`removedScriptTags`): `content_for_header` stops loading them at once | The app creates them again |
 | Admin UI extensions, admin links | Admin links are deleted ([`appUninstall`](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/appUninstall)) | lsf's admin renders neither | - |
