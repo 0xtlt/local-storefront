@@ -15,10 +15,29 @@
 //! Every token is `shpat_` followed by 32 hex digits: shopify.dev says offline and online tokens
 //! both begin with `shpat_` ("whichever grant produced them"); refresh tokens begin with `shprt_`.
 //!
+//! **Tokens survive a restart.** lsf keeps its tokens in memory, but a backend keeps the ones it
+//! was given in its session storage. So each access and refresh token is sealed with a key of the
+//! client id and the client secret: it holds, readable with the key only, the epoch of the
+//! installation it was issued in and its rank among the tokens of its kind (offline, expiring
+//! offline, client credentials, refresh) issued in that epoch, and a check of the shop, the app,
+//! the kind, the epoch and the rank. Until a reset or an uninstall, an installation is in epoch
+//! 0, the same every run: the n-th offline token of a run is the n-th of every run. A token lsf
+//! does not know is opened ([`Tokens::recognize`]): one of an earlier run is valid again, with
+//! the scopes the app is installed with now, an expiring one for an hour from then, whatever
+//! order the backend presents them in.
+//!
+//! A reset, a shop deletion or an uninstall closes the installation: it moves to a new epoch (the
+//! time of the closure, in milliseconds), and every token of an earlier epoch is refused from then
+//! on, those of an earlier run lsf never saw included. The tokens issued after it are of the new
+//! epoch, which no earlier run had, and they too are taken back after a restart (until the next
+//! closure). A token issued in this run and since expired, migrated or retired is never taken
+//! back, nor one taken back twice. Online tokens are not taken back: they last a day, and the
+//! libraries exchange a session token for a new one after a `401`.
+//!
 //! The registry holds no lock and reads no clock: the server keeps it behind a mutex and passes
 //! the time, which is the system clock (the backend compares expiries with its own).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{BuildHasher, Hasher};
 
 use chrono::{DateTime, Duration, Utc};
@@ -64,6 +83,24 @@ pub enum Revocation {
     Uninstalled,
 }
 
+impl Revocation {
+    /// What revoked a token of `shop`, as a reason says it: `by a reset of the Admin API (…)`.
+    pub fn what(self, shop: &str) -> String {
+        match self {
+            Revocation::Reset => "by a reset of the Admin API (DELETE /__lsf/admin)".to_string(),
+            Revocation::ShopDeleted => format!(
+                "when the shop was deleted (DELETE /__lsf/admin/shops/{})",
+                shop.strip_suffix(".myshopify.com").unwrap_or(shop)
+            ),
+            Revocation::Uninstalled => {
+                "when the app was uninstalled from the shop (POST /__lsf/admin/uninstall, or \
+                 appUninstall)"
+                    .to_string()
+            }
+        }
+    }
+}
+
 /// A revoked access token: the shop it was for and what revoked it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Revoked {
@@ -77,20 +114,7 @@ impl Revoked {
     /// The `X-Lsf-Reason` of the `401` that refuses it: what revoked it, and how to get a token
     /// again. A backend that keeps its sessions sends the old one until it forgets it.
     pub fn reason(&self) -> String {
-        let what = match self.by {
-            Revocation::Reset => "by a reset of the Admin API (DELETE /__lsf/admin)".to_string(),
-            Revocation::ShopDeleted => format!(
-                "when the shop was deleted (DELETE /__lsf/admin/shops/{})",
-                self.shop
-                    .strip_suffix(".myshopify.com")
-                    .unwrap_or(&self.shop)
-            ),
-            Revocation::Uninstalled => {
-                "when the app was uninstalled from the shop (POST /__lsf/admin/uninstall, or \
-                 appUninstall)"
-                    .to_string()
-            }
-        };
+        let what = self.by.what(&self.shop);
         format!(
             "this access token of {} was revoked {what}: run the token exchange or OAuth again \
              for a new one (a backend that stored this one in its session storage must forget \
@@ -139,6 +163,8 @@ pub enum GrantSource {
     /// `delegateAccessTokenCreate`: a subset of its parent's scopes, never more than the
     /// installation grants.
     Delegate,
+    /// Issued by an earlier run of lsf, and presented again: [`Tokens::recognize`].
+    EarlierRun,
 }
 
 /// The staff member an online token acts for: `associated_user` of the token response.
@@ -290,7 +316,7 @@ pub struct Code {
 
 /// Why a refresh is refused: always Shopify's `401` `invalid_request`, "This request requires an
 /// active refresh_token". The variant says why, for lsf's own messages.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RefreshError {
     Unknown,
     /// Issued to another app.
@@ -299,6 +325,12 @@ pub enum RefreshError {
     Retired,
     /// Past its 90 days, or 30 days after its first use.
     Expired,
+    /// Its installation was closed since it was issued, in this run or an earlier one: a reset,
+    /// a shop deletion or an uninstall.
+    Revoked {
+        shop: String,
+        by: Revocation,
+    },
 }
 
 /// Why a migration of a non-expiring offline token is refused (`invalid_subject_token`).
@@ -334,11 +366,48 @@ struct Migration {
     at: DateTime<Utc>,
 }
 
+/// The kinds of access tokens [`Tokens::recognize`] takes back.
+const RECOGNIZED_KINDS: [&str; 3] = ["offline", "expiring", "client_credentials"];
+
+/// How many bytes of a sealed token are its check: 48 bits, against 6 of its epoch and 4 of its
+/// rank.
+const CHECK_BYTES: usize = 6;
+/// The epochs fit in 48 bits: milliseconds until the year 10889.
+const EPOCH_MASK: u64 = (1 << 48) - 1;
+
+/// What a token lsf does not know turns out to be ([`Tokens::recognize`]).
+enum EarlierRun {
+    /// Not lsf's, or this run's own (issued, then expired, migrated or retired).
+    Unknown,
+    /// An earlier run's, of an installation closed since.
+    Closed { shop: String, by: Revocation },
+    /// An earlier run's, to take back.
+    Found {
+        shop: String,
+        client_id: String,
+        kind: &'static str,
+        scopes: Vec<String>,
+    },
+}
+
 /// The tokens of every shop, the codes and refresh tokens, and the installations.
 #[derive(Clone, Debug)]
 pub struct Tokens {
+    /// What codes and the `jti` of session tokens are made from: different every run.
     seed: [u8; 32],
+    /// What the access and refresh tokens are derived from: the same every run of an app.
+    key: [u8; 32],
     counter: u64,
+    /// The rank of the next token of each kind, for each shop and app, in the epoch of its
+    /// installation: `(shop, client id, prefix and kind)`.
+    ranks: HashMap<(String, String, String), u32>,
+    /// The epoch of each installation closed in this run, and what closed it; the others are in
+    /// epoch 0 ([`Tokens::close`]).
+    epochs: HashMap<(String, String), (u64, Revocation)>,
+    /// The latest epoch given: each closure has a later one, even within a millisecond.
+    last_epoch: u64,
+    /// The tokens of an earlier run taken back in this one: never taken back again, nor issued.
+    taken_back: HashSet<String>,
     access: HashMap<String, Grant>,
     refresh: HashMap<String, RefreshEntry>,
     codes: HashMap<String, Code>,
@@ -371,18 +440,39 @@ impl Tokens {
             entropy.extend_from_slice(&hasher.finish().to_le_bytes());
         }
         entropy.extend_from_slice(&std::process::id().to_le_bytes());
-        Tokens::from_seed(sha256(&entropy))
+        let seed = sha256(&entropy);
+        Tokens::from_seed(seed, seed)
+    }
+
+    /// An empty registry whose access and refresh tokens are the same every run of the app
+    /// `client_id` signed with `client_secret`: a backend's stored tokens work again after a
+    /// restart ([`Tokens::recognize`]). Its codes and session token ids differ every run.
+    pub fn stable(client_id: &str, client_secret: &str) -> Tokens {
+        let key = hmac_sha256(
+            client_secret.as_bytes(),
+            format!("lsf tokens\0{client_id}").as_bytes(),
+        );
+        Tokens {
+            key,
+            ..Tokens::new()
+        }
     }
 
     /// An empty registry whose tokens are the same every run with the same `seed`, for tests.
     pub fn with_seed(seed: u64) -> Tokens {
-        Tokens::from_seed(sha256(&seed.to_le_bytes()))
+        let seed = sha256(&seed.to_le_bytes());
+        Tokens::from_seed(seed, seed)
     }
 
-    fn from_seed(seed: [u8; 32]) -> Tokens {
+    fn from_seed(seed: [u8; 32], key: [u8; 32]) -> Tokens {
         Tokens {
             seed,
+            key,
             counter: 0,
+            ranks: HashMap::new(),
+            epochs: HashMap::new(),
+            last_epoch: 0,
+            taken_back: HashSet::new(),
             access: HashMap::new(),
             refresh: HashMap::new(),
             codes: HashMap::new(),
@@ -401,9 +491,280 @@ impl Tokens {
         )
     }
 
-    /// A new secret value: `prefix` and 32 hex digits.
-    fn fresh(&mut self, prefix: &str) -> String {
-        format!("{prefix}{}", &hex(&self.entropy(prefix))[..32])
+    /// The epoch tokens of `client_id` on `shop` are issued in: 0 until the installation is
+    /// closed in this run.
+    fn epoch(&self, shop: &str, client_id: &str) -> u64 {
+        self.epochs
+            .get(&(shop.to_string(), client_id.to_string()))
+            .map_or(0, |(epoch, _)| *epoch)
+    }
+
+    /// The check a sealed token holds: of its prefix, kind, shop, app, epoch and rank.
+    fn check(
+        &self,
+        prefix: &str,
+        kind: &str,
+        shop: &str,
+        client_id: &str,
+        epoch: u64,
+        rank: u32,
+    ) -> [u8; CHECK_BYTES] {
+        let mac = hmac_sha256(
+            &self.key,
+            format!("{prefix}\0{kind}\0{shop}\0{client_id}\0{epoch}\0{rank}").as_bytes(),
+        );
+        let mut check = [0; CHECK_BYTES];
+        check.copy_from_slice(&mac[..CHECK_BYTES]);
+        check
+    }
+
+    /// The token of rank `rank` of `kind` for `client_id` on `shop`, in `epoch`: `prefix` and 32
+    /// hex digits, which look random and which only the key opens ([`Tokens::open`]).
+    fn sealed(
+        &self,
+        prefix: &str,
+        kind: &str,
+        shop: &str,
+        client_id: &str,
+        epoch: u64,
+        rank: u32,
+    ) -> String {
+        let mut block = [0u8; 16];
+        block[..6].copy_from_slice(&(epoch & EPOCH_MASK).to_be_bytes()[2..]);
+        block[6..10].copy_from_slice(&rank.to_be_bytes());
+        block[10..].copy_from_slice(&self.check(prefix, kind, shop, client_id, epoch, rank));
+        format!("{prefix}{}", hex(&self.permute(block, true)))
+    }
+
+    /// The epoch, rank and check `token` holds, if it has `prefix` and 32 hex digits. Any such
+    /// token opens: its check says whether lsf sealed it, and for which shop, app and kind.
+    fn open(&self, token: &str, prefix: &str) -> Option<(u64, u32, [u8; CHECK_BYTES])> {
+        let digits = token.strip_prefix(prefix)?;
+        if digits.len() != 32 || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        let mut block = [0u8; 16];
+        for (index, byte) in block.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&digits[index * 2..index * 2 + 2], 16).ok()?;
+        }
+        let block = self.permute(block, false);
+        let mut epoch = [0u8; 8];
+        epoch[2..].copy_from_slice(&block[..6]);
+        let mut rank = [0u8; 4];
+        rank.copy_from_slice(&block[6..10]);
+        let mut check = [0u8; CHECK_BYTES];
+        check.copy_from_slice(&block[10..]);
+        Some((u64::from_be_bytes(epoch), u32::from_be_bytes(rank), check))
+    }
+
+    /// A permutation of 16 bytes keyed by the key (a Feistel network of four rounds), `forward`
+    /// or back: what makes a sealed token look random.
+    fn permute(&self, block: [u8; 16], forward: bool) -> [u8; 16] {
+        let round = |index: u8, half: &[u8; 8]| -> [u8; 8] {
+            let mut input = b"lsf token round\0".to_vec();
+            input.push(index);
+            input.extend_from_slice(half);
+            let mac = hmac_sha256(&self.key, &input);
+            let mut out = [0u8; 8];
+            out.copy_from_slice(&mac[..8]);
+            out
+        };
+        let xor = |a: [u8; 8], b: [u8; 8]| -> [u8; 8] { std::array::from_fn(|i| a[i] ^ b[i]) };
+        let mut left: [u8; 8] = block[..8].try_into().unwrap_or_default();
+        let mut right: [u8; 8] = block[8..].try_into().unwrap_or_default();
+        if forward {
+            for index in 0..4 {
+                (left, right) = (right, xor(left, round(index, &right)));
+            }
+        } else {
+            for index in (0..4).rev() {
+                (left, right) = (xor(right, round(index, &left)), left);
+            }
+        }
+        let mut out = [0u8; 16];
+        out[..8].copy_from_slice(&left);
+        out[8..].copy_from_slice(&right);
+        out
+    }
+
+    /// The next token of `kind` for `client_id` on `shop`, in the epoch of the installation: one
+    /// no earlier run's token taken back in this run already is.
+    fn next(&mut self, prefix: &str, kind: &str, shop: &str, client_id: &str) -> String {
+        let epoch = self.epoch(shop, client_id);
+        let key = (
+            shop.to_string(),
+            client_id.to_string(),
+            format!("{prefix}{kind}"),
+        );
+        let mut rank = self.ranks.get(&key).copied().unwrap_or(0);
+        let mut token = self.sealed(prefix, kind, shop, client_id, epoch, rank);
+        while self.taken_back.contains(&token) {
+            rank += 1;
+            token = self.sealed(prefix, kind, shop, client_id, epoch, rank);
+        }
+        self.ranks.insert(key, rank + 1);
+        token
+    }
+
+    /// Closes the installation of `client_id` on `shop`, as `by` says: it moves to a new epoch,
+    /// later than every one before (the time, in milliseconds, of `now`), and no token of an
+    /// earlier epoch is taken back any more, an earlier run's included.
+    fn close(&mut self, shop: &str, client_id: &str, by: Revocation, now: DateTime<Utc>) {
+        let epoch = u64::try_from(now.timestamp_millis())
+            .unwrap_or(0)
+            .max(self.last_epoch + 1)
+            & EPOCH_MASK;
+        self.last_epoch = epoch;
+        self.epochs
+            .insert((shop.to_string(), client_id.to_string()), (epoch, by));
+        self.ranks
+            .retain(|(ranked, client, _), _| !(ranked == shop && client == client_id));
+    }
+
+    /// Whether `token` (of `prefix`) is one lsf would issue for an app on a shop, and may take
+    /// back: an earlier run's, of one of `kinds`, which this run has neither issued nor taken back,
+    /// for an installation in place.
+    fn earlier_run(&self, token: &str, prefix: &str, kinds: &[&'static str]) -> EarlierRun {
+        let Some((epoch, rank, check)) = self.open(token, prefix) else {
+            return EarlierRun::Unknown;
+        };
+        let mut candidates: Vec<(String, String)> = self.installs.keys().cloned().collect();
+        candidates.extend(
+            self.epochs
+                .keys()
+                .filter(|key| !self.installs.contains_key(*key))
+                .cloned(),
+        );
+        for (shop, client_id) in candidates {
+            for kind in kinds {
+                if self.check(prefix, kind, &shop, &client_id, epoch, rank) != check {
+                    continue;
+                }
+                let current = self.epochs.get(&(shop.clone(), client_id.clone()));
+                if let Some((closed_at, by)) = current {
+                    if epoch < *closed_at {
+                        return EarlierRun::Closed { shop, by: *by };
+                    }
+                    // The epoch of this run's closure: only this run issued tokens in it.
+                    if epoch == *closed_at {
+                        return EarlierRun::Unknown;
+                    }
+                } else if epoch == 0 {
+                    // Epoch 0 is every run's: the ranks this run issued are its own tokens.
+                    let issued = self
+                        .ranks
+                        .get(&(shop.clone(), client_id.clone(), format!("{prefix}{kind}")))
+                        .copied()
+                        .unwrap_or(0);
+                    if rank < issued {
+                        return EarlierRun::Unknown;
+                    }
+                }
+                let Some(scopes) = self.installs.get(&(shop.clone(), client_id.clone())) else {
+                    return EarlierRun::Unknown;
+                };
+                if self.taken_back.contains(token) {
+                    return EarlierRun::Unknown;
+                }
+                return EarlierRun::Found {
+                    shop,
+                    client_id,
+                    kind,
+                    scopes: scopes.clone(),
+                };
+            }
+        }
+        EarlierRun::Unknown
+    }
+
+    /// Takes back an access token an earlier run of lsf issued, which a backend kept: offline,
+    /// expiring or of client credentials, for an app installed on a shop whose installation was
+    /// not closed since (see the module). It grants what the installation grants now; an
+    /// expiring one lives an hour from `now`, a client credentials one a day. Whether it was. A
+    /// token of an installation closed since is remembered as revoked by what closed it
+    /// ([`Tokens::revocation`]).
+    pub fn recognize(&mut self, token: &str, now: DateTime<Utc>) -> bool {
+        let token = token.trim();
+        if !token.starts_with("shpat_")
+            || self.access.contains_key(token)
+            || self.revoked.contains_key(token)
+        {
+            return false;
+        }
+        match self.earlier_run(token, "shpat_", &RECOGNIZED_KINDS) {
+            EarlierRun::Unknown => false,
+            EarlierRun::Closed { shop, by } => {
+                self.remember_revoked(vec![token.to_string()], &shop, by);
+                false
+            }
+            EarlierRun::Found {
+                shop,
+                client_id,
+                kind,
+                scopes,
+            } => {
+                let expires_at = match kind {
+                    "expiring" => Some(now + Duration::seconds(EXPIRING_OFFLINE_LIFETIME)),
+                    "client_credentials" => {
+                        Some(now + Duration::seconds(CLIENT_CREDENTIALS_LIFETIME))
+                    }
+                    _ => None,
+                };
+                self.taken_back.insert(token.to_string());
+                self.access.insert(
+                    token.to_string(),
+                    Grant {
+                        shop,
+                        client_id,
+                        scopes,
+                        mode: AccessMode::Offline,
+                        user: None,
+                        issued_at: now,
+                        expires_at,
+                        source: GrantSource::EarlierRun,
+                    },
+                );
+                true
+            }
+        }
+    }
+
+    /// Takes back a refresh token an earlier run issued, as [`Tokens::recognize`] does an
+    /// access token: usable for 90 days from `now`. What closed its installation since, if
+    /// something did.
+    fn recognize_refresh(
+        &mut self,
+        refresh_token: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(), RefreshError> {
+        if !refresh_token.starts_with("shprt_") || self.refresh.contains_key(refresh_token) {
+            return Ok(());
+        }
+        match self.earlier_run(refresh_token, "shprt_", &["refresh"]) {
+            EarlierRun::Unknown => Ok(()),
+            EarlierRun::Closed { shop, by } => Err(RefreshError::Revoked { shop, by }),
+            EarlierRun::Found {
+                shop,
+                client_id,
+                scopes,
+                ..
+            } => {
+                self.taken_back.insert(refresh_token.to_string());
+                self.refresh.insert(
+                    refresh_token.to_string(),
+                    RefreshEntry {
+                        shop,
+                        client_id,
+                        scopes,
+                        expires_at: now + Duration::seconds(REFRESH_TOKEN_LIFETIME),
+                        first_used_at: None,
+                        predecessor: None,
+                        retired: None,
+                    },
+                );
+                Ok(())
+            }
+        }
     }
 
     /// Installs the app `client_id` on `shop` with `scopes`, or changes the scopes it is
@@ -505,11 +866,13 @@ impl Tokens {
             .map(Vec::as_slice)
     }
 
-    /// Uninstalls `client_id` from `shop`: its tokens, refresh tokens and codes stop working.
+    /// Uninstalls `client_id` from `shop`: its tokens, refresh tokens and codes stop working,
+    /// and no token of an earlier run is taken back for it any more.
     /// What `app/uninstalled` reports. Answers the number of access tokens revoked.
-    pub fn uninstall(&mut self, shop: &str, client_id: &str) -> usize {
+    pub fn uninstall(&mut self, shop: &str, client_id: &str, now: DateTime<Utc>) -> usize {
         self.installs
             .remove(&(shop.to_string(), client_id.to_string()));
+        self.close(shop, client_id, Revocation::Uninstalled, now);
         let before = self.access.len();
         let gone: Vec<String> = self
             .access
@@ -528,8 +891,27 @@ impl Tokens {
     }
 
     /// Revokes every token of every app on `shop`, and its installations: a shop reset or
-    /// deleted, as `by` says. Answers the number of access tokens revoked.
-    pub fn revoke_shop(&mut self, shop: &str, by: Revocation) -> usize {
+    /// deleted, as `by` says: no token of an earlier run is taken back for them any more. Answers
+    /// the number of access tokens revoked.
+    pub fn revoke_shop(&mut self, shop: &str, by: Revocation, now: DateTime<Utc>) -> usize {
+        let mut clients: Vec<String> = self
+            .installs
+            .keys()
+            .chain(self.epochs.keys())
+            .filter(|(installed, _)| installed == shop)
+            .map(|(_, client_id)| client_id.clone())
+            .collect();
+        clients.extend(
+            self.access
+                .values()
+                .filter(|grant| grant.shop == shop)
+                .map(|grant| grant.client_id.clone()),
+        );
+        clients.sort();
+        clients.dedup();
+        for client_id in clients {
+            self.close(shop, &client_id, by, now);
+        }
         self.installs.retain(|(installed, _), _| installed != shop);
         let before = self.access.len();
         let gone: Vec<String> = self
@@ -693,7 +1075,7 @@ impl Tokens {
         predecessor: Option<String>,
         now: DateTime<Utc>,
     ) -> Issued {
-        let refresh_token = self.fresh("shprt_");
+        let refresh_token = self.next("shprt_", "refresh", shop, client_id);
         let refresh_expires_at = now + Duration::seconds(REFRESH_TOKEN_LIFETIME);
         self.refresh.insert(
             refresh_token.clone(),
@@ -772,7 +1154,15 @@ impl Tokens {
 
     fn issue(&mut self, grant: Grant, refresh: Option<(String, DateTime<Utc>)>) -> Issued {
         self.purge(grant.issued_at - Duration::seconds(PURGE_AFTER));
-        let access_token = self.fresh("shpat_");
+        let kind = match (grant.mode, grant.source, grant.expires_at) {
+            (AccessMode::Online, _, _) => {
+                format!("online:{}", grant.user.as_ref().map_or(0, |user| user.id))
+            }
+            (_, GrantSource::ClientCredentials, _) => "client_credentials".to_string(),
+            (_, _, Some(_)) => "expiring".to_string(),
+            (_, _, None) => "offline".to_string(),
+        };
+        let access_token = self.next("shpat_", &kind, &grant.shop, &grant.client_id);
         self.access.insert(access_token.clone(), grant.clone());
         let (refresh_token, refresh_token_expires_at) = refresh.unzip();
         Issued {
@@ -790,6 +1180,7 @@ impl Tokens {
         client_id: &str,
         now: DateTime<Utc>,
     ) -> Result<Issued, RefreshError> {
+        self.recognize_refresh(refresh_token, now)?;
         let entry = self
             .refresh
             .get(refresh_token)
@@ -859,6 +1250,7 @@ impl Tokens {
                 refresh_token_expires_at: Some(entry.expires_at),
             });
         }
+        self.recognize(token, now);
         let grant = self.access.get(token).ok_or(MigrationError::Unknown)?;
         if grant.client_id != client_id || grant.shop != shop {
             return Err(MigrationError::Unknown);
@@ -1278,16 +1670,19 @@ mod tests {
             at(0),
         );
         let other_shop = tokens.install("other.myshopify.com", "client", &scopes(), at(0));
-        assert_eq!(tokens.uninstall(SHOP, "client"), 2);
+        assert_eq!(tokens.uninstall(SHOP, "client", at(100)), 2);
         assert_eq!(tokens.lookup(&default, at(1)), Err(TokenError::Unknown));
         assert_eq!(
             tokens.refresh(issued.refresh_token.as_deref().unwrap(), "client", at(1)),
-            Err(RefreshError::Unknown)
+            Err(RefreshError::Revoked {
+                shop: SHOP.to_string(),
+                by: Revocation::Uninstalled
+            })
         );
         assert_eq!(tokens.installed_scopes(SHOP, "client"), None);
         assert!(tokens.lookup(&other_shop, at(1)).is_ok());
         assert_eq!(
-            tokens.revoke_shop("other.myshopify.com", Revocation::ShopDeleted),
+            tokens.revoke_shop("other.myshopify.com", Revocation::ShopDeleted, at(100)),
             1
         );
         assert!(tokens.grants().next().is_none());
@@ -1308,7 +1703,7 @@ mod tests {
             )
             .access_token;
         assert_eq!(tokens.revocation(&exchanged), None);
-        tokens.revoke_shop(SHOP, Revocation::Reset);
+        tokens.revoke_shop(SHOP, Revocation::Reset, at(100));
         // A reset installs the app again: its default token is valid again, not the other.
         tokens.install(SHOP, "client", &scopes(), at(1));
         assert!(tokens.lookup(&default, at(1)).is_ok());
@@ -1328,13 +1723,13 @@ mod tests {
         assert!(!tokens.first_refusal("shpat_never_issued"));
 
         // An uninstall, then a deleted shop: the latest says why.
-        tokens.uninstall(SHOP, "client");
+        tokens.uninstall(SHOP, "client", at(100));
         assert_eq!(
             tokens.revocation(&default).map(|revoked| revoked.by),
             Some(Revocation::Uninstalled)
         );
         let test = tokens.install("test-1.myshopify.com", "client", &scopes(), at(2));
-        tokens.revoke_shop("test-1.myshopify.com", Revocation::ShopDeleted);
+        tokens.revoke_shop("test-1.myshopify.com", Revocation::ShopDeleted, at(100));
         assert!(
             tokens
                 .revocation(&test)
@@ -1366,6 +1761,271 @@ mod tests {
         assert_eq!(from_a, from_b);
         assert_ne!(from_a, from_c);
         assert_ne!(issue(&mut a), from_a);
-        assert_ne!(Tokens::new().fresh("x"), Tokens::new().fresh("x"));
+        assert_ne!(Tokens::new().entropy("x"), Tokens::new().entropy("x"));
+    }
+
+    /// A run of lsf with the app installed on [`SHOP`], as the server starts.
+    fn run(secret: &str) -> Tokens {
+        let mut tokens = Tokens::stable("client", secret);
+        tokens.install(SHOP, "client", &scopes(), at(0));
+        tokens
+    }
+
+    #[test]
+    fn a_token_of_an_earlier_run_is_valid_again() {
+        let mut first = run("secret");
+        let offline = first
+            .issue_offline(
+                SHOP,
+                "client",
+                &scopes(),
+                false,
+                GrantSource::TokenExchange,
+                at(0),
+            )
+            .access_token;
+        let expiring = first.issue_offline(
+            SHOP,
+            "client",
+            &scopes(),
+            true,
+            GrantSource::TokenExchange,
+            at(0),
+        );
+        // lsf restarts: the backend still has both.
+        let mut second = run("secret");
+        assert_eq!(second.lookup(&offline, at(10)), Err(TokenError::Unknown));
+        assert!(second.recognize(&offline, at(10)));
+        let grant = second.lookup(&offline, at(10)).unwrap();
+        assert_eq!(grant.source, GrantSource::EarlierRun);
+        assert_eq!(grant.expires_at, None);
+        assert!(second.recognize(&expiring.access_token, at(10)));
+        assert_eq!(
+            second
+                .lookup(&expiring.access_token, at(10))
+                .unwrap()
+                .expires_at,
+            Some(at(10 + EXPIRING_OFFLINE_LIFETIME))
+        );
+        // Its refresh token too, and what it gives is new.
+        let refreshed = second
+            .refresh(expiring.refresh_token.as_deref().unwrap(), "client", at(20))
+            .unwrap();
+        assert_ne!(
+            Some(refreshed.access_token.clone()),
+            Some(expiring.access_token.clone())
+        );
+        // The next token of the run is not one taken back.
+        let next = second
+            .issue_offline(
+                SHOP,
+                "client",
+                &scopes(),
+                false,
+                GrantSource::TokenExchange,
+                at(30),
+            )
+            .access_token;
+        assert_ne!(next, offline);
+    }
+
+    #[test]
+    fn a_token_revoked_or_of_another_secret_is_not_taken_back() {
+        let mut first = run("secret");
+        let offline = first
+            .issue_offline(
+                SHOP,
+                "client",
+                &scopes(),
+                false,
+                GrantSource::TokenExchange,
+                at(0),
+            )
+            .access_token;
+        assert!(!run("another secret").recognize(&offline, at(1)));
+        assert!(
+            !run("secret").recognize(&format!("shpat_{}", "0123456789abcdef".repeat(2)), at(1))
+        );
+        // Uninstalled in this run: revoked, even once installed again.
+        first.uninstall(SHOP, "client", at(100));
+        first.install(SHOP, "client", &scopes(), at(2));
+        assert!(!first.recognize(&offline, at(3)));
+        assert_eq!(first.lookup(&offline, at(3)), Err(TokenError::Unknown));
+        // Not installed: nothing to take back.
+        let mut bare = Tokens::stable("client", "secret");
+        assert!(!bare.recognize(&offline, at(1)));
+    }
+
+    #[test]
+    fn a_token_expired_in_this_run_is_not_taken_back() {
+        let mut tokens = run("secret");
+        let issued = tokens.issue_offline(
+            SHOP,
+            "client",
+            &scopes(),
+            true,
+            GrantSource::TokenExchange,
+            at(0),
+        );
+        tokens.purge(at(2 * EXPIRING_OFFLINE_LIFETIME));
+        assert!(!tokens.recognize(&issued.access_token, at(2 * EXPIRING_OFFLINE_LIFETIME)));
+    }
+
+    /// What a backend kept from a run of lsf: two offline tokens, two expiring ones and their
+    /// refresh tokens, in the order they were issued.
+    fn kept(tokens: &mut Tokens) -> (Vec<String>, Vec<String>, Vec<String>) {
+        let offline = (0..2)
+            .map(|_| {
+                tokens
+                    .issue_offline(
+                        SHOP,
+                        "client",
+                        &scopes(),
+                        false,
+                        GrantSource::TokenExchange,
+                        at(0),
+                    )
+                    .access_token
+            })
+            .collect();
+        let (mut expiring, mut refresh) = (Vec::new(), Vec::new());
+        for _ in 0..2 {
+            let issued = tokens.issue_offline(
+                SHOP,
+                "client",
+                &scopes(),
+                true,
+                GrantSource::Migration,
+                at(0),
+            );
+            expiring.push(issued.access_token);
+            refresh.push(issued.refresh_token.unwrap());
+        }
+        (offline, expiring, refresh)
+    }
+
+    #[test]
+    fn tokens_of_an_earlier_run_are_taken_back_in_any_order() {
+        let (offline, expiring, refresh) = kept(&mut run("secret"));
+        let mut second = run("secret");
+        // The second first: the first is still taken back.
+        for token in [&offline[1], &offline[0], &expiring[1], &expiring[0]] {
+            assert!(second.recognize(token, at(10)), "{token}");
+            assert!(second.lookup(token, at(10)).is_ok());
+        }
+        for token in [&refresh[1], &refresh[0]] {
+            assert!(second.refresh(token, "client", at(20)).is_ok(), "{token}");
+        }
+        // Taken back once: a new token of the run is none of them.
+        let next = second
+            .issue_offline(
+                SHOP,
+                "client",
+                &scopes(),
+                false,
+                GrantSource::TokenExchange,
+                at(30),
+            )
+            .access_token;
+        assert!(!offline.contains(&next));
+    }
+
+    #[test]
+    fn a_reset_or_an_uninstall_stops_taking_back_tokens_of_an_earlier_run() {
+        for by in [
+            Revocation::Reset,
+            Revocation::Uninstalled,
+            Revocation::ShopDeleted,
+        ] {
+            let (offline, expiring, refresh) = kept(&mut run("secret"));
+            // lsf restarts; the backend presents one token, then the rest after the reset.
+            let mut second = run("secret");
+            assert!(second.recognize(&offline[0], at(10)));
+            match by {
+                Revocation::Uninstalled => {
+                    second.uninstall(SHOP, "client", at(20));
+                }
+                _ => {
+                    second.revoke_shop(SHOP, by, at(20));
+                }
+            }
+            second.install(SHOP, "client", &scopes(), at(21));
+            for token in [&offline[0], &offline[1], &expiring[0], &expiring[1]] {
+                assert!(!second.recognize(token, at(30)), "{by:?} {token}");
+                assert_eq!(second.lookup(token, at(30)), Err(TokenError::Unknown));
+                assert_eq!(second.revocation(token).map(|revoked| revoked.by), Some(by));
+            }
+            for token in &refresh {
+                assert_eq!(
+                    second.refresh(token, "client", at(30)),
+                    Err(RefreshError::Revoked {
+                        shop: SHOP.to_string(),
+                        by
+                    })
+                );
+            }
+            // A token issued after it works, is none of the earlier run's, and is taken back
+            // after the next restart.
+            let issued = second.issue_offline(
+                SHOP,
+                "client",
+                &scopes(),
+                true,
+                GrantSource::TokenExchange,
+                at(40),
+            );
+            assert!(second.lookup(&issued.access_token, at(41)).is_ok());
+            assert!(!expiring.contains(&issued.access_token));
+            let fresh = issued.refresh_token.unwrap();
+            assert!(!refresh.contains(&fresh));
+            let mut third = run("secret");
+            assert!(third.recognize(&issued.access_token, at(50)));
+            assert!(third.refresh(&fresh, "client", at(50)).is_ok());
+            // A run that has not closed the installation takes back any run's tokens.
+            assert!(third.recognize(&offline[1], at(50)));
+        }
+    }
+
+    #[test]
+    fn a_token_migrated_in_this_run_is_not_taken_back() {
+        let mut first = run("secret");
+        let offline = first
+            .issue_offline(
+                SHOP,
+                "client",
+                &scopes(),
+                false,
+                GrantSource::TokenExchange,
+                at(0),
+            )
+            .access_token;
+        let mut second = run("secret");
+        assert!(second.recognize(&offline, at(10)));
+        second.migrate(&offline, "client", SHOP, at(20)).unwrap();
+        assert!(!second.recognize(&offline, at(30)));
+        assert_eq!(second.lookup(&offline, at(30)), Err(TokenError::Unknown));
+    }
+
+    #[test]
+    fn a_token_not_sealed_with_the_key_opens_as_nothing() {
+        let tokens = run("secret");
+        assert!(tokens.open("shpat_0123", "shpat_").is_none());
+        assert!(
+            tokens
+                .open("shpat_zz23456789abcdef0123456789abcdef", "shpat_")
+                .is_none()
+        );
+        let sealed = tokens.sealed("shpat_", "offline", SHOP, "client", 1_234, 5);
+        let (epoch, rank, check) = tokens.open(&sealed, "shpat_").unwrap();
+        assert_eq!((epoch, rank), (1_234, 5));
+        assert_eq!(
+            check,
+            tokens.check("shpat_", "offline", SHOP, "client", 1_234, 5)
+        );
+        // One digit changed: the check no longer matches.
+        let mut forged = sealed.clone().into_bytes();
+        forged[10] = if forged[10] == b'0' { b'1' } else { b'0' };
+        let forged = String::from_utf8(forged).unwrap();
+        assert!(!run("secret").recognize(&forged, at(1)));
     }
 }

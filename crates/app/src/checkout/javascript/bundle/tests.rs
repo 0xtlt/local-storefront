@@ -641,8 +641,18 @@ fn without_a_tsconfig_jsx_calls_react_s_runtime() {
         "src/Entry.jsx",
         "export default () => <s-text>hi</s-text>;\n",
     )]);
-    assert_eq!(
-        script(&folder, true).unwrap_err(),
-        "src/Entry.jsx: cannot find the package of `react/jsx-runtime` in a node_modules folder: install it"
+    let error = script(&folder, true).unwrap_err();
+    assert!(
+        error.starts_with(
+            "src/Entry.jsx: cannot find the package of `react/jsx-runtime` in a node_modules folder: install it. "
+        ),
+        "{error}"
+    );
+    // What a Preact extension, as Shopify's templates make them, lacks.
+    assert!(
+        error.ends_with(
+            r#"says so in its tsconfig.json: {"compilerOptions": {"jsx": "react-jsx", "jsxImportSource": "preact"}}"#
+        ),
+        "{error}"
     );
 }

@@ -180,6 +180,17 @@
       "type": "object",
       "additionalProperties": true,
       "default": {}
+    },
+    "app": {
+      "description": "The app of `--app` as this store has it installed: what its theme app extensions read.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AppInstallationInput"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -1137,7 +1148,7 @@
           "default": null
         },
         "available": {
-          "description": "Whether the variant can be bought. Derived from the inventory fields when omitted.",
+          "description": "Whether the variant can be bought. Derived from the inventory fields when omitted.\n`false` alone makes the variant tracked and out of stock, as a sold-out variant is on\nShopify.",
           "type": [
             "boolean",
             "null"
@@ -1154,7 +1165,7 @@
           "default": null
         },
         "inventory_tracked": {
-          "description": "Set to `false` to disable inventory tracking (the variant is then always available).\nDefaults to `true` when `inventory_quantity` is set, `false` otherwise.",
+          "description": "Set to `false` to disable inventory tracking (the variant is then always available).\nDefaults to `true` when `inventory_quantity` is set or `available` is `false`, `false`\notherwise.",
           "type": [
             "boolean",
             "null"
@@ -3480,6 +3491,13 @@
           },
           "default": {}
         },
+        "extensions": {
+          "description": "What the merchant filled in for the UI extensions of the app, by the handle of the\nextension: the values its `shopify.settings` (`useSettings`) reads.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CheckoutExtensionInput"
+          }
+        },
         "tax_rate": {
           "description": "Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when\nomitted.",
           "type": [
@@ -3646,11 +3664,8 @@
           "default": []
         },
         "metafields": {
-          "description": "The metafields of the discount, which its Function's input query reads, by\n`\"namespace.key\"`: `{\"$app:config.settings\": {\"type\": \"json\", \"value\": {\"percent\": 10}}}`.",
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/MetafieldInput"
-          },
+          "description": "The metafields of the discount, which its Function's input query reads, by\n`\"namespace.key\"`: `{\"$app.function-configuration\": {\"type\": \"json\", \"value\":\n{\"percentage\": 10}}}` for `metafield(namespace: \"$app\", key: \"function-configuration\")`.\nShopify's list of `{namespace, key, type, value}` is taken too.",
+          "$ref": "#/$defs/OwnerMetafields",
           "default": {}
         }
       },
@@ -3668,6 +3683,55 @@
         "SHIPPING"
       ]
     },
+    "OwnerMetafields": {
+      "description": "The metafields of a discount or of the owner of a Function: by `\"namespace.key\"`, or as\nShopify's Admin API takes them (`metafieldsSet`, `discountAutomaticAppCreate`), a list of\n`{namespace, key, type, value}`.",
+      "anyOf": [
+        {
+          "description": "`{\"$app.function-configuration\": {\"type\": \"json\", \"value\": {…}}}`.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/MetafieldInput"
+          }
+        },
+        {
+          "description": "`[{\"namespace\": \"$app\", \"key\": \"function-configuration\", \"type\": \"json\", \"value\": {…}}]`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OwnerMetafield"
+          }
+        }
+      ]
+    },
+    "OwnerMetafield": {
+      "description": "A metafield as Shopify's Admin API takes it.",
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "description": "`$app`, `$app:<name>`, or another namespace.",
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The metafield type: `json`, `single_line_text_field`, … Inferred from the value when\nomitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "value": {
+          "description": "The value: JSON, or the text Shopify stores (`\"{\\\"percentage\\\":10}\"` for `json`)."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "key",
+        "value"
+      ]
+    },
     "CheckoutFunctionInput": {
       "description": "A Function that is not a discount (cart transform, delivery or payment customization,\nvalidation): its owner in the shop, and its settings.",
       "type": "object",
@@ -3680,11 +3744,71 @@
           ]
         },
         "metafields": {
-          "description": "The metafields of the object the Function belongs to, by `\"namespace.key\"`.",
+          "description": "The metafields of the object the Function belongs to, by `\"namespace.key\"`:\n`{\"$app.function-configuration\": {\"type\": \"json\", \"value\": {…}}}` for\n`metafield(namespace: \"$app\", key: \"function-configuration\")`. Shopify's list of\n`{namespace, key, type, value}` is taken too.",
+          "$ref": "#/$defs/OwnerMetafields",
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "CheckoutExtensionInput": {
+      "description": "A checkout or customer account UI extension of the app, as the merchant set it up.",
+      "type": "object",
+      "properties": {
+        "settings": {
+          "description": "The values of the fields of its `[extensions.settings]`, by `key`, as the merchant fills\nthem in the checkout editor: `{\"title\": \"Free gift\", \"threshold\": 50, \"show\": true}`. A\nfield left out has no value (`undefined`), as on Shopify.",
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "AppInstallationInput": {
+      "description": "The app of `--app` as the store has it installed, for its theme app extensions: its\napp-data metafields and the app embed blocks turned on.",
+      "type": "object",
+      "properties": {
+        "metafields": {
+          "description": "The app-data metafields of the installation, by namespace then key:\n`{\"conditions\": {\"reviews_enabled\": true}}`. The Liquid of the app's blocks reads them as\n`app.metafields.conditions.reviews_enabled`, and an `available_if` of a block tests them.",
           "type": "object",
           "additionalProperties": {
-            "$ref": "#/$defs/MetafieldInput"
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
           },
+          "default": {}
+        },
+        "embeds": {
+          "description": "App embed blocks turned on or off, by the name of their file in the extension's\n`blocks/` (`\"chat-bubble\"` for `blocks/chat-bubble.liquid`): `true` turns one on, with\nthe settings `config/settings_data.json` gives it or else its defaults; `false` turns it\noff; `{\"settings\": {...}}` turns it on with these settings. The embeds of\n`config/settings_data.json` that this does not name stay as the theme has them.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/AppEmbedInput"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "AppEmbedInput": {
+      "description": "An app embed block turned on (`true`) or off (`false`), or turned on with its settings.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/AppEmbedSettings"
+        }
+      ]
+    },
+    "AppEmbedSettings": {
+      "description": "An app embed block turned on with settings of its own.",
+      "type": "object",
+      "properties": {
+        "settings": {
+          "description": "The values of the settings of the block's schema, by setting id. The others have their\ndefaults.",
+          "type": "object",
+          "additionalProperties": true,
           "default": {}
         }
       },

@@ -214,6 +214,61 @@ test('fetch() asks a new token once when the backend says so, and follows a reau
   assert.equal(settled, false, 'the page goes, the fetch never answers');
 });
 
+test('fetch() says to the admin when a request of the app fails, so that it asks lsf what is wrong', async () => {
+  const { fetch } = recordingFetch((request) =>
+    new Response('', { status: request.url.endsWith('/broken') ? 404 : 200 }),
+  );
+  const frame = connected({ fetch });
+  const answer = frame.answer({ idToken: () => 'token' });
+  for (const path of ['/api/ok', '/api/broken']) {
+    const response = frame.window.fetch(path);
+    for (let i = 0; i < 3; i++) {
+      await settle();
+      await answer();
+    }
+    await response;
+  }
+  assert.deepEqual(frame.posts('failed').map(({ status }) => status), [404]);
+});
+
+test('the CDN URLs the frame\'s proxy pointed at lsf go back in the src of their scripts, for React to hydrate', () => {
+  const MARKED_POLARIS = `${ADMIN}/__lsf/cdn/shopifycloud/polaris.js#lsf-cdn`;
+  const OWN_POLARIS = `${ADMIN}/__lsf/cdn/shopifycloud/polaris-2.js`;
+  const frame = connected({
+    scriptSrc: `${ADMIN}/__lsf/admin/app-bridge.js#lsf-cdn`,
+    build(document) {
+      document.body.append(
+        element(document, 'script', { src: MARKED_POLARIS }),
+        element(document, 'script', { src: OWN_POLARIS }),
+        element(document, 'script', { src: `${APP}/x.js#lsf-cdn` }),
+      );
+    },
+  });
+  const sources = frame.document.querySelectorAll('script[src]').map((script) => script.getAttribute('src'));
+  assert.deepEqual(sources, [
+    'https://cdn.shopify.com/shopifycloud/app-bridge.js',
+    'https://cdn.shopify.com/shopifycloud/polaris.js',
+    OWN_POLARIS,
+    `${APP}/x.js#lsf-cdn`,
+  ]);
+  assert.equal(frame.shopify.origin, ADMIN, 'the admin is still the origin the script came from');
+
+  // While the parser runs, the scripts after this one are put back once it is done.
+  let later;
+  const loading = connected({
+    scriptSrc: `${ADMIN}/__lsf/admin/app-bridge.js#lsf-cdn`,
+    build(document) {
+      document.readyState = 'loading';
+      later = element(document, 'script', { src: MARKED_POLARIS });
+      document.body.append(later);
+    },
+  });
+  assert.equal(later.getAttribute('src'), MARKED_POLARIS);
+  loading.document.readyState = 'interactive';
+  loading.document.dispatchEvent(new loading.window.Event('readystatechange'));
+  assert.equal(later.getAttribute('src'), 'https://cdn.shopify.com/shopifycloud/polaris.js');
+});
+
 test('fetch() of Direct API access rejects, and disabledFeatures: fetch leaves fetch alone', async () => {
   const { fetch } = recordingFetch();
   const frame = connected({ fetch });
@@ -605,6 +660,58 @@ test('ui-modal opens over the app, dims the admin, and is shown by its id', asyn
   assert.equal(polaris.document.getElementById('p').opened, true);
 });
 
+test('intents.invoke() asks the admin, and its activity completes with what the admin answers', async () => {
+  const frame = connected();
+  const answer = frame.answer({ intent: (params) => (params.action === 'edit' ? { code: 'closed' } : { code: 'error', message: 'lsf does not simulate the intent create:shopify/Discount' }) });
+  const edit = await frame.shopify.intents.invoke('edit:shopify/Product', { value: 'gid://shopify/Product/1' });
+  assert.deepEqual(frame.last('request').params, { action: 'edit', type: 'shopify/Product', value: 'gid://shopify/Product/1', data: null });
+  await answer();
+  assert.deepEqual(plain(await edit.complete), { code: 'closed' });
+
+  const create = await frame.shopify.intents.invoke({ action: 'create', type: 'shopify/Discount', data: { type: 'free-shipping' } });
+  assert.deepEqual(frame.last('request').params, { action: 'create', type: 'shopify/Discount', value: null, data: { type: 'free-shipping' } });
+  await answer();
+  assert.equal((await create.complete).code, 'error');
+  assert.ok(frame.warnings.includes('lsf App Bridge: lsf does not simulate the intent create:shopify/Discount'));
+
+  await assert.rejects(frame.shopify.intents.invoke('Product'), /an intent is "<action>:<type>"/);
+});
+
+test('while a modal shows, the page lifts itself over the whole window when the admin asks, and comes back after', async () => {
+  const frame = connected({
+    build(document) {
+      document.body.setAttribute('style', 'color: red');
+      document.body.append(element(document, 'ui-modal', { id: 'm' }, [element(document, 'p', {}, ['Hi'])]));
+      document.body.append(element(document, 's-modal', { id: 'p' }));
+    },
+  });
+  const { document } = frame;
+  await frame.shopify.modal.show('m');
+  assert.deepEqual(frame.posts('modal').map(({ open }) => open), [true]);
+  frame.event('modal.lift', { left: 240, top: 108, width: 1000, height: 600, background: 'rgb(255, 255, 255)', radius: 12 });
+  assert.ok(document.documentElement.hasAttribute('data-lsf-lifted'));
+  assert.match(document.documentElement.getAttribute('style'), /background: linear-gradient\(transparent, transparent\) !important/);
+  const style = document.body.getAttribute('style');
+  assert.match(style, /^color: red; position: fixed !important; left: 240px !important; top: 108px !important; width: 1000px !important; height: 600px !important;/);
+  assert.match(style, /background: rgb\(255, 255, 255\) !important; border-radius: 12px !important/);
+  assert.equal(frame.posts('lifted').length, 1);
+
+  // Polaris's s-modal says when it shows: one modal more, no new message.
+  document.getElementById('p').dispatchEvent(new frame.window.Event('show', { bubbles: true }));
+  await frame.shopify.modal.hide('m');
+  assert.deepEqual(frame.posts('modal').map(({ open }) => open), [true]);
+  document.getElementById('p').dispatchEvent(new frame.window.Event('hide', { bubbles: true }));
+  assert.deepEqual(frame.posts('modal').map(({ open }) => open), [true, false]);
+  frame.event('modal.unlift');
+  assert.equal(document.body.getAttribute('style'), 'color: red');
+  assert.equal(document.documentElement.getAttribute('style'), null);
+  assert.equal(document.documentElement.hasAttribute('data-lsf-lifted'), false);
+
+  // A lift asked when no modal shows (late) does nothing.
+  frame.event('modal.lift', { left: 1, top: 1, width: 1, height: 1 });
+  assert.equal(document.documentElement.hasAttribute('data-lsf-lifted'), false);
+});
+
 test('what lsf does not simulate rejects (or warns) and says so, here and to the admin', async () => {
   const frame = connected();
   const { shopify } = frame;
@@ -614,7 +721,6 @@ test('what lsf does not simulate rejects (or warns) and says so, here and to the
     ['pos.close', () => shopify.pos.close()],
     ['pos.device', () => shopify.pos.device()],
     ['pos.location', () => shopify.pos.location()],
-    ['intents.invoke', () => shopify.intents.invoke('create:shopify/Product')],
     ['webVitals.onReport', () => shopify.webVitals.onReport(() => {})],
     ['support.registerHandler', () => shopify.support.registerHandler(() => {})],
     ['reviews.request', () => shopify.reviews.request()],

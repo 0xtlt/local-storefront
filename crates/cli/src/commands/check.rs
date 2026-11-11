@@ -11,6 +11,8 @@ use serde::Serialize;
 
 use crate::output::count;
 
+mod references;
+
 #[derive(Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum Format {
     /// For a person: a line per problem, with indented details.
@@ -19,6 +21,9 @@ pub enum Format {
     /// One JSON document, for a tool: `{ok, files, problems, fixable, fixed, changes_output,
     /// diagnostics: [{severity, code, file, line, message, ...}]}`.
     Json,
+    /// GitHub Actions annotations, one per problem (`::error file=…,line=…::message`): a
+    /// workflow shows each on its line of the pull request.
+    Github,
 }
 
 #[derive(clap::Args)]
@@ -33,6 +38,12 @@ pub struct Args {
     /// How to print the result.
     #[arg(long, value_enum, default_value = "text")]
     format: Format,
+
+    /// The directory of a Shopify app: the app blocks the theme names are checked against its
+    /// theme app extensions. Without it, they are not checked, and a note says how many there
+    /// are.
+    #[arg(long, value_name = "DIR")]
+    app: Option<PathBuf>,
 }
 
 /// What `lsf check` writes into a file.
@@ -428,13 +439,43 @@ impl Diagnostic {
         }
     }
 
+    /// The diagnostic as a GitHub Actions annotation, its file in `base`.
+    fn annotation(&self, base: &Path) -> crate::output::Annotation {
+        let mut message = self.message.clone();
+        if let Some(setting) = &self.location.setting {
+            message = format!("{setting}: {message}");
+        }
+        if let Some(fix) = &self.fix {
+            message.push_str(&format!("\nfix: {}", one_line(&fix.markup)));
+            if !fix.before.is_empty() {
+                message.push_str(&format!("\nbefore it: {}", fix.before.join("; ")));
+            }
+            if let Some(change) = &fix.changes_output {
+                message.push_str(&format!("\nchanges the output: {change}"));
+            }
+        }
+        if let Some(reason) = &self.no_fix {
+            message.push_str(&format!("\nno automatic fix: {reason}"));
+        }
+        if let Some(hint) = &self.hint {
+            message.push_str(&format!("\nhint: {hint}"));
+        }
+        crate::output::Annotation {
+            level: crate::output::Annotation::level_of(self.severity),
+            file: Some(crate::output::annotation_path(base, &self.location.file)),
+            line: self.location.line,
+            title: format!("lsf check: {}", self.code),
+            message,
+        }
+    }
+
     /// Prints the diagnostic for a person.
     fn print(&self) {
         // A warning says so: it is not one of the problems the summary counts.
-        let warning = if self.severity == "warning" {
-            "warning: "
-        } else {
-            ""
+        let warning = match self.severity {
+            "warning" => "warning: ",
+            "info" => "note: ",
+            _ => "",
         };
         let Some(markup) = &self.markup else {
             println!("{}: {warning}{}", self.location, self.message);
@@ -523,6 +564,8 @@ struct Tally {
     fixed: usize,
     /// Kept for the JSON report; printed at once for a person.
     json: bool,
+    /// For `--format github`: the theme folder, which the files of the annotations are in.
+    github: Option<PathBuf>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -530,6 +573,8 @@ impl Tally {
     fn report(&mut self, diagnostic: Diagnostic) {
         if self.json {
             self.diagnostics.push(diagnostic);
+        } else if let Some(base) = &self.github {
+            println!("{}", diagnostic.annotation(base));
         } else {
             diagnostic.print();
         }
@@ -809,6 +854,7 @@ fn check_theme(
     let mut files = 0;
     let mut tally = Tally {
         json: args.format == Format::Json,
+        github: (args.format == Format::Github).then(|| theme_dir.to_path_buf()),
         ..Tally::default()
     };
     // A warning, which is not a problem: the theme is fine on Shopify.
@@ -820,6 +866,10 @@ fn check_theme(
             note,
         ));
     }
+    // The keys of the `t` filter are looked up in the default locale.
+    let locale = references::default_locale(&theme);
+    // The schemas are checked against the theme blocks and the default schema locale.
+    let schema_names = references::SchemaNames::of(&theme);
     for directory in [
         "layout",
         "templates",
@@ -871,6 +921,34 @@ fn check_theme(
                     "the block tag can only be used in layout/ and templates/ files".to_string(),
                 );
             }
+            if matches!(directory, "sections" | "blocks") {
+                for problem in schema_names.problems(&source) {
+                    tally.problem_with_hint(
+                        problem.code,
+                        Location::file(&path, Some(problem.line)),
+                        problem.message,
+                        problem.hint,
+                    );
+                }
+            }
+            for missing in references::missing_assets(&theme, &source) {
+                let mut diagnostic = Diagnostic::new(
+                    "warning",
+                    missing.code,
+                    Location::file(&path, Some(missing.line)),
+                    missing.message,
+                );
+                diagnostic.hint = missing.hint;
+                tally.report(diagnostic);
+            }
+            for missing in references::in_liquid(&theme, &source, locale.as_deref()) {
+                tally.problem_with_hint(
+                    missing.code,
+                    Location::file(&path, Some(missing.line)),
+                    missing.message,
+                    missing.hint,
+                );
+            }
             let mut reported = Vec::new();
             for (filter, line) in filters_used(&source) {
                 if env.filter(&filter).is_none() && !reported.contains(&filter) {
@@ -911,7 +989,39 @@ fn check_theme(
             if holds_settings(&path) {
                 check_liquid_settings(&theme, &env, &path, args.writes(), &mut tally);
             }
+            if matches!(directory, "templates" | "templates/customers" | "sections") {
+                for missing in references::in_json_template(&theme, &path) {
+                    tally.problem_with_hint(
+                        missing.code,
+                        Location::file(&path, Some(missing.line)),
+                        missing.message,
+                        missing.hint,
+                    );
+                }
+            }
         }
+    }
+    // The app blocks the templates name: against the theme app extensions of `--app`.
+    // With `--app`, an app block that renders nothing is an error: the check is asked for.
+    for finding in crate::theme_extensions::check_lines(&theme, args.app.as_deref())? {
+        let severity = match finding.level {
+            lsf_theme::app_extensions::references::Level::Warning if args.app.is_some() => {
+                tally.problems += 1;
+                "error"
+            }
+            lsf_theme::app_extensions::references::Level::Warning => "warning",
+            lsf_theme::app_extensions::references::Level::Info => "info",
+        };
+        let location = Location {
+            setting: finding.pointer,
+            ..Location::file(&finding.file, None)
+        };
+        tally.report(Diagnostic::new(
+            severity,
+            "app_block",
+            location,
+            finding.message,
+        ));
     }
     Ok((files, tally))
 }
@@ -940,6 +1050,308 @@ mod tests {
         // Nothing close: no guess.
         assert_eq!(meant("frobnicate"), None);
         assert_eq!(meant("nope"), None);
+    }
+
+    #[test]
+    fn the_apps_section_shopify_supplies_is_not_missing() {
+        // The fixture theme names an `apps` section and has no `sections/apps.liquid`.
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/theme-app-extensions");
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: Some(fixture.join("app")),
+        };
+        let (files, tally) = check_theme(&fixture.join("theme"), &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let codes: Vec<&str> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["code"].as_str().unwrap())
+            .collect();
+        assert!(!codes.contains(&"missing_section"), "{report}");
+    }
+
+    #[test]
+    fn what_the_theme_names_and_does_not_have_is_a_problem() {
+        let root = std::env::temp_dir().join(format!("lsf-check-names-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write(
+            "layout/theme.liquid",
+            "{% sections 'header-group' %}{% sections 'footr-group' %}{{ content_for_layout }}",
+        );
+        write(
+            "sections/header-group.json",
+            r#"{"type": "header", "name": "Header", "sections": {}, "order": []}"#,
+        );
+        write("sections/main-product.liquid", "{% render 'price' %}");
+        write("snippets/price.liquid", "{{ 'products.price' | t }}");
+        write(
+            "snippets/card.liquid",
+            "<p>\n{% render 'prcie' %}\n{{ 'products.foo' | t }}\n{{ 'products.price' | t }}\n{% render 'price' %}",
+        );
+        write(
+            "locales/en.default.json",
+            r#"{"products": {"price": "Price"}}"#,
+        );
+        write(
+            "templates/product.json",
+            r#"{
+  "sections": {
+    "main": {
+      "type": "main-prodcut"
+    }
+  },
+  "order": ["main"]
+}"#,
+        );
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(String, String, u64, String)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["code"].as_str().unwrap().to_string(),
+                    d["file"].as_str().unwrap().to_string(),
+                    d["line"].as_u64().unwrap_or(0),
+                    d["hint"].as_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        let expected = |code: &str, file: &str, line: u64, hint: &str| {
+            (code.to_string(), file.to_string(), line, hint.to_string())
+        };
+        assert_eq!(
+            found,
+            [
+                expected("missing_section_group", "layout/theme.liquid", 1, ""),
+                expected(
+                    "missing_snippet",
+                    "snippets/card.liquid",
+                    2,
+                    "did you mean \"price\"?"
+                ),
+                expected(
+                    "missing_translation",
+                    "snippets/card.liquid",
+                    3,
+                    "add it to locales/en.default.json"
+                ),
+                expected(
+                    "missing_section",
+                    "templates/product.json",
+                    4,
+                    "did you mean \"main-product\"?"
+                ),
+            ],
+            "{report:#}"
+        );
+        assert_eq!(report["problems"], 4);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn schemas_block_types_and_assets_are_checked() {
+        let root = std::env::temp_dir().join(format!("lsf-check-schema-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write("layout/theme.liquid", "{{ content_for_layout }}");
+        write("assets/base.css", "");
+        write("assets/app.js.liquid", "");
+        write(
+            "snippets/head.liquid",
+            "{{ 'base.css' | asset_url }}{{ 'app.js' | asset_url }}\n{{ 'bse.css' | asset_url | stylesheet_tag }}",
+        );
+        write(
+            "blocks/price.liquid",
+            "{% content_for 'block', type: 'pirce', id: 'x' %}",
+        );
+        write(
+            "sections/main.liquid",
+            "{% content_for 'blocks' %}\n{% schema %}\n{\n  \"name\": \"t:names.main\",\n  \"blocks\": [{ \"type\": \"@theme\" }],\n  \"settings\": [\n    { \"type\": \"chekbox\", \"id\": \"a\", \"label\": \"A\" }\n  ]\n}\n{% endschema %}",
+        );
+        write(
+            "sections/broken.liquid",
+            "<p>\n{% schema %}\n{ \"name\": \"Broken\", }\n{% endschema %}",
+        );
+        write(
+            "sections/slides.liquid",
+            r#"{% schema %}{"name": "Slides", "blocks": [{"type": "slide", "name": "Slide"}]}{% endschema %}"#,
+        );
+        write(
+            "locales/en.default.schema.json",
+            r#"{"names": {"other": "Other"}}"#,
+        );
+        write(
+            "templates/index.json",
+            r#"{
+  "sections": {
+    "main": {
+      "type": "main",
+      "blocks": {
+        "p": {
+          "type": "pricee",
+          "blocks": { "q": { "type": "price" } }
+        }
+      }
+    },
+    "slides": {
+      "type": "slides",
+      "blocks": { "s": { "type": "slide" }, "t": { "type": "slid" } }
+    }
+  },
+  "order": ["main", "slides"]
+}"#,
+        );
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(String, String, String, u64, String)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["severity"].as_str().unwrap().to_string(),
+                    d["code"].as_str().unwrap().to_string(),
+                    d["file"].as_str().unwrap().to_string(),
+                    d["line"].as_u64().unwrap_or(0),
+                    d["hint"].as_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        let expected = |severity: &str, code: &str, file: &str, line: u64, hint: &str| {
+            (
+                severity.to_string(),
+                code.to_string(),
+                file.to_string(),
+                line,
+                hint.to_string(),
+            )
+        };
+        assert_eq!(
+            found,
+            [
+                expected("error", "invalid_schema", "sections/broken.liquid", 3, ""),
+                expected(
+                    "error",
+                    "missing_schema_translation",
+                    "sections/main.liquid",
+                    4,
+                    "add it to locales/en.default.schema.json"
+                ),
+                expected(
+                    "error",
+                    "unknown_setting_type",
+                    "sections/main.liquid",
+                    7,
+                    "did you mean \"checkbox\"?"
+                ),
+                expected(
+                    "error",
+                    "missing_block",
+                    "blocks/price.liquid",
+                    1,
+                    "did you mean \"price\"?"
+                ),
+                expected(
+                    "warning",
+                    "missing_asset",
+                    "snippets/head.liquid",
+                    2,
+                    "did you mean \"base.css\"?"
+                ),
+                expected(
+                    "error",
+                    "missing_block",
+                    "templates/index.json",
+                    7,
+                    "did you mean \"price\"?"
+                ),
+                expected(
+                    "error",
+                    "missing_block",
+                    "templates/index.json",
+                    14,
+                    "did you mean \"slide\"?"
+                ),
+            ],
+            "{report:#}"
+        );
+        assert_eq!(report["problems"], 6);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn with_an_app_a_block_that_renders_nothing_is_a_problem() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/theme-app-extensions");
+        let report = |app: Option<std::path::PathBuf>| {
+            let args = Args {
+                fix: false,
+                format: Format::Json,
+                app,
+            };
+            let (files, tally) = check_theme(&fixture.join("theme"), &[], &args).unwrap();
+            json_report(files, &tally)
+        };
+        let with_app = report(Some(fixture.join("app")));
+        let errors: Vec<&str> = with_app["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["code"] == "app_block" && d["severity"] == "error")
+            .map(|d| d["message"].as_str().unwrap())
+            .collect();
+        assert_eq!(errors.len(), 2, "{with_app:#}");
+        assert!(errors[0].contains("no block `reviewz`: did you mean `reviews`?"));
+        assert!(errors[1].contains("its `enabled_on` leaves out the footer section group"));
+        assert_eq!(with_app["problems"], 2);
+        assert_eq!(with_app["ok"], false);
+        // Without the app, a note: they are not checked.
+        let without = report(None);
+        assert_eq!(without["problems"], 0, "{without:#}");
+    }
+
+    #[test]
+    fn a_github_annotation_carries_the_setting_the_fix_and_the_hint() {
+        let mut diagnostic = super::Diagnostic::new(
+            "error",
+            "unknown_filter",
+            super::Location {
+                setting: Some("sections.a.settings.code".to_string()),
+                ..super::Location::file("templates/index.json", Some(3))
+            },
+            "unknown filter `upcse`".to_string(),
+        );
+        diagnostic.hint = Some("did you mean \"upcase\"?".to_string());
+        assert_eq!(
+            diagnostic
+                .annotation(std::path::Path::new("theme"))
+                .to_string(),
+            "::error file=theme/templates/index.json,line=3,title=lsf check%3A unknown_filter::sections.a.settings.code: unknown filter `upcse`%0Ahint: did you mean \"upcase\"?"
+        );
     }
 
     #[test]
@@ -974,6 +1386,7 @@ mod tests {
             let args = Args {
                 fix,
                 format: Format::Json,
+                app: None,
             };
             let (files, tally) = check_theme(&root, &[], &args).unwrap();
             json_report(files, &tally)
@@ -1048,7 +1461,7 @@ mod tests {
         );
         write(
             "sections/custom.liquid",
-            "{{ section.settings.code }}{% schema %}{\"settings\": [{\"type\": \"liquid\", \"id\": \"code\"}]}{% endschema %}",
+            "{{ section.settings.code }}{% schema %}{\"settings\": [{\"type\": \"liquid\", \"id\": \"code\", \"label\": \"Code\"}]}{% endschema %}",
         );
         write(
             "templates/index.json",
@@ -1061,6 +1474,7 @@ mod tests {
                 Args {
                     fix,
                     format: Format::Text,
+                    app: None,
                 },
             )
             .unwrap()

@@ -78,6 +78,7 @@ export function startAdmin(env) {
     cdn: false,
     path: config.frame?.path ?? '/',
     toasts: new Map(),
+    modal: false,
   };
 
   // ---- talking to the frame ------------------------------------------------------------------
@@ -100,6 +101,7 @@ export function startAdmin(env) {
       return body.token;
     },
     resourcePicker: (options) => openResourcePicker(options),
+    intent: (intent) => openIntent(intent),
     picker: (options) => openPicker(options),
     async leaveConfirmation() {
       shake();
@@ -123,7 +125,13 @@ export function startAdmin(env) {
     'toast-hide': ({ id }) => hideToast(id),
     history: ({ path }) => followApp(path),
     navigate: ({ url, target }) => navigate(url, target),
-    modal: ({ open }) => root.classList.toggle('lsf-modal-open', Boolean(open)),
+    modal: ({ open }) => showModal(Boolean(open)),
+    lifted: () => {
+      if (!state.modal) return;
+      frame?.classList.add('lsf-frame-lifted');
+      root.classList.add('lsf-modal-lifted');
+    },
+    failed: () => refreshWarnings(),
     unload: () => frameUnloaded(),
     unsupported: ({ name }) => {
       state.unsupported.add(name);
@@ -210,18 +218,80 @@ export function startAdmin(env) {
     state.connected = false;
     renderSaveBar({ visible: false });
     query('.lsf-progress').hidden = true;
-    root.classList.remove('lsf-modal-open');
+    showModal(false);
+  }
+
+  // A modal of the app: the admin around is dimmed, and the frame asked to lift itself over the
+  // whole window (its page keeps its box, the rest is transparent), so that the modal is over the
+  // whole admin, as Shopify draws it. Once the frame says it is lifted, the frame covers the
+  // window.
+  function frameBox() {
+    const slot = query('.lsf-content');
+    const box = (slot ?? frame)?.getBoundingClientRect?.() ?? {};
+    const style = typeof window.getComputedStyle === 'function' ? window.getComputedStyle(slot ?? frame) : null;
+    const pad = (side) => (style ? parseFloat(style[`padding${side}`]) || 0 : 0);
+    const own = typeof window.getComputedStyle === 'function' && frame ? window.getComputedStyle(frame) : null;
+    return {
+      left: (box.left ?? 0) + pad('Left'),
+      top: (box.top ?? 0) + pad('Top'),
+      width: (box.width ?? 0) - pad('Left') - pad('Right'),
+      height: (box.height ?? 0) - pad('Top') - pad('Bottom'),
+      background: own?.backgroundColor || null,
+      radius: own ? parseFloat(own.borderTopLeftRadius) || 0 : 0,
+    };
+  }
+  function showModal(open) {
+    state.modal = open;
+    root.classList.toggle('lsf-modal-open', open);
+    if (open) {
+      emit('modal.lift', frameBox());
+    } else if (frame?.classList.contains('lsf-frame-lifted') || root.classList.contains('lsf-modal-lifted')) {
+      frame?.classList.remove('lsf-frame-lifted');
+      root.classList.remove('lsf-modal-lifted');
+      emit('modal.unlift');
+    }
+  }
+  window.addEventListener('resize', () => {
+    if (state.modal) emit('modal.lift', frameBox());
+  });
+
+  // What lsf says of the app now (`/__lsf/admin/warnings`): the template's files are read again,
+  // so a fixed file loses its banner, and a backend that sends its calls to Shopify gains one.
+  // A banner the merchant dismissed stays dismissed.
+  const dismissed = new Set();
+  let shownWarnings = [];
+  function showWarnings(warnings) {
+    shownWarnings.forEach((_, index) => removeBanner(`config-${index}`));
+    shownWarnings = warnings.filter((message) => !dismissed.has(message));
+    shownWarnings.forEach((message, index) =>
+      banner(`config-${index}`, 'warning', message, () => dismissed.add(message)),
+    );
+  }
+  async function refreshWarnings() {
+    if (!config.endpoints?.warnings || typeof fetch !== 'function') return;
+    try {
+      const response = await fetch(config.endpoints.warnings);
+      if (!response.ok) return;
+      const body = await response.json();
+      if (Array.isArray(body.warnings)) showWarnings(body.warnings);
+    } catch (_) {
+      // lsf stopped: the banners stay as they were.
+    }
   }
 
   // A page loaded in the frame: its App Bridge says hello soon, or the admin says why not.
   function frameLoaded() {
+    refreshWarnings();
+    const proxied = Boolean(config.frame?.appOrigin) && config.frame.appOrigin !== config.frame.origin;
     clearTimeout(state.waiting);
     state.waiting = setTimeout(() => {
       if (state.connected || state.cdn) return;
       banner(
         'app-bridge',
         'warning',
-        `No App Bridge answered from the app's page. Is the backend running at ${config.frame.origin}, and did the page load (an error page has no App Bridge)? A page that loads Shopify's App Bridge cannot load it offline, and online it talks only to Shopify's admin: load lsf's first in the page's <head>: <script src="${location.origin}${config.endpoints.appBridge}"></script>. And the app must let this admin frame it: Content-Security-Policy frame-ancestors ${location.origin}.`,
+        proxied
+          ? `No App Bridge answered from the app's page. Is the backend running at ${config.frame.appOrigin} (lsf's frame goes through ${config.frame.origin}, which gives the page lsf's App Bridge), and did the page load (an error page has no App Bridge)?`
+          : `No App Bridge answered from the app's page. Is the backend running at ${config.frame.origin}, and did the page load (an error page has no App Bridge)? A page that loads Shopify's App Bridge cannot load it offline, and online it talks only to Shopify's admin: load lsf's first in the page's <head>: <script src="${location.origin}${config.endpoints.appBridge}"></script>. And the app must let this admin frame it: Content-Security-Policy frame-ancestors ${location.origin}.`,
       );
     }, env.waitForAppBridge ?? 4000);
   }
@@ -229,7 +299,7 @@ export function startAdmin(env) {
 
   // ---- banners ---------------------------------------------------------------------------------
 
-  function banner(key, tone, message) {
+  function banner(key, tone, message, onDismiss) {
     const banners = query('.lsf-banners');
     let existing = banners.querySelector(`[data-banner="${key}"]`);
     if (!existing) {
@@ -237,7 +307,10 @@ export function startAdmin(env) {
       banners.append(existing);
     }
     const close = el('button', { class: 'lsf-banner-close', type: 'button', 'aria-label': 'Dismiss' }, ['×']);
-    close.addEventListener('click', () => existing.remove());
+    close.addEventListener('click', () => {
+      existing.remove();
+      onDismiss?.();
+    });
     existing.replaceChildren(el('p', {}, [message]), close);
   }
   function removeBanner(key) {
@@ -377,6 +450,21 @@ export function startAdmin(env) {
     return admin.pathname + admin.search + parsed.hash;
   }
 
+  // A URL of the app itself (its frame's origin, or its backend's) for the whole window: the
+  // admin's page of that path, where the app opens again in the frame. The exit-iframe page of
+  // Shopify's libraries sends the merchant there (`redirect('/app', { target: '_top' })`).
+  function appPage(url) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      return null;
+    }
+    const origins = [config.frame?.origin, config.frame?.appOrigin].filter(Boolean);
+    if (!origins.includes(parsed.origin)) return null;
+    return adminHref(config.app.base, appPathOf(parsed.pathname + parsed.search + parsed.hash, config.frame?.base), config.query);
+  }
+
   // A link of the app that leaves it: `shopify:admin/…` (a page of the admin, lsf's page of it),
   // a URL of Shopify's admin (lsf's page of it too), or a URL for the whole window.
   function navigate(url, target) {
@@ -388,10 +476,86 @@ export function startAdmin(env) {
     } else if (!/^https?:/i.test(url)) {
       return;
     } else {
-      href = shopifyAdmin(url) ?? url;
+      href = shopifyAdmin(url) ?? appPage(url) ?? url;
     }
     if (target === '_blank') window.open(href, '_blank', 'noopener');
     else location.assign(href);
+  }
+
+  // ---- intents (shopify.intents.invoke) --------------------------------------------------------
+
+  // `edit:shopify/Product`, `…/ProductVariant` and `…/Collection` open a dialog with what lsf's
+  // Admin API has of it: lsf has no editor, so closing it answers `{code: 'closed'}`, as the
+  // merchant leaving Shopify's editor without saving does. Another intent answers
+  // `{code: 'error'}` and joins the banner of what lsf does not simulate.
+  const INTENTS = {
+    'shopify/Product': { noun: 'product', picker: 'product', filter: 'id' },
+    'shopify/ProductVariant': { noun: 'variant', picker: 'variant', filter: 'variant_id' },
+    'shopify/Collection': { noun: 'collection', picker: 'collection', filter: 'id' },
+  };
+
+  async function openIntent({ action, type, value } = {}) {
+    const name = `${action}:${type}`;
+    const kind = action === 'edit' && typeof value === 'string' && value ? INTENTS[type] : null;
+    if (!kind) {
+      notifications.unsupported({ name: `shopify.intents.invoke(${name})` });
+      return { code: 'error', message: `lsf does not simulate the intent ${name}${action === 'edit' && !value ? ' without a value (the GID of what to edit)' : ''}: it opens edit:shopify/Product, edit:shopify/ProductVariant and edit:shopify/Collection` };
+    }
+    const found = await resourcesOf(kind.picker, `${kind.filter}:${numeric(value)}`).catch(() => ({ resources: [] }));
+    const resource = found.resources.find((entry) =>
+      kind.picker === 'variant' ? (entry.variants ?? []).some((variant) => variant.id === value) : entry.id === value,
+    );
+    if (!resource) {
+      const message = `lsf has no ${kind.noun} ${value} in ${config.shop}`;
+      showToast({ id: `intent-${Date.now()}`, message, isError: true });
+      return { code: 'error', message };
+    }
+    const variants = (resource.variants ?? []).filter((variant) => kind.picker !== 'variant' || variant.id === value);
+    const detail = (label, text) => (text === undefined || text === null || text === '' ? [] : [el('dt', {}, [label]), el('dd', {}, [String(text)])]);
+    const details = el('dl', { class: 'lsf-intent-details' }, [
+      ...detail('ID', kind.picker === 'variant' ? value : resource.id),
+      ...detail('Handle', resource.handle),
+      ...detail('Status', resource.status),
+      ...detail('Vendor', resource.vendor),
+      ...detail('Type', resource.productType),
+      ...detail('Inventory', resource.totalInventory),
+      ...detail('Products', resource.productsCount?.count),
+    ]);
+    const table = variants.length
+      ? el('table', { class: 'lsf-picker-table' }, [
+          el('thead', {}, [el('tr', {}, [el('th', {}, ['Variant']), el('th', {}, ['SKU']), el('th', { class: 'lsf-number' }, ['Price']), el('th', { class: 'lsf-number' }, ['Inventory'])])]),
+          el('tbody', {}, variants.map((variant) =>
+            el('tr', {}, [
+              el('td', {}, [variant.title ?? '']),
+              el('td', {}, [variant.sku ?? '']),
+              el('td', { class: 'lsf-number' }, [variant.price ?? '']),
+              el('td', { class: 'lsf-number' }, [variant.inventoryQuantity === undefined || variant.inventoryQuantity === null ? '' : String(variant.inventoryQuantity)]),
+            ]),
+          )),
+        ])
+      : null;
+    const close = el('button', { type: 'button', class: 'lsf-button lsf-button-primary' }, ['Close']);
+    const element = dialog('lsf-intent', [
+      el('div', { class: 'lsf-dialog-header' }, [
+        el('h2', {}, [`Edit ${kind.noun}`]),
+        el('p', { class: 'lsf-intent-note' }, [`${name}: lsf has no ${kind.noun} editor. This is what its Admin API has; change it with the Admin API. Closing answers {code: 'closed'}.`]),
+      ]),
+      el('div', { class: 'lsf-intent-body' }, [el('h3', {}, [resource.title ?? '']), details, ...(table ? [table] : [])]),
+      el('div', { class: 'lsf-dialog-actions' }, [close]),
+    ]);
+    return new Promise((resolve) => {
+      let answered = false;
+      const answer = () => {
+        if (answered) return;
+        answered = true;
+        element.close();
+        element.remove();
+        resolve({ code: 'closed' });
+      };
+      close.addEventListener('click', answer);
+      element.addEventListener('cancel', answer);
+      element.addEventListener('close', answer);
+    });
   }
 
   // ---- the save bar ----------------------------------------------------------------------------
@@ -747,9 +911,12 @@ export function startAdmin(env) {
   }
 
   markCurrent();
+  // What shopify.app.toml gets wrong for the embedded app (no client_id, …), as the page was
+  // served; each page of the frame asks again.
+  showWarnings(config.warnings ?? []);
   // The frame may have loaded before this module ran: wait for its App Bridge from now on.
   if (frame) frameLoaded();
-  return { state, receive, frameLoaded, frameUnloaded, renderTitle, renderNav, openResourcePicker, openPicker };
+  return { state, receive, frameLoaded, frameUnloaded, renderTitle, renderNav, openResourcePicker, openPicker, refreshWarnings };
 }
 
 // In the browser: the page's own config, its window and its document.

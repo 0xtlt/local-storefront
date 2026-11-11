@@ -214,9 +214,19 @@ impl Graph<'_> {
 
         let resolver = self.resolver;
         let mut resolve = |specifier: &str, kind: Kind| -> Result<usize, String> {
-            let resolved = resolver
-                .resolve(specifier, &dir, kind)
-                .map_err(|error| format!("{name}: {error}"))?;
+            let resolved = resolver.resolve(specifier, &dir, kind).map_err(|error| {
+                // React's runtime, which JSX calls when no tsconfig.json names another: a
+                // Preact extension without its tsconfig.json.
+                let hint = if specifier.starts_with("react/jsx") {
+                    ". JSX calls the runtime `jsxImportSource` names, React's when no \
+                     tsconfig.json names one: a Preact extension, as Shopify's templates make \
+                     them, says so in its tsconfig.json: \
+                     {\"compilerOptions\": {\"jsx\": \"react-jsx\", \"jsxImportSource\": \"preact\"}}"
+                } else {
+                    ""
+                };
+                format!("{name}: {error}{hint}")
+            })?;
             Ok(self.id(Source::File(resolved)))
         };
         let mut reader = Reader {

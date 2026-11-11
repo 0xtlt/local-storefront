@@ -119,12 +119,13 @@ fn a_subscription_is_created_pending_and_approved_on_the_confirmation_page() {
     assert_eq!(subscription["currentPeriodEnd"], Value::Null);
     let id = subscription["id"].as_str().unwrap();
     let number = lsf_app::admin::state::parse_gid(id).unwrap().1;
-    assert_eq!(
-        payload["confirmationUrl"],
-        json!(format!(
-            "{ORIGIN}/__lsf/admin/charges/{number}?shop={}",
-            shop.domain()
-        ))
+    let confirmation = payload["confirmationUrl"].as_str().unwrap();
+    assert!(
+        confirmation.starts_with(&format!("https://{}/admin/charges/", shop.domain()))
+            && confirmation.contains(&format!(
+                "/{number}/RecurringApplicationCharge/confirm_recurring_application_charge?signature="
+            )),
+        "{confirmation}"
     );
     let lines = subscription["lineItems"].as_array().unwrap();
     assert_eq!(
@@ -362,7 +363,9 @@ fn capped_amounts_trials_and_cancellations() {
         payload["confirmationUrl"]
             .as_str()
             .unwrap()
-            .contains(&format!("/charges/{number}?"))
+            .contains(&format!(
+                "/{number}/RecurringApplicationCharge/confirm_update_capped_amount?"
+            ))
     );
     // Until the merchant approves, the capped amount is the old one.
     let capped = |shop: &mut ShopState| {
@@ -701,6 +704,35 @@ fn discounts_are_updated_activated_deactivated_and_deleted() {
 }
 
 #[test]
+fn discounts_have_the_admins_summaries() {
+    let (_, mut shop) = rich();
+    // The admin's summaries: what a discount takes off, then its minimum, in the shop's format.
+    let summaries = run(
+        &mut shop,
+        r#"mutation {
+            fixed: discountAutomaticBasicCreate(automaticBasicDiscount: {title: "Five off", startsAt: "2026-01-01T00:00:00Z",
+                customerGets: {value: {discountAmount: {amount: "5.00", appliesOnEachItem: false}}, items: {all: true}},
+                minimumRequirement: {quantity: {greaterThanOrEqualToQuantity: "2"}}}) {
+                automaticDiscountNode { automaticDiscount { ... on DiscountAutomaticBasic { summary shortSummary } } } userErrors { message } }
+            bxgy: discountAutomaticBxgyCreate(automaticBxgyDiscount: {title: "Two for one", startsAt: "2026-01-01T00:00:00Z",
+                customerBuys: {value: {quantity: "2"}, items: {all: true}},
+                customerGets: {value: {discountOnQuantity: {quantity: "1", effect: {percentage: 1.0}}}, items: {all: true}}}) {
+                automaticDiscountNode { automaticDiscount { ... on DiscountAutomaticBxgy { summary } } } userErrors { message } } }"#,
+        Value::Null,
+    );
+    assert_eq!(
+        summaries["data"]["fixed"]["automaticDiscountNode"]["automaticDiscount"],
+        json!({"summary": "€5,00 off entire order • Minimum quantity of 2 items", "shortSummary": "€5,00 off entire order"}),
+        "{summaries}"
+    );
+    assert_eq!(
+        summaries["data"]["bxgy"]["automaticDiscountNode"]["automaticDiscount"]["summary"],
+        json!("Buy 2 items, get 1 item free"),
+        "{summaries}"
+    );
+}
+
+#[test]
 fn discount_nodes_list_search_and_sort_every_kind() {
     let (_, mut shop) = rich();
     let basic = run(
@@ -715,7 +747,7 @@ fn discount_nodes_list_search_and_sort_every_kind() {
     let node = &data(&basic, "discountCodeBasicCreate")["codeDiscountNode"];
     assert_eq!(
         node["codeDiscount"],
-        json!({"title": "Ten off", "summary": "10% off entire order", "discountClasses": ["ORDER"],
+        json!({"title": "Ten off", "summary": "10% off entire order • Minimum purchase of €50,00", "discountClasses": ["ORDER"],
             "customerGets": {"value": {"percentage": 0.1}, "items": {"allItems": true}},
             "minimumRequirement": {"greaterThanOrEqualToSubtotal": {"amount": "50.0", "currencyCode": "EUR"}}})
     );
@@ -1256,6 +1288,47 @@ fn a_bulk_mutation_runs_once_per_line_of_its_staged_upload() {
         data(&missing, "bulkOperationRunMutation")["userErrors"][0]["code"],
         json!("NO_SUCH_FILE")
     );
+    // One mutation field selected twice, directly and through a fragment, merges into one, as
+    // GraphQL merges fields of one response key.
+    let merged = run(
+        &mut shop,
+        r#"mutation($mutation: String!, $path: String!) { bulkOperationRunMutation(mutation: $mutation, stagedUploadPath: $path) { bulkOperation { id } userErrors { field message code } } }"#,
+        json!({
+            "mutation": "mutation($product: ProductCreateInput!) { productCreate(product: $product) { product { id } } ...errors } fragment errors on Mutation { productCreate(product: $product) { userErrors { message } } }",
+            "path": key,
+        }),
+    );
+    let payload = data(&merged, "bulkOperationRunMutation");
+    assert_eq!(payload["userErrors"], json!([]), "{merged}");
+    assert!(payload["bulkOperation"]["id"].is_string(), "{merged}");
+    // A mutation the schema refuses, or one with no mutation field or two, starts nothing.
+    for (invalid, says) in [
+        ("mutation { shop { id } }", "Invalid mutation: "),
+        (
+            "mutation { productNoSuchField(input: {}) { userErrors { message } } }",
+            "Invalid mutation: ",
+        ),
+        (
+            "mutation($product: ProductCreateInput!) { a: productCreate(product: $product) { product { id } } b: productCreate(product: $product) { product { id } } }",
+            "a single mutation field",
+        ),
+    ] {
+        let refused = run(
+            &mut shop,
+            r#"mutation($mutation: String!, $path: String!) { bulkOperationRunMutation(mutation: $mutation, stagedUploadPath: $path) { bulkOperation { id } userErrors { field message code } } }"#,
+            json!({"mutation": invalid, "path": key}),
+        );
+        let payload = data(&refused, "bulkOperationRunMutation");
+        assert_eq!(payload["bulkOperation"], Value::Null, "{refused}");
+        assert_eq!(payload["userErrors"][0]["code"], json!("INVALID_MUTATION"));
+        assert!(
+            payload["userErrors"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains(says),
+            "{refused}"
+        );
+    }
 }
 
 #[test]
@@ -1691,4 +1764,47 @@ fn uninstalling_the_app_removes_every_object_that_runs_its_functions() {
             functions[handle]
         );
     }
+}
+
+#[test]
+fn billing_cycles_follow_the_shops_clock() {
+    let (_, mut shop) = rich();
+    let started = shop.now();
+    let (id, usage, _) = active_subscription(&mut shop, "Pro");
+    let period_end = |shop: &mut ShopState| {
+        let answer = run(
+            shop,
+            r#"query($id: ID!) { node(id: $id) { ... on AppSubscription { status currentPeriodEnd lineItems { plan { pricingDetails { ... on AppUsagePricing { balanceUsed { amount } } } } } } } }"#,
+            json!({"id": id}),
+        );
+        answer["data"]["node"].clone()
+    };
+    // The trial's end, then a usage charge.
+    let day =
+        |days: i64| lsf_app::admin::state::value::date_time(started + chrono::Duration::days(days));
+    assert_eq!(period_end(&mut shop)["currentPeriodEnd"], json!(day(7)));
+    let charged = run(
+        &mut shop,
+        r#"mutation($id: ID!) { appUsageRecordCreate(subscriptionLineItemId: $id, description: "100 emails", price: {amount: 5, currencyCode: USD}) { userErrors { message } } }"#,
+        json!({"id": usage}),
+    );
+    assert_eq!(
+        data(&charged, "appUsageRecordCreate")["userErrors"],
+        json!([])
+    );
+    // 71 days later: the trial's end, then three periods of 30 days.
+    shop.set_clock(lsf_app::admin::state::Clock::Frozen(
+        started + chrono::Duration::days(71),
+    ));
+    assert_eq!(billing::renew(&mut shop), 3);
+    let node = period_end(&mut shop);
+    assert_eq!(node["status"], json!("ACTIVE"));
+    assert_eq!(node["currentPeriodEnd"], json!(day(97)));
+    assert_eq!(
+        node["lineItems"][1]["plan"]["pricingDetails"]["balanceUsed"]["amount"],
+        json!("0.0")
+    );
+    // A renewal is no status change: no webhook.
+    assert_eq!(topics(&mut shop), Vec::<String>::new());
+    assert_eq!(billing::renew(&mut shop), 0);
 }

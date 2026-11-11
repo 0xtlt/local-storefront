@@ -117,6 +117,13 @@ pub fn extract_block<'s>(source: &'s str, name: &str) -> Option<&'s str> {
     Some(&source[body_start..body_end])
 }
 
+/// Where the body of the first `{% name %}...{% endname %}` block of a Liquid source is.
+pub fn block_span(source: &str, name: &str) -> Option<std::ops::Range<usize>> {
+    let (_, body_start) = find_tag(source, name, 0)?;
+    let (body_end, _) = find_tag(source, &format!("end{name}"), body_start)?;
+    Some(body_start..body_end)
+}
+
 /// Every `{% name %}...{% endname %}` body in a Liquid source.
 pub fn extract_blocks<'s>(source: &'s str, name: &str) -> Vec<&'s str> {
     let mut out = Vec::new();

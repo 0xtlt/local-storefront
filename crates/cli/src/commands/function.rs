@@ -13,7 +13,7 @@ use serde_json::Value as Json;
 
 use crate::app::App;
 use crate::checkout::{self, display_money};
-use crate::output::print_diagnostics;
+use crate::output::{count, print_diagnostics};
 use crate::server::apply_session_input;
 
 #[derive(clap::Args)]
@@ -39,6 +39,12 @@ enum Subcommand {
     /// schema` does: from the schemas lsf carries, without the network. Run it in the Function's
     /// folder, or name the Function (or give `--path`).
     Schema(schema::SchemaArgs),
+    /// Write the GraphQL types of a JavaScript or TypeScript Function, as `shopify app function
+    /// typegen` does: the `codegen` section of its `package.json` (graphql-codegen's config),
+    /// written as graphql-codegen writes it (`generated/api.ts`), from its `schema.graphql` or
+    /// lsf's schema of its API version, offline. `lsf app function build` does it too. Run it in
+    /// the Function's folder, or name the Functions; every JavaScript Function without either.
+    Typegen(BuildArgs),
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -119,6 +125,24 @@ struct RunArgs {
     /// How to print the result.
     #[arg(long, value_enum, default_value = "text")]
     format: Format,
+
+    /// Run one Function on this input instead of one built from the store data, as
+    /// `shopify app function run --input` does: a JSON file (a fixture of a unit test, one
+    /// `--save-input` wrote), or `-` for stdin. Name the Function, or run it in its folder.
+    #[arg(long, short = 'i', value_name = "FILE|-", conflicts_with_all = ["session", "scenario", "checkout", "locale", "save_input"])]
+    input: Option<String>,
+
+    /// The target to run, by the Wasm export it calls (`cart_lines_discounts_generate_run`), as
+    /// `shopify app function run --export`, or by its name (`cart.lines.discounts.generate.run`):
+    /// for `--input` and `--save-input`, when the Function has several targets.
+    #[arg(long, short = 'e', value_name = "EXPORT")]
+    export: Option<String>,
+
+    /// Write the input lsf built for a run to this file, as JSON, for `--input` or for the
+    /// fixture of a unit test: the run of the Function named (and of `--export` when it has
+    /// several targets).
+    #[arg(long, value_name = "FILE")]
+    save_input: Option<std::path::PathBuf>,
 }
 
 /// `lsf app function build`: builds the Functions, and says what it wrote.
@@ -129,6 +153,65 @@ fn build(args: &BuildArgs) -> Result<ExitCode, String> {
         "lsf app function build",
         checkout::build_functions,
     )
+}
+
+/// `lsf app function typegen`: the types of the JavaScript Functions named, the one of the
+/// current folder, or all of them.
+fn typegen(args: &BuildArgs) -> Result<ExitCode, String> {
+    let app_dir = checkout::app_of(args.app.as_deref(), "lsf app function typegen")?;
+    let app = lsf_app::config::load(&app_dir)?;
+    let current = std::env::current_dir().map_err(|error| error.to_string())?;
+    let functions: Vec<&lsf_app::config::FunctionExtension> = if !args.handles.is_empty() {
+        args.handles
+            .iter()
+            .map(|handle| {
+                schema::function_of(&app, Some(handle), &current, "lsf app function typegen")
+            })
+            .collect::<Result<_, _>>()?
+    } else if let Ok(function) =
+        schema::function_of(&app, None, &current, "lsf app function typegen")
+    {
+        vec![function]
+    } else {
+        app.functions
+            .iter()
+            .filter(|function| function.build() == Some(lsf_app::config::Build::JavaScript))
+            .collect()
+    };
+    if functions.is_empty() {
+        return Err("the app has no JavaScript Function to write the types of".to_string());
+    }
+    let mut failed = false;
+    for function in functions {
+        if function.build() != Some(lsf_app::config::Build::JavaScript) {
+            eprintln!(
+                "typegen: {}: not a JavaScript Function built by lsf: {}",
+                function.handle,
+                if function.dir.join("Cargo.toml").is_file() {
+                    "a Rust Function's types come from the `typegen` macro, at its build"
+                } else {
+                    "its build command writes its types"
+                }
+            );
+            continue;
+        }
+        match lsf_app::checkout::javascript::typegen(function) {
+            Ok(Some(path)) => eprintln!("typegen: {}: {}", function.handle, path.display()),
+            Ok(None) => eprintln!(
+                "typegen: {}: its package.json has no `codegen` section: nothing to write",
+                function.handle
+            ),
+            Err(error) => {
+                eprintln!("error: the typegen of {} failed: {error}", function.handle);
+                failed = true;
+            }
+        }
+    }
+    Ok(if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 /// JSON given on the command line, or the path of a file that holds it.
@@ -151,7 +234,11 @@ pub fn run(
         Subcommand::Run(args) => args,
         Subcommand::Build(args) => return build(&args),
         Subcommand::Schema(args) => return schema::run(&args),
+        Subcommand::Typegen(args) => return typegen(&args),
     };
+    if let Some(input) = &args.input {
+        return run_on_input(&args, input);
+    }
     let Ran {
         app: shopify_app,
         result,
@@ -159,7 +246,12 @@ pub fn run(
         discounted,
         named,
         forced,
+        addressed,
+        country,
     } = compute(theme, data, previews, &args)?;
+    if let Some(file) = &args.save_input {
+        save_input(&result, &args, file)?;
+    }
     let failed = result.runs.iter().any(|run| run.error.is_some());
     // A Function asked for by name that did not run is a failure, with why.
     let not_run: Vec<(String, String)> = args
@@ -224,7 +316,7 @@ pub fn run(
             if !forced.is_empty() {
                 println!();
             }
-            print_text(&result);
+            print_text(&result, addressed, &country);
         }
     }
     for (handle, reason) in &not_run {
@@ -235,6 +327,546 @@ pub fn run(
     } else {
         ExitCode::SUCCESS
     })
+}
+
+/// The target of `function` that `--export` names (by its export or its name), else its only
+/// one.
+fn target_of<'a>(
+    function: &'a lsf_app::config::FunctionExtension,
+    export: Option<&str>,
+) -> Result<&'a lsf_app::config::FunctionTarget, String> {
+    let listed = || {
+        function
+            .targets
+            .iter()
+            .map(|target| format!("{} ({})", target.export, target.target))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match export {
+        Some(export) => function
+            .targets
+            .iter()
+            .find(|target| target.export == export || target.target == export)
+            .ok_or_else(|| {
+                format!(
+                    "--export {export}: {} has no such target (it has {})",
+                    function.handle,
+                    listed()
+                )
+            }),
+        None => match function.targets.as_slice() {
+            [one] => Ok(one),
+            [] => Err(format!("{} has no target", function.handle)),
+            _ => Err(format!(
+                "{} has several targets: say which with `--export` ({})",
+                function.handle,
+                listed()
+            )),
+        },
+    }
+}
+
+/// `--input`: runs one Function on the input given, and prints its run. A folder runs each of
+/// its `*.json` fixtures, as the unit tests of Shopify's templates do.
+fn run_on_input(args: &RunArgs, input: &str) -> Result<ExitCode, String> {
+    let app_dir = &checkout::app_of(args.app.as_deref(), "lsf app function run")?;
+    if args.handles.len() > 1 {
+        return Err("--input runs one Function: name one".to_string());
+    }
+    let open = |extensions: Vec<String>, build: bool| {
+        checkout::open(
+            &checkout::AppArgs {
+                app: Some(app_dir.clone()),
+                extensions,
+                build,
+            },
+            app_dir,
+        )
+    };
+    // The Function first, then `--build` builds it alone: the other extensions of the app are
+    // none of this run's business.
+    let current = std::env::current_dir().map_err(|error| error.to_string())?;
+    let handle = {
+        let (shopify_app, _) = open(args.handles.clone(), false)?;
+        input_function(&shopify_app, args.handles.first(), input, &current)?
+            .handle
+            .clone()
+    };
+    let (shopify_app, selection) = open(vec![handle.clone()], args.build)?;
+    // Built first when its files changed after its module was built, as Shopify's CLI does.
+    let shopify_app = if args.build {
+        shopify_app
+    } else {
+        checkout::freshen(app_dir, shopify_app, &selection)?
+    };
+    let function = schema::function_of(
+        &shopify_app,
+        Some(&handle),
+        &current,
+        "lsf app function run --input <file>",
+    )?;
+    // A wrong `--export` is a wrong option (2); a fixture that names a target the Function
+    // does not have is the fixture's to fix (1).
+    if let Some(export) = &args.export {
+        target_of(function, Some(export))?;
+    }
+    if input != "-" && Path::new(input).is_dir() {
+        return run_fixtures(args, function, Path::new(input));
+    }
+    let text = if input == "-" {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+            .map_err(|error| format!("--input -: {error}"))?;
+        text
+    } else {
+        std::fs::read_to_string(input).map_err(|error| format!("--input {input}: {error}"))?
+    };
+    let fixture = Fixture::read(function, args.export.as_deref(), input, &text)
+        .map_err(crate::output::fixable)?;
+    let ran = fixture.run(function);
+    match args.format {
+        Format::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&ran.to_json()).map_err(|error| error.to_string())?
+        ),
+        Format::Text => {
+            print_run(&ran.run);
+            if ran.run.error.is_none() && fixture.expected.is_some() {
+                println!("the output is the one the fixture expects");
+            }
+        }
+    }
+    Ok(if ran.run.error.is_some() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// The Function `--input` runs: the one named, else the one whose folder holds the input
+/// (`extensions/discount/tests/fixtures/`) or the current folder, else the app's only one.
+fn input_function<'a>(
+    app: &'a lsf_app::config::App,
+    named: Option<&String>,
+    input: &str,
+    current: &Path,
+) -> Result<&'a lsf_app::config::FunctionExtension, String> {
+    let command = "lsf app function run --input <file>";
+    if let Some(handle) = named {
+        return schema::function_of(app, Some(handle), current, command);
+    }
+    let around_input = (input != "-")
+        .then(|| current.join(input))
+        .and_then(|path| schema::function_of(app, None, &path, command).ok());
+    if let Some(function) = around_input {
+        return Ok(function);
+    }
+    match schema::function_of(app, None, current, command) {
+        Ok(function) => Ok(function),
+        Err(_) if app.functions.len() == 1 => Ok(&app.functions[0]),
+        Err(error) => Err(error),
+    }
+}
+
+/// An input to run a Function on: a fixture of the unit tests of Shopify's templates
+/// (`{"payload": {"export", "target", "input", "output"}}`), whose target is the one it names
+/// and whose output the run must answer, or an input alone.
+struct Fixture<'a> {
+    target: &'a lsf_app::config::FunctionTarget,
+    input: Json,
+    expected: Option<Json>,
+}
+
+/// A run on a [`Fixture`], with what of its output is not the one the fixture expects.
+struct FixtureRun {
+    run: lsf_app::checkout::FunctionRun,
+    mismatches: Vec<Mismatch>,
+}
+
+impl FixtureRun {
+    /// The run as `--format json` prints it, with `mismatches` when the fixture expects
+    /// another output.
+    fn to_json(&self) -> Json {
+        let mut json = serde_json::to_value(&self.run).unwrap_or(Json::Null);
+        if !self.mismatches.is_empty() {
+            json["mismatches"] = Json::Array(
+                self.mismatches
+                    .iter()
+                    .map(|mismatch| {
+                        serde_json::json!({
+                            "path": mismatch.path,
+                            "expected": mismatch.expected,
+                            "actual": mismatch.actual,
+                        })
+                    })
+                    .collect(),
+            );
+        }
+        json
+    }
+}
+
+impl<'a> Fixture<'a> {
+    /// The fixture in `text` (from `source`, as messages name it) for `function`. `export` is
+    /// `--export`. A fixture whose `target` or `export` is not one of the Function's targets
+    /// (or not the one `--export` names) is an error, not left aside.
+    fn read(
+        function: &'a lsf_app::config::FunctionExtension,
+        export: Option<&str>,
+        source: &str,
+        text: &str,
+    ) -> Result<Fixture<'a>, String> {
+        let json: Json = serde_json::from_str(text)
+            .map_err(|error| format!("--input {source}: not valid JSON: {error}"))?;
+        let Some(payload) = json
+            .get("payload")
+            .filter(|payload| payload.get("input").is_some())
+        else {
+            return Ok(Fixture {
+                target: target_of(function, export)?,
+                input: json,
+                expected: None,
+            });
+        };
+        let named_target = payload["target"].as_str();
+        let named_export = payload["export"].as_str();
+        let listed = || {
+            function
+                .targets
+                .iter()
+                .map(|target| format!("{} ({})", target.target, target.export))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        // `cart_lines_discounts_generate_run` is `cart-lines-discounts-generate-run`.
+        let same_export = |a: &str, b: &str| a.replace('_', "-") == b.replace('_', "-");
+        let target = match (export, named_target) {
+            (Some(export), _) => target_of(function, Some(export))?,
+            (None, Some(name)) => function
+                .targets
+                .iter()
+                .find(|target| target.target == name)
+                .ok_or_else(|| {
+                    format!(
+                        "--input {source}: the fixture's target `{name}` is not a target of {} (it has {})",
+                        function.handle,
+                        listed()
+                    )
+                })?,
+            (None, None) => match named_export {
+                Some(name) => function
+                    .targets
+                    .iter()
+                    .find(|target| same_export(&target.export, name))
+                    .ok_or_else(|| {
+                        format!(
+                            "--input {source}: the fixture's export `{name}` is not an export of {} (it has {})",
+                            function.handle,
+                            listed()
+                        )
+                    })?,
+                None => target_of(function, None)?,
+            },
+        };
+        if let Some(name) = named_target
+            && name != target.target
+        {
+            return Err(format!(
+                "--input {source}: the fixture's target is `{name}`, not `{}` that --export names",
+                target.target
+            ));
+        }
+        if let Some(name) = named_export
+            && !same_export(name, &target.export)
+        {
+            return Err(format!(
+                "--input {source}: the fixture's export `{name}` is not the export of `{}`, `{}`",
+                target.target, target.export
+            ));
+        }
+        Ok(Fixture {
+            target,
+            input: payload["input"].clone(),
+            expected: payload.get("output").cloned(),
+        })
+    }
+
+    /// Runs `function` on it, and compares its output with the one it expects.
+    fn run(&self, function: &lsf_app::config::FunctionExtension) -> FixtureRun {
+        let mut run = pipeline::run_with_input(function, self.target, self.input.clone());
+        let mut mismatches = Vec::new();
+        if let (None, Some(expected), Some(output)) = (&run.error, &self.expected, &run.output) {
+            json_diff("", expected, output, &mut mismatches);
+            if !mismatches.is_empty() {
+                run.error = Some(format!(
+                    "the output is not the one the fixture expects:\n{}",
+                    describe_mismatches(&mismatches)
+                ));
+            }
+        }
+        FixtureRun { run, mismatches }
+    }
+}
+
+/// `--input <folder>`: runs `function` on each `*.json` fixture of `dir`, as the unit tests of
+/// Shopify's templates (`tests/fixtures/`), and says which pass. Exits with 1 when one fails.
+fn run_fixtures(
+    args: &RunArgs,
+    function: &lsf_app::config::FunctionExtension,
+    dir: &Path,
+) -> Result<ExitCode, String> {
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map_err(|error| format!("--input {}: {error}", dir.display()))?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    files.sort();
+    if files.is_empty() {
+        return Err(format!(
+            "--input {}: no fixture (`*.json`) in this folder",
+            dir.display()
+        ));
+    }
+    let mut results = Vec::new();
+    for file in &files {
+        let name = file.display().to_string();
+        let outcome = std::fs::read_to_string(file)
+            .map_err(|error| format!("--input {name}: {error}"))
+            .and_then(|text| Fixture::read(function, args.export.as_deref(), &name, &text))
+            .map(|fixture| fixture.run(function));
+        // Each line names its file already.
+        let outcome = outcome.map_err(|error| {
+            error
+                .strip_prefix(&format!("--input {name}: "))
+                .map_or(error.clone(), str::to_string)
+        });
+        results.push((name, outcome));
+    }
+    let failed = results
+        .iter()
+        .filter(|(_, outcome)| !matches!(outcome, Ok(ran) if ran.run.error.is_none()))
+        .count();
+    match args.format {
+        Format::Json => {
+            let fixtures: Vec<Json> = results
+                .iter()
+                .map(|(file, outcome)| match outcome {
+                    Ok(ran) => serde_json::json!({
+                        "file": file,
+                        "ok": ran.run.error.is_none(),
+                        "run": ran.to_json(),
+                    }),
+                    Err(error) => serde_json::json!({"file": file, "ok": false, "error": error}),
+                })
+                .collect();
+            let json = serde_json::json!({
+                "ok": failed == 0,
+                "handle": function.handle,
+                "passed": results.len() - failed,
+                "failed": failed,
+                "fixtures": fixtures,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?
+            );
+        }
+        Format::Text => {
+            for (file, outcome) in &results {
+                match outcome {
+                    Ok(ran) => match &ran.run.error {
+                        None => println!("pass     {file}"),
+                        Some(error) => {
+                            let mut lines = error.lines();
+                            println!("fails    {file}: {}", lines.next().unwrap_or_default());
+                            for line in lines {
+                                println!("         {line}");
+                            }
+                            if !ran.run.logs.trim().is_empty() {
+                                println!("         logs:");
+                                for line in ran.run.logs.trim_end().lines() {
+                                    println!("           {line}");
+                                }
+                            }
+                        }
+                    },
+                    Err(error) => println!("fails    {file}: {error}"),
+                }
+            }
+            println!(
+                "ran {} of {}: {} passed, {} failed",
+                count(results.len(), "fixture", "fixtures"),
+                function.handle,
+                results.len() - failed,
+                failed
+            );
+        }
+    }
+    Ok(if failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
+}
+
+/// A place where the output of a run is not the one a fixture expects: its path in the output
+/// (`operations[0].discountsAdd.candidates[0].value.percentage.value`), and the value each has
+/// there (`None` where it has none).
+#[derive(Debug, PartialEq)]
+struct Mismatch {
+    path: String,
+    expected: Option<Json>,
+    actual: Option<Json>,
+}
+
+/// Adds to `out` each place where `actual` is not `expected`, as JavaScript compares them
+/// ([`same_json`]), under `path`.
+fn json_diff(path: &str, expected: &Json, actual: &Json, out: &mut Vec<Mismatch>) {
+    let key = |key: &str| {
+        if path.is_empty() {
+            key.to_string()
+        } else {
+            format!("{path}.{key}")
+        }
+    };
+    match (expected, actual) {
+        (Json::Object(expected), Json::Object(actual)) => {
+            for (name, value) in expected {
+                match actual.get(name) {
+                    Some(other) => json_diff(&key(name), value, other, out),
+                    None => out.push(Mismatch {
+                        path: key(name),
+                        expected: Some(value.clone()),
+                        actual: None,
+                    }),
+                }
+            }
+            for (name, value) in actual {
+                if !expected.contains_key(name) {
+                    out.push(Mismatch {
+                        path: key(name),
+                        expected: None,
+                        actual: Some(value.clone()),
+                    });
+                }
+            }
+        }
+        (Json::Array(expected), Json::Array(actual)) => {
+            for index in 0..expected.len().max(actual.len()) {
+                let at = format!("{path}[{index}]");
+                match (expected.get(index), actual.get(index)) {
+                    (Some(a), Some(b)) => json_diff(&at, a, b, out),
+                    (a, b) => out.push(Mismatch {
+                        path: at,
+                        expected: a.cloned(),
+                        actual: b.cloned(),
+                    }),
+                }
+            }
+        }
+        _ if same_json(expected, actual) => {}
+        _ => out.push(Mismatch {
+            path: if path.is_empty() {
+                "(the output)".to_string()
+            } else {
+                path.to_string()
+            },
+            expected: Some(expected.clone()),
+            actual: Some(actual.clone()),
+        }),
+    }
+}
+
+/// The mismatches as the text output prints them: each path, then what the fixture expects
+/// and what the run answered, on lines of their own. The first 20.
+fn describe_mismatches(mismatches: &[Mismatch]) -> String {
+    const SHOWN: usize = 20;
+    let value = |value: &Option<Json>| match value {
+        Some(value) => serde_json::to_string(value).unwrap_or_default(),
+        None => "(nothing)".to_string(),
+    };
+    let mut lines = Vec::new();
+    for mismatch in mismatches.iter().take(SHOWN) {
+        lines.push(format!("  {}", mismatch.path));
+        lines.push(format!("    expected: {}", value(&mismatch.expected)));
+        lines.push(format!("    actual:   {}", value(&mismatch.actual)));
+    }
+    if mismatches.len() > SHOWN {
+        lines.push(format!("  … and {} more", mismatches.len() - SHOWN));
+    }
+    lines.join("\n")
+}
+
+/// Whether two JSON values are the same as JavaScript compares them: `10` and `10.0` are.
+fn same_json(a: &Json, b: &Json) -> bool {
+    match (a, b) {
+        (Json::Number(a), Json::Number(b)) => a.as_f64() == b.as_f64(),
+        (Json::Array(a), Json::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_json(a, b))
+        }
+        (Json::Object(a), Json::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(key, value)| b.get(key).is_some_and(|other| same_json(value, other)))
+        }
+        _ => a == b,
+    }
+}
+
+/// `--save-input`: writes the input of the one run the command names to `file`.
+fn save_input(result: &CheckoutResult, args: &RunArgs, file: &Path) -> Result<(), String> {
+    let runs: Vec<&lsf_app::checkout::FunctionRun> = result
+        .runs
+        .iter()
+        .filter(|run| args.handles.is_empty() || args.handles.contains(&run.handle))
+        .filter(|run| {
+            args.export
+                .as_deref()
+                .is_none_or(|export| run.export == export || run.target == export)
+        })
+        .collect();
+    let run = match runs.as_slice() {
+        [run] => run,
+        [] => {
+            return Err(format!(
+                "--save-input {}: no run to save the input of (the Function did not run here)",
+                file.display()
+            ));
+        }
+        many => {
+            let listed: Vec<String> = many
+                .iter()
+                .map(|run| format!("{} · {} ({})", run.handle, run.target, run.export))
+                .collect();
+            return Err(format!(
+                "--save-input {}: {} runs, save one: name its Function, and `--export` for its target ({})",
+                file.display(),
+                many.len(),
+                listed.join(", ")
+            ));
+        }
+    };
+    let json = serde_json::to_string_pretty(&run.input).map_err(|error| error.to_string())?;
+    // `tests/fixtures/` need not exist yet, as for `--save-input tests/fixtures/x.json` of the
+    // quickstart.
+    if let Some(parent) = file
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("--save-input {}: {error}", file.display()))?;
+    }
+    std::fs::write(file, format!("{json}\n"))
+        .map_err(|error| format!("--save-input {}: {error}", file.display()))?;
+    eprintln!(
+        "wrote {}: the input of {} · {}",
+        file.display(),
+        run.handle,
+        run.target
+    );
+    Ok(())
 }
 
 /// What a run of the Functions comes to.
@@ -251,6 +883,10 @@ struct Ran {
     /// The Functions named on the command line that the shop's checkout would not run, for want
     /// of an enabled owner, and why: they ran anyway, as named, and the output says so.
     forced: Vec<(String, String)>,
+    /// Whether the buyer gave a shipping address (before one, no rate is selected), and the
+    /// country of the shop, for the hint that gives one.
+    addressed: bool,
+    country: String,
 }
 
 /// Why a Function asked for by name did not run: what the app says is wrong with it, a
@@ -367,6 +1003,13 @@ fn compute(
     let selection = match scenario {
         Some(scenario) => checkout::narrow_to_scenario(&shopify_app, selection, scenario)?,
         None => selection,
+    };
+    // A Function whose files changed after its module was built is built first, as
+    // `shopify app function run` builds before it runs (`--build` built them all already).
+    let shopify_app = if args.build {
+        shopify_app
+    } else {
+        checkout::freshen(app_dir, shopify_app, &selection)?
     };
 
     let mut session = Session::initial(&store);
@@ -494,6 +1137,8 @@ fn compute(
         discounted,
         named,
         forced,
+        addressed: state.shipping_address.is_some(),
+        country: store.shop.address.country_code.clone(),
     })
 }
 
@@ -520,10 +1165,8 @@ fn scenario_to_run<'a>(
             }
         }
     })?;
+    // Its problems are among the diagnostics of the store data, printed already.
     if !scenario.problems.is_empty() {
-        for problem in &scenario.problems {
-            eprintln!("{problem}");
-        }
         return Err(format!(
             "--scenario {name}: {} has errors (see above)",
             scenario.file
@@ -539,7 +1182,45 @@ fn indent(text: &str) -> String {
         .join("\n")
 }
 
-fn print_text(result: &CheckoutResult) {
+/// One run, as the text output prints it: its input, output, logs, instructions and error.
+fn print_run(run: &lsf_app::checkout::FunctionRun) {
+    println!("== {} · {} ({})", run.handle, run.target, run.export);
+    println!("input:");
+    println!(
+        "{}",
+        indent(&serde_json::to_string_pretty(&run.input).unwrap_or_default())
+    );
+    match &run.output {
+        Some(output) => {
+            println!("output:");
+            println!(
+                "{}",
+                indent(&serde_json::to_string_pretty(output).unwrap_or_default())
+            );
+        }
+        None => println!("output: none"),
+    }
+    if let Some(exchange) = &run.exchange {
+        println!(
+            "http: {} {} -> {}",
+            exchange.request.method.as_str(),
+            exchange.request.url,
+            exchange.response.status
+        );
+        println!("response body:");
+        println!("{}", indent(&exchange.response.body));
+    }
+    if !run.logs.trim().is_empty() {
+        println!("logs:");
+        println!("{}", indent(run.logs.trim_end()));
+    }
+    println!("instructions: {}", run.instructions);
+    if let Some(error) = &run.error {
+        println!("error: {error}");
+    }
+}
+
+fn print_text(result: &CheckoutResult, addressed: bool, country: &str) {
     let currency = result.cost.currency_code.as_str();
     if result.runs.is_empty() {
         println!("No Function ran.");
@@ -557,40 +1238,7 @@ fn print_text(result: &CheckoutResult) {
         println!();
     }
     for run in &result.runs {
-        println!("== {} · {} ({})", run.handle, run.target, run.export);
-        println!("input:");
-        println!(
-            "{}",
-            indent(&serde_json::to_string_pretty(&run.input).unwrap_or_default())
-        );
-        match &run.output {
-            Some(output) => {
-                println!("output:");
-                println!(
-                    "{}",
-                    indent(&serde_json::to_string_pretty(output).unwrap_or_default())
-                );
-            }
-            None => println!("output: none"),
-        }
-        if let Some(exchange) = &run.exchange {
-            println!(
-                "http: {} {} -> {}",
-                exchange.request.method.as_str(),
-                exchange.request.url,
-                exchange.response.status
-            );
-            println!("response body:");
-            println!("{}", indent(&exchange.response.body));
-        }
-        if !run.logs.trim().is_empty() {
-            println!("logs:");
-            println!("{}", indent(run.logs.trim_end()));
-        }
-        println!("instructions: {}", run.instructions);
-        if let Some(error) = &run.error {
-            println!("error: {error}");
-        }
+        print_run(run);
         println!();
     }
 
@@ -657,6 +1305,26 @@ fn print_text(result: &CheckoutResult) {
                 display_money(option.cost, currency)
             );
         }
+        // Rates offered, none chosen: the shipping of the totals is 0, as on Shopify before
+        // the buyer gives an address. Said, for the totals not to look wrong.
+        if group.selected.is_none() && !group.options.is_empty() {
+            println!(
+                "  delivery: {}",
+                if addressed {
+                    format!(
+                        "no rate selected, so shipping is {}",
+                        display_money(0, currency)
+                    )
+                } else {
+                    format!(
+                        "no rate selected before a shipping address, as on Shopify, so shipping is {} \
+                         (`--checkout '{{\"shippingAddress\": {{\"countryCode\": \"{}\"}}}}'` gives one)",
+                        display_money(0, currency),
+                        if country.is_empty() { "US" } else { country }
+                    )
+                }
+            );
+        }
     }
     // Each method with where it is still offered once the Functions ran: the list of the
     // checkout (`PAYMENT_METHOD`), the express buttons (`ACCELERATED_CHECKOUT`), or both.
@@ -694,8 +1362,10 @@ fn print_text(result: &CheckoutResult) {
     }
     let cost = &result.cost;
     println!(
-        "  subtotal {} · discounts -{} · shipping {} · tax {} · total {}",
+        "  subtotal {} · discounts {}{} · shipping {} · tax {} · total {}",
         display_money(cost.subtotal, currency),
+        // No discount is 0.00, not -0.00.
+        if cost.discounts == 0 { "" } else { "-" },
         display_money(cost.discounts, currency),
         display_money(cost.shipping, currency),
         display_money(cost.tax, currency),
@@ -721,6 +1391,40 @@ mod tests {
     use clap::Parser;
 
     use super::*;
+
+    #[test]
+    fn a_fixture_mismatch_names_each_path() {
+        let expected =
+            serde_json::json!({"operations": [{"add": {"value": 10, "message": "a"}}], "x": 1});
+        let actual = serde_json::json!({"operations": [{"add": {"value": 15.0, "message": "a"}}, {"more": true}], "y": 2});
+        let mut found = Vec::new();
+        json_diff("", &expected, &actual, &mut found);
+        let paths: Vec<&str> = found.iter().map(|m| m.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            ["operations[0].add.value", "operations[1]", "x", "y"]
+        );
+        assert_eq!(found[0].expected, Some(serde_json::json!(10)));
+        assert_eq!(found[1].expected, None);
+        // 10 and 10.0 are the same number, as in JavaScript.
+        let mut none = Vec::new();
+        json_diff(
+            "",
+            &serde_json::json!({"v": 10}),
+            &serde_json::json!({"v": 10.0}),
+            &mut none,
+        );
+        assert!(none.is_empty(), "{none:?}");
+        let text = describe_mismatches(&found);
+        assert!(
+            text.starts_with("  operations[0].add.value\n    expected: 10\n    actual:   15.0\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("  x\n    expected: 1\n    actual:   (nothing)"),
+            "{text}"
+        );
+    }
 
     #[test]
     fn json_comes_from_the_argument_or_from_a_file() {
@@ -770,6 +1474,9 @@ mod tests {
                     locale: Some(locale.to_string()),
                     step: Step::Completion,
                     format: Format::Json,
+                    input: None,
+                    export: None,
+                    save_input: None,
                 }),
             };
             run(&root, Some(&data), &[], args).map(|_| ())
@@ -810,6 +1517,9 @@ mod tests {
                 locale: None,
                 step,
                 format: Format::Json,
+                input: None,
+                export: None,
+                save_input: None,
             };
             let result = compute(&root, Some(&data), &[], &args).unwrap().result;
             let seen = result.runs[0].input["buyerJourney"]["step"].clone();
@@ -906,6 +1616,9 @@ mod tests {
                 locale: None,
                 step: Step::Completion,
                 format: Format::Json,
+                input: None,
+                export: None,
+                save_input: None,
             }),
         };
         let code = run(&root, Some(&data), &[], args).unwrap();
@@ -1028,6 +1741,9 @@ mod tests {
             locale: None,
             step: Step::Completion,
             format: Format::Json,
+            input: None,
+            export: None,
+            save_input: None,
         }
     }
 

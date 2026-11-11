@@ -13,6 +13,7 @@ mod customer_account;
 mod data_files;
 pub use control::{apply_session_input, routes};
 mod forms;
+pub mod frame_proxy;
 mod home;
 mod home_check;
 pub use home_check::{Unmet, run_with_expectations as check_scenarios};
@@ -168,6 +169,9 @@ pub struct ServerState {
     pub app_proxy: Option<app_proxy::AppProxy>,
     /// The Polaris mode, which the control API changes (`/__lsf/polaris`).
     pub polaris: polaris::Polaris,
+    /// What the terminal was told of the app blocks pages did not render, once each until the
+    /// files change.
+    pub(crate) notices: Mutex<std::collections::HashSet<String>>,
 }
 
 /// One HTTP request, decoded.
@@ -354,6 +358,7 @@ impl ServerState {
             admin,
             app_proxy,
             polaris,
+            notices: Mutex::default(),
         };
         (state, diagnostics)
     }
@@ -486,6 +491,21 @@ impl ServerState {
         }
     }
 
+    /// Says when `shopify.app.toml` declares other scopes than those the app was installed with
+    /// at start (a server without `--static`): the tokens keep the old ones until lsf restarts
+    /// or `POST /__lsf/admin/install` grants the new ones. Said once per set of scopes, even
+    /// with `--quiet`: every request of the backend reads with the old ones meanwhile.
+    fn warn_if_scopes_changed(&self) {
+        if !self.options.watch {
+            return;
+        }
+        if let Some(admin) = &self.admin
+            && let Some(warning) = admin.api.app_scopes_changed()
+        {
+            eprintln!("admin:  {warning}");
+        }
+    }
+
     /// Reloads the store when its files changed since they were last read (`--watch`). The
     /// files are looked at every 300 ms at most, unless the caller knows that they changed
     /// (`now`). A change of checkout scenarios alone reads the files again without touching
@@ -577,6 +597,10 @@ impl ServerState {
         for directory in THEME_DIRECTORIES {
             hasher.write_u64(fingerprint(&root.join(directory)));
         }
+        // The theme app extensions of `--app`, whose blocks the pages render.
+        for directory in self.app.theme.app_extensions().directories() {
+            hasher.write_u64(fingerprint(&directory));
+        }
         if let Some(directory) = self.app.data_dir() {
             hasher.write_u64(fingerprint(&directory));
         }
@@ -593,6 +617,8 @@ impl ServerState {
         let token = self.change_token();
         if self.last_token.swap(token, Ordering::Relaxed) != token {
             self.app.theme.files().expire();
+            self.app.theme.app_extensions().expire();
+            lock(&self.notices).clear();
             self.refresh_if_changed(true);
         }
         token
@@ -704,6 +730,47 @@ impl ServerState {
         action(entry)
     }
 
+    /// Answers a `GET` of `path_and_query` as the server does, for a visitor whose session is
+    /// `session`: the status, how many Liquid errors the page has, and the body. `lsf render`
+    /// answers so the pages the server answers itself rather than the theme (`/account`,
+    /// `/recommendations/products`).
+    pub fn answer_get(
+        &self,
+        path_and_query: &str,
+        host: &str,
+        session: Session,
+    ) -> (u16, usize, String) {
+        const ID: &str = "lsf-render";
+        self.with_session(ID, |entry| entry.session = session);
+        let (path, query) = path_and_query
+            .split_once('?')
+            .unwrap_or((path_and_query, ""));
+        let mut headers = HashMap::new();
+        headers.insert(SESSION_HEADER.to_string(), ID.to_string());
+        headers.insert("host".to_string(), host.to_string());
+        let reply = self.dispatch(&Incoming {
+            method: "GET".to_string(),
+            path: path.to_string(),
+            query: params::query_pairs(query),
+            raw_query: query.to_string(),
+            headers,
+            params: Json::Object(Default::default()),
+            body: Default::default(),
+            host: host.to_string(),
+        });
+        let errors = reply
+            .headers
+            .iter()
+            .find(|(name, _)| name == "x-lsf-liquid-errors")
+            .and_then(|(_, count)| count.parse().ok())
+            .unwrap_or(0);
+        (
+            reply.status,
+            errors,
+            String::from_utf8_lossy(&reply.body).into_owned(),
+        )
+    }
+
     pub fn reset_session(&self, id: &str) {
         self.sessions.lock().expect("sessions poisoned").remove(id);
     }
@@ -788,6 +855,7 @@ impl ServerState {
         }
         // The plans of `--pricing-plans`, which every kind of request below reads.
         self.refresh_pricing_if_changed();
+        self.warn_if_scopes_changed();
         // The Admin API, OAuth and their control endpoints come first: a backend's request is
         // never a page.
         if let Some(reply) = admin::route(self, incoming) {

@@ -261,7 +261,17 @@ fn insert_shipment(
         .get(transfer)
         .map_or(0, |record| int(record, SHIPMENT_COUNT))
         + 1;
-    let number = gid_number(transfer);
+    // `T1-1`: the transfer's name (`#T1`) and the shipment's count.
+    let number = state
+        .get(transfer)
+        .and_then(|record| record.get("name"))
+        .and_then(Value::as_str)
+        .map(|name| {
+            name.trim_start_matches('#')
+                .trim_start_matches('T')
+                .to_string()
+        })
+        .unwrap_or_else(|| gid_number(transfer).to_string());
     let id = state.new_gid("InventoryShipment");
     let now = state.timestamp();
     state.insert(value::object(json!({

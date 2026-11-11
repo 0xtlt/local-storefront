@@ -16,27 +16,16 @@ const seen = { webhooks: [], rejectedWebhooks: [], billingReturns: [], welcomes:
 // The settings of the embedded page's form, kept in memory.
 const settings = { threshold: 5, notify: false };
 
-// The headers of a page of the embedded app, as the template's app/entry.server.tsx sets them:
-// `addDocumentResponseHeaders` lets only Shopify's admin frame the app
-// (`Content-Security-Policy: frame-ancestors https://<shop> https://admin.shopify.com …`). With
-// lsf's App Bridge (APP_BRIDGE_URL), lsf's admin frames it: the line after says so.
+// The headers of a page of the embedded app, as the template's app/entry.server.tsx sets them,
+// unchanged: `addDocumentResponseHeaders` lets only Shopify's admin frame the app
+// (`Content-Security-Policy: frame-ancestors https://<shop> https://admin.shopify.com …`), and so
+// do the pages the library throws (the bounce page, the page of `redirect(…, { target: "_top" })`).
+// lsf's admin frames them all the same: its frame goes through a proxy that drops
+// `frame-ancestors`.
 function documentHeaders(request) {
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
   shopify.addDocumentResponseHeaders(request, headers);
-  if (config.appBridgeUrl) {
-    headers.set("Content-Security-Policy", `frame-ancestors ${new URL(config.appBridgeUrl).origin};`);
-  }
   return headers;
-}
-
-// A page the library throws (the App Bridge page of `redirect(…, { target: "_top" })`, the bounce
-// page) gets the same frame-ancestors: the template's entry.server.tsx sets them on every
-// document, a thrown one too.
-function thrownDocument(response) {
-  if (!config.appBridgeUrl || !(response.headers.get("content-type") ?? "").startsWith("text/html")) return response;
-  const headers = new Headers(response.headers);
-  headers.set("Content-Security-Policy", `frame-ancestors ${new URL(config.appBridgeUrl).origin};`);
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 const json = (value, init = {}) =>
@@ -329,7 +318,7 @@ async function handle(request) {
       try {
         return await handler(request);
       } catch (error) {
-        if (error instanceof Response) return thrownDocument(error);
+        if (error instanceof Response) return error;
         console.error(`${request.method} ${pathname}: ${error.name}: ${error.message}`);
         return json(
           { error: error.message, name: error.constructor.name, details: error.details ?? error.body ?? error.response ?? null },

@@ -32,6 +32,7 @@ data directory is one of these, and they are merged, so you can split the data a
 | `checkout` | [Checkout](#checkout) | The fake checkout of `lsf app dev --app`: shipping rates, payment methods, discounts and Function settings. At most one data file may define it. |
 | `now` | string | Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`. Set it to make renders reproducible; each `'now'` of a render is then one nanosecond after the previous one, so `%N` still differs between calls. Defaults to the real time, read at each `'now'`. |
 | `theme_settings` | map of any JSON value | Overrides for theme settings (`config/settings_data.json`), by setting id. |
+| `app` | [AppInstallation](#appinstallation) | The app of `--app` as this store has it installed: what its theme app extensions read. |
 
 ## Shop
 
@@ -276,9 +277,9 @@ A product variant.
 | `compare_at_price` | [Money](#money) | The price before a sale. Must be higher than `price` to show as a discount. |
 | `sku` | string | Also a convenient way to reference the variant from carts and orders. |
 | `barcode` | string |  |
-| `available` | boolean | Whether the variant can be bought. Derived from the inventory fields when omitted. |
+| `available` | boolean | Whether the variant can be bought. Derived from the inventory fields when omitted. `false` alone makes the variant tracked and out of stock, as a sold-out variant is on Shopify. |
 | `inventory_quantity` | integer | Units in stock. Setting it turns inventory tracking on. |
-| `inventory_tracked` | boolean | Set to `false` to disable inventory tracking (the variant is then always available). Defaults to `true` when `inventory_quantity` is set, `false` otherwise. |
+| `inventory_tracked` | boolean | Set to `false` to disable inventory tracking (the variant is then always available). Defaults to `true` when `inventory_quantity` is set or `available` is `false`, `false` otherwise. |
 | `inventory_policy` | [InventoryPolicy](#inventorypolicy) | Defaults to `"deny"`. |
 | `weight` | integer | Weight in grams. |
 | `weight_unit` | string | The unit the weight is displayed in: `g`, `kg`, `oz` or `lb`. Defaults to `kg`. |
@@ -901,6 +902,7 @@ How the local checkout (`lsf app dev --app`) is set up. Every field has a defaul
 | `payment_methods` | array of [CheckoutPaymentMethod](#checkoutpaymentmethod) | The payment methods. Defaults to "Credit card", "Cash on Delivery" and "Bank Deposit". |
 | `discounts` | array of [CheckoutDiscount](#checkoutdiscount) | Discounts backed by discount Functions of the app. |
 | `functions` | map of [CheckoutFunction](#checkoutfunction) | The settings of the other Functions, by the handle of the Function. |
+| `extensions` | map of [CheckoutExtension](#checkoutextension) | What the merchant filled in for the UI extensions of the app, by the handle of the extension: the values its `shopify.settings` (`useSettings`) reads. |
 | `tax_rate` | number | Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when omitted. |
 
 ## CheckoutShippingRate
@@ -955,13 +957,35 @@ A discount backed by a discount Function of the app.
 | `title` | string | What the buyer sees. Defaults to the handle of the Function. |
 | `code` | string | The code that triggers the discount. Without one the discount is automatic. |
 | `classes` | array of [CheckoutDiscountClass](#checkoutdiscountclass) | What the discount may reduce. All three when omitted. |
-| `metafields` | map of [Metafield](#metafield) | The metafields of the discount, which its Function's input query reads, by `"namespace.key"`: `{"$app:config.settings": {"type": "json", "value": {"percent": 10}}}`. |
+| `metafields` | [OwnerMetafields](#ownermetafields) | The metafields of the discount, which its Function's input query reads, by `"namespace.key"`: `{"$app.function-configuration": {"type": "json", "value": {"percentage": 10}}}` for `metafield(namespace: "$app", key: "function-configuration")`. Shopify's list of `{namespace, key, type, value}` is taken too. |
 
 ## CheckoutDiscountClass
 
 What a discount may reduce.
 
 One of: `"PRODUCT"`, `"ORDER"`, `"SHIPPING"`.
+
+## OwnerMetafields
+
+The metafields of a discount or of the owner of a Function: by `"namespace.key"`, or as
+Shopify's Admin API takes them (`metafieldsSet`, `discountAutomaticAppCreate`), a list of
+`{namespace, key, type, value}`.
+
+One of:
+
+- map of [Metafield](#metafield): `{"$app.function-configuration": {"type": "json", "value": {…}}}`.
+- array of [OwnerMetafield](#ownermetafield): `[{"namespace": "$app", "key": "function-configuration", "type": "json", "value": {…}}]`.
+
+## OwnerMetafield
+
+A metafield as Shopify's Admin API takes it.
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | string | **Required.** `$app`, `$app:<name>`, or another namespace. |
+| `key` | string | **Required.** |
+| `type` | string | The metafield type: `json`, `single_line_text_field`, … Inferred from the value when omitted. |
+| `value` | any JSON value | **Required.** The value: JSON, or the text Shopify stores (`"{\"percentage\":10}"` for `json`). |
 
 ## CheckoutFunction
 
@@ -971,7 +995,42 @@ validation): its owner in the shop, and its settings.
 | Field | Type | Description |
 |---|---|---|
 | `enabled` | boolean | Whether the shop has an owner of the Function (the payment or delivery customization, validation or cart transform an app creates for it), and it is enabled. As on Shopify, the Function runs at the checkout only through an enabled owner: `true` runs it, `false` is an owner that is turned off. Without it, the shop has no owner of it, as after an install: the Function runs only for a scenario that names it in `extensions`, or for `app function run <handle>`, with these metafields. |
-| `metafields` | map of [Metafield](#metafield) | The metafields of the object the Function belongs to, by `"namespace.key"`. |
+| `metafields` | [OwnerMetafields](#ownermetafields) | The metafields of the object the Function belongs to, by `"namespace.key"`: `{"$app.function-configuration": {"type": "json", "value": {…}}}` for `metafield(namespace: "$app", key: "function-configuration")`. Shopify's list of `{namespace, key, type, value}` is taken too. |
+
+## CheckoutExtension
+
+A checkout or customer account UI extension of the app, as the merchant set it up.
+
+| Field | Type | Description |
+|---|---|---|
+| `settings` | map of any JSON value | The values of the fields of its `[extensions.settings]`, by `key`, as the merchant fills them in the checkout editor: `{"title": "Free gift", "threshold": 50, "show": true}`. A field left out has no value (`undefined`), as on Shopify. |
+
+## AppInstallation
+
+The app of `--app` as the store has it installed, for its theme app extensions: its
+app-data metafields and the app embed blocks turned on.
+
+| Field | Type | Description |
+|---|---|---|
+| `metafields` | map of map of [Metafield](#metafield) | The app-data metafields of the installation, by namespace then key: `{"conditions": {"reviews_enabled": true}}`. The Liquid of the app's blocks reads them as `app.metafields.conditions.reviews_enabled`, and an `available_if` of a block tests them. |
+| `embeds` | map of [AppEmbed](#appembed) | App embed blocks turned on or off, by the name of their file in the extension's `blocks/` (`"chat-bubble"` for `blocks/chat-bubble.liquid`): `true` turns one on, with the settings `config/settings_data.json` gives it or else its defaults; `false` turns it off; `{"settings": {...}}` turns it on with these settings. The embeds of `config/settings_data.json` that this does not name stay as the theme has them. |
+
+## AppEmbed
+
+An app embed block turned on (`true`) or off (`false`), or turned on with its settings.
+
+One of:
+
+- boolean
+- [AppEmbedSettings](#appembedsettings)
+
+## AppEmbedSettings
+
+An app embed block turned on with settings of its own.
+
+| Field | Type | Description |
+|---|---|---|
+| `settings` | map of any JSON value | The values of the settings of the block's schema, by setting id. The others have their defaults. |
 
 ## Checkout scenario
 
@@ -986,7 +1045,7 @@ depends on on top of the store data, and what it does not set stays as the store
 | `session` | [Session](#session) | Who buys and what is in the cart, written as the `session` of the store data and applied on top of it: `customer`, `cart` (lines, quantities, selling plans, note, attributes), `country`, `company_location`. |
 | `entered` | [ScenarioEntered](#scenarioentered) | What the buyer already entered: email, address, discount codes, delivery and payment. |
 | `language` | string | The language of the buyer, by ISO code (`"fr"`): one of `localization.languages`. The checkout opens under its locale root. Defaults to the primary language. |
-| `checkout` | [Checkout](#checkout) | Overrides of the `checkout` section of the store data: every field that is present replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`, `tax_rate`), except `functions`, which replaces the settings of the Functions it names. |
+| `checkout` | [Checkout](#checkout) | Overrides of the `checkout` section of the store data: every field that is present replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`, `tax_rate`), except `functions` and `extensions`, which replace the settings of the Functions and extensions they name. |
 | `variant` | [ScenarioLook](#scenariolook) | The look of the page. Defaults to the one of the server (`--variant`). |
 | `extensions` | array of string | The handles of the extensions (Functions and checkout UI extensions) that run, among those of the app that `--extension` allows. When omitted, every UI extension shows and the Functions run as at the shop's checkout: a payment or delivery customization, validation or cart transform Function only through an enabled owner of it. |
 | `expect` | [ScenarioExpect](#scenarioexpect) | What the checkout must look like once the Functions ran: `lsf app check` fails when it does not, and says what it expected and what it got. Without it, `app check` only checks that the Functions run without an error. |

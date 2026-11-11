@@ -99,9 +99,11 @@ const VALUES: &[(&str, &str)] = &[
     ("app/uninstalled", ".timezone"),
     ("app/uninstalled", ".iana_timezone"),
     ("app/uninstalled", ".myshopify_domain"),
+    ("app/uninstalled", ".domain"),
     ("shop/update", ".timezone"),
     ("shop/update", ".iana_timezone"),
     ("shop/update", ".myshopify_domain"),
+    ("shop/update", ".domain"),
     // Not in GraphQL: `plan_name` comes from the plan's flags, the email consent at checkout is
     // false.
     ("app/uninstalled", ".plan_name"),
@@ -569,4 +571,26 @@ fn the_compliance_payloads_name_the_shop() {
     let request = payload("customers/data_request", &customer, &lookup).unwrap();
     assert_eq!(request["orders_requested"], json!([10, 11]));
     assert_eq!(request["data_request"], json!({"id": 3}));
+}
+
+/// The shop's `domain` is the host of its primary domain, a `Domain` record or inline.
+#[test]
+fn the_shop_payload_names_its_primary_domain() {
+    let domain = record(json!({"id": "gid://shopify/Domain/5", "host": "supply.example.com"}));
+    let shop =
+        record(json!({"id": "gid://shopify/Shop/7", "primaryDomain": "gid://shopify/Domain/5"}));
+    let lookup = Records::of([domain], Some(shop.clone()));
+    for topic in ["shop/update", "app/uninstalled"] {
+        assert_eq!(
+            payload(topic, &shop, &lookup).unwrap()["domain"],
+            json!("supply.example.com")
+        );
+    }
+    let inline = record(
+        json!({"id": "gid://shopify/Shop/7", "primaryDomain": {"host": "inline.example.com"}}),
+    );
+    assert_eq!(
+        payload("shop/update", &inline, &Records::default()).unwrap()["domain"],
+        json!("inline.example.com")
+    );
 }

@@ -6,8 +6,10 @@ mod date;
 pub mod demo;
 pub mod docs;
 pub mod load;
+pub mod metafield_types;
 pub mod model;
 pub mod reference;
+pub mod theme_settings;
 pub mod validate;
 
 use std::collections::HashMap;
@@ -96,6 +98,23 @@ pub struct Metafield {
 }
 
 pub type Metafields = IndexMap<String, IndexMap<String, Metafield>>;
+
+/// The app of `--app` as the store has it installed (`app` of the store data).
+#[derive(Clone, Debug, Default)]
+pub struct AppInstallation {
+    /// Its app-data metafields: what `app.metafields` reads in the Liquid of its blocks.
+    pub metafields: Metafields,
+    /// Its app embed blocks turned on or off, by the name of their file.
+    pub embeds: IndexMap<String, AppEmbed>,
+}
+
+/// An app embed block the store data turns on or off.
+#[derive(Clone, Debug)]
+pub struct AppEmbed {
+    pub enabled: bool,
+    /// The settings it is turned on with; `None` for those of the theme, or the defaults.
+    pub settings: Option<serde_json::Map<String, Json>>,
+}
 
 /// How an option value is shown instead of its name.
 #[derive(Clone, Debug)]
@@ -888,6 +907,8 @@ pub struct CheckoutSettings {
     pub owners: IndexMap<String, bool>,
     /// Basis points: 2000 is 20 %.
     pub tax_rate_bps: i64,
+    /// UI extension handle → the values of its settings, by key (`shopify.settings`).
+    pub extensions: IndexMap<String, IndexMap<String, Json>>,
 }
 
 impl Default for CheckoutSettings {
@@ -916,6 +937,7 @@ impl Default for CheckoutSettings {
             functions: IndexMap::new(),
             owners: IndexMap::new(),
             tax_rate_bps: 0,
+            extensions: IndexMap::new(),
         }
     }
 }
@@ -943,7 +965,7 @@ pub struct CheckoutScenario {
     /// The settings of the store with this scenario's overrides on top.
     pub checkout: CheckoutSettings,
     /// What the scenario overrides of the `checkout` section: `shipping_rates`,
-    /// `payment_methods`, `discounts`, `functions`, `tax_rate`.
+    /// `payment_methods`, `discounts`, `functions`, `extensions`, `tax_rate`.
     pub overrides: Vec<&'static str>,
     /// What the checkout must look like once the Functions ran, which `lsf app check` checks.
     /// Its amounts are valid: those that are not are in `problems`.
@@ -983,6 +1005,9 @@ pub struct Store {
     /// The frozen clock, if the data sets one.
     pub now: Option<DateTime<Utc>>,
     pub theme_settings: IndexMap<String, Json>,
+    /// The app of `--app` as the store has it installed: its app-data metafields and its app
+    /// embed blocks turned on or off.
+    pub app: AppInstallation,
 
     product_handles: HashMap<String, usize>,
     product_ids: HashMap<u64, usize>,

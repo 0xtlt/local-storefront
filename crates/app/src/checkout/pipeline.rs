@@ -542,38 +542,7 @@ impl<'a> Pipeline<'a> {
         };
 
         let mut execution = runner::run(&function.wasm_path, &target.export, &input);
-        // The runner knows the path; the Function knows how lsf builds it.
-        if !function.built()
-            && execution
-                .error
-                .as_deref()
-                .is_some_and(|error| error.starts_with("no Wasm module"))
-        {
-            execution.error = Some(function.missing_build());
-        }
-        if execution.error.is_none()
-            && let Some(output) = &execution.output
-            && let Err(problems) = version
-                .schema(spec.api)
-                .validate_output(spec.result, output)
-        {
-            execution.error = Some(format!(
-                "the output does not fit `{}` in API version {version}: {problems}",
-                spec.result
-            ));
-        }
-        // Shopify stops a Function that runs past the limit: its output does not count.
-        if execution.instructions > runner::INSTRUCTIONS_LIMIT {
-            let message = format!(
-                "used {} instructions: Shopify stops a Function past {}",
-                execution.instructions,
-                runner::INSTRUCTIONS_LIMIT
-            );
-            execution.error = Some(match execution.error.take() {
-                Some(previous) => format!("{previous}; {message}"),
-                None => message,
-            });
-        }
+        judge(function, version, spec, &mut execution);
         // What is applied has the lists the schema asks for; the run keeps what the Function
         // answered. A failed run applies nothing: only a run that succeeds copies its output.
         let applied = match (&execution.error, &execution.output) {
@@ -2901,6 +2870,84 @@ fn gid_number(gid: &str) -> Option<u64> {
 /// Whether an id a Function gives (a handle, or a gid ending with it) names `handle`.
 fn id_matches(id: &str, handle: &str) -> bool {
     id == handle || id.rsplit('/').next() == Some(handle)
+}
+
+/// What makes the run of `function` a failure besides a trap, as Shopify judges it: a module
+/// that was never built, an output that does not fit the schema of its API version, more
+/// instructions than Shopify allows.
+fn judge(
+    function: &FunctionExtension,
+    version: ApiVersion,
+    spec: crate::config::version::TargetSpec,
+    execution: &mut runner::Execution,
+) {
+    // The runner knows the path; the Function knows how lsf builds it.
+    if !function.built()
+        && execution
+            .error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("no Wasm module"))
+    {
+        execution.error = Some(function.missing_build());
+    }
+    if execution.error.is_none()
+        && let Some(output) = &execution.output
+        && let Err(problems) = version
+            .schema(spec.api)
+            .validate_output(spec.result, output)
+    {
+        execution.error = Some(format!(
+            "the output does not fit `{}` in API version {version}: {problems}",
+            spec.result
+        ));
+    }
+    // Shopify stops a Function that runs past the limit: its output does not count. One lsf
+    // stopped says so already.
+    if execution.instructions > runner::INSTRUCTIONS_LIMIT
+        && execution.instructions < runner::INSTRUCTIONS_CAP
+    {
+        let message = format!(
+            "used {} instructions: Shopify stops a Function past {}",
+            execution.instructions,
+            runner::INSTRUCTIONS_LIMIT
+        );
+        execution.error = Some(match execution.error.take() {
+            Some(previous) => format!("{previous}; {message}"),
+            None => message,
+        });
+    }
+}
+
+/// Runs `target` of `function` on `input`, as given (a fixture, an input `--save-input` wrote),
+/// rather than one built from a checkout: the output is checked against the schema of its API
+/// version and the instruction limit, as in a checkout, and nothing is applied.
+pub fn run_with_input(
+    function: &FunctionExtension,
+    target: &FunctionTarget,
+    input: Value,
+) -> FunctionRun {
+    let mut execution = runner::run(&function.wasm_path, &target.export, &input);
+    match (function.version, target.spec()) {
+        (Some(version), Some(spec)) => judge(function, version, spec, &mut execution),
+        _ if execution.error.is_none() => {
+            execution.error = Some(format!(
+                "`{}` is not run by the local checkout",
+                target.target
+            ));
+        }
+        _ => {}
+    }
+    FunctionRun {
+        handle: function.handle.clone(),
+        target: target.target.clone(),
+        export: target.export.clone(),
+        input,
+        output: execution.output,
+        logs: execution.logs,
+        error: execution.error,
+        instructions: execution.instructions,
+        exchange: None,
+    }
 }
 
 #[cfg(test)]

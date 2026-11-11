@@ -14,8 +14,9 @@
 //!   `draftOrderCalculate` answers the same totals without making a draft.
 //! - `draftOrderComplete` makes the order (`sourceName` `shopify_draft_order` unless given),
 //!   paid through a manual sale unless `paymentPending`, its units committed in stock; the draft
-//!   is `COMPLETED` with its `order`. Events: `orders/create`, `order_transactions/create`,
-//!   `orders/paid`, `draft_orders/update`.
+//!   is `COMPLETED` with its `order`. Its discounts are the order's manual discount applications
+//!   and their allocations on the lines (`record_manual_discounts`). Events: `orders/create`,
+//!   `order_transactions/create`, `orders/paid`, `draft_orders/update`.
 //! - `draftOrderInvoiceSend` records the invoice as sent (`INVOICE_SENT`, `invoiceSentAt`) and
 //!   puts the email in the shop's outbox (`crate::admin::outbox`): lsf sends nothing.
 //!   `draftOrderDuplicate` copies a draft as a new open one.
@@ -1241,6 +1242,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         presentment: None,
     };
     let order = super::insert_order(state, &draft);
+    record_manual_discounts(state, &order, &record, &lines);
     if let Some(order_record) = state.get_mut(&order) {
         order_record.insert(
             "tags".into(),
@@ -1317,6 +1319,112 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     state.touch(&id);
     state.emit("draft_orders/update", &id);
     Ok(payload(json!({"draftOrder": id}), &[]))
+}
+
+/// The applied discounts of a draft as its order keeps them, as Shopify records a draft's
+/// discounts: a `ManualDiscountApplication` for each line's discount (`targetSelection:
+/// EXPLICIT`, `allocationMethod: EACH`, as an order edit's line discount), then one for the
+/// draft's own (`ALL`, `ACROSS`), and on each line the `DiscountAllocation`s they made. The
+/// draft's discount is spread over the lines in proportion to their totals after their own
+/// discounts, the remainder on the last one it reaches. What `Order.discountApplications`, the
+/// lines' `discountAllocations` and the `discount_applications` of the order webhooks read. A
+/// discount without a title is titled by its description, else "Custom discount" *(lsf's)*.
+fn record_manual_discounts(state: &mut ShopState, order: &str, draft: &Record, lines: &[Record]) {
+    let currency = state.currency();
+    let application = |discount: &Value, index: usize, explicit: bool, cents: i64| {
+        let kind = discount.get("valueType").and_then(Value::as_str);
+        let input = discount.get("value").and_then(Value::as_f64).unwrap_or(0.0);
+        let value = if kind == Some("PERCENTAGE") {
+            json!({"__typename": "PricingPercentageValue", "percentage": input})
+        } else {
+            // A line's fixed amount is per unit (`EACH`); the draft's is what it took off.
+            let amount = if explicit {
+                (input * 100.0).round() as i64
+            } else {
+                cents
+            };
+            let mut money = value::money_v2(amount, &currency);
+            money["__typename"] = json!("MoneyV2");
+            money
+        };
+        let description = discount
+            .get("description")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty());
+        let title = discount
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .or(description)
+            .unwrap_or("Custom discount");
+        json!({
+            "__typename": "ManualDiscountApplication",
+            "index": index,
+            "title": title,
+            "description": description,
+            "allocationMethod": if explicit { "EACH" } else { "ACROSS" },
+            "targetSelection": if explicit { "EXPLICIT" } else { "ALL" },
+            "targetType": "LINE_ITEM",
+            "value": value,
+        })
+    };
+    let allocation = |cents: i64, application: &Value| {
+        json!({
+            "allocatedAmountSet": value::money_bag(cents, &currency),
+            "discountApplication": application,
+        })
+    };
+    let mut applications = Vec::new();
+    let mut allocations: Vec<Vec<Value>> = vec![Vec::new(); lines.len()];
+    for (position, line) in lines.iter().enumerate() {
+        let taken = field_cents(line, "totalDiscountSet");
+        let Some(discount) = line.get("appliedDiscount").filter(|d| !d.is_null()) else {
+            continue;
+        };
+        if taken <= 0 {
+            continue;
+        }
+        let made = application(discount, applications.len(), true, taken);
+        allocations[position].push(allocation(taken, &made));
+        applications.push(made);
+    }
+    let order_discount =
+        field_cents(draft, "lineItemsSubtotalPrice") - field_cents(draft, "subtotalPriceSet");
+    if let Some(discount) = draft.get("appliedDiscount").filter(|d| !d.is_null())
+        && order_discount > 0
+    {
+        let made = application(discount, applications.len(), false, order_discount);
+        let totals: Vec<i64> = lines
+            .iter()
+            .map(|line| field_cents(line, "discountedTotalSet").max(0))
+            .collect();
+        let whole: i64 = totals.iter().sum();
+        let mut shares: Vec<i64> = totals
+            .iter()
+            .map(|total| model::share(order_discount, *total, whole))
+            .collect();
+        let given: i64 = shares.iter().sum();
+        if let Some(last) = totals.iter().rposition(|total| *total > 0) {
+            shares[last] += order_discount - given;
+        }
+        for (position, cents) in shares.into_iter().enumerate() {
+            if cents > 0 {
+                allocations[position].push(allocation(cents, &made));
+            }
+        }
+        applications.push(made);
+    }
+    if applications.is_empty() {
+        return;
+    }
+    for (item, made) in super::line_items(state, order).iter().zip(allocations) {
+        if let Some(record) = state.get_mut(item) {
+            record.insert("discountAllocations".into(), Value::Array(made));
+        }
+    }
+    if let Some(record) = state.get_mut(order) {
+        record.insert("discountApplications".into(), Value::Array(applications));
+    }
 }
 
 /// `draftOrderDuplicate`.

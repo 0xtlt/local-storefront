@@ -94,6 +94,15 @@ fn graphql(api: &AdminApi, query: &str, variables: Value) -> Value {
     answer
 }
 
+/// lsf's page of a charge (`/__lsf/admin/charges/<n>?shop=`): where its `confirmationUrl`, on
+/// the shop's admin as Shopify writes it, leads once opened on lsf's origin.
+fn charge_page(api: &AdminApi, confirmation: &str) -> String {
+    let path = confirmation.replacen(&format!("https://{}", api.default_shop()), "", 1);
+    let answer = send(api, "GET", &path, &[], b"");
+    assert_eq!(answer.status, 302, "{confirmation}");
+    header(&answer, "location").unwrap().to_string()
+}
+
 /// Subscribes the receiver to a topic.
 fn subscribe(api: &AdminApi, topic: &str, receiver: &Receiver) {
     let answer = graphql(
@@ -297,8 +306,50 @@ fn the_billing_helpers_of_shopify_api_work_against_lsf() {
     let data = &requested["data"]["appSubscriptionCreate"];
     assert_eq!(data["userErrors"], json!([]));
     let confirmation = data["confirmationUrl"].as_str().unwrap().to_string();
+    // Shopify's, on the shop's admin, which lsf's admin serves on its origin.
+    let shop = api.default_shop();
+    let prefix = format!("https://{shop}/admin/charges/");
+    assert!(confirmation.starts_with(&prefix), "{confirmation}");
     assert!(
-        confirmation.starts_with(&format!("http://{HOST}/__lsf/admin/charges/")),
+        confirmation.contains(
+            "/RecurringApplicationCharge/confirm_recurring_application_charge?signature="
+        ),
+        "{confirmation}"
+    );
+    // The same page on lsf's origin, for a test that opens it itself: followed as it is, it
+    // leads to the charge page, as Shopify's does through lsf's admin.
+    let local = requested["extensions"]["lsf"]["localConfirmationUrl"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{requested}"))
+        .to_string();
+    assert!(
+        local.starts_with(&format!("http://{HOST}/admin/charges/")),
+        "{local}"
+    );
+    assert!(local.ends_with(&format!("&shop={shop}")), "{local}");
+    let followed = send(&api, "GET", &local, &[], b"");
+    assert_eq!(followed.status, 302, "{local}");
+    assert_eq!(
+        header(&followed, "location"),
+        Some(charge_page(&api, &confirmation).as_str()),
+        "{local}"
+    );
+    let on_lsf = send(
+        &api,
+        "GET",
+        &confirmation.replacen(&format!("https://{shop}"), "", 1),
+        &[],
+        b"",
+    );
+    assert_eq!(
+        on_lsf.status,
+        302,
+        "{}",
+        String::from_utf8_lossy(&on_lsf.body)
+    );
+    let confirmation = header(&on_lsf, "location").unwrap().to_string();
+    assert!(
+        confirmation.starts_with("/__lsf/admin/charges/"),
         "{confirmation}"
     );
     let id = data["appSubscription"]["id"].as_str().unwrap().to_string();
@@ -318,7 +369,6 @@ fn the_billing_helpers_of_shopify_api_work_against_lsf() {
         .and_then(|rest| rest.split('?').next())
         .unwrap()
         .to_string();
-    let shop = api.default_shop();
     let approved = send(
         &api,
         "POST",
@@ -421,7 +471,7 @@ fn a_one_time_purchase_is_approved_through_the_endpoint_and_its_webhook_delivere
         .as_str()
         .unwrap()
         .to_string();
-    let path = confirmation.replace("?", "/approve?");
+    let path = charge_page(&api, &confirmation).replace("?", "/approve?");
     let approved = send(&api, "POST", &path, &[], b"");
     assert_eq!(approved.status, 200);
     let answer = json_of(&approved);
@@ -442,10 +492,13 @@ fn uninstalling_cancels_the_active_subscription() {
         json!({"name": "Basic", "returnUrl": "http://localhost:3000/", "lineItems": [
             {"plan": {"appRecurringPricingDetails": {"price": {"amount": 5, "currencyCode": "USD"}}}}]}),
     );
-    let confirmation = created["data"]["appSubscriptionCreate"]["confirmationUrl"]
-        .as_str()
-        .unwrap()
-        .replace('?', "/approve?");
+    let confirmation = charge_page(
+        &api,
+        created["data"]["appSubscriptionCreate"]["confirmationUrl"]
+            .as_str()
+            .unwrap(),
+    )
+    .replace('?', "/approve?");
     assert_eq!(send(&api, "POST", &confirmation, &[], b"").status, 200);
     assert_eq!(
         send(&api, "POST", "/__lsf/admin/uninstall", &[], b"").status,
@@ -754,4 +807,199 @@ fn a_file_uploaded_to_a_staged_target_is_created_with_its_name_type_and_size() {
         b"",
     );
     assert_eq!((back.status, back.body.len()), (200, 2048));
+}
+
+#[test]
+fn a_standalone_app_gets_a_confirmation_url_on_lsf_that_works_as_it_is() {
+    let mut app = support::fixture_app();
+    app.config.embedded = Some(false);
+    let api = api(&support::demo_store(), Some(app));
+    // On a shop other than the default one: the URL names it.
+    let created = send(
+        &api,
+        "POST",
+        "/__lsf/admin/shops",
+        &[("content-type", "application/json")],
+        br#"{"shop": "standalone"}"#,
+    );
+    assert_eq!(
+        created.status,
+        201,
+        "{}",
+        String::from_utf8_lossy(&created.body)
+    );
+    let created = json_of(&created);
+    let shop = created["shop"].as_str().unwrap().to_string();
+    let token = created["token"].as_str().unwrap().to_string();
+    let body = json!({
+        "query": r#"mutation($returnUrl: URL!) { appPurchaseOneTimeCreate(name: "Setup", price: {amount: 25, currencyCode: USD}, returnUrl: $returnUrl, test: true) { confirmationUrl userErrors { message } } }"#,
+        "variables": {"returnUrl": "http://localhost:3000/"},
+    })
+    .to_string();
+    let answer = json_of(&send(
+        &api,
+        "POST",
+        GRAPHQL,
+        &[
+            ("content-type", "application/json"),
+            ("x-shopify-access-token", &token),
+        ],
+        body.as_bytes(),
+    ));
+    let confirmation = answer["data"]["appPurchaseOneTimeCreate"]["confirmationUrl"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{answer}"))
+        .to_string();
+    // lsf's origin, Shopify's path, and the shop: no `https://<shop>`, which is Shopify's.
+    assert!(
+        confirmation.starts_with(&format!("http://{HOST}/admin/charges/")),
+        "{confirmation}"
+    );
+    assert!(confirmation.contains("/ApplicationCharge/confirm_application_charge?signature="));
+    assert!(
+        confirmation.ends_with(&format!("&shop={shop}")),
+        "{confirmation}"
+    );
+    // Followed as it is, it leads to the charge page of that shop.
+    let followed = send(&api, "GET", &confirmation, &[], b"");
+    assert_eq!(followed.status, 302);
+    let page = header(&followed, "location").unwrap().to_string();
+    // The charge's number is its id, which a shop of its own counts from its own offset.
+    assert!(!page.starts_with("/__lsf/admin/charges/1?"), "{page}");
+    assert!(page.starts_with("/__lsf/admin/charges/"), "{page}");
+    assert!(page.contains(&shop), "{page}");
+    let html = send(&api, "GET", &page, &[], b"");
+    assert_eq!(html.status, 200);
+    assert!(String::from_utf8_lossy(&html.body).contains("Approve a one-time charge"));
+
+    // An embedded app keeps Shopify's URL, which the library's exit-iframe page requires.
+    let api = self::api(&support::demo_store(), Some(support::fixture_app()));
+    let answer = graphql(
+        &api,
+        r#"mutation { appPurchaseOneTimeCreate(name: "Setup", price: {amount: 25, currencyCode: USD}, returnUrl: "http://localhost:3000/", test: true) { confirmationUrl } }"#,
+        json!({}),
+    );
+    let confirmation = answer["data"]["appPurchaseOneTimeCreate"]["confirmationUrl"]
+        .as_str()
+        .unwrap();
+    assert!(
+        confirmation.starts_with(&format!("https://{}/admin/charges/", api.default_shop())),
+        "{confirmation}"
+    );
+}
+
+/// The ids of the records two shops create are not the same, as on Shopify where ids are unique
+/// across shops: a backend that keeps the records of every test shop in one database does not
+/// mix them up. The ids stay the same every run, and the seeded records keep theirs.
+#[test]
+fn records_created_in_two_shops_have_different_ids() {
+    let seeded = {
+        let api = api(&support::demo_store(), None);
+        graphql(&api, "{ products(first: 1) { nodes { id } } }", json!({}))["data"]["products"]
+            ["nodes"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let created_in = |api: &AdminApi, name: &str| -> Vec<String> {
+        let (shop, token) = if name.is_empty() {
+            (api.default_shop(), api.token(&api.default_shop()))
+        } else {
+            let created = json_of(&send(
+                api,
+                "POST",
+                "/__lsf/admin/shops",
+                &[("content-type", "application/json")],
+                json!({"shop": name}).to_string().as_bytes(),
+            ));
+            (
+                created["shop"].as_str().unwrap().to_string(),
+                created["token"].as_str().unwrap().to_string(),
+            )
+        };
+        let body = json!({"query": r#"mutation {
+            productCreate(product: {title: "Mug"}) { product { id } }
+            customerCreate(input: {email: "jo@example.com"}) { customer { id } }
+            metafieldsSet(metafields: [{ownerId: "OWNER", namespace: "custom", key: "kind", type: "single_line_text_field", value: "v"}]) { metafields { id } userErrors { message } }
+            appSubscriptionCreate(name: "Pro", returnUrl: "http://localhost:3000/", test: true, lineItems: [{plan: {appRecurringPricingDetails: {price: {amount: 10, currencyCode: USD}}}}]) { appSubscription { id } confirmationUrl }
+        }"#.replace("OWNER", &seeded)}).to_string();
+        let answer = json_of(&send(
+            api,
+            "POST",
+            GRAPHQL,
+            &[
+                ("content-type", "application/json"),
+                ("x-shopify-access-token", &token),
+            ],
+            body.as_bytes(),
+        ));
+        let data = &answer["data"];
+        let subscription = data["appSubscriptionCreate"]["appSubscription"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{answer}"))
+            .to_string();
+        // The control API takes the charge by the number of its id, in any shop.
+        let number = subscription.rsplit('/').next().unwrap();
+        let page = send(
+            api,
+            "GET",
+            &format!("/__lsf/admin/charges/{number}?shop={shop}&format=json"),
+            &[],
+            b"",
+        );
+        assert_eq!(page.status, 200, "{}", String::from_utf8_lossy(&page.body));
+        vec![
+            data["productCreate"]["product"]["id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            data["customerCreate"]["customer"]["id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            subscription,
+            // A metafield of a seeded product: an id lsf derives from its owner and key in the
+            // default shop, a new one in another.
+            data["metafieldsSet"]["metafields"][0]["id"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{answer}"))
+                .to_string(),
+        ]
+    };
+    let api = api(&support::demo_store(), None);
+    let default = created_in(&api, "");
+    let one = created_in(&api, "ids-one");
+    let two = created_in(&api, "ids-two");
+    for (index, id) in one.iter().enumerate() {
+        assert_ne!(*id, two[index]);
+        assert_ne!(*id, default[index]);
+    }
+    // The default shop counts its charges from 1, as the docs say.
+    assert_eq!(default[2], "gid://shopify/AppSubscription/1");
+
+    // The same every run: a server made again gives the same ids, and so does a reset.
+    let again = self::api(&support::demo_store(), None);
+    assert_eq!(created_in(&again, ""), default);
+    assert_eq!(created_in(&again, "ids-one"), one);
+    assert_eq!(send(&again, "DELETE", "/__lsf/admin", &[], b"").status, 200);
+    let token = json_of(&send(&again, "GET", "/__lsf/admin", &[], b""))["shops"][1]["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let answer = json_of(&send(
+        &again,
+        "POST",
+        GRAPHQL,
+        &[
+            ("content-type", "application/json"),
+            ("x-shopify-access-token", &token),
+        ],
+        json!({"query": r#"mutation { productCreate(product: {title: "Mug"}) { product { id } } }"#})
+            .to_string()
+            .as_bytes(),
+    ));
+    assert_eq!(
+        answer["data"]["productCreate"]["product"]["id"],
+        json!(one[0])
+    );
 }

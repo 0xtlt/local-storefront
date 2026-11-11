@@ -808,8 +808,10 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     if !others.is_empty() && !make_draft {
         errors.push(duplicate_error(state, &others));
     }
-    let id = market_gid(&handle);
-    if errors.is_empty() && state.contains(&id) {
+    let stable = market_gid(&handle);
+    if errors.is_empty()
+        && (state.contains(&stable) || !state.with_text("Market", "handle", &handle).is_empty())
+    {
         errors.push(coded(
             &["input", "handle"],
             "Handle has already been taken",
@@ -839,6 +841,8 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         taxes_included,
         input.get("priceInclusions").and_then(Value::as_object),
     );
+    // The id the store sync reads in the default shop; a new one in another shop.
+    let id = mutation.state_mut().created_gid("Market", stable);
     let mut record = value::object(json!({
         "__typename": "Market",
         "id": id,

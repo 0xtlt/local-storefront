@@ -47,6 +47,25 @@ fn not_found(reason: String) -> Page {
     page
 }
 
+/// The locale of the theme that the first segment of a path names when the store has no such
+/// language: `/de/…` on a theme with `locales/de.json` and a store in English only.
+fn missing_language(site: &Site, segment: &str) -> Option<String> {
+    let store = &site.store;
+    let known = |code: &str| {
+        store
+            .languages
+            .iter()
+            .any(|language| language.iso_code.eq_ignore_ascii_case(code))
+    };
+    if known(segment) {
+        return None;
+    }
+    site.theme
+        .locales()
+        .into_iter()
+        .find(|locale| locale.eq_ignore_ascii_case(segment))
+}
+
 /// Resolves the request's path. Unknown paths and missing resources give the 404 page.
 pub fn resolve(site: &Site) -> Page {
     let store = &site.store;
@@ -342,7 +361,16 @@ pub fn resolve(site: &Site) -> Page {
                 request.path
             ));
         }
-        _ => return not_found(format!("no page at \"{}\"", request.path)),
+        [first, ..] => {
+            let mut reason = format!("no page at \"{}\"", request.path);
+            if let Some(locale) = missing_language(site, first) {
+                reason.push_str(&format!(
+                    ": the theme has a {locale} locale but the store data has no {} language; add {{\"iso_code\": \"{locale}\"}} to localization.languages",
+                    lsf_core::store::reference::language_name(&locale)
+                ));
+            }
+            return not_found(reason);
+        }
     };
 
     if let Some(view) = view

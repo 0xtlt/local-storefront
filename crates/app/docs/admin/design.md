@@ -602,8 +602,11 @@ storefront, the checkout and the Function inputs already use.
   resolver applies the `sortKey` and its default on top. The arrays of a record are in the order
   Shopify shows them (variants and media by position, the products of a collection in its manual
   order).
-- New records get ids from a counter per type that starts above every seeded id
-  (`ShopState::new_gid`; the discount nodes share one counter, as they share ids on Shopify).
+- New records get ids from a counter per type that starts above every seeded id, and at a
+  13-digit number of the type's name at least (`state::first_id`: `stable_id("new_gid",
+  type)`), so that a new draft order, refund or webhook subscription has an id like Shopify's
+  and the seeded products', the same every run (`ShopState::new_gid`; the discount nodes share
+  one counter, as they share ids on Shopify).
 - **An index** finds the records of a type by their `handle` (products, collections, metaobjects,
   pages, blogs, articles, markets, channels) and the orders by their `number`, without reading
   every record (`state::INDEXED`; `ShopState::with_handle`, `handle_taken`, `max_number`, and
@@ -700,15 +703,22 @@ field, in order:
    `metafields(namespace:, keys:)` of any owner read its `metafields`, `$app` and `$app:x` being
    the app's reserved namespaces (`app--<id>`, `app--<id>--x`; `metafield` without a namespace is
    in the app's). After it, when there is none: `legacyResourceId` (the number of the GID),
-   `defaultCursor` (the cursor of the record in the `ID` order of its type), and the `Count` of an
-   array (`variantsCount` of `variants`, with the field's `query`).
+   `defaultCursor` (the cursor of the record in the `ID` order of its type), the `Count` of an
+   array (`variantsCount` of `variants`, with the field's `query`), and a deprecated field whose
+   reason is "Use `x` instead." (`x` a field, or a path of fields, of the same object without
+   required arguments): `x`'s value, `Money` from the amount of a `MoneyV2` or the shop money of
+   a `MoneyBag`, `MoneyV2` from a `MoneyBag`, `Int` from a `Count`, a scalar from a scalar of its
+   kind (`resolve::successor_path`; `OTHER_VALUES` lists the two whose replacement holds another
+   value).
 6. **A default**: `null`; for a non-null field an empty list, `""`, `0`, `false`, `"0.00"` for
    `Money` and `"0.0"` for `Decimal`, the seed's fixed date for `DateTime`, the first enum value,
    or an object of defaults (the first possible type of an abstract one). Its path goes into
    `extensions.lsf.defaulted` (the first 50, with `defaultedCount` past them) and its `Type.field`
-   into `defaultedFields`, except for lists and connections (empty by nature) and inside what lsf
-   builds whole (payloads, objects of defaults). An explicit `null` in a non-null field is a
-   default too.
+   into `defaultedFields`, except inside what lsf builds whole (payloads, objects of defaults). A
+   list or a connection a record lacks is reported too (`Order.agreements`, `Product.events`: lsf
+   does not compute them), unless lsf fills it as things happen (`resolve::SIMULATED_LISTS`:
+   `returns`, `refunds`, `fulfillmentOrders`, …), where missing means none. An explicit `null`
+   in a non-null field is a default too.
 
 **Connections** (`resolve::connection`): the items (GIDs or inline objects) go through the
 field's `query`, its `sortKey`, `reverse`, then `after`/`before`, then `first`/`last`. Shopify's
@@ -936,7 +946,9 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 | Path | What answers |
 |---|---|
 | `POST\|GET /admin/api/<version>/graphql.json` | The version (`Served::resolve`: served, fallen forward, or `404`), the token (`401` as Shopify, `X-Lsf-Reason` saying why), what the shop's clock passed since the last request (`domains::tick`, see "The shop's clock"), the GraphQL request (JSON, `application/graphql`, `?query=`; `400` `{"errors": {"query": "Required parameter missing or invalid"}}` without one), then `graphql::run` with the bucket of the shop and app, `X-Shopify-API-Version` and `X-Request-Id`. The events the request emitted are handed to `Webhooks::emit` with a lookup over the shop: the payloads are built then, the deliveries queued for the worker, nothing waits on the backend. |
-| other `/admin/api/<v>/…` | `404`: another version, or the REST Admin API, which lsf does not serve. |
+| other `/admin/api/<v>/…`, `/admin/*.json`, another `/admin/oauth/*` | `404` in JSON: another version, or the REST Admin API, which lsf does not simulate (`version::rest_not_served_by`, also the `X-Lsf-Reason`). |
+| `GET /admin/oauth/access_scopes.json` | The REST endpoint of the token's scopes (`AdminApi::access_scopes`), each write scope followed by the read scope it implies; `401` as the GraphQL endpoint. |
+| `GET /__lsf/graphiql` | `graphiql`: lsf's GraphiQL, one page embedded in the binary (`assets/graphiql/graphiql.html`), which reads the shops, tokens and versions of `GET /__lsf/admin` and posts to the GraphQL endpoint. |
 | `/admin/oauth/*`, `/__lsf/admin/session-token`, `/__lsf/admin/launch` | `auth::oauth::handle`, with `oauth::Shops` over the shops and the system clock. |
 | `/__lsf/admin` (`GET` status, `DELETE` reset), `/__lsf/admin/shops`, `/__lsf/admin/uninstall`, `/__lsf/admin/install` | The control endpoints of `docs/control-api.md`. |
 | `/__lsf/admin/charges/<n>` (`GET` the page, `POST …/approve`, `…/decline`), `/__lsf/admin/uploads/<shop>[/<key>]`, `/__lsf/admin/bulk/<shop>/<n>.jsonl` | `api::app`: the merchant's approval of a charge, staged uploads, bulk operations' results; no token, as Shopify's admin page and signed URLs need none from the app. The URLs the mutations answer for them are on the origin the request reached lsf at (`http://<Host>`, `ShopResolver::with_origin`). |
@@ -1052,12 +1064,25 @@ of the CDN script 0.41.4 where shopify.dev leaves it open:
 
 The parts the admin draws, in the admin page: toasts, the loading bar, the title bar, the nav
 items, the save bar (in place of the top bar, as Shopify's), the resource picker and the picker
-(`<dialog>`s), the confirmations (leave, discard). **Modals are drawn in the app's frame**, over
-the app, from a shadow root on the element (its children stay where the app put them, React
-keeps them, their handlers work); the admin dims what is around the frame. Shopify draws them
-over the whole admin, in a frame of its own whose document the app's frame fills; lsf's are as
-large as the app's frame. A modal's `src` is an `<iframe name="lsf-modal:<n>">` on the app's
-origin, whose page takes the opener's `shopify`.
+(`<dialog>`s), the confirmations (leave, discard), and the dialog of an `edit:` intent.
+**Modals are drawn in the app's frame**, from a shadow root on the element (its children stay
+where the app put them, React keeps them, their handlers work), and Polaris's `s-modal` draws
+itself there (App Bridge hears its `show` and `hide`). While one shows, the frame is **lifted
+over the whole window**: the admin sends `modal.lift` with the frame's box, the page sets
+`position: fixed` on its body in that box (the frame's background and radius, the scroll kept)
+and a transparent image on its root (with none, the body's background would paint the whole
+canvas), answers `lifted`, and the admin then makes the frame cover the window. The admin shows
+through, under the modal's backdrop, and the modal is centered over the whole admin, as
+Shopify's. `modal.unlift` puts the styles back. Shopify draws modals in a frame of its own; lsf
+cannot move the app's DOM out of its frame without cutting React's handlers off. A modal's `src`
+is an `<iframe name="lsf-modal:<n>">` on the app's origin, whose page takes the opener's
+`shopify`.
+
+**Intents**: `shopify.intents.invoke('edit:shopify/Product', {value})` (and `…/ProductVariant`,
+`…/Collection`, or the object form) asks the admin, which fetches the resource from
+`/__lsf/admin/resources` (`id:` or `variant_id:`) and shows it in a dialog: lsf has no editor,
+so closing it completes the activity with `{code: 'closed'}`. Another intent completes with
+`{code: 'error'}`, its message saying lsf does not simulate it, and joins the banner.
 
 The resource picker reads `GET /__lsf/admin/resources`: one query of the shop
 (`products` with their `variants` and `media`, or `collections`) run with every scope and no cost
@@ -1077,15 +1102,28 @@ Shopify's syntax; `selectionIds` are fetched by id (`id:`, `variant_id:`).
   answers `410` to a bot's user agent, `401` to a revoked token), the frame was refused (the
   template's `Content-Security-Policy: frame-ancestors`), or the page loads no App Bridge.
 - A call of what lsf does not simulate: listed in a banner.
+- What the template lacks (`config::template_warnings`: no `setAbstractFetchFunc` in
+  `app/shopify.server.ts`, no `boundary.headers` in `app/routes/app.tsx`): read again at each
+  load of the admin and of a page of the frame (`GET /__lsf/admin/warnings`), so a fixed file
+  loses its banner without a restart.
+- A backend that bypasses lsf (`api::BackendWatch`): the frame's proxy reports a request with a
+  session token (`id_token`, `Authorization: Bearer`) answered `400` or more (not `401`, the
+  library's own flows, nor `410`, its bot answer) while lsf has received no token exchange and
+  no Admin API call yet. A backend without `LSF_URL` does exactly that: its token exchange fails
+  at Shopify (`500`), or its Admin API call does (Shopify's status, `404` for a shop it does not
+  have). The terminal says it once; the admin shows it (App Bridge posts `failed` when a
+  `fetch()` of the app fails, and the admin asks again) until a call of the backend arrives.
 
 ### What is not simulated
 
 The admin itself (its pages, its search, its other apps); Polaris itself (lsf serves Shopify's,
-or its copy of it, and does not draw a component of its own); `shopify.scanner`, `pos`, `intents` (`invoke`, `register`), `webVitals`, `support`,
+or its copy of it, and does not draw a component of its own); `shopify.scanner`, `pos`,
+`intents.register` and the intents other than `edit:` of a product, a variant or a collection,
+`webVitals`, `support`,
 `reviews`, `scopes.request` and `revoke`, `app.extensions`, `shopifyQL`, `sidekick`, `tools`
 (they reject or warn with "lsf does not simulate shopify.<name>"); Direct API access
-(`fetch("shopify:admin/api/…")`); `extension:` links; the mobile and POS environments; modals
-over the whole admin; the admin's keyboard shortcuts; `?shopify-reload=` by `fetch` and
+(`fetch("shopify:admin/api/…")`); `extension:` links; the mobile and POS environments; the
+admin's keyboard shortcuts; `?shopify-reload=` by `fetch` and
 `document.write`. `shopify.user()` has `accountAccess` `"Account owner"` or `"Full access"`,
 lsf's choice: shopify.dev's example says `"full"`, and the CDN script leaves it to the admin.
 
@@ -1140,6 +1178,16 @@ Discount API (`shopifyFunctions` example). Not verified, chosen by analogy: the 
 | inline objects with an id | `MailingAddress/<lsf-core address id>?model_name=CustomerAddress` (address book) or `Address` (order); `ImageSource`/`CollectionImage`/`ArticleImage` + lsf-core's image id; `MenuItem`: `stable_id("menu_item", "<menu>/<i>/<j>…")`; `MarketRegionCountry`: `stable_id("market_region", code)`; others `stable_id(<snake type>, …)` |
 
 Every id is a function of the data: the same data gives the same records every run.
+
+The records the Admin API creates take their ids from a counter per type (`state::first_id`),
+and in a shop other than the default one the counter is moved by the shop's slot times
+`ID_STRIDE` (`ShopState::set_id_slot`): ids are unique across shops, as on Shopify. The slot is
+a number of the domain alone (`state::id_slot`), one of 80 million from 10¹³ (a million ids per
+type each, 14 digits), so that the order shops are made in does not change their ids; the next
+free one when two live domains share it, once in 80 million pairs. An id
+lsf derives from a name in the default shop (a metafield, a metaobject, a menu, a market) is a
+new one of the counter in another shop (`ShopState::created_gid`). Charges count from 1 in the
+default shop and from the shop's offset in another.
 
 ### Catalog (`domains/catalog.rs`)
 

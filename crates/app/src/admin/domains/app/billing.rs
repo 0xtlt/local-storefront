@@ -7,14 +7,18 @@
 //!
 //! - `appSubscriptionCreate` makes a `PENDING` subscription with its line items (one recurring
 //!   and one usage plan at most: "Only one pricing plan can be defined for each available
-//!   type"), and answers a `confirmationUrl` on lsf: `GET /__lsf/admin/charges/<n>?shop=…`
-//!   shows the charge, approving redirects to `returnUrl` with `charge_id=<n>`, as Shopify does.
+//!   type"), and answers a `confirmationUrl` as Shopify's, on the shop's admin
+//!   (on lsf's for an app with `embedded = false`: [`confirmation_url`]), which lsf's admin sends to `GET /__lsf/admin/charges/<n>?shop=…`:
+//!   it shows the charge, approving redirects to `returnUrl` with `charge_id=<n>`, as Shopify does.
 //!   `POST /__lsf/admin/charges/<n>/approve` (or `/decline`) does it without the page.
 //! - Approved, the subscription is `ACTIVE` (2026-10: "When a merchant approves an app
 //!   subscription, the status immediately transitions from pending to active"), and the app's
 //!   other active subscription is `CANCELLED` ("An app can have only one active subscription for
-//!   each merchant"). lsf has no billing cycles: a replacement Shopify defers to the next cycle
-//!   (`APPLY_ON_NEXT_BILLING_CYCLE`, and the three cases of `STANDARD`) applies at once. Declined,
+//!   each merchant"). A replacement Shopify defers to the next cycle
+//!   (`APPLY_ON_NEXT_BILLING_CYCLE`, and the three cases of `STANDARD`) applies at once.
+//! - Billing cycles follow the shop's clock ([`renew`]): past `currentPeriodEnd`, the period
+//!   moves on by its interval, the usage balance starts again from nothing, and a limited
+//!   discount has an interval less. Declined,
 //!   it is `DECLINED`; pending for more than two days by the shop's clock, `EXPIRED`.
 //! - `currentPeriodEnd`, *chosen*: the end of the trial when there is one, else 30 days (365 for
 //!   an `ANNUAL` plan) from the approval; `null` while the subscription is not active.
@@ -25,8 +29,8 @@
 //! - `appUsageRecordCreate` charges a usage line of an active subscription: the balance used may
 //!   not exceed the capped amount (shopify.dev's example: `"Failed to create usage charge"`,
 //!   `field: null`); an `idempotencyKey` of 255 characters at most ("Idempotency key exceeds the
-//!   maximum length.") answers the record it made the first time. The balance never resets (no
-//!   cycles).
+//!   maximum length.") answers the record it made the first time. The balance starts again at
+//!   each billing cycle.
 //! - `appPurchaseOneTimeCreate` makes a `PENDING` purchase, approved (`ACTIVE`) or declined on
 //!   the same page.
 //! - Webhooks (shopify.dev: "triggered when a subscription's status or capped amount changes",
@@ -155,7 +159,9 @@ fn currency_of(money: Option<&Value>) -> String {
         .to_string()
 }
 
-/// The next number of a charge: subscriptions and one-time purchases share them.
+/// The next number of a charge: subscriptions and one-time purchases share them. They count from
+/// 1 in the default shop; a shop made with `POST /__lsf/admin/shops` counts from its own
+/// [`ShopState::id_offset`], so that no two shops have the same charge id, as on Shopify.
 pub(super) fn next_charge(state: &ShopState) -> u64 {
     state
         .keys("AppSubscription")
@@ -164,12 +170,107 @@ pub(super) fn next_charge(state: &ShopState) -> u64 {
         .map(|(_, id)| id)
         .max()
         .unwrap_or(0)
+        .max(state.id_offset())
         + 1
 }
 
-/// The page where the merchant approves a charge.
-pub fn confirmation_url(origin: &str, shop: &str, number: u64) -> String {
-    format!("{origin}/__lsf/admin/charges/{number}?shop={shop}")
+/// What a confirmation URL is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Confirm {
+    Subscription,
+    OneTime,
+    CappedAmount,
+}
+
+/// The page where the merchant approves a charge, as Shopify writes it: on the shop's admin,
+/// `https://<shop>/admin/charges/<app id>/<charge>/RecurringApplicationCharge/confirm_recurring_application_charge?signature=…`.
+/// That is what `@shopify/shopify-app-react-router` lets its exit-iframe page go to (`https`, a
+/// `*.myshopify.com` host, under `/admin`), and what an embedded app's loader sends the merchant
+/// to. lsf's admin serves the path (`api::embedded`), and redirects it to lsf's page of the
+/// charge, `/__lsf/admin/charges/<charge>?shop=<shop>`; lsf's admin, its App Bridge and the
+/// frame's proxy take Shopify's URL there.
+///
+/// An app with `embedded = false` gets the same path on lsf's `origin`, with `shop`: its backend
+/// redirects the merchant there plainly (the library does, without the exit-iframe page), and
+/// `https://<shop>` is Shopify's, not lsf's.
+pub fn confirmation_url(
+    state: &ShopState,
+    origin: &str,
+    shop: &str,
+    number: u64,
+    confirm: Confirm,
+) -> String {
+    let embedded = state
+        .all("App")
+        .next()
+        .and_then(|app| app.get("embedded"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let app = state
+        .all("App")
+        .next()
+        .and_then(|app| app.get("id"))
+        .and_then(Value::as_str)
+        .map_or(0, gid_number);
+    let (kind, action) = match confirm {
+        Confirm::Subscription => (
+            "RecurringApplicationCharge",
+            "confirm_recurring_application_charge",
+        ),
+        Confirm::OneTime => ("ApplicationCharge", "confirm_application_charge"),
+        Confirm::CappedAmount => ("RecurringApplicationCharge", "confirm_update_capped_amount"),
+    };
+    let signature = crate::admin::auth::signing::hex(&crate::admin::auth::signing::sha256(
+        format!("lsf charge\0{shop}\0{number}").as_bytes(),
+    ));
+    let path = format!(
+        "/admin/charges/{app}/{number}/{kind}/{action}?signature={}",
+        &signature[..32]
+    );
+    if embedded || origin.is_empty() {
+        format!("https://{shop}{path}")
+    } else {
+        local(origin, shop, &path)
+    }
+}
+
+/// The same page on lsf's `origin`, with `shop`: the URL a test or a script opens as it is. An
+/// embedded app's `confirmationUrl` is Shopify's, for the library's exit-iframe page; this one
+/// is in `extensions.lsf.localConfirmationUrl` ([`note_local_url`]).
+fn local(origin: &str, shop: &str, path: &str) -> String {
+    let mut query = form_urlencoded::Serializer::new(String::new());
+    query.append_pair("shop", shop);
+    format!("{}{path}&{}", origin.trim_end_matches('/'), query.finish())
+}
+
+/// Puts the page of a `confirmationUrl` on lsf's origin in `extensions.lsf.localConfirmationUrl`,
+/// when the URL is Shopify's: a test that opens it itself, outside lsf's admin, opens that one.
+fn note_local_url(mutation: &mut Mutation<'_>, url: &str) {
+    let origin = mutation.origin().to_string();
+    let Some(rest) = url.strip_prefix("https://") else {
+        return;
+    };
+    let Some((shop, path)) = rest.split_once('/') else {
+        return;
+    };
+    if origin.is_empty() {
+        return;
+    }
+    let local = local(&origin, shop, &format!("/{path}"));
+    mutation.extension("localConfirmationUrl", json!(local));
+}
+
+/// The charge a path of the admin confirms (`/charges/<app id>/<charge>/<kind>/<action>`, below
+/// `/admin`), as [`confirmation_url`] writes it.
+pub fn confirmed_charge(segments: &[&str]) -> Option<u64> {
+    match segments {
+        ["charges", _app, number, kind, action]
+            if kind.ends_with("ApplicationCharge") && action.starts_with("confirm_") =>
+        {
+            number.parse().ok()
+        }
+        _ => None,
+    }
 }
 
 /// The pricing details of a line item record.
@@ -389,6 +490,7 @@ fn subscription_create(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let failed = json!({"appSubscription": null, "confirmationUrl": null});
+    let origin = mutation.origin().to_string();
     if mutation.managed_pricing() {
         let error = UserError::new(&[], super::pricing::BILLING_API_REFUSED);
         return Ok(payload(failed, &[error]));
@@ -454,7 +556,6 @@ fn subscription_create(
         return Ok(payload(failed, &errors));
     }
 
-    let origin = mutation.origin().to_string();
     let shop = mutation.shop().to_string();
     let test = ctx.arg_bool("test").unwrap_or(false);
     let behavior = ctx
@@ -493,10 +594,12 @@ fn subscription_create(
     })));
     // A charge waiting for the merchant is no status change: no webhook, but a change.
     state.emit(CHANGED, &id);
+    let url = confirmation_url(state, &origin, &shop, number, Confirm::Subscription);
+    note_local_url(mutation, &url);
     Ok(payload(
         json!({
             "appSubscription": id,
-            "confirmationUrl": confirmation_url(&origin, &shop, number),
+            "confirmationUrl": url,
         }),
         &[],
     ))
@@ -597,6 +700,7 @@ fn line_item_update(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let failed = json!({"appSubscription": null, "confirmationUrl": null});
+    let origin = mutation.origin().to_string();
     let line = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
     let details = (state.type_of(&line) == Some("AppSubscriptionLineItem"))
@@ -639,7 +743,6 @@ fn line_item_update(
     if !errors.is_empty() {
         return Ok(payload(failed, &errors));
     }
-    let origin = mutation.origin().to_string();
     let shop = mutation.shop().to_string();
     let state = mutation.state_mut();
     if let Some(record) = state.get_mut(&line) {
@@ -647,10 +750,12 @@ fn line_item_update(
     }
     state.emit(CHANGED, &line);
     let number = gid_number(&subscription);
+    let url = confirmation_url(state, &origin, &shop, number, Confirm::CappedAmount);
+    note_local_url(mutation, &url);
     Ok(payload(
         json!({
             "appSubscription": subscription,
-            "confirmationUrl": confirmation_url(&origin, &shop, number),
+            "confirmationUrl": url,
         }),
         &[],
     ))
@@ -772,6 +877,7 @@ fn purchase_create(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let failed = json!({"appPurchaseOneTime": null, "confirmationUrl": null});
+    let origin = mutation.origin().to_string();
     if mutation.managed_pricing() {
         let error = UserError::new(&[], super::pricing::BILLING_API_REFUSED);
         return Ok(payload(failed, &[error]));
@@ -794,7 +900,6 @@ fn purchase_create(
     let Some((amount, currency)) = price.filter(|_| errors.is_empty()) else {
         return Ok(payload(failed, &errors));
     };
-    let origin = mutation.origin().to_string();
     let shop = mutation.shop().to_string();
     let test = ctx.arg_bool("test").unwrap_or(false);
     let state = mutation.state_mut();
@@ -814,10 +919,12 @@ fn purchase_create(
         "updatedAt": now,
     })));
     state.emit(CHANGED, &id);
+    let url = confirmation_url(state, &origin, &shop, number, Confirm::OneTime);
+    note_local_url(mutation, &url);
     Ok(payload(
         json!({
             "appPurchaseOneTime": id,
-            "confirmationUrl": confirmation_url(&origin, &shop, number),
+            "confirmationUrl": url,
         }),
         &[],
     ))
@@ -1052,15 +1159,7 @@ pub(super) fn activate(state: &mut ShopState, id: &str) {
 /// Partner API reads has them.
 pub(super) fn activate_until(state: &mut ShopState, id: &str, period_end: Option<Value>) {
     let now = state.now();
-    let annual = state
-        .get(id)
-        .and_then(|record| record.get("lineItems"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .filter_map(|line| pricing(state, line))
-        .any(|details| details.get("interval").and_then(Value::as_str) == Some("ANNUAL"));
+    let annual = is_annual(state, id);
     if let Some(record) = state.get_mut(id) {
         let trial = record.get("trialDays").and_then(Value::as_i64).unwrap_or(0);
         let period = if annual { 365 } else { 30 };
@@ -1082,6 +1181,77 @@ pub(super) fn activate_until(state: &mut ShopState, id: &str, period_end: Option
         record.insert("currentPeriodEnd".into(), ends);
     }
     set_status(state, id, "ACTIVE");
+}
+
+/// Whether a subscription bills every year (`ANNUAL`), not every 30 days.
+fn is_annual(state: &ShopState, id: &str) -> bool {
+    state
+        .get(id)
+        .and_then(|record| record.get("lineItems"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(|line| pricing(state, line))
+        .any(|details| details.get("interval").and_then(Value::as_str) == Some("ANNUAL"))
+}
+
+/// The billing cycles of the active subscriptions, by the shop's clock: run by the shop's tick
+/// (`domains::tick`). A subscription whose `currentPeriodEnd` has passed starts its next
+/// cycle, and as many as the clock passed: the end moves 30 days on (365 for an `ANNUAL`
+/// plan), from the end of the trial for one that had a trial. Each new cycle charges the
+/// usage again from nothing (`balanceUsed` is 0, and `approaching_capped_amount` can be sent
+/// again), and counts down the intervals of a limited discount
+/// (`remainingDurationInIntervals`). No webhook: `app_subscriptions/update` is sent for a change
+/// of status or of capped amount, and a renewal is neither. Answers how many cycles started.
+pub fn renew(state: &mut ShopState) -> usize {
+    let now = state.now();
+    let due: Vec<(String, chrono::DateTime<chrono::Utc>)> = state
+        .keys("AppSubscription")
+        .filter(|key| status(state, key) == Some("ACTIVE"))
+        .filter_map(|key| {
+            let end = value::date_time_of(state.get(key)?.get("currentPeriodEnd"))?;
+            (end <= now).then(|| (key.to_string(), end))
+        })
+        .collect();
+    let mut started = 0;
+    for (id, end) in due {
+        let period = Duration::days(if is_annual(state, &id) { 365 } else { 30 });
+        let mut next = end;
+        let mut cycles = 0i64;
+        while next <= now {
+            next += period;
+            cycles += 1;
+        }
+        if let Some(record) = state.get_mut(&id) {
+            record.insert("currentPeriodEnd".into(), json!(value::date_time(next)));
+        }
+        for line in gids(state.get(&id).and_then(|record| record.get("lineItems"))) {
+            let Some(details) = state
+                .get_mut(&line)
+                .and_then(|line| line.get_mut("plan"))
+                .and_then(|plan| plan.get_mut("pricingDetails"))
+                .and_then(Value::as_object_mut)
+            else {
+                continue;
+            };
+            if details.get("__typename").and_then(Value::as_str) == Some("AppUsagePricing") {
+                let currency = currency_of(details.get("cappedAmount"));
+                details.insert("balanceUsed".into(), money_v2(0.0, &currency));
+            }
+            if let Some(remaining) = details
+                .get_mut("discount")
+                .and_then(Value::as_object_mut)
+                .and_then(|discount| discount.get_mut("remainingDurationInIntervals"))
+                && let Some(left) = remaining.as_i64()
+            {
+                *remaining = json!((left - cycles).max(0));
+            }
+        }
+        state.emit(CHANGED, &id);
+        started += cycles as usize;
+    }
+    started
 }
 
 /// `returnUrl` with `charge_id=<n>` added to its query.

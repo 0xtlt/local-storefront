@@ -108,6 +108,8 @@ impl Webhooks {
         let topic = match request.query_param("topic") {
             Some(topic) => match topics::written_form(topic) {
                 Some(topic) => Some(topic.to_string()),
+                // The topic of an Event (`[[events.subscription]]`): a resource.
+                None if crate::config::EVENT_TOPICS.contains(&topic) => Some(topic.to_string()),
                 None => return unknown_topic(topic),
             },
             None => None,

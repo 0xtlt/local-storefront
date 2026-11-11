@@ -13,6 +13,7 @@
 //! | `GET /__lsf/admin/app-bridge.js` | lsf's App Bridge. |
 //! | `GET /__lsf/admin/assets/<file>` | The files of the page. |
 //! | `GET /__lsf/admin/resources?shop=&type=&query=&first=&after=` | What the resource picker lists: products (with their variants) or collections of the shop, in the shape `shopify.resourcePicker` answers. |
+//! | `GET /__lsf/admin/warnings` | `{"warnings": [...]}`: the banners of the admin now, the template's files read again, and a backend that seems to bypass lsf. |
 //!
 //! See "The admin of an embedded app" in `crates/app/docs/admin/design.md`.
 
@@ -26,6 +27,10 @@ use crate::admin::resolve::{Registry, ShopResolver};
 
 /// Where the page's files are served.
 pub const ASSETS: &str = "/__lsf/admin/assets";
+
+/// What lsf's admin says of the app now ([`warnings`]): the page asks again when the frame loads
+/// a page and when a request of the app fails.
+pub const WARNINGS: &str = "/__lsf/admin/warnings";
 
 /// Where the app's pages load lsf's App Bridge from.
 pub const APP_BRIDGE: &str = "/__lsf/admin/app-bridge.js";
@@ -57,6 +62,12 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest) -> Option<HttpRespon
     }
     if path.trim_end_matches('/') == "/__lsf/admin/resources" {
         return Some(resources(api, request));
+    }
+    if path.trim_end_matches('/') == WARNINGS {
+        return Some(HttpResponse::json(
+            200,
+            &json!({ "warnings": warnings(api) }),
+        ));
     }
     let rest = path.strip_prefix("/admin")?;
     if !(rest.is_empty() || rest.starts_with('/')) {
@@ -147,7 +158,7 @@ fn viewer(api: &AdminApi, request: &HttpRequest) -> Result<Viewer, HttpResponse>
 /// The handle the admin's URLs name the app by: its handle, else its client id.
 pub(super) fn app_key(api: &AdminApi) -> String {
     api.app()
-        .and_then(|app| app.handle.clone())
+        .and_then(|app| app.admin_handle())
         .unwrap_or_else(|| api.client_id().to_string())
 }
 
@@ -186,6 +197,15 @@ fn page(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse {
             &admin_query(request),
         )),
         ["apps", app, path @ ..] => app_page(api, request, &viewer, app, path),
+        // The `confirmationUrl` of a charge, on the shop's admin as Shopify writes it.
+        charge if crate::admin::domains::app::billing::confirmed_charge(charge).is_some() => {
+            let number =
+                crate::admin::domains::app::billing::confirmed_charge(charge).unwrap_or_default();
+            HttpResponse::redirect(&with_query(
+                &format!("/__lsf/admin/charges/{number}"),
+                &[("shop".to_string(), viewer.shop.clone())],
+            ))
+        }
         ["charges", app, "pricing_plans", rest @ ..] => {
             super::pricing::page(api, request, &viewer, app, rest)
         }
@@ -280,6 +300,14 @@ fn app_page(
             ],
         );
     };
+    // On the proxy the server puts in front of the backend, when there is one.
+    let app_origin = origin_of(&frame);
+    let frame = match api.frame_origin() {
+        Some(proxy) if frame.starts_with(&app_origin) => {
+            format!("{proxy}{}", &frame[app_origin.len()..])
+        }
+        _ => frame,
+    };
     let origin = origin_of(&frame);
     let main = format!(
         "<iframe class=\"lsf-frame\" name=\"app-iframe\" title=\"{}\" src=\"{}\" allow=\"clipboard-read; clipboard-write\"></iframe>",
@@ -296,6 +324,8 @@ fn app_page(
             "path": app_path,
             // Where the app's paths start: the admin's URL has the app's path after it.
             "base": api.app_url(),
+            // The backend's own origin, which a URL of the app may name.
+            "appOrigin": app_origin,
         }),
     );
     render(
@@ -323,6 +353,18 @@ fn origin_of(url: &str) -> String {
     };
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     format!("{scheme}://{}", &rest[..end])
+}
+
+/// What lsf's admin says of the app now, as banners: what `shopify.app.toml` gets wrong, what the
+/// template's files lack (read again each time), and a backend that seems to send its calls to
+/// Shopify rather than to lsf.
+fn warnings(api: &AdminApi) -> Vec<String> {
+    let mut warnings = api
+        .app()
+        .map(crate::config::App::admin_warnings_now)
+        .unwrap_or_default();
+    warnings.extend(api.backend_watch().hint());
+    warnings
 }
 
 /// What `admin.js` knows of the shop, the user and the app, as JSON.
@@ -379,11 +421,13 @@ pub(super) fn admin_config(
             "scopes": {"granted": granted, "required": required, "optional": optional},
         }),
     );
+    config.insert("warnings".into(), json!(warnings(api)));
     config.insert(
         "endpoints".into(),
         json!({
             "sessionToken": "/__lsf/admin/session-token",
             "resources": "/__lsf/admin/resources",
+            "warnings": WARNINGS,
             "appBridge": APP_BRIDGE,
         }),
     );

@@ -265,6 +265,7 @@ impl ContextBuilder {
             scopes: vec![HashMap::new()],
             environment: self.assigns,
             inherited: Arc::new(HashMap::new()),
+            partials: None,
             interrupts: Vec::new(),
             cycles: HashMap::new(),
             for_offsets: HashMap::new(),
@@ -287,6 +288,9 @@ pub struct Context {
     /// Variables that isolated sub-contexts inherit, unlike local ones. Shopify uses this for
     /// `section` and `block`, which snippets can read without receiving them as arguments.
     inherited: Arc<HashMap<String, Value>>,
+    /// Where `render` and `include` load partials from in this context and the sub-contexts
+    /// created from it, instead of the loader of the render ([`Context::set_partials`]).
+    partials: Option<Arc<dyn PartialLoader>>,
     interrupts: Vec<Interrupt>,
     cycles: HashMap<String, usize>,
     for_offsets: HashMap<String, usize>,
@@ -344,6 +348,7 @@ impl Context {
             scopes: vec![HashMap::new()],
             environment: HashMap::new(),
             inherited: self.inherited.clone(),
+            partials: self.partials.clone(),
             interrupts: Vec::new(),
             cycles: HashMap::new(),
             for_offsets: HashMap::new(),
@@ -528,7 +533,17 @@ impl Context {
     }
 
     pub fn load_partial(&self, name: &str) -> Result<Arc<Template>> {
-        self.shared.partials.load(name)
+        match &self.partials {
+            Some(partials) => partials.load(name),
+            None => self.shared.partials.load(name),
+        }
+    }
+
+    /// Loads the partials of this context and of the sub-contexts created from it with
+    /// `partials`: the snippets of a theme app extension, which its blocks render instead of the
+    /// theme's.
+    pub fn set_partials(&mut self, partials: Arc<dyn PartialLoader>) {
+        self.partials = Some(partials);
     }
 
     /// The time `'now'` stands for. On Shopify each read is a new `Time.now`, so two reads in a

@@ -9,6 +9,7 @@ pub mod api;
 pub mod assets;
 pub mod auth;
 pub mod domains;
+pub mod graphiql;
 pub mod graphql;
 pub mod outbox;
 pub mod partner;

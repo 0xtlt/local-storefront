@@ -16,6 +16,13 @@ use crate::server::throttle::Throttle;
 use crate::server::{ServeOptions, ServerState, run as run_server};
 use crate::watch::{self, Watcher};
 
+/// The help heading of the options for a Shopify app (`--app`). The options of the theme come
+/// first, without a heading.
+const APP: &str = "App (with --app)";
+
+/// The help heading of the options of the Admin API and lsf's admin.
+const ADMIN: &str = "Admin API and embedded admin (with --app)";
+
 #[derive(clap::Args)]
 pub struct Args {
     /// The address to listen on.
@@ -43,7 +50,7 @@ pub struct Args {
     /// module or whose files changed since the last watch are built (all with `--build`). The
     /// checkout runs a copy of the last module that built: a build that fails keeps it, and the
     /// pages show its error.
-    #[arg(long, conflicts_with = "static_files")]
+    #[arg(help_heading = APP, long, conflicts_with = "static_files")]
     watch: bool,
 
     /// Do not log requests.
@@ -100,30 +107,31 @@ pub struct Args {
     )]
     only: Vec<Part>,
 
-    #[command(flatten)]
+    #[command(flatten, next_help_heading = APP)]
     app: AppArgs,
 
     /// With `--app`: serve its UI extensions and its Admin API, but run none of its Functions.
     /// For the tests of a backend, whose orders a Function that fails would block.
-    #[arg(long, conflicts_with = "watch")]
+    #[arg(help_heading = APP, long, conflicts_with = "watch")]
     no_functions: bool,
 
     /// The look of the checkout of the app: `standard` (Shopify's one-page checkout) or `shop`
     /// (the Shop app and Shop Pay). A checkout URL can ask for the other with `?variant=`.
-    #[arg(long, value_enum, default_value_t = Variant::Standard)]
+    #[arg(help_heading = APP, long, value_enum, default_value_t = Variant::Standard)]
     variant: Variant,
 
     /// Where the backend of the app listens (`http://localhost:3000`): the webhooks of
     /// shopify.app.toml are delivered there (a relative `uri` is joined to it, and an absolute
     /// one on the origin of `application_url` is moved to it), and the OAuth redirects and the
     /// embedded app's launch go there. Without it, `application_url`.
-    #[arg(long, env = "LSF_APP_URL", value_name = "URL", value_parser = super::app_url)]
+    #[arg(help_heading = APP, long, env = "LSF_APP_URL", value_name = "URL", value_parser = super::app_url)]
     app_url: Option<String>,
 
     /// The client secret webhooks, OAuth and session tokens are signed with: the backend checks
     /// them with its own. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's
     /// `.env`, else a fixed local secret, printed at start.
     #[arg(
+        help_heading = APP,
         long,
         env = "LSF_CLIENT_SECRET",
         value_name = "SECRET",
@@ -136,6 +144,7 @@ pub struct Args {
     /// restored at 100 a second, `advanced`, `plus`, `enterprise`, `legacy`: 1000 at 50), or
     /// `off` (nothing is throttled; `extensions.cost` is still reported).
     #[arg(
+        help_heading = ADMIN,
         long,
         env = "LSF_ADMIN_THROTTLE",
         value_name = "PLAN",
@@ -147,14 +156,14 @@ pub struct Args {
     /// this build knows: the default one alone without it. A request for another answers 404;
     /// one Shopify no longer supports falls forward to the oldest stable version served, as
     /// Shopify does.
-    #[arg(long, env = "LSF_ADMIN_VERSIONS", value_name = "VERSIONS")]
+    #[arg(help_heading = ADMIN, long, env = "LSF_ADMIN_VERSIONS", value_name = "VERSIONS")]
     admin_versions: Option<String>,
 
     /// Lets `themeCreate`, the `URL` bodies of `themeFilesUpsert` and `urlRedirectImportCreate`
     /// fetch their source from this machine or its network (the loopback, private and
     /// link-local addresses), for a theme ZIP served from localhost on purpose. Off by default:
     /// Shopify cannot reach them, and a backend could otherwise read what the machine serves.
-    #[arg(long, env = "LSF_ADMIN_FETCH_LOCAL")]
+    #[arg(help_heading = ADMIN, long, env = "LSF_ADMIN_FETCH_LOCAL")]
     admin_fetch_local: bool,
 
     /// A URL lsf answers itself with a file, never downloading it: `<url>=<file>`, repeatable
@@ -162,7 +171,7 @@ pub struct Args {
     /// your backend that `themeCreate`, the `URL` bodies of `themeFilesUpsert` and
     /// `urlRedirectImportCreate` read, when nothing serves them in a test. The file is read at
     /// each use. `PUT /__lsf/admin/sources?url=` stubs others while lsf runs.
-    #[arg(long = "admin-source", value_name = "URL=FILE", value_parser = super::admin_source)]
+    #[arg(help_heading = ADMIN, long = "admin-source", value_name = "URL=FILE", value_parser = super::admin_source)]
     admin_sources: Vec<(String, std::path::PathBuf)>,
 
     /// The plans of the app's managed pricing (Shopify App Pricing), which Shopify keeps in the
@@ -172,7 +181,7 @@ pub struct Args {
     /// and the Billing API creates no charge, as on Shopify. Read at start, and again when the
     /// file changes unless `--static`; `PUT /__lsf/admin/pricing-plans` changes them while lsf
     /// runs.
-    #[arg(long, env = "LSF_PRICING_PLANS", value_name = "FILE")]
+    #[arg(help_heading = ADMIN, long, env = "LSF_PRICING_PLANS", value_name = "FILE")]
     pricing_plans: Option<std::path::PathBuf>,
 
     /// What `/__lsf/cdn/<path>` answers, the URL an embedded app loads Polaris from in lsf's
@@ -181,6 +190,7 @@ pub struct Args {
     /// icons and its fonts, for an app shown without the internet. `PUT /__lsf/polaris` changes
     /// it while lsf runs.
     #[arg(
+        help_heading = ADMIN,
         long,
         env = "LSF_POLARIS",
         value_enum,
@@ -192,6 +202,55 @@ pub struct Args {
 
 /// The port used when `--port` is not given.
 const DEFAULT_PORT: u16 = 9292;
+
+/// Starts the proxy of the app's frame (`server::frame_proxy`) on a free port of `host`, in
+/// front of the backend, for an embedded app with a URL; `LSF_ADMIN_FRAME=direct` opens the
+/// backend in the frame instead.
+async fn start_frame_proxy(admin: &crate::server::admin::Admin, host: &str, lsf: &str) {
+    if std::env::var("LSF_ADMIN_FRAME").is_ok_and(|mode| mode.eq_ignore_ascii_case("direct")) {
+        return;
+    }
+    let Some(app_url) = admin
+        .api
+        .app_url()
+        .filter(|_| admin.embedded_path().is_some())
+    else {
+        return;
+    };
+    let Some(upstream) = url_origin(&app_url) else {
+        return;
+    };
+    let host = match host {
+        "0.0.0.0" | "::" | "[::]" => "127.0.0.1",
+        host => host,
+    };
+    let listener = match tokio::net::TcpListener::bind(format!("{host}:0")).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!(
+                "admin:  the app's frame opens the backend itself: no port for its proxy ({error})"
+            );
+            return;
+        }
+    };
+    let Ok(address) = listener.local_addr() else {
+        return;
+    };
+    let origin = format!("http://{address}");
+    let proxy = std::sync::Arc::new(
+        crate::server::frame_proxy::FrameProxy::new(&upstream, &origin, lsf)
+            .with_watch(admin.api.backend_watch()),
+    );
+    admin.api.set_frame_origin(Some(origin));
+    tokio::spawn(crate::server::frame_proxy::serve(proxy, listener));
+}
+
+/// The origin of a URL: `http://localhost:3000` of `http://localhost:3000/app`.
+fn url_origin(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    (!rest[..end].is_empty()).then(|| format!("{scheme}://{}", &rest[..end]))
+}
 
 /// How many ports are tried from the default one on, when `--port` is not given.
 const PORT_ATTEMPTS: u16 = 100;
@@ -411,6 +470,21 @@ pub fn run(
             // An app without extensions is a backend: the `app:` line says so.
             app.diagnostics
                 .retain(|diagnostic| diagnostic.message != lsf_app::config::NO_EXTENSIONS);
+            // `--build --watch`: the watcher builds every Function at start and says how it
+            // went, so a module not built yet is not a problem to print before it.
+            if args.watch && args.app.build {
+                let missing: Vec<(String, String)> = app
+                    .functions
+                    .iter()
+                    .map(|function| (function.handle.clone(), function.missing_build()))
+                    .collect();
+                app.diagnostics.retain(|diagnostic| {
+                    !missing.iter().any(|(handle, message)| {
+                        diagnostic.extension.as_deref() == Some(handle.as_str())
+                            && &diagnostic.message == message
+                    })
+                });
+            }
             checkout::print_app_diagnostics(&app, &selection);
             functions = selection.functions(&app).count();
             summary = Some(app_summary(
@@ -492,6 +566,16 @@ pub fn run(
         })?;
         crate::app::note_missing_previews(&app.theme, previews);
         crate::app::note_classic_accounts(&app.theme);
+        // The app blocks and app embed blocks of its theme app extensions render in the theme.
+        if let Some(dir) = &app_dir {
+            crate::theme_extensions::attach(&app.theme, dir, revalidate);
+            if let Some(line) = crate::theme_extensions::summary(&app.theme.app_extensions()) {
+                match summary.as_mut() {
+                    Some(summary) => summary.push_str(&format!(", {line}")),
+                    None => summary = Some(line),
+                }
+            }
+        }
         app
     } else {
         App::open_without_theme(theme, data, previews)?
@@ -515,6 +599,9 @@ pub fn run(
         },
     );
     print_diagnostics(&diagnostics);
+    if parts.theme {
+        crate::theme_extensions::print_findings(&state.app.theme, &state.loaded().store);
+    }
     if let Some(who) = &args.customer {
         state
             .loaded()
@@ -568,6 +655,11 @@ pub fn run(
         };
         let listener = listen(&args.host, ports).await?;
         let local = listener.local_addr().map_err(|error| error.to_string())?;
+        // The app's frame in lsf's admin goes through a proxy of its own port, which lets the
+        // admin frame every page of the backend (`server::frame_proxy`).
+        if let Some(admin) = &state.admin {
+            start_frame_proxy(admin, &args.host, &format!("http://{local}")).await;
+        }
         if parts.theme {
             eprintln!("theme:  {}", theme.display());
         }

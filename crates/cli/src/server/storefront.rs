@@ -301,6 +301,13 @@ fn log_problems(state: &ServerState, rendered: &Rendered) {
             seen.push(message);
         }
     }
+    // Why app blocks did not render: said once, until the files change.
+    let mut said = super::lock(&state.notices);
+    for notice in &rendered.notices {
+        if said.insert(notice.clone()) {
+            eprintln!("    {notice}");
+        }
+    }
 }
 
 /// A reason (of a 404, of an app proxy that got no answer) as a header value: printable ASCII
@@ -324,13 +331,30 @@ pub(super) fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target)
     if let Some(reason) = &rendered.not_found
         && !visit.state.options.quiet
     {
-        eprintln!("    404: {reason}");
+        eprintln!("    {}: {reason}", rendered.status);
     }
     visit.state.timings.add(&rendered, target);
     let timings = timing::of_render(&rendered.timings, visit.state.options.timings);
     let mut body = rendered.body;
-    if visit.state.options.live_reload && *target == Target::Page {
+    if visit.state.options.live_reload
+        && *target == Target::Page
+        && live_reload::is_html(rendered.content_type)
+    {
         live_reload::inject(&mut body);
+        let loaded = visit.state.loaded();
+        let data_errors: Vec<String> = loaded
+            .diagnostics
+            .items
+            .iter()
+            .filter(|item| item.severity == lsf_core::diagnostics::Severity::Error)
+            .map(|item| format!("{}: {}", item.file, item.message))
+            .collect();
+        let liquid_errors: Vec<String> = rendered.errors.iter().map(|e| e.to_string()).collect();
+        if let Some(overlay) =
+            live_reload::overlay(&data_errors, &liquid_errors, rendered.not_found.as_deref())
+        {
+            live_reload::inject_markup(&mut body, &overlay);
+        }
     }
     let mut reply = Reply::new(rendered.status, rendered.content_type, body.into_bytes())
         .header("x-lsf-template", rendered.template)
@@ -341,6 +365,15 @@ pub(super) fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target)
     }
     if !rendered.errors.is_empty() {
         reply = reply.header("x-lsf-liquid-errors", rendered.errors.len().to_string());
+    }
+    // An app block that renders nothing is easy to miss: every reason of the page.
+    match rendered.notices.as_slice() {
+        [] => {}
+        [notice] => reply = reply.header("x-lsf-reason", header_text(notice)),
+        notices => {
+            let all = format!("{} reasons: {}", notices.len(), notices.join(" | "));
+            reply = reply.header("x-lsf-reason", header_text(&all));
+        }
     }
     if !rendered.preloads.is_empty() {
         reply = reply.header("link", rendered.preloads.join(", "));

@@ -50,6 +50,21 @@ npx local-storefront app build --app ../my-app      # every extension
 npx local-storefront app dev --app ../my-app --build
 ```
 
+### Coming from Shopify's CLI
+
+| Shopify CLI | lsf | What lsf does not do |
+|---|---|---|
+| `shopify app dev` | `lsf app dev --watch`: the checkout, the customer account and the Admin API, built again at each save ([watch mode](#watch-mode)) | No development store, tunnel or Partner account. The app's web server is yours to start: give its URL with `--app-url`. |
+| `shopify app build` | `lsf app build` | `wasm-opt` is not run on a Rust Function ([Rust Functions](#rust-functions)). |
+| `shopify app function build` | `lsf app function build` | `@shopify/shopify_function` 1.x ([JavaScript Functions](#javascript-and-typescript-functions)). |
+| `shopify app function run` | `lsf app function run --input <file>` (or `-`, or a folder of fixtures), `--export <name>`, `--format json`; with `--scenario`, on an input lsf builds from the store data ([run a Function](#run-a-function-without-a-server)). As Shopify's, it builds the Function first when its files changed after its module was built. | |
+| `shopify app function replay` | `lsf app function run --scenario <name> --save-input <file>`, then `--input <file>` | No run of a store to replay: lsf does not read Shopify's logs. |
+| `shopify app function typegen` | `lsf app function typegen` | A Rust Function's types come from the `typegen` macro, at its build. |
+| `shopify app function schema` | `lsf app function schema` | The schemas of fulfillment constraints, order routing and pickup generators. |
+| `shopify app webhook trigger` | `lsf app webhook trigger` ([Admin API](admin.md)) | |
+| `shopify app generate extension` | Not covered: copy an extension of the [playground](https://github.com/0xtlt/local-storefront/tree/main/examples/checkout-playground/extensions) ([add a JavaScript Function](#add-a-javascript-function)). | |
+| `shopify app init`, `deploy`, `release`, `versions`, `env`, `config`, `info` | Not covered: they act on Shopify's servers. `lsf app init` writes checkout scenarios, not an app. | |
+
 ### What lsf builds without Node
 
 | Extension | Built by lsf when | Output |
@@ -62,7 +77,9 @@ npx local-storefront app dev --app ../my-app --build
 The npm packages they import come from the app's `node_modules`, when it has them. Without, lsf
 has its own copy of those Shopify's templates use: `@shopify/shopify_function` 2.0.1, `preact`
 10.29.8, `@preact/signals` 2.11.4 and `@shopify/ui-extensions` 2026.10.0 (MIT, but
-`@shopify/shopify_function`: Apache-2.0). Any other package needs a `node_modules`.
+`@shopify/shopify_function`: Apache-2.0), written once in the user's cache folder
+(`~/Library/Caches/lsf/` on macOS, `~/.cache/lsf/` on Linux). Any other package needs a
+`node_modules`.
 
 ### JavaScript and TypeScript Functions
 
@@ -75,7 +92,9 @@ npx local-storefront app function build --app ../my-app        # every Function
 npx local-storefront app function build discount --app ../my-app
 ```
 
-`--build` and `--watch` build it the same way. The steps are the CLI's:
+`--build` and `--watch` build it the same way, and `lsf app function typegen` writes its types
+alone, as `shopify app function typegen` does (the `typegen` script of Shopify's templates'
+`package.json`). The steps are the CLI's:
 
 1. **Types**: the `codegen` section of its `package.json` (graphql-codegen's config) is written
    as graphql-codegen writes it (`generated/api.ts`), from `schema.graphql`, or, when the
@@ -140,6 +159,15 @@ of `--build`, `--watch` and `lsf app function build`, the module is the one the 
 byte. A module already linked is left as it is. Modules of the first version of the API
 (`shopify_function_v1`) are refused, as by the trampoline: update the `shopify_function` crate.
 
+The `typegen` macro of the `shopify_function` crate reads the input queries and
+`schema.graphql` without telling cargo, so a change to one of them alone compiles nothing. When
+one is newer than the module, lsf's builds (`--build`, `--watch`, `lsf app function build`)
+touch `src/main.rs` and `src/lib.rs` first (their time, not their text), and cargo compiles the
+crate again: `↻ delivery-rules: src/run.graphql changed: src/main.rs touched, for cargo to
+compile the crate again`. A compiler cache (sccache, a `RUSTC_WRAPPER`) may still answer the old
+build, as it does not see those files either: the watch then says that the module did not
+change.
+
 lsf does not run `wasm-opt -Oz`, which the CLI runs on a module before it links it: on the
 playground's Rust Functions it takes 5 to 6% off the module's size, and 0.25 to 0.5% off the
 instructions a run costs.
@@ -162,7 +190,9 @@ files. As Shopify's CLI does:
 - **The entry**: from API version 2025-10, each target's module is imported and its default
   export registered with `shopify.extend('<target>', …)`; before, each module is imported.
 - **JSX** calls the automatic runtime of the `jsxImportSource` of the closest `tsconfig.json`
-  (`preact` in Shopify's templates; `react` without one), in `.jsx`, `.tsx` and `.js` files.
+  (`preact` in Shopify's templates; `react` without one), in `.jsx`, `.tsx` and `.js` files. A
+  Preact extension without its `tsconfig.json` fails on `react/jsx-runtime`, and the error says
+  what to add: `{"compilerOptions": {"jsx": "react-jsx", "jsxImportSource": "preact"}}`.
 - **The bundle** is one minified script (`dist/<handle>.js`): the modules it imports, what nothing
   uses left out, `process.env.NODE_ENV` `production` and the other values of `process.env` from
   the environment or the app's `.env`.
@@ -399,7 +429,12 @@ The home page runs the Functions of every scenario that opens, as its checkout w
 opens (what `lsf app function run --scenario` does), and lists each Function target that fails, with
 the error and the scenarios it fails in: a trap or a panic, more than 11 million instructions,
 an output that does not fit the schema of its API version, a `.fetch` request out of Shopify's
-limits. The scenario and the Function get an error status.
+limits. A target that fails in several ways is listed once per error, each with its own
+scenarios and logs. The scenario and the Function get an error status.
+
+lsf stops a run at 110 million instructions, ten times Shopify's limit: an endless loop fails in
+a moment (`exceeded Shopify's limit of 11,000,000 instructions: stopped at 110,000,000`), and a
+run under that has its exact count.
 
 This check sends no HTTP request: opening the home page never calls a server. A `.fetch` target
 runs, and the request it asks for is checked against [Shopify's limits](#network-access) (a
@@ -480,7 +515,7 @@ change, and `validate` checks them: run it in the app folder, no theme needed
 | a delivery customization | `delivery-options`: standard, express, local delivery and store pickup |
 | a payment customization | `payment-methods`: card, PayPal, cash on delivery and bank deposit in the list; PayPal, Shop Pay and Apple Pay as express buttons (PayPal in both placements, as with PayPal Express on) |
 | a validation Function | `validation`: a big cart, for the Function to refuse |
-| a checkout UI extension | `all-extensions`: a customer, several lines (one with a subscription), a code, shipping options |
+| a checkout UI extension | `all-extensions`: a customer, several lines (one with a subscription), shipping options, and with a discount Function, a discount of it with the code `SAVE10` entered |
 | (always) | `guest`, `customer` (with a note and an attribute), `b2b` (a company customer at another location), `abroad` (another country and language), `subscription`, `pre-order` (a deposit, the rest later), `shop-look`, `large-cart` |
 
 A scenario about one kind of Function runs that Function and the checkout UI extensions, and no
@@ -494,7 +529,7 @@ handle to them. The settings of your Functions are the store data's: the scenari
 with the settings (and the code) `checkout.discounts` gives them. The scenarios are a place to
 start: edit them.
 
-**A discount Function runs in `discount-automatic` and `discount-code` only.** It runs only for a
+**A discount Function runs in `discount-automatic`, `discount-code` and `all-extensions` only.** It runs only for a
 discount that names it ([set up the checkout](#set-up-the-checkout)), and the other scenarios
 (`b2b`, `abroad`, `large-cart`, …) have none: `app check` passes on them without running it. It
 warns only about a Function no scenario ran at all (`warning  <handle>: ran in no scenario, so
@@ -510,7 +545,7 @@ every scenario, a B2B buyer, another country and a large cart included, give it 
       {
         "function": "my-discount",
         "title": "My discount",
-        "metafields": { "$app:config.settings": { "type": "json", "value": { "percentage": 10 } } }
+        "metafields": { "$app.function-configuration": { "type": "json", "value": { "percentage": 10 } } }
       }
     ]
   }
@@ -818,13 +853,13 @@ settings of your other Functions, and a tax rate.
         "code": null,
         "classes": ["PRODUCT"],
         "metafields": {
-          "$app:config.settings": { "type": "json", "value": { "minimumQuantity": 3, "percentage": 10 } }
+          "$app.function-configuration": { "type": "json", "value": { "minimumQuantity": 3, "percentage": 10 } }
         }
       }
     ],
     "functions": {
       "delivery-rules": {
-        "metafields": { "$app:config.settings": { "type": "json", "value": { "hide": ["express"] } } }
+        "metafields": { "$app.function-configuration": { "type": "json", "value": { "hide": ["express"] } } }
       }
     },
     "tax_rate": 20
@@ -843,9 +878,23 @@ settings of your other Functions, and a tax rate.
 - A Function that is not a discount (cart transform, delivery or payment customization,
   validation) has its metafields under `functions`, by its handle, and `"enabled"` when the shop
   has an owner of it: see [what runs](#owners-and-scenarios).
-- A metafield is written `"namespace.key"`, with a [typed value](data-format.md#metafields-and-metaobjects).
-  The input query of a Function reads it; `[extensions.input.variables]` of the Function says
-  which one.
+- A metafield is written `"namespace.key"`, with a [typed value](data-format.md#metafields-and-metaobjects):
+  the namespace and the key the input query reads, joined by a dot. Shopify's templates read
+  `metafield(namespace: "$app", key: "function-configuration")`, and name it in
+  `[extensions.input.variables]` (`namespace = "$app"`, `key = "function-configuration"`):
+  that is `"$app.function-configuration": {"type": "json", "value": {…}}`. A namespace
+  `$app:<name>` keeps its colon: `"$app:config.settings"` is the key `settings` of
+  `$app:config`. Shopify's list of `{namespace, key, type, value}`, as `metafieldsSet` takes
+  it, is read too:
+  `"metafields": [{"namespace": "$app", "key": "function-configuration", "type": "json", "value": "{\"percentage\": 10}"}]`.
+- The **settings of a UI extension** are what the merchant fills in in the checkout editor:
+  `checkout.extensions.<handle>.settings`, by the `key` of each field of its
+  `[extensions.settings]`, read as `shopify.settings` (`useSettings`). A scenario's replace the
+  store data's for the extensions it names. A field without a value is left out, as on Shopify.
+  `validate` and the home page warn about a key the extension does not declare, a value not of
+  its field's type (`number_integer`: a whole number, `boolean`, text and dates: a string) or
+  not among its `choices`:
+  `{"checkout": {"extensions": {"gift-banner": {"settings": {"title": "Free gift wrap", "max_items": 3}}}}}`.
 - A **payment method** is in the list of the page by default (`PAYMENT_METHOD`). Its
   `placements` can put it among the express buttons above the contact section
   (`["ACCELERATED_CHECKOUT"]`), or in both, as PayPal with PayPal Express on
@@ -996,7 +1045,7 @@ The owners come from two places:
   settings alone: the shop has no owner of the Function.
 
 ```json
-{ "checkout": { "functions": { "payment-rules": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": { "hide": ["paypal"] } } } } } } }
+{ "checkout": { "functions": { "payment-rules": { "enabled": true, "metafields": { "$app.function-configuration": { "type": "json", "value": { "hide": ["paypal"] } } } } } } }
 ```
 
 lsf creates no owner at install: `paymentCustomizations` answers none, as Shopify does, and an
@@ -1021,7 +1070,8 @@ the app is installed again.
 of `app dev` only narrows the extensions: the shop's owners still decide which Functions run.
 
 A Function the shop's checkout leaves out is said: the home page warns that the shop has no
-enabled owner of it, the "Functions" dialog of the checkout lists it under "Functions not run",
+enabled owner of it when no scenario runs it either (the scenarios of `app init` name each
+Function, so it says nothing after them), the "Functions" dialog of the checkout lists it under "Functions not run",
 with why, and so does `lsf app function run` (`Not run: …`; `idle` in JSON).
 
 A scenario added or edited while lsf runs is read again without seeding the shops of the Admin
@@ -1303,11 +1353,45 @@ payment method has its placements: `[ACCELERATED_CHECKOUT]` is an express button
 | `--step interaction\|completion` | The step of the buyer journey, which validation Functions read as `buyerJourney.step`: `completion` (default) is the placing of the order, `interaction` is the page and its updates. |
 | `--format json` | The checkout as the page reads it, with every run in `runs`. For tools. |
 | `--build` | Builds the extensions first, as `lsf app build` does: each Function (its build command, or lsf's build of a JavaScript Function), then each UI extension that names its sources. |
+| `--input <file>` | Runs one Function on this input instead, as `shopify app function run --input` does: a JSON file, or `-` for stdin (see below). |
+| `--export <name>` | The target to run, by its Wasm export or its name, when the Function has several: for `--input` and `--save-input`. |
+| `--save-input <file>` | Writes the input lsf built for the run of the Function named to this file. |
 
 It exits with `1` when a Function fails to run (no module, a trap, an output that does not
 parse), or when a Function named on the command line did not run: it says why (no discount
 names a discount Function, the cart is empty, the scenario's `extensions` leaves it out…).
 Errors that a validation Function reports are part of the checkout, not a failure.
+
+### Run a Function on an input
+
+`--save-input` keeps the input lsf builds for a scenario, and `--input` runs a Function on an
+input, without the store data, as `shopify app function run --input` does:
+
+```bash
+npx local-storefront app function run volume-discount --scenario discount-code \
+  --export cart.lines.discounts.generate.run --save-input tests/fixtures/code.json
+npx local-storefront app function run volume-discount --input tests/fixtures/code.json
+cat input.json | npx local-storefront app function run volume-discount --input -
+```
+
+It prints the run (input, output, logs, instructions), and `--format json` the run as JSON. The
+output is checked as in a checkout: against the schema of the API version, and the instruction
+limit. A fixture of the unit tests of Shopify's templates (`tests/fixtures/*.json`,
+`{"payload": {"export", "target", "input", "output"}}`) runs the target it names, and fails
+when its `output` is not the run's, with each path that differs (it says `the output is the one
+the fixture expects` when it is). Its `target` and `export` must be the Function's: a wrong one
+is an error, not left aside. A Function with
+several targets needs `--export` (its export, `cart-lines-discounts-generate-run`, or its name).
+In the Function's folder, with a fixture in it, or in an app with one Function, the handle can
+be left out. `--input` with a folder runs each of its `*.json` fixtures and exits with `1` when
+one fails, as the unit tests of the templates do:
+
+```bash
+npx local-storefront app function run volume-discount --input extensions/volume-discount/tests/fixtures
+```
+
+`--save-input` creates the folders of its file. When a file of the Function changed after its
+module was built, the run builds it first, as `shopify app function run` does.
 
 ## Test it
 
@@ -1457,7 +1541,12 @@ extensions before checking them.
 `app check` fails on a scenario that does not validate, on a Function that traps or panics,
 runs past 11 million instructions or answers an output out of its schema, and on an
 [expectation](#expected-results) of a scenario that is not met: a discount of the wrong amount,
-PayPal left in the express buttons. A trap ends with the last message the Function logged
+PayPal left in the express buttons. It also fails on an extension the checkout does not offer
+(an `api_version` other than `2026-10` and `2027-01`, no module or bundle), on a Function whose
+files changed after its module was built (`stale`, unless `--build`: its folder, and the app's
+files every build reads, such as a workspace's `Cargo.toml` or a shared package; a lock file
+the build writes itself does not count), and on what Shopify rejects in a theme app extension.
+`--extension` naming theme app extensions only checks those. A trap ends with the last message the Function logged
 (`the Function trapped: Error: boom (in b2b)` for a `throw new Error("boom")`), and the JSON has
 the `logs` of each failure. For what `expect` cannot say, `app function run --format json` has the
 whole checkout (`lines`, `discounts`, `deliveryGroups`, `paymentMethods`, `expressMethods`,
@@ -1477,12 +1566,9 @@ The browser tests of a theme in CI: [testing](testing.md#in-ci).
   combine, and applies the best of those that cannot; here all the product and order discounts
   combine, and of the shipping discounts the best one applies.
 - Tax is one rate on the discounted subtotal, with no tax lines.
-- The values of the `settings` of an extension are not set: the manifest declares them, and
-  `shopify.settings.value` is empty.
 - No Storefront API: `query` in an extension rejects. No Customer Account API either: a customer
   account extension reads the account through its `shopify` global only.
-- `shopify.appMetafields` has no `shopUser` entries (the store data has no staff accounts), and
-  on the order status page no `order` ones (the orders of the store data have no metafields).
+- `shopify.appMetafields` has no `shopUser` entries (the store data has no staff accounts).
 - The customer account shows; it changes nothing (no address to edit, no order to cancel or
   return), and its intents (`shopify.intents.invoke`) are closed at once.
 - Some fields of the Function input hold what the store data says and nothing more. The orders of
@@ -1512,7 +1598,8 @@ store before a release:
   run.
 - **Network access**: the request JWT and Shopify's cache of responses
   ([network access](#network-access)).
-- **The settings of an extension** (`shopify.settings`): empty here.
+- **The settings of an extension** (`shopify.settings`): those of the store data or the
+  scenario here, not the checkout editor's.
 - **lsf's choices**: how several customizations chain and how `linesMerge` counts
   ([what runs](#what-runs)), which validation step blocks the order
   ([network access](#network-access)), the split between due today and due later

@@ -7,7 +7,7 @@
 //!   *.json            any number of files, each holding any of: shop, products, collections,
 //!                     pages, blogs, menus, customers, companies, gift_cards, locations,
 //!                     selling_plan_groups, swatches, metaobjects, localization, files,
-//!                     session, checkout, now, theme_settings. They are merged.
+//!                     session, checkout, now, theme_settings, app. They are merged.
 //!   products/*.json   one product per file (or an array); the file name is the default handle
 //!   collections/*.json, pages/*.json, blogs/*.json, customers/*.json, menus/*.json
 //!   checkouts/*.json  checkout scenarios, one per file
@@ -28,7 +28,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
-use super::build::{BuildOptions, MergedInput, MergedScenario, Origin, Sourced, build, undated};
+use super::build::{
+    BuildOptions, LeftOut, MergedInput, MergedScenario, Origin, Sourced, build, undated,
+};
 use super::validate::{FileKind, validate};
 use super::{Store, demo, model};
 use crate::diagnostics::Diagnostics;
@@ -236,6 +238,14 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
                         error.column()
                     ))
                     .to_string();
+                // A product that cannot be read is named after its file.
+                if file.kind == FileKind::Product {
+                    merged.left_out.push(LeftOut {
+                        kind: "product",
+                        key: crate::util::handleize(&file_stem(name)),
+                        file: name.to_string(),
+                    });
+                }
                 // A scenario that cannot be read is listed with its error, not hidden.
                 if file.kind == FileKind::CheckoutScenario {
                     merged.scenarios.push(MergedScenario {
@@ -250,18 +260,54 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
         };
         match file.kind {
             FileKind::Store => {
-                let Some(input) =
-                    entity::<model::StoreInput>(FileKind::Store, name, &json, "", diagnostics)
-                else {
-                    continue;
+                let before = diagnostics.items.len();
+                let (input, skipped) = match entity::<model::StoreInput>(
+                    FileKind::Store,
+                    name,
+                    &json,
+                    "",
+                    diagnostics,
+                ) {
+                    Some(input) => (input, Skipped::default()),
+                    // What has errors is left out, and the rest of the file is read: the
+                    // references of the rest are checked in the same run.
+                    None => match salvage_store(name, &json, &diagnostics.items[before..]) {
+                        Some(salvaged) => salvaged,
+                        None => continue,
+                    },
                 };
-                merge_store_file(&mut merged, input, name, diagnostics);
+                for (section, kind, key) in [
+                    ("products", "product", "handle"),
+                    ("customers", "customer", "email"),
+                    ("collections", "collection", "handle"),
+                    ("pages", "page", "handle"),
+                ] {
+                    for index in skipped.indices(section) {
+                        if let Some(item) = json.get(section).and_then(|items| items.get(index)) {
+                            merged.left_out.push(LeftOut {
+                                kind,
+                                key: entity_key(item, key, None),
+                                file: name.to_string(),
+                            });
+                        }
+                    }
+                }
+                merge_store_file(&mut merged, input, name, diagnostics, &skipped);
             }
             FileKind::Product => {
                 let single = json.is_object();
-                for mut product in
-                    entities::<model::ProductInput>(FileKind::Product, name, &json, diagnostics)
-                {
+                let products =
+                    entities::<model::ProductInput>(FileKind::Product, name, &json, diagnostics);
+                record_left_out(
+                    &mut merged,
+                    FileKind::Product,
+                    "product",
+                    "handle",
+                    name,
+                    &json,
+                    products.len(),
+                );
+                for mut product in products {
                     // A file holding a single product is named after its handle.
                     if single && product.value.handle.is_none() {
                         product.value.handle = Some(crate::util::handleize(&file_stem(name)));
@@ -305,12 +351,20 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
                     merged.blogs.push(blog);
                 }
             }
-            FileKind::Customer => merged.customers.extend(entities::<model::CustomerInput>(
-                FileKind::Customer,
-                name,
-                &json,
-                diagnostics,
-            )),
+            FileKind::Customer => {
+                let customers =
+                    entities::<model::CustomerInput>(FileKind::Customer, name, &json, diagnostics);
+                record_left_out(
+                    &mut merged,
+                    FileKind::Customer,
+                    "customer",
+                    "email",
+                    name,
+                    &json,
+                    customers.len(),
+                );
+                merged.customers.extend(customers);
+            }
             FileKind::Menu => {
                 if let Some(menu) =
                     entity::<model::MenuInput>(FileKind::Menu, name, &json, "", diagnostics)
@@ -357,11 +411,163 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
     merged
 }
 
+/// The entries of a data file left out because they have errors: by section (`products`,
+/// `metaobjects/designer`), the indices they had in the file, in order.
+#[derive(Debug, Default)]
+struct Skipped(std::collections::HashMap<String, Vec<usize>>);
+
+impl Skipped {
+    fn indices(&self, section: &str) -> Vec<usize> {
+        self.0.get(section).cloned().unwrap_or_default()
+    }
+
+    /// The index in the file of the `kept`-th entry of a section that was read.
+    fn original(&self, section: &str, kept: usize) -> usize {
+        let mut index = kept;
+        for skipped in self.0.get(section).into_iter().flatten() {
+            if *skipped <= index {
+                index += 1;
+            }
+        }
+        index
+    }
+}
+
+/// A data file with errors, without the entries that have them: the entries of its lists, of
+/// its maps (`menus`, `swatches`), and its sections of one (`shop`, `localization`, ...). `None`
+/// when nothing can be read of it even so.
+fn salvage_store(
+    file: &str,
+    json: &Json,
+    problems: &[crate::diagnostics::Diagnostic],
+) -> Option<(model::StoreInput, Skipped)> {
+    const LISTS: [&str; 9] = [
+        "products",
+        "collections",
+        "pages",
+        "blogs",
+        "customers",
+        "companies",
+        "gift_cards",
+        "locations",
+        "selling_plan_groups",
+    ];
+    let mut salvaged = json.clone();
+    let mut skipped = Skipped::default();
+    let mut removed_keys: Vec<(String, String)> = Vec::new();
+    for problem in problems {
+        if problem.severity != crate::diagnostics::Severity::Error
+            || problem.code == "unknown_field"
+        {
+            continue;
+        }
+        let segments: Vec<&str> = problem.path.split('/').skip(1).collect();
+        match segments.as_slice() {
+            [] | [""] => return None,
+            [section, index, ..] if LISTS.contains(section) => {
+                let index: usize = index.parse().ok()?;
+                let list = skipped.0.entry((*section).to_string()).or_default();
+                if !list.contains(&index) {
+                    list.push(index);
+                }
+            }
+            ["metaobjects", kind, index, ..] => {
+                let index: usize = index.parse().ok()?;
+                let list = skipped.0.entry(format!("metaobjects/{kind}")).or_default();
+                if !list.contains(&index) {
+                    list.push(index);
+                }
+            }
+            [
+                section @ ("menus" | "swatches" | "files" | "metaobjects"),
+                key,
+                ..,
+            ] => removed_keys.push(((*section).to_string(), (*key).to_string())),
+            [section, ..] => removed_keys.push(((*section).to_string(), String::new())),
+        }
+    }
+    for (section, indices) in &mut skipped.0 {
+        indices.sort_unstable();
+        let pointer = format!("/{section}");
+        let list = salvaged.pointer_mut(&pointer)?.as_array_mut()?;
+        for index in indices.iter().rev() {
+            if *index < list.len() {
+                list.remove(*index);
+            }
+        }
+    }
+    for (section, key) in removed_keys {
+        let object = salvaged.as_object_mut()?;
+        if key.is_empty() {
+            object.remove(&section);
+        } else if let Some(entries) = object.get_mut(&section).and_then(Json::as_object_mut) {
+            entries.remove(&key.replace("~1", "/").replace("~0", "~"));
+        }
+    }
+    // What is left must read without an error; its unknown fields are reported already.
+    let mut again = Diagnostics::new();
+    let json = checked(FileKind::Store, file, &salvaged, "", &mut again)?;
+    let input = serde_json::from_value::<model::StoreInput>(json).ok()?;
+    Some((input, skipped))
+}
+
+/// What an entity is named by in references: its `handle` (or `email`), else the handle of its
+/// title, else of its file.
+fn entity_key(item: &Json, field: &str, file: Option<&str>) -> String {
+    if let Some(key) = item.get(field).and_then(Json::as_str) {
+        return key.to_string();
+    }
+    if field == "handle" {
+        if let Some(stem) = file {
+            return crate::util::handleize(&file_stem(stem));
+        }
+        if let Some(title) = item.get("title").and_then(Json::as_str) {
+            return crate::util::handleize(title);
+        }
+    }
+    String::new()
+}
+
+/// Records the entities of a per-entity file that were left out because of their errors.
+fn record_left_out(
+    merged: &mut MergedInput,
+    file_kind: FileKind,
+    kind: &'static str,
+    field: &str,
+    file: &str,
+    json: &Json,
+    read: usize,
+) {
+    let items: Vec<&Json> = match json {
+        Json::Array(items) => items.iter().collect(),
+        single => vec![single],
+    };
+    if read == items.len() {
+        return;
+    }
+    let single = json.is_object();
+    for item in items {
+        // Checked again, on the side: the entities that were read are not left out.
+        if checked(file_kind, file, item, "", &mut Diagnostics::new()).is_some() {
+            continue;
+        }
+        let key = entity_key(item, field, single.then_some(file));
+        if !key.is_empty() {
+            merged.left_out.push(LeftOut {
+                kind,
+                key,
+                file: file.to_string(),
+            });
+        }
+    }
+}
+
 fn merge_store_file(
     merged: &mut MergedInput,
     input: model::StoreInput,
     file: &str,
     diagnostics: &mut Diagnostics,
+    skipped: &Skipped,
 ) {
     let origin = |pointer: String| Origin::new(file, pointer);
     let singleton = |name: &str, already: Option<&str>, diagnostics: &mut Diagnostics| {
@@ -434,55 +640,73 @@ fn merge_store_file(
     for (index, value) in input.products.into_iter().enumerate() {
         merged.products.push(Sourced {
             value,
-            origin: origin(format!("/products/{index}")),
+            origin: origin(format!("/products/{}", skipped.original("products", index))),
         });
     }
     for (index, value) in input.collections.into_iter().enumerate() {
         merged.collections.push(Sourced {
             value,
-            origin: origin(format!("/collections/{index}")),
+            origin: origin(format!(
+                "/collections/{}",
+                skipped.original("collections", index)
+            )),
         });
     }
     for (index, value) in input.pages.into_iter().enumerate() {
         merged.pages.push(Sourced {
             value,
-            origin: origin(format!("/pages/{index}")),
+            origin: origin(format!("/pages/{}", skipped.original("pages", index))),
         });
     }
     for (index, value) in input.blogs.into_iter().enumerate() {
         merged.blogs.push(Sourced {
             value,
-            origin: origin(format!("/blogs/{index}")),
+            origin: origin(format!("/blogs/{}", skipped.original("blogs", index))),
         });
     }
     for (index, value) in input.customers.into_iter().enumerate() {
         merged.customers.push(Sourced {
             value,
-            origin: origin(format!("/customers/{index}")),
+            origin: origin(format!(
+                "/customers/{}",
+                skipped.original("customers", index)
+            )),
         });
     }
     for (index, value) in input.companies.into_iter().enumerate() {
         merged.companies.push(Sourced {
             value,
-            origin: origin(format!("/companies/{index}")),
+            origin: origin(format!(
+                "/companies/{}",
+                skipped.original("companies", index)
+            )),
         });
     }
     for (index, value) in input.gift_cards.into_iter().enumerate() {
         merged.gift_cards.push(Sourced {
             value,
-            origin: origin(format!("/gift_cards/{index}")),
+            origin: origin(format!(
+                "/gift_cards/{}",
+                skipped.original("gift_cards", index)
+            )),
         });
     }
     for (index, value) in input.locations.into_iter().enumerate() {
         merged.locations.push(Sourced {
             value,
-            origin: origin(format!("/locations/{index}")),
+            origin: origin(format!(
+                "/locations/{}",
+                skipped.original("locations", index)
+            )),
         });
     }
     for (index, value) in input.selling_plan_groups.into_iter().enumerate() {
         merged.selling_plan_groups.push(Sourced {
             value,
-            origin: origin(format!("/selling_plan_groups/{index}")),
+            origin: origin(format!(
+                "/selling_plan_groups/{}",
+                skipped.original("selling_plan_groups", index)
+            )),
         });
     }
     for (name, value) in input.swatches {
@@ -503,6 +727,7 @@ fn merge_store_file(
     }
     for (kind, entries) in input.metaobjects {
         for (index, value) in entries.into_iter().enumerate() {
+            let index = skipped.original(&format!("metaobjects/{kind}"), index);
             let origin = origin(format!("/metaobjects/{kind}/{index}"));
             merged
                 .metaobjects
@@ -510,7 +735,29 @@ fn merge_store_file(
         }
     }
     merged.files.extend(input.files);
+    for key in input.theme_settings.keys() {
+        merged
+            .theme_settings_origins
+            .insert(key.clone(), origin(format!("/theme_settings/{key}")));
+    }
     merged.theme_settings.extend(input.theme_settings);
+    merge_app(&mut merged.app, input.app);
+}
+
+/// Merges the `app` of a data file into what the others gave: metafield by metafield, embed by
+/// embed.
+fn merge_app(merged: &mut model::AppInstallationInput, input: Option<model::AppInstallationInput>) {
+    let Some(input) = input else {
+        return;
+    };
+    for (namespace, fields) in input.metafields {
+        merged
+            .metafields
+            .entry(namespace)
+            .or_default()
+            .extend(fields);
+    }
+    merged.embeds.extend(input.embeds);
 }
 
 /// Options that depend on the theme being served.
@@ -518,6 +765,9 @@ fn merge_store_file(
 pub struct LoadOptions {
     /// The locales the theme has translations for, default first.
     pub theme_locales: Vec<String>,
+    /// The theme's `config/settings_schema.json`, which the `theme_settings` of the data are
+    /// checked against. `None` without a theme: they are not checked.
+    pub settings_schema: Option<std::sync::Arc<Json>>,
 }
 
 /// Loads and validates the store. The store is returned even when the data has errors (built
@@ -818,11 +1068,14 @@ fn apply_overlay(
                 let base = base.value;
                 let mut functions = base.functions;
                 functions.extend(patch.functions);
+                let mut extensions = base.extensions;
+                extensions.extend(patch.extensions);
                 model::CheckoutInput {
                     shipping_rates: patch.shipping_rates.or(base.shipping_rates),
                     payment_methods: patch.payment_methods.or(base.payment_methods),
                     discounts: patch.discounts.or(base.discounts),
                     functions,
+                    extensions,
                     tax_rate: patch.tax_rate.or(base.tax_rate),
                 }
             }
@@ -840,7 +1093,13 @@ fn apply_overlay(
         });
     }
     merged.files.extend(input.files);
+    for key in input.theme_settings.keys() {
+        merged
+            .theme_settings_origins
+            .insert(key.clone(), origin(format!("/theme_settings/{key}")));
+    }
     merged.theme_settings.extend(input.theme_settings);
+    merge_app(&mut merged.app, input.app);
 }
 
 /// An entity of a list that an overlay upserts into ([`upsert`]).
@@ -1125,6 +1384,7 @@ impl SourceData {
             merged,
             &BuildOptions {
                 theme_locales: options.theme_locales.clone(),
+                settings_schema: options.settings_schema.as_deref(),
                 probe_image: &probe,
             },
         );
@@ -1223,6 +1483,202 @@ mod tests {
 
     fn inline(data: serde_json::Value) -> (crate::store::Store, Diagnostics) {
         load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&data))
+    }
+
+    #[test]
+    fn a_variant_said_unavailable_is_sold_out() {
+        // On Shopify an untracked variant is always available: `available: false` means tracked
+        // with nothing in stock, so that themes say "Sold out", not "Unavailable".
+        let (store, diagnostics) = inline(serde_json::json!({"products": [
+            {"title": "Sold out thing", "price": "10.00", "available": false},
+            {"title": "Backorder", "price": "10.00", "variants": [
+                {"available": false, "inventory_policy": "continue"},
+            ]},
+            {"title": "Untracked", "price": "10.00", "variants": [
+                {"available": false, "inventory_tracked": false},
+            ]},
+            {"title": "Counted", "price": "10.00", "variants": [
+                {"available": false, "inventory_quantity": 3},
+            ]},
+        ]}));
+        // Unavailable with stock: Shopify never has both, and the data is warned about it.
+        let found: Vec<(&str, &str, &str)> = diagnostics
+            .items
+            .iter()
+            .map(|item| {
+                (
+                    item.code,
+                    item.path.as_str(),
+                    if item.severity == crate::diagnostics::Severity::Warning {
+                        "warning"
+                    } else {
+                        "error"
+                    },
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [(
+                "unavailable_in_stock",
+                "/products/3/variants/0/available",
+                "warning"
+            )],
+            "{diagnostics}"
+        );
+        assert!(
+            diagnostics.items[0]
+                .message
+                .contains("lsf keeps it unavailable with 3 in stock"),
+            "{diagnostics}"
+        );
+        let variant =
+            |handle: &str| store.product_by_handle(handle).expect(handle).variants[0].clone();
+        let sold_out = variant("sold-out-thing");
+        assert!(!sold_out.available);
+        assert!(sold_out.inventory_tracked);
+        assert_eq!(sold_out.inventory_quantity, 0);
+        assert_eq!(sold_out.inventory_policy, model::InventoryPolicy::Deny);
+        // What the data says otherwise is kept.
+        assert!(!variant("backorder").inventory_tracked);
+        assert!(!variant("untracked").inventory_tracked);
+        let counted = variant("counted");
+        assert!(counted.inventory_tracked);
+        assert_eq!(counted.inventory_quantity, 3);
+    }
+
+    #[test]
+    fn typed_metafields_are_checked_against_their_type() {
+        let (_, diagnostics) = inline(serde_json::json!({
+            "products": [{"title": "Thing", "price": "1.00", "metafields": {"custom": {
+                "count": {"type": "number_integer", "value": "two"},
+                "related": {"type": "list.product_reference", "value": ["ceramic-mug", "ceramic-mugg", "does-not-exist"]},
+                "guide": {"type": "page_reference", "value": "contact"},
+                "weight": {"type": "weight", "value": {"value": 2, "unit": "kgs"}},
+                "kind": {"type": "number_interger", "value": 2},
+                "plain": "inferred, never wrong",
+            }}}],
+            "metaobjects": {"designer": [{"handle": "sam", "fields": {
+                "age": {"type": "number_integer", "value": 3.5},
+                "friend": {"type": "metaobject_reference", "value": "designer/samm"},
+            }}]},
+        }));
+        let found: Vec<String> = diagnostics
+            .items
+            .iter()
+            .map(|item| {
+                format!(
+                    "{} {} {}",
+                    item.code,
+                    item.path,
+                    item.hint.as_deref().unwrap_or_default()
+                )
+            })
+            .collect();
+        let at = |path: &str| {
+            found
+                .iter()
+                .find(|line| line.contains(&format!(" {path} ")))
+                .unwrap_or_else(|| panic!("nothing at {path}: {found:#?}"))
+                .clone()
+        };
+        let base = "/products/0/metafields/custom";
+        assert!(at(&format!("{base}/count/value")).starts_with("invalid_metafield"));
+        assert_eq!(
+            at(&format!("{base}/related/value/1")),
+            format!("unknown_reference {base}/related/value/1 did you mean \"ceramic-mug\"?")
+        );
+        assert!(at(&format!("{base}/related/value/2")).starts_with("unknown_reference"));
+        assert!(at(&format!("{base}/weight/value/unit")).ends_with("did you mean \"kg\"?"));
+        assert!(at(&format!("{base}/kind/type")).starts_with("unknown_metafield_type"));
+        assert!(at("/metaobjects/designer/0/fields/age/value").starts_with("invalid_metafield"));
+        assert!(
+            at("/metaobjects/designer/0/fields/friend/value")
+                .ends_with("did you mean \"designer/sam\"?")
+        );
+        assert_eq!(found.len(), 7, "{found:#?}");
+    }
+
+    #[test]
+    fn what_reads_of_a_file_with_errors_is_checked_in_the_same_run() {
+        let files = vec![
+            DataFile {
+                name: "store.json".to_string(),
+                kind: FileKind::Store,
+                content: r#"{
+                    "products": [
+                        {"title": "Broken", "price": 1.5},
+                        {"title": "Fine", "price": "2.00", "collections": ["nope"]}
+                    ],
+                    "collections": [{"title": "Picks", "products": ["broken", "fine", "gone"]}]
+                }"#
+                .to_string(),
+            },
+            DataFile {
+                name: "products/unread.json".to_string(),
+                kind: FileKind::Product,
+                content: r#"{"title": "Unread", "price": "1.00", "tags": 5}"#.to_string(),
+            },
+            DataFile {
+                name: "menus.json".to_string(),
+                kind: FileKind::Store,
+                content: r#"{"collections": [{"title": "More", "products": ["unread"]}]}"#
+                    .to_string(),
+            },
+        ];
+        let mut diagnostics = Diagnostics::new();
+        let merged = merge(files, &mut diagnostics);
+        let source = SourceData {
+            merged,
+            diagnostics,
+            files_directory: None,
+            images: Mutex::new(HashMap::new()),
+        };
+        let (store, diagnostics) = source.build(&LoadOptions::default(), &[]);
+        let found: Vec<String> = diagnostics
+            .items
+            .iter()
+            .map(|item| {
+                format!(
+                    "{} {} {} | {}",
+                    item.code,
+                    item.file,
+                    item.path,
+                    item.hint.as_deref().unwrap_or_default()
+                )
+            })
+            .collect();
+        // The product without errors of the file is read, with its own references.
+        assert!(store.product_by_handle("fine").is_some());
+        assert!(
+            found
+                .iter()
+                .any(|line| line
+                    .starts_with("unknown_collection store.json /products/1/collections/0")),
+            "{found:#?}"
+        );
+        // Its place in the file is the one it has there.
+        let picks = store.collection_by_handle("picks").expect("picks");
+        assert_eq!(picks.products.len(), 1);
+        // What names a product left out says why, rather than suggesting another.
+        let broken = found
+            .iter()
+            .find(|line| line.contains("/collections/0/products/0"))
+            .expect("broken");
+        assert!(broken.ends_with("the product \"broken\" is left out because store.json has errors: fix them, and this reference works"), "{broken}");
+        let unread = found
+            .iter()
+            .find(|line| line.starts_with("unknown_product menus.json"))
+            .expect("unread");
+        assert!(
+            unread.contains("because products/unread.json has errors"),
+            "{unread}"
+        );
+        let gone = found
+            .iter()
+            .find(|line| line.contains("/collections/0/products/2"))
+            .expect("gone");
+        assert!(!gone.contains("left out"), "{gone}");
     }
 
     #[test]
@@ -1854,6 +2310,61 @@ mod tests {
         // The settings of the Functions, Function by Function.
         assert_eq!(checkout.functions["delivery-rules"][0].value, "strict");
         assert_eq!(checkout.functions["payment-rules"][0].value, "on");
+    }
+
+    /// The metafields of an owner by `"namespace.key"`, or as Shopify's Admin API takes them:
+    /// a list of `{namespace, key, type, value}`, a `json` value as its text or as JSON.
+    #[test]
+    fn owner_metafields_are_read_by_name_or_as_shopify_s_list() {
+        let overlay = serde_json::json!({"checkout": {
+            "discounts": [{"function": "volume-discount", "metafields": [
+                {"namespace": "$app", "key": "function-configuration", "type": "json", "value": "{\"percentage\":10}"}
+            ]}],
+            "functions": {
+                "payment-rules": {"metafields": [
+                    {"namespace": "$app", "key": "function-configuration", "type": "json", "value": {"hide": ["cod"]}},
+                    {"namespace": "custom", "key": "mode", "value": "on"}
+                ]},
+                "delivery-rules": {"metafields": {"$app.function-configuration": {"type": "json", "value": {"hide": []}}}}
+            }
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(!diagnostics.has_errors(), "{diagnostics}");
+        let field = |metafield: &crate::store::CheckoutMetafield| {
+            (
+                metafield.namespace.clone(),
+                metafield.key.clone(),
+                metafield.kind.clone(),
+                metafield.value.clone(),
+            )
+        };
+        let configuration = |value: &str| {
+            (
+                "$app".to_string(),
+                "function-configuration".to_string(),
+                "json".to_string(),
+                value.to_string(),
+            )
+        };
+        assert_eq!(
+            field(&store.checkout.discounts[0].metafields[0]),
+            configuration(r#"{"percentage":10}"#)
+        );
+        let payment = &store.checkout.functions["payment-rules"];
+        assert_eq!(field(&payment[0]), configuration(r#"{"hide":["cod"]}"#));
+        assert_eq!(
+            (
+                payment[1].namespace.as_str(),
+                payment[1].key.as_str(),
+                payment[1].value.as_str()
+            ),
+            ("custom", "mode", "on")
+        );
+        assert_eq!(
+            field(&store.checkout.functions["delivery-rules"][0]),
+            configuration(r#"{"hide":[]}"#)
+        );
     }
 
     #[test]

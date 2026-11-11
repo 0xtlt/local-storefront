@@ -159,6 +159,42 @@ fn pages_products_with_cursors_and_a_query() {
     assert_eq!(cost["throttleStatus"]["maximumAvailable"], json!(20000.0));
 }
 
+/// `Shopify-GraphQL-Cost-Debug: 1` adds the fields of the requested cost to `extensions.cost`,
+/// children first, as Shopify's example lists them; without it, there are none.
+#[test]
+fn the_cost_debug_header_lists_the_cost_of_each_field() {
+    let api = demo_api();
+    let token = default_token(&api);
+    let query = "{ products(first: 10) { edges { node { title } } } }";
+    let body = json!({ "query": query }).to_string();
+    let response = api
+        .handle(&request(
+            "POST",
+            GRAPHQL,
+            &[
+                ("content-type", "application/json"),
+                ("x-shopify-access-token", &token),
+                ("shopify-graphql-cost-debug", "1"),
+            ],
+            body.as_bytes(),
+        ))
+        .unwrap();
+    let answer = json_of(&response);
+    let cost = &answer["extensions"]["cost"];
+    assert_eq!(cost["requestedQueryCost"], json!(12));
+    assert_eq!(
+        cost["fields"],
+        json!([
+            {"path": ["products", "edges", "node", "title"], "definedCost": 0, "requestedTotalCost": 0, "requestedChildrenCost": null},
+            {"path": ["products", "edges", "node"], "definedCost": 1, "requestedTotalCost": 10, "requestedChildrenCost": 0},
+            {"path": ["products", "edges"], "definedCost": 0, "requestedTotalCost": 10, "requestedChildrenCost": 10},
+            {"path": ["products"], "definedCost": 2, "requestedTotalCost": 12, "requestedChildrenCost": 10},
+        ])
+    );
+    let (_, plain) = graphql(&api, &token, query, Value::Null);
+    assert!(plain["extensions"]["cost"].get("fields").is_none());
+}
+
 #[test]
 fn reads_any_record_by_node() {
     let api = demo_api();
@@ -410,6 +446,69 @@ fn exchanges_a_session_token_for_an_access_token() {
         answer["data"]["shop"]["myshopifyDomain"],
         json!(api.default_shop())
     );
+}
+
+/// Only what the backend sends tells that it talks to lsf: a token exchange and the Admin API
+/// calls with the token it got, not a test's calls with the printed token or a test shop's.
+/// Opening the app again does not start over.
+#[test]
+fn the_backend_is_seen_by_its_own_calls() {
+    let api = AdminApi::new(
+        &support::demo_store(),
+        options(None, Some("http://localhost:3000".to_string())),
+    );
+    let watch = api.backend_watch();
+    let (status, _) = graphql(&api, &default_token(&api), "{ shop { id } }", Value::Null);
+    assert_eq!(status, 200);
+    let created = send(
+        &api,
+        "POST",
+        "/__lsf/admin/shops",
+        json!({"shop": "fixtures"}),
+    );
+    let token = json_of(&created)["token"].as_str().unwrap().to_string();
+    assert_eq!(graphql(&api, &token, "{ shop { id } }", Value::Null).0, 200);
+    assert_eq!(watch.calls(), 0);
+    assert!(watch.failed("/app", 500, "http://127.0.0.1:9292").is_some());
+
+    let minted = send(&api, "POST", "/__lsf/admin/session-token", json!({}));
+    let session_token = json_of(&minted)["token"].as_str().unwrap().to_string();
+    let exchanged = send(
+        &api,
+        "POST",
+        "/admin/oauth/access_token",
+        json!({
+            "client_id": api.client_id(),
+            "client_secret": SECRET,
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": session_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+            "requested_token_type": "urn:shopify:params:oauth:token-type:offline-access-token",
+        }),
+    );
+    let issued = json_of(&exchanged)["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(watch.calls(), 1);
+    assert_eq!(watch.hint(), None);
+    assert_eq!(
+        graphql(&api, &issued, "{ shop { id } }", Value::Null).0,
+        200
+    );
+    assert_eq!(watch.calls(), 2);
+
+    // The admin opens the app again: what the backend did still counts (it may reuse its
+    // session and call lsf only when it needs to), so a page that fails is not blamed on it.
+    assert!(
+        api.launch_url(&api.default_shop(), "/app", 1, "en")
+            .is_some()
+    );
+    let launched = send(&api, "GET", "/__lsf/admin/launch", Value::Null);
+    assert!((300..400).contains(&launched.status), "{}", launched.status);
+    assert_eq!(watch.calls(), 2);
+    assert_eq!(watch.failed("/app", 500, "http://127.0.0.1:9292"), None);
+    assert_eq!(watch.hint(), None);
 }
 
 #[test]
@@ -1179,6 +1278,71 @@ fn refuses_requests_without_a_valid_token() {
     );
 }
 
+/// `GET /admin/oauth/access_scopes.json` lists the token's scopes in Shopify's shape, and
+/// refuses a request without a token as the GraphQL Admin API does.
+#[test]
+fn the_access_scopes_of_a_token_are_listed() {
+    let api = demo_api();
+    let token = default_token(&api);
+    let response = api
+        .handle(&request(
+            "GET",
+            "/admin/oauth/access_scopes.json",
+            &[("x-shopify-access-token", &token)],
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(response.status, 200);
+    let scopes = json_of(&response)["access_scopes"].clone();
+    let handles: Vec<&str> = scopes
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|scope| scope["handle"].as_str().unwrap())
+        .collect();
+    assert!(handles.contains(&"write_products"), "{scopes}");
+    // A write scope lists the read scope it implies, once.
+    assert!(handles.contains(&"read_products"), "{scopes}");
+    assert_eq!(
+        handles
+            .iter()
+            .filter(|handle| **handle == "read_products")
+            .count(),
+        1
+    );
+    let denied = send(&api, "GET", "/admin/oauth/access_scopes.json", Value::Null);
+    assert_eq!(denied.status, 401);
+    assert_eq!(json_of(&denied), json!({"errors": INVALID_TOKEN}));
+}
+
+/// `GET /__lsf/graphiql` is lsf's GraphiQL, and a browser that opens the endpoint without a
+/// token is pointed there.
+#[test]
+fn graphiql_is_served_and_a_browser_is_pointed_there() {
+    let api = demo_api();
+    let page = send(&api, "GET", "/__lsf/graphiql", Value::Null);
+    assert_eq!(page.status, 200);
+    assert_eq!(
+        header(&page, "content-type"),
+        Some("text/html; charset=utf-8")
+    );
+    assert!(String::from_utf8_lossy(&page.body).contains("<title>GraphiQL · lsf</title>"));
+    let browser = api
+        .handle(&request(
+            "GET",
+            GRAPHQL,
+            &[("accept", "text/html,application/xhtml+xml")],
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(browser.status, 401);
+    assert!(
+        header(&browser, "x-lsf-reason")
+            .unwrap()
+            .ends_with("in a browser, open /__lsf/graphiql (GraphiQL, the token filled in)")
+    );
+}
+
 #[test]
 fn says_the_rest_api_and_other_versions_are_not_served() {
     let api = demo_api();
@@ -1188,8 +1352,19 @@ fn says_the_rest_api_and_other_versions_are_not_served() {
         json_of(&rest)["errors"]
             .as_str()
             .unwrap()
-            .contains("does not serve the REST Admin API")
+            .contains("does not simulate the REST Admin API (products.json), except GET /admin/oauth/access_scopes.json")
     );
+    // The REST paths without a version, and those under OAuth's, say the same, in JSON.
+    for path in ["/admin/products.json", "/admin/oauth/access_scopes_v2.json"] {
+        let rest = send(&api, "GET", path, Value::Null);
+        assert_eq!(rest.status, 404, "{path}");
+        assert!(
+            header(&rest, "x-lsf-reason")
+                .unwrap()
+                .starts_with("lsf does not simulate the REST Admin API"),
+            "{path}"
+        );
+    }
     let other = send(
         &api,
         "POST",
@@ -1592,4 +1767,113 @@ fn a_revoked_token_says_what_revoked_it_and_how_to_recover_once_in_the_log() {
             .starts_with("lsf did not issue this access token")
     );
     assert_eq!(said.lock().unwrap().len(), 3);
+}
+
+/// A run of lsf whose tokens are the same every run of the app and its secret, as `serve` runs.
+fn stable_api() -> AdminApi {
+    let mut options = options(None, None);
+    options.token_seed = None;
+    AdminApi::new(&support::demo_store(), options)
+}
+
+/// An expiring offline token and its refresh token, by token exchange.
+fn exchange_expiring(api: &AdminApi) -> (String, String) {
+    let minted = send(api, "POST", "/__lsf/admin/session-token", json!({}));
+    let session_token = json_of(&minted)["token"].as_str().unwrap().to_string();
+    let exchanged = send(
+        api,
+        "POST",
+        "/admin/oauth/access_token",
+        json!({
+            "client_id": api.client_id(),
+            "client_secret": SECRET,
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": session_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+            "requested_token_type": "urn:shopify:params:oauth:token-type:offline-access-token",
+            "expiring": "1",
+        }),
+    );
+    assert_eq!(exchanged.status, 200);
+    let issued = json_of(&exchanged);
+    (
+        issued["access_token"].as_str().unwrap().to_string(),
+        issued["refresh_token"].as_str().unwrap().to_string(),
+    )
+}
+
+fn refresh(api: &AdminApi, refresh_token: &str) -> HttpResponse {
+    send(
+        api,
+        "POST",
+        "/admin/oauth/access_token",
+        json!({
+            "client_id": api.client_id(),
+            "client_secret": SECRET,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }),
+    )
+}
+
+#[test]
+fn after_a_restart_a_reset_or_an_uninstall_revokes_the_tokens_of_the_earlier_run() {
+    for close in ["DELETE /__lsf/admin", "POST /__lsf/admin/uninstall"] {
+        // The backend kept two pairs from a first run of lsf.
+        let first = stable_api();
+        let (older, older_refresh) = exchange_expiring(&first);
+        let (newer, newer_refresh) = exchange_expiring(&first);
+        drop(first);
+
+        // lsf restarts: they work again, the second presented first.
+        let api = stable_api();
+        let shop = "{ shop { myshopifyDomain } }";
+        assert_eq!(graphql(&api, &newer, shop, Value::Null).0, 200, "{close}");
+        assert_eq!(graphql(&api, &older, shop, Value::Null).0, 200, "{close}");
+
+        // The reset (or the uninstall) revokes them, and the earlier run's refresh tokens,
+        // presented before or not.
+        let (method, path) = close.split_once(' ').unwrap();
+        assert!(send(&api, method, path, json!({})).status < 300, "{close}");
+        if method == "POST" {
+            send(&api, "POST", "/__lsf/admin/install", json!({}));
+        }
+        for token in [&older, &newer] {
+            let response = api
+                .handle(&request(
+                    "POST",
+                    GRAPHQL,
+                    &[
+                        ("content-type", "application/json"),
+                        ("x-shopify-access-token", token),
+                    ],
+                    json!({"query": shop}).to_string().as_bytes(),
+                ))
+                .unwrap();
+            assert_eq!(response.status, 401, "{close}");
+            assert!(
+                header(&response, "x-lsf-reason")
+                    .is_some_and(|reason| reason.contains("was revoked")),
+                "{close}: {:?}",
+                header(&response, "x-lsf-reason")
+            );
+        }
+        for token in [&older_refresh, &newer_refresh] {
+            let refused = refresh(&api, token);
+            assert_eq!(refused.status, 401, "{close}");
+            assert!(
+                header(&refused, "x-lsf-reason").is_some_and(|reason| reason.contains("revoked")),
+                "{close}"
+            );
+        }
+
+        // A pair issued after it works, and after the next restart too.
+        let (fresh, fresh_refresh) = exchange_expiring(&api);
+        assert_ne!(fresh, older);
+        assert_ne!(fresh, newer);
+        assert_eq!(graphql(&api, &fresh, shop, Value::Null).0, 200, "{close}");
+        let next = stable_api();
+        assert_eq!(graphql(&next, &fresh, shop, Value::Null).0, 200, "{close}");
+        assert_eq!(refresh(&next, &fresh_refresh).status, 200, "{close}");
+    }
 }

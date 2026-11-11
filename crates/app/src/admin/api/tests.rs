@@ -544,3 +544,53 @@ fn a_stubbed_url_is_read_without_being_fetched() {
     assert_eq!(hits.load(Ordering::SeqCst), 0, "nothing was connected to");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Scopes changed in `shopify.app.toml` while the server runs are said once, with what to do:
+/// the app stays installed with those of the start, as on Shopify until the merchant approves.
+#[test]
+fn scopes_changed_in_the_app_config_are_said() {
+    let dir = std::env::temp_dir().join(format!("lsf-scopes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = |scopes: &str| {
+        format!(
+            "client_id = \"0123456789abcdef0123456789abcdef\"\nhandle = \"scopes-test\"\n\n[access_scopes]\nscopes = \"{scopes}\"\n"
+        )
+    };
+    std::fs::write(dir.join("shopify.app.toml"), config("read_products")).unwrap();
+    let app = crate::config::load(&dir).expect("the app loads");
+    let (store, _) = lsf_core::store::load::load(
+        &lsf_core::store::load::DataSource::Demo,
+        &Default::default(),
+    );
+    let api = super::AdminApi::new(
+        &store,
+        super::AdminOptions {
+            app: Some(app),
+            client_secret: "test-secret".to_string(),
+            throttle: ThrottleSetting::Off,
+            ..Default::default()
+        },
+    );
+    assert_eq!(api.app_scopes_changed(), None);
+    std::fs::write(
+        dir.join("shopify.app.toml"),
+        config("read_products,read_orders,read_returns"),
+    )
+    .unwrap();
+    let warning = api.app_scopes_changed().expect("a warning");
+    assert!(
+        warning.contains("added `read_orders`, `read_returns`, removed none"),
+        "{warning}"
+    );
+    assert!(
+        warning.contains(
+            r#"POST /__lsf/admin/install {"scopes": "read_products,read_orders,read_returns"}"#
+        ),
+        "{warning}"
+    );
+    // Once per set of scopes; the token keeps those of the start.
+    assert_eq!(api.app_scopes_changed(), None);
+    assert_eq!(api.scopes(), ["read_products"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

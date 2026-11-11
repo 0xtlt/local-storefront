@@ -123,27 +123,44 @@ fn fields<'d, 'q>(
     type_name: &'d str,
     out: &mut Vec<(&'d Field<'q>, &'d str)>,
 ) {
-    for item in &set.items {
-        match item {
-            Selection::Field(field) => out.push((field, type_name)),
-            Selection::InlineFragment(fragment) => fields(
-                document,
-                &fragment.selection_set,
-                fragment.type_condition.unwrap_or(type_name),
-                out,
-            ),
-            Selection::FragmentSpread(spread) => {
-                if let Some(fragment) = document.fragment(spread.name) {
-                    fields(
-                        document,
-                        &fragment.selection_set,
-                        fragment.type_condition,
-                        out,
-                    );
+    /// `spread`: the fragments spread so far, each once, so that a cycle (which validation
+    /// refuses, later) ends.
+    fn collect<'d, 'q>(
+        document: &'d graphql::ast::Document<'q>,
+        set: &'d SelectionSet<'q>,
+        type_name: &'d str,
+        out: &mut Vec<(&'d Field<'q>, &'d str)>,
+        spread: &mut Vec<&'q str>,
+    ) {
+        for item in &set.items {
+            match item {
+                Selection::Field(field) => out.push((field, type_name)),
+                Selection::InlineFragment(fragment) => collect(
+                    document,
+                    &fragment.selection_set,
+                    fragment.type_condition.unwrap_or(type_name),
+                    out,
+                    spread,
+                ),
+                Selection::FragmentSpread(fragment) => {
+                    if spread.contains(&fragment.name) {
+                        continue;
+                    }
+                    spread.push(fragment.name);
+                    if let Some(fragment) = document.fragment(fragment.name) {
+                        collect(
+                            document,
+                            &fragment.selection_set,
+                            fragment.type_condition,
+                            out,
+                            spread,
+                        );
+                    }
                 }
             }
         }
     }
+    collect(document, set, type_name, out, &mut Vec::new());
 }
 
 /// Whether the selection of a node selects its `id`, without an alias.
@@ -496,8 +513,10 @@ fn run_query(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     Ok(payload(json!({ "bulkOperation": created }), &[]))
 }
 
-/// The problems of the mutation of a bulk mutation: one mutation operation, not a bulk one.
-fn check_mutation(query: &str) -> Option<String> {
+/// The problems of the mutation of a bulk mutation: one mutation operation, valid against the
+/// schema, that runs one mutation field, not a bulk one, as Shopify's "Bulk import data" asks
+/// (one mutation per bulk operation). The wording of these messages is lsf's.
+fn check_mutation(schema: &Schema, query: &str) -> Option<String> {
     let document = match graphql::parse::parse(query) {
         Ok(document) => document,
         Err(error) => return Some(format!("Invalid mutation: {}", error.message)),
@@ -522,13 +541,31 @@ fn check_mutation(query: &str) -> Option<String> {
                 .to_string(),
         );
     }
+    if let Some(error) = graphql::validate::validate(schema, &document).first() {
+        return Some(format!("Invalid mutation: {}", error.message));
+    }
+    // Fields of one response key merge into one (validation checked they can): a mutation
+    // selected again through a fragment runs once. Two aliases run twice.
+    let mut named: Vec<&str> = top
+        .iter()
+        .filter(|(field, _)| field.name != "__typename")
+        .map(|(field, _)| field.response_key())
+        .collect();
+    named.sort_unstable();
+    named.dedup();
+    if named.len() != 1 {
+        return Some(format!(
+            "The mutation of a bulk operation runs a single mutation field: it has {}.",
+            named.len()
+        ));
+    }
     None
 }
 
 fn run_mutation(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let text = ctx.arg_str("mutation").unwrap_or_default().to_string();
     let path = ctx.arg_str("stagedUploadPath").unwrap_or_default();
-    if let Some(problem) = check_mutation(&text) {
+    if let Some(problem) = check_mutation(ctx.schema(), &text) {
         let error = UserError::new(&["mutation"], problem).code("INVALID_MUTATION");
         return Ok(payload(json!({"bulkOperation": null}), &[error]));
     }
@@ -645,6 +682,23 @@ mod tests {
             check_query(schema, no_id)
                 .iter()
                 .any(|problem| problem.contains("'id'"))
+        );
+    }
+
+    /// Fields are counted by response key, as GraphQL merges them, and a fragment cycle is
+    /// refused rather than followed.
+    #[test]
+    fn a_bulk_mutation_counts_its_fields_once_merged() {
+        let schema = crate::admin::schema::admin();
+        let merged = "mutation($product: ProductCreateInput!) { productCreate(product: $product) { product { id } } ... on Mutation { productCreate(product: $product) { userErrors { message } } } }";
+        assert_eq!(check_mutation(schema, merged), None);
+        let aliased = "mutation($product: ProductCreateInput!) { a: productCreate(product: $product) { product { id } } b: productCreate(product: $product) { product { id } } }";
+        assert!(
+            check_mutation(schema, aliased).is_some_and(|problem| problem.contains("it has 2"))
+        );
+        let cycle = "mutation { ...a } fragment a on Mutation { ...a }";
+        assert!(
+            check_mutation(schema, cycle).is_some_and(|problem| problem.starts_with("Invalid"))
         );
     }
 

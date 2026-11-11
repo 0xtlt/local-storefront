@@ -4,6 +4,7 @@ use lsf_liquid::lexer::{MarkupParser, TokenKind};
 use lsf_liquid::strict2::{self, Issue};
 use lsf_liquid::{BlockBody, Context, Error, Expr, Parser, Result, Tag, TagToken};
 
+use crate::render::section::{BlockDrop, ClosestDrop, page_closest};
 use crate::render::state::RenderState;
 use crate::theme::Layout;
 
@@ -133,15 +134,40 @@ pub(super) fn check_layout(markup: &str, style: &strict2::Style) -> Option<Issue
     )
 }
 
-/// `{% render block %}`: Shopify's form for rendering an app block held in a variable. App
-/// blocks come from installed apps, which do not exist outside Shopify, so nothing is rendered.
+/// `{% render block %}`: Shopify's form for rendering an app block held in a variable, a block
+/// of `section.blocks` whose type is `@app`. It renders the block of the app served with
+/// `--app`; any other block renders nothing.
 struct RenderObject {
     object: Expr,
 }
 
 impl Tag for RenderObject {
-    fn render(&self, ctx: &mut Context, _out: &mut String) -> Result<()> {
-        self.object.evaluate(ctx)?;
+    fn render(&self, ctx: &mut Context, out: &mut String) -> Result<()> {
+        let object = self.object.evaluate(ctx)?;
+        let Some(block) = object.downcast::<BlockDrop>() else {
+            return Ok(());
+        };
+        let Some(app) = &block.app else {
+            return Ok(());
+        };
+        let closest = ctx
+            .find_variable("closest")
+            .downcast::<ClosestDrop>()
+            .map(|closest| closest.0.clone())
+            .unwrap_or_else(|| page_closest(ctx));
+        out.push_str(&crate::app_extensions::render::render_block(
+            ctx,
+            crate::app_extensions::render::Call {
+                kind: &app.kind,
+                id: block.id.clone(),
+                key: &app.key,
+                values: &serde_json::Map::new(),
+                section: ctx.find_variable("section"),
+                closest,
+                variables: &[],
+                settings: Some(block.settings.clone()),
+            },
+        )?);
         Ok(())
     }
 }

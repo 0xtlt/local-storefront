@@ -21,8 +21,8 @@
 //!    computed.
 //! 6. Otherwise a default ([`defaults`]): `null`, or for a non-null field an empty list, `""`,
 //!    `0`, `false`, the first enum value, an empty object. Its path goes into
-//!    `extensions.lsf.defaulted`, so that nobody mistakes it for data (lists and connections,
-//!    empty by nature, are not reported).
+//!    `extensions.lsf.defaulted`, so that nobody mistakes it for data (an empty list or
+//!    connection too, unless lsf fills it as things happen: `SIMULATED_LISTS`).
 //!
 //! See "How a field is resolved" and "Writing a resolver or a mutation" in
 //! `crates/app/docs/admin/design.md`.
@@ -132,7 +132,32 @@ struct Report {
     search: Vec<Value>,
     /// What lsf did not simulate in this request, in plain words.
     notes: IndexSet<String>,
+    /// Fields of lsf's own for `extensions.lsf` (`localConfirmationUrl`).
+    fields: Map<String, Value>,
 }
+
+/// The lists and connections a record has only once something put an item in them, which lsf
+/// simulates: missing, they are empty because nothing happened, and they are not reported as
+/// defaulted. Every other list or connection a record lacks is (`Order.agreements`,
+/// `Product.events`: lsf does not compute them).
+const SIMULATED_LISTS: &[&str] = &[
+    "bundleComponents",
+    "dispositions",
+    "fulfillmentHolds",
+    "fulfillmentOrders",
+    "fulfillments",
+    "lineItems",
+    "merchantRequests",
+    "payouts",
+    "productVariantComponents",
+    "refunds",
+    "requestedOrderEdits",
+    "returns",
+    "reverseDeliveries",
+    "reverseFulfillmentOrders",
+    "storeCreditAccounts",
+    "transactions",
+];
 
 /// How many defaulted paths `extensions.lsf.defaulted` lists; `defaultedFields` names them all.
 const DEFAULTED_PATHS: usize = 50;
@@ -338,6 +363,9 @@ impl<'a> ShopResolver<'a> {
         if !report.notes.is_empty() {
             lsf.insert("notes".into(), json!(report.notes));
         }
+        for (key, value) in &report.fields {
+            lsf.insert(key.clone(), value.clone());
+        }
         if !lsf.is_empty() {
             extensions.insert("lsf".into(), Value::Object(lsf));
         }
@@ -348,6 +376,11 @@ impl<'a> ShopResolver<'a> {
     /// a search field it does not read), in plain words.
     pub fn note(&self, text: impl Into<String>) {
         self.report.borrow_mut().notes.insert(text.into());
+    }
+
+    /// Sets a field of lsf's own in `extensions.lsf`, from `Mutation::extension`.
+    pub fn lsf_extension(&self, key: String, value: Value) {
+        self.report.borrow_mut().fields.insert(key, value);
     }
 
     /// The record or the inline value of an object, `None` for the roots and for a record that
@@ -690,15 +723,19 @@ impl<'a> ShopResolver<'a> {
     ) -> Result<Output<Obj>, FieldError> {
         let schema = ctx.schema();
         let named = ctx.ty().named();
-        if schema.is_connection(named) {
-            return self.connection_of(ctx, Vec::new(), reported);
-        }
-        if reported && !ctx.ty().is_list() {
+        let empty_list = ctx.ty().is_list() || schema.is_connection(named);
+        if reported && !(empty_list && SIMULATED_LISTS.contains(&ctx.field_name())) {
+            // A list or a connection lsf does not compute (`Order.agreements`, `Order.events`)
+            // is empty because lsf has nothing, not because the shop has nothing: it is
+            // reported too, unless lsf fills it as things happen ([`SIMULATED_LISTS`]).
             let mut report = self.report.borrow_mut();
             report.defaulted.insert(ctx.path_string());
             report
                 .defaulted_fields
                 .insert(format!("{}.{}", ctx.parent_type(), ctx.field_name()));
+        }
+        if schema.is_connection(named) {
+            return self.connection_of(ctx, Vec::new(), reported);
         }
         Ok(defaults::output(schema, ctx.ty()))
     }
@@ -763,7 +800,168 @@ impl<'a> ShopResolver<'a> {
             let items = self.search(ctx, &node_type, items);
             return Ok(Some(self.count(ctx, items.len())));
         }
+        if let Some(value) = self.successor_value(ctx, map) {
+            return self.convert(ctx, &value, false).map(Some);
+        }
         Ok(None)
+    }
+
+    /// A deprecated field Shopify replaced by another of the same object ("Use
+    /// `originalUnitPriceSet` instead.", "Use `defaultEmailAddress.emailAddress` instead."),
+    /// read from its successor's value when the record has none of its own: `DraftOrderLineItem
+    /// .originalUnitPrice` from `originalUnitPriceWithCurrency`, rather than a default `"0.00"`.
+    /// `Money` reads the amount of a `MoneyV2` or the shop money of a `MoneyBag`, `MoneyV2` the
+    /// shop money of a `MoneyBag`, an `Int` the count of a `Count` (or of the array it counts);
+    /// another scalar reads a scalar of the same kind.
+    fn successor_value(&self, ctx: &FieldContext<'_>, map: &Record) -> Option<Value> {
+        let (schema, parent) = (ctx.schema(), ctx.parent_type());
+        if OTHER_VALUES.contains(&(parent, ctx.field_name())) {
+            return None;
+        }
+        if let Some(value) = self.transformed_successor(parent, ctx.field_name(), map) {
+            return Some(value);
+        }
+        let field = schema.field(parent, ctx.field_name())?;
+        let path = successor_path(field.deprecation.as_deref()?)?;
+        let target = &field.ty;
+        if target.is_list() {
+            return None;
+        }
+        // Walk the path through the object's values: inline objects or records.
+        let mut type_name = parent.to_string();
+        let mut current: Option<&Value> = None;
+        let mut owner = map;
+        let segments: Vec<&str> = path.split('.').collect();
+        for (index, segment) in segments.iter().enumerate() {
+            let next = schema.field(&type_name, segment)?;
+            if next.args.values().any(|arg| arg.is_required()) || next.ty.is_list() {
+                return None;
+            }
+            let stored = owner.get(*segment).filter(|value| !value.is_null());
+            let stored = match stored {
+                Some(value) => value,
+                // A `Count` lsf derives from the array it counts (`variantsCount`).
+                None if next.ty.named() == "Count" && index + 1 == segments.len() => {
+                    let base = segment.strip_suffix("Count")?;
+                    let Some(Value::Array(items)) = owner.get(base) else {
+                        return None;
+                    };
+                    let listed = schema.field(&type_name, base)?.ty.named();
+                    let node_type = schema.connection_node(listed).unwrap_or(listed);
+                    let count = items
+                        .iter()
+                        .filter(|item| !self.gone(schema, node_type, item))
+                        .count();
+                    return (target.named() == "Int").then(|| json!(count));
+                }
+                None => return None,
+            };
+            type_name = next.ty.named().to_string();
+            current = Some(stored);
+            if index + 1 < segments.len() {
+                owner = match stored {
+                    Value::Object(object) => object,
+                    Value::String(key) => self.state.get(&self.lookup(key)?)?,
+                    _ => return None,
+                };
+            }
+        }
+        let value = current?;
+        let stringy = |name: &str| matches!(name, "String" | "URL" | "HTML");
+        Some(match (target.named(), type_name.as_str()) {
+            ("Money", "MoneyBag" | "MoneyV2") => {
+                json!(crate::admin::state::value::money(
+                    crate::admin::state::value::cents(Some(value))
+                ))
+            }
+            ("MoneyV2", "MoneyBag") => value.get("shopMoney")?.clone(),
+            ("Int", "Count") => value.get("count")?.clone(),
+            (wanted, found)
+                if (wanted == found || (stringy(wanted) && stringy(found)))
+                    && schema.get(wanted).is_some_and(|def| def.is_leaf()) =>
+            {
+                value.clone()
+            }
+            ("MoneyV2", "MoneyV2") => value.clone(),
+            _ => return None,
+        })
+    }
+
+    /// The deprecated fields whose replacement says something else than they did, as the
+    /// schema's descriptions tell, read from it with the difference applied:
+    ///
+    /// - `Product.descriptionPlainSummary` is "single line with HTML tags removed. Truncated to
+    ///   60 characters", where `description` is whole: on one line, cut to 60 characters
+    ///   ending in `...` past them (Rails' `truncate`; *chosen*, Shopify does not say how it
+    ///   ends);
+    /// - `Order.totalShippingPrice` is "before discounts and returns", where lsf's
+    ///   `totalShippingPriceSet` is after the shipping discounts: the original prices of its
+    ///   shipping lines;
+    /// - `ShippingLine.discountedPrice` is "the pre-tax shipping price with discounts applied",
+    ///   where `discountedPriceSet` includes the taxes of an order whose `taxesIncluded` is
+    ///   true: without the line's tax lines then.
+    ///
+    /// `None` for another field, or when the record lacks what the difference needs.
+    fn transformed_successor(&self, parent: &str, field: &str, map: &Record) -> Option<Value> {
+        use crate::admin::state::value;
+        match (parent, field) {
+            ("Product", "descriptionPlainSummary") => {
+                let description = map
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| {
+                        map.get("descriptionHtml")
+                            .and_then(Value::as_str)
+                            .map(value::plain_text)
+                    })?;
+                Some(json!(plain_summary(&description)))
+            }
+            ("Order", "totalShippingPrice") => {
+                let Some(Value::Array(lines)) = map.get("shippingLines") else {
+                    return None;
+                };
+                let original: i64 = lines
+                    .iter()
+                    .filter_map(|line| self.item_map(line))
+                    .filter(|line| line.get("isRemoved").and_then(Value::as_bool) != Some(true))
+                    .map(|line| value::cents(line.get("originalPriceSet")))
+                    .sum();
+                Some(json!(value::money(original)))
+            }
+            ("ShippingLine", "discountedPrice") => {
+                let discounted = map.get("discountedPriceSet")?.get("shopMoney")?;
+                let currency = discounted.get("currencyCode")?.as_str()?.to_string();
+                let mut cents = value::cents(Some(discounted));
+                let included = self.state.keys("Order").any(|order| {
+                    self.state.get(order).is_some_and(|record| {
+                        record.get("taxesIncluded").and_then(Value::as_bool) == Some(true)
+                            && record
+                                .get("shippingLines")
+                                .and_then(Value::as_array)
+                                .is_some_and(|lines| {
+                                    lines.iter().any(|line| line.as_object() == Some(map))
+                                })
+                    })
+                });
+                if included {
+                    let taxes: i64 = map
+                        .get("taxLines")
+                        .and_then(Value::as_array)
+                        .map(|lines| {
+                            lines
+                                .iter()
+                                .filter_map(|line| self.item_map(line))
+                                .map(|line| value::cents(line.get("priceSet")))
+                                .sum()
+                        })
+                        .unwrap_or(0);
+                    cents -= taxes;
+                }
+                Some(value::money_v2(cents, &currency))
+            }
+            _ => None,
+        }
     }
 
     /// `metafield(namespace:, key:)` and `metafields(namespace:, keys:)` of an owner, the
@@ -1097,4 +1295,38 @@ pub fn camel_case(snake: &str) -> String {
         }
     }
     camel
+}
+
+/// A description as `Product.descriptionPlainSummary` gives it: on one line, at most 60
+/// characters, the last three `...` when it is cut.
+fn plain_summary(description: &str) -> String {
+    const LENGTH: usize = 60;
+    let line = description.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= LENGTH {
+        return line;
+    }
+    let mut cut: String = line.chars().take(LENGTH - 3).collect();
+    cut.push_str("...");
+    cut
+}
+
+/// The deprecated fields whose replacement holds another value: a payout's `gross` is not its
+/// `net`, a transaction's `authorizationCode` not its `paymentId`.
+const OTHER_VALUES: &[(&str, &str)] = &[
+    ("ShopifyPaymentsPayout", "gross"),
+    ("OrderTransaction", "authorizationCode"),
+];
+
+/// The field a deprecation names as its replacement on the same object, when the reason is
+/// Shopify's "Use `x` instead." (`originalUnitPriceSet`, `defaultEmailAddress.emailAddress`):
+/// fields only, a type's (`AppInstallation.launchUrl`) or a call's
+/// (`Image.url(transform: …)`) are not.
+fn successor_path(reason: &str) -> Option<&str> {
+    let rest = reason.trim().strip_prefix("Use `")?;
+    let (path, tail) = rest.split_once('`')?;
+    let field = |segment: &str| {
+        segment.starts_with(|c: char| c.is_ascii_lowercase())
+            && segment.chars().all(|c| c.is_ascii_alphanumeric())
+    };
+    (tail.trim() == "instead." && path.split('.').all(field)).then_some(path)
 }

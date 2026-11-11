@@ -113,6 +113,9 @@ pub fn create_media(state: &mut ShopState, product: &str, input: &Map<String, Va
     };
     let file_name = super::file_name(&source).to_string();
     let mime = super::mime_type(&file_name);
+    // The size of an image uploaded to a staged target, from its header.
+    let dimensions = crate::admin::domains::app::uploads::bytes(state, &source)
+        .and_then(|blob| crate::admin::domains::app::uploads::image_size(&blob.bytes));
     let image = json!({
         "id": gid(
             "ImageSource",
@@ -120,8 +123,8 @@ pub fn create_media(state: &mut ShopState, product: &str, input: &Map<String, Va
         ),
         "url": source,
         "altText": value::text(&alt),
-        "width": null,
-        "height": null,
+        "width": dimensions.map(|(width, _)| width),
+        "height": dimensions.map(|(_, height)| height),
     });
     let mut record = value::object(json!({
         "__typename": type_name,

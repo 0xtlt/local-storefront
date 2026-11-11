@@ -1,0 +1,8 @@
+<div class="featured">{% content_for 'blocks', closest.product: all_products['blue-shirt'] %}</div>
+
+{% schema %}
+{
+  "name": "Featured",
+  "blocks": [{ "type": "@app" }, { "type": "@theme" }]
+}
+{% endschema %}

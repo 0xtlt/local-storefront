@@ -32,6 +32,36 @@
   const script = document.currentScript;
   const lsfOrigin = originOf(script && script.src);
 
+  // The proxy of lsf's frame pointed the page's scripts of Shopify's CDN at lsf, and marked them
+  // (`#lsf-cdn`). Once a script has started loading, its `src` no longer matters to the browser:
+  // the CDN's URL goes back in it, so that React finds the `src` it rendered when it hydrates
+  // the page, and warns of no mismatch. This script's own tag now; the others when the parser is
+  // done, before the page's deferred and module scripts (React's) run.
+  const CDN_MARK = '#lsf-cdn';
+  function cdnSource(src) {
+    if (!lsfOrigin || typeof src !== 'string' || !src.endsWith(CDN_MARK)) return null;
+    const url = src.slice(0, -CDN_MARK.length);
+    if (url === lsfOrigin + '/__lsf/admin/app-bridge.js') return 'https://cdn.shopify.com/shopifycloud/app-bridge.js';
+    const cdn = lsfOrigin + '/__lsf/cdn/';
+    if (url.startsWith(cdn)) return 'https://cdn.shopify.com/' + url.slice(cdn.length);
+    return null;
+  }
+  function restoreCdnSources() {
+    for (const element of document.querySelectorAll('script[src]')) {
+      const cdn = cdnSource(element.getAttribute('src'));
+      if (cdn) element.setAttribute('src', cdn);
+    }
+  }
+  if (script && cdnSource(script.getAttribute('src'))) script.setAttribute('src', cdnSource(script.getAttribute('src')));
+  if (document.readyState === 'loading') {
+    document.addEventListener('readystatechange', function restore() {
+      document.removeEventListener('readystatechange', restore);
+      restoreCdnSources();
+    });
+  } else {
+    restoreCdnSources();
+  }
+
   // Another App Bridge is already here: Shopify's (whose `ready` this script also defines, so that
   // the CDN script returns when it loads second), or this script twice.
   try {
@@ -366,6 +396,32 @@
       notSimulated(name);
       return typeof value === 'function' ? value() : value;
     };
+
+  // ---- intents ---------------------------------------------------------------------------------
+
+  // `shopify.intents.invoke('edit:shopify/Product', {value})`, or `({action, type, value, data})`:
+  // the admin opens what lsf has of the resource, and `complete` answers when the merchant closes
+  // it (`{code: 'closed'}`). An intent lsf does not simulate completes with `{code: 'error'}`,
+  // whose message says so.
+  async function invokeIntent(query, options) {
+    let intent;
+    if (typeof query === 'string') {
+      const match = /^([a-z]+):(.+)$/.exec(query.trim());
+      intent = match ? Object.assign({}, options || {}, { action: match[1], type: match[2] }) : null;
+    } else if (query && typeof query === 'object') {
+      intent = Object.assign({}, query);
+    }
+    if (!intent || !intent.action || !intent.type) {
+      throw new Error('shopify.intents.invoke: an intent is "<action>:<type>", such as "edit:shopify/Product", or {action, type}');
+    }
+    if (!framed) throw notInAdmin();
+    const params = { action: String(intent.action), type: String(intent.type), value: intent.value === undefined ? null : intent.value, data: plain(intent.data) || null };
+    const complete = request('intent', params).then((response) => {
+      if (response && response.code === 'error' && response.message) console.warn('lsf App Bridge: ' + response.message);
+      return response;
+    });
+    return { complete };
+  }
 
   // ---- toast, loading, user -------------------------------------------------------------------
 
@@ -987,6 +1043,9 @@
         post({ type: 'navigate', url: new URL(reauthorize, win.location.href).href, target: '_top' });
         return new Promise(() => {});
       }
+      // A request of the app failed: the admin asks lsf again what it should say (a backend that
+      // sends its Admin API calls to Shopify rather than to lsf, say).
+      if (ours && response.status >= 400) post({ type: 'failed', status: response.status });
       return response;
     };
   }
@@ -1026,7 +1085,6 @@
   // ---- modals and app windows: drawn over the app, in its frame -------------------------------
 
   const SIZES = { small: '380px', base: '620px', large: '980px' };
-  let openModals = 0;
   let modalCount = 0;
 
   const MODAL_STYLE = [
@@ -1124,8 +1182,7 @@
     if (host.hasAttribute('data-lsf-open')) return Promise.resolve();
     overlayOf(host).render();
     host.setAttribute('data-lsf-open', '');
-    openModals++;
-    post({ type: 'modal', open: true });
+    modalShown(host);
     host.dispatchEvent(new win.CustomEvent('show'));
     return Promise.resolve();
   }
@@ -1133,11 +1190,103 @@
   function hideOverlay(host) {
     if (!host.hasAttribute('data-lsf-open')) return Promise.resolve();
     host.removeAttribute('data-lsf-open');
-    openModals = Math.max(0, openModals - 1);
-    if (!openModals) post({ type: 'modal', open: false });
+    modalHidden(host);
     host.dispatchEvent(new win.CustomEvent('hide'));
     return Promise.resolve();
   }
+
+  // The modals open in the page, lsf's overlays and Polaris's `s-modal`s alike: while there is
+  // one, the admin lifts the frame over the whole window (`modal.lift`), so that the modal is
+  // over the whole admin, as on Shopify.
+  const shownModals = new Set();
+  function modalShown(host) {
+    if (shownModals.has(host)) return;
+    shownModals.add(host);
+    if (shownModals.size === 1) post({ type: 'modal', open: true });
+  }
+  function modalHidden(host) {
+    if (!shownModals.delete(host)) return;
+    if (!shownModals.size) post({ type: 'modal', open: false });
+  }
+  // Polaris draws its own `s-modal`, and says when it shows and hides it.
+  document.addEventListener(
+    'show',
+    (event) => {
+      const host = event && event.target;
+      if (host && host.localName === 's-modal' && !host.hasAttribute('data-lsf-open')) modalShown(host);
+    },
+    true,
+  );
+  document.addEventListener(
+    'hide',
+    (event) => {
+      const host = event && event.target;
+      if (host && host.localName === 's-modal' && !host.hasAttribute('data-lsf-open')) modalHidden(host);
+    },
+    true,
+  );
+
+  // The frame over the whole window: the page keeps its box (`left`, `top`, `width`, `height`
+  // of the frame in the admin, the frame's `background` and `radius`), and the rest of the frame
+  // is transparent, so that the admin shows through it, under the modal's backdrop.
+  let lifted = null;
+  function lift(box) {
+    const html = document.documentElement;
+    const body = document.body;
+    if (!html || !body || !box) return;
+    if (!lifted) {
+      lifted = { html: html.getAttribute('style'), body: body.getAttribute('style'), x: win.scrollX || 0, y: win.scrollY || 0 };
+    }
+    const computed = (element) => (typeof win.getComputedStyle === 'function' ? win.getComputedStyle(element) : null);
+    const opaque = (color) => color && color !== 'transparent' && !/^rgba\(.*,\s*0\)$/.test(color);
+    const own = computed(body);
+    const page = computed(html);
+    const background = (own && opaque(own.backgroundColor) && own.backgroundColor) || (page && opaque(page.backgroundColor) && page.backgroundColor) || box.background || '#fff';
+    const margin = (side) => (own ? parseFloat(own['margin' + side]) || 0 : 0);
+    const px = (value) => Math.max(0, Math.round(Number(value) || 0)) + 'px';
+    const important = (declarations) => declarations.map(([name, value]) => name + ': ' + value + ' !important').join('; ');
+    // A transparent image, not just a transparent color: with none, the body's background would
+    // paint the whole frame (CSS gives the root's canvas the body's background).
+    html.setAttribute(
+      'style',
+      (lifted.html ? lifted.html + '; ' : '') +
+        important([['background', 'linear-gradient(transparent, transparent)'], ['overflow', 'hidden']]),
+    );
+    body.setAttribute(
+      'style',
+      (lifted.body ? lifted.body + '; ' : '') +
+        important([
+          ['position', 'fixed'],
+          ['left', px(box.left)],
+          ['top', px(box.top)],
+          ['width', px(box.width - margin('Left') - margin('Right'))],
+          ['height', px(box.height - margin('Top') - margin('Bottom'))],
+          ['overflow', 'hidden'],
+          ['background', background],
+          ['border-radius', px(box.radius)],
+        ]),
+    );
+    html.setAttribute('data-lsf-lifted', '');
+    body.scrollTop = lifted.y;
+    body.scrollLeft = lifted.x;
+    post({ type: 'lifted' });
+  }
+  function unlift() {
+    if (!lifted) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const put = (element, style) => (style === null ? element.removeAttribute('style') : element.setAttribute('style', style));
+    put(html, lifted.html);
+    put(body, lifted.body);
+    html.removeAttribute('data-lsf-lifted');
+    const { x, y } = lifted;
+    lifted = null;
+    if (typeof win.scrollTo === 'function') win.scrollTo(x, y);
+  }
+  on('modal.lift', (box) => {
+    if (shownModals.size) lift(box);
+  });
+  on('modal.unlift', () => unlift());
 
   function modalElement(id) {
     const element = findById(id, ['ui-modal', 's-modal', 's-app-window']);
@@ -1397,7 +1546,7 @@
           return () => {};
         },
       },
-      invoke: rejecting('intents.invoke'),
+      invoke: invokeIntent,
       register: warning('intents.register', () => () => {}),
     },
     webVitals: { onReport: rejecting('webVitals.onReport') },

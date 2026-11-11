@@ -1,0 +1,17 @@
+{
+  "type": "footer",
+  "name": "Footer",
+  "sections": {
+    "footer": {
+      "type": "footer",
+      "blocks": {
+        "reviews_footer": {
+          "type": "shopify://apps/product-reviews/blocks/reviews/5b1c7a52-2d0e-4c8a-9a3e-6f1d2b7c9e01",
+          "settings": {}
+        }
+      },
+      "block_order": ["reviews_footer"]
+    }
+  },
+  "order": ["footer"]
+}

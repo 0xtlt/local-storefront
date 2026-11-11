@@ -53,6 +53,7 @@ pub fn run(args: &SchemaArgs) -> Result<ExitCode, String> {
         &app,
         args.handle.as_deref(),
         path.as_deref().unwrap_or(&current),
+        "lsf app function schema",
     )?;
     let schema = schema_of(function)?;
     if args.stdout {
@@ -71,11 +72,13 @@ pub fn run(args: &SchemaArgs) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The Function named by `handle`, else the one whose folder `dir` is or is in.
-fn function_of<'a>(
+/// The Function named by `handle`, else the one whose folder `dir` is or is in. `command` is the
+/// one the hints name.
+pub fn function_of<'a>(
     app: &'a App,
     handle: Option<&str>,
     dir: &Path,
+    command: &str,
 ) -> Result<&'a FunctionExtension, String> {
     let handles = || {
         app.functions
@@ -87,9 +90,7 @@ fn function_of<'a>(
     if let Some(handle) = handle {
         return app.function(handle).ok_or_else(|| {
             if app.ui_extension(handle).is_some() {
-                format!(
-                    "`{handle}` is a UI extension, not a Function: it has no Function API schema"
-                )
+                format!("`{handle}` is a UI extension, not a Function")
             } else if app.functions.is_empty() {
                 format!("the app has no Function `{handle}`, nor any Function")
             } else {
@@ -115,7 +116,7 @@ fn function_of<'a>(
                     "{} is not the folder of a Function: run it in one, give `--path` to one, or \
                      name it: `{}` (the app has {})",
                     dir.display(),
-                    checkout::as_typed("lsf app function schema <handle>"),
+                    checkout::as_typed(&format!("{command} <handle>")),
                     handles()
                 )
             }
@@ -207,28 +208,41 @@ mod tests {
         let app = fixture_app();
         let payment = app.function("payment-rules").unwrap();
         assert_eq!(
-            function_of(&app, None, &payment.dir).unwrap().handle,
-            "payment-rules"
-        );
-        assert_eq!(
-            function_of(&app, None, &payment.dir.join("src"))
+            function_of(&app, None, &payment.dir, "lsf app function schema")
                 .unwrap()
                 .handle,
             "payment-rules"
         );
         assert_eq!(
-            function_of(&app, Some("payment-rules"), &app.root)
-                .unwrap()
-                .handle,
+            function_of(
+                &app,
+                None,
+                &payment.dir.join("src"),
+                "lsf app function schema"
+            )
+            .unwrap()
+            .handle,
             "payment-rules"
         );
-        let outside = function_of(&app, None, &app.root).unwrap_err();
+        assert_eq!(
+            function_of(
+                &app,
+                Some("payment-rules"),
+                &app.root,
+                "lsf app function schema"
+            )
+            .unwrap()
+            .handle,
+            "payment-rules"
+        );
+        let outside = function_of(&app, None, &app.root, "lsf app function schema").unwrap_err();
         assert!(
             outside.contains("is not the folder of a Function"),
             "{outside}"
         );
         assert!(outside.contains("payment-rules"), "{outside}");
-        let unknown = function_of(&app, Some("nope"), &app.root).unwrap_err();
+        let unknown =
+            function_of(&app, Some("nope"), &app.root, "lsf app function schema").unwrap_err();
         assert!(unknown.contains("no Function `nope`"), "{unknown}");
     }
 

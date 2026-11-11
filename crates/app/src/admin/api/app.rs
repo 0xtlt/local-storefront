@@ -97,7 +97,12 @@ fn charges(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse {
             match result {
                 Ok((redirect, _)) if from_page => HttpResponse {
                     status: 303,
-                    headers: vec![("location".into(), redirect)],
+                    headers: vec![(
+                        "location".into(),
+                        local_admin_url(&redirect)
+                            .or_else(|| app_admin_url(api, &redirect, &shop))
+                            .unwrap_or(redirect),
+                    )],
                     body: Vec::new(),
                 },
                 Ok((redirect, charge)) => HttpResponse::json(
@@ -141,7 +146,117 @@ border-radius:999px;background:#fff4d6;color:#5c4300;font-size:12px;font-weight:
 padding:12px 20px;border-radius:var(--radius);border:1px solid var(--border);background:#fff;cursor:pointer}\
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}a{color:var(--accent)}";
 
-/// The confirmation page of a charge, in the look of lsf's pages.
+/// A URL of Shopify's admin (`https://admin.shopify.com/store/<store>/apps/<app>…`, or
+/// `https://<store>.myshopify.com/admin/…`) as lsf's admin page of it, for that shop: where the
+/// merchant returns after a charge whose `returnUrl` is the app in Shopify's admin, the default
+/// of `@shopify/shopify-app-react-router`'s `billing.request`. `None` for another URL.
+pub(super) fn local_admin_url(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://")?;
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = host.to_ascii_lowercase();
+    let (shop, path) = if host == "admin.shopify.com" {
+        let path = path.strip_prefix("store/")?;
+        let (store, rest) = path.split_once('/').unwrap_or((path, ""));
+        let store = store.split(['?', '#']).next().unwrap_or(store);
+        (
+            format!("{}.myshopify.com", store.to_ascii_lowercase()),
+            rest.to_string(),
+        )
+    } else if host.ends_with(".myshopify.com") {
+        let rest = path.strip_prefix("admin")?;
+        if !(rest.is_empty() || rest.starts_with(['/', '?', '#'])) {
+            return None;
+        }
+        (host, rest.trim_start_matches('/').to_string())
+    } else {
+        return None;
+    };
+    let (path, fragment) = path
+        .split_once('#')
+        .map_or((path.as_str(), None), |(path, fragment)| {
+            (path, Some(fragment))
+        });
+    let (path, query) = path.split_once('?').unwrap_or((path, ""));
+    let mut params: Vec<(String, String)> = form_urlencoded::parse(query.as_bytes())
+        .into_owned()
+        .filter(|(name, _)| name != "shop")
+        .collect();
+    params.push(("shop".to_string(), shop));
+    let mut serializer = form_urlencoded::Serializer::new(String::new());
+    for (name, value) in &params {
+        serializer.append_pair(name, value);
+    }
+    let path = path.trim_end_matches('/');
+    let mut local = format!(
+        "/admin{}{path}?{}",
+        if path.is_empty() { "" } else { "/" },
+        serializer.finish()
+    );
+    if let Some(fragment) = fragment {
+        local.push('#');
+        local.push_str(fragment);
+    }
+    Some(local)
+}
+
+/// A URL of the app's own backend (`--app-url`) as lsf's admin page of it, for `shop`: where
+/// the merchant returns after a charge whose `returnUrl` is the app (`${SHOPIFY_APP_URL}/app`).
+/// On Shopify the page lands outside the admin and App Bridge sends it back in; lsf sends it
+/// there at once. `None` for another URL, or an app that is not embedded.
+fn app_admin_url(api: &AdminApi, url: &str, shop: &str) -> Option<String> {
+    let app = api.app()?;
+    if app.config.embedded == Some(false) {
+        return None;
+    }
+    let base = api.app_url()?;
+    let base = base.trim_end_matches('/');
+    let rest = url.strip_prefix(base)?;
+    if !(rest.is_empty() || rest.starts_with(['/', '?', '#'])) {
+        return None;
+    }
+    let (rest, fragment) = rest
+        .split_once('#')
+        .map_or((rest, None), |(rest, fragment)| (rest, Some(fragment)));
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let mut serializer = form_urlencoded::Serializer::new(String::new());
+    for (name, value) in form_urlencoded::parse(query.as_bytes()) {
+        if ![
+            "shop",
+            "host",
+            "embedded",
+            "id_token",
+            "hmac",
+            "session",
+            "timestamp",
+        ]
+        .contains(&name.as_ref())
+        {
+            serializer.append_pair(&name, &value);
+        }
+    }
+    if shop != api.default_shop() {
+        serializer.append_pair("shop", shop);
+    }
+    let query = serializer.finish();
+    let mut local = format!(
+        "/admin/apps/{}{}",
+        super::embedded::app_key(api),
+        path.trim_end_matches('/')
+    );
+    if !query.is_empty() {
+        local.push('?');
+        local.push_str(&query);
+    }
+    if let Some(fragment) = fragment {
+        local.push('#');
+        local.push_str(fragment);
+    }
+    Some(local)
+}
+
+/// The confirmation page of a charge, in the look of lsf's pages. Shopify's is a page of the
+/// admin, never inside the app's frame: a backend that redirected its frame here (the frame's
+/// proxy points `https://<shop>/admin/charges/…` at lsf) sees the page take the whole window.
 fn charge_page(shop: &str, charge: &billing::Charge) -> String {
     let what = match (charge.kind, charge.pending_capped_amount.is_some()) {
         ("AppPurchaseOneTime", _) => "Approve a one-time charge",
@@ -204,13 +319,15 @@ fn charge_page(shop: &str, charge: &billing::Charge) -> String {
         body.push_str(&format!(
             "<p>This charge is <span class=\"status\">{}</span>: there is nothing to decide.</p><p><a href=\"{}\">Back to the app</a></p>",
             escape_html(&charge.status.to_ascii_lowercase()),
-            escape_html(&charge.return_url)
+            escape_html(&local_admin_url(&charge.return_url).unwrap_or_else(|| charge.return_url.clone()))
         ));
     }
     body.push_str("</div></main>");
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>{} · {}</title><style>{STYLE}</style></head><body>{body}</body></html>",
+         <title>{} · {}</title><style>{STYLE}</style>\
+         <script>if (window.top !== window.self) {{ try {{ window.top.location.replace(window.location.href); }} catch (_) {{}} }}</script>\
+         </head><body>{body}</body></html>",
         escape_html(what),
         escape_html(&charge.app)
     )
@@ -333,5 +450,34 @@ fn bulk_result(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpRespons
             body: blob.bytes.to_vec(),
         },
         None => HttpResponse::error(404, format!("{shop} has no bulk operation result {file}")),
+    }
+}
+
+#[cfg(test)]
+mod local_admin_tests {
+    use super::local_admin_url;
+
+    #[test]
+    fn a_return_url_of_shopifys_admin_is_lsfs_admin() {
+        assert_eq!(
+            local_admin_url(
+                "https://admin.shopify.com/store/local-supply-co/apps/abc123?charge_id=2"
+            )
+            .as_deref(),
+            Some("/admin/apps/abc123?charge_id=2&shop=local-supply-co.myshopify.com")
+        );
+        assert_eq!(
+            local_admin_url("https://local-supply-co.myshopify.com/admin/apps/my-app/billing")
+                .as_deref(),
+            Some("/admin/apps/my-app/billing?shop=local-supply-co.myshopify.com")
+        );
+        assert_eq!(
+            local_admin_url("http://localhost:3000/app?charge_id=2"),
+            None
+        );
+        assert_eq!(
+            local_admin_url("https://local-supply-co.myshopify.com/products/x"),
+            None
+        );
     }
 }

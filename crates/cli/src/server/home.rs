@@ -314,8 +314,11 @@ fn function_json(
         ));
     }
     // Any other Function runs through an owner the app creates (a payment customization, …): a
-    // shop it was just installed on has none, and its checkout does not run the Function.
+    // shop it was just installed on has none, and its checkout does not run the Function. Said
+    // only when no scenario runs it either (one that names it in `extensions` does, as those
+    // `app init` writes): it is then tried nowhere.
     let owner_note = !store_note
+        && used_by == 0
         && function.owner_type().is_some()
         && owners.get(&function.handle) != Some(&true);
     if let (true, Some(owner)) = (owner_note, function.owner_type()) {
@@ -326,8 +329,8 @@ fn function_json(
             format!(
                 "{}, so the store's checkout does not run it, as on Shopify: the app creates one \
                  (`{}Create`), or the store data declares one, \
-                 `\"checkout\": {{\"functions\": {{\"{}\": {{\"enabled\": true}}}}}}`. The \
-                 scenarios that name it in `extensions` run it anyway",
+                 `\"checkout\": {{\"functions\": {{\"{}\": {{\"enabled\": true}}}}}}`. A \
+                 scenario that names it in `extensions` runs it anyway",
                 if declared {
                     format!("its {words} is disabled")
                 } else {
@@ -406,6 +409,7 @@ fn ui_extension_json(
     selection: &Selection,
     extension: &UiExtension,
     used_by: usize,
+    settings: &[crate::checkout::SettingsProblem],
 ) -> Json {
     let targets: Vec<Json> = extension
         .targets
@@ -429,7 +433,25 @@ fn ui_extension_json(
         .filter(|(_, value)| value.as_bool() == Some(true))
         .map(|(name, _)| name.as_str())
         .collect();
-    let problems = ui_problems(app, extension);
+    let mut problems = ui_problems(app, extension);
+    // The settings the store data or a scenario gives it that it does not declare. Those of a
+    // scenario are that scenario's: the others that run the extension are not wrong.
+    let own = problems.len();
+    let given: Vec<&crate::checkout::SettingsProblem> = settings
+        .iter()
+        .filter(|problem| problem.handle == extension.handle)
+        .collect();
+    problems.extend(
+        given
+            .iter()
+            .map(|settings| problem(Level::Warning, settings.to_string())),
+    );
+    let mut problems_listed = problems_json(&problems);
+    for (listed, settings) in problems_listed[own..].iter_mut().zip(&given) {
+        if let Some(file) = &settings.file {
+            listed["scenario"] = json!(file);
+        }
+    }
     let selected = selection.contains(&extension.handle);
     // Whether the checkout loads it: every error keeps it out (not built, an API version it
     // does not run, an `owner_type` that is wrong or missing); a warning does not.
@@ -456,7 +478,7 @@ fn ui_extension_json(
         "built": extension.built(),
         "selected": selected,
         "status": extension_status(&problems, &[], selected),
-        "problems": problems_json(&problems),
+        "problems": problems_listed,
         "scenarios": used_by,
         "loads": loads,
         "script": script,
@@ -718,6 +740,9 @@ struct Context<'a> {
     /// The worst level of the problems of each extension, by handle, from its own problems
     /// only (`None`: it has none).
     statuses: HashMap<String, Option<Level>>,
+    /// The settings the store data and the scenarios give the UI extensions that do not fit
+    /// them: a scenario's are its own warnings.
+    settings: &'a [crate::checkout::SettingsProblem],
 }
 
 /// The extensions a scenario runs: the ones it names, or every one that is selected.
@@ -785,11 +810,19 @@ fn scenario_json(context: &Context, scenario: &CheckoutScenario) -> Json {
         (Some(report), true) => report.failing_in(&scenario.name),
         _ => Vec::new(),
     };
-    // The worst of its own problems and the Functions that fail in it (errors), and of the
-    // problems of the extensions it runs (each at its own level).
+    // The settings it gives a UI extension that do not fit it: warnings of its own.
+    let warnings: Vec<String> = context
+        .settings
+        .iter()
+        .filter(|settings| settings.file.as_deref() == Some(scenario.file.as_str()))
+        .map(ToString::to_string)
+        .collect();
+    // The worst of its own problems and the Functions that fail in it (errors), its warnings,
+    // and the problems of the extensions it runs (each at its own level).
     let own = (!problems.is_empty() || !failing.is_empty()).then_some(Level::Error);
+    let warned = (!warnings.is_empty()).then_some(Level::Warning);
     let status = status_of(
-        own.into_iter().chain(
+        own.into_iter().chain(warned).chain(
             handles
                 .iter()
                 .filter_map(|handle| context.statuses.get(*handle).copied().flatten()),
@@ -806,6 +839,7 @@ fn scenario_json(context: &Context, scenario: &CheckoutScenario) -> Json {
         "facts": facts,
         "summary": summary,
         "problems": problems,
+        "warnings": warnings,
         // The extensions it runs: the ones it names, or every one (`allExtensions`).
         "allExtensions": scenario.extensions.is_none(),
         "functions": functions,
@@ -1003,6 +1037,48 @@ fn only_in_account(extension: &Json) -> bool {
 
 /// Everything that is wrong, errors first: the store data, the app, the Functions that fail
 /// when the scenarios run, the extensions, the scenarios.
+/// The theme app extensions of the home page, each with its blocks.
+fn theme_extensions_html(themes: &[Json]) -> String {
+    let items: String = themes
+        .iter()
+        .map(|extension| {
+            let blocks: String = extension["blocks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|block| match block["error"].as_str() {
+                    Some(error) => format!(
+                        "<li>{} <span class=\"lsf-muted\">{}</span></li>",
+                        code(text_of(&block["path"])),
+                        esc(error)
+                    ),
+                    None => format!(
+                        "<li>{} <span class=\"lsf-muted\">{} · {}</span></li>",
+                        code(text_of(&block["name"])),
+                        if block["embed"] == true {
+                            "app embed block"
+                        } else {
+                            "app block"
+                        },
+                        esc(text_of(&block["target"]))
+                    ),
+                })
+                .collect();
+            format!(
+                "<li>{} <span class=\"lsf-muted\">{}</span><ul class=\"lsf-h-plain\">{blocks}</ul></li>",
+                code(text_of(&extension["handle"])),
+                esc(text_of(&extension["path"]))
+            )
+        })
+        .collect();
+    format!(
+        "<div class=\"lsf-h-others\" data-section=\"theme-extensions\"><h3>Theme app extensions <span class=\"lsf-h-n\">{}</span></h3>\
+         <p class=\"lsf-muted lsf-h-note\">Their app blocks render in the theme of <code>serve --app</code>, where its templates name them; their app embed blocks where <code>config/settings_data.json</code> or <code>app.embeds</code> of the store data turn them on.</p>\
+         <ul class=\"lsf-h-plain\">{items}</ul></div>",
+        themes.len()
+    )
+}
+
 fn problem_list(
     state: &ServerState,
     app: &App,
@@ -1063,6 +1139,14 @@ fn problem_list(
             diagnostic.message.clone(),
             None,
         );
+    }
+    // The app blocks the theme names that render nothing.
+    if state.app.has_theme() {
+        for (place, message) in
+            crate::theme_extensions::warnings(&state.app.theme, &state.loaded().store)
+        {
+            add(&mut list, Level::Warning, "app", Some(place), message, None);
+        }
     }
     for (kind, extensions, label) in [
         ("function", functions, "Functions"),
@@ -1211,6 +1295,7 @@ fn build(
 ) -> Json {
     let selection =
         Selection::resolve(app, &options.extensions).unwrap_or_else(|_| Selection::all());
+    let settings = crate::checkout::settings_problems(app, store);
     // The discount Functions a discount of the store data, or of a scenario, runs.
     let discounted: std::collections::HashSet<&str> = store
         .checkout
@@ -1232,6 +1317,7 @@ fn build(
         root,
         report,
         statuses: HashMap::new(),
+        settings: &settings,
     };
 
     // How many scenarios that open run each extension, and the one its problems open: the one
@@ -1286,7 +1372,15 @@ fn build(
     let ui_extensions: Vec<Json> = app
         .ui_extensions
         .iter()
-        .map(|extension| ui_extension_json(app, &selection, extension, used(&extension.handle)))
+        .map(|extension| {
+            ui_extension_json(
+                app,
+                &selection,
+                extension,
+                used(&extension.handle),
+                &settings,
+            )
+        })
         .map(runs_in)
         .map(|mut extension| {
             // Where a problem the page finds when it loads the bundle shows (`home.js`): the
@@ -1320,7 +1414,7 @@ fn build(
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|problem| problem["store"] != true)
+            .filter(|problem| problem["store"] != true && problem["scenario"].is_null())
             .map(Level::of_json);
         context
             .statuses
@@ -1331,7 +1425,30 @@ fn build(
         .iter()
         .map(|scenario| scenario_json(&context, scenario))
         .collect();
-    let problems = problem_list(state, app, &functions, &ui_extensions, &scenarios, report);
+    let mut problems = problem_list(state, app, &functions, &ui_extensions, &scenarios, report);
+    // Settings for a UI extension the app does not have: the others are the extension's.
+    for unknown in settings
+        .iter()
+        .filter(|problem| app.ui_extension(&problem.handle).is_none())
+    {
+        problems.push(Problem {
+            level: Level::Warning,
+            kind: "store",
+            subject: Some(
+                unknown
+                    .file
+                    .clone()
+                    .unwrap_or_else(|| "checkout".to_string()),
+            ),
+            message: unknown.to_string(),
+            target: None,
+            link: None,
+            scenarios: Vec::new(),
+            open: None,
+            detail: None,
+        });
+    }
+    problems.sort_by_key(Problem::rank);
     let errors = problems
         .iter()
         .filter(|problem| problem.level == Level::Error)
@@ -1375,6 +1492,12 @@ fn build(
         "otherExtensions": app.other.iter()
             .map(|other| json!({"handle": other.handle, "type": other.kind}))
             .collect::<Vec<_>>(),
+        // The theme app extensions, with their app blocks and app embed blocks.
+        "themeExtensions": crate::theme_extensions::home(&crate::theme_extensions::of(
+            app,
+            state.app.theme.environment().clone(),
+            lsf_core::theme::Revalidate::Never,
+        )),
         "scenarios": scenarios,
         // The login profiles: the customers of the store data, each with a checkout logged in as
         // them. A scenario gives it a cart, the session's own may well be empty: the first that
@@ -1409,6 +1532,8 @@ fn build(
             "account": format!("{root}/account"),
             // lsf's admin with the app open, for an embedded app.
             "admin": state.admin.as_ref().and_then(|admin| admin.embedded_path()),
+            // GraphiQL on the Admin API, when the server runs it.
+            "graphiql": state.admin.as_ref().map(|_| lsf_app::admin::graphiql::PATH),
         },
     })
 }
@@ -2026,6 +2151,7 @@ fn scenario_html(scenario: &Json, dir: &str, group: Option<&str>) -> String {
     let functions = strings(&scenario["functions"]);
     let ui = strings(&scenario["uiExtensions"]);
     let problems = strings(&scenario["problems"]);
+    let warnings = strings(&scenario["warnings"]);
     let failing = strings(&scenario["failing"]);
     let description = scenario["description"].as_str().unwrap_or_default();
 
@@ -2069,6 +2195,11 @@ fn scenario_html(scenario: &Json, dir: &str, group: Option<&str>) -> String {
             "<span class=\"lsf-h-meta is-error\">Fails: {}</span>",
             esc(&failing.join(", "))
         ),
+        (None, true) if !warnings.is_empty() => format!(
+            "<span class=\"lsf-h-meta is-warning\" title=\"{}\">{}</span>",
+            esc(warnings[0]),
+            message_html(warnings[0], dir)
+        ),
         // What it is about: its description, else the cart and the buyer in a few words.
         (None, true) => {
             let text = if description.is_empty() {
@@ -2094,7 +2225,7 @@ fn scenario_html(scenario: &Json, dir: &str, group: Option<&str>) -> String {
         code(name),
         esc(text_of(&scenario["file"]))
     ));
-    for problem in &problems {
+    for problem in problems.iter().chain(&warnings) {
         body.push_str(&format!(
             "<pre class=\"lsf-home-problem\" title=\"{}\">{}</pre>",
             esc(problem),
@@ -2645,7 +2776,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
          <span class=\"lsf-brand\">{}</span><span class=\"lsf-muted\" title=\"{}\">{}</span></div>\
          <div class=\"lsf-h-top-actions\" data-section=\"open\">{}\
          <details class=\"lsf-h-more\"><summary class=\"lsf-h-btn\" aria-label=\"More ways to open a checkout\">More</summary>\
-         <div class=\"lsf-h-menu\"><a href=\"{}\">Every extension target</a><a href=\"{}\">Shop look</a></div></details>\
+         <div class=\"lsf-h-menu\"><a href=\"{}\">Every extension target</a><a href=\"{}\">Shop look</a>{}</div></details>\
          {}<a class=\"lsf-h-btn\" href=\"{}\" data-link=\"account\">Customer account</a>\
          <a class=\"lsf-h-btn is-primary\" href=\"{}\">Open the checkout</a></div></div>\
          <nav class=\"lsf-h-tabs\" role=\"tablist\" aria-label=\"Home\">{}{}{}{}</nav></header>",
@@ -2655,6 +2786,13 @@ pub fn render(home: &Json, check_now: &str) -> String {
         problem_pill(home),
         esc(text_of(&links["allTargets"])),
         esc(text_of(&links["shop"])),
+        links["graphiql"]
+            .as_str()
+            .map(|graphiql| format!(
+                "<a href=\"{}\" data-link=\"graphiql\" title=\"Queries on the Admin API\">GraphiQL</a>",
+                esc(graphiql)
+            ))
+            .unwrap_or_default(),
         links["admin"]
             .as_str()
             .map(|admin| format!(
@@ -2790,6 +2928,10 @@ pub fn render(home: &Json, check_now: &str) -> String {
         .as_array()
         .cloned()
         .unwrap_or_default();
+    let themes = home["themeExtensions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     for (index, list) in lists.iter().enumerate() {
         let with_problems = list
             .extensions
@@ -2843,6 +2985,9 @@ pub fn render(home: &Json, check_now: &str) -> String {
                     ""
                 }
             ));
+        }
+        if index == lists.len() - 1 && !themes.is_empty() {
+            body.push_str(&theme_extensions_html(&themes));
         }
         body.push_str("</div></section>");
     }

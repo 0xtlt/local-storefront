@@ -154,11 +154,12 @@ Some markup has no fix, and the report says why after `no automatic fix:`. Fix i
 ## In CI
 
 ```yaml
-- run: npx local-storefront check
+- run: npx local-storefront check --format github
 ```
 
 `npx local-storefront check` exits with `1` while a problem is left, so the build fails before
-Shopify refuses the upload. It reads the files and renders none: an error at render time (a
+Shopify refuses the upload. `--format github` shows each problem on its line of the pull
+request. It reads the files and renders none: an error at render time (a
 division by zero) needs `render --strict`. A complete workflow:
 [agents](agents.md#run-the-checks-in-ci); with browser tests: [testing](testing.md#in-ci).
 

@@ -1,7 +1,7 @@
 //! Reads a Shopify app directory: `shopify.app.toml` and `extensions/*/shopify.extension.toml`.
 //!
-//! Functions and checkout UI extensions are described; other extension types are listed and
-//! ignored. Problems that do not prevent loading (a missing build, an unknown target, a query
+//! Functions, checkout UI extensions and theme app extensions are described; other extension
+//! types are listed and ignored. Problems that do not prevent loading (a missing build, an unknown target, a query
 //! file that does not exist) become [`Diagnostic`]s so the checkout can still run what works.
 //!
 //! [`version`] holds the API releases of Functions and UI extensions, and the Function API schema
@@ -24,19 +24,94 @@ pub struct App {
     pub root: PathBuf,
     /// `name` of `shopify.app.toml`.
     pub name: Option<String>,
+    /// `client_id` of `shopify.app.toml`, else `SHOPIFY_API_KEY` ([`ClientIdSource`]).
     pub client_id: Option<String>,
+    /// Where `client_id` came from.
+    pub client_id_source: ClientIdSource,
+    /// What `shopify.app.toml` gets wrong for the backend and the embedded app: also in
+    /// `diagnostics`, and shown as banners in lsf's admin, with [`template_warnings`], which
+    /// the admin reads again at each load ([`App::admin_warnings_now`]).
+    pub admin_warnings: Vec<String>,
     pub handle: Option<String>,
     /// What else `shopify.app.toml` says that the backend of the app depends on: its URL, its
     /// access scopes, its webhook subscriptions. Read by the Admin API ([`crate::admin`]).
     pub config: AppConfig,
     pub functions: Vec<FunctionExtension>,
     pub ui_extensions: Vec<UiExtension>,
-    /// Extensions of another type (theme app extension, admin action, ...): listed, not used.
+    /// Theme app extensions (`type = "theme"`): their app blocks and app embed blocks render in
+    /// the theme (`lsf-theme`).
+    pub theme_extensions: Vec<ThemeExtension>,
+    /// Extensions of another type (admin action, ...): listed, not used.
     pub other: Vec<OtherExtension>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// Where the client id of the app came from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClientIdSource {
+    /// `client_id` of `shopify.app.toml`.
+    #[default]
+    File,
+    /// `SHOPIFY_API_KEY` of the environment, `shopify.app.toml` having none (`client_id = ""`,
+    /// as the app templates ship it).
+    Environment,
+    /// `SHOPIFY_API_KEY` of the app's `.env`.
+    DotEnv,
+    /// Nowhere: lsf uses its own (`lsf-local-client-id`).
+    None,
+}
+
+impl ClientIdSource {
+    /// Where the client id came from, as the start lines say it: `None` for the file.
+    pub fn describe(self) -> Option<&'static str> {
+        match self {
+            ClientIdSource::File => None,
+            ClientIdSource::Environment => Some(
+                "from SHOPIFY_API_KEY of the environment (shopify.app.toml has client_id = \"\")",
+            ),
+            ClientIdSource::DotEnv => Some(
+                "from SHOPIFY_API_KEY of the app's .env (shopify.app.toml has client_id = \"\")",
+            ),
+            ClientIdSource::None => Some(
+                "lsf's own: shopify.app.toml has client_id = \"\" and there is no SHOPIFY_API_KEY; set one of them to the backend's SHOPIFY_API_KEY",
+            ),
+        }
+    }
+}
+
+/// The topics of `[[events.subscription]]` lsf delivers.
+pub const EVENT_TOPICS: &[&str] = &["Product"];
+
+/// What the client id is when `shopify.app.toml` has none: the message of the warning, with
+/// the handle the admin opens the app at.
+pub fn no_client_id(handle: &str) -> String {
+    format!(
+        "shopify.app.toml has no client_id (client_id = \"\", as the app template ships it), and neither the environment nor the app's .env has SHOPIFY_API_KEY: lsf uses its own client id, {id}, and the admin opens the app at /admin/apps/{handle}. The backend's session tokens are refused unless its SHOPIFY_API_KEY is that value. Set client_id (shopify app config link writes it), or SHOPIFY_API_KEY in the app's .env to the backend's.",
+        id = crate::admin::domains::app::LOCAL_CLIENT_ID
+    )
+}
+
 impl App {
+    /// The handle lsf's admin names the app by (`/admin/apps/<handle>`): `handle` of
+    /// `shopify.app.toml`, else its `name` in lower case with dashes (as Shopify makes a handle
+    /// of a name), else the client id.
+    pub fn admin_handle(&self) -> Option<String> {
+        if let Some(handle) = self.handle.as_ref().filter(|handle| !handle.is_empty()) {
+            return Some(handle.clone());
+        }
+        let name = self.name.as_deref()?;
+        let mut slug = String::new();
+        for c in name.chars() {
+            if c.is_ascii_alphanumeric() {
+                slug.push(c.to_ascii_lowercase());
+            } else if !slug.is_empty() && !slug.ends_with('-') {
+                slug.push('-');
+            }
+        }
+        let slug = slug.trim_end_matches('-').to_string();
+        (!slug.is_empty()).then_some(slug)
+    }
+
     pub fn function(&self, handle: &str) -> Option<&FunctionExtension> {
         self.functions
             .iter()
@@ -47,6 +122,23 @@ impl App {
         self.ui_extensions
             .iter()
             .find(|extension| extension.handle == handle)
+    }
+
+    pub fn theme_extension(&self, handle: &str) -> Option<&ThemeExtension> {
+        self.theme_extensions
+            .iter()
+            .find(|extension| extension.handle == handle)
+    }
+
+    /// The handle the app has in the `shopify://apps/<handle>/blocks/...` types of its blocks:
+    /// `handle` of `shopify.app.toml`, else its `name` as a handle (`Product Reviews` →
+    /// `product-reviews`).
+    pub fn block_handle(&self) -> Option<String> {
+        self.handle
+            .clone()
+            .filter(|handle| !handle.is_empty())
+            .or_else(|| self.name.as_deref().map(handleize))
+            .filter(|handle| !handle.is_empty())
     }
 
     /// Leaves out the Functions, and what is said of them: `--no-functions`, which serves the
@@ -104,6 +196,10 @@ pub struct AppConfig {
     pub webhook_subscriptions: Vec<WebhookSubscriptionConfig>,
     /// `[app_proxy]`: `url`, `subpath`, `prefix`.
     pub app_proxy: Option<AppProxyConfig>,
+    /// `[events] api_version`.
+    pub events_api_version: Option<String>,
+    /// `[[events.subscription]]`, in the order of the file: Shopify's Events.
+    pub event_subscriptions: Vec<EventSubscriptionConfig>,
     /// The order metafield definitions it declares (`[order.metafields.<namespace>.<key>]`), in
     /// the order of the file: what copies a cart metafield onto the order placed from the cart.
     /// The definitions of the other owner types are not read.
@@ -141,6 +237,28 @@ pub struct WebhookSubscriptionConfig {
     pub include_fields: Vec<String>,
     /// `name`.
     pub name: Option<String>,
+}
+
+/// A `[[events.subscription]]` of `shopify.app.toml`: Shopify's Events
+/// (<https://shopify.dev/docs/apps/build/events-webhooks>), delivered with `Shopify-*` headers
+/// and a body of what `query` answers.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EventSubscriptionConfig {
+    /// `handle`: in the body and in `Shopify-Handle`.
+    pub handle: String,
+    /// `topic`: a resource, `Product`.
+    pub topic: String,
+    /// `actions`: `create`, `update`, `delete`.
+    pub actions: Vec<String>,
+    /// `triggers`: the fields whose change is an `update` (`product.variants.price`,
+    /// `product.*`).
+    pub triggers: Vec<String>,
+    /// `uri`: as for a webhook subscription.
+    pub uri: String,
+    /// `query`: a GraphQL Admin API query run with the ids of what changed.
+    pub query: Option<String>,
+    /// `query_filter`: Shopify's search syntax over what `query` answers.
+    pub query_filter: Option<String>,
 }
 
 /// `[app_proxy]` of `shopify.app.toml`.
@@ -392,6 +510,105 @@ impl UiExtension {
         self.buildable()
             .then(|| format!("{} app build {}", lsf_core::util::command(), self.handle))
     }
+
+    /// The fields of its `[extensions.settings]`: `(key, type)`, as declared.
+    pub fn setting_fields(&self) -> Vec<(&str, &str)> {
+        self.settings["fields"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|field| {
+                Some((field["key"].as_str()?, field["type"].as_str().unwrap_or("")))
+            })
+            .collect()
+    }
+
+    /// What is wrong with `values`, the settings a merchant gave it, against the fields of its
+    /// `[extensions.settings]`: a key that is not a field, a value not of the field's type, one
+    /// that is not among its `choices`. Each problem names the key.
+    pub fn check_settings(
+        &self,
+        values: &indexmap::IndexMap<String, Value>,
+    ) -> Vec<(String, String)> {
+        let fields = self.setting_fields();
+        let mut problems = Vec::new();
+        for (key, value) in values {
+            let Some((_, kind)) = fields.iter().find(|(field, _)| field == key) else {
+                let known: Vec<&str> = fields.iter().map(|(key, _)| *key).collect();
+                problems.push((
+                    key.clone(),
+                    if known.is_empty() {
+                        format!(
+                            "`{}` declares no settings (`[[extensions.settings.fields]]`)",
+                            self.handle
+                        )
+                    } else {
+                        let close = lsf_core::util::closest_match(key, known.iter().copied())
+                            .map(|close| format!("did you mean `{close}`? "))
+                            .unwrap_or_default();
+                        format!(
+                            "`{}` has no setting `{key}`: {close}its fields are {}",
+                            self.handle,
+                            known.join(", ")
+                        )
+                    },
+                ));
+                continue;
+            };
+            let fits = match *kind {
+                "boolean" => value.is_boolean(),
+                "number_integer" => value.is_i64() || value.is_u64(),
+                "number_decimal" => value.is_number(),
+                // Text, dates, references: a string, as the editor stores them.
+                _ => value.is_string(),
+            };
+            if !fits {
+                let wanted = match *kind {
+                    "boolean" => "`true` or `false`",
+                    "number_integer" => "a whole number",
+                    "number_decimal" => "a number",
+                    _ => "a string",
+                };
+                problems.push((
+                    key.clone(),
+                    format!(
+                        "`{key}` is a `{kind}` field of `{}`: its value is {wanted}, not `{value}`",
+                        self.handle
+                    ),
+                ));
+                continue;
+            }
+            let field = self.settings["fields"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|field| field["key"] == key.as_str());
+            let choices: Option<Vec<Value>> = field
+                .and_then(|field| field["validations"].as_array())
+                .into_iter()
+                .flatten()
+                .find(|validation| validation["name"] == "choices")
+                .and_then(|validation| match &validation["value"] {
+                    Value::String(text) => serde_json::from_str::<Vec<Value>>(text).ok(),
+                    Value::Array(items) => Some(items.clone()),
+                    _ => None,
+                });
+            if let Some(choices) = choices
+                && !choices.contains(value)
+            {
+                let listed: Vec<String> = choices.iter().map(Value::to_string).collect();
+                problems.push((
+                    key.clone(),
+                    format!(
+                        "`{key}` of `{}` is one of {}, not `{value}`",
+                        self.handle,
+                        listed.join(", ")
+                    ),
+                ));
+            }
+        }
+        problems
+    }
 }
 
 /// A metafield a checkout UI extension declares: `[[extensions.metafields]]`, or
@@ -412,6 +629,32 @@ pub struct UiTarget {
     pub target: String,
     /// The source module the target renders, as written (`./src/Checkout.jsx`).
     pub module: Option<String>,
+}
+
+/// A theme app extension: `extensions/<dir>/shopify.extension.toml` with `type = "theme"`, and its
+/// `blocks/`, `snippets/`, `assets/` and `locales/`.
+#[derive(Clone, Debug)]
+pub struct ThemeExtension {
+    pub handle: String,
+    pub name: Option<String>,
+    /// `uid`: the id Shopify CLI writes, the last part of the `shopify://apps/...` types of the
+    /// blocks when it has one.
+    pub uid: Option<String>,
+    /// The directory of the extension.
+    pub dir: PathBuf,
+}
+
+/// A text as a Shopify handle: lowercase letters and digits, the rest turned into single dashes.
+fn handleize(text: &str) -> String {
+    let mut handle = String::new();
+    for c in text.chars().flat_map(char::to_lowercase) {
+        if c.is_alphanumeric() {
+            handle.push(c);
+        } else if !handle.is_empty() && !handle.ends_with('-') {
+            handle.push('-');
+        }
+    }
+    handle.trim_end_matches('-').to_string()
 }
 
 #[derive(Clone, Debug)]
@@ -626,7 +869,35 @@ pub fn load(dir: &Path) -> Result<App, String> {
     }
 
     app.check_handles();
+    app.check_template();
     Ok(app)
+}
+
+/// What the React Router template (`app/shopify.server.ts`) lacks to run against lsf: the
+/// fetch function that sends the Admin API to lsf, and the `headers` of `app/routes/app.tsx`
+/// that keep the library's reauthorize header. Nothing for another app.
+pub fn template_warnings(root: &Path) -> Vec<String> {
+    let read = |path: &str| std::fs::read_to_string(root.join(path)).ok();
+    let Some(server) = read("app/shopify.server.ts").or_else(|| read("app/shopify.server.js"))
+    else {
+        return Vec::new();
+    };
+    let mut warnings = Vec::new();
+    if !server.contains("setAbstractFetchFunc") {
+        warnings.push(
+            "app/shopify.server.ts does not replace the fetch function of @shopify/shopify-api (setAbstractFetchFunc): its token exchange and Admin API calls go to Shopify, not to lsf. Add the recipe of \"Point the backend at lsf\" in lsf's docs/admin.md, and set LSF_URL."
+                .to_string(),
+        );
+    }
+    if let Some(layout) = read("app/routes/app.tsx").or_else(|| read("app/routes/app.jsx"))
+        && !layout.contains("boundary.headers")
+    {
+        warnings.push(
+            "app/routes/app.tsx does not export headers (export const headers = (headersArgs) => boundary.headers(headersArgs)): a 401 of billing.request loses X-Shopify-API-Request-Failure-Reauthorize-Url, and App Bridge has nowhere to send the merchant."
+                .to_string(),
+        );
+    }
+    warnings
 }
 
 impl App {
@@ -668,6 +939,29 @@ impl App {
         });
     }
 
+    /// What the React Router template lacks to run against lsf ([`template_warnings`]), as
+    /// diagnostics of the start. lsf's admin reads the files again at each load.
+    fn check_template(&mut self) {
+        for message in template_warnings(&self.root) {
+            self.warn(None, message);
+        }
+    }
+
+    /// What lsf's admin says of the app now: the warnings of `shopify.app.toml` read at start,
+    /// and those of the template's files read again, so that a fixed file loses its banner at
+    /// the next load.
+    pub fn admin_warnings_now(&self) -> Vec<String> {
+        let mut warnings = self.admin_warnings.clone();
+        warnings.extend(template_warnings(&self.root));
+        warnings
+    }
+
+    /// A warning of `shopify.app.toml` that lsf's admin shows too.
+    fn warn_admin(&mut self, message: String) {
+        self.admin_warnings.push(message.clone());
+        self.warn(None, message);
+    }
+
     fn error(&mut self, extension: Option<&str>, message: String) {
         self.diagnostics.push(Diagnostic {
             severity: Severity::Error,
@@ -684,6 +978,11 @@ impl App {
             .iter()
             .map(|function| &function.handle)
             .chain(self.ui_extensions.iter().map(|extension| &extension.handle))
+            .chain(
+                self.theme_extensions
+                    .iter()
+                    .map(|extension| &extension.handle),
+            )
             .chain(self.other.iter().map(|extension| &extension.handle));
         for handle in handles {
             if !seen.insert(handle.clone()) {
@@ -732,10 +1031,56 @@ fn load_app_config(app: &mut App) {
     };
     let text = |key: &str| table.get(key).and_then(|v| v.as_str()).map(str::to_string);
     app.name = text("name");
-    app.client_id = text("client_id");
+    // `client_id = ""`, as the app template ships it (a file without the key is not one of
+    // Shopify's CLI: no warning).
+    let declared_empty = text("client_id").is_some_and(|id| id.trim().is_empty());
+    app.client_id = text("client_id").filter(|id| !id.trim().is_empty());
     app.handle = text("handle");
+    let dotenv_key = crate::admin::auth::dotenv_value(&app.root.join(".env"), "SHOPIFY_API_KEY");
+    match &app.client_id {
+        // The app template ships `client_id = ""`: the backend's key is in its environment.
+        None => {
+            let environment = std::env::var("SHOPIFY_API_KEY")
+                .ok()
+                .filter(|key| !key.trim().is_empty());
+            (app.client_id, app.client_id_source) = match (environment, dotenv_key) {
+                (Some(key), _) => (Some(key), ClientIdSource::Environment),
+                (None, Some(key)) => (Some(key), ClientIdSource::DotEnv),
+                (None, None) => {
+                    if declared_empty {
+                        let handle = app.admin_handle().unwrap_or_else(|| {
+                            crate::admin::domains::app::LOCAL_CLIENT_ID.to_string()
+                        });
+                        app.warn_admin(no_client_id(&handle));
+                        (None, ClientIdSource::None)
+                    } else {
+                        (None, ClientIdSource::File)
+                    }
+                }
+            };
+        }
+        Some(id) => {
+            if let Some(key) = dotenv_key.filter(|key| key != id) {
+                app.warn_admin(
+                    format!(
+                        "client_id of shopify.app.toml is {id}, and SHOPIFY_API_KEY of the app's .env is {key}: the session tokens lsf mints are for {id}, which a backend whose apiKey is {key} refuses. Make them the same."
+                    ),
+                );
+            }
+        }
+    }
     app.config = app_config(&table);
     app.config.order_metafields = declared_definitions(app, &table, "order");
+    for event in app.config.event_subscriptions.clone() {
+        if !EVENT_TOPICS.contains(&event.topic.as_str()) {
+            app.warn_admin(format!(
+                "shopify.app.toml: [[events.subscription]] {}: lsf delivers the Events of topic {} only, not of {}: nothing is sent for it",
+                event.handle,
+                EVENT_TOPICS.join(", "),
+                event.topic
+            ));
+        }
+    }
 }
 
 /// The metafield definitions `shopify.app.toml` declares for an owner type
@@ -839,7 +1184,29 @@ fn app_config(table: &toml::Table) -> AppConfig {
         subpath: text_in(Some(proxy), "subpath").unwrap_or_default(),
         prefix: text_in(Some(proxy), "prefix").unwrap_or_default(),
     });
+    let events = section("events");
+    let event_subscriptions = events
+        .and_then(|events| events.get("subscription"))
+        .and_then(|value| value.as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.as_table())
+                .map(|entry| EventSubscriptionConfig {
+                    handle: text_in(Some(entry), "handle").unwrap_or_default(),
+                    topic: text_in(Some(entry), "topic").unwrap_or_default(),
+                    actions: strings(entry.get("actions")),
+                    triggers: strings(entry.get("triggers")),
+                    uri: text_in(Some(entry), "uri").unwrap_or_default(),
+                    query: text_in(Some(entry), "query"),
+                    query_filter: text_in(Some(entry), "query_filter"),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     AppConfig {
+        events_api_version: text_in(events, "api_version"),
+        event_subscriptions,
         application_url: text_in(Some(table), "application_url"),
         embedded: table.get("embedded").and_then(|value| value.as_bool()),
         scopes: strings(access_scopes.and_then(|scopes| scopes.get("scopes"))),
@@ -921,6 +1288,16 @@ fn load_extension_file(app: &mut App, file: &Path) {
                 let extension = load_ui_extension(app, &dir, &handle, name, api_version, entry);
                 app.ui_extensions.push(extension);
             }
+            "theme" => app.theme_extensions.push(ThemeExtension {
+                handle,
+                name,
+                uid: entry
+                    .get("uid")
+                    .or_else(|| table.get("uid"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                dir: dir.clone(),
+            }),
             "" => app.error(Some(&handle), "no `type` in the extension file".to_string()),
             other => app.other.push(OtherExtension {
                 handle,
@@ -1361,6 +1738,77 @@ fn toml_to_json(value: &toml::Value) -> Value {
 mod tests {
     use super::*;
 
+    /// The settings a merchant gives an extension are checked against its fields: the key, the
+    /// type of the value, and its `choices`.
+    #[test]
+    fn the_settings_of_an_extension_are_checked_against_its_fields() {
+        let root = temp_app("settings-fields");
+        write(&root, "shopify.app.toml", "name = \"Demo\"\n");
+        write(
+            &root,
+            "extensions/banner/shopify.extension.toml",
+            r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Banner"
+type = "ui_extension"
+handle = "banner"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+  module = "./src/Checkout.jsx"
+
+  [extensions.settings]
+    [[extensions.settings.fields]]
+    key = "title"
+    type = "single_line_text_field"
+    [[extensions.settings.fields]]
+    key = "threshold"
+    type = "number_decimal"
+    [[extensions.settings.fields]]
+    key = "count"
+    type = "number_integer"
+    [[extensions.settings.fields]]
+    key = "show"
+    type = "boolean"
+    [[extensions.settings.fields]]
+    key = "status"
+    type = "single_line_text_field"
+      [[extensions.settings.fields.validations]]
+      name = "choices"
+      value = '["info", "warning"]'
+"#,
+        );
+        let app = load(&root).unwrap();
+        let banner = app.ui_extension("banner").unwrap();
+        let values = |json: serde_json::Value| -> indexmap::IndexMap<String, Value> {
+            serde_json::from_value(json).unwrap()
+        };
+        let fine = values(serde_json::json!({
+            "title": "Hi", "threshold": 12.5, "count": 3, "show": true, "status": "info"
+        }));
+        assert_eq!(banner.check_settings(&fine), vec![]);
+        let wrong = values(serde_json::json!({
+            "titel": "Hi", "count": 1.5, "show": "yes", "status": "error", "threshold": "1"
+        }));
+        let problems: Vec<String> = banner
+            .check_settings(&wrong)
+            .into_iter()
+            .map(|(key, message)| format!("{key}: {message}"))
+            .collect();
+        assert_eq!(
+            problems,
+            [
+                "titel: `banner` has no setting `titel`: did you mean `title`? its fields are title, threshold, count, show, status",
+                "count: `count` is a `number_integer` field of `banner`: its value is a whole number, not `1.5`",
+                "show: `show` is a `boolean` field of `banner`: its value is `true` or `false`, not `\"yes\"`",
+                "status: `status` of `banner` is one of \"info\", \"warning\", not `\"error\"`",
+                "threshold: `threshold` is a `number_decimal` field of `banner`: its value is a number, not `\"1\"`",
+            ]
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     fn write(root: &Path, path: &str, content: &str) {
         let file = root.join(path);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -1373,6 +1821,81 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn an_empty_client_id_is_the_shopify_api_key_of_the_dotenv() {
+        let root = temp_app("empty-client-id");
+        write(
+            &root,
+            "shopify.app.toml",
+            "client_id = \"\"\nname = \"Gift Notes & Co\"\n",
+        );
+        let app = load(&root).unwrap();
+        if std::env::var("SHOPIFY_API_KEY").is_err() {
+            assert_eq!(app.client_id, None);
+            assert_eq!(app.client_id_source, ClientIdSource::None);
+            assert_eq!(app.admin_warnings, vec![no_client_id("gift-notes-co")]);
+            assert!(app.admin_warnings[0].contains("/admin/apps/gift-notes-co."));
+            write(&root, ".env", "SHOPIFY_API_KEY=abc123\n");
+            let app = load(&root).unwrap();
+            assert_eq!(app.client_id.as_deref(), Some("abc123"));
+            assert_eq!(app.client_id_source, ClientIdSource::DotEnv);
+            assert!(app.admin_warnings.is_empty());
+        }
+        assert_eq!(app.admin_handle().as_deref(), Some("gift-notes-co"));
+        // A key that differs from the file's is said.
+        write(
+            &root,
+            "shopify.app.toml",
+            "client_id = \"xyz\"\nhandle = \"notes\"\n",
+        );
+        write(&root, ".env", "SHOPIFY_API_KEY=abc123\n");
+        let app = load(&root).unwrap();
+        assert_eq!(app.client_id.as_deref(), Some("xyz"));
+        assert_eq!(app.admin_handle().as_deref(), Some("notes"));
+        assert!(app.admin_warnings[0].contains("SHOPIFY_API_KEY of the app's .env is abc123"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn says_what_the_react_router_template_lacks() {
+        let root = temp_app("template-checks");
+        write(&root, "shopify.app.toml", "client_id = \"abc\"\n");
+        write(
+            &root,
+            "app/shopify.server.ts",
+            "import { shopifyApp } from \"x\";\n",
+        );
+        write(
+            &root,
+            "app/routes/app.tsx",
+            "export default function App() {}\n",
+        );
+        let app = load(&root).unwrap();
+        let warnings = app.admin_warnings_now();
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(warnings[0].contains("setAbstractFetchFunc"));
+        assert!(warnings[1].contains("boundary.headers"));
+        assert!(
+            app.diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("setAbstractFetchFunc"))
+        );
+        write(
+            &root,
+            "app/shopify.server.ts",
+            "import { setAbstractFetchFunc } from \"@shopify/shopify-api/runtime\";\n",
+        );
+        write(
+            &root,
+            "app/routes/app.tsx",
+            "export const headers = (headersArgs) => boundary.headers(headersArgs);\n",
+        );
+        // The admin reads the files again: the app loaded before the fix has no warning now.
+        assert!(app.admin_warnings_now().is_empty());
+        assert!(load(&root).unwrap().admin_warnings_now().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1691,8 +2214,11 @@ handle = "banner"
         assert_eq!(banner.capabilities["network_access"], Value::Bool(true));
         assert_eq!(banner.settings["fields"][0]["key"], "title");
 
-        assert_eq!(app.other.len(), 1);
-        assert_eq!(app.other[0].kind, "theme");
+        assert!(app.other.is_empty());
+        let theme = app.theme_extension("theme-ext").unwrap();
+        assert_eq!(theme.name.as_deref(), Some("Theme"));
+        assert!(theme.dir.ends_with("extensions/theme"));
+        assert_eq!(app.block_handle().as_deref(), Some("demo"));
 
         let messages: Vec<String> = app.diagnostics.iter().map(ToString::to_string).collect();
         assert!(

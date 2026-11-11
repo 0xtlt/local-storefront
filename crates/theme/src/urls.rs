@@ -42,6 +42,26 @@ pub fn asset_url(site: &Site, name: &str) -> String {
     )
 }
 
+/// The URL of a file of a theme app extension's `assets/`:
+/// `//host/cdn/extensions/<id>/assets/app.js?v=123`. Shopify serves them from
+/// `cdn.shopify.com/extensions/<id>/<version>/assets/`.
+pub fn extension_asset_url(
+    site: &Site,
+    extension: &crate::app_extensions::Extension,
+    name: &str,
+) -> String {
+    let version = match extension.files().version(&format!("assets/{name}")) {
+        0 => version_of(name),
+        version => version,
+    };
+    format!(
+        "{}/cdn/extensions/{}/assets/{}?v={version}",
+        cdn_origin(site),
+        encode_path(extension.id()),
+        encode_path(name),
+    )
+}
+
 /// The URL of a file in the data directory's `files/`: `//host/cdn/shop/files/shirt.jpg?v=123`.
 pub fn file_url(site: &Site, src: &str) -> String {
     format!(

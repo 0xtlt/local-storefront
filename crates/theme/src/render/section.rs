@@ -11,7 +11,9 @@ use lsf_liquid::{BlockBody, Context, Error, Hash, Object, Result, Value};
 
 use super::settings;
 use super::state::RenderState;
-use crate::theme::{BlockInstance, Schema, SectionInstance, Wrapper};
+use crate::app_extensions::is_app_type;
+use crate::app_extensions::render::{self as app_blocks, AppBlockData};
+use crate::theme::{BlockInstance, LiquidFile, Schema, SectionInstance, Wrapper};
 
 /// The context variable holding the [`Container`] `content_for` renders blocks from. The name
 /// cannot be written in Liquid, so templates cannot see or shadow it.
@@ -80,6 +82,8 @@ pub struct BlockDrop {
     /// The body of a `{% block %}` call. The Liquid reference reads it as `content`, the
     /// developer preview's guide as `block.content`: both work.
     pub content: Option<Value>,
+    /// What `{% render block %}` renders, for an app block of `section.blocks`.
+    pub app: Option<Arc<AppBlockData>>,
 }
 
 impl Object for BlockDrop {
@@ -131,10 +135,6 @@ fn theme_block_id(section_id: &str, key: &str) -> String {
     format!("A{}__{key}", &short_hash(section_id)[..15])
 }
 
-fn is_app_block(kind: &str) -> bool {
-    kind.starts_with("shopify://apps/") || kind == "@app"
-}
-
 /// Whether a block type is a theme block (`blocks/<type>.liquid`) rather than one defined
 /// inline by the section's schema.
 fn is_theme_block(state: &RenderState, section_schema: &Schema, kind: &str) -> bool {
@@ -175,8 +175,18 @@ fn section_blocks(
         .block_order
         .iter()
         .filter_map(|key| instance.blocks.get(key).map(|block| (key, block)))
-        .filter(|(_, block)| !block.disabled && !is_app_block(&block.kind))
-        .map(|(key, block)| {
+        .filter(|(_, block)| !block.disabled)
+        .filter_map(|(key, block)| {
+            if is_app_type(&block.kind) {
+                return app_blocks::section_block(
+                    state,
+                    ctx,
+                    key,
+                    &block.kind,
+                    &block.settings,
+                    &[("closest", closest_value.clone())],
+                );
+            }
             let theme_block = is_theme_block(state, schema, &block.kind);
             let (id, defs) = if theme_block {
                 (
@@ -195,7 +205,7 @@ fn section_blocks(
                         .unwrap_or_default(),
                 )
             };
-            Value::object(BlockDrop {
+            Some(Value::object(BlockDrop {
                 id,
                 kind: block.kind.clone(),
                 settings: settings::resolve(
@@ -206,7 +216,8 @@ fn section_blocks(
                     &[("closest", closest_value.clone())],
                 ),
                 content: None,
-            })
+                app: None,
+            }))
         })
         .collect();
     Value::array(blocks)
@@ -220,6 +231,30 @@ pub struct Placement<'a> {
     pub location: &'a str,
     /// The section group file name, for the wrapper's class.
     pub group: Option<&'a str>,
+}
+
+/// Records what Shopify refuses in the schema of a section or a theme block as errors of the
+/// page, once each: Shopify would not have taken the file, and its settings lose their defaults.
+fn report_schema(ctx: &Context, path: &str, file: &LiquidFile) {
+    if file.schema_problems.is_empty() {
+        return;
+    }
+    let name: Arc<str> = path.strip_suffix(".liquid").unwrap_or(path).into();
+    let recorded: Vec<String> = ctx.errors().iter().map(ToString::to_string).collect();
+    for problem in &file.schema_problems {
+        let message = if problem.message.starts_with("the {% schema %}") {
+            problem.message.clone()
+        } else {
+            format!("{{% schema %}}: {}", problem.message)
+        };
+        let line = u32::try_from(problem.line).unwrap_or(u32::MAX);
+        let error = Error::standard(message)
+            .with_template(Some(name.clone()))
+            .with_line(line);
+        if !recorded.contains(&error.to_string()) {
+            ctx.handle_error(error, line);
+        }
+    }
 }
 
 /// Renders a section: its Liquid, wrapped in `<div id="shopify-section-...">`.
@@ -237,12 +272,31 @@ pub fn render_section(
     let blocks_before = state.blocks_so_far();
     let theme = &state.site.theme;
     let path = format!("sections/{}.liquid", instance.kind);
+    // The section Shopify wraps an app block in when a merchant adds it as a section of its
+    // own: the theme's `sections/apps.liquid`, else Shopify's.
+    if instance.kind == "apps" && !theme.files().exists(&path) {
+        return render_apps_section(ctx, placement, instance, state, blocks_before, started);
+    }
     let file = theme.liquid(&path)?.ok_or_else(|| {
-        Error::standard(format!(
+        let mut message = format!(
             "Error in tag 'section' - '{}' is not a valid section type",
             instance.kind
-        ))
+        );
+        let sections: Vec<String> = theme
+            .files()
+            .list("sections")
+            .iter()
+            .filter_map(|file| file.strip_suffix(".liquid"))
+            .map(str::to_string)
+            .collect();
+        if let Some(close) =
+            lsf_core::util::closest_match(&instance.kind, sections.iter().map(String::as_str))
+        {
+            message.push_str(&format!(" (did you mean '{close}'?)"));
+        }
+        Error::standard(message)
     })?;
+    report_schema(ctx, &path, &file);
     let schema = &file.schema;
     let closest = page_closest(ctx);
     let section = Value::object(SectionDrop {
@@ -295,6 +349,67 @@ pub fn render_section(
     ))
 }
 
+/// The section of type `apps` of a theme that has no `sections/apps.liquid`: its app blocks one
+/// after the other, as Shopify renders them.
+fn render_apps_section(
+    ctx: &Context,
+    placement: &Placement<'_>,
+    instance: &SectionInstance,
+    state: &RenderState,
+    blocks_before: usize,
+    started: Instant,
+) -> Result<String> {
+    let closest = page_closest(ctx);
+    let schema = Schema::default();
+    let section = Value::object(SectionDrop {
+        id: placement.id.clone(),
+        kind: instance.kind.clone(),
+        settings: Value::hash(Hash::new()),
+        blocks: section_blocks(state, ctx, &placement.id, &schema, instance, &closest),
+        index: state.next_section_index(placement.location),
+        location: placement.location.to_string(),
+    });
+    let mut content = String::new();
+    for key in &instance.block_order {
+        let Some(block) = instance
+            .blocks
+            .get(key)
+            .filter(|block| !block.disabled && is_app_type(&block.kind))
+        else {
+            continue;
+        };
+        let call = app_blocks::Call {
+            kind: &block.kind,
+            id: key.clone(),
+            key,
+            values: &block.settings,
+            section: section.clone(),
+            closest: closest.clone(),
+            variables: &[],
+            settings: None,
+        };
+        match app_blocks::render_block(ctx, call) {
+            Ok(html) => content.push_str(&html),
+            Err(error) => content.push_str(&ctx.handle_error(error, 1)),
+        }
+    }
+    state.record_section(
+        &placement.id,
+        &instance.kind,
+        started.elapsed(),
+        blocks_before,
+    );
+    let mut classes = String::from("shopify-section");
+    if let Some(group) = placement.group {
+        classes.push_str(" shopify-section-group-");
+        classes.push_str(group);
+    }
+    Ok(format!(
+        "<div id=\"shopify-section-{}\" class=\"{classes}\">{content}</div>",
+        placement.id
+    ))
+}
+
 /// Renders one theme block (`blocks/<type>.liquid`) of a container.
 pub fn render_block(
     ctx: &Context,
@@ -304,8 +419,20 @@ pub fn render_block(
     closest: &Arc<Hash>,
     variables: &[(String, Value)],
 ) -> Result<String> {
-    if is_app_block(&instance.kind) {
-        return Ok(String::new());
+    if is_app_type(&instance.kind) {
+        return app_blocks::render_block(
+            ctx,
+            app_blocks::Call {
+                kind: &instance.kind,
+                id: theme_block_id(&container.section_id, key),
+                key,
+                values: &instance.settings,
+                section: container.section.clone(),
+                closest: closest.clone(),
+                variables,
+                settings: None,
+            },
+        );
     }
     let started = Instant::now();
     let _span = ctx
@@ -318,6 +445,7 @@ pub fn render_block(
         .theme
         .liquid(&path)?
         .ok_or_else(|| Error::standard(format!("Could not find asset {path}")))?;
+    report_schema(ctx, &path, &file);
     let schema = &file.schema;
     let id = theme_block_id(&container.section_id, key);
     let closest_value = Value::object(ClosestDrop(closest.clone()));
@@ -335,6 +463,7 @@ pub fn render_block(
             ],
         ),
         content: None,
+        app: None,
     });
 
     let entered = state.enter_block(&id, key, &instance.kind)?;
@@ -402,6 +531,7 @@ pub fn render_called_block(
             .theme
             .liquid(&path)?
             .ok_or_else(|| Error::standard(format!("Could not find asset {path}")))?;
+        report_schema(ctx, &path, &file);
         // Each call is a block of its own, numbered in the order the page renders them.
         let key = format!("{kind}-{}", state.blocks_so_far() + 1);
         let id = theme_block_id("block", &key);
@@ -442,6 +572,7 @@ pub fn render_called_block(
             kind: kind.to_string(),
             settings: Value::hash(settings),
             content: Some(content.clone()),
+            app: None,
         });
 
         let mut inner = ctx.isolated()?;

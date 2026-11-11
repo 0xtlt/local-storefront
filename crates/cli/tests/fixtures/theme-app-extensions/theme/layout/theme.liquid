@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="{{ request.locale.iso_code }}">
+  <head>
+    <title>{{ page_title }}</title>
+    {{ content_for_header }}
+  </head>
+  <body>
+    {% sections 'footer-group' %}
+    <main>{{ content_for_layout }}</main>
+  </body>
+</html>

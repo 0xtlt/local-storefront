@@ -315,19 +315,78 @@ fn defaults_are_reported() {
     let mut shop = demo();
     let answer = run(
         &mut shop,
-        r#"{ productByHandle(handle: "wool-beanie") { title category { id } descriptionPlainSummary events(first: 1) { nodes { id } } } }"#,
+        r#"{ productByHandle(handle: "wool-beanie") { title category { id } descriptionPlainSummary description events(first: 1) { nodes { id } } } }"#,
     );
     let product = &answer["data"]["productByHandle"];
     assert_eq!(product["category"], Value::Null);
-    assert_eq!(product["descriptionPlainSummary"], json!(""));
+    // A deprecated field reads the one that replaced it ("Use `description` instead."), with
+    // what it said of itself: on one line, truncated to 60 characters.
+    assert_ne!(product["description"], json!(""));
+    assert_eq!(
+        product["descriptionPlainSummary"],
+        json!(super::plain_summary(
+            product["description"].as_str().unwrap()
+        ))
+    );
+    assert!(
+        product["descriptionPlainSummary"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count()
+            <= 60
+    );
+    // lsf keeps no `Event`s: the empty list is reported, as every list lsf does not compute.
     assert_eq!(product["events"]["nodes"], json!([]));
     assert_eq!(
         answer["extensions"]["lsf"],
         json!({
-            "defaulted": ["productByHandle.category", "productByHandle.descriptionPlainSummary"],
-            "defaultedFields": ["Product.category", "Product.descriptionPlainSummary"],
+            "defaulted": ["productByHandle.category", "productByHandle.events"],
+            "defaultedFields": ["Product.category", "Product.events"],
         })
     );
+}
+
+/// Every deprecated field Shopify replaced by another of its object reads the other's value,
+/// not a default: the money fields of the line items, drafts, orders and transactions, the
+/// counts, the URLs.
+#[test]
+fn deprecated_fields_read_their_successors() {
+    let mut shop = demo();
+    let answer = run(
+        &mut shop,
+        r#"{ orders(first: 1) { nodes { totalPrice totalPriceSet { shopMoney { amount } } subtotalPrice totalTax totalDiscounts
+            totalShippingPrice totalReceived totalRefunded netPayment totalCapturable cartDiscountAmount
+            lineItems(first: 1) { nodes { originalUnitPrice originalUnitPriceSet { shopMoney { amount } } originalTotal discountedTotal
+                discountedUnitPrice totalDiscount unfulfilledDiscountedTotal unfulfilledOriginalTotal } }
+            transactions(first: 1) { amount amountV2 { amount } amountSet { shopMoney { amount } } } } }
+          products(first: 1) { nodes { totalVariants variantsCount { count } bodyHtml descriptionHtml } } }"#,
+    );
+    assert!(
+        answer["extensions"]["lsf"].get("defaulted").is_none(),
+        "{answer}"
+    );
+    let order = &answer["data"]["orders"]["nodes"][0];
+    let money = |amount: &Value| {
+        crate::admin::state::value::money(crate::admin::state::value::cents(Some(amount)))
+    };
+    assert_eq!(
+        order["totalPrice"],
+        json!(money(&order["totalPriceSet"]["shopMoney"]["amount"]))
+    );
+    let line = &order["lineItems"]["nodes"][0];
+    assert_eq!(
+        line["originalUnitPrice"],
+        json!(money(&line["originalUnitPriceSet"]["shopMoney"]["amount"]))
+    );
+    let transaction = &order["transactions"][0];
+    assert_eq!(
+        transaction["amountV2"]["amount"],
+        transaction["amountSet"]["shopMoney"]["amount"]
+    );
+    let product = &answer["data"]["products"]["nodes"][0];
+    assert_eq!(product["totalVariants"], product["variantsCount"]["count"]);
+    assert_eq!(product["bodyHtml"], product["descriptionHtml"]);
 }
 
 #[test]
@@ -801,4 +860,266 @@ fn a_version_adapts_the_arguments_it_is_given_and_the_fields_it_reads() {
         &format!("{{ product(id: \"{gid}\") {{ title }} }}"),
     );
     assert_eq!(read["data"]["product"]["title"], json!("RAIN JACKET"));
+}
+
+/// A product created by a token without `write_publications` is on no channel, and the answer
+/// says how to put it on the storefront; with the scope, it says nothing.
+#[test]
+fn a_product_created_without_the_publication_scopes_says_it_is_not_on_the_storefront() {
+    let mut shop = demo();
+    let create = r#"mutation { productCreate(product: {title: "Desk lamp"}) { product { id } userErrors { message } } }"#;
+    let without = run_as(&mut shop, create, Some(&grant(&["write_products"])));
+    let notes = without["extensions"]["lsf"]["notes"].to_string();
+    assert!(
+        notes.contains("productCreate: the product is published on no sales channel")
+            && notes.contains("write_publications"),
+        "{without}"
+    );
+    let with = run_as(
+        &mut shop,
+        create,
+        Some(&grant(&["write_products", "write_publications"])),
+    );
+    assert!(with["extensions"]["lsf"].get("notes").is_none(), "{with}");
+}
+
+/// A deprecated field whose replacement says something else than it did reads the replacement
+/// with the difference: the summary of a description is cut to 60 characters, an order's
+/// shipping price is before its discounts, a shipping line's discounted price before its taxes.
+#[test]
+fn deprecated_fields_keep_what_set_them_apart_from_their_successors() {
+    use crate::admin::state::value::money_bag;
+    let mut shop = demo();
+    let created = run(
+        &mut shop,
+        r#"mutation { productCreate(product: {title: "Long", descriptionHtml: "<p>A long description,</p>\n<p>on two paragraphs, that goes past sixty characters for sure.</p>"}) { product { description descriptionPlainSummary } } }"#,
+    );
+    let product = &created["data"]["productCreate"]["product"];
+    let summary = product["descriptionPlainSummary"].as_str().unwrap();
+    assert_eq!(summary.chars().count(), 60, "{summary}");
+    assert!(summary.ends_with("..."), "{summary}");
+    assert!(!summary.contains('\n'));
+    assert!(
+        product["description"]
+            .as_str()
+            .unwrap()
+            .starts_with(&summary[..57])
+    );
+    assert_eq!(super::plain_summary("  Short\n text "), "Short text");
+
+    // An order whose shipping of 10.00 is discounted to 8.00, 1.33 of it taxes included.
+    let order = shop.keys("Order").next().unwrap().to_string();
+    let currency = shop.currency();
+    let record = shop.get_mut(&order).unwrap();
+    record.insert("taxesIncluded".into(), json!(true));
+    record.insert("totalShippingPriceSet".into(), money_bag(800, &currency));
+    record.insert(
+        "shippingLines".into(),
+        json!([{
+            "title": "Standard",
+            "originalPriceSet": money_bag(1000, &currency),
+            "discountedPriceSet": money_bag(800, &currency),
+            "taxLines": [{"title": "VAT", "rate": 0.2, "priceSet": money_bag(133, &currency)}],
+        }]),
+    );
+    let answer = run(
+        &mut shop,
+        &format!(
+            r#"{{ order(id: "{order}") {{ totalShippingPrice totalShippingPriceSet {{ shopMoney {{ amount }} }}
+                shippingLines(first: 1) {{ nodes {{ discountedPrice {{ amount currencyCode }} discountedPriceSet {{ shopMoney {{ amount }} }} }} }} }} }}"#
+        ),
+    );
+    let order_answer = &answer["data"]["order"];
+    assert_eq!(
+        order_answer["totalShippingPrice"],
+        json!("10.00"),
+        "{answer}"
+    );
+    assert_eq!(
+        order_answer["totalShippingPriceSet"]["shopMoney"]["amount"],
+        json!("8.0")
+    );
+    let line = &order_answer["shippingLines"]["nodes"][0];
+    assert_eq!(line["discountedPrice"]["amount"], json!("6.67"), "{answer}");
+    assert_eq!(line["discountedPrice"]["currencyCode"], json!(currency));
+    // Taxes not included: the discounted price is pre-tax already.
+    shop.get_mut(&order)
+        .unwrap()
+        .insert("taxesIncluded".into(), json!(false));
+    let answer = run(
+        &mut shop,
+        &format!(
+            r#"{{ order(id: "{order}") {{ shippingLines(first: 1) {{ nodes {{ discountedPrice {{ amount }} }} }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        answer["data"]["order"]["shippingLines"]["nodes"][0]["discountedPrice"]["amount"],
+        json!("8.0")
+    );
+}
+
+/// An input list longer than 250 items is refused before anything runs, as Shopify refuses it,
+/// whether the query writes it or a variable gives it: `nodes(ids:)` does not answer `null`s.
+#[test]
+fn input_lists_take_250_items_at_most() {
+    let mut shop = demo();
+    let ids: Vec<String> = (0..251)
+        .map(|n| format!("\"gid://shopify/Product/{n}\""))
+        .collect();
+    let written = run(
+        &mut shop,
+        &format!("{{ nodes(ids: [{}]) {{ id }} }}", ids.join(",")),
+    );
+    assert_eq!(written["data"], Value::Null, "{written}");
+    assert_eq!(
+        written["errors"][0]["extensions"]["code"],
+        json!("MAX_INPUT_SIZE_EXCEEDED")
+    );
+    assert_eq!(
+        written["errors"][0]["message"],
+        json!("The input array size of 251 is greater than the maximum allowed of 250.")
+    );
+    let mut resolver = ShopResolver::new(&mut shop, Registry::standard());
+    let ids: Vec<String> = (0..300)
+        .map(|n| format!("gid://shopify/Product/{n}"))
+        .collect();
+    let variable = graphql::run(
+        crate::admin::schema::admin(),
+        &mut resolver,
+        &Request::new("query($ids: [ID!]!) { nodes(ids: $ids) { id } }")
+            .with_variables(json!({"ids": ids})),
+        None,
+    )
+    .to_json();
+    assert_eq!(
+        variable["errors"][0]["extensions"]["code"],
+        json!("MAX_INPUT_SIZE_EXCEEDED"),
+        "{variable}"
+    );
+    let ids: Vec<String> = (0..250)
+        .map(|n| format!("\"gid://shopify/Product/{n}\""))
+        .collect();
+    let fine = run(
+        &mut shop,
+        &format!("{{ nodes(ids: [{}]) {{ id }} }}", ids.join(",")),
+    );
+    assert_eq!(fine["data"]["nodes"].as_array().map(Vec::len), Some(250));
+}
+
+/// A list lsf does not compute answers empty and is reported in `extensions.lsf.defaulted`, so
+/// that nobody reads "no agreements" for "lsf does not know"; one lsf fills as things happen
+/// (`returns`) is not.
+#[test]
+fn lists_lsf_does_not_compute_are_reported() {
+    let mut shop = demo();
+    let answer = run(
+        &mut shop,
+        "{ orders(first: 1) { nodes { agreements(first: 5) { nodes { id } } events(first: 5) { nodes { id } } returns(first: 5) { nodes { id } } } } }",
+    );
+    let order = &answer["data"]["orders"]["nodes"][0];
+    assert_eq!(order["agreements"]["nodes"], json!([]), "{answer}");
+    let fields = answer["extensions"]["lsf"]["defaultedFields"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{answer}"));
+    assert!(fields.contains(&json!("Order.agreements")), "{answer}");
+    assert!(fields.contains(&json!("Order.events")), "{answer}");
+    assert!(!fields.contains(&json!("Order.returns")), "{answer}");
+}
+
+/// Runs `query` with `variables` as the default app.
+fn run_with(shop: &mut ShopState, query: &str, variables: Value) -> Value {
+    let mut resolver = ShopResolver::new(shop, Registry::standard());
+    graphql::run(
+        crate::admin::schema::admin(),
+        &mut resolver,
+        &Request::new(query).with_variables(variables),
+        None,
+    )
+    .to_json()
+}
+
+/// The 250 items are a limit of the schema's lists, not of every array: `productSet` takes the
+/// 2048 variants a product has, `metafieldsSet` 25 metafields, and a JSON value is not a list.
+#[test]
+fn input_lists_take_the_limit_shopify_documents_for_them() {
+    let mut shop = demo();
+    let product_set = |count: usize| {
+        let values: Vec<Value> = (0..count)
+            .map(|n| json!({"name": format!("V{n}")}))
+            .collect();
+        let variants: Vec<Value> = (0..count)
+            .map(|n| json!({"optionValues": [{"optionName": "Size", "name": format!("V{n}")}]}))
+            .collect();
+        json!({"input": {
+            "title": "Many sizes",
+            "productOptions": [{"name": "Size", "values": values}],
+            "variants": variants,
+        }})
+    };
+    let query = "mutation($input: ProductSetInput!) { productSet(input: $input) { product { variantsCount { count } } userErrors { field message } } }";
+    let answer = run_with(&mut shop, query, product_set(251));
+    assert_eq!(answer["errors"], Value::Null, "{answer}");
+    assert_eq!(
+        answer["data"]["productSet"]["product"]["variantsCount"]["count"],
+        json!(251),
+        "{answer}"
+    );
+    let answer = run_with(&mut shop, query, product_set(2049));
+    assert_eq!(
+        answer["errors"][0]["message"],
+        json!("The input array size of 2049 is greater than the maximum allowed of 2048."),
+        "{answer}"
+    );
+
+    let metafields: Vec<Value> = (0..26)
+        .map(|n| {
+            json!({"ownerId": "gid://shopify/Shop/1", "namespace": "custom", "key": format!("k{n}"),
+                   "type": "single_line_text_field", "value": "x"})
+        })
+        .collect();
+    let answer = run_with(
+        &mut shop,
+        "mutation($m: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $m) { userErrors { message } } }",
+        json!({"m": metafields}),
+    );
+    assert_eq!(
+        answer["errors"][0]["extensions"]["code"],
+        json!("MAX_INPUT_SIZE_EXCEEDED"),
+        "{answer}"
+    );
+    assert_eq!(
+        answer["errors"][0]["message"],
+        json!("The input array size of 26 is greater than the maximum allowed of 25."),
+        "{answer}"
+    );
+
+    let settings = json!({"ids": (0..300).collect::<Vec<_>>()}).to_string();
+    let answer = run_with(
+        &mut shop,
+        "mutation($settings: JSON!) { webPixelCreate(webPixel: {settings: $settings}) { userErrors { message } } }",
+        json!({"settings": settings}),
+    );
+    assert_eq!(answer["errors"], Value::Null, "{answer}");
+}
+
+/// Every list of [`graphql::INPUT_LIMITS`] is a list of the schema: a typo would leave Shopify's
+/// limit unapplied.
+#[test]
+fn the_input_limits_name_lists_of_the_schema() {
+    let schema = crate::admin::schema::admin();
+    for (key, _) in graphql::INPUT_LIMITS {
+        let parts: Vec<&str> = key.split('.').collect();
+        let ty = match parts.as_slice() {
+            [object, field, argument] => schema
+                .field(object, field)
+                .and_then(|field| field.arg(argument))
+                .map(|arg| &arg.ty),
+            [input, field] => schema
+                .get(input)
+                .and_then(|def| def.input_field(field))
+                .map(|field| &field.ty),
+            _ => None,
+        };
+        assert!(ty.is_some_and(|ty| ty.is_list()), "{key}");
+    }
 }

@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GraphiQL · lsf</title>
+<style>
+  :root {
+    --bg: #f6f6f7; --panel: #fff; --text: #202223; --muted: #6d7175; --line: #e1e3e5;
+    --accent: #008060; --accent-text: #fff; --error: #d72c0d; --code: #f4f6f8;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1a1a1a; --panel: #242424; --text: #e3e3e3; --muted: #a0a0a0; --line: #3a3a3a;
+      --accent: #2bb38a; --accent-text: #0b0b0b; --error: #ff7a5c; --code: #1e1e1e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px;
+    background: var(--panel); border-bottom: 1px solid var(--line); }
+  header strong { margin-right: 8px; }
+  label { color: var(--muted); display: inline-flex; gap: 4px; align-items: center; }
+  select, input[type=text] { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 6px; }
+  input#token { width: 22em; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--text);
+    border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button.run { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
+  main.docs-open { grid-template-columns: 1fr 1fr 22em; }
+  .pane { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+  .pane h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+    margin: 0; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  textarea, pre { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45;
+    margin: 0; padding: 10px; border: 0; outline: none; background: var(--code); color: var(--text); tab-size: 2; }
+  textarea { resize: none; }
+  #query { flex: 3; }
+  #variables { flex: 1; border-top: 1px solid var(--line); }
+  #result { flex: 1; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  #status { padding: 4px 10px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); background: var(--panel); }
+  #status.error { color: var(--error); }
+  #docs { display: none; overflow: auto; padding: 0 10px 10px; background: var(--panel); }
+  main.docs-open #docs { display: block; }
+  #docs input { width: 100%; margin: 8px 0; }
+  #docs h3 { margin: 8px 0 4px; font-size: 15px; }
+  #docs p { color: var(--muted); margin: 4px 0 8px; white-space: pre-wrap; }
+  #docs ul { list-style: none; padding: 0; margin: 0; }
+  #docs li { padding: 4px 0; border-bottom: 1px solid var(--line); }
+  #docs a { color: var(--accent); cursor: pointer; text-decoration: none; }
+  #docs .field { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  #docs .deprecated { text-decoration: line-through; color: var(--muted); }
+  #docs .desc { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  @media (max-width: 800px) { main, main.docs-open { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <strong>GraphiQL</strong>
+  <label>Shop <select id="shop"></select></label>
+  <label>API version <select id="version"></select></label>
+  <label>X-Shopify-Access-Token <input id="token" type="text" spellcheck="false" autocomplete="off"></label>
+  <label><input id="costDebug" type="checkbox"> Cost debug</label>
+  <button class="run" id="run" title="Ctrl+Enter or ⌘+Enter">Run ▶</button>
+  <button id="toggleDocs">Docs</button>
+</header>
+<main id="main">
+  <section class="pane">
+    <h2>Query</h2>
+    <textarea id="query" spellcheck="false" aria-label="Query"></textarea>
+    <h2>Variables (JSON)</h2>
+    <textarea id="variables" spellcheck="false" aria-label="Variables"></textarea>
+  </section>
+  <section class="pane">
+    <h2>Response</h2>
+    <pre id="result" aria-live="polite"></pre>
+    <div id="status">Ctrl+Enter (⌘+Enter) runs the query.</div>
+  </section>
+  <aside id="docs" aria-label="Documentation"></aside>
+</main>
+<script>
+// lsf's GraphiQL: a query editor for the local Admin API, with the shops, their tokens and the
+// API versions the server serves, read from GET /__lsf/admin. Everything runs on this machine.
+"use strict";
+const $ = (id) => document.getElementById(id);
+const DEFAULT_QUERY = "{\n  shop {\n    name\n    myshopifyDomain\n  }\n  products(first: 5) {\n    nodes {\n      id\n      title\n    }\n  }\n}\n";
+const store = {
+  get(key) { try { return localStorage.getItem("lsf-graphiql:" + key); } catch { return null; } },
+  set(key, value) { try { localStorage.setItem("lsf-graphiql:" + key, value); } catch { /* private mode */ } },
+};
+let shops = [];
+let schemaCache = {};
+
+function endpoint() { return "/admin/api/" + $("version").value + "/graphql.json"; }
+
+async function load() {
+  const params = new URLSearchParams(location.search);
+  $("query").value = params.get("query") || store.get("query") || DEFAULT_QUERY;
+  $("variables").value = params.get("variables") || store.get("variables") || "";
+  let admin;
+  try {
+    admin = await (await fetch("/__lsf/admin")).json();
+  } catch (error) {
+    status("GET /__lsf/admin failed: " + error.message, true);
+    return;
+  }
+  shops = admin.shops || [];
+  for (const shop of shops) {
+    const option = new Option(shop.shop + (shop.installed === false ? " (not installed)" : ""), shop.shop);
+    $("shop").add(option);
+  }
+  const wanted = params.get("shop") || store.get("shop") || admin.defaultShop;
+  if (shops.some((shop) => shop.shop === wanted)) $("shop").value = wanted;
+  for (const version of admin.apiVersions || []) {
+    if (version.served) $("version").add(new Option(version.version + " (" + version.status + ")", version.version));
+  }
+  const version = params.get("version") || store.get("version");
+  if (version && [...$("version").options].some((option) => option.value === version)) $("version").value = version;
+  pickToken();
+}
+
+function pickToken() {
+  const shop = shops.find((shop) => shop.shop === $("shop").value);
+  $("token").value = (shop && shop.token) || "";
+}
+
+function status(text, error = false) {
+  $("status").textContent = text;
+  $("status").className = error ? "error" : "";
+}
+
+async function run() {
+  let variables = {};
+  const text = $("variables").value.trim();
+  if (text) {
+    try { variables = JSON.parse(text); } catch (error) { status("The variables are not JSON: " + error.message, true); return; }
+  }
+  store.set("query", $("query").value);
+  store.set("variables", $("variables").value);
+  const headers = { "Content-Type": "application/json", "X-Shopify-Access-Token": $("token").value.trim() };
+  if ($("costDebug").checked) headers["Shopify-GraphQL-Cost-Debug"] = "1";
+  status("Running…");
+  const started = performance.now();
+  try {
+    const response = await fetch(endpoint(), { method: "POST", headers, body: JSON.stringify({ query: $("query").value, variables }) });
+    const body = await response.text();
+    let shown = body;
+    try { shown = JSON.stringify(JSON.parse(body), null, 2); } catch { /* not JSON */ }
+    $("result").textContent = shown;
+    const reason = response.headers.get("x-lsf-reason");
+    const ms = Math.round(performance.now() - started);
+    status(response.status + " · " + (response.headers.get("x-shopify-api-version") || $("version").value) + " · " + ms + " ms" + (reason ? " · " + reason : ""), !response.ok);
+  } catch (error) {
+    status("The request failed: " + error.message, true);
+  }
+}
+
+const INTROSPECTION = `query { __schema { queryType { name } mutationType { name }
+  types { kind name description
+    fields(includeDeprecated: true) { name description isDeprecated deprecationReason
+      args { name description defaultValue type { ...T } } type { ...T } }
+    inputFields { name description defaultValue type { ...T } }
+    enumValues(includeDeprecated: true) { name description isDeprecated }
+    possibleTypes { name } interfaces { name } } } }
+fragment T on __Type { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } } }`;
+
+async function schema() {
+  const version = $("version").value;
+  if (schemaCache[version]) return schemaCache[version];
+  const response = await fetch(endpoint(), { method: "POST",
+    headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": $("token").value.trim() },
+    body: JSON.stringify({ query: INTROSPECTION }) });
+  const answer = await response.json();
+  if (!answer.data) throw new Error(JSON.stringify(answer.errors || answer));
+  const types = new Map(answer.data.__schema.types.map((type) => [type.name, type]));
+  schemaCache[version] = { types, query: answer.data.__schema.queryType.name, mutation: (answer.data.__schema.mutationType || {}).name };
+  return schemaCache[version];
+}
+
+function typeName(type) {
+  if (type.kind === "NON_NULL") return typeName(type.ofType) + "!";
+  if (type.kind === "LIST") return "[" + typeName(type.ofType) + "]";
+  return type.name;
+}
+function namedType(type) { return type.ofType ? namedType(type.ofType) : type.name; }
+function el(tag, attributes = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attributes)) {
+    if (key === "onclick") node.addEventListener("click", value); else node.setAttribute(key, value);
+  }
+  for (const child of children) node.append(child);
+  return node;
+}
+function link(type) {
+  return el("a", { onclick: () => showType(namedType(type)) }, typeName(type));
+}
+
+async function showDocs(search = "") {
+  const docs = $("docs");
+  docs.replaceChildren(el("p", {}, "Loading the schema…"));
+  let found;
+  try { found = await schema(); } catch (error) { docs.replaceChildren(el("p", {}, "Introspection failed: " + error.message)); return; }
+  const input = el("input", { type: "text", placeholder: "Search a type or a root field", "aria-label": "Search" });
+  input.value = search;
+  input.addEventListener("input", () => listMatches(found, input.value, list));
+  const list = el("ul");
+  docs.replaceChildren(input, list);
+  listMatches(found, search, list);
+  input.focus();
+}
+
+function listMatches(found, search, list) {
+  const needle = search.trim().toLowerCase();
+  const items = [];
+  if (!needle) {
+    for (const root of [found.query, found.mutation].filter(Boolean)) {
+      items.push(el("li", {}, el("a", { onclick: () => showType(root) }, root)));
+    }
+  } else {
+    for (const root of [found.query, found.mutation].filter(Boolean)) {
+      for (const field of found.types.get(root).fields || []) {
+        if (field.name.toLowerCase().includes(needle) && items.length < 200) {
+          items.push(el("li", { class: "field" }, root + ".", el("a", { onclick: () => showType(root, field.name) }, field.name), ": ", link(field.type)));
+        }
+      }
+    }
+    for (const name of found.types.keys()) {
+      if (!name.startsWith("__") && name.toLowerCase().includes(needle) && items.length < 300) {
+        items.push(el("li", {}, el("a", { onclick: () => showType(name) }, name)));
+      }
+    }
+  }
+  list.replaceChildren(...items);
+}
+
+async function showType(name, focus) {
+  const found = await schema();
+  const type = found.types.get(name);
+  const docs = $("docs");
+  if (!type) return;
+  const back = el("a", { onclick: () => showDocs() }, "← Search");
+  const parts = [el("p", {}, back), el("h3", {}, name + " (" + type.kind.toLowerCase() + ")")];
+  if (type.description) parts.push(el("p", {}, type.description));
+  if (type.interfaces && type.interfaces.length) {
+    parts.push(el("p", {}, "Implements ", ...type.interfaces.flatMap((i, n) => [n ? ", " : "", el("a", { onclick: () => showType(i.name) }, i.name)])));
+  }
+  if (type.possibleTypes && type.possibleTypes.length) {
+    parts.push(el("p", {}, "Possible types: ", ...type.possibleTypes.flatMap((p, n) => [n ? ", " : "", el("a", { onclick: () => showType(p.name) }, p.name)])));
+  }
+  const list = el("ul");
+  for (const field of type.fields || type.inputFields || []) {
+    const args = (field.args || []).flatMap((arg, n) => [n ? ", " : "", arg.name + ": ", link(arg.type)]);
+    const item = el("li", { class: "field", id: "field-" + field.name },
+      el("span", { class: field.isDeprecated ? "deprecated" : "" }, field.name),
+      ...(args.length ? ["(", ...args, ")"] : []), ": ", link(field.type));
+    const description = [field.description, field.isDeprecated ? "Deprecated: " + field.deprecationReason : ""].filter(Boolean).join("\n");
+    if (description) item.append(el("div", { class: "desc" }, description));
+    list.append(item);
+  }
+  for (const value of type.enumValues || []) {
+    const item = el("li", { class: "field" }, el("span", { class: value.isDeprecated ? "deprecated" : "" }, value.name));
+    if (value.description) item.append(el("div", { class: "desc" }, value.description));
+    list.append(item);
+  }
+  parts.push(list);
+  docs.replaceChildren(...parts);
+  if (focus) document.getElementById("field-" + focus)?.scrollIntoView();
+  else docs.scrollTop = 0;
+}
+
+$("run").addEventListener("click", run);
+$("shop").addEventListener("change", () => { store.set("shop", $("shop").value); pickToken(); });
+$("version").addEventListener("change", () => { store.set("version", $("version").value); if ($("main").classList.contains("docs-open")) showDocs(); });
+$("toggleDocs").addEventListener("click", () => {
+  const open = $("main").classList.toggle("docs-open");
+  if (open) showDocs();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); run(); }
+});
+for (const area of [$("query"), $("variables")]) {
+  area.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || event.shiftKey) return;
+    event.preventDefault();
+    const { selectionStart: start, selectionEnd: end, value } = area;
+    area.value = value.slice(0, start) + "  " + value.slice(end);
+    area.selectionStart = area.selectionEnd = start + 2;
+  });
+}
+load();
+</script>
+</body>
+</html>

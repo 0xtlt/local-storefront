@@ -81,7 +81,7 @@ and `tags`, or these collections stay empty.
 Every `*.json` file at the root is a **data file**: an object with any of the keys `shop`,
 `products`, `collections`, `pages`, `blogs`, `menus`, `customers`, `companies`, `gift_cards`,
 `selling_plan_groups`, `locations`, `swatches`, `metaobjects`, `localization`, `files`,
-`session`, `checkout`, `now` and `theme_settings`. Root files are merged, so the data can be
+`session`, `checkout`, `now`, `theme_settings` and `app`. Root files are merged, so the data can be
 split however is convenient. Lists add up; `shop`, `localization`, `session`, `checkout` and
 `now` may be defined in one file only.
 
@@ -161,8 +161,12 @@ product with options lists its variants; each gives one value per option:
 - **Availability** follows Shopify's rules. A variant with `inventory_quantity` is tracked: it
   is available while the quantity is above zero, or always with
   `"inventory_policy": "continue"`. A variant without `inventory_quantity` is not tracked and
-  always available. `available` forces the answer either way. Adding more than the stock to the
-  cart fails as it does on Shopify.
+  always available. `available` forces the answer either way. `"available": false` alone also
+  makes the variant tracked with a quantity of 0, as a sold-out variant is on Shopify, so themes
+  show "Sold out". Adding more than the stock to the cart fails as it does on Shopify.
+  `"available": false` with an `inventory_quantity` above 0 is a warning
+  (`unavailable_in_stock`): Shopify never has both. lsf keeps the variant unavailable with its
+  stock, which Horizon shows as "Unavailable".
 - `options` can spell out the order of the values:
   `{ "name": "Size", "values": ["S", "M", "L"] }`. A value can carry a [swatch](#swatches).
 - `selling_plan_groups` and `requires_selling_plan` sell the product by subscription: see
@@ -595,10 +599,10 @@ changes nothing for a theme.
         "function": "volume-discount",
         "title": "Volume",
         "classes": ["PRODUCT"],
-        "metafields": { "$app:config.settings": { "type": "json", "value": { "percentage": 10 } } }
+        "metafields": { "$app.function-configuration": { "type": "json", "value": { "percentage": 10 } } }
       }
     ],
-    "functions": { "delivery-rules": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": {} } } } },
+    "functions": { "delivery-rules": { "enabled": true, "metafields": { "$app.function-configuration": { "type": "json", "value": {} } } } },
     "tax_rate": 20
   }
 }
@@ -808,6 +812,17 @@ inside `files/`.
 `{{ product.metafields.custom.size_guide.value.title }}` then behave as on Shopify, including
 `metafield_tag` and `metafield_text`.
 
+A typed value is checked against its type, as Shopify checks it. `{"type": "number_integer",
+"value": "two"}` is an `invalid_metafield` error, and so is a `weight` in `"kgs"` or a
+`rating` outside its scale. A `weight`, `dimension` or `volume` takes the units Shopify lists
+(`kilograms`, `centimeters`, `milliliters`...) and their short forms (`kg`, `cm`, `ml`). A
+`language` is a locale code (`fr`, `pt-BR`). A type Shopify does not have is an
+`unknown_metafield_type`. A
+reference that names nothing of the data is an `unknown_reference`, with the closest name:
+products, variants (by SKU or id), collections, pages, articles (`blog/article`) and
+metaobjects (`type/handle`). A `file_reference` to a file that is not in `files/` is no error:
+it shows as a placeholder.
+
 A `file_reference` is an image when its extension is one (`.jpg`, `.png`, `.webp`...) and a
 video for `.mp4`, `.mov`, `.webm` and `.m4v`: `sources`, `preview_image`, `video_tag` and
 `metafield_tag` work.
@@ -852,7 +867,32 @@ find them, whatever the id, since the store data does not know it.
   previous one: `{{ 'now' | date: '%N' }}` gives `000000000`, then `000000001`, and so on, so
   ids built from it differ. Without `now`, `'now'` reads the real clock each time.
 - `theme_settings` overrides values of `config/settings_data.json` by setting id, without
-  touching the theme: `"theme_settings": { "cart_type": "drawer" }`.
+  touching the theme: `"theme_settings": { "cart_type": "drawer" }`. Each id and value is
+  checked against the theme's `config/settings_schema.json`: an id the theme does not have is
+  an `unknown_setting`, and a value its setting does not take (an option a `select` does not
+  have, a `range` out of bounds, a `checkbox` that is not `true` or `false`) an
+  `invalid_setting`. Without a theme, `validate` cannot check them, and a warning says so.
+
+## The app
+
+With `serve --app`, `app` is the app as the store has it installed, for its theme app
+extensions:
+
+```json
+{
+  "app": {
+    "metafields": { "reviews": { "badge_enabled": true } },
+    "embeds": { "chat-bubble": true, "reviews-loader": { "settings": { "api_key": "test-key" } } }
+  }
+}
+```
+
+- `metafields` are its app-data metafields, by namespace then key, written as other
+  metafields. The Liquid of its blocks reads them as `app.metafields.reviews.badge_enabled`,
+  and the `available_if` of a block tests them.
+- `embeds` turns its app embed blocks on or off, by the name of their file in `blocks/`: `true`,
+  `false`, or `{"settings": {...}}` to turn one on with these settings. What it does not name
+  stays as `config/settings_data.json` has it.
 
 ## Error codes
 
@@ -869,13 +909,16 @@ find them, whatever the id, since the store data does not know it.
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
 | `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
-| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a shipping rate or a payment method a scenario's `entered` names. |
+| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield, and a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
 | `unknown_return_line` | A return of an order names a variant that is not a line of the order. |
 | `expect_checks_nothing` (warning) | An `excludes` of a scenario's `expect` names a payment method, express button or delivery option the checkout does not offer, so it checks nothing. The hint lists what it offers. |
 | `invalid_throttle` | The `throttle` of a session sent to `PUT /__lsf/session` is not one `--throttle` takes. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
+| `invalid_metafield`, `unknown_metafield_type` | A typed metafield (or field of a metaobject) whose value its type refuses, or whose type Shopify does not have. The hint shows how the type is written. |
+| `unknown_setting`, `invalid_setting` | A `theme_settings` id that `config/settings_schema.json` does not have, or a value its setting does not take. The hint suggests the closest id or option. |
+| `unchecked_theme_settings` (warning) | The data has `theme_settings` and there is no theme to check them against. |
 | `invalid_color`, `empty_swatch` | A swatch whose color is not a CSS color, or that has neither a color nor an image. |
 | `missing_price` | A product without a price on itself or on its variants. |
 | `missing_variants`, `missing_options`, `option_mismatch`, `too_many_options` | The options of a product and the option values of its variants do not line up. |
@@ -883,14 +926,16 @@ find them, whatever the id, since the store data does not know it.
 | `ambiguous_link` | A menu link that points at more than one thing. |
 | `missing_locale_file` (warning) | A language the theme has no `locales/<code>.json` for. |
 | `gift_card_balance` (warning) | A gift card whose balance is above its initial value. |
+| `unavailable_in_stock` (warning) | A variant with `"available": false` and an `inventory_quantity` above 0, which Shopify never has. It stays unavailable, with its stock. The hint says which field to remove. |
 
 `path` is always a JSON pointer into `file`, so the value to fix can be located mechanically.
 
-A product or a customer with a value that cannot be read (a `wrong_type`, an `invalid_value`,
-an `invalid_format`, a `missing_field`) is left out, so each reference to it is an error too:
-an `unknown_product`, `unknown_variant`, `unknown_customer` or `unknown_reference` in another
-file. Fix the errors in `products/` and `customers.json` first, and run `validate` again before
-you edit a reference.
+An entity with a value that cannot be read (a `wrong_type`, an `invalid_value`, an
+`invalid_format`, a `missing_field`) is left out. The rest of its file is still read, with its
+references, so one run reports every problem. Each reference to the entity left out is an error
+too (`unknown_product`, `unknown_variant`, `unknown_customer`, `unknown_reference`), and its
+hint says so: `the product "a" is left out because products/a.json has errors`. Fix that file,
+and these errors go away with it.
 
 ## Field reference
 
@@ -924,6 +969,7 @@ data directory is one of these, and they are merged, so you can split the data a
 | `checkout` | [Checkout](#checkout) | The fake checkout of `lsf app dev --app`: shipping rates, payment methods, discounts and Function settings. At most one data file may define it. |
 | `now` | string | Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`. Set it to make renders reproducible; each `'now'` of a render is then one nanosecond after the previous one, so `%N` still differs between calls. Defaults to the real time, read at each `'now'`. |
 | `theme_settings` | map of any JSON value | Overrides for theme settings (`config/settings_data.json`), by setting id. |
+| `app` | [AppInstallation](#appinstallation) | The app of `--app` as this store has it installed: what its theme app extensions read. |
 
 ### Shop
 
@@ -1168,9 +1214,9 @@ A product variant.
 | `compare_at_price` | [Money](#money) | The price before a sale. Must be higher than `price` to show as a discount. |
 | `sku` | string | Also a convenient way to reference the variant from carts and orders. |
 | `barcode` | string |  |
-| `available` | boolean | Whether the variant can be bought. Derived from the inventory fields when omitted. |
+| `available` | boolean | Whether the variant can be bought. Derived from the inventory fields when omitted. `false` alone makes the variant tracked and out of stock, as a sold-out variant is on Shopify. |
 | `inventory_quantity` | integer | Units in stock. Setting it turns inventory tracking on. |
-| `inventory_tracked` | boolean | Set to `false` to disable inventory tracking (the variant is then always available). Defaults to `true` when `inventory_quantity` is set, `false` otherwise. |
+| `inventory_tracked` | boolean | Set to `false` to disable inventory tracking (the variant is then always available). Defaults to `true` when `inventory_quantity` is set or `available` is `false`, `false` otherwise. |
 | `inventory_policy` | [InventoryPolicy](#inventorypolicy) | Defaults to `"deny"`. |
 | `weight` | integer | Weight in grams. |
 | `weight_unit` | string | The unit the weight is displayed in: `g`, `kg`, `oz` or `lb`. Defaults to `kg`. |
@@ -1793,6 +1839,7 @@ How the local checkout (`lsf app dev --app`) is set up. Every field has a defaul
 | `payment_methods` | array of [CheckoutPaymentMethod](#checkoutpaymentmethod) | The payment methods. Defaults to "Credit card", "Cash on Delivery" and "Bank Deposit". |
 | `discounts` | array of [CheckoutDiscount](#checkoutdiscount) | Discounts backed by discount Functions of the app. |
 | `functions` | map of [CheckoutFunction](#checkoutfunction) | The settings of the other Functions, by the handle of the Function. |
+| `extensions` | map of [CheckoutExtension](#checkoutextension) | What the merchant filled in for the UI extensions of the app, by the handle of the extension: the values its `shopify.settings` (`useSettings`) reads. |
 | `tax_rate` | number | Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when omitted. |
 
 ### CheckoutShippingRate
@@ -1847,13 +1894,35 @@ A discount backed by a discount Function of the app.
 | `title` | string | What the buyer sees. Defaults to the handle of the Function. |
 | `code` | string | The code that triggers the discount. Without one the discount is automatic. |
 | `classes` | array of [CheckoutDiscountClass](#checkoutdiscountclass) | What the discount may reduce. All three when omitted. |
-| `metafields` | map of [Metafield](#metafield) | The metafields of the discount, which its Function's input query reads, by `"namespace.key"`: `{"$app:config.settings": {"type": "json", "value": {"percent": 10}}}`. |
+| `metafields` | [OwnerMetafields](#ownermetafields) | The metafields of the discount, which its Function's input query reads, by `"namespace.key"`: `{"$app.function-configuration": {"type": "json", "value": {"percentage": 10}}}` for `metafield(namespace: "$app", key: "function-configuration")`. Shopify's list of `{namespace, key, type, value}` is taken too. |
 
 ### CheckoutDiscountClass
 
 What a discount may reduce.
 
 One of: `"PRODUCT"`, `"ORDER"`, `"SHIPPING"`.
+
+### OwnerMetafields
+
+The metafields of a discount or of the owner of a Function: by `"namespace.key"`, or as
+Shopify's Admin API takes them (`metafieldsSet`, `discountAutomaticAppCreate`), a list of
+`{namespace, key, type, value}`.
+
+One of:
+
+- map of [Metafield](#metafield): `{"$app.function-configuration": {"type": "json", "value": {…}}}`.
+- array of [OwnerMetafield](#ownermetafield): `[{"namespace": "$app", "key": "function-configuration", "type": "json", "value": {…}}]`.
+
+### OwnerMetafield
+
+A metafield as Shopify's Admin API takes it.
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | string | **Required.** `$app`, `$app:<name>`, or another namespace. |
+| `key` | string | **Required.** |
+| `type` | string | The metafield type: `json`, `single_line_text_field`, … Inferred from the value when omitted. |
+| `value` | any JSON value | **Required.** The value: JSON, or the text Shopify stores (`"{\"percentage\":10}"` for `json`). |
 
 ### CheckoutFunction
 
@@ -1863,7 +1932,42 @@ validation): its owner in the shop, and its settings.
 | Field | Type | Description |
 |---|---|---|
 | `enabled` | boolean | Whether the shop has an owner of the Function (the payment or delivery customization, validation or cart transform an app creates for it), and it is enabled. As on Shopify, the Function runs at the checkout only through an enabled owner: `true` runs it, `false` is an owner that is turned off. Without it, the shop has no owner of it, as after an install: the Function runs only for a scenario that names it in `extensions`, or for `app function run <handle>`, with these metafields. |
-| `metafields` | map of [Metafield](#metafield) | The metafields of the object the Function belongs to, by `"namespace.key"`. |
+| `metafields` | [OwnerMetafields](#ownermetafields) | The metafields of the object the Function belongs to, by `"namespace.key"`: `{"$app.function-configuration": {"type": "json", "value": {…}}}` for `metafield(namespace: "$app", key: "function-configuration")`. Shopify's list of `{namespace, key, type, value}` is taken too. |
+
+### CheckoutExtension
+
+A checkout or customer account UI extension of the app, as the merchant set it up.
+
+| Field | Type | Description |
+|---|---|---|
+| `settings` | map of any JSON value | The values of the fields of its `[extensions.settings]`, by `key`, as the merchant fills them in the checkout editor: `{"title": "Free gift", "threshold": 50, "show": true}`. A field left out has no value (`undefined`), as on Shopify. |
+
+### AppInstallation
+
+The app of `--app` as the store has it installed, for its theme app extensions: its
+app-data metafields and the app embed blocks turned on.
+
+| Field | Type | Description |
+|---|---|---|
+| `metafields` | map of map of [Metafield](#metafield) | The app-data metafields of the installation, by namespace then key: `{"conditions": {"reviews_enabled": true}}`. The Liquid of the app's blocks reads them as `app.metafields.conditions.reviews_enabled`, and an `available_if` of a block tests them. |
+| `embeds` | map of [AppEmbed](#appembed) | App embed blocks turned on or off, by the name of their file in the extension's `blocks/` (`"chat-bubble"` for `blocks/chat-bubble.liquid`): `true` turns one on, with the settings `config/settings_data.json` gives it or else its defaults; `false` turns it off; `{"settings": {...}}` turns it on with these settings. The embeds of `config/settings_data.json` that this does not name stay as the theme has them. |
+
+### AppEmbed
+
+An app embed block turned on (`true`) or off (`false`), or turned on with its settings.
+
+One of:
+
+- boolean
+- [AppEmbedSettings](#appembedsettings)
+
+### AppEmbedSettings
+
+An app embed block turned on with settings of its own.
+
+| Field | Type | Description |
+|---|---|---|
+| `settings` | map of any JSON value | The values of the settings of the block's schema, by setting id. The others have their defaults. |
 
 ### Checkout scenario
 
@@ -1878,7 +1982,7 @@ depends on on top of the store data, and what it does not set stays as the store
 | `session` | [Session](#session) | Who buys and what is in the cart, written as the `session` of the store data and applied on top of it: `customer`, `cart` (lines, quantities, selling plans, note, attributes), `country`, `company_location`. |
 | `entered` | [ScenarioEntered](#scenarioentered) | What the buyer already entered: email, address, discount codes, delivery and payment. |
 | `language` | string | The language of the buyer, by ISO code (`"fr"`): one of `localization.languages`. The checkout opens under its locale root. Defaults to the primary language. |
-| `checkout` | [Checkout](#checkout) | Overrides of the `checkout` section of the store data: every field that is present replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`, `tax_rate`), except `functions`, which replaces the settings of the Functions it names. |
+| `checkout` | [Checkout](#checkout) | Overrides of the `checkout` section of the store data: every field that is present replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`, `tax_rate`), except `functions` and `extensions`, which replace the settings of the Functions and extensions they name. |
 | `variant` | [ScenarioLook](#scenariolook) | The look of the page. Defaults to the one of the server (`--variant`). |
 | `extensions` | array of string | The handles of the extensions (Functions and checkout UI extensions) that run, among those of the app that `--extension` allows. When omitted, every UI extension shows and the Functions run as at the shop's checkout: a payment or delivery customization, validation or cart transform Function only through an enabled owner of it. |
 | `expect` | [ScenarioExpect](#scenarioexpect) | What the checkout must look like once the Functions ran: `lsf app check` fails when it does not, and says what it expected and what it got. Without it, `app check` only checks that the Functions run without an error. |

@@ -140,31 +140,160 @@ pub fn build(app: &App, selection: &Selection) -> Result<(), String> {
 /// Function without one, lsf's build of it.
 pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
     for function in selection.functions(app) {
+        // What it is built from, read before the build: a file saved meanwhile is not taken to
+        // be in the module ([`crate::freshness`]).
+        let sources = crate::freshness::sources(&app.root, function);
         match function.build() {
-            None => eprintln!("build:  {} has no build command", function.handle),
+            None => {
+                // Nothing was built: what the module was built from is not known any better.
+                eprintln!("build:  {} has no build command", function.handle);
+                continue;
+            }
             Some(Build::Command(command)) => {
                 eprintln!("build:  {}: {command}", function.handle);
+                for (query, root) in refresh_typegen(&function.dir, &function.wasm_path) {
+                    eprintln!(
+                        "build:  {}: {} changed: {} touched, for cargo to compile the crate again",
+                        function.handle,
+                        query.display(),
+                        root.display()
+                    );
+                }
                 let status = build_command(command, &function.dir)
                     .status()
                     .map_err(|error| {
                         format!("cannot run the build of {}: {error}", function.handle)
                     })?;
                 if !status.success() {
-                    return Err(format!(
+                    return Err(crate::output::fixable(format!(
                         "the build of {} failed ({status})",
                         function.handle
-                    ));
+                    )));
                 }
                 link(function)?;
             }
             Some(Build::JavaScript) => {
                 eprintln!("build:  {}: JavaScript, built by lsf", function.handle);
-                lsf_app::checkout::javascript::build(function, &app.root)
-                    .map_err(|error| format!("the build of {} failed: {error}", function.handle))?;
+                lsf_app::checkout::javascript::build(function, &app.root).map_err(|error| {
+                    crate::output::fixable(format!(
+                        "the build of {} failed: {error}",
+                        function.handle
+                    ))
+                })?;
             }
+        }
+        if function.built() {
+            let sources = sources.after_build(crate::freshness::sources(&app.root, function));
+            crate::freshness::record(&app.root, &function.handle, &function.wasm_path, &sources);
         }
     }
     Ok(())
+}
+
+/// Builds the Functions of `selection` whose module is older than their files, as
+/// `shopify app function run` builds a Function before it runs it, and answers the app as it
+/// is then. One lsf cannot build (no build command) runs its old module, with a warning.
+pub fn freshen(app_dir: &Path, app: App, selection: &Selection) -> Result<App, String> {
+    let mut stale = Vec::new();
+    for function in selection.functions(&app) {
+        let Some(file) = crate::freshness::stale(&app.root, function) else {
+            continue;
+        };
+        let file = crate::freshness::in_app(&app.root, function, &file);
+        if function.build().is_some() {
+            eprintln!(
+                "build:  {}: {file} changed after its module was built: building it first",
+                function.handle
+            );
+            stale.push(function.handle.clone());
+        } else {
+            eprintln!(
+                "warning: {}: {file} changed after its module was built, and it has no build \
+                 command lsf can run: this runs the old module",
+                function.handle
+            );
+        }
+    }
+    if stale.is_empty() {
+        return Ok(app);
+    }
+    build_functions(&app, &Selection::only(stale))?;
+    config::load(app_dir)
+}
+
+/// The Functions of `selection` whose module is older than their files: each handle, with the
+/// file that changed by its path in the app.
+pub fn stale_functions(app: &App, selection: &Selection) -> Vec<(String, String)> {
+    selection
+        .functions(app)
+        .filter_map(|function| {
+            let file = crate::freshness::stale(&app.root, function)?;
+            Some((
+                function.handle.clone(),
+                crate::freshness::in_app(&app.root, function, &file),
+            ))
+        })
+        .collect()
+}
+
+/// A Rust Function's types come from its `.graphql` files (the input queries, `schema.graphql`),
+/// which the `typegen` macro of the `shopify_function` crate reads without telling cargo: after
+/// a change to one of them alone, `cargo build` compiles nothing and the old module stays. So
+/// when one is newer than the module `module`, the roots of the crate in `dir` (`src/main.rs`,
+/// `src/lib.rs`) are touched (their time only), as one does by hand, and cargo compiles the
+/// crate again. Returns the newest of those files and each root touched, from `dir`.
+pub fn refresh_typegen(dir: &Path, module: &Path) -> Vec<(PathBuf, PathBuf)> {
+    if !dir.join("Cargo.toml").is_file() {
+        return Vec::new();
+    }
+    let built = std::fs::metadata(module)
+        .and_then(|meta| meta.modified())
+        .ok();
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    let mut stack = vec![PathBuf::new()];
+    while let Some(relative) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(dir.join(&relative)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') || ["target", "node_modules", "dist"].contains(&&*name) {
+                continue;
+            }
+            let path = relative.join(&*name);
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                stack.push(path);
+            } else if name.ends_with(".graphql")
+                && let Ok(modified) = entry.metadata().and_then(|meta| meta.modified())
+                && newest.as_ref().is_none_or(|(time, _)| modified > *time)
+            {
+                newest = Some((modified, path));
+            }
+        }
+    }
+    // No module yet: cargo has not compiled the crate, and does.
+    let (Some(built), Some((modified, query))) = (built, newest) else {
+        return Vec::new();
+    };
+    if modified <= built {
+        return Vec::new();
+    }
+    let now = std::time::SystemTime::now();
+    ["src/main.rs", "src/lib.rs"]
+        .into_iter()
+        .filter(|root| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(dir.join(root))
+                .and_then(|file| file.set_modified(now))
+                .is_ok()
+        })
+        .map(|root| (query.clone(), PathBuf::from(root)))
+        .collect()
 }
 
 /// What `shopify app build` does after a Function's build command: a module that calls the
@@ -175,9 +304,9 @@ pub fn link(function: &config::FunctionExtension) -> Result<(), String> {
     if !function.wasm_path.is_file() {
         return Ok(());
     }
-    if lsf_app::checkout::trampoline::apply(&function.wasm_path)
-        .map_err(|error| format!("the build of {} failed: {error}", function.handle))?
-    {
+    if lsf_app::checkout::trampoline::apply(&function.wasm_path).map_err(|error| {
+        crate::output::fixable(format!("the build of {} failed: {error}", function.handle))
+    })? {
         eprintln!(
             "build:  {}: linked to the Function Wasm API (shopify-function-trampoline)",
             function.handle
@@ -195,8 +324,9 @@ pub fn build_ui_extensions(app: &App, selection: &Selection) -> Result<(), Strin
             continue;
         }
         let started = std::time::Instant::now();
-        lsf_app::checkout::javascript::build_extension(extension, &app.root)
-            .map_err(|error| format!("the build of {} failed: {error}", extension.handle))?;
+        lsf_app::checkout::javascript::build_extension(extension, &app.root).map_err(|error| {
+            crate::output::fixable(format!("the build of {} failed: {error}", extension.handle))
+        })?;
         eprintln!(
             "build:  {}: built by lsf in {}ms",
             extension.handle,
@@ -204,6 +334,79 @@ pub fn build_ui_extensions(app: &App, selection: &Selection) -> Result<(), Strin
         );
     }
     Ok(())
+}
+
+/// A setting of `checkout.extensions` that does not fit the app: an extension it does not have,
+/// a key its `[extensions.settings]` does not declare, a value of the wrong type.
+pub struct SettingsProblem {
+    pub handle: String,
+    /// The scenario's file (`checkouts/banner.json`), or `None` for the store data's.
+    pub file: Option<String>,
+    /// Where it is, as a JSON pointer: `/checkout/extensions/banner/settings/title`.
+    pub path: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for SettingsProblem {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{} ({} at {})",
+            self.message,
+            self.file
+                .as_deref()
+                .unwrap_or("the checkout section of the store data"),
+            self.path
+        )
+    }
+}
+
+/// What is wrong with the settings the store data and its scenarios give the UI extensions of
+/// `app` (`checkout.extensions.<handle>.settings`). A scenario is checked for what it changes.
+pub fn settings_problems(app: &App, store: &Store) -> Vec<SettingsProblem> {
+    let mut problems = Vec::new();
+    let mut check =
+        |file: Option<&str>, handle: &str, values: &indexmap::IndexMap<String, Json>| {
+            let at = format!("/checkout/extensions/{handle}");
+            match app.ui_extension(handle) {
+                None => {
+                    let handles = app
+                        .ui_extensions
+                        .iter()
+                        .map(|extension| extension.handle.as_str());
+                    let close = lsf_core::util::closest_match(handle, handles)
+                        .map(|close| format!(": did you mean `{close}`?"))
+                        .unwrap_or_default();
+                    problems.push(SettingsProblem {
+                        handle: handle.to_string(),
+                        file: file.map(str::to_string),
+                        path: at,
+                        message: format!("the app has no UI extension `{handle}`{close}"),
+                    });
+                }
+                Some(extension) => {
+                    for (key, message) in extension.check_settings(values) {
+                        problems.push(SettingsProblem {
+                            handle: handle.to_string(),
+                            file: file.map(str::to_string),
+                            path: format!("{at}/settings/{key}"),
+                            message,
+                        });
+                    }
+                }
+            }
+        };
+    for (handle, values) in &store.checkout.extensions {
+        check(None, handle, values);
+    }
+    for scenario in &store.scenarios {
+        for (handle, values) in &scenario.checkout.extensions {
+            if store.checkout.extensions.get(handle) != Some(values) {
+                check(Some(&scenario.file), handle, values);
+            }
+        }
+    }
+    problems
 }
 
 /// A discount of `checkout.discounts` that runs `function`, for a hint: with its settings, the
@@ -275,7 +478,17 @@ pub fn run_build(
 ) -> Result<std::process::ExitCode, String> {
     let app_dir = app_of(app, command)?;
     let shopify_app = config::load(&app_dir)?;
-    let selection = Selection::resolve(&shopify_app, handles)?;
+    // `lsf app build` checks the theme app extensions as Shopify does: there is nothing to build.
+    let themes = command == "lsf app build";
+    let (theme_handles, handles): (Vec<String>, Vec<String>) = handles
+        .iter()
+        .cloned()
+        .partition(|handle| themes && shopify_app.theme_extension(handle).is_some());
+    let selection = if handles.is_empty() && !theme_handles.is_empty() {
+        Selection::only(Vec::<String>::new())
+    } else {
+        Selection::resolve(&shopify_app, &handles)?
+    };
     build(&shopify_app, &selection)?;
     let shopify_app = config::load(&app_dir)?;
     let mut built = 0;
@@ -299,7 +512,18 @@ pub fn run_build(
             built += 1;
         }
     }
-    if built == 0 {
+    let (checked, failed) = if themes && (handles.is_empty() || !theme_handles.is_empty()) {
+        crate::theme_extensions::validate_app(&shopify_app, &theme_handles)
+    } else {
+        (0, false)
+    };
+    if failed {
+        // The extension's to fix, as a build that fails: exit 1, not 2.
+        return Err(crate::output::fixable(
+            "a theme app extension has errors that Shopify rejects (see above)".to_string(),
+        ));
+    }
+    if built == 0 && checked == 0 {
         return Err(
             "nothing was built: the app has no extension lsf or its build command builds"
                 .to_string(),
@@ -665,6 +889,63 @@ mod tests {
             expect: None,
             problems: Vec::new(),
         }
+    }
+
+    /// The `.graphql` files of a Rust Function are read by its `typegen` macro, which cargo does
+    /// not know of: one newer than the module has the crate's roots touched, and only then.
+    #[test]
+    fn a_query_newer_than_the_module_touches_the_roots_of_the_crate() {
+        let dir = std::env::temp_dir().join(format!("lsf-typegen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::create_dir_all(dir.join("target")).unwrap();
+        let at = |seconds: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
+        let write = |path: &str, time: u64| {
+            std::fs::write(dir.join(path), path).unwrap();
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(dir.join(path))
+                .unwrap();
+            file.set_modified(at(time)).unwrap();
+        };
+        let modified = |path: &str| {
+            std::fs::metadata(dir.join(path))
+                .unwrap()
+                .modified()
+                .unwrap()
+        };
+        write("src/main.rs", 1_000);
+        write("src/run.graphql", 1_000);
+        write("schema.graphql", 1_000);
+        write("target/function.wasm", 2_000);
+        let module = dir.join("target/function.wasm");
+
+        // Not a crate.
+        write("src/run.graphql", 3_000);
+        assert!(refresh_typegen(&dir, &module).is_empty());
+        write("Cargo.toml", 1_000);
+        // A query newer than the module.
+        assert_eq!(
+            refresh_typegen(&dir, &module),
+            vec![(
+                PathBuf::from("src/run.graphql"),
+                PathBuf::from("src/main.rs")
+            )]
+        );
+        assert!(modified("src/main.rs") > at(3_000));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("src/main.rs")).unwrap(),
+            "src/main.rs"
+        );
+        // The module built since: nothing to touch.
+        write("src/main.rs", 1_000);
+        write("target/function.wasm", 4_000);
+        assert!(refresh_typegen(&dir, &module).is_empty());
+        assert_eq!(modified("src/main.rs"), at(1_000));
+        // The schema counts too.
+        write("schema.graphql", 5_000);
+        assert_eq!(refresh_typegen(&dir, &module).len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A Rust Function's build command writes the module `cargo build` writes; the build links

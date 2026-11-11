@@ -524,14 +524,22 @@ fn an_app_prints_its_token_webhooks_and_secret_before_ready() {
             .position(|line| line.trim_start().starts_with(prefix))
             .unwrap_or_else(|| panic!("no `{prefix}` line before `ready:`:\n{text}"))
     };
-    let (admin, token, secret, webhooks) = (
+    let (admin, token, secret, graphiql, webhooks) = (
         at("admin:"),
         at("X-Shopify-Access-Token: shpat_"),
         at("client secret:"),
+        at("GraphiQL:"),
         at("webhooks:"),
     );
     assert!(
-        admin < token && token < secret && secret < webhooks,
+        admin < token && token < secret && secret < graphiql && graphiql < webhooks,
+        "{text}"
+    );
+    assert!(
+        before[graphiql]
+            .trim()
+            .starts_with("GraphiQL: http://127.0.0.1:")
+            && before[graphiql].contains("/__lsf/graphiql"),
         "{text}"
     );
     assert!(webhooks < before.len() - 1, "{text}");

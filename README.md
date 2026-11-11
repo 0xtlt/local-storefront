@@ -114,8 +114,10 @@ Guide: [strict Liquid](docs/strict-liquid.md).
 
 **Coming from `shopify theme dev`?** Add `--live-reload` to reload open pages as you edit, and
 leave it off in tests. The store is your JSON files, not a development store. `check` finds the
-Liquid that does not parse and the filters that do not exist. Theme Check's lint rules
-(performance, accessibility, translations) still need `shopify theme check`.
+Liquid that does not parse, the filters that do not exist, the `{% schema %}` Shopify refuses
+on upload, and the snippets, sections, blocks, assets and translation keys the theme names but
+does not have; `--format github` annotates a pull request. Theme Check's other lint rules
+(performance, accessibility) still need `shopify theme check`.
 
 ## Apps
 
@@ -135,6 +137,9 @@ UI extensions.
   when a Function fails or an expectation is not met. It needs no store and no network.
 - **Builds without Node.** `app build` and `app function build` build the extensions as
   `shopify app build` does. `app function schema` writes a Function's `schema.graphql`.
+- **Theme app extensions.** `serve --app ../my-app` renders the app's app blocks where the
+  theme's templates name them, and its app embed blocks where the theme or the store data turns
+  them on. Guide: [storefront](docs/storefront.md#theme-app-extensions).
 
 Guide: [checkout](docs/checkout.md).
 
@@ -176,19 +181,20 @@ To see the whole flow with Shopify's own libraries, read
 | `serve` | Serves the theme at <http://127.0.0.1:9292>. With `--app`, it also serves the app's checkout, its customer account and its Admin API. |
 | `init` | Creates `shopify-local/` with a demo store to edit. |
 | `validate` | Checks the store data and the checkout scenarios, with or without a theme. |
-| `check` | Checks every Liquid file, including what Shopify's strict parser rejects. `--fix` rewrites that markup. |
+| `check` | Checks every Liquid file and schema: what Shopify's strict parser rejects, what Shopify refuses on upload. `--fix` rewrites that markup. |
 | `fmt [paths]` | Formats Liquid files as Prettier does. Use `--check` in CI. |
 | `render <path>` | Prints the HTML of one page, without a server. |
 | `profile <path>` | Shows what a page spends its time on, or what it would cost Shopify. |
-| `routes` | Lists the pages the store data creates. |
+| `routes` | Lists the pages the store data creates. `--all` adds the other languages, a search and the sections the theme fetches. |
 | **Apps** | |
 | `app dev --app <dir>` | Serves an app without a theme: its checkout, its customer account and its Admin API. |
 | `app init` | Writes checkout scenarios made for the app's Functions and extensions. |
 | `app check` | Runs every scenario and checks each `expect`. Exits with 1 on a failure, for CI. |
 | `app build` | Builds the app's extensions as `shopify app build` does, without Node. |
-| `app function run` | Runs the Functions once and prints each input, output and log. |
+| `app function run` | Runs the Functions once and prints each input, output and log. `--input` runs one on a given input, as `shopify app function run` does. |
 | `app function build` | Builds the Functions, including JavaScript and TypeScript ones, without Node. |
 | `app function schema` | Writes a Function's `schema.graphql`, offline. |
+| `app function typegen` | Writes a JavaScript Function's GraphQL types (`generated/api.ts`), offline. |
 | `app webhook trigger` | Sends one webhook to the backend, signed, as `shopify app webhook trigger` does. |
 | **Store data** | |
 | `schema [kind]` | Prints the JSON Schema of the store data. |
@@ -201,6 +207,17 @@ the [CLI reference](docs/cli.md).
 
 ## Documentation
 
+**Start here.** One page each, from the first command to a test in CI:
+
+| I work on... | Quickstart |
+|---|---|
+| A theme | [A theme](docs/quickstart-theme.md): serve, store data, checks, a Playwright test |
+| An app's Functions and checkout UI extensions | [Functions](docs/quickstart-functions.md): scenarios, `app function run`, `expect`, `app check` |
+| An app's backend | [An Admin API backend](docs/quickstart-admin-api.md): the token, a first query, webhooks, resets |
+| A public app made from the React Router template | [A public app](docs/quickstart-app.md): the embedded admin, billing, a theme app extension, the app proxy |
+
+Then the guides:
+
 | I want to... | Read |
 |---|---|
 | Write store data | [Data format](docs/data-format.md), then the [field reference](docs/data-reference.md) |
@@ -208,7 +225,7 @@ the [CLI reference](docs/cli.md).
 | Fix what Shopify's strict parser rejects | [Strict Liquid](docs/strict-liquid.md) |
 | Format Liquid files | [Formatting](docs/formatting.md) |
 | Make a page faster | [Performance](docs/performance.md) |
-| Use the storefront in a browser | [Storefront](docs/storefront.md): accounts, password page, live reload, previews |
+| Use the storefront in a browser | [Storefront](docs/storefront.md): accounts, password page, live reload, previews, theme app extensions |
 | Run the Functions and checkout extensions of an app | [Checkout](docs/checkout.md) |
 | Test an app's backend: Admin API, OAuth, webhooks, billing, app proxy | [Admin API](docs/admin.md), then the [Admin API reference](docs/admin-reference.md) |
 | Know an option or an exit code | [CLI reference](docs/cli.md) |

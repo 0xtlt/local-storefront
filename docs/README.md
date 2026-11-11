@@ -1,6 +1,7 @@
 # Documentation
 
-local-storefront runs a Shopify theme on your machine, without Shopify, from JSON store data.
+local-storefront runs a Shopify theme, and the checkout and the Admin API of an app, on your
+machine, without Shopify, from JSON store data.
 
 ## Get started
 
@@ -16,6 +17,17 @@ Write `npx local-storefront`, not `npx lsf`: `lsf` is another package on npm. Ot
 install (mise, a binary, from source):
 [the project's README](https://github.com/0xtlt/local-storefront#other-ways-to-install).
 
+## Start here
+
+One page each, from the first command to a test in CI.
+
+| Quickstart | For |
+|---|---|
+| [A theme](quickstart-theme.md) | Serving a theme, writing store data, `validate`, `check`, a Playwright test. |
+| [Functions](quickstart-functions.md) | Running an app's Functions and checkout UI extensions: scenarios, `expect`, `app check` in CI. |
+| [An Admin API backend](quickstart-admin-api.md) | A backend against the local Admin API: the token, a first query, webhooks, resets, the clock. |
+| [A public app](quickstart-app.md) | The React Router template end to end: the embedded admin, Events, billing, a theme app extension, the app proxy. |
+
 ## Guides
 
 One task each, from the first command to the details.
@@ -29,7 +41,7 @@ One task each, from the first command to the details.
 | [Performance](performance.md) | Profiling a page, in time or in what it would cost Shopify. |
 | [Checkout](checkout.md) | Running the Functions and the checkout UI extensions of a Shopify app. |
 | [Admin API](admin.md) | Pointing the backend of an app at the local Admin API, its OAuth and its webhooks; previewing its embedded pages in a local admin, with a local App Bridge. |
-| [Storefront](storefront.md) | The storefront in a browser: accounts, password page, images, previews. |
+| [Storefront](storefront.md) | The storefront in a browser: accounts, password page, images, previews, the theme app extensions of an app. |
 | [Agents](agents.md) | Driving local-storefront from an AI agent or a script. |
 
 ## Reference

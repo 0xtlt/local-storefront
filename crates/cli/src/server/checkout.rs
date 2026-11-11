@@ -808,7 +808,14 @@ fn compute(
             .any(|method| &method.handle == *handle)
     });
     object.insert("selectedPayment".into(), json!(selected));
-    object.insert("extensions".into(), extensions_json(&app, &selection));
+    // What the merchant filled in for each extension: the scenario's, else the store's.
+    let settings = &scenario_named(&store, checkout.scenario.as_deref())
+        .map_or(&store.checkout, |scenario| &scenario.checkout)
+        .extensions;
+    object.insert(
+        "extensions".into(),
+        extensions_json(&app, &selection, settings),
+    );
     // None renders while the app is not installed on the shop.
     place_extensions(&mut json, state.app_uninstalled());
     let object = json.as_object_mut().expect("a result is an object");
@@ -1000,8 +1007,13 @@ pub(super) fn place_extensions(json: &mut Json, uninstalled: bool) {
     }
 }
 
-/// The checkout UI extensions to load: the built ones on a supported API version.
-pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
+/// The checkout UI extensions to load: the built ones on a supported API version, with the
+/// values of their settings (`settings`, by handle).
+pub(super) fn extensions_json(
+    app: &App,
+    selection: &Selection,
+    settings: &indexmap::IndexMap<String, indexmap::IndexMap<String, Json>>,
+) -> Json {
     Json::Array(
         selection
             .ui_extensions(app)
@@ -1027,7 +1039,7 @@ pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
                     "build": format!("{} app build {}", lsf_core::util::command(), extension.handle),
                     "targets": targets,
                     "capabilities": extension.capabilities,
-                    "settings": setting_values(&extension.settings),
+                    "settings": setting_values(&extension.settings, settings.get(&extension.handle)),
                     "metafields": extension.metafields.iter().map(|declared| {
                         let mut entry = json!({"namespace": declared.namespace, "key": declared.key});
                         if let Some(owner_type) = &declared.owner_type {
@@ -1051,19 +1063,22 @@ pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
 }
 
 /// The values the extension reads from `shopify.settings`. `[extensions.settings]` of the
-/// manifest declares the fields (`fields`) a merchant fills in; nothing here fills them in, so
-/// only the entries that are not that declaration are values.
-fn setting_values(settings: &Json) -> Json {
-    match settings {
-        Json::Object(entries) => Json::Object(
-            entries
-                .iter()
-                .filter(|(key, _)| key.as_str() != "fields")
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect(),
-        ),
-        _ => json!({}),
+/// manifest declares the fields (`fields`) a merchant fills in; `checkout.extensions.<handle>
+/// .settings` of the store data or of the scenario are what the merchant filled in. A field
+/// without a value is left out (`undefined`), as on Shopify.
+fn setting_values(declared: &Json, given: Option<&indexmap::IndexMap<String, Json>>) -> Json {
+    let mut values: serde_json::Map<String, Json> = match declared {
+        Json::Object(entries) => entries
+            .iter()
+            .filter(|(key, _)| key.as_str() != "fields")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+        _ => serde_json::Map::new(),
+    };
+    for (key, value) in given.into_iter().flatten() {
+        values.insert(key.clone(), value.clone());
     }
+    Json::Object(values)
 }
 
 /// The state of the session's checkout: the order that was completed, if the cart was emptied by

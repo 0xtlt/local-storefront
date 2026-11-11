@@ -60,7 +60,7 @@
       "default": null
     },
     "checkout": {
-      "description": "Overrides of the `checkout` section of the store data: every field that is present\nreplaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`,\n`tax_rate`), except `functions`, which replaces the settings of the Functions it names.",
+      "description": "Overrides of the `checkout` section of the store data: every field that is present\nreplaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`,\n`tax_rate`), except `functions` and `extensions`, which replace the settings of the\nFunctions and extensions they name.",
       "anyOf": [
         {
           "$ref": "#/$defs/CheckoutInput"
@@ -436,6 +436,13 @@
           },
           "default": {}
         },
+        "extensions": {
+          "description": "What the merchant filled in for the UI extensions of the app, by the handle of the\nextension: the values its `shopify.settings` (`useSettings`) reads.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CheckoutExtensionInput"
+          }
+        },
         "tax_rate": {
           "description": "Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when\nomitted.",
           "type": [
@@ -616,11 +623,8 @@
           "default": []
         },
         "metafields": {
-          "description": "The metafields of the discount, which its Function's input query reads, by\n`\"namespace.key\"`: `{\"$app:config.settings\": {\"type\": \"json\", \"value\": {\"percent\": 10}}}`.",
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/MetafieldInput"
-          },
+          "description": "The metafields of the discount, which its Function's input query reads, by\n`\"namespace.key\"`: `{\"$app.function-configuration\": {\"type\": \"json\", \"value\":\n{\"percentage\": 10}}}` for `metafield(namespace: \"$app\", key: \"function-configuration\")`.\nShopify's list of `{namespace, key, type, value}` is taken too.",
+          "$ref": "#/$defs/OwnerMetafields",
           "default": {}
         }
       },
@@ -636,6 +640,25 @@
         "PRODUCT",
         "ORDER",
         "SHIPPING"
+      ]
+    },
+    "OwnerMetafields": {
+      "description": "The metafields of a discount or of the owner of a Function: by `\"namespace.key\"`, or as\nShopify's Admin API takes them (`metafieldsSet`, `discountAutomaticAppCreate`), a list of\n`{namespace, key, type, value}`.",
+      "anyOf": [
+        {
+          "description": "`{\"$app.function-configuration\": {\"type\": \"json\", \"value\": {…}}}`.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/MetafieldInput"
+          }
+        },
+        {
+          "description": "`[{\"namespace\": \"$app\", \"key\": \"function-configuration\", \"type\": \"json\", \"value\": {…}}]`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OwnerMetafield"
+          }
+        }
       ]
     },
     "MetafieldInput": {
@@ -665,6 +688,36 @@
         "value"
       ]
     },
+    "OwnerMetafield": {
+      "description": "A metafield as Shopify's Admin API takes it.",
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "description": "`$app`, `$app:<name>`, or another namespace.",
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The metafield type: `json`, `single_line_text_field`, … Inferred from the value when\nomitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "value": {
+          "description": "The value: JSON, or the text Shopify stores (`\"{\\\"percentage\\\":10}\"` for `json`)."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "key",
+        "value"
+      ]
+    },
     "CheckoutFunctionInput": {
       "description": "A Function that is not a discount (cart transform, delivery or payment customization,\nvalidation): its owner in the shop, and its settings.",
       "type": "object",
@@ -677,11 +730,21 @@
           ]
         },
         "metafields": {
-          "description": "The metafields of the object the Function belongs to, by `\"namespace.key\"`.",
+          "description": "The metafields of the object the Function belongs to, by `\"namespace.key\"`:\n`{\"$app.function-configuration\": {\"type\": \"json\", \"value\": {…}}}` for\n`metafield(namespace: \"$app\", key: \"function-configuration\")`. Shopify's list of\n`{namespace, key, type, value}` is taken too.",
+          "$ref": "#/$defs/OwnerMetafields",
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "CheckoutExtensionInput": {
+      "description": "A checkout or customer account UI extension of the app, as the merchant set it up.",
+      "type": "object",
+      "properties": {
+        "settings": {
+          "description": "The values of the fields of its `[extensions.settings]`, by `key`, as the merchant fills\nthem in the checkout editor: `{\"title\": \"Free gift\", \"threshold\": 50, \"show\": true}`. A\nfield left out has no value (`undefined`), as on Shopify.",
           "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/MetafieldInput"
-          },
+          "additionalProperties": true,
           "default": {}
         }
       },

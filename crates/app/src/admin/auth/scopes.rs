@@ -218,6 +218,88 @@ pub const ALL_SCOPES: &[&str] = &[
     "write_validations",
 ];
 
+/// The scopes `[access_scopes] scopes` of an app's configuration file declares, as lsf reads
+/// it at start (`shopify.app.toml`, else the first `shopify.app.*.toml`): `None` when the file
+/// is missing or cannot be read. What a running server compares with the scopes it installed
+/// the app with ([`scopes_changed`]).
+pub fn declared_scopes(app_root: &std::path::Path) -> Option<(std::path::PathBuf, Vec<String>)> {
+    let file = app_config_file(app_root)?;
+    let text = std::fs::read_to_string(&file).ok()?;
+    let table: toml::Table = text.parse().ok()?;
+    let scopes = match table
+        .get("access_scopes")
+        .and_then(|section| section.get("scopes"))
+    {
+        Some(toml::Value::String(list)) => parse_scopes(list),
+        Some(toml::Value::Array(items)) => parse_scopes(
+            &items
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+        _ => Vec::new(),
+    };
+    Some((file, scopes))
+}
+
+/// The configuration file of the app: `shopify.app.toml`, else the first `shopify.app.*.toml`.
+pub fn app_config_file(app_root: &std::path::Path) -> Option<std::path::PathBuf> {
+    let main = app_root.join("shopify.app.toml");
+    if main.is_file() {
+        return Some(main);
+    }
+    let mut others: Vec<std::path::PathBuf> = std::fs::read_dir(app_root)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("shopify.app.") && name.ends_with(".toml"))
+        })
+        .collect();
+    others.sort();
+    others.into_iter().find(|path| path.is_file())
+}
+
+/// What a running server says when `[access_scopes] scopes` changed since it started: lsf keeps
+/// the scopes it installed the app with (`started`), as an installed app keeps what the
+/// merchant granted on Shopify until they approve the new ones. `None` when they are the same
+/// set.
+pub fn scopes_changed(started: &[String], declared: &[String]) -> Option<String> {
+    let added: Vec<&str> = declared
+        .iter()
+        .filter(|scope| !started.contains(scope))
+        .map(String::as_str)
+        .collect();
+    let removed: Vec<&str> = started
+        .iter()
+        .filter(|scope| !declared.contains(scope))
+        .map(String::as_str)
+        .collect();
+    if added.is_empty() && removed.is_empty() {
+        return None;
+    }
+    let list = |scopes: &[&str]| {
+        if scopes.is_empty() {
+            "none".to_string()
+        } else {
+            scopes
+                .iter()
+                .map(|scope| format!("`{scope}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    };
+    Some(format!(
+        "shopify.app.toml changed its scopes (added {}, removed {}), and the app is still installed with those lsf started with. On Shopify the merchant approves new scopes: here, restart lsf, or grant them on each shop with POST /__lsf/admin/install {{\"scopes\": \"{}\"}} (and \"shop\" for a test shop)",
+        list(&added),
+        list(&removed),
+        declared.join(",")
+    ))
+}
+
 /// The scopes of a comma-separated list (`scope` of OAuth, `[access_scopes] scopes`), trimmed,
 /// without empty or repeated ones, in their order.
 pub fn parse_scopes(list: &str) -> Vec<String> {

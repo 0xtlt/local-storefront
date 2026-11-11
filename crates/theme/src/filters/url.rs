@@ -24,8 +24,17 @@ fn encode_query_value(input: &str) -> String {
     out
 }
 
+/// The URL of a theme asset, or of an asset of the theme app extension whose Liquid renders.
+fn asset_url_of(ctx: &Context, name: &str) -> Result<String> {
+    let site = site(ctx)?;
+    Ok(match crate::app_extensions::render::extension_of(ctx) {
+        Some(extension) => urls::extension_asset_url(site, &extension, name),
+        None => urls::asset_url(site, name),
+    })
+}
+
 fn asset_url(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<Value> {
-    Ok(Value::from(urls::asset_url(site(ctx)?, &input.to_str())))
+    Ok(Value::from(asset_url_of(ctx, &input.to_str())?))
 }
 
 fn size_argument(args: &FilterArgs) -> String {
@@ -35,7 +44,7 @@ fn size_argument(args: &FilterArgs) -> String {
 }
 
 fn asset_img_url(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
-    let url = urls::asset_url(site(ctx)?, &input.to_str());
+    let url = asset_url_of(ctx, &input.to_str())?;
     Ok(Value::from(lsf_core::urls::with_size_suffix(
         &url,
         &size_argument(args),

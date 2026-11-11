@@ -1,0 +1,14 @@
+<span class="stars-badge">{{ block.settings.label }}</span>
+
+{% schema %}
+{
+  "name": "Stars badge",
+  "target": "content",
+  "tag": "aside",
+  "available_if": "{{ app.metafields.reviews.badge_enabled }}",
+  "stylesheet": "reviews.css",
+  "settings": [
+    { "type": "text", "id": "label", "label": "Label", "default": "Top rated" }
+  ]
+}
+{% endschema %}

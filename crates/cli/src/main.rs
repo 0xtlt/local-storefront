@@ -3,9 +3,11 @@
 mod app;
 mod checkout;
 mod commands;
+mod freshness;
 mod output;
 mod profile;
 mod server;
+mod theme_extensions;
 mod watch;
 
 use std::path::PathBuf;
@@ -57,9 +59,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Serve the theme over HTTP. With `--app`, its `/checkout` runs the Functions and shows the
-    /// checkout UI extensions of a Shopify app, its `/account` shows its customer account UI
-    /// extensions, and a local Admin API serves the app's backend.
+    /// Serve the theme over HTTP, with the store data: its pages, cart and customer accounts.
+    ///
+    /// `--live-reload` reloads a page when a file changes. With `--app`, a Shopify app joins
+    /// it: the theme renders its app blocks, `/checkout` runs its Functions and shows its
+    /// checkout UI extensions, `/account` its customer account UI extensions, and a local Admin
+    /// API serves its backend.
     Serve(commands::serve::Args),
     /// The commands of a Shopify app: `dev` serves it alone (its checkout, its customer account
     /// and the Admin API of its backend), `init` writes checkout scenarios to try it with, `build`
@@ -77,8 +82,9 @@ enum Command {
     Init(commands::init::Args),
     /// Print the JSON Schema of the store data format.
     Schema(commands::schema::Args),
-    /// List the URLs the store data gives a page to.
-    Routes,
+    /// List the URLs the store data gives a page to. `--all` adds the other languages, a search
+    /// and the sections the theme fetches.
+    Routes(commands::routes::Args),
     /// Parse every Liquid file of the theme and report what would not render on Shopify,
     /// including what Shopify's strict Liquid parser rejects. `--fix` rewrites that markup.
     Check(commands::check::Args),
@@ -118,7 +124,7 @@ fn end_quietly_on_a_closed_pipe(command: &Command) {
             | Command::Profile(_)
             | Command::Validate(_)
             | Command::Schema(_)
-            | Command::Routes
+            | Command::Routes(_)
             | Command::Check(_)
             | Command::Fmt(_)
             | Command::Docs(_)
@@ -163,7 +169,9 @@ fn main() -> ExitCode {
         }
         Command::Init(args) => commands::init::run(&cli.theme, cli.data.as_deref(), args),
         Command::Schema(args) => commands::schema::run(args),
-        Command::Routes => commands::routes::run(&cli.theme, cli.data.as_deref(), previews),
+        Command::Routes(args) => {
+            commands::routes::run(&cli.theme, cli.data.as_deref(), previews, args)
+        }
         Command::Check(args) => commands::check::run(&cli.theme, previews, args),
         Command::Fmt(args) => commands::fmt::run(&cli.theme, args),
         Command::Docs(args) => commands::docs::run(args),
@@ -172,7 +180,9 @@ fn main() -> ExitCode {
         Ok(code) => code,
         Err(message) => {
             eprintln!("error: {message}");
-            ExitCode::from(2)
+            // A build of the user's extension that fails is theirs to fix, as a Function that
+            // fails is; anything else kept the command from running.
+            ExitCode::from(if output::is_fixable() { 1 } else { 2 })
         }
     }
 }
@@ -186,6 +196,43 @@ mod tests {
     #[test]
     fn the_command_line_is_consistent() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn the_help_of_serve_lists_the_options_of_the_theme_first() {
+        let mut command = Cli::command();
+        let help = command
+            .find_subcommand_mut("serve")
+            .expect("serve")
+            .render_help()
+            .to_string();
+        let at = |text: &str| help.find(text).unwrap_or_else(|| panic!("{text}: {help}"));
+        let app = at("App (with --app):");
+        let admin = at("Admin API and embedded admin (with --app):");
+        for theme in [
+            "--live-reload",
+            "--port",
+            "--static",
+            "--throttle",
+            "--customer",
+        ] {
+            assert!(at(theme) < app, "{theme}");
+        }
+        for of_app in ["--app <DIR>", "--watch", "--variant", "--app-url"] {
+            assert!(app < at(of_app) && at(of_app) < admin, "{of_app}");
+        }
+        for of_admin in ["--admin-throttle", "--pricing-plans", "--polaris"] {
+            assert!(admin < at(of_admin), "{of_admin}");
+        }
+    }
+
+    #[test]
+    fn the_help_of_serve_starts_with_the_theme() {
+        let mut command = Cli::command();
+        let serve = command.find_subcommand_mut("serve").expect("serve");
+        let about = serve.get_about().expect("about").to_string();
+        assert!(about.starts_with("Serve the theme"), "{about}");
+        assert!(!about.contains("--app"), "{about}");
     }
 
     #[test]

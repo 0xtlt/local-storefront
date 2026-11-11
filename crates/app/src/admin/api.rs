@@ -7,6 +7,7 @@
 mod admin;
 mod app;
 mod audit;
+mod backend;
 mod embedded;
 mod partner;
 mod pricing;
@@ -20,6 +21,7 @@ mod tests;
 use std::collections::HashMap;
 
 pub use admin::{AdminApi, AdminOptions, INVALID_TOKEN, Preview, Reseeded, ThrottleSetting};
+pub use backend::BackendWatch;
 pub use sync::Synced;
 
 /// A request, as `lsf` decoded it.

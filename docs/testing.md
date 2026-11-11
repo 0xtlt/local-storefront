@@ -52,6 +52,58 @@ The tests get a port of their own, outside the `9292` to `9391` that `serve` tak
 `--port`. A local run then never reuses your dev server, with its live reload and its data that
 changes.
 
+### An embedded app
+
+For the backend of an app (the React Router template), start lsf and the backend, and open the
+app in lsf's admin ([preview the embedded app](admin.md#preview-the-embedded-app)). The config
+is the [quickstart's](quickstart-app.md#7-a-playwright-test), the same in every page of lsf's
+docs:
+
+```ts
+// playwright.config.ts
+import { defineConfig } from '@playwright/test';
+
+// The app's values (SHOPIFY_API_KEY, SHOPIFY_API_SECRET, SCOPES): react-router-serve reads no .env.
+process.loadEnvFile('.env');
+
+export default defineConfig({
+  testDir: 'e2e',
+  workers: 1, // one lsf, one shop: the tests change it in turn
+  use: {
+    // For the test's own requests to the backend: the template answers 410 to HeadlessChrome.
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+  },
+  webServer: [
+    {
+      command: 'npx local-storefront app dev --app . --port 9393 --app-url http://localhost:3001 --polaris offline --static --quiet',
+      url: 'http://127.0.0.1:9393/__lsf/status',
+    },
+    {
+      // A build, not the dev server: on a cold start, Vite's dev server optimizes the
+      // dependencies a page asks for and reloads the page, under the test.
+      command: 'npx prisma migrate deploy && npx react-router build && npx react-router-serve ./build/server/index.js',
+      url: 'http://localhost:3001/',
+      env: { PORT: '3001', SHOPIFY_APP_URL: 'http://localhost:3001', LSF_URL: 'http://127.0.0.1:9393' },
+      timeout: 120_000,
+    },
+  ],
+});
+```
+
+```ts
+test('the app opens in lsf\'s admin', async ({ page }) => {
+  await page.goto('http://127.0.0.1:9393/admin/apps/my-app/app');
+  await expect(page.frameLocator('iframe').getByText('Get started with products')).toBeVisible();
+});
+```
+
+The template's `isbot` answers `410 Gone` to Playwright's headless Chromium (`HeadlessChrome` in
+its user agent). Pages in lsf's admin pass: the frame's proxy says Chrome. A request of the test
+to `http://localhost:3001` does not go through it, hence `use.userAgent`. The backend runs from a
+build: Vite's dev server, on a cold start (CI), reloads the page under the test while it
+optimizes its dependencies. A build has no HMR port either, so the tests run next to your dev
+server.
+
 ## Sessions: every test is isolated
 
 The server keeps one **session** per browser: the cart, the logged-in customer, the selected
@@ -254,7 +306,7 @@ await setSession(page, {
           function: 'discount-codes',
           title: '10% off',
           code: 'SAVE10',
-          metafields: { '$app:config.settings': { type: 'json', value: { percentage: 10 } } },
+          metafields: { '$app.function-configuration': { type: 'json', value: { percentage: 10 } } },
         },
       ],
     },
@@ -421,7 +473,8 @@ writes (cart changes, forms) are estimates. `slow` is not measured.
 - **Pages that are not found.** A 404 renders the theme's `404` template, so a wrong URL looks
   like a page that works. The response carries `x-lsf-not-found` with the cause (`no product
   with the handle "x"`, `no page at "/x"`, `no metaobject "type/x" in the store data`, `the
-  theme has no templates/metaobject/<type>.json...`) and the server prints it in its log. To
+  theme has no templates/metaobject/<type>.json...`, `no section "x" on the page...`) and the
+  server prints it in its log. To
   fail a test on a link that leads nowhere:
 
   ```ts
@@ -457,11 +510,11 @@ Everything a theme talks to on a storefront:
 
 | Area | Endpoints |
 |---|---|
-| Pages | `/`, `/products/<handle>`, `/collections`, `/collections/<handle>`, `/collections/<handle>/<tag>`, `/collections/<handle>/products/<handle>`, `/pages/<handle>`, `/blogs/<handle>`, `/blogs/<handle>/tagged/<tag>`, `/blogs/<blog>/<article>`, `/cart`, `/search`, `/policies/<handle>`, `/gift_cards/<shop id>/<token>`, `/password`, `/account` and, with legacy customer accounts, `/account/login`, `/account/register`, `/account/addresses`, `/account/orders/<id>`. A 404 for the rest. Each also under a locale prefix (`/fr/...`). |
+| Pages | `/`, `/products/<handle>`, `/collections`, `/collections/<handle>`, `/collections/<handle>/<tag>`, `/collections/<handle>/products/<handle>`, `/pages/<handle>`, `/blogs/<handle>`, `/blogs/<handle>/tagged/<tag>`, `/blogs/<blog>/<article>`, `/cart`, `/search`, `/policies/<handle>`, `/gift_cards/<shop id>/<token>`, `/password`, `/account`. A 404 for the rest. Each also under a locale prefix (`/fr/...`). |
 | Customer accounts | With new customer accounts, `/account` is a page of local-storefront where the visitor chooses who is logged in; `/account/login`, `/customer_authentication/login` and the other account URLs redirect to it. `/company_location/update?location_id=<id>&return_to=<path>` changes the location of a B2B customer. |
 | Robots and sitemaps | `/robots.txt` (from `templates/robots.txt.liquid`, or Shopify's default rules), `/sitemap.xml` and `/sitemap_<products|pages|collections|blogs>_1.xml`. |
 | Alternate templates | `?view=<suffix>` and the `template_suffix` of the resource. |
-| Section Rendering API | `?section_id=<id>` and `?sections=<id>,<id>` on any page. |
+| Section Rendering API | `?section_id=<id>` and `?sections=<id>,<id>` on any page. An id the page does not have is a 404 for `section_id` and `null` in `sections`; either way `x-lsf-not-found` names it and lists the ids the page has. |
 | Cart Ajax API | `GET /cart.js`, `POST /cart/add.js`, `/cart/change.js`, `/cart/update.js`, `/cart/clear.js` (with `sections` and `sections_url`), and the form posts `/cart/add`, `/cart`. Stock limits answer `422` like Shopify. |
 | Product and search JSON | `/products/<handle>.js`, `/products.json`, `/collections/<handle>/products.json`, `/search/suggest.json`, `/search/suggest?section_id=`, `/recommendations/products.json`, `/recommendations/products?section_id=&product_id=`. |
 | Forms | Contact, newsletter (`customer`), blog comment, customer logout, localization (country and language), storefront password. The outcome shows in `form.posted_successfully?` and `form.errors` on the next page, once. A wrong storefront password comes back to `/password` with the error; the right one (`password`, or `shop.password`) goes to the home page. |
@@ -470,7 +523,7 @@ Everything a theme talks to on a storefront:
 
 Not simulated: Shopify's checkout (`/checkout` shows a summary of the cart, or, with `--app`,
 the local [checkout](checkout.md) of a Shopify app, unless `--only` leaves the checkout out), classic customer accounts (the theme's `templates/customers`; its account forms lead to `/account`),
-and anything served by apps. See [compatibility.md](compatibility.md).
+and what other apps serve (with `--app`, the [theme app extensions](storefront.md#theme-app-extensions) of that app render). See [compatibility.md](compatibility.md).
 
 ## Reproducibility
 
@@ -507,15 +560,16 @@ jobs:
           node-version: 24 # 18 or later
           cache: npm
       - run: npm ci
-      - run: npx local-storefront validate # the store data
-      - run: npx local-storefront check # every Liquid file parses, and Shopify's strict parser accepts it
+      - run: npx local-storefront validate --format github # the store data
+      - run: npx local-storefront check --format github # what Shopify refuses on upload
       - name: Render every page, and fail on a Liquid error
         run: |
-          npx local-storefront routes > /dev/null # stops the step when `routes` cannot run
-          for route in $(npx local-storefront routes); do
-            npx local-storefront render "$route" --strict > /dev/null ||
-              { echo "::error::render failed: $route"; exit 1; }
-          done
+          npx local-storefront routes --all > routes.txt
+          failed=0
+          while read -r route; do
+            npx local-storefront render "$route" --strict --format github > /dev/null || failed=1
+          done < routes.txt
+          exit $failed
       # - run: npx local-storefront fmt --check # uncomment once `fmt` has run in its own commit
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
@@ -523,11 +577,13 @@ jobs:
 
 - `check` reads the files and renders none. A Liquid error at render time (a division by zero)
   shows only when the page renders: with `render --strict`, or in a test.
-- `routes` lists every page of the store data, and `render` answers each one, so the loop
-  renders the whole store. `/account`, a page of lsf's, is not listed. A `for` over `$(…)`
-  ignores the exit code of `routes`: the first line of the step stops it when `routes` fails (a
-  wrong `--theme`). Name the variable `route`, not `path`: in zsh, `path` is `PATH`, and the
-  loop would lose `npx`.
+- `routes --all` lists every page of the store data, each again in the other languages, a
+  search, and the sections the theme fetches (product recommendations, predictive search);
+  `render` answers each one, so the loop renders the whole store. `/account`, a page of lsf's,
+  is not listed. The step stops at once when `routes` fails (a wrong `--theme`), renders every
+  route, and fails at the end if one has a Liquid error. Name the variable `route`, not `path`:
+  in zsh, `path` is `PATH`, and the loop would lose `npx`.
+- `--format github` shows each problem on its line of the pull request.
 - `fmt --check` fails on a theme no one has formatted: Shopify's Horizon has 28 files to
   format. Run `npx local-storefront fmt` first, in a commit of its own, then uncomment the step.
 - The steps before Playwright take a few seconds, and fail before the browser tests start.

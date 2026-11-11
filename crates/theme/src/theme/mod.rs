@@ -4,6 +4,7 @@
 pub mod liquid_settings;
 pub mod locales;
 pub mod schema;
+pub mod schema_check;
 pub mod template_json;
 
 use std::collections::HashMap;
@@ -16,6 +17,7 @@ use lsf_core::theme::{Revalidate, ThemeFiles, ThemeIdentity};
 use lsf_liquid::{Environment, Template};
 use serde_json::Value as Json;
 
+use crate::app_extensions::AppExtensions;
 pub use locales::Translations;
 pub use schema::{Schema, SettingDef, Wrapper};
 pub use template_json::{BlockInstance, Layout, SectionInstance, TemplateJson};
@@ -25,6 +27,9 @@ pub struct LiquidFile {
     pub template: Arc<Template>,
     /// The `{% schema %}` of a section or block file.
     pub schema: Arc<Schema>,
+    /// What Shopify refuses in that schema, which the file alone shows: a section or a theme
+    /// block renders them as errors.
+    pub schema_problems: Vec<schema_check::SchemaProblem>,
 }
 
 struct Cached<T> {
@@ -35,10 +40,10 @@ struct Cached<T> {
 
 /// Values built from theme files, by path. Renders running at the same time all go through
 /// it for every snippet and translation, so a lookup only takes the lock for reading.
-struct Cache<T>(RwLock<HashMap<String, Cached<T>>>);
+pub(crate) struct Cache<T>(RwLock<HashMap<String, Cached<T>>>);
 
 impl<T: Clone> Cache<T> {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Cache(RwLock::new(HashMap::new()))
     }
 
@@ -50,7 +55,7 @@ impl<T: Clone> Cache<T> {
     }
 
     /// The value built from `source`, built now when the file is new or has changed.
-    fn get(&self, path: &str, source: Arc<str>, build: impl FnOnce(&str) -> T) -> T {
+    pub(crate) fn get(&self, path: &str, source: Arc<str>, build: impl FnOnce(&str) -> T) -> T {
         if let Some(value) =
             Self::lookup(&self.0.read().expect("theme cache poisoned"), path, &source)
         {
@@ -91,6 +96,9 @@ pub struct Theme {
     /// Which theme of the shop is served, when the Admin API published another one or renamed
     /// this one ([`Theme::set_identity`]).
     identity: RwLock<Option<Arc<ThemeIdentity>>>,
+    /// The theme app extensions of the app served with the theme
+    /// ([`Theme::set_app_extensions`]): their blocks render where the theme names them.
+    app_extensions: RwLock<Arc<AppExtensions>>,
 }
 
 impl Theme {
@@ -100,6 +108,18 @@ impl Theme {
         revalidate: Revalidate,
     ) -> Result<Theme> {
         let root = root.as_ref();
+        if !root.exists() {
+            return Err(Error::Theme(format!(
+                "the theme folder {} does not exist: give `--theme` the folder of a theme (the one with layout/ and templates/)",
+                root.display()
+            )));
+        }
+        if !root.is_dir() {
+            return Err(Error::Theme(format!(
+                "{} is a file, not a folder: give `--theme` the folder of a theme (the one with layout/ and templates/)",
+                root.display()
+            )));
+        }
         if !root.join("layout").is_dir() && !root.join("templates").is_dir() {
             return Err(Error::Theme(format!(
                 "{} does not look like a Shopify theme: it has neither a layout/ nor a templates/ directory",
@@ -117,6 +137,7 @@ impl Theme {
             revalidate,
             script_tags: RwLock::new(Arc::default()),
             identity: RwLock::new(None),
+            app_extensions: RwLock::new(Arc::default()),
         })
     }
 
@@ -143,6 +164,23 @@ impl Theme {
         if let Ok(mut current) = self.identity.write() {
             *current = identity.map(Arc::new);
         }
+    }
+
+    /// The theme app extensions of the app served with the theme: their app blocks render
+    /// where the templates name them, and their app embed blocks where the theme settings or
+    /// the store data turn them on.
+    pub fn set_app_extensions(&self, extensions: AppExtensions) {
+        if let Ok(mut current) = self.app_extensions.write() {
+            *current = Arc::new(extensions);
+        }
+    }
+
+    /// The theme app extensions served with the theme: none without an app.
+    pub fn app_extensions(&self) -> Arc<AppExtensions> {
+        self.app_extensions
+            .read()
+            .map(|extensions| extensions.clone())
+            .unwrap_or_default()
     }
 
     /// Which theme of the shop is served, when it is not the directory as it is.
@@ -229,9 +267,16 @@ impl Theme {
                         })
                         .map(Schema::from_json)
                         .unwrap_or_default();
+                    let schema_problems =
+                        if path.starts_with("sections/") || path.starts_with("blocks/") {
+                            schema_check::check(source)
+                        } else {
+                            Vec::new()
+                        };
                     Arc::new(LiquidFile {
                         template: Arc::new(template),
                         schema: Arc::new(schema),
+                        schema_problems,
                     })
                 })
             })

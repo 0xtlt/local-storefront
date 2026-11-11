@@ -435,12 +435,31 @@ pub fn resolve(
     values: &Map<String, Json>,
     vars: &[(&str, Value)],
 ) -> Value {
+    resolve_translated(
+        state,
+        ctx,
+        defs,
+        values,
+        vars,
+        state.site.schema_translations(),
+    )
+}
+
+/// [`resolve`], with the `t:` defaults looked up in `schema_translations`: those of a theme app
+/// extension for its blocks.
+pub fn resolve_translated(
+    state: &RenderState,
+    ctx: &Context,
+    defs: &[SettingDef],
+    values: &Map<String, Json>,
+    vars: &[(&str, Value)],
+    schema_translations: &crate::theme::Translations,
+) -> Value {
     let mut dynamic = Dynamic {
         parent: ctx,
         vars,
         ctx: None,
     };
-    let schema_translations = state.site.schema_translations();
     let mut out = Hash::with_capacity(defs.len());
     for def in defs {
         let raw: Option<&Json> = values.get(&def.id).or(def.default.as_ref());

@@ -194,15 +194,16 @@ fn refuses_wrong_metafields_and_changes_nothing() {
     assert_eq!(invalid["errors"][0]["message"], "invalid id", "{invalid}");
     assert_eq!(invalid["data"]["metafieldsSet"], Value::Null);
 
-    // More than 25.
+    // More than 25: the input list is refused before the mutation runs, as Shopify does.
     let many: Vec<Value> = (0..26)
         .map(|n| json!({"ownerId": product, "namespace": "lsf_test", "key": format!("k{n}"), "type": "boolean", "value": "true"}))
         .collect();
     let refused = run(&mut shop, SET, json!({"metafields": many}));
     assert_eq!(
-        refused["data"]["metafieldsSet"]["userErrors"][0]["code"],
-        "LESS_THAN_OR_EQUAL_TO"
+        refused["errors"][0]["extensions"]["code"], "MAX_INPUT_SIZE_EXCEEDED",
+        "{refused}"
     );
+    assert_eq!(shop.get(&product).cloned(), before, "nothing changed");
 }
 
 #[test]
@@ -1175,6 +1176,56 @@ const FILE_CREATE: &str = "mutation($files: [FileCreateInput!]!) { fileCreate(fi
         ... on Video { filename } }
     userErrors { field message code } } }";
 
+/// An image uploaded to a staged target has the size of its header; a URL lsf does not download
+/// is `READY` with a note that says so.
+#[test]
+fn a_staged_image_has_its_size_and_an_external_url_a_note() {
+    let mut shop = rich();
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    png.extend(64u32.to_be_bytes());
+    png.extend(32u32.to_be_bytes());
+    png.extend([8, 6, 0, 0, 0]);
+    crate::admin::domains::app::uploads::store(
+        &mut shop,
+        "tmp/42/files/9a/tiny.png",
+        png,
+        "image/png",
+    );
+    let staged = format!(
+        "http://127.0.0.1:9292/__lsf/admin/uploads/{}/tmp/42/files/9a/tiny.png",
+        shop.domain()
+    );
+    let created = run(
+        &mut shop,
+        "mutation($files: [FileCreateInput!]!) { fileCreate(files: $files) { files { fileStatus
+            ... on MediaImage { image { width height } } } userErrors { code } } }",
+        json!({"files": [{"originalSource": staged}]}),
+    );
+    assert_eq!(
+        created["data"]["fileCreate"]["files"],
+        json!([{"fileStatus": "READY", "image": {"width": 64, "height": 32}}]),
+        "{created}"
+    );
+    assert!(
+        created["extensions"]["lsf"].get("notes").is_none(),
+        "{created}"
+    );
+    let external = run(
+        &mut shop,
+        "mutation($files: [FileCreateInput!]!) { fileCreate(files: $files) { files { fileStatus } userErrors { code } } }",
+        json!({"files": [{"originalSource": "https://unreachable.invalid/missing.png"}]}),
+    );
+    assert_eq!(
+        external["data"]["fileCreate"]["files"],
+        json!([{"fileStatus": "READY"}])
+    );
+    let notes = external["extensions"]["lsf"]["notes"].to_string();
+    assert!(
+        notes.contains("lsf did not download https://unreachable.invalid/missing.png"),
+        "{external}"
+    );
+}
+
 #[test]
 fn creates_updates_and_deletes_files() {
     let mut shop = rich();
@@ -1452,4 +1503,123 @@ fn registers_and_removes_translations() {
         json!([{"key": "title"}])
     );
     assert!(shop.get(&format!("translations/{product}")).is_none());
+}
+
+/// A reference to metaobjects names a definition of the shop: none, or one the shop does not
+/// have, is a user error of the metafield definition and of the metaobject field definition.
+#[test]
+fn a_metaobject_reference_names_a_definition_of_the_shop() {
+    let mut shop = rich();
+    let definition = shop
+        .keys("MetaobjectDefinition")
+        .next()
+        .unwrap()
+        .to_string();
+    let metafield = "mutation($definition: MetafieldDefinitionInput!) {
+        metafieldDefinitionCreate(definition: $definition) { createdDefinition { id } userErrors { field message code } }
+    }";
+    let create = |shop: &mut ShopState, key: &str, validations: Value| {
+        run(
+            shop,
+            metafield,
+            json!({"definition": {"name": "Author", "namespace": "custom", "key": key, "ownerType": "PRODUCT", "type": "metaobject_reference", "validations": validations}}),
+        )["data"]["metafieldDefinitionCreate"]
+            .clone()
+    };
+    let none = create(&mut shop, "author_a", json!([]));
+    assert_eq!(none["createdDefinition"], Value::Null, "{none}");
+    assert_eq!(
+        none["userErrors"][0]["message"],
+        "Validations must include 'metaobject_definition_id'."
+    );
+    let junk = create(
+        &mut shop,
+        "author_b",
+        json!([{"name": "metaobject_definition_id", "value": "REPLACE"}]),
+    );
+    assert_eq!(junk["createdDefinition"], Value::Null, "{junk}");
+    assert_eq!(junk["userErrors"][0]["code"], "INVALID_OPTION");
+    let fine = create(
+        &mut shop,
+        "author_c",
+        json!([{"name": "metaobject_definition_id", "value": definition}]),
+    );
+    assert_eq!(fine["userErrors"], json!([]), "{fine}");
+
+    let metaobject = run(
+        &mut shop,
+        "mutation { metaobjectDefinitionCreate(definition: {type: \"lsf_book\", fieldDefinitions: [{key: \"author\", type: \"list.metaobject_reference\", validations: [{name: \"metaobject_definition_id\", value: \"gid://shopify/MetaobjectDefinition/1\"}]}]}) { metaobjectDefinition { id } userErrors { field message code } } }",
+        json!({}),
+    );
+    let created = &metaobject["data"]["metaobjectDefinitionCreate"];
+    assert_eq!(created["metaobjectDefinition"], Value::Null, "{metaobject}");
+    assert_eq!(
+        created["userErrors"][0]["field"],
+        json!(["definition", "fieldDefinitions", "0", "validations"])
+    );
+}
+
+/// `Metaobject.referencedBy` lists the metafields and the metaobject fields that reference the
+/// entry.
+#[test]
+fn a_metaobject_lists_what_references_it() {
+    let mut shop = rich();
+    let product = shop.keys("Product").next().unwrap().to_string();
+    let created = run(
+        &mut shop,
+        r#"mutation {
+            metaobjectDefinitionCreate(definition: {type: "lsf_designer", fieldDefinitions: [{key: "name", type: "single_line_text_field"}]}) { metaobjectDefinition { id } userErrors { message } }
+        }"#,
+        json!({}),
+    );
+    let definition = created["data"]["metaobjectDefinitionCreate"]["metaobjectDefinition"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{created}"))
+        .to_string();
+    let entry = run(
+        &mut shop,
+        r#"mutation { metaobjectCreate(metaobject: {type: "lsf_designer", handle: "ada", fields: [{key: "name", value: "Ada"}]}) { metaobject { id } } }"#,
+        json!({}),
+    )["data"]["metaobjectCreate"]["metaobject"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let setup = run(
+        &mut shop,
+        r#"mutation($definition: String!, $product: ID!, $entry: String!) {
+            def: metafieldDefinitionCreate(definition: {name: "Designer", namespace: "lsf_test", key: "designer", ownerType: PRODUCT, type: "metaobject_reference", validations: [{name: "metaobject_definition_id", value: $definition}]}) { userErrors { message } }
+            book: metaobjectDefinitionCreate(definition: {type: "lsf_lookbook", fieldDefinitions: [{key: "by", name: "By", type: "metaobject_reference", validations: [{name: "metaobject_definition_id", value: $definition}]}]}) { userErrors { message } }
+            set: metafieldsSet(metafields: [{ownerId: $product, namespace: "lsf_test", key: "designer", type: "metaobject_reference", value: $entry}]) { userErrors { message } }
+        }"#,
+        json!({"definition": definition, "product": product, "entry": entry}),
+    );
+    assert_eq!(setup["data"]["def"]["userErrors"], json!([]), "{setup}");
+    assert_eq!(setup["data"]["book"]["userErrors"], json!([]), "{setup}");
+    assert_eq!(setup["data"]["set"]["userErrors"], json!([]), "{setup}");
+    let book = run(
+        &mut shop,
+        r#"mutation($entry: String!) { metaobjectCreate(metaobject: {type: "lsf_lookbook", handle: "spring", fields: [{key: "by", value: $entry}]}) { metaobject { id } userErrors { message } } }"#,
+        json!({"entry": entry}),
+    );
+    let book = book["data"]["metaobjectCreate"]["metaobject"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{book}"))
+        .to_string();
+    let answer = run(
+        &mut shop,
+        r#"query($id: ID!) { metaobject(id: $id) { referencedBy(first: 5) { nodes { key namespace name referencer { __typename ... on Product { id } ... on Metaobject { id } } target { ... on Metaobject { id } } } } } }"#,
+        json!({"id": entry}),
+    );
+    assert_eq!(
+        answer["data"]["metaobject"]["referencedBy"]["nodes"],
+        json!([
+            {"key": "designer", "namespace": "lsf_test", "name": "Designer", "referencer": {"__typename": "Product", "id": product}, "target": {"id": entry}},
+            {"key": "by", "namespace": "lsf_lookbook", "name": "By", "referencer": {"__typename": "Metaobject", "id": book}, "target": {"id": entry}},
+        ]),
+        "{answer}"
+    );
+    assert!(
+        answer["extensions"]["lsf"].get("defaulted").is_none(),
+        "{answer}"
+    );
 }

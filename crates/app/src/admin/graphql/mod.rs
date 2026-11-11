@@ -66,7 +66,7 @@ mod input;
 mod introspection;
 pub mod parse;
 pub(crate) mod print;
-mod validate;
+pub(crate) mod validate;
 
 use std::collections::HashMap;
 
@@ -77,7 +77,7 @@ pub use error::Error;
 
 use execute::Context;
 
-use crate::admin::schema::{Field as FieldDef, Schema, TypeRef};
+use crate::admin::schema::{Field as FieldDef, Kind, Schema, TypeRef};
 use crate::admin::throttle::{self, Throttle};
 
 /// What a [`Resolver`] answers for a field.
@@ -497,6 +497,9 @@ pub fn prepare<'s, 'q>(
         return Err(vec![Error::new("This query is too large to execute.")]);
     }
     let variables = coerce_variables(schema, definition, variables)?;
+    if let Some(error) = oversized_input(schema, &document, definition, &variables) {
+        return Err(vec![error]);
+    }
     Ok(Prepared {
         schema,
         document,
@@ -579,6 +582,185 @@ fn coerce_variables(
     } else {
         Err(errors)
     }
+}
+
+/// The most items an input list takes: `nodes(ids:)`, `fulfillmentCreate`'s line items, any
+/// list of an argument or of an input object's field, written in the query or given by a
+/// variable. Shopify refuses a longer one before it runs anything, with
+/// `MAX_INPUT_SIZE_EXCEEDED` (shopify.dev changelog, "GraphQL input arrays limited to 250 items";
+/// the wording of the message is lsf's recollection of Shopify's, not checked against a live
+/// shop). A JSON scalar (`WebPixelInput.settings`) is a value, not a list: its arrays are not
+/// counted. [`INPUT_LIMITS`] has the lists Shopify documents another limit for.
+pub const MAX_INPUT_ITEMS: usize = 250;
+
+/// The lists that take another number of items than [`MAX_INPUT_ITEMS`]: an argument as
+/// `Type.field.argument`, a field of an input object as `InputType.field`.
+///
+/// - `metafieldsSet`: "Allows a maximum of 25 metafields to be set at a time".
+/// - The variants of a product, 2048 by default ("stores have a limit of 2048 product variants
+///   for each product"), which `productSet` and the bulk mutations of variants take in one
+///   call, and the values of an option, as many as the variants. Where Shopify publishes no
+///   limit, lsf takes the product's, rather than refuse what Shopify may take.
+pub const INPUT_LIMITS: &[(&str, usize)] = &[
+    ("Mutation.metafieldsSet.metafields", 25),
+    ("ProductSetInput.variants", 2048),
+    ("OptionSetInput.values", 2048),
+    ("OptionCreateInput.values", 2048),
+    ("Mutation.productOptionUpdate.optionValuesToAdd", 2048),
+    ("Mutation.productOptionUpdate.optionValuesToUpdate", 2048),
+    ("Mutation.productOptionUpdate.optionValuesToDelete", 2048),
+    ("Mutation.productVariantsBulkCreate.variants", 2048),
+    ("Mutation.productVariantsBulkUpdate.variants", 2048),
+    ("Mutation.productVariantsBulkDelete.variantsIds", 2048),
+    ("Mutation.productVariantsBulkReorder.positions", 2048),
+    ("Mutation.combinedListingUpdate.productsAdded", 2048),
+    ("Mutation.combinedListingUpdate.productsEdited", 2048),
+    ("Mutation.combinedListingUpdate.productsRemovedIds", 2048),
+];
+
+/// How many items the list of `key` takes ([`INPUT_LIMITS`]).
+fn input_limit(key: &str) -> usize {
+    INPUT_LIMITS
+        .iter()
+        .find(|(list, _)| *list == key)
+        .map_or(MAX_INPUT_ITEMS, |(_, limit)| *limit)
+}
+
+/// The first list in `value`, of type `ty`, longer than it takes: its size and its limit.
+/// `limit` is that of `value` when it is a list; the lists inside take theirs. Stops at scalars
+/// and enums: a JSON value's arrays are not input lists.
+fn oversized_list(
+    schema: &Schema,
+    value: &Value,
+    ty: &TypeRef,
+    limit: usize,
+) -> Option<(usize, usize)> {
+    match (ty, value) {
+        (TypeRef::NonNull(inner), _) => oversized_list(schema, value, inner, limit),
+        (TypeRef::List(item), Value::Array(items)) => {
+            if items.len() > limit {
+                return Some((items.len(), limit));
+            }
+            items
+                .iter()
+                .find_map(|value| oversized_list(schema, value, item, MAX_INPUT_ITEMS))
+        }
+        (TypeRef::List(item), single) => oversized_list(schema, single, item, MAX_INPUT_ITEMS),
+        (TypeRef::Named(name), Value::Object(fields)) => {
+            let def = schema
+                .get(name)
+                .filter(|def| def.kind == Kind::InputObject)?;
+            fields.iter().find_map(|(key, value)| {
+                let field = def.input_field(key)?;
+                let limit = input_limit(&format!("{name}.{key}"));
+                oversized_list(schema, value, &field.ty, limit)
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The error of the first input list of the operation longer than it takes ([`MAX_INPUT_ITEMS`],
+/// [`INPUT_LIMITS`]), through its fragments. Called after validation: every field and argument
+/// is the schema's.
+fn oversized_input(
+    schema: &Schema,
+    document: &ast::Document<'_>,
+    operation: &ast::Operation<'_>,
+    variables: &Map<String, Value>,
+) -> Option<Error> {
+    fn walk<'d, 'q>(
+        schema: &Schema,
+        parent: &str,
+        set: &'d ast::SelectionSet<'q>,
+        document: &'d ast::Document<'q>,
+        variables: &Map<String, Value>,
+        seen: &mut Vec<&'q str>,
+    ) -> Option<Error> {
+        for selection in &set.items {
+            let found = match selection {
+                ast::Selection::Field(field) => {
+                    let Some(def) = schema.lookup_field(parent, field.name) else {
+                        continue;
+                    };
+                    field
+                        .arguments
+                        .iter()
+                        .find_map(|argument| {
+                            let arg = def.arg(argument.name)?;
+                            let value =
+                                input::coerce_literal(schema, &argument.value, &arg.ty, variables)?;
+                            let limit =
+                                input_limit(&format!("{parent}.{}.{}", field.name, argument.name));
+                            let (size, limit) = oversized_list(schema, &value, &arg.ty, limit)?;
+                            Some(
+                                Error::new(format!(
+                                    "The input array size of {size} is greater than the maximum allowed of {limit}."
+                                ))
+                                .with_locations(vec![argument.pos])
+                                .with_path(vec![Value::from(field.name), Value::from(argument.name)])
+                                .with_extension("code", "MAX_INPUT_SIZE_EXCEEDED"),
+                            )
+                        })
+                        .or_else(|| {
+                            walk(
+                                schema,
+                                def.ty.named(),
+                                &field.selection_set,
+                                document,
+                                variables,
+                                seen,
+                            )
+                        })
+                }
+                ast::Selection::InlineFragment(inline) => walk(
+                    schema,
+                    inline.type_condition.unwrap_or(parent),
+                    &inline.selection_set,
+                    document,
+                    variables,
+                    seen,
+                ),
+                ast::Selection::FragmentSpread(spread) => {
+                    if seen.contains(&spread.name) {
+                        None
+                    } else {
+                        seen.push(spread.name);
+                        document
+                            .fragments()
+                            .find(|fragment| fragment.name == spread.name)
+                            .and_then(|fragment| {
+                                walk(
+                                    schema,
+                                    fragment.type_condition,
+                                    &fragment.selection_set,
+                                    document,
+                                    variables,
+                                    seen,
+                                )
+                            })
+                    }
+                }
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    let root = match operation.kind {
+        ast::OperationKind::Query => Some(schema.query_type()),
+        ast::OperationKind::Mutation => schema.mutation_type(),
+        ast::OperationKind::Subscription => schema.subscription_type(),
+    }?;
+    walk(
+        schema,
+        root,
+        &operation.selection_set,
+        document,
+        variables,
+        &mut Vec::new(),
+    )
 }
 
 /// Whether the operation nests deeper than [`parse::MAX_DEPTH`] once its fragments are spread:
@@ -667,6 +849,12 @@ impl<'s, 'q> Prepared<'s, 'q> {
         cost::requested(&self.context(), self.operation())
     }
 
+    /// The fields of the requested cost, as `Shopify-GraphQL-Cost-Debug: 1` lists them
+    /// ([`cost::requested_fields`]).
+    pub fn requested_cost_fields(&self) -> Vec<Value> {
+        cost::requested_fields(&self.context(), self.operation())
+    }
+
     /// Runs the operation.
     pub fn execute<R: Resolver>(&self, resolver: &mut R) -> Executed {
         let context = self.context();
@@ -676,6 +864,26 @@ impl<'s, 'q> Prepared<'s, 'q> {
             errors: executed.errors,
             actual_cost: executed.actual_cost,
         }
+    }
+}
+
+/// Adds the fields of the requested cost to `extensions.cost` (`fields`), as Shopify answers a
+/// request with `Shopify-GraphQL-Cost-Debug: 1`. Nothing for a request that does not prepare,
+/// which has no cost.
+pub fn add_cost_fields(schema: &Schema, request: &Request, response: &mut Response) {
+    let Ok(prepared) = prepare(
+        schema,
+        &request.query,
+        request.operation_name.as_deref(),
+        &request.variables,
+    ) else {
+        return;
+    };
+    if let Some(Value::Object(cost)) = response.extensions.get_mut("cost") {
+        cost.insert(
+            "fields".into(),
+            Value::Array(prepared.requested_cost_fields()),
+        );
     }
 }
 

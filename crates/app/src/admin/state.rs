@@ -294,6 +294,11 @@ pub struct ShopState {
     by_type: HashMap<String, IndexSet<String>>,
     /// The next numeric id of each group of types (see [`counter_group`]).
     counters: HashMap<String, u64>,
+    /// What the ids of the records this shop creates are moved by, so that they are unique
+    /// across the shops of the server, as Shopify's are: 0 for the default shop, a multiple of
+    /// [`ID_STRIDE`] from 10¹³ for a shop made with `POST /__lsf/admin/shops`
+    /// ([`ShopState::set_id_slot`]).
+    id_offset: u64,
     clock: Clock,
     events: Vec<Event>,
     /// How many events the shop emitted, ever (a reset does not restart it). Event ids are random
@@ -435,6 +440,7 @@ impl ShopState {
             records: IndexMap::new(),
             by_type: HashMap::new(),
             counters: HashMap::new(),
+            id_offset: 0,
             clock,
             events: Vec::new(),
             emitted: 0,
@@ -762,7 +768,9 @@ impl ShopState {
         if let Some((gid_type, id)) = parse_gid(&key) {
             let group = counter_group(gid_type);
             let before = self.counters.get(&group).copied();
-            let next = before.unwrap_or(1).max(id.saturating_add(1));
+            let next = before
+                .unwrap_or_else(|| first_id(&group) + self.id_offset)
+                .max(id.saturating_add(1));
             if before != Some(next) {
                 self.counters.insert(group.clone(), next);
                 self.log(|| Undo::Counter { group, before });
@@ -901,15 +909,50 @@ impl ShopState {
     }
 
     /// A new GID for a record of `type_name`, from a counter that starts above every id of the
-    /// type the state holds. The discount nodes (`DiscountAutomaticNode`, `DiscountCodeNode`,
-    /// `DiscountNode`) share a counter, as they share their ids on Shopify.
+    /// type the state holds, and at [`first_id`] of the type at least: the ids of new records
+    /// have 13 digits, as Shopify's and the seeded products' do, and are the same every run. The
+    /// discount nodes (`DiscountAutomaticNode`, `DiscountCodeNode`, `DiscountNode`) share a
+    /// counter, as they share their ids on Shopify.
+    ///
+    /// A shop other than the default one has ids of its own ([`ShopState::set_id_slot`]): a
+    /// record it creates has an id no other shop gives.
     pub fn new_gid(&mut self, type_name: &str) -> String {
         let group = counter_group(type_name);
         let before = self.counters.get(&group).copied();
-        let id = before.unwrap_or(1);
+        let id = before.unwrap_or_else(|| first_id(&group) + self.id_offset);
         self.counters.insert(group.clone(), id + 1);
         self.log(|| Undo::Counter { group, before });
         gid(type_name, id)
+    }
+
+    /// The id of a record the Admin API creates whose id lsf derives from what names it
+    /// (`stable`: a metafield from its owner, namespace and key, a metaobject from its type and
+    /// handle), as the store data's are: `stable` in the default shop when no record has it, a
+    /// new id of the counter otherwise. Another shop always takes a new id: it would share
+    /// `stable` with every shop made from the same seed.
+    pub fn created_gid(&mut self, type_name: &str, stable: String) -> String {
+        if self.id_offset == 0 && !self.contains(&stable) {
+            stable
+        } else {
+            self.new_gid(type_name)
+        }
+    }
+
+    /// What the ids of the records this shop creates are moved by: 0 for the default shop.
+    pub fn id_offset(&self) -> u64 {
+        self.id_offset
+    }
+
+    /// Gives the shop its ids: those of the records it creates from now on are moved by `slot`
+    /// times [`ID_STRIDE`], above every id of the seed, so that two shops never create the same
+    /// id. Slot 0 is the default shop's. The records already there keep theirs.
+    pub fn set_id_slot(&mut self, slot: u64) {
+        let offset = slot * ID_STRIDE;
+        let shift = offset.wrapping_sub(self.id_offset);
+        for counter in self.counters.values_mut() {
+            *counter = counter.wrapping_add(shift);
+        }
+        self.id_offset = offset;
     }
 
     /// Sets `updatedAt` of a record to now, when the record has that field. Returns whether the
@@ -1445,13 +1488,14 @@ impl ShopState {
     /// and the event sequence kept. The revision moves on: a reset is a write.
     fn reset_from(&mut self, seed: &ShopState) {
         let domain = self.domain.clone();
-        let (emitted, revision) = (self.emitted, self.revision);
+        let (emitted, revision, slot) = (self.emitted, self.revision, self.id_offset / ID_STRIDE);
         *self = seed.clone();
         self.emitted = emitted;
         self.revision = revision + 1;
         if domain != self.domain {
             self.rehost(&domain);
         }
+        self.set_id_slot(slot);
     }
 }
 
@@ -1479,6 +1523,38 @@ fn record_type(record: &Record) -> String {
 
 /// The counter a type takes its new ids from: its own, except the discount nodes, which share
 /// one.
+/// Where the ids of new records of a counter's group start: a 13-digit number of the group's
+/// name (`DraftOrder/4…`), as lsf-core derives the ids of the store data's records. Ids then
+/// follow one another (`…012`, `…013`).
+pub(crate) fn first_id(group: &str) -> u64 {
+    lsf_core::util::stable_id("new_gid", group)
+}
+
+/// How far apart the ids of two shops are ([`ShopState::set_id_slot`]): a shop creates up to a
+/// million records of a type before it reaches the ids of the next slot.
+pub const ID_STRIDE: u64 = 1_000_000;
+
+/// The first slot of a test shop: its ids start at 10¹³, above every id of the store data and
+/// of the default shop (13 digits), so that a test shop's ids have 14 digits.
+const FIRST_SLOT: u64 = 10_000_000;
+
+/// How many slots of ids there are for test shops. The last one ends below 10¹⁴: ids keep 14
+/// digits, below 2⁵³ (`Number.MAX_SAFE_INTEGER` of JavaScript).
+const ID_SLOTS: u64 = 80_000_000;
+
+/// The slot of ids of a shop made under `domain` ([`ShopState::set_id_slot`]): a number of the
+/// domain alone, the same every run whatever other shops exist. Two domains share one once in
+/// 80 million pairs; `taken` then gives the next free one, so that ids stay unique across shops.
+/// Never 0, the default shop's.
+pub fn id_slot(domain: &str, taken: impl Fn(u64) -> bool) -> u64 {
+    // `stable_id` is 10¹² + an FNV-1a hash modulo 8·10¹², which `ID_SLOTS` divides.
+    let first = (lsf_core::util::stable_id("id slot", domain) - 1_000_000_000_000) % ID_SLOTS;
+    (0..ID_SLOTS)
+        .map(|step| FIRST_SLOT + (first + step) % ID_SLOTS)
+        .find(|slot| !taken(*slot))
+        .unwrap_or(FIRST_SLOT + first)
+}
+
 fn counter_group(type_name: &str) -> String {
     match type_name {
         "DiscountAutomaticNode" | "DiscountCodeNode" | "DiscountNode" => "DiscountNode".to_string(),
@@ -1572,11 +1648,15 @@ impl Shops {
         }
         let mut shop = self.seed.clone();
         shop.rehost(&domain);
+        let taken: Vec<u64> = self.shops.values().map(|shop| shop.id_offset).collect();
+        shop.set_id_slot(id_slot(&domain, |slot| taken.contains(&(slot * ID_STRIDE))));
         Ok(self.shops.entry(domain).or_insert(shop))
     }
 
     /// A shop seeded from the same data under the domain of `name`, as [`Shops::create`] makes
-    /// it, but not kept here: for a server that keeps each shop behind a lock of its own.
+    /// it, but not kept here: for a server that keeps each shop behind a lock of its own. It
+    /// creates the ids of the default shop until it is given a slot of its own
+    /// ([`ShopState::set_id_slot`]).
     pub fn new_shop(&self, name: &str) -> Result<ShopState, String> {
         let domain = shop_domain(name)?;
         let mut shop = self.seed.clone();
@@ -1666,6 +1746,68 @@ mod tests {
             Value::Object(map) => map,
             _ => unreachable!(),
         }
+    }
+
+    /// Two shops never create the same id, a reset keeps a shop's ids, and two domains of the
+    /// same slot get two.
+    #[test]
+    fn shops_create_ids_of_their_own() {
+        let mut shops = Shops {
+            seed: ShopState::new("seed.myshopify.com", Clock::System),
+            shops: IndexMap::new(),
+        };
+        let default = shops.seed.clone().new_gid("Product");
+        let one = shops.create("one").unwrap().new_gid("Product");
+        let two = shops.create("two").unwrap().new_gid("Product");
+        assert_ne!(one, two);
+        assert_ne!(one, default);
+        assert!(gid_number(&one) < 1 << 53, "{one}");
+        shops.reset();
+        assert_eq!(
+            shops
+                .get_mut("one.myshopify.com")
+                .unwrap()
+                .new_gid("Product"),
+            one
+        );
+        let first = id_slot("a.myshopify.com", |_| false);
+        assert_ne!(first, 0);
+        assert_ne!(id_slot("a.myshopify.com", |slot| slot == first), first);
+    }
+
+    /// A test shop's ids are a number of its name alone: the order the shops are made in does
+    /// not change them. `test-286` and `test-542` shared a slot when there were 89,999.
+    #[test]
+    fn a_shop_has_the_same_ids_whatever_shops_came_before() {
+        let product = |names: &[&str]| {
+            let mut shops = Shops {
+                seed: ShopState::new("seed.myshopify.com", Clock::System),
+                shops: IndexMap::new(),
+            };
+            names
+                .iter()
+                .map(|name| {
+                    (
+                        name.to_string(),
+                        shops.create(name).unwrap().new_gid("Product"),
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        };
+        let forward = product(&["test-286", "test-542"]);
+        let backward = product(&["test-542", "test-286"]);
+        assert_eq!(forward, backward);
+        assert_ne!(forward["test-286"], forward["test-542"]);
+        for id in forward.values() {
+            let number = gid_number(id);
+            assert_eq!(number.to_string().len(), 14, "{id}");
+            assert!(number < 1 << 53, "{id}");
+        }
+        // No two of a thousand names share a slot.
+        let slots: std::collections::HashSet<u64> = (0..1000)
+            .map(|n| id_slot(&format!("test-{n}.myshopify.com"), |_| false))
+            .collect();
+        assert_eq!(slots.len(), 1000);
     }
 
     #[test]
@@ -1808,13 +1950,19 @@ mod tests {
         assert_eq!(ids, ["gid://shopify/Product/9", "gid://shopify/Product/3"]);
         assert_eq!(state.count("Product"), 2);
         assert_eq!(state.all_of(&["Collection", "Product"]).count(), 3);
-        // A new id is above every id of the type.
-        assert_eq!(state.new_gid("Product"), "gid://shopify/Product/10");
-        assert_eq!(state.new_gid("Product"), "gid://shopify/Product/11");
-        assert_eq!(state.new_gid("Order"), "gid://shopify/Order/1");
+        // A new id is above every id of the type, and has 13 digits, the same every run.
+        let first = first_id("Product");
+        assert_eq!(first.to_string().len(), 13);
+        assert_eq!(state.new_gid("Product"), gid("Product", first));
+        assert_eq!(state.new_gid("Product"), gid("Product", first + 1));
+        assert_eq!(state.new_gid("Order"), gid("Order", first_id("Order")));
+        state.insert(record(
+            json!({"__typename": "Product", "id": gid("Product", first + 10)}),
+        ));
+        assert_eq!(state.new_gid("Product"), gid("Product", first + 11));
         // A record without an id gets a new one.
         let new = state.insert(record(json!({"__typename": "Product", "title": "New"})));
-        assert_eq!(new, "gid://shopify/Product/12");
+        assert_eq!(new, gid("Product", first + 12));
         assert_eq!(state.get(&new).unwrap()["id"], json!(new));
         // Replacing keeps the position; removing forgets it.
         state.insert(record(
@@ -1825,19 +1973,20 @@ mod tests {
             Some("gid://shopify/Product/9")
         );
         assert!(state.remove("gid://shopify/Product/3").is_some());
-        assert_eq!(state.count("Product"), 2);
+        assert_eq!(state.count("Product"), 3);
         assert!(state.get("gid://shopify/Product/3").is_none());
     }
 
     #[test]
     fn discount_nodes_share_their_ids() {
         let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        let first = first_id("DiscountNode");
         state.insert(record(
-            json!({"__typename": "DiscountCodeNode", "id": "gid://shopify/DiscountCodeNode/2"}),
+            json!({"__typename": "DiscountCodeNode", "id": gid("DiscountCodeNode", first + 1)}),
         ));
         assert_eq!(
             state.new_gid("DiscountAutomaticNode"),
-            "gid://shopify/DiscountAutomaticNode/3"
+            gid("DiscountAutomaticNode", first + 2)
         );
     }
 
@@ -2003,7 +2152,10 @@ mod tests {
         assert_eq!(state.picture(), before);
         assert!(state.journal.is_none());
         // New ids start where they did, and the next event has the next sequence.
-        assert_eq!(state.new_gid("Product"), "gid://shopify/Product/7");
+        assert_eq!(
+            state.new_gid("Product"),
+            gid("Product", first_id("Product"))
+        );
         assert_eq!(state.changes().len(), 1);
     }
 

@@ -689,9 +689,11 @@ function header(ctx) {
 }
 
 /** A build of `--watch` that failed, with the end of its output: the Function runs the last
- * module that built, when one did (`built`). */
+ * module that built, and a UI extension (`kind: 'ui'`) the last bundle, when one did (`built`). */
 function buildFailure(build) {
-  const meanwhile = build.built === false ? 'No module of it built yet.' : 'The checkout runs the last module that built.';
+  const meanwhile = build.kind === 'ui'
+    ? (build.built === false ? 'No bundle of it built yet.' : 'The last build failed: the page runs the bundle of the previous one.')
+    : (build.built === false ? 'No module of it built yet.' : 'The last build failed: the checkout runs the module of the previous one.');
   return [
     h('p', null, h('strong', null, build.handle), `: ${build.reason}. ${meanwhile}`),
     build.output && h('pre', { class: 'lsf-build-output' }, build.output),

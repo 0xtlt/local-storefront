@@ -261,13 +261,24 @@ body { background: var(--lsf-bg); }
 .lsf-plan-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 16px 0 8px; }
 .lsf-plan-actions .lsf-button { text-decoration: none; }
 
-/* While the app shows a modal, the admin around it is dimmed. */
-.lsf-modal-open .lsf-nav,
-.lsf-modal-open .lsf-topbar,
-.lsf-modal-open .lsf-titlebar,
-.lsf-modal-open .lsf-banners {
+/* While the app shows a modal, the admin around it is dimmed. Once the frame is lifted over the
+   whole window (its page in its box, the rest transparent), the modal's own backdrop dims it. */
+.lsf-modal-open:not(.lsf-modal-lifted) .lsf-nav,
+.lsf-modal-open:not(.lsf-modal-lifted) .lsf-topbar,
+.lsf-modal-open:not(.lsf-modal-lifted) .lsf-titlebar,
+.lsf-modal-open:not(.lsf-modal-lifted) .lsf-banners {
   filter: brightness(0.45);
   pointer-events: none;
+}
+.lsf-frame.lsf-frame-lifted {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 100;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 /* Buttons and badges. */
@@ -380,6 +391,13 @@ body { background: var(--lsf-bg); }
   gap: 8px;
 }
 .lsf-picker .lsf-dialog-actions { padding: 12px 20px; border-top: 1px solid var(--lsf-border); }
+.lsf-intent .lsf-dialog-actions { padding: 12px 20px; border-top: 1px solid var(--lsf-border); }
+.lsf-intent-note { margin: 6px 0 0; color: var(--lsf-muted); font-size: 13px; }
+.lsf-intent-body { padding: 16px 20px; overflow: auto; }
+.lsf-intent-body h3 { margin: 0 0 12px; font-size: 15px; }
+.lsf-intent-details { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 16px; }
+.lsf-intent-details dt { color: var(--lsf-muted); }
+.lsf-intent-details dd { margin: 0; overflow-wrap: anywhere; }
 .lsf-picker-count { margin-right: auto; color: var(--lsf-muted); }
 .lsf-picker-search {
   margin: 12px 20px;
