@@ -186,6 +186,15 @@ fn page(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse {
             &admin_query(request),
         )),
         ["apps", app, path @ ..] => app_page(api, request, &viewer, app, path),
+        // The `confirmationUrl` of a charge, on the shop's admin as Shopify writes it.
+        charge if crate::admin::domains::app::billing::confirmed_charge(charge).is_some() => {
+            let number =
+                crate::admin::domains::app::billing::confirmed_charge(charge).unwrap_or_default();
+            HttpResponse::redirect(&with_query(
+                &format!("/__lsf/admin/charges/{number}"),
+                &[("shop".to_string(), viewer.shop.clone())],
+            ))
+        }
         ["charges", app, "pricing_plans", rest @ ..] => {
             super::pricing::page(api, request, &viewer, app, rest)
         }
@@ -280,6 +289,14 @@ fn app_page(
             ],
         );
     };
+    // On the proxy the server puts in front of the backend, when there is one.
+    let app_origin = origin_of(&frame);
+    let frame = match api.frame_origin() {
+        Some(proxy) if frame.starts_with(&app_origin) => {
+            format!("{proxy}{}", &frame[app_origin.len()..])
+        }
+        _ => frame,
+    };
     let origin = origin_of(&frame);
     let main = format!(
         "<iframe class=\"lsf-frame\" name=\"app-iframe\" title=\"{}\" src=\"{}\" allow=\"clipboard-read; clipboard-write\"></iframe>",
@@ -296,6 +313,8 @@ fn app_page(
             "path": app_path,
             // Where the app's paths start: the admin's URL has the app's path after it.
             "base": api.app_url(),
+            // The backend's own origin, which a URL of the app may name.
+            "appOrigin": app_origin,
         }),
     );
     render(

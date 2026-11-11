@@ -119,12 +119,13 @@ fn a_subscription_is_created_pending_and_approved_on_the_confirmation_page() {
     assert_eq!(subscription["currentPeriodEnd"], Value::Null);
     let id = subscription["id"].as_str().unwrap();
     let number = lsf_app::admin::state::parse_gid(id).unwrap().1;
-    assert_eq!(
-        payload["confirmationUrl"],
-        json!(format!(
-            "{ORIGIN}/__lsf/admin/charges/{number}?shop={}",
-            shop.domain()
-        ))
+    let confirmation = payload["confirmationUrl"].as_str().unwrap();
+    assert!(
+        confirmation.starts_with(&format!("https://{}/admin/charges/", shop.domain()))
+            && confirmation.contains(&format!(
+                "/{number}/RecurringApplicationCharge/confirm_recurring_application_charge?signature="
+            )),
+        "{confirmation}"
     );
     let lines = subscription["lineItems"].as_array().unwrap();
     assert_eq!(
@@ -362,7 +363,9 @@ fn capped_amounts_trials_and_cancellations() {
         payload["confirmationUrl"]
             .as_str()
             .unwrap()
-            .contains(&format!("/charges/{number}?"))
+            .contains(&format!(
+                "/{number}/RecurringApplicationCharge/confirm_update_capped_amount?"
+            ))
     );
     // Until the merchant approves, the capped amount is the old one.
     let capped = |shop: &mut ShopState| {

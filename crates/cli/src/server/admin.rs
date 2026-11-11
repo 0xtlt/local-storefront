@@ -194,9 +194,14 @@ impl Admin {
     pub fn embedded_banner(&self, origin: &str) -> Option<String> {
         let path = self.embedded_path()?;
         Some(match self.api.app_url() {
-            Some(_) => format!(
-                "embedded: {origin}{path}   (the app in lsf's admin; its pages load {origin}/__lsf/admin/app-bridge.js)"
-            ),
+            Some(app_url) => match self.api.frame_origin() {
+                Some(frame) => format!(
+                    "embedded: {origin}{path}   (the app in lsf's admin; its frame is {frame}, a proxy of {app_url} that lets the admin frame every page and gives it lsf's App Bridge and Polaris)"
+                ),
+                None => format!(
+                    "embedded: {origin}{path}   (the app in lsf's admin; its pages load {origin}/__lsf/admin/app-bridge.js)"
+                ),
+            },
             None => format!(
                 "embedded: {origin}{path} opens the app once lsf knows its URL: give --app-url (where the backend listens)"
             ),

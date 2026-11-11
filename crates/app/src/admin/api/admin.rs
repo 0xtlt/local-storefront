@@ -171,6 +171,9 @@ pub struct AdminApi {
     /// What the Events of the app (`[[events.subscription]]`) compare a product's change with:
     /// its last snapshot, by shop and product. Empty for an app without Events.
     event_snapshots: Mutex<HashMap<String, BTreeMap<String, Value>>>,
+    /// The origin lsf's admin opens the app's frame on, in place of the backend's: the proxy
+    /// the server puts in front of it ([`AdminApi::set_frame_origin`]).
+    frame_origin: RwLock<Option<String>>,
     /// What a test runs once at a point of a request ([`Hook`]).
     #[cfg(test)]
     test_hooks: TestHooks,
@@ -319,6 +322,7 @@ impl AdminApi {
             notices: None,
             pricing: RwLock::new(PricingPlans::default()),
             event_snapshots: Mutex::new(HashMap::new()),
+            frame_origin: RwLock::new(None),
             #[cfg(test)]
             test_hooks: Mutex::new(Default::default()),
         }
@@ -618,6 +622,24 @@ impl AdminApi {
     /// `application_url`; `None` when neither is known.
     pub fn app_url(&self) -> Option<String> {
         self.auth.app_url()
+    }
+
+    /// Opens the app's frame in lsf's admin on `origin` rather than on the backend's: a proxy
+    /// in front of the backend, which lets the admin frame the pages Shopify's libraries let
+    /// only Shopify's admin frame. `None` opens the backend itself.
+    pub fn set_frame_origin(&self, origin: Option<String>) {
+        *self
+            .frame_origin
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = origin;
+    }
+
+    /// The origin of the app's frame in lsf's admin, when it is not the backend's.
+    pub fn frame_origin(&self) -> Option<String> {
+        self.frame_origin
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Whether lsf has the shop `domain`.

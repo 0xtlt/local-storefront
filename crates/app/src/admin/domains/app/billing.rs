@@ -7,8 +7,9 @@
 //!
 //! - `appSubscriptionCreate` makes a `PENDING` subscription with its line items (one recurring
 //!   and one usage plan at most: "Only one pricing plan can be defined for each available
-//!   type"), and answers a `confirmationUrl` on lsf: `GET /__lsf/admin/charges/<n>?shop=…`
-//!   shows the charge, approving redirects to `returnUrl` with `charge_id=<n>`, as Shopify does.
+//!   type"), and answers a `confirmationUrl` as Shopify's, on the shop's admin
+//!   ([`confirmation_url`]), which lsf's admin sends to `GET /__lsf/admin/charges/<n>?shop=…`:
+//!   it shows the charge, approving redirects to `returnUrl` with `charge_id=<n>`, as Shopify does.
 //!   `POST /__lsf/admin/charges/<n>/approve` (or `/decline`) does it without the page.
 //! - Approved, the subscription is `ACTIVE` (2026-10: "When a merchant approves an app
 //!   subscription, the status immediately transitions from pending to active"), and the app's
@@ -167,9 +168,55 @@ pub(super) fn next_charge(state: &ShopState) -> u64 {
         + 1
 }
 
-/// The page where the merchant approves a charge.
-pub fn confirmation_url(origin: &str, shop: &str, number: u64) -> String {
-    format!("{origin}/__lsf/admin/charges/{number}?shop={shop}")
+/// What a confirmation URL is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Confirm {
+    Subscription,
+    OneTime,
+    CappedAmount,
+}
+
+/// The page where the merchant approves a charge, as Shopify writes it: on the shop's admin,
+/// `https://<shop>/admin/charges/<app id>/<charge>/RecurringApplicationCharge/confirm_recurring_application_charge?signature=…`.
+/// That is what `@shopify/shopify-app-react-router` lets its exit-iframe page go to (`https`, a
+/// `*.myshopify.com` host, under `/admin`). lsf's admin serves the path (`api::embedded`), and
+/// redirects it to lsf's page of the charge, `/__lsf/admin/charges/<charge>?shop=<shop>`: a
+/// test opens it on lsf's origin in place of `https://<shop>`.
+pub fn confirmation_url(state: &ShopState, shop: &str, number: u64, confirm: Confirm) -> String {
+    let app = state
+        .all("App")
+        .next()
+        .and_then(|app| app.get("id"))
+        .and_then(Value::as_str)
+        .map_or(0, gid_number);
+    let (kind, action) = match confirm {
+        Confirm::Subscription => (
+            "RecurringApplicationCharge",
+            "confirm_recurring_application_charge",
+        ),
+        Confirm::OneTime => ("ApplicationCharge", "confirm_application_charge"),
+        Confirm::CappedAmount => ("RecurringApplicationCharge", "confirm_update_capped_amount"),
+    };
+    let signature = crate::admin::auth::signing::hex(&crate::admin::auth::signing::sha256(
+        format!("lsf charge\0{shop}\0{number}").as_bytes(),
+    ));
+    format!(
+        "https://{shop}/admin/charges/{app}/{number}/{kind}/{action}?signature={}",
+        &signature[..32]
+    )
+}
+
+/// The charge a path of the admin confirms (`/charges/<app id>/<charge>/<kind>/<action>`, below
+/// `/admin`), as [`confirmation_url`] writes it.
+pub fn confirmed_charge(segments: &[&str]) -> Option<u64> {
+    match segments {
+        ["charges", _app, number, kind, action]
+            if kind.ends_with("ApplicationCharge") && action.starts_with("confirm_") =>
+        {
+            number.parse().ok()
+        }
+        _ => None,
+    }
 }
 
 /// The pricing details of a line item record.
@@ -454,7 +501,6 @@ fn subscription_create(
         return Ok(payload(failed, &errors));
     }
 
-    let origin = mutation.origin().to_string();
     let shop = mutation.shop().to_string();
     let test = ctx.arg_bool("test").unwrap_or(false);
     let behavior = ctx
@@ -496,7 +542,7 @@ fn subscription_create(
     Ok(payload(
         json!({
             "appSubscription": id,
-            "confirmationUrl": confirmation_url(&origin, &shop, number),
+            "confirmationUrl": confirmation_url(state, &shop, number, Confirm::Subscription),
         }),
         &[],
     ))
@@ -639,7 +685,6 @@ fn line_item_update(
     if !errors.is_empty() {
         return Ok(payload(failed, &errors));
     }
-    let origin = mutation.origin().to_string();
     let shop = mutation.shop().to_string();
     let state = mutation.state_mut();
     if let Some(record) = state.get_mut(&line) {
@@ -650,7 +695,7 @@ fn line_item_update(
     Ok(payload(
         json!({
             "appSubscription": subscription,
-            "confirmationUrl": confirmation_url(&origin, &shop, number),
+            "confirmationUrl": confirmation_url(state, &shop, number, Confirm::CappedAmount),
         }),
         &[],
     ))
@@ -794,7 +839,6 @@ fn purchase_create(
     let Some((amount, currency)) = price.filter(|_| errors.is_empty()) else {
         return Ok(payload(failed, &errors));
     };
-    let origin = mutation.origin().to_string();
     let shop = mutation.shop().to_string();
     let test = ctx.arg_bool("test").unwrap_or(false);
     let state = mutation.state_mut();
@@ -817,7 +861,7 @@ fn purchase_create(
     Ok(payload(
         json!({
             "appPurchaseOneTime": id,
-            "confirmationUrl": confirmation_url(&origin, &shop, number),
+            "confirmationUrl": confirmation_url(state, &shop, number, Confirm::OneTime),
         }),
         &[],
     ))
