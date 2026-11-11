@@ -294,6 +294,18 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   `expressMethods`, and every method its `placements`; `lsf app function run` prints each method
   with its placements. The `payment-methods` scenario of `app init` has PayPal in both
   placements, as Shopify offers it with PayPal Express on.
+- **Theme app extensions render in the theme.** With `serve --app`, the app blocks a JSON
+  template or a section group names (`shopify://apps/<app>/blocks/<block>/<id>`) render where the
+  theme renders blocks: `{% render block %}` for a `@app` block of `section.blocks`,
+  `{% content_for 'blocks' %}` (Horizon), and the `apps` section. App embed blocks render before
+  `</head>` and `</body>` when `config/settings_data.json` turns them on, or `app.embeds` of the
+  store data does; `app.metafields` there sets the app-data metafields. In the Liquid of an
+  extension, `render`, `asset_url` and `t` read its own snippets, assets and locales, and the
+  `javascript` and `stylesheet` of a schema load once per page. A block that renders nothing
+  says why, in the terminal and in `X-LSF-Reason`. The `app:` line and the home page list the
+  extensions and their blocks; `check --app` checks the app blocks the theme names; `app build`
+  checks the extensions as Shopify does, where it said "nothing was built"; live reload follows
+  their files. [Storefront](docs/storefront.md#theme-app-extensions).
 
 ### Changed
 

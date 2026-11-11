@@ -135,6 +135,9 @@ UI extensions.
   when a Function fails or an expectation is not met. It needs no store and no network.
 - **Builds without Node.** `app build` and `app function build` build the extensions as
   `shopify app build` does. `app function schema` writes a Function's `schema.graphql`.
+- **Theme app extensions.** `serve --app ../my-app` renders the app's app blocks where the
+  theme's templates name them, and its app embed blocks where the theme or the store data turns
+  them on. Guide: [storefront](docs/storefront.md#theme-app-extensions).
 
 Guide: [checkout](docs/checkout.md).
 
@@ -208,7 +211,7 @@ the [CLI reference](docs/cli.md).
 | Fix what Shopify's strict parser rejects | [Strict Liquid](docs/strict-liquid.md) |
 | Format Liquid files | [Formatting](docs/formatting.md) |
 | Make a page faster | [Performance](docs/performance.md) |
-| Use the storefront in a browser | [Storefront](docs/storefront.md): accounts, password page, live reload, previews |
+| Use the storefront in a browser | [Storefront](docs/storefront.md): accounts, password page, live reload, previews, theme app extensions |
 | Run the Functions and checkout extensions of an app | [Checkout](docs/checkout.md) |
 | Test an app's backend: Admin API, OAuth, webhooks, billing, app proxy | [Admin API](docs/admin.md), then the [Admin API reference](docs/admin-reference.md) |
 | Know an option or an exit code | [CLI reference](docs/cli.md) |

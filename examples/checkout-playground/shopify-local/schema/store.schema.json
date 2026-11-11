@@ -180,6 +180,17 @@
       "type": "object",
       "additionalProperties": true,
       "default": {}
+    },
+    "app": {
+      "description": "The app of `--app` as this store has it installed: what its theme app extensions read.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AppInstallationInput"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -3685,6 +3696,56 @@
           "additionalProperties": {
             "$ref": "#/$defs/MetafieldInput"
           },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "AppInstallationInput": {
+      "description": "The app of `--app` as the store has it installed, for its theme app extensions: its\napp-data metafields and the app embed blocks turned on.",
+      "type": "object",
+      "properties": {
+        "metafields": {
+          "description": "The app-data metafields of the installation, by namespace then key:\n`{\"conditions\": {\"reviews_enabled\": true}}`. The Liquid of the app's blocks reads them as\n`app.metafields.conditions.reviews_enabled`, and an `available_if` of a block tests them.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        },
+        "embeds": {
+          "description": "App embed blocks turned on or off, by the name of their file in the extension's\n`blocks/` (`\"chat-bubble\"` for `blocks/chat-bubble.liquid`): `true` turns one on, with\nthe settings `config/settings_data.json` gives it or else its defaults; `false` turns it\noff; `{\"settings\": {...}}` turns it on with these settings. The embeds of\n`config/settings_data.json` that this does not name stay as the theme has them.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/AppEmbedInput"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "AppEmbedInput": {
+      "description": "An app embed block turned on (`true`) or off (`false`), or turned on with its settings.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/AppEmbedSettings"
+        }
+      ]
+    },
+    "AppEmbedSettings": {
+      "description": "An app embed block turned on with settings of its own.",
+      "type": "object",
+      "properties": {
+        "settings": {
+          "description": "The values of the settings of the block's schema, by setting id. The others have their\ndefaults.",
+          "type": "object",
+          "additionalProperties": true,
           "default": {}
         }
       },

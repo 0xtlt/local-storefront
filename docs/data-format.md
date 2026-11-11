@@ -81,7 +81,7 @@ and `tags`, or these collections stay empty.
 Every `*.json` file at the root is a **data file**: an object with any of the keys `shop`,
 `products`, `collections`, `pages`, `blogs`, `menus`, `customers`, `companies`, `gift_cards`,
 `selling_plan_groups`, `locations`, `swatches`, `metaobjects`, `localization`, `files`,
-`session`, `checkout`, `now` and `theme_settings`. Root files are merged, so the data can be
+`session`, `checkout`, `now`, `theme_settings` and `app`. Root files are merged, so the data can be
 split however is convenient. Lists add up; `shop`, `localization`, `session`, `checkout` and
 `now` may be defined in one file only.
 
@@ -853,6 +853,27 @@ find them, whatever the id, since the store data does not know it.
   ids built from it differ. Without `now`, `'now'` reads the real clock each time.
 - `theme_settings` overrides values of `config/settings_data.json` by setting id, without
   touching the theme: `"theme_settings": { "cart_type": "drawer" }`.
+
+## The app
+
+With `serve --app`, `app` is the app as the store has it installed, for its theme app
+extensions:
+
+```json
+{
+  "app": {
+    "metafields": { "reviews": { "badge_enabled": true } },
+    "embeds": { "chat-bubble": true, "reviews-loader": { "settings": { "api_key": "test-key" } } }
+  }
+}
+```
+
+- `metafields` are its app-data metafields, by namespace then key, written as other
+  metafields. The Liquid of its blocks reads them as `app.metafields.reviews.badge_enabled`,
+  and the `available_if` of a block tests them.
+- `embeds` turns its app embed blocks on or off, by the name of their file in `blocks/`: `true`,
+  `false`, or `{"settings": {...}}` to turn one on with these settings. What it does not name
+  stays as `config/settings_data.json` has it.
 
 ## Error codes
 

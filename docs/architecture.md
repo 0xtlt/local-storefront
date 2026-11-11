@@ -73,6 +73,7 @@ Tests: unit tests next to the code, `tests/docs.rs` (the generated reference is 
 | `assets/platform/` | The JavaScript counterparts of Shopify's own scripts (`Shopify.actions`, `Shopify.loadFeatures`), embedded in the binary and served from the local CDN, with Shopify's global assets (`themes_support/`, see its README). Tested with Node's test runner (`mise run test:js`). |
 | `images`, `fonts`, `urls` | Image transformations, the format an image is sent in (JPEG, PNG, WebP or AVIF, by what the client accepts) and placeholders, the blank fallback font, the local CDN URLs of a site. |
 | `previews` | Shopify's feature previews (`--preview liquid-july-26`): what a render adds when one is on. |
+| `app_extensions` | Theme app extensions of `--app` (`Theme::set_app_extensions`): their files read as the theme's, the block a `shopify://apps/...` type names, app blocks and app embed blocks rendered with the extension's snippets (`Context::set_partials`), assets and locales (`render`), the app blocks a theme names and what is wrong with them (`references`), and the checks of `app build` (`validate`). |
 | `site` | What one render sees: theme, store, request, session, clock. |
 
 A render is a pure function of `(theme, store, request, session, now)`: `Renderer::render`
@@ -92,7 +93,7 @@ itself: `lsf` does, with `lsf app dev`, `lsf serve --app` and `lsf app function 
 
 | Module | Role |
 |---|---|
-| `config` | Reads `shopify.app.toml` and `extensions/*/shopify.extension.toml`: Functions, checkout UI extensions, the others listed and ignored. What is wrong with the app (a missing build, an unknown target) is a diagnostic, not an error. `Selection` is the set of extensions in use (`--extension`). `config::version` holds the API releases and the Function schemas of each (`schemas/functions/`). |
+| `config` | Reads `shopify.app.toml` and `extensions/*/shopify.extension.toml`: Functions, checkout UI extensions, theme app extensions (which `lsf-theme` renders), the others listed and ignored. What is wrong with the app (a missing build, an unknown target) is a diagnostic, not an error. `Selection` is the set of extensions in use (`--extension`). `config::version` holds the API releases and the Function schemas of each (`schemas/functions/`). |
 | `checkout` | The checkout, below. |
 | `admin` | The Admin API, below. |
 
@@ -162,7 +163,7 @@ Tests: unit tests next to the code; `tests/golden.rs` formats the cases of
 
 ## `lsf-cli`: commands and server
 
-`commands/` holds one file per subcommand (`app.rs` is `lsf app`: `app dev` is `serve` without a theme, `App::open_without_theme`, and `app init` (`app_init.rs`) writes the checkout scenarios for an app; `function.rs` is `app function run`, which runs the pipeline once, and `app function build`, with `function/schema.rs` for `app function schema`; `webhook.rs` is `app webhook trigger`). `server/` is the HTTP side:
+`commands/` holds one file per subcommand (`app.rs` is `lsf app`: `app dev` is `serve` without a theme, `App::open_without_theme`, and `app init` (`app_init.rs`) writes the checkout scenarios for an app; `function.rs` is `app function run`, which runs the pipeline once, and `app function build`, with `function/schema.rs` for `app function schema`; `webhook.rs` is `app webhook trigger`). `theme_extensions.rs` gives the theme the theme app extensions of `--app` and describes them for the `app:` line, the home page, `check --app` and `app build`. `server/` is the HTTP side:
 
 | Module | Role |
 |---|---|

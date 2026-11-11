@@ -29,7 +29,7 @@ One task each, from the first command to the details.
 | [Performance](performance.md) | Profiling a page, in time or in what it would cost Shopify. |
 | [Checkout](checkout.md) | Running the Functions and the checkout UI extensions of a Shopify app. |
 | [Admin API](admin.md) | Pointing the backend of an app at the local Admin API, its OAuth and its webhooks; previewing its embedded pages in a local admin, with a local App Bridge. |
-| [Storefront](storefront.md) | The storefront in a browser: accounts, password page, images, previews. |
+| [Storefront](storefront.md) | The storefront in a browser: accounts, password page, images, previews, the theme app extensions of an app. |
 | [Agents](agents.md) | Driving local-storefront from an AI agent or a script. |
 
 ## Reference

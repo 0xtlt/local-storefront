@@ -53,7 +53,7 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--timings` | | Names every section and theme block in the `Server-Timing` header. See [performance](performance.md#render-times). |
 | `--no-minify` | | Serves styles and scripts as written. Without it, they are minified with a source map, as on Shopify. |
 | `--no-compression` | | Sends responses uncompressed. Without it, they are compressed (Brotli or gzip) for clients that accept it, as on Shopify. |
-| `--app <dir>` | `LSF_APP` | A Shopify app. `/checkout` then runs its Functions and shows its checkout UI extensions, `/account` shows its customer account UI extensions, and its backend gets the [Admin API](admin.md). See [checkout](checkout.md). |
+| `--app <dir>` | `LSF_APP` | A Shopify app. `/checkout` then runs its Functions and shows its checkout UI extensions, `/account` shows its customer account UI extensions, its backend gets the [Admin API](admin.md), and the theme renders the app blocks and app embed blocks of its [theme app extensions](storefront.md#theme-app-extensions). See [checkout](checkout.md). |
 | `--only <parts>` | `LSF_ONLY` | Runs only these parts: `theme`, `checkout`, `admin`, comma-separated or repeated. Without it, the theme, and all three with `--app`. `checkout` and `admin` need `--app`. See [what runs](#what-runs). |
 | `--extension <handle>` | | With `--app`: uses only this extension of the app. Repeat it for several. Without it, every extension is used. |
 | `--build` | | With `--app`: builds the extensions first, as `app build` does: the Functions, then the UI extensions that name their sources. |
@@ -130,7 +130,9 @@ lsf has three parts:
 
 - **theme**: the storefront rendered from the theme: its pages, the cart, search, and the
   stand-ins of the checkout (`/checkout` lists the cart) and of the customer accounts
-  (`/account`).
+  (`/account`). With `--app`, the app blocks and app embed blocks of the app's
+  [theme app extensions](storefront.md#theme-app-extensions), and their assets at
+  `/cdn/extensions/<id>/assets/`.
 - **checkout**: what `--app` brings to the shop: the [checkout](checkout.md), where its
   Functions run, its UI extensions (checkout, thank-you page, order status, customer account at
   `/account`), the scenarios and the home page of the app.
@@ -251,9 +253,17 @@ Builds the extensions of an app, as `shopify app build` does, without Node: its 
 name their sources (`module`), bundled into `dist/<handle>.js`. Guide:
 [checkout](checkout.md#what-lsf-builds-without-node).
 
+A theme app extension has nothing to build: it is checked as Shopify checks it when the app is
+deployed. Its folders (`assets/`, `blocks/`, `snippets/`, `locales/`, no other), its limits (10
+MB of files, 30 blocks, 100 KB of Liquid, 100 locale files of 15 KB at most; a warning past 100
+KB of CSS or 10 KB of JavaScript, gzipped, named by a schema), the schema of each block
+(`name`, `target`, settings with a `type` and a unique `id`, the files of `javascript` and
+`stylesheet`, `available_if`, not both `enabled_on` and `disabled_on`), and its Liquid, with
+Shopify's strict parser. Each one says `checked: <handle>: ...`; an error exits with `1`.
+
 | Option | Environment variable | What it does |
 |---|---|---|
-| `[handle]...` | | The extensions to build. Every extension of the app when none is given. |
+| `[handle]...` | | The extensions to build or check. Every extension of the app when none is given. |
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
 
 ### app check
@@ -573,13 +583,15 @@ templates, section groups and `config/settings_data.json`. Guide:
 | Option | What it does |
 |---|---|
 | `--fix` | Rewrites what the strict parser rejects. A file is written only if it has not changed since it was read. Run twice, the second run writes nothing. |
+| `--app <dir>` | Checks the app blocks and app embed blocks the theme names against the [theme app extensions](storefront.md#theme-app-extensions) of this app: a block it does not have is a warning (with the name it probably meant), a block of another app a note. Without it, a note says how many the theme names, not checked. |
 | `--format text` | Default. One block per problem, for a person. |
 | `--format json` | One JSON document, for a tool. |
 
 ### The text format
 
 Each problem is a line `<file>:<line>: <message>`, followed by indented details. A warning,
-which is not counted as a problem, has `warning: ` before its message.
+which is not counted as a problem, has `warning: ` before its message, and a note `note: `
+(`"severity": "info"` in JSON).
 
 | Detail | Meaning |
 |---|---|

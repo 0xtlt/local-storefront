@@ -82,6 +82,105 @@ in.
   Shopify signs it, and a Liquid answer is rendered in the theme's layout. See the
   [Admin API guide](admin.md#app-proxy).
 
+## Theme app extensions
+
+With `--app`, the theme renders the app blocks and app embed blocks of the app's theme app
+extensions, as Shopify does once the app is installed. An extension is a folder of the app
+whose `shopify.extension.toml` says `type = "theme"`, with `blocks/`, `snippets/`, `assets/`
+and `locales/`.
+
+```bash
+npx local-storefront serve --app ../my-app --live-reload
+```
+
+The `app:` line counts them: `(0 Functions, 0 UI extensions, 1 theme extension (2 app blocks,
+1 app embed block))`.
+
+### App blocks
+
+A JSON template or a section group names an app block by its type, as the theme editor writes
+it:
+
+```json
+"reviews": {
+  "type": "shopify://apps/product-reviews/blocks/reviews/5b1c7a52-2d0e-4c8a-9a3e-6f1d2b7c9e01",
+  "settings": { "heading": "Loved by customers" }
+}
+```
+
+`product-reviews` is the `handle` of `shopify.app.toml`, or its `name` as a handle. `reviews` is
+the file `blocks/reviews.liquid` of one of its extensions. The last part is the `uid` of the
+extension. A type copied from another store has another id: the block is found by its name all
+the same.
+
+The block renders where the theme renders blocks:
+
+- `{% render block %}`, for a block of `section.blocks` whose `block.type` is `@app`, as in Dawn;
+- `{% content_for 'blocks' %}`, in a section or a theme block that accepts `@app` blocks, as in
+  Horizon;
+- a section of type `apps`, which the theme editor adds around an app block: the theme's
+  `sections/apps.liquid`, or Shopify's own wrapper when the theme has none.
+
+Its output is wrapped as on Shopify, in `<div id="shopify-block-<id>" class="shopify-block
+shopify-app-block">`, with the `class` and the `tag` of its schema. Its Liquid reads:
+
+- `block.settings`, with the defaults of its schema; a `t:` default is read from the
+  extension's `locales/*.schema.json`;
+- `block.id`, `block.type` (`@app`), `section`, `closest`, and the objects of the page
+  (`product` on a product page);
+- `app.metafields`: the app-data metafields of the store data (`app.metafields`, below).
+
+In the Liquid of an extension, `{% render 'stars' %}` renders its `snippets/stars.liquid`,
+`asset_url` points to its `assets/` (served at `/cdn/extensions/<uid>/assets/`), and `t` reads
+its `locales/`, never the theme's. The `javascript` and the `stylesheet` of a schema load once
+per page, before `</head>`, when a block that names them renders. `enabled_on` and
+`disabled_on` keep a block out of templates and section groups; `available_if` keeps it out
+until its metafield is `true`.
+
+### App embed blocks
+
+An app embed block (`"target": "head"`, `"compliance_head"` or `"body"`) renders on every page
+where it is turned on: `compliance_head` then `head` before `</head>`, `body` before `</body>`.
+The theme editor turns one on in `config/settings_data.json`, under `current.blocks`, with
+`"disabled": false`. To turn one on without changing the theme, or to set the app-data
+metafields, write `app` in the store data:
+
+```json
+{
+  "app": {
+    "embeds": {
+      "chat-bubble": true,
+      "reviews-loader": { "settings": { "api_key": "test-key" } }
+    },
+    "metafields": { "reviews": { "badge_enabled": true } }
+  }
+}
+```
+
+An embed is named by its file in `blocks/`. `true` turns it on, with the settings of
+`config/settings_data.json` or its defaults; `false` turns it off; `{"settings": {...}}` turns
+it on with these. A test does it for its session alone with `PUT /__lsf/session` and
+`{"data": {"app": ...}}` ([testing](testing.md#data-for-one-test-only)).
+
+### When a block renders nothing
+
+lsf says why, once in the terminal and in the `X-LSF-Reason` header of the page: the app has no
+block of that name, the block is another app's, no app is served (`--app`), `enabled_on` leaves
+the page out, `available_if` is not `true`. A Liquid error in a file of an extension is reported
+as the theme's are, with its path: `Liquid syntax error (extensions/reviews/snippets/stars line
+1): Unknown tag 'unknowntag'`.
+
+At start, `serve` prints the blocks the theme names that the app does not have
+(`app: warning: ...`, with the name it probably meant), and the blocks no template uses or the
+app embed blocks that are off (`app: note: ...`). The home page of the app
+(`/__lsf/checkouts`) lists its extensions and their blocks. `check --app ../my-app` checks the
+app blocks of the theme, and `app build` checks the extensions as Shopify does when it deploys
+them ([CLI reference](cli.md#app-build)).
+
+With `--live-reload`, open pages reload when a file of an extension changes. The Section
+Rendering API (`?sections=`) renders app blocks as the page does. What differs from Shopify is
+in [compatibility](compatibility.md#known-differences).
+
 ## Feature previews
 
 Shopify tries changes on development stores before it ships them. A store turns them on in its

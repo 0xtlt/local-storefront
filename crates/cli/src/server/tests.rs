@@ -6847,7 +6847,9 @@ fn the_home_page_says_what_is_wrong_with_the_extensions() {
     assert!(html.contains("network access"));
     assert!(html.contains("not built"));
     assert!(html.contains("API 2025-07 is not supported"));
-    assert!(html.contains("Other extensions"));
+    // The theme app extension has its own list.
+    assert!(html.contains("Theme app extensions"), "{html}");
+    assert!(!html.contains("Other extensions"), "{html}");
 }
 
 #[test]
