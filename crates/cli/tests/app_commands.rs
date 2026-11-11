@@ -1776,3 +1776,138 @@ fn save_input_creates_the_folders_of_its_file() {
     .unwrap();
     assert!(saved["cart"]["lines"].is_array(), "{saved}");
 }
+
+/// `--input` takes a folder of fixtures, as the unit tests of Shopify's templates, prints where
+/// an output is not the one expected, refuses a fixture whose target or export is not the
+/// Function's, and needs no handle when the app has one Function.
+#[test]
+fn function_run_input_runs_a_folder_of_fixtures() {
+    let app = app_with_a_validation("fixtures", "  return { operations: [] };", &[1]);
+    // The app has one Function: `boom`.
+    for extension in [
+        "quantity-limit",
+        "payment-rules",
+        "gift-message",
+        "volume-discount",
+        "bundle-transform",
+        "order-notice",
+        "delivery-rules",
+    ] {
+        std::fs::remove_dir_all(app.0.join("extensions").join(extension)).unwrap();
+    }
+    let fixture = |name: &str, target: &str, export: &str, output: &str| {
+        app.write(
+            &format!("tests/fixtures/{name}.json"),
+            &format!(
+                r#"{{"payload": {{"export": "{export}", "target": "{target}", "input": {{"cart": {{"lines": [{{"quantity": 1}}]}}}}, "output": {output}}}}}"#
+            ),
+        );
+    };
+    let (target, export) = (
+        "cart.validations.generate.run",
+        "cart-validations-generate-run",
+    );
+    fixture("a-pass", target, export, r#"{"operations": []}"#);
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "function",
+            "run",
+            "--build",
+            "--input",
+            "tests/fixtures",
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains(
+            "pass     tests/fixtures/a-pass.json\nran 1 fixture of boom: 1 passed, 0 failed"
+        ),
+        "{}",
+        text(&output)
+    );
+
+    fixture(
+        "b-fail",
+        target,
+        export,
+        r#"{"operations": [{"validationAdd": {"errors": [{"message": "Too many", "target": "$.cart"}]}}]}"#,
+    );
+    fixture(
+        "c-target",
+        "cart.payment-methods.transform.run",
+        export,
+        r#"{"operations": []}"#,
+    );
+    fixture("d-export", target, "nope-export", r#"{"operations": []}"#);
+    let output = lsf(
+        &app.0,
+        &["app", "function", "run", "--input", "tests/fixtures"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    let said = text(&output);
+    for line in [
+        "fails    tests/fixtures/b-fail.json: the output is not the one the fixture expects:\n           operations[0]\n             expected: {\"validationAdd\":{\"errors\":[{\"message\":\"Too many\",\"target\":\"$.cart\"}]}}\n             actual:   (nothing)\n",
+        "fails    tests/fixtures/c-target.json: the fixture's target `cart.payment-methods.transform.run` is not a target of boom",
+        "fails    tests/fixtures/d-export.json: the fixture's export `nope-export` is not the export of `cart.validations.generate.run`",
+        "ran 4 fixtures of boom: 1 passed, 3 failed",
+    ] {
+        assert!(said.contains(line), "{line}\n---\n{said}");
+    }
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "function",
+            "run",
+            "--input",
+            "tests/fixtures",
+            "--format",
+            "json",
+        ],
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["failed"], 3, "{json}");
+    assert_eq!(
+        json["fixtures"][1]["run"]["mismatches"][0]["path"], "operations[0]",
+        "{json}"
+    );
+
+    // One fixture: a wrong target is an error of the fixture (1), a mismatch prints its path.
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "function",
+            "run",
+            "--input",
+            "tests/fixtures/d-export.json",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    fixture(
+        "e-value",
+        target,
+        export,
+        r#"{"operations": [{"validationAdd": {"errors": []}}]}"#,
+    );
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "function",
+            "run",
+            "boom",
+            "--input",
+            "tests/fixtures/e-value.json",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output)
+            .contains("error: the output is not the one the fixture expects:\n  operations[0]\n"),
+        "{}",
+        text(&output)
+    );
+}
