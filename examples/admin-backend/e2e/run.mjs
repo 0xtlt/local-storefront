@@ -27,10 +27,7 @@ const SHOP = "local-supply-co.myshopify.com";
 // Known gaps: checks that fail for a reason recorded in the README ("What does not work yet").
 // They run, and show as KNOWN rather than FAIL while they fail; a known check that passes is
 // reported, so that the list stays true.
-const KNOWN = {
-  "billing: billing.require from a page (exit-iframe)":
-    "the template's exit-iframe page only redirects to https admin URLs, lsf's charge page is http://127.0.0.1",
-};
+const KNOWN = {};
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -150,6 +147,9 @@ async function main() {
 async function runChecks({ lsf, appUrl, token, lsfLog }) {
   const browser = new Browser();
   const ctx = {};
+  // lsf's admin opens the app's frame through a proxy of its own port, in front of the backend:
+  // the `embedded:` line names it.
+  const frameOrigin = lsfLog.join("").match(/its frame is (\S+),/)?.[1] ?? appUrl;
   const results = [];
   const only = process.env.E2E_ONLY;
 
@@ -370,22 +370,26 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
     const frameOf = (text) => text.match(/class="lsf-frame"[^>]* src="([^"]+)"/)[1].replaceAll("&amp;", "&");
     const src = frameOf(html);
     const token = new URL(src).searchParams.get("id_token");
-    assert(src.startsWith(`${appUrl}/app/settings?`) && token, "the frame is not a launch of the app", src);
+    assert(src.startsWith(`${frameOrigin}/app/settings?`) && token, "the frame is not a launch of the app through lsf's proxy", src);
     const again = new URL(frameOf(await (await browser.fetch(`${lsf}/admin/apps/admin-backend/app/settings`)).text())).searchParams.get("id_token");
     assert(again && again !== token, "the same session token on two loads");
     const page = await browser.fetch(src);
     const body = await page.text();
     assert(page.status === 200, `the app's page answered ${page.status}`, body.slice(0, 300));
+    // The library's policy lets only Shopify's admin frame the page: lsf's proxy drops it.
+    const direct = await browser.fetch(src.replace(frameOrigin, appUrl));
+    assert(/frame-ancestors https:\/\/local-supply-co\.myshopify\.com/.test(direct.headers.get("content-security-policy") ?? ""), "the backend's own policy is not the library's", direct.headers.get("content-security-policy"));
     const csp = page.headers.get("content-security-policy");
-    assert(csp === `frame-ancestors ${lsf};`, "the page does not let lsf's admin frame it", csp);
+    assert(!/frame-ancestors/.test(csp ?? ""), "the page through lsf's frame does not let lsf's admin frame it", csp);
     const scripts = [...body.matchAll(/<script src="([^"]+)"/g)].map((match) => match[1]);
-    assert(scripts[0] === `${lsf}/__lsf/admin/app-bridge.js` && scripts[1] === "https://cdn.shopify.com/shopifycloud/app-bridge.js", "lsf's App Bridge is not the first script", scripts);
+    // Shopify's tag is lsf's too, through the proxy.
+    assert(scripts[0] === `${lsf}/__lsf/admin/app-bridge.js` && scripts[1] === `${lsf}/__lsf/admin/app-bridge.js`, "lsf's App Bridge is not the first script", scripts);
     for (const part of ["<s-app-nav>", "<ui-title-bar", "data-save-bar", "<ui-modal", 'href="shopify://admin/products"']) {
       assert(body.includes(part), `the page has no ${part}`);
     }
     const script = await fetch(`${lsf}/__lsf/admin/app-bridge.js`);
     assert(script.status === 200 && (await script.text()).includes("lsf's App Bridge"), `app-bridge.js answered ${script.status}`);
-    return "admin 200, frame at a new launch, CSP frame-ancestors lsf, lsf's App Bridge before Shopify's";
+    return "admin 200, frame at a new launch through lsf's proxy, no frame-ancestors, lsf's App Bridge";
   });
   await check("embedded", "embedded: fetch() with App Bridge's session token → authenticate.admin", async () => {
     const before = await appOk("GET", "/api/settings");
@@ -403,15 +407,18 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
     assert(product.variants[0].price === "25.00" && product.totalVariants === 1 && product.variants[0].product.id === product.id, "not in the picker's shape", product);
     return `${product.title}: ${product.variants.length} variant at ${product.variants[0].price}`;
   });
-  await check("embedded", "embedded: the library's bounce page loads lsf's App Bridge (APP_BRIDGE_URL)", async () => {
+  await check("embedded", "embedded: the library's bounce page, thrown past entry.server, is framed by lsf's admin and loads lsf's App Bridge", async () => {
     const host = Buffer.from(`admin.shopify.com/store/${SHOP.replace(".myshopify.com", "")}`).toString("base64").replace(/=+$/, "");
-    const document = await browser.fetch(`${appUrl}/app/products?embedded=1&shop=${SHOP}&host=${host}`);
+    const document = await browser.fetch(`${frameOrigin}/app/products?embedded=1&shop=${SHOP}&host=${host}`);
     assert(document.status === 302, `a launch without id_token answered ${document.status}`);
-    const bounce = new URL(document.headers.get("location"), appUrl);
-    assert(bounce.pathname === "/auth/session-token" && bounce.searchParams.get("shopify-reload"), "not the bounce page", bounce.href);
-    const html = await (await browser.fetch(bounce)).text();
+    const bounce = new URL(document.headers.get("location"), frameOrigin);
+    assert(bounce.pathname === "/auth/session-token" && bounce.searchParams.get("shopify-reload")?.startsWith(`${frameOrigin}/app/products`), "not the bounce page, back to the frame's origin", bounce.href);
+    const page = await browser.fetch(bounce);
+    const html = await page.text();
+    const csp = page.headers.get("content-security-policy");
+    assert(!/frame-ancestors/.test(csp ?? ""), "lsf's admin may not frame the bounce page", csp);
     assert(html.includes(`src="${lsf}/__lsf/admin/app-bridge.js"`), "the bounce page loads another App Bridge", html.slice(0, 300));
-    return `${bounce.pathname}?shopify-reload=… loads lsf's App Bridge`;
+    return `${bounce.pathname}?shopify-reload=… framed, loads lsf's App Bridge`;
   });
   await check("embedded", "embedded: shopify:admin/products lands on lsf's page, which says it has none", async () => {
     const page = await fetch(`${lsf}/admin/products`);
@@ -434,7 +441,7 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
     await page.goto(`${lsf}/admin/apps/admin-backend/app`);
     const deadline = Date.now() + 15_000;
     let frame;
-    while (!(frame = page.frames().find((candidate) => candidate.url().startsWith(`${appUrl}/app`))) && Date.now() < deadline) await sleep(50);
+    while (!(frame = page.frames().find((candidate) => candidate.url().startsWith(`${frameOrigin}/app`))) && Date.now() < deadline) await sleep(50);
     assert(frame, "the app's frame did not open", page.frames().map((candidate) => candidate.url()));
     await frame.waitForFunction(() => customElements.get("s-button") && customElements.get("s-page"), null, { timeout: 15_000 });
     return frame;
@@ -485,7 +492,7 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
       // 127.0.0.1 need the local network permission (a page of localhost does not).
       const cdnPolaris = "https://cdn.shopify.com/shopifycloud/polaris-2.js";
       await context.grantPermissions(["local-network-access"]);
-      await context.route((url) => url.href.startsWith(`${appUrl}/app`), async (route) => {
+      await context.route((url) => url.href.startsWith(`${frameOrigin}/app`), async (route) => {
         const response = await route.fetch();
         await route.fulfill({ response, body: (await response.text()).replaceAll(polarisUrl, cdnPolaris) });
       });
@@ -526,7 +533,7 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
       // The pages as the backend renders them, with lsf at `localhost`: its scripts' URLs, and
       // the admin the pages may be framed by (`frame-ancestors`).
       await context.grantPermissions(["local-network-access"]);
-      await context.route((url) => url.href.startsWith(`${appUrl}/app`), async (route) => {
+      await context.route((url) => url.href.startsWith(`${frameOrigin}/app`), async (route) => {
         const response = await route.fetch();
         const headers = Object.fromEntries(Object.entries(response.headers()).map(([name, value]) => [name, value.replaceAll(lsf, local)]));
         await route.fulfill({ response, headers, body: (await response.text()).replaceAll(lsf, local) });
@@ -535,7 +542,7 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
       await page.goto(`${local}/admin/apps/admin-backend/app`);
       const deadline = Date.now() + 15_000;
       let frame;
-      while (!(frame = page.frames().find((candidate) => candidate.url().startsWith(`${appUrl}/app`))) && Date.now() < deadline) await sleep(50);
+      while (!(frame = page.frames().find((candidate) => candidate.url().startsWith(`${frameOrigin}/app`))) && Date.now() < deadline) await sleep(50);
       assert(frame, "the app's frame did not open", page.frames().map((candidate) => candidate.url()));
       await frame.waitForFunction(() => customElements.get("s-banner") && customElements.get("s-button"), null, { timeout: 15_000 });
       const icons = () => served.filter((response) => response.url.startsWith(`${local}/__lsf/cdn/`) && response.url.endsWith(".svg"));
@@ -659,8 +666,13 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
   // The app: billing, bulk operations, files.
   await check("billing", "billing: billing.request → approval page → returnUrl → billing.check", async () => {
     const requested = await app("POST", "/api/billing/request");
-    const confirmation = requested.headers.get("x-shopify-api-request-failure-reauthorize-url");
-    assert(requested.status === 401 && confirmation, `billing.request answered ${requested.status}`, requested.body);
+    const reauthorize = requested.headers.get("x-shopify-api-request-failure-reauthorize-url");
+    assert(requested.status === 401 && reauthorize, `billing.request answered ${requested.status}`, requested.body);
+    // Shopify's confirmationUrl, on the shop's admin: lsf's admin serves its path.
+    assert(reauthorize.startsWith(`https://${SHOP}/admin/charges/`), "not Shopify's confirmation URL", reauthorize);
+    const served = await browser.fetch(reauthorize.replace(`https://${SHOP}`, lsf));
+    assert(served.status === 302, `lsf's admin answered ${served.status} for the confirmation URL`);
+    const confirmation = new URL(served.headers.get("location"), lsf).href;
     const page = await browser.fetch(confirmation);
     const html = await page.text();
     const action = html.match(/<form method="post" action="([^"]*\/approve[^"]*)"/)?.[1];
@@ -671,7 +683,13 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
       body: new URLSearchParams({ shop: SHOP }),
     });
     assert(approved.status === 303, `approve answered ${approved.status}`);
-    const back = await browser.fetch(approved.headers.get("location"));
+    // The returnUrl is the app's: the merchant comes back to it in lsf's admin, whose frame opens
+    // it with a new launch.
+    const admin = await browser.fetch(new URL(approved.headers.get("location"), lsf));
+    const adminHtml = await admin.text();
+    const frame = adminHtml.match(/class="lsf-frame"[^>]* src="([^"]+)"/)?.[1]?.replaceAll("&amp;", "&");
+    assert(admin.status === 200 && frame?.includes("charge_id="), `the admin answered ${admin.status} for the return URL`, adminHtml.slice(0, 300));
+    const back = await browser.fetch(frame);
     assert(back.status === 200, `the return URL answered ${back.status}`);
     const check = await appOk("GET", "/api/billing/check");
     assert(check.hasActivePayment && check.appSubscriptions[0].status === "ACTIVE", "not active", check);
@@ -685,8 +703,8 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
     assert(page.status === 302, `the loader answered ${page.status}`);
     const exit = await browser.fetch(new URL(page.headers.get("location"), appUrl));
     const html = await exit.text();
-    assert(exit.status === 200 && html.includes("/__lsf/admin/charges/"), `exit-iframe answered ${exit.status}`, html.slice(0, 200));
-    return "exit-iframe page opens the charge page";
+    assert(exit.status === 200 && html.includes(`https://${shop}/admin/charges/`), `exit-iframe answered ${exit.status}`, html.slice(0, 300));
+    return "exit-iframe page opens Shopify's confirmation URL, which lsf's admin serves";
   });
 
   // Managed pricing (Shopify App Pricing): the plans are the Partner Dashboard's on Shopify, the
@@ -704,7 +722,7 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
   const appFrame = async (page, path) => {
     const deadline = Date.now() + 15_000;
     let frame;
-    while (!(frame = page.frames().find((candidate) => candidate.url().startsWith(`${appUrl}${path}`))) && Date.now() < deadline) await sleep(50);
+    while (!(frame = page.frames().find((candidate) => candidate.url().startsWith(`${frameOrigin}${path}`))) && Date.now() < deadline) await sleep(50);
     assert(frame, `the app's frame did not open at ${path}`, page.frames().map((candidate) => candidate.url()));
     await frame.waitForFunction(() => typeof window.shopify === "object" && document.querySelector("#plans"), null, { timeout: 15_000 });
     return frame;
