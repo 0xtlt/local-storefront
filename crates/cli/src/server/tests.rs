@@ -12,6 +12,7 @@ use super::throttle::Throttle;
 use super::{Incoming, SESSION_HEADER, ServeOptions, ServerState};
 use crate::app::App;
 
+mod dev_pages;
 mod parts;
 mod polaris;
 mod store_base;

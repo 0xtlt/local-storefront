@@ -21,12 +21,76 @@ pub const SCRIPT: &str = concat!(
     "</script>"
 );
 
-/// Puts the script in a page, at the end of its body.
+/// Puts the script in a page, at the end of its body. A response without a `</body>` or an
+/// `</html>` is not an HTML page (a `{% layout none %}` template that writes JSON, a fragment):
+/// it is left as it is.
 pub fn inject(html: &mut String) {
-    match html.rfind("</body>") {
-        Some(index) => html.insert_str(index, SCRIPT),
-        None => html.push_str(SCRIPT),
+    inject_markup(html, SCRIPT);
+}
+
+/// Puts `markup` at the end of the body of a page. Returns whether the page had one.
+pub fn inject_markup(html: &mut String, markup: &str) -> bool {
+    match html.rfind("</body>").or_else(|| html.rfind("</html>")) {
+        Some(index) => {
+            html.insert_str(index, markup);
+            true
+        }
+        None => false,
     }
+}
+
+/// The panel `--live-reload` shows in a page whose render or store data has problems: the
+/// store data errors, the Liquid errors of the page, why it is the 404 page. Dismissed with
+/// its button; the next render shows it again while the problems remain. `None` when there is
+/// nothing to say.
+pub fn overlay(
+    data_errors: &[String],
+    liquid_errors: &[String],
+    not_found: Option<&str>,
+) -> Option<String> {
+    use lsf_liquid::filters::escape_html;
+    let mut items = Vec::new();
+    if let Some(reason) = not_found {
+        items.push(format!("<li>404: {}</li>", escape_html(reason)));
+    }
+    for (label, problems) in [("store data", data_errors), ("Liquid", liquid_errors)] {
+        let mut seen: Vec<&str> = Vec::new();
+        for problem in problems {
+            if seen.contains(&problem.as_str()) {
+                continue;
+            }
+            seen.push(problem);
+            items.push(format!(
+                "<li><b>{label}</b> <code style=\"white-space:pre-wrap\">{}</code></li>",
+                escape_html(problem)
+            ));
+        }
+    }
+    if items.is_empty() {
+        return None;
+    }
+    let count = items.len();
+    Some(format!(
+        "<aside data-lsf-errors role=\"alert\" style=\"all:initial;position:fixed;z-index:2147483647;right:12px;bottom:12px;\
+         box-sizing:border-box;max-width:min(640px,calc(100vw - 24px));max-height:50vh;overflow:auto;padding:10px 14px;\
+         background:#fff;color:#1a1a1a;border:2px solid #c00;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.3);\
+         font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace\">\
+         <button type=\"button\" aria-label=\"Dismiss\" onclick=\"this.parentNode.remove()\" style=\"float:right;\
+         margin:-4px -6px 0 8px;border:0;background:none;color:inherit;font:inherit;font-size:18px;cursor:pointer\">&times;</button>\
+         <b style=\"color:#c00\">lsf: {count} problem{plural}</b> \
+         <span style=\"color:#666\">(shown by --live-reload; the terminal has them too)</span>\
+         <ul style=\"margin:6px 0 0;padding-left:18px\">{items}</ul></aside>",
+        plural = if count == 1 { "" } else { "s" },
+        items = items.join(""),
+    ))
+}
+
+/// Whether a content type is the one of an HTML page.
+pub fn is_html(content_type: &str) -> bool {
+    content_type
+        .split(';')
+        .next()
+        .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("text/html"))
 }
 
 /// How often the files are looked at while a page listens.
