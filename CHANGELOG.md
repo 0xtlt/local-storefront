@@ -87,7 +87,9 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
   ([quickstart-theme](docs/quickstart-theme.md)), Functions and checkout UI extensions
   ([quickstart-functions](docs/quickstart-functions.md)), an Admin API backend
   ([quickstart-admin-api](docs/quickstart-admin-api.md)) and a public app made from the React
-  Router template ([quickstart-app](docs/quickstart-app.md)).
+  Router template ([quickstart-app](docs/quickstart-app.md)). The app's Playwright config is the
+  same in every page of the docs. It runs the backend from a build, so the test passes on a cold
+  checkout too: Vite's dev server reloads the first page while it optimizes its dependencies.
 - **The docs ship in the npm package.** `node_modules/local-storefront/` has the `llms.txt`,
   `docs/` and `CHANGELOG.md` of the version you installed, for a tool or an agent to read
   offline.
@@ -414,7 +416,11 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
   - the title bar (`ui-title-bar`, `s-page`), the navigation (`s-app-nav`, `ui-nav-menu`), the
     save bar (`ui-save-bar`, `data-save-bar` forms), toasts, the loading bar, `shopify.user()`;
   - the resource picker, with the shop's products, variants and collections;
-  - modals (`ui-modal`, `s-app-window`), `shopify:admin/…` links.
+  - modals (`ui-modal`, `s-app-window`, Polaris's `s-modal`), over the whole admin as on
+    Shopify, and `shopify:admin/…` links;
+  - `shopify.intents.invoke()` of `edit:shopify/Product` (the template's **Edit product**),
+    `…/ProductVariant` and `…/Collection`: a dialog shows what lsf has of it, and closing it
+    answers `{code: 'closed'}`. Another intent answers `{code: 'error'}` and says why.
 
   What lsf does not simulate (the scanner, POS, Sidekick, …) rejects or warns and says so.
   [Preview the embedded app](docs/admin.md#preview-the-embedded-app).
@@ -423,9 +429,14 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
   library's bounce page and `redirect(…, {target: "_top"})` page included, gives the pages lsf's
   App Bridge and Polaris (a `Content-Security-Policy` that allowed Shopify's CDN allows lsf there
   too), and says Chrome to the template's bot check, so that Playwright's
-  headless Chromium gets no `410 Gone`. The template's one edit is the fetch function, for the
-  Admin API: lsf warns, on the home page and in its admin, when `app/shopify.server.ts` has none
-  or `app/routes/app.tsx` has no `headers` export. `LSF_ADMIN_FRAME=direct` opens the backend
+  headless Chromium gets no `410 Gone`. React hydrates the pages without a "Prop `src` did not
+  match": lsf's App Bridge puts the CDN's URLs back in the scripts the proxy pointed at lsf. The
+  template's one edit is the fetch function, for the Admin API: lsf warns, on the home page and
+  in its admin, when `app/shopify.server.ts` has none or `app/routes/app.tsx` has no `headers`
+  export. The admin reads the files again at each load, so the warning goes once they are
+  fixed. A backend started without `LSF_URL` sends its calls to Shopify: when a page of it fails
+  and lsf has received nothing from it, the admin and the terminal name `LSF_URL`.
+  `LSF_ADMIN_FRAME=direct` opens the backend
   itself, and the admin says when the app runs Shopify's App Bridge instead
   ([preview the embedded app](docs/admin.md#preview-the-embedded-app)).
 - **Polaris without the internet.** lsf serves the paths of Shopify's CDN at `/__lsf/cdn/<path>`:

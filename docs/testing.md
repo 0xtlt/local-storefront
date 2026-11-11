@@ -55,16 +55,22 @@ changes.
 ### An embedded app
 
 For the backend of an app (the React Router template), start lsf and the backend, and open the
-app in lsf's admin ([preview the embedded app](admin.md#preview-the-embedded-app)):
+app in lsf's admin ([preview the embedded app](admin.md#preview-the-embedded-app)). The config
+is the [quickstart's](quickstart-app.md#7-a-playwright-test), the same in every page of lsf's
+docs:
 
 ```ts
-// playwright.config.ts of the app
+// playwright.config.ts
 import { defineConfig } from '@playwright/test';
 
+// The app's values (SHOPIFY_API_KEY, SHOPIFY_API_SECRET, SCOPES): react-router-serve reads no .env.
+process.loadEnvFile('.env');
+
 export default defineConfig({
+  testDir: 'e2e',
   workers: 1, // one lsf, one shop: the tests change it in turn
   use: {
-    // Only for requests to the backend itself: in lsf's admin the frame says Chrome.
+    // For the test's own requests to the backend: the template answers 410 to HeadlessChrome.
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
   },
   webServer: [
@@ -73,9 +79,12 @@ export default defineConfig({
       url: 'http://127.0.0.1:9393/__lsf/status',
     },
     {
-      command: 'npx prisma migrate deploy && npx react-router dev',
+      // A build, not the dev server: on a cold start, Vite's dev server optimizes the
+      // dependencies a page asks for and reloads the page, under the test.
+      command: 'npx prisma migrate deploy && npx react-router build && npx react-router-serve ./build/server/index.js',
       url: 'http://localhost:3001/',
       env: { PORT: '3001', SHOPIFY_APP_URL: 'http://localhost:3001', LSF_URL: 'http://127.0.0.1:9393' },
+      timeout: 120_000,
     },
   ],
 });
@@ -90,9 +99,10 @@ test('the app opens in lsf\'s admin', async ({ page }) => {
 
 The template's `isbot` answers `410 Gone` to Playwright's headless Chromium (`HeadlessChrome` in
 its user agent). Pages in lsf's admin pass: the frame's proxy says Chrome. A request of the test
-to `http://localhost:3001` does not go through it, hence `use.userAgent`. Change the HMR port of
-the template's `vite.config.ts` (`64999`) to run it next to a dev server
-([another port](admin.md#javascript-the-react-router-app-and-shopifyshopify-api)).
+to `http://localhost:3001` does not go through it, hence `use.userAgent`. The backend runs from a
+build: Vite's dev server, on a cold start (CI), reloads the page under the test while it
+optimizes its dependencies. A build has no HMR port either, so the tests run next to your dev
+server.
 
 ## Sessions: every test is isolated
 

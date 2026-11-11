@@ -221,9 +221,17 @@ to a client whose `User-Agent` looks like a bot (the `isbot` package): curl's, N
 and Playwright's headless Chromium (`HeadlessChrome`) do; send a browser's. In lsf's frame, the
 frame's proxy says Chrome for headless Chromium.
 
-lsf reads the template when it starts: an `app/shopify.server.ts` without `setAbstractFetchFunc`,
-or an `app/routes/app.tsx` without `boundary.headers`, is a warning on the home page and in lsf's
-admin, which says what to add. Three things of the template to know:
+lsf reads the template: an `app/shopify.server.ts` without `setAbstractFetchFunc`, or an
+`app/routes/app.tsx` without `boundary.headers`, is a warning at start and in lsf's admin, which
+says what to add. The admin reads the files again at each load: the banner goes once the file is
+fixed, without a restart. The fetch function does nothing without `LSF_URL`, and the backend
+then sends its token exchange and its Admin API calls to Shopify. lsf sees the pages fail
+instead: a request of the frame with a session token that fails (`500` when the token exchange
+fails, Shopify's `404` when an Admin API call does; not the library's `401`), while lsf has
+received no token exchange and no Admin API call from the backend, gets a banner in lsf's admin
+and a line in its terminal (`admin:  The app's backend answered 404 to /app.data, and lsf has
+received no request from it … Start it with LSF_URL=http://127.0.0.1:9292 …`). The banner goes
+with the backend's first call to lsf. Three things of the template to know:
 
 - **Export the route's `headers`.** `export const headers: HeadersFunction = (headersArgs) =>
   boundary.headers(headersArgs);` on a route (the template has it on `app.tsx`) passes the
@@ -435,7 +443,10 @@ a Response thrown from a loader carries past `entry.server.tsx`. No local origin
 - `frame-ancestors` leaves `Content-Security-Policy`, and `X-Frame-Options` goes;
 - `https://cdn.shopify.com/shopifycloud/app-bridge.js` is lsf's App Bridge, and
   `https://cdn.shopify.com/shopifycloud/polaris…` is lsf's `/__lsf/cdn/` (in the pages and in
-  `Link`): Shopify's CDN online, lsf's copy offline;
+  `Link`): Shopify's CDN online, lsf's copy offline. Each URL it changes ends with `#lsf-cdn`:
+  once those scripts have started loading, lsf's App Bridge puts the CDN's URL back in their
+  `src`, before React hydrates the page. So React finds the `src` it rendered, and the console
+  has no "Prop `src` did not match";
 - each directive of `Content-Security-Policy` that lets the page load from Shopify's CDN
   (`script-src`, `style-src`, `connect-src`, `font-src`, `img-src`, their `-elem` forms,
   `default-src`) lets it load from lsf too, since lsf's App Bridge and Polaris come from there;
@@ -533,13 +544,14 @@ script). In lsf's admin:
 | `shopify.resourcePicker()` | A picker of the shop's products (with their variants), variants or collections, as the Admin API has them: `action`, `multiple` (a number is a maximum), `query`, `filter` (`query`, `variants`, `draft`, `archived`, `hidden`), `selectionIds`. Answers `Product[]`, `ProductVariant[]` or `Collection[]` of `@shopify/app-bridge-types`, a product's `variants` the ones picked; `undefined` when cancelled. |
 | `shopify.picker()` | A picker of the app's own items: `heading`, `items`, `headers`, `multiple`; `selected` resolves with their ids. |
 | `shopify.scopes.query()` | `granted` (the scopes installed on the shop), `required` and `optional` (those of `shopify.app.toml`). |
-| Modals | `<ui-modal>` (its children, or `src`; its `<ui-title-bar>` is its title and buttons), `<s-app-window src>`, and `<s-modal>` while Polaris is not there (offline): drawn over the app, in its frame, the admin around dimmed. `shopify.modal.show(id)`, `.hide()`, `.toggle()`; Polaris's `s-modal` opens itself. A page of a modal's `src` shares the frame's App Bridge. |
+| Modals | `<ui-modal>` (its children, or `src`; its `<ui-title-bar>` is its title and buttons), `<s-app-window src>`, and `<s-modal>` while Polaris is not there (offline): drawn in the app's frame. `shopify.modal.show(id)`, `.hide()`, `.toggle()`; Polaris's `s-modal` opens itself. While one shows, the frame covers the whole window, its page in its box and the rest transparent: the modal is over the whole admin, the admin dimmed behind it, as on Shopify. A page of a modal's `src` shares the frame's App Bridge. |
+| `shopify.intents.invoke()` | `edit:shopify/Product`, `edit:shopify/ProductVariant` and `edit:shopify/Collection` with a `value` (the GID) show what lsf's Admin API has of it in a dialog. lsf has no editor: closing it completes the activity with `{code: 'closed'}`. Another intent completes with `{code: 'error'}`, whose `message` says lsf does not simulate it, and the admin lists it in its banner. |
 | Links | `shopify:admin/products` (and `shopify://admin/…`, `window.open`) goes to lsf's page of it, which says lsf has no admin page there. `app:/path` is a path of the app. `target="_top"` leaves the admin. A plain `<a>` the app's router does not follow reloads the frame without the session token, on Shopify too: the console says so. Without Polaris, an `s-link`, `s-button` or `s-clickable` with `href` dispatches `shopify:navigate`, as Polaris does, for `AppProvider` to route. |
 | The bounce page | `?shopify-reload=<url>` (the library's `/auth/session-token`) loads `<url>` again with a new `id_token`. |
 
 What lsf does not simulate rejects with, or warns, `lsf does not simulate shopify.<name>`, and
-the admin lists it in a banner: `shopify.scanner`, `shopify.pos`, `shopify.intents.invoke` and
-`.register`, `shopify.webVitals`, `shopify.support`, `shopify.reviews`, `shopify.scopes.request`
+the admin lists it in a banner: `shopify.scanner`, `shopify.pos`, `shopify.intents.register`, the
+intents other than `edit:` (above), `shopify.webVitals`, `shopify.support`, `shopify.reviews`, `shopify.scopes.request`
 and `.revoke`, `shopify.app.extensions()`, `shopify.shopifyQL`, `shopify.sidekick`,
 `shopify.tools`, `fetch()` of `shopify:admin/api/…` (Direct API access), and `extension:` links.
 `shopify.intents.request.value` is `null`: the page never runs as an intent.
@@ -617,7 +629,9 @@ From then on nothing is delivered for the shop: an order placed at the checkout 
 no `orders/create` goes out, not even through `shopify.app.toml`, whose subscriptions apply to
 "every shop that installs your app". Installing it again (`POST /__lsf/admin/install`, OAuth, or a
 token exchange) brings back the subscriptions of `shopify.app.toml`; those of the shop are gone,
-for the backend to make again, as on Shopify. `shop/redact`, which Shopify sends 48 hours after
+for the backend to make again, as on Shopify. It brings back the shop's default token too (the
+one printed at start), by design: a script or a test that read it keeps working. The tokens of
+token exchange and OAuth stay revoked, and the backend gets new ones, as on Shopify. `shop/redact`, which Shopify sends 48 hours after
 an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/redact"}`.
 
 **The app's Functions stop with the uninstall.** Shopify removes an uninstalled app's
@@ -844,34 +858,53 @@ one); the backend reads that file only when something loads it:
 - `npx react-router dev`, the React Router template's dev server, loads it into the backend
   (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES`), after `npm run setup` (its Prisma session
   storage);
-- `npm run start` (`react-router-serve` of a build) reads no `.env`: run `npm run build` first,
-  and pass the three in `env`;
+- `react-router-serve` (`npm run start`, a build's server) reads no `.env`: the Playwright config
+  below loads it with `process.loadEnvFile`;
 - a plain Node server reads it with `node --env-file=.env server.mjs`.
 
-With Playwright:
+With Playwright, the config of the React Router template is the same in every page of lsf's
+docs ([quickstart](quickstart-app.md#7-a-playwright-test), [testing](testing.md#an-embedded-app)):
 
 ```ts
 // playwright.config.ts
-import { defineConfig } from "@playwright/test";
+import { defineConfig } from '@playwright/test';
+
+// The app's values (SHOPIFY_API_KEY, SHOPIFY_API_SECRET, SCOPES): react-router-serve reads no .env.
+process.loadEnvFile('.env');
 
 export default defineConfig({
-  fullyParallel: true,
+  testDir: 'e2e',
+  workers: 1, // one lsf, one shop: the tests change it in turn
+  use: {
+    // For the test's own requests to the backend: the template answers 410 to HeadlessChrome.
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+  },
   webServer: [
     {
-      command: "npx local-storefront app dev --app . --port 9292 --app-url http://localhost:3000 --static --quiet",
-      url: "http://127.0.0.1:9292/__lsf/status",
-      reuseExistingServer: !process.env.CI,
+      command: 'npx local-storefront app dev --app . --port 9393 --app-url http://localhost:3001 --polaris offline --static --quiet',
+      url: 'http://127.0.0.1:9393/__lsf/status',
     },
     {
-      // The backend, without the Shopify CLI: the React Router template's dev server.
-      command: "npx react-router dev",
-      url: "http://localhost:3000/",
-      env: { PORT: "3000", LSF_URL: "http://127.0.0.1:9292", SHOPIFY_APP_URL: "http://localhost:3000" },
-      reuseExistingServer: !process.env.CI,
+      // A build, not the dev server: on a cold start, Vite's dev server optimizes the
+      // dependencies a page asks for and reloads the page, under the test.
+      command: 'npx prisma migrate deploy && npx react-router build && npx react-router-serve ./build/server/index.js',
+      url: 'http://localhost:3001/',
+      env: { PORT: '3001', SHOPIFY_APP_URL: 'http://localhost:3001', LSF_URL: 'http://127.0.0.1:9393' },
+      timeout: 120_000,
     },
   ],
 });
 ```
+
+The backend runs from a build: on a cold checkout (CI), Vite's dev server optimizes the
+dependencies the first page asks for, answers `504 Outdated Optimize Dep`, and reloads the page
+under the test. The build takes a few seconds, and the tests run next to your dev server: other
+ports, no HMR. Two changes for the tests of this section:
+
+- they each make a shop of their own ([a shop per test](#a-shop-per-test)), so they may run in
+  parallel: `fullyParallel: true` in place of `workers: 1`;
+- another backend gets its own command and port in place of the second server, the same
+  `LSF_URL` and `--app-url`.
 
 The backend's `url` must answer without a session token: Playwright waits for a `2xx`, `3xx` or
 `400` to `403`. Without Playwright, start both, then wait until `GET /__lsf/status` answers (or
@@ -886,8 +919,8 @@ session token of that shop, as App Bridge does, and a browser's `User-Agent`:
 
 ```js
 // tests/lsf.mjs: plain fetch, for Playwright, node:test or Vitest alike.
-export const LSF = "http://127.0.0.1:9292";
-export const BACKEND = "http://localhost:3000";
+export const LSF = "http://127.0.0.1:9393";
+export const BACKEND = "http://localhost:3001";
 // The React Router package answers 410 Gone to a bot's User-Agent, Node's included.
 const BROWSER = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
 
@@ -1379,12 +1412,12 @@ between runs](#reset-between-runs)). Start the backend the same way, on the port
 # tests/conftest.py: lsf for the whole run, and a clean state for each test.
 import subprocess, time, requests, pytest
 
-LSF_URL = "http://127.0.0.1:9292"
+LSF_URL = "http://127.0.0.1:9393"
 
 @pytest.fixture(scope="session")
 def lsf():
-    server = subprocess.Popen(["npx", "local-storefront", "app", "dev", "--app", ".", "--port", "9292",
-                               "--app-url", "http://localhost:3000", "--static", "--quiet"])
+    server = subprocess.Popen(["npx", "local-storefront", "app", "dev", "--app", ".", "--port", "9393",
+                               "--app-url", "http://localhost:3001", "--static", "--quiet"])
     for _ in range(100):
         try:
             if requests.get(LSF_URL + "/__lsf/status").ok:

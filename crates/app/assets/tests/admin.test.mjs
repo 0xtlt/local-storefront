@@ -227,6 +227,25 @@ test('shows the loading bar and dims the admin while the app shows a modal', asy
   assert.equal(page.query('.lsf-admin').classList.contains('lsf-modal-open'), false);
 });
 
+test('lifts the frame over the whole window while the app shows a modal, so that it is over the whole admin', async () => {
+  const page = await connected();
+  const lifts = () => page.sent('event').filter(({ name }) => name.startsWith('modal.'));
+  page.bridge({ type: 'modal', open: true });
+  assert.equal(lifts()[0].name, 'modal.lift');
+  assert.deepEqual(Object.keys(lifts()[0].detail).sort(), ['background', 'height', 'left', 'radius', 'top', 'width']);
+  assert.equal(page.iframe.classList.contains('lsf-frame-lifted'), false, 'not before the frame lifted its page');
+  page.bridge({ type: 'lifted' });
+  assert.ok(page.iframe.classList.contains('lsf-frame-lifted'));
+  assert.ok(page.query('.lsf-admin').classList.contains('lsf-modal-lifted'));
+  page.bridge({ type: 'modal', open: false });
+  assert.equal(page.iframe.classList.contains('lsf-frame-lifted'), false);
+  assert.equal(page.query('.lsf-admin').classList.contains('lsf-modal-lifted'), false);
+  assert.deepEqual(lifts().map(({ name }) => name), ['modal.lift', 'modal.unlift']);
+  // A late answer of the frame after the modal closed lifts nothing.
+  page.bridge({ type: 'lifted' });
+  assert.equal(page.iframe.classList.contains('lsf-frame-lifted'), false);
+});
+
 test('follows shopify:admin links to lsf\'s page of them, and other links out of the admin', async () => {
   const page = await connected({ config: adminConfig({ query: { shop: 'other.myshopify.com' } }) });
   page.bridge({ type: 'navigate', url: 'shopify:/admin/products/123', target: '_top' });
@@ -284,6 +303,36 @@ test("follows a URL of the app for the whole window to the admin's page of it: t
 test('shows the warnings of shopify.app.toml', async () => {
   const page = await adminPage({ config: adminConfig({ warnings: ['shopify.app.toml has no client_id'] }) });
   assert.match(page.query('[data-banner="config-0"]').textContent, /shopify\.app\.toml has no client_id/);
+});
+
+test('asks lsf again for its warnings when the frame loads and when a request of the app fails', async () => {
+  let warnings = ['B'];
+  const page = await adminPage({
+    config: adminConfig({
+      warnings: ['A'],
+      endpoints: { ...adminConfig().endpoints, warnings: '/__lsf/admin/warnings' },
+    }),
+    fetch: async (url) => (url === '/__lsf/admin/warnings' ? json({ warnings }) : json({})),
+  });
+  await settle();
+  // The frame loaded: the template's files were fixed (A gone), the backend bypasses lsf (B).
+  const texts = () =>
+    page
+      .all('.lsf-banner')
+      .filter((banner) => banner.getAttribute('data-banner').startsWith('config-'))
+      .map((banner) => banner.querySelector('p').textContent);
+  assert.deepEqual(texts(), ['B']);
+  page.query('[data-banner="config-0"] .lsf-banner-close').click();
+  warnings = ['B', 'C'];
+  page.bridge({ type: 'failed', status: 500 });
+  await settle();
+  await settle();
+  assert.deepEqual(texts(), ['C'], 'a dismissed warning stays dismissed');
+  warnings = [];
+  page.admin.frameLoaded();
+  await settle();
+  await settle();
+  assert.deepEqual(texts(), []);
 });
 
 test('lists what lsf does not simulate that the page called', async () => {
@@ -348,6 +397,54 @@ async function picking(options) {
   };
   return { page, dialog, rows, check, answer, asked };
 }
+
+/** The admin answering the intent `params` of its frame, lsf's resources being PRODUCTS. */
+async function intent(params) {
+  const asked = [];
+  const page = await connected({
+    fetch: async (url) => {
+      const query = new URL(url, 'http://127.0.0.1:9292').searchParams.get('query') ?? '';
+      asked.push(query);
+      const id = /id:(\d+)/.exec(query)?.[1];
+      const resources = PRODUCTS.filter((product) => product.id.endsWith(`/${id}`) || product.variants.some((v) => v.id.endsWith(`/${id}`)));
+      return json({ resources, pageInfo: { hasNextPage: false, endCursor: null } });
+    },
+  });
+  page.bridge({ type: 'request', id: 1, method: 'intent', params });
+  await settle();
+  await settle();
+  return { page, asked, answer: () => page.sent('response')[0] };
+}
+
+test('an edit intent opens what lsf has of the product, and completes closed when the merchant closes it', async () => {
+  const { page, asked, answer } = await intent({ action: 'edit', type: 'shopify/Product', value: 'gid://shopify/Product/1', data: null });
+  assert.deepEqual(asked, ['id:1']);
+  const dialog = page.query('dialog.lsf-intent');
+  assert.equal(dialog.querySelector('h2').textContent, 'Edit product');
+  assert.equal(dialog.querySelector('h3').textContent, 'Mug');
+  assert.match(dialog.querySelector('.lsf-intent-note').textContent, /lsf has no product editor/);
+  assert.deepEqual(dialog.querySelectorAll('tbody tr').map((row) => row.querySelector('td').textContent), ['Oat', 'Slate']);
+  assert.equal(answer(), undefined, 'open until the merchant closes it');
+  dialog.querySelector('.lsf-dialog-actions button').click();
+  await settle();
+  assert.deepEqual(answer().value, { code: 'closed' });
+
+  const variant = await intent({ action: 'edit', type: 'shopify/ProductVariant', value: 'gid://shopify/ProductVariant/12' });
+  assert.deepEqual(variant.asked, ['variant_id:12']);
+  assert.deepEqual(variant.page.query('dialog.lsf-intent').querySelectorAll('tbody tr').map((row) => row.querySelector('td').textContent), ['Slate']);
+});
+
+test('an intent lsf does not simulate, or of what lsf does not have, completes with an error that says so', async () => {
+  const create = await intent({ action: 'create', type: 'shopify/Discount', value: null, data: { type: 'free-shipping' } });
+  assert.equal(create.page.query('dialog.lsf-intent'), null);
+  assert.equal(create.answer().value.code, 'error');
+  assert.match(create.answer().value.message, /lsf does not simulate the intent create:shopify\/Discount/);
+  assert.match(create.page.query('[data-banner="unsupported"]').textContent, /shopify\.intents\.invoke\(create:shopify\/Discount\)/);
+
+  const missing = await intent({ action: 'edit', type: 'shopify/Product', value: 'gid://shopify/Product/99' });
+  assert.deepEqual(missing.answer().value, { code: 'error', message: 'lsf has no product gid://shopify/Product/99 in local-supply-co.myshopify.com' });
+  assert.match(missing.page.query('.lsf-toast').textContent, /lsf has no product/);
+});
 
 test('the resource picker lists the shop\'s products with their variants, and answers what was picked', async () => {
   const { dialog, rows, check, answer, asked } = await picking({ type: 'product', multiple: true, filter: { query: 'vendor:Acme', archived: false } });

@@ -177,6 +177,8 @@ pub struct AdminApi {
     /// The origin lsf's admin opens the app's frame on, in place of the backend's: the proxy
     /// the server puts in front of it ([`AdminApi::set_frame_origin`]).
     frame_origin: RwLock<Option<String>>,
+    /// Whether the app's backend talks to lsf ([`AdminApi::backend_watch`]).
+    backend: Arc<super::BackendWatch>,
     /// What a test runs once at a point of a request ([`Hook`]).
     #[cfg(test)]
     test_hooks: TestHooks,
@@ -326,6 +328,7 @@ impl AdminApi {
             pricing: RwLock::new(PricingPlans::default()),
             event_snapshots: Mutex::new(HashMap::new()),
             frame_origin: RwLock::new(None),
+            backend: Arc::default(),
             #[cfg(test)]
             test_hooks: Mutex::new(Default::default()),
         }
@@ -635,6 +638,12 @@ impl AdminApi {
             .frame_origin
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = origin;
+    }
+
+    /// What lsf has seen of the app's backend: the frame's proxy reports the requests that
+    /// failed, and lsf's admin shows a hint when the backend seems to send its calls to Shopify.
+    pub fn backend_watch(&self) -> Arc<super::BackendWatch> {
+        self.backend.clone()
     }
 
     /// The origin of the app's frame in lsf's admin, when it is not the backend's.
@@ -1236,6 +1245,7 @@ impl AdminApi {
             return Some(super::partner::handle(self, request, partner_id, version));
         }
         if let Some(admin) = version::parse_path(path) {
+            self.backend.called();
             let primary = self.versions.primary();
             return Some(match admin {
                 AdminPath::Graphql(asked) => match self.versions.resolve(asked) {
@@ -1300,6 +1310,7 @@ impl AdminApi {
             // A grant may install the app again with fewer scopes, which narrows every token of
             // the installation: the requests waiting on a shop look their token up again.
             if path.trim_end_matches('/') == "/admin/oauth/access_token" {
+                self.backend.called();
                 for (domain, _) in self.all_shops() {
                     self.auth_changed(&domain);
                 }

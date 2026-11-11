@@ -13,7 +13,10 @@
 //!   may frame every page;
 //! - Shopify's App Bridge (`https://cdn.shopify.com/shopifycloud/app-bridge.js`) is lsf's in the
 //!   pages and in `Link`, and Polaris (`https://cdn.shopify.com/shopifycloud/polaris…`) is
-//!   lsf's `/__lsf/cdn/` (Shopify's CDN online, lsf's copy offline); so each directive of the
+//!   lsf's `/__lsf/cdn/` (Shopify's CDN online, lsf's copy offline). Each URL it changes ends
+//!   with [`CDN_MARK`]: lsf's App Bridge writes the CDN's URL back in the `src` of those
+//!   scripts once they have started loading, before React hydrates the page, so that React
+//!   finds the `src` it rendered (no "Prop `src` did not match"). So each directive of the
 //!   policy that lets the page load from Shopify's CDN (`script-src`, `style-src`, `connect-src`,
 //!   `font-src`, `img-src`, their `-elem` forms, `default-src`) lets it load from lsf too, and
 //!   nothing else of the policy changes;
@@ -28,6 +31,10 @@
 //!   the backend's; and a `User-Agent` of headless Chromium (`HeadlessChrome`, which the
 //!   template's `isbot` answers `410 Gone`) is Chrome's.
 //!
+//! A request with a session token that fails, while lsf has received no token exchange and no
+//! Admin API call from the backend, is reported to the [`BackendWatch`]: the backend likely
+//! sends them to Shopify (no `LSF_URL`), and lsf's admin and its terminal say so.
+//!
 //! The proxy forwards plain HTTP: a WebSocket (Vite's HMR on the app's own port) does not pass,
 //! and the template's HMR has a port of its own. `LSF_ADMIN_FRAME=direct` opens the backend in
 //! the frame without the proxy.
@@ -39,6 +46,7 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderName, HeaderValue, Request as HttpRequest, Response, StatusCode};
+use lsf_app::admin::api::BackendWatch;
 
 /// What an answer of the backend may weigh.
 const MAX_ANSWER: u64 = 256 << 20;
@@ -69,6 +77,11 @@ const CDN_APP_BRIDGE: &str = "https://cdn.shopify.com/shopifycloud/app-bridge.js
 /// Polaris on the CDN: `polaris.js`, `polaris-2.js`.
 const CDN_POLARIS: &str = "https://cdn.shopify.com/shopifycloud/polaris";
 
+/// The fragment that ends a URL of the CDN the proxy pointed at lsf: lsf's App Bridge puts the
+/// CDN's URL back in the `src` of such a script once it loads (`app-bridge.js`), so that React
+/// hydrates the page without a mismatch. A fragment never reaches a server.
+pub const CDN_MARK: &str = "#lsf-cdn";
+
 /// The proxy of the app's frame.
 pub struct FrameProxy {
     /// The backend's origin: `http://localhost:3000`.
@@ -78,6 +91,8 @@ pub struct FrameProxy {
     /// lsf's, where the admin and its App Bridge are: `http://127.0.0.1:9292`.
     lsf: String,
     agent: ureq::Agent,
+    /// Where the failures of the backend go, when lsf's admin watches it.
+    watch: Option<Arc<BackendWatch>>,
 }
 
 impl FrameProxy {
@@ -93,7 +108,14 @@ impl FrameProxy {
                 .allow_non_standard_methods(true)
                 .build()
                 .into(),
+            watch: None,
         }
+    }
+
+    /// Reports to `watch` the requests with a session token that fail.
+    pub fn with_watch(mut self, watch: Arc<BackendWatch>) -> FrameProxy {
+        self.watch = Some(watch);
+        self
     }
 
     /// A URL of the backend as the frame sees it: the backend's origin, raw or in a query
@@ -111,16 +133,43 @@ impl FrameProxy {
 
     /// A page of the backend: lsf's App Bridge and Polaris, the proxy's origin.
     pub fn rewrite_page(&self, html: &str) -> String {
-        let html = html
-            .replace(
-                CDN_APP_BRIDGE,
-                &format!("{}/__lsf/admin/app-bridge.js", self.lsf),
-            )
-            .replace(
-                CDN_POLARIS,
-                &format!("{}/__lsf/cdn/shopifycloud/polaris", self.lsf),
-            );
+        let html = self.point_at_lsf(html);
         self.rewrite_url(&html)
+    }
+
+    /// `text` where Shopify's App Bridge and Polaris on the CDN are lsf's, each URL ending with
+    /// [`CDN_MARK`] (unless it has a fragment already).
+    fn point_at_lsf(&self, text: &str) -> String {
+        let app_bridge = format!("{}/__lsf/admin/app-bridge.js", self.lsf);
+        let polaris = format!("{}/__lsf/cdn/shopifycloud/polaris", self.lsf);
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        loop {
+            let found = [(CDN_APP_BRIDGE, &app_bridge), (CDN_POLARIS, &polaris)]
+                .into_iter()
+                .filter_map(|(cdn, local)| rest.find(cdn).map(|at| (at, cdn, local)))
+                .min_by_key(|(at, ..)| *at);
+            let Some((at, cdn, local)) = found else {
+                out.push_str(rest);
+                return out;
+            };
+            out.push_str(&rest[..at]);
+            let after = &rest[at + cdn.len()..];
+            // The rest of the URL: up to a quote, a bracket, a space or an escape.
+            let end = after
+                .find(|c: char| {
+                    c.is_whitespace()
+                        || matches!(c, '"' | '\'' | '`' | '<' | '>' | '(' | ')' | '\\')
+                })
+                .unwrap_or(after.len());
+            let tail = &after[..end];
+            out.push_str(local);
+            out.push_str(tail);
+            if !tail.contains('#') {
+                out.push_str(CDN_MARK);
+            }
+            rest = &after[end..];
+        }
     }
 
     /// A header of the backend's answer, `None` when it goes.
@@ -165,6 +214,7 @@ impl FrameProxy {
         body: Vec<u8>,
     ) -> (u16, Vec<(String, String)>, Vec<u8>) {
         let url = format!("{}{path}", self.upstream);
+        let authenticated = has_session_token(path, headers);
         let mut builder = ureq::http::Request::builder().method(method).uri(&url);
         for (name, value) in headers {
             if let Some(value) = self.request_header(name, value) {
@@ -199,6 +249,12 @@ impl FrameProxy {
             }
         };
         let status = response.status().as_u16();
+        if authenticated
+            && let Some(watch) = &self.watch
+            && let Some(hint) = watch.failed(path, status, &self.lsf)
+        {
+            eprintln!("admin:  {hint}");
+        }
         let mut html = false;
         let mut out = Vec::new();
         for (name, value) in response.headers() {
@@ -232,6 +288,20 @@ impl FrameProxy {
         }
         (status, out, body)
     }
+}
+
+/// Whether a request of the frame carries a session token: the `id_token` of a launch or a
+/// bounce, or the `Authorization: Bearer` App Bridge adds to `fetch()`.
+fn has_session_token(path: &str, headers: &[(String, String)]) -> bool {
+    let query = path.split_once('?').map_or("", |(_, query)| query);
+    form_urlencoded::parse(query.as_bytes())
+        .any(|(name, value)| name == "id_token" && !value.is_empty())
+        || headers.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case("authorization")
+                && value
+                    .get(..7)
+                    .is_some_and(|scheme| scheme.eq_ignore_ascii_case("bearer "))
+        })
 }
 
 /// `Content-Security-Policy` without its `frame-ancestors` directive; `None` when nothing else
@@ -465,7 +535,9 @@ mod tests {
         let page = r#"<script data-api-key="k" src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
       <script>window.open("http://localhost:3000/app/plans", "_top")</script>"#;
         let rewritten = proxy.rewrite_page(page);
-        assert!(rewritten.contains(r#"src="http://127.0.0.1:9292/__lsf/admin/app-bridge.js""#));
+        assert!(
+            rewritten.contains(r#"src="http://127.0.0.1:9292/__lsf/admin/app-bridge.js#lsf-cdn""#)
+        );
         assert!(rewritten.contains(r#"window.open("http://127.0.0.1:52011/app/plans", "_top")"#));
         assert_eq!(
             proxy
@@ -474,8 +546,34 @@ mod tests {
                     "<https://cdn.shopify.com/shopifycloud/polaris.js>; rel=\"preload\"; as=\"script\""
                 )
                 .unwrap(),
-            "<http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris.js>; rel=\"preload\"; as=\"script\""
+            "<http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris.js#lsf-cdn>; rel=\"preload\"; as=\"script\""
         );
+    }
+
+    #[test]
+    fn each_cdn_url_pointed_at_lsf_ends_with_the_mark() {
+        let proxy = proxy();
+        let page = r#"<script src="https://cdn.shopify.com/shopifycloud/polaris-2.js?v=2"></script><script src='https://cdn.shopify.com/shopifycloud/app-bridge.js'></script>{"u":"https://cdn.shopify.com/shopifycloud/polaris.js\"}<link href="https://cdn.shopify.com/shopifycloud/polaris.js#x"><img src="https://cdn.shopify.com/s/files/a.png">"#;
+        assert_eq!(
+            proxy.rewrite_page(page),
+            r#"<script src="http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris-2.js?v=2#lsf-cdn"></script><script src='http://127.0.0.1:9292/__lsf/admin/app-bridge.js#lsf-cdn'></script>{"u":"http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris.js#lsf-cdn\"}<link href="http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris.js#x"><img src="https://cdn.shopify.com/s/files/a.png">"#
+        );
+    }
+
+    #[test]
+    fn a_session_token_is_in_the_query_or_the_authorization() {
+        let none: [(String, String); 0] = [];
+        assert!(has_session_token("/app?embedded=1&id_token=a.b.c", &none));
+        assert!(!has_session_token("/app?embedded=1&id_token=", &none));
+        assert!(!has_session_token("/app?embedded=1", &none));
+        assert!(has_session_token(
+            "/app.data",
+            &[("Authorization".to_string(), "Bearer a.b.c".to_string())]
+        ));
+        assert!(!has_session_token(
+            "/app.data",
+            &[("authorization".to_string(), "Basic abc".to_string())]
+        ));
     }
 
     #[test]
@@ -610,6 +708,10 @@ mod tests {
                 }),
             )
             .route(
+                "/broken",
+                axum::routing::get(|| async { StatusCode::INTERNAL_SERVER_ERROR.into_response() }),
+            )
+            .route(
                 "/api/billing",
                 axum::routing::post(|| async {
                     (
@@ -688,11 +790,13 @@ mod tests {
             "default-src 'self'; script-src 'self' https://cdn.shopify.com http://127.0.0.1:9292; style-src 'self' https://cdn.shopify.com http://127.0.0.1:9292"
         );
         assert!(
-            html.contains(r#"src="http://127.0.0.1:9292/__lsf/admin/app-bridge.js""#),
+            html.contains(r#"src="http://127.0.0.1:9292/__lsf/admin/app-bridge.js#lsf-cdn""#),
             "{html}"
         );
         assert!(
-            html.contains(r#"src="http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris.js""#),
+            html.contains(
+                r#"src="http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris.js#lsf-cdn""#
+            ),
             "{html}"
         );
         assert_eq!(redirect, 302);
@@ -705,5 +809,42 @@ mod tests {
             reauthorize,
             "http://127.0.0.1:9292/admin/charges/7/2/RecurringApplicationCharge/confirm_recurring_application_charge?signature=s&shop=a.myshopify.com"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failure_with_a_session_token_before_any_call_of_the_backend_is_reported() {
+        let upstream = backend().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let watch = Arc::new(BackendWatch::default());
+        tokio::spawn(serve(
+            Arc::new(
+                FrameProxy::new(&upstream, &origin, "http://127.0.0.1:9292")
+                    .with_watch(watch.clone()),
+            ),
+            listener,
+        ));
+        let get = move |path: &str| {
+            let url = format!("{origin}{path}");
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let agent: ureq::Agent = ureq::Agent::config_builder()
+                        .http_status_as_error(false)
+                        .build()
+                        .into();
+                    agent.get(url).call().unwrap().status().as_u16()
+                })
+                .await
+                .unwrap()
+            }
+        };
+        // Without a session token, or answered, nothing is said.
+        assert_eq!(get("/broken").await, 500);
+        assert_eq!(get("/app?id_token=a.b.c").await, 200);
+        assert_eq!(watch.hint(), None);
+        assert_eq!(get("/broken?embedded=1&id_token=a.b.c").await, 500);
+        let hint = watch.hint().expect("a hint");
+        assert!(hint.contains("answered 500 to /broken,"), "{hint}");
+        assert!(hint.contains("LSF_URL=http://127.0.0.1:9292"), "{hint}");
     }
 }

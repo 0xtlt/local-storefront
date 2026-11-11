@@ -48,9 +48,11 @@ if (lsf) {
 }
 ```
 
-Without `LSF_URL`, the app talks to Shopify as before. Until the edit is there, lsf says so at
-start and in its admin. Nothing else changes: lsf's admin gives the pages its App Bridge and
-Polaris.
+Without `LSF_URL`, the app talks to Shopify as before. Until the edit is there, lsf's admin
+says so; it reads the file again at each load, so the banner goes once the edit is saved. A
+backend started without `LSF_URL` sends its calls to Shopify: when a page of it fails and lsf has
+received nothing from it, lsf's admin and its terminal name `LSF_URL`. Nothing else changes:
+lsf's admin gives the pages its App Bridge and Polaris.
 
 ## 3. Run lsf and the backend
 
@@ -62,6 +64,8 @@ LSF_URL=http://127.0.0.1:9292 SHOPIFY_APP_URL=http://localhost:3000 PORT=3000 np
 Not `npm run dev`: that is `shopify app dev`, which talks to Shopify. Open the `embedded:` URL
 lsf prints, <http://127.0.0.1:9292/admin/apps/my-app>. The app opens in a local admin, with its
 navigation and title bar. Click **Generate a product**: the admin shows "Product created".
+**Edit product** (`shopify.intents.invoke("edit:shopify/Product")`) shows what lsf has of the
+product; lsf has no product editor, so closing it answers `{code: "closed"}`.
 
 ## 4. Webhooks and Events
 
@@ -74,6 +78,10 @@ curl -X POST http://127.0.0.1:9292/__lsf/admin/uninstall   # app/uninstalled: th
 curl -X POST http://127.0.0.1:9292/__lsf/admin/install
 curl http://127.0.0.1:9292/__lsf/webhooks                  # every delivery, and what the backend answered
 ```
+
+The uninstall revokes every token of the app. The install brings back the token lsf printed at
+start, so that a script or a test that read it keeps working. The tokens of the backend's token
+exchange stay revoked: the next page of the app exchanges a session token again, as on Shopify.
 
 ## 5. Billing
 
@@ -171,27 +179,42 @@ npx local-storefront serve --theme ../horizon --app . --app-url http://localhost
 ```
 
 A product page shows the block, and <http://127.0.0.1:9292/apps/my-app> shows the proxy's answer
-in the theme's layout. In the theme's folder, `npx local-storefront check --app ../my-app`
-checks the app blocks the theme names, and `app build` checks the extension as Shopify does.
+in the theme's layout. In the app's folder, `npx local-storefront check --theme ../horizon --app .`
+checks the app blocks the theme names, and `npx local-storefront app build` checks the extension
+as Shopify does.
 
 ## 7. A Playwright test
+
+```bash
+npm install --save-dev @playwright/test && npx playwright install chromium
+```
 
 ```ts
 // playwright.config.ts
 import { defineConfig } from '@playwright/test';
 
+// The app's values (SHOPIFY_API_KEY, SHOPIFY_API_SECRET, SCOPES): react-router-serve reads no .env.
+process.loadEnvFile('.env');
+
 export default defineConfig({
   testDir: 'e2e',
   workers: 1, // one lsf, one shop: the tests change it in turn
+  use: {
+    // For the test's own requests to the backend: the template answers 410 to HeadlessChrome.
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+  },
   webServer: [
     {
       command: 'npx local-storefront app dev --app . --port 9393 --app-url http://localhost:3001 --polaris offline --static --quiet',
       url: 'http://127.0.0.1:9393/__lsf/status',
     },
     {
-      command: 'npx prisma migrate deploy && npx react-router dev',
+      // A build, not the dev server: on a cold start, Vite's dev server optimizes the
+      // dependencies a page asks for and reloads the page, under the test.
+      command: 'npx prisma migrate deploy && npx react-router build && npx react-router-serve ./build/server/index.js',
       url: 'http://localhost:3001/',
       env: { PORT: '3001', SHOPIFY_APP_URL: 'http://localhost:3001', LSF_URL: 'http://127.0.0.1:9393' },
+      timeout: 120_000,
     },
   ],
 });
@@ -204,6 +227,8 @@ import { test, expect } from '@playwright/test';
 const LSF = 'http://127.0.0.1:9393';
 
 test('the app generates a product', async ({ page, request }) => {
+  const errors: string[] = [];
+  page.on('console', (message) => message.type() === 'error' && errors.push(message.text()));
   const { last } = await (await request.get(`${LSF}/__lsf/webhooks`)).json();
 
   await page.goto(`${LSF}/admin/apps/my-app/app`);
@@ -215,12 +240,24 @@ test('the app generates a product', async ({ page, request }) => {
   const events = await request.get(`${LSF}/__lsf/webhooks?topic=Product&since=${last}&wait=1`);
   const { deliveries } = await events.json();
   expect(deliveries[0].state).toBe('delivered');
+  expect(errors).toEqual([]); // nothing failed in the page
 });
 ```
 
-`--polaris offline` serves Polaris from lsf: no request leaves the machine. To run the test next
-to your dev server, give the template's HMR port (`64999` in `vite.config.ts`) a variable
-([another port](admin.md#javascript-the-react-router-app-and-shopifyshopify-api)).
+`npx playwright test` builds the app and runs it with `react-router-serve`. Not the dev server:
+on a cold checkout, as in CI, Vite optimizes the dependencies the first page asks for, answers
+`504 Outdated Optimize Dep` and reloads the page, and the test clicks a page that never
+hydrates. The build takes a few seconds, has no HMR port, and runs next to your dev server.
+`--polaris offline` serves Polaris from lsf: no request leaves the machine.
+
+In CI, write the `.env` first (it is not committed): the values of step 1 are lsf's, not
+secrets.
+
+```yaml
+- run: npm ci && npm run setup
+- run: printf 'SHOPIFY_API_KEY=0123456789abcdef0123456789abcdef\nSHOPIFY_API_SECRET=local-secret\nSCOPES=write_products\n' > .env
+- run: npx playwright install --with-deps chromium && npx playwright test
+```
 
 ## Next
 
