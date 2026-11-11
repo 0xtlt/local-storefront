@@ -52,6 +52,48 @@ The tests get a port of their own, outside the `9292` to `9391` that `serve` tak
 `--port`. A local run then never reuses your dev server, with its live reload and its data that
 changes.
 
+### An embedded app
+
+For the backend of an app (the React Router template), start lsf and the backend, and open the
+app in lsf's admin ([preview the embedded app](admin.md#preview-the-embedded-app)):
+
+```ts
+// playwright.config.ts of the app
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  workers: 1, // one lsf, one shop: the tests change it in turn
+  use: {
+    // Only for requests to the backend itself: in lsf's admin the frame says Chrome.
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+  },
+  webServer: [
+    {
+      command: 'npx local-storefront app dev --app . --port 9393 --app-url http://localhost:3001 --polaris offline --static --quiet',
+      url: 'http://127.0.0.1:9393/__lsf/status',
+    },
+    {
+      command: 'npx prisma migrate deploy && npx react-router dev',
+      url: 'http://localhost:3001/',
+      env: { PORT: '3001', SHOPIFY_APP_URL: 'http://localhost:3001', LSF_URL: 'http://127.0.0.1:9393' },
+    },
+  ],
+});
+```
+
+```ts
+test('the app opens in lsf\'s admin', async ({ page }) => {
+  await page.goto('http://127.0.0.1:9393/admin/apps/my-app/app');
+  await expect(page.frameLocator('iframe').getByText('Generate a product')).toBeVisible();
+});
+```
+
+The template's `isbot` answers `410 Gone` to Playwright's headless Chromium (`HeadlessChrome` in
+its user agent). Pages in lsf's admin pass: the frame's proxy says Chrome. A request of the test
+to `http://localhost:3001` does not go through it, hence `use.userAgent`. Change the HMR port of
+the template's `vite.config.ts` (`64999`) to run it next to a dev server
+([another port](admin.md#javascript-the-react-router-app-and-shopifyshopify-api)).
+
 ## Sessions: every test is isolated
 
 The server keeps one **session** per browser: the cart, the logged-in customer, the selected

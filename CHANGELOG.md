@@ -295,6 +295,22 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   with its placements. The `payment-methods` scenario of `app init` has PayPal in both
   placements, as Shopify offers it with PayPal Express on.
 
+- **The embedded app opens in lsf's admin as the React Router template ships it.** The admin's
+  frame goes through a proxy on a port of its own. It lets lsf's admin frame every page, the
+  library's bounce page and `redirect(…, {target: "_top"})` page included, and gives the pages
+  lsf's App Bridge and Polaris. The `entry.server.tsx`, `app.tsx` and `polarisUrl` edits are no
+  longer needed. `LSF_ADMIN_FRAME=direct` opens the backend itself
+  ([preview the embedded app](docs/admin.md#preview-the-embedded-app)).
+- **Shopify's Events of `[events]` in `shopify.app.toml`.** lsf delivers the `Product` Events
+  (`create`, `update`, `delete`) when a product or a variant changes through the Admin API, with
+  their triggers, their `query`, their `query_filter` and Shopify's `Shopify-*` headers. The
+  template's `webhooks.products.update.tsx` receives them ([webhooks](docs/admin.md#webhooks)).
+- **App subscriptions renew on the shop's clock.** Past `currentPeriodEnd`, the period moves on
+  by its interval, the usage balance starts again, and a limited discount has an interval less.
+- **lsf warns about what the React Router template lacks:** no fetch function for lsf in
+  `app/shopify.server.ts`, no `headers` export in `app/routes/app.tsx`. The warnings are on the
+  home page and in lsf's admin.
+
 ### Changed
 
 - **A Function runs only through an enabled owner, as on Shopify.** At the shop's checkout (no
@@ -497,6 +513,21 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   that takes something off the option the buyer selected. An automatic discount of 0 shows too,
   at 0 (a Function that reads its percentage from settings that are not set)
   ([#26](https://github.com/0xtlt/local-storefront/issues/26)).
+
+- **A backend's stored tokens work after lsf restarts.** Tokens are now derived from the
+  client id, the client secret, the shop and their rank, and lsf takes back one of an earlier run.
+  A token revoked in the run stays revoked ([tokens](docs/admin.md#tokens)).
+- **`billing.require` and `billing.request` work in the loader of a page.** `confirmationUrl` is
+  now Shopify's, on the shop's admin, which the library's exit-iframe page accepts. lsf's admin
+  serves that path. After the approval, a `returnUrl` on Shopify's admin or on the app comes back
+  to the app in lsf's admin.
+- **`client_id = ""` is no longer replaced without a word.** lsf takes `SHOPIFY_API_KEY` of the
+  environment or of the app's `.env`, and warns when it has to use `lsf-local-client-id` or when
+  the two keys differ. The admin names the app by its `handle`, else its `name`.
+- **Playwright's headless Chromium no longer gets `410 Gone` in lsf's admin.** The frame's proxy
+  says Chrome to the template's bot check.
+- **`lsf app webhook trigger` names the `[events]` subscriptions** of a topic that has no
+  webhook subscription, and `GET /__lsf/webhooks?topic=Product` lists Events.
 
 ## 0.2.0 - 2026-10-30
 

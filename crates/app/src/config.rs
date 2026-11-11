@@ -717,6 +717,7 @@ pub fn load(dir: &Path) -> Result<App, String> {
     }
 
     app.check_handles();
+    app.check_template();
     Ok(app)
 }
 
@@ -757,6 +758,32 @@ impl App {
             extension: extension.map(str::to_string),
             message,
         });
+    }
+
+    /// What the React Router template (`app/shopify.server.ts`) lacks to run against lsf: the
+    /// fetch function that sends the Admin API to lsf, and the `headers` of `app/routes/app.tsx`
+    /// that keep the library's reauthorize header. Nothing for another app.
+    fn check_template(&mut self) {
+        let root = self.root.clone();
+        let read = |path: &str| std::fs::read_to_string(root.join(path)).ok();
+        let Some(server) = read("app/shopify.server.ts").or_else(|| read("app/shopify.server.js"))
+        else {
+            return;
+        };
+        if !server.contains("setAbstractFetchFunc") {
+            self.warn_admin(
+                "app/shopify.server.ts does not replace the fetch function of @shopify/shopify-api (setAbstractFetchFunc): its token exchange and Admin API calls go to Shopify, not to lsf. Add the recipe of \"Point the backend at lsf\" in lsf's docs/admin.md, and set LSF_URL."
+                    .to_string(),
+            );
+        }
+        if let Some(layout) = read("app/routes/app.tsx").or_else(|| read("app/routes/app.jsx"))
+            && !layout.contains("boundary.headers")
+        {
+            self.warn_admin(
+                "app/routes/app.tsx does not export headers (export const headers = (headersArgs) => boundary.headers(headersArgs)): a 401 of billing.request loses X-Shopify-API-Request-Failure-Reauthorize-Url, and App Bridge has nowhere to send the merchant."
+                    .to_string(),
+            );
+        }
     }
 
     /// A warning of `shopify.app.toml` that lsf's admin shows too.
@@ -1561,6 +1588,38 @@ mod tests {
         assert_eq!(app.client_id.as_deref(), Some("xyz"));
         assert_eq!(app.admin_handle().as_deref(), Some("notes"));
         assert!(app.admin_warnings[0].contains("SHOPIFY_API_KEY of the app's .env is abc123"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn says_what_the_react_router_template_lacks() {
+        let root = temp_app("template-checks");
+        write(&root, "shopify.app.toml", "client_id = \"abc\"\n");
+        write(
+            &root,
+            "app/shopify.server.ts",
+            "import { shopifyApp } from \"x\";\n",
+        );
+        write(
+            &root,
+            "app/routes/app.tsx",
+            "export default function App() {}\n",
+        );
+        let app = load(&root).unwrap();
+        assert_eq!(app.admin_warnings.len(), 2, "{:?}", app.admin_warnings);
+        assert!(app.admin_warnings[0].contains("setAbstractFetchFunc"));
+        assert!(app.admin_warnings[1].contains("boundary.headers"));
+        write(
+            &root,
+            "app/shopify.server.ts",
+            "import { setAbstractFetchFunc } from \"@shopify/shopify-api/runtime\";\n",
+        );
+        write(
+            &root,
+            "app/routes/app.tsx",
+            "export const headers = (headersArgs) => boundary.headers(headersArgs);\n",
+        );
+        assert!(load(&root).unwrap().admin_warnings.is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 
