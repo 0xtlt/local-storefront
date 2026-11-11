@@ -77,7 +77,9 @@ npx local-storefront app dev --app ../my-app --build
 The npm packages they import come from the app's `node_modules`, when it has them. Without, lsf
 has its own copy of those Shopify's templates use: `@shopify/shopify_function` 2.0.1, `preact`
 10.29.8, `@preact/signals` 2.11.4 and `@shopify/ui-extensions` 2026.10.0 (MIT, but
-`@shopify/shopify_function`: Apache-2.0). Any other package needs a `node_modules`.
+`@shopify/shopify_function`: Apache-2.0), written once in the user's cache folder
+(`~/Library/Caches/lsf/` on macOS, `~/.cache/lsf/` on Linux). Any other package needs a
+`node_modules`.
 
 ### JavaScript and TypeScript Functions
 
@@ -1549,8 +1551,7 @@ The browser tests of a theme in CI: [testing](testing.md#in-ci).
 - Tax is one rate on the discounted subtotal, with no tax lines.
 - No Storefront API: `query` in an extension rejects. No Customer Account API either: a customer
   account extension reads the account through its `shopify` global only.
-- `shopify.appMetafields` has no `shopUser` entries (the store data has no staff accounts), and
-  on the order status page no `order` ones (the orders of the store data have no metafields).
+- `shopify.appMetafields` has no `shopUser` entries (the store data has no staff accounts).
 - The customer account shows; it changes nothing (no address to edit, no order to cancel or
   return), and its intents (`shopify.intents.invoke`) are closed at once.
 - Some fields of the Function input hold what the store data says and nothing more. The orders of
