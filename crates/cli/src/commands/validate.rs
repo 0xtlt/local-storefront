@@ -64,11 +64,23 @@ pub fn run(
         }
         app
     };
-    let (store, diagnostics) = app.load_store();
+    let (store, mut diagnostics) = app.load_store();
     let shopify_app = match &app_dir {
         Some(dir) => Some(lsf_app::config::load(dir)?),
         None => None,
     };
+    // The settings of the UI extensions, against what the extensions declare.
+    for problem in shopify_app
+        .iter()
+        .flat_map(|shopify_app| crate::checkout::settings_problems(shopify_app, &store))
+    {
+        diagnostics.warning(
+            "extension_settings",
+            problem.file.as_deref().unwrap_or("checkout"),
+            &problem.path,
+            problem.message,
+        );
+    }
     let app_problems: Vec<&lsf_app::config::Diagnostic> = shopify_app
         .iter()
         .flat_map(|app| &app.diagnostics)

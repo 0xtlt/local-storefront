@@ -279,6 +279,79 @@ pub fn build_ui_extensions(app: &App, selection: &Selection) -> Result<(), Strin
     Ok(())
 }
 
+/// A setting of `checkout.extensions` that does not fit the app: an extension it does not have,
+/// a key its `[extensions.settings]` does not declare, a value of the wrong type.
+pub struct SettingsProblem {
+    pub handle: String,
+    /// The scenario's file (`checkouts/banner.json`), or `None` for the store data's.
+    pub file: Option<String>,
+    /// Where it is, as a JSON pointer: `/checkout/extensions/banner/settings/title`.
+    pub path: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for SettingsProblem {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{} ({} at {})",
+            self.message,
+            self.file
+                .as_deref()
+                .unwrap_or("the checkout section of the store data"),
+            self.path
+        )
+    }
+}
+
+/// What is wrong with the settings the store data and its scenarios give the UI extensions of
+/// `app` (`checkout.extensions.<handle>.settings`). A scenario is checked for what it changes.
+pub fn settings_problems(app: &App, store: &Store) -> Vec<SettingsProblem> {
+    let mut problems = Vec::new();
+    let mut check =
+        |file: Option<&str>, handle: &str, values: &indexmap::IndexMap<String, Json>| {
+            let at = format!("/checkout/extensions/{handle}");
+            match app.ui_extension(handle) {
+                None => {
+                    let handles = app
+                        .ui_extensions
+                        .iter()
+                        .map(|extension| extension.handle.as_str());
+                    let close = lsf_core::util::closest_match(handle, handles)
+                        .map(|close| format!(": did you mean `{close}`?"))
+                        .unwrap_or_default();
+                    problems.push(SettingsProblem {
+                        handle: handle.to_string(),
+                        file: file.map(str::to_string),
+                        path: at,
+                        message: format!("the app has no UI extension `{handle}`{close}"),
+                    });
+                }
+                Some(extension) => {
+                    for (key, message) in extension.check_settings(values) {
+                        problems.push(SettingsProblem {
+                            handle: handle.to_string(),
+                            file: file.map(str::to_string),
+                            path: format!("{at}/settings/{key}"),
+                            message,
+                        });
+                    }
+                }
+            }
+        };
+    for (handle, values) in &store.checkout.extensions {
+        check(None, handle, values);
+    }
+    for scenario in &store.scenarios {
+        for (handle, values) in &scenario.checkout.extensions {
+            if store.checkout.extensions.get(handle) != Some(values) {
+                check(Some(&scenario.file), handle, values);
+            }
+        }
+    }
+    problems
+}
+
 /// A discount of `checkout.discounts` that runs `function`, for a hint: with its settings, the
 /// metafield its `[extensions.input.variables]` names, or the one of the discount its input
 /// query reads.

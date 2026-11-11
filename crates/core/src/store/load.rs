@@ -818,11 +818,14 @@ fn apply_overlay(
                 let base = base.value;
                 let mut functions = base.functions;
                 functions.extend(patch.functions);
+                let mut extensions = base.extensions;
+                extensions.extend(patch.extensions);
                 model::CheckoutInput {
                     shipping_rates: patch.shipping_rates.or(base.shipping_rates),
                     payment_methods: patch.payment_methods.or(base.payment_methods),
                     discounts: patch.discounts.or(base.discounts),
                     functions,
+                    extensions,
                     tax_rate: patch.tax_rate.or(base.tax_rate),
                 }
             }

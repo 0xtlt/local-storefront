@@ -3168,6 +3168,11 @@ fn override_checkout(
             ),
         });
     }
+    for (handle, extension) in &input.extensions {
+        settings
+            .extensions
+            .insert(handle.clone(), extension.settings.clone());
+    }
     for (handle, function) in &input.functions {
         let metafields = checkout_metafields(
             builder,
@@ -3348,6 +3353,9 @@ fn resolve_scenario(
         }
         if !checkout.functions.is_empty() {
             scenario.overrides.push("functions");
+        }
+        if !checkout.extensions.is_empty() {
+            scenario.overrides.push("extensions");
         }
         if checkout.tax_rate.is_some() {
             scenario.overrides.push("tax_rate");

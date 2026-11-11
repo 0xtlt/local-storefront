@@ -901,6 +901,7 @@ How the local checkout (`lsf app dev --app`) is set up. Every field has a defaul
 | `payment_methods` | array of [CheckoutPaymentMethod](#checkoutpaymentmethod) | The payment methods. Defaults to "Credit card", "Cash on Delivery" and "Bank Deposit". |
 | `discounts` | array of [CheckoutDiscount](#checkoutdiscount) | Discounts backed by discount Functions of the app. |
 | `functions` | map of [CheckoutFunction](#checkoutfunction) | The settings of the other Functions, by the handle of the Function. |
+| `extensions` | map of [CheckoutExtension](#checkoutextension) | What the merchant filled in for the UI extensions of the app, by the handle of the extension: the values its `shopify.settings` (`useSettings`) reads. |
 | `tax_rate` | number | Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when omitted. |
 
 ## CheckoutShippingRate
@@ -973,6 +974,14 @@ validation): its owner in the shop, and its settings.
 | `enabled` | boolean | Whether the shop has an owner of the Function (the payment or delivery customization, validation or cart transform an app creates for it), and it is enabled. As on Shopify, the Function runs at the checkout only through an enabled owner: `true` runs it, `false` is an owner that is turned off. Without it, the shop has no owner of it, as after an install: the Function runs only for a scenario that names it in `extensions`, or for `app function run <handle>`, with these metafields. |
 | `metafields` | map of [Metafield](#metafield) | The metafields of the object the Function belongs to, by `"namespace.key"`. |
 
+## CheckoutExtension
+
+A checkout or customer account UI extension of the app, as the merchant set it up.
+
+| Field | Type | Description |
+|---|---|---|
+| `settings` | map of any JSON value | The values of the fields of its `[extensions.settings]`, by `key`, as the merchant fills them in the checkout editor: `{"title": "Free gift", "threshold": 50, "show": true}`. A field left out has no value (`undefined`), as on Shopify. |
+
 ## Checkout scenario
 
 A named setup of the local checkout: a file of `checkouts/`. It sets what a checkout
@@ -986,7 +995,7 @@ depends on on top of the store data, and what it does not set stays as the store
 | `session` | [Session](#session) | Who buys and what is in the cart, written as the `session` of the store data and applied on top of it: `customer`, `cart` (lines, quantities, selling plans, note, attributes), `country`, `company_location`. |
 | `entered` | [ScenarioEntered](#scenarioentered) | What the buyer already entered: email, address, discount codes, delivery and payment. |
 | `language` | string | The language of the buyer, by ISO code (`"fr"`): one of `localization.languages`. The checkout opens under its locale root. Defaults to the primary language. |
-| `checkout` | [Checkout](#checkout) | Overrides of the `checkout` section of the store data: every field that is present replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`, `tax_rate`), except `functions`, which replaces the settings of the Functions it names. |
+| `checkout` | [Checkout](#checkout) | Overrides of the `checkout` section of the store data: every field that is present replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`, `tax_rate`), except `functions` and `extensions`, which replace the settings of the Functions and extensions they name. |
 | `variant` | [ScenarioLook](#scenariolook) | The look of the page. Defaults to the one of the server (`--variant`). |
 | `extensions` | array of string | The handles of the extensions (Functions and checkout UI extensions) that run, among those of the app that `--extension` allows. When omitted, every UI extension shows and the Functions run as at the shop's checkout: a payment or delivery customization, validation or cart transform Function only through an enabled owner of it. |
 | `expect` | [ScenarioExpect](#scenarioexpect) | What the checkout must look like once the Functions ran: `lsf app check` fails when it does not, and says what it expected and what it got. Without it, `app check` only checks that the Functions run without an error. |

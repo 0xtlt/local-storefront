@@ -1629,6 +1629,17 @@ pub struct CheckoutFunctionInput {
     pub metafields: IndexMap<String, MetafieldInput>,
 }
 
+/// A checkout or customer account UI extension of the app, as the merchant set it up.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutExtensionInput {
+    /// The values of the fields of its `[extensions.settings]`, by `key`, as the merchant fills
+    /// them in the checkout editor: `{"title": "Free gift", "threshold": 50, "show": true}`. A
+    /// field left out has no value (`undefined`), as on Shopify.
+    #[serde(default)]
+    pub settings: IndexMap<String, Json>,
+}
+
 /// How the local checkout (`lsf app dev --app`) is set up. Every field has a default.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -1645,6 +1656,10 @@ pub struct CheckoutInput {
     /// The settings of the other Functions, by the handle of the Function.
     #[serde(default)]
     pub functions: IndexMap<String, CheckoutFunctionInput>,
+    /// What the merchant filled in for the UI extensions of the app, by the handle of the
+    /// extension: the values its `shopify.settings` (`useSettings`) reads.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub extensions: IndexMap<String, CheckoutExtensionInput>,
     /// Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when
     /// omitted.
     #[serde(default)]
@@ -1742,7 +1757,8 @@ pub struct CheckoutScenarioInput {
     pub language: Option<String>,
     /// Overrides of the `checkout` section of the store data: every field that is present
     /// replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`,
-    /// `tax_rate`), except `functions`, which replaces the settings of the Functions it names.
+    /// `tax_rate`), except `functions` and `extensions`, which replace the settings of the
+    /// Functions and extensions they name.
     #[serde(default)]
     pub checkout: Option<CheckoutInput>,
     /// The look of the page. Defaults to the one of the server (`--variant`).

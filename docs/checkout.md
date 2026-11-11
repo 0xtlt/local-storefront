@@ -877,6 +877,14 @@ settings of your other Functions, and a tax rate.
 - A metafield is written `"namespace.key"`, with a [typed value](data-format.md#metafields-and-metaobjects).
   The input query of a Function reads it; `[extensions.input.variables]` of the Function says
   which one.
+- The **settings of a UI extension** are what the merchant fills in in the checkout editor:
+  `checkout.extensions.<handle>.settings`, by the `key` of each field of its
+  `[extensions.settings]`, read as `shopify.settings` (`useSettings`). A scenario's replace the
+  store data's for the extensions it names. A field without a value is left out, as on Shopify.
+  `validate` and the home page warn about a key the extension does not declare, a value not of
+  its field's type (`number_integer`: a whole number, `boolean`, text and dates: a string) or
+  not among its `choices`:
+  `{"checkout": {"extensions": {"gift-banner": {"settings": {"title": "Free gift wrap", "max_items": 3}}}}}`.
 - A **payment method** is in the list of the page by default (`PAYMENT_METHOD`). Its
   `placements` can put it among the express buttons above the contact section
   (`["ACCELERATED_CHECKOUT"]`), or in both, as PayPal with PayPal Express on
@@ -1533,8 +1541,6 @@ The browser tests of a theme in CI: [testing](testing.md#in-ci).
   combine, and applies the best of those that cannot; here all the product and order discounts
   combine, and of the shipping discounts the best one applies.
 - Tax is one rate on the discounted subtotal, with no tax lines.
-- The values of the `settings` of an extension are not set: the manifest declares them, and
-  `shopify.settings.value` is empty.
 - No Storefront API: `query` in an extension rejects. No Customer Account API either: a customer
   account extension reads the account through its `shopify` global only.
 - `shopify.appMetafields` has no `shopUser` entries (the store data has no staff accounts), and
@@ -1568,7 +1574,8 @@ store before a release:
   run.
 - **Network access**: the request JWT and Shopify's cache of responses
   ([network access](#network-access)).
-- **The settings of an extension** (`shopify.settings`): empty here.
+- **The settings of an extension** (`shopify.settings`): those of the store data or the
+  scenario here, not the checkout editor's.
 - **lsf's choices**: how several customizations chain and how `linesMerge` counts
   ([what runs](#what-runs)), which validation step blocks the order
   ([network access](#network-access)), the split between due today and due later

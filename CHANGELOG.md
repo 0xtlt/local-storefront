@@ -307,6 +307,13 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 - **A Shopify CLI to lsf table** in [checkout](docs/checkout.md#coming-from-shopifys-cli): each
   `shopify app` command, lsf's, and what lsf does not do.
 
+- **The settings of a UI extension can be set.** `checkout.extensions.<handle>.settings` of
+  the store data or of a scenario are the values `shopify.settings` (`useSettings`) reads, in
+  the checkout and the customer account, as a merchant fills them in. `validate` and the home
+  page warn about a key the extension's `[extensions.settings]` does not declare, a value of the
+  wrong type, or one not among its `choices`. `shopify.settings.value` was always empty.
+  [Checkout](docs/checkout.md#set-up-the-checkout).
+
 ### Changed
 
 - **A Function runs only through an enabled owner, as on Shopify.** At the shop's checkout (no

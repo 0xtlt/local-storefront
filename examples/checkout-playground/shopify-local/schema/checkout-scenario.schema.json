@@ -60,7 +60,7 @@
       "default": null
     },
     "checkout": {
-      "description": "Overrides of the `checkout` section of the store data: every field that is present\nreplaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`,\n`tax_rate`), except `functions`, which replaces the settings of the Functions it names.",
+      "description": "Overrides of the `checkout` section of the store data: every field that is present\nreplaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`,\n`tax_rate`), except `functions` and `extensions`, which replace the settings of the\nFunctions and extensions they name.",
       "anyOf": [
         {
           "$ref": "#/$defs/CheckoutInput"
@@ -436,6 +436,13 @@
           },
           "default": {}
         },
+        "extensions": {
+          "description": "What the merchant filled in for the UI extensions of the app, by the handle of the\nextension: the values its `shopify.settings` (`useSettings`) reads.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CheckoutExtensionInput"
+          }
+        },
         "tax_rate": {
           "description": "Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when\nomitted.",
           "type": [
@@ -682,6 +689,19 @@
           "additionalProperties": {
             "$ref": "#/$defs/MetafieldInput"
           },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "CheckoutExtensionInput": {
+      "description": "A checkout or customer account UI extension of the app, as the merchant set it up.",
+      "type": "object",
+      "properties": {
+        "settings": {
+          "description": "The values of the fields of its `[extensions.settings]`, by `key`, as the merchant fills\nthem in the checkout editor: `{\"title\": \"Free gift\", \"threshold\": 50, \"show\": true}`. A\nfield left out has no value (`undefined`), as on Shopify.",
+          "type": "object",
+          "additionalProperties": true,
           "default": {}
         }
       },
