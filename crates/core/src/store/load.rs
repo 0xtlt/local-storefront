@@ -28,7 +28,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
-use super::build::{BuildOptions, MergedInput, MergedScenario, Origin, Sourced, build, undated};
+use super::build::{
+    BuildOptions, LeftOut, MergedInput, MergedScenario, Origin, Sourced, build, undated,
+};
 use super::validate::{FileKind, validate};
 use super::{Store, demo, model};
 use crate::diagnostics::Diagnostics;
@@ -236,6 +238,14 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
                         error.column()
                     ))
                     .to_string();
+                // A product that cannot be read is named after its file.
+                if file.kind == FileKind::Product {
+                    merged.left_out.push(LeftOut {
+                        kind: "product",
+                        key: crate::util::handleize(&file_stem(name)),
+                        file: name.to_string(),
+                    });
+                }
                 // A scenario that cannot be read is listed with its error, not hidden.
                 if file.kind == FileKind::CheckoutScenario {
                     merged.scenarios.push(MergedScenario {
@@ -250,18 +260,54 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
         };
         match file.kind {
             FileKind::Store => {
-                let Some(input) =
-                    entity::<model::StoreInput>(FileKind::Store, name, &json, "", diagnostics)
-                else {
-                    continue;
+                let before = diagnostics.items.len();
+                let (input, skipped) = match entity::<model::StoreInput>(
+                    FileKind::Store,
+                    name,
+                    &json,
+                    "",
+                    diagnostics,
+                ) {
+                    Some(input) => (input, Skipped::default()),
+                    // What has errors is left out, and the rest of the file is read: the
+                    // references of the rest are checked in the same run.
+                    None => match salvage_store(name, &json, &diagnostics.items[before..]) {
+                        Some(salvaged) => salvaged,
+                        None => continue,
+                    },
                 };
-                merge_store_file(&mut merged, input, name, diagnostics);
+                for (section, kind, key) in [
+                    ("products", "product", "handle"),
+                    ("customers", "customer", "email"),
+                    ("collections", "collection", "handle"),
+                    ("pages", "page", "handle"),
+                ] {
+                    for index in skipped.indices(section) {
+                        if let Some(item) = json.get(section).and_then(|items| items.get(index)) {
+                            merged.left_out.push(LeftOut {
+                                kind,
+                                key: entity_key(item, key, None),
+                                file: name.to_string(),
+                            });
+                        }
+                    }
+                }
+                merge_store_file(&mut merged, input, name, diagnostics, &skipped);
             }
             FileKind::Product => {
                 let single = json.is_object();
-                for mut product in
-                    entities::<model::ProductInput>(FileKind::Product, name, &json, diagnostics)
-                {
+                let products =
+                    entities::<model::ProductInput>(FileKind::Product, name, &json, diagnostics);
+                record_left_out(
+                    &mut merged,
+                    FileKind::Product,
+                    "product",
+                    "handle",
+                    name,
+                    &json,
+                    products.len(),
+                );
+                for mut product in products {
                     // A file holding a single product is named after its handle.
                     if single && product.value.handle.is_none() {
                         product.value.handle = Some(crate::util::handleize(&file_stem(name)));
@@ -305,12 +351,20 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
                     merged.blogs.push(blog);
                 }
             }
-            FileKind::Customer => merged.customers.extend(entities::<model::CustomerInput>(
-                FileKind::Customer,
-                name,
-                &json,
-                diagnostics,
-            )),
+            FileKind::Customer => {
+                let customers =
+                    entities::<model::CustomerInput>(FileKind::Customer, name, &json, diagnostics);
+                record_left_out(
+                    &mut merged,
+                    FileKind::Customer,
+                    "customer",
+                    "email",
+                    name,
+                    &json,
+                    customers.len(),
+                );
+                merged.customers.extend(customers);
+            }
             FileKind::Menu => {
                 if let Some(menu) =
                     entity::<model::MenuInput>(FileKind::Menu, name, &json, "", diagnostics)
@@ -357,11 +411,163 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
     merged
 }
 
+/// The entries of a data file left out because they have errors: by section (`products`,
+/// `metaobjects/designer`), the indices they had in the file, in order.
+#[derive(Debug, Default)]
+struct Skipped(std::collections::HashMap<String, Vec<usize>>);
+
+impl Skipped {
+    fn indices(&self, section: &str) -> Vec<usize> {
+        self.0.get(section).cloned().unwrap_or_default()
+    }
+
+    /// The index in the file of the `kept`-th entry of a section that was read.
+    fn original(&self, section: &str, kept: usize) -> usize {
+        let mut index = kept;
+        for skipped in self.0.get(section).into_iter().flatten() {
+            if *skipped <= index {
+                index += 1;
+            }
+        }
+        index
+    }
+}
+
+/// A data file with errors, without the entries that have them: the entries of its lists, of
+/// its maps (`menus`, `swatches`), and its sections of one (`shop`, `localization`, ...). `None`
+/// when nothing can be read of it even so.
+fn salvage_store(
+    file: &str,
+    json: &Json,
+    problems: &[crate::diagnostics::Diagnostic],
+) -> Option<(model::StoreInput, Skipped)> {
+    const LISTS: [&str; 9] = [
+        "products",
+        "collections",
+        "pages",
+        "blogs",
+        "customers",
+        "companies",
+        "gift_cards",
+        "locations",
+        "selling_plan_groups",
+    ];
+    let mut salvaged = json.clone();
+    let mut skipped = Skipped::default();
+    let mut removed_keys: Vec<(String, String)> = Vec::new();
+    for problem in problems {
+        if problem.severity != crate::diagnostics::Severity::Error
+            || problem.code == "unknown_field"
+        {
+            continue;
+        }
+        let segments: Vec<&str> = problem.path.split('/').skip(1).collect();
+        match segments.as_slice() {
+            [] | [""] => return None,
+            [section, index, ..] if LISTS.contains(section) => {
+                let index: usize = index.parse().ok()?;
+                let list = skipped.0.entry((*section).to_string()).or_default();
+                if !list.contains(&index) {
+                    list.push(index);
+                }
+            }
+            ["metaobjects", kind, index, ..] => {
+                let index: usize = index.parse().ok()?;
+                let list = skipped.0.entry(format!("metaobjects/{kind}")).or_default();
+                if !list.contains(&index) {
+                    list.push(index);
+                }
+            }
+            [
+                section @ ("menus" | "swatches" | "files" | "metaobjects"),
+                key,
+                ..,
+            ] => removed_keys.push(((*section).to_string(), (*key).to_string())),
+            [section, ..] => removed_keys.push(((*section).to_string(), String::new())),
+        }
+    }
+    for (section, indices) in &mut skipped.0 {
+        indices.sort_unstable();
+        let pointer = format!("/{section}");
+        let list = salvaged.pointer_mut(&pointer)?.as_array_mut()?;
+        for index in indices.iter().rev() {
+            if *index < list.len() {
+                list.remove(*index);
+            }
+        }
+    }
+    for (section, key) in removed_keys {
+        let object = salvaged.as_object_mut()?;
+        if key.is_empty() {
+            object.remove(&section);
+        } else if let Some(entries) = object.get_mut(&section).and_then(Json::as_object_mut) {
+            entries.remove(&key.replace("~1", "/").replace("~0", "~"));
+        }
+    }
+    // What is left must read without an error; its unknown fields are reported already.
+    let mut again = Diagnostics::new();
+    let json = checked(FileKind::Store, file, &salvaged, "", &mut again)?;
+    let input = serde_json::from_value::<model::StoreInput>(json).ok()?;
+    Some((input, skipped))
+}
+
+/// What an entity is named by in references: its `handle` (or `email`), else the handle of its
+/// title, else of its file.
+fn entity_key(item: &Json, field: &str, file: Option<&str>) -> String {
+    if let Some(key) = item.get(field).and_then(Json::as_str) {
+        return key.to_string();
+    }
+    if field == "handle" {
+        if let Some(stem) = file {
+            return crate::util::handleize(&file_stem(stem));
+        }
+        if let Some(title) = item.get("title").and_then(Json::as_str) {
+            return crate::util::handleize(title);
+        }
+    }
+    String::new()
+}
+
+/// Records the entities of a per-entity file that were left out because of their errors.
+fn record_left_out(
+    merged: &mut MergedInput,
+    file_kind: FileKind,
+    kind: &'static str,
+    field: &str,
+    file: &str,
+    json: &Json,
+    read: usize,
+) {
+    let items: Vec<&Json> = match json {
+        Json::Array(items) => items.iter().collect(),
+        single => vec![single],
+    };
+    if read == items.len() {
+        return;
+    }
+    let single = json.is_object();
+    for item in items {
+        // Checked again, on the side: the entities that were read are not left out.
+        if checked(file_kind, file, item, "", &mut Diagnostics::new()).is_some() {
+            continue;
+        }
+        let key = entity_key(item, field, single.then_some(file));
+        if !key.is_empty() {
+            merged.left_out.push(LeftOut {
+                kind,
+                key,
+                file: file.to_string(),
+            });
+        }
+    }
+}
+
 fn merge_store_file(
     merged: &mut MergedInput,
     input: model::StoreInput,
     file: &str,
     diagnostics: &mut Diagnostics,
+    skipped: &Skipped,
 ) {
     let origin = |pointer: String| Origin::new(file, pointer);
     let singleton = |name: &str, already: Option<&str>, diagnostics: &mut Diagnostics| {
@@ -434,55 +640,73 @@ fn merge_store_file(
     for (index, value) in input.products.into_iter().enumerate() {
         merged.products.push(Sourced {
             value,
-            origin: origin(format!("/products/{index}")),
+            origin: origin(format!("/products/{}", skipped.original("products", index))),
         });
     }
     for (index, value) in input.collections.into_iter().enumerate() {
         merged.collections.push(Sourced {
             value,
-            origin: origin(format!("/collections/{index}")),
+            origin: origin(format!(
+                "/collections/{}",
+                skipped.original("collections", index)
+            )),
         });
     }
     for (index, value) in input.pages.into_iter().enumerate() {
         merged.pages.push(Sourced {
             value,
-            origin: origin(format!("/pages/{index}")),
+            origin: origin(format!("/pages/{}", skipped.original("pages", index))),
         });
     }
     for (index, value) in input.blogs.into_iter().enumerate() {
         merged.blogs.push(Sourced {
             value,
-            origin: origin(format!("/blogs/{index}")),
+            origin: origin(format!("/blogs/{}", skipped.original("blogs", index))),
         });
     }
     for (index, value) in input.customers.into_iter().enumerate() {
         merged.customers.push(Sourced {
             value,
-            origin: origin(format!("/customers/{index}")),
+            origin: origin(format!(
+                "/customers/{}",
+                skipped.original("customers", index)
+            )),
         });
     }
     for (index, value) in input.companies.into_iter().enumerate() {
         merged.companies.push(Sourced {
             value,
-            origin: origin(format!("/companies/{index}")),
+            origin: origin(format!(
+                "/companies/{}",
+                skipped.original("companies", index)
+            )),
         });
     }
     for (index, value) in input.gift_cards.into_iter().enumerate() {
         merged.gift_cards.push(Sourced {
             value,
-            origin: origin(format!("/gift_cards/{index}")),
+            origin: origin(format!(
+                "/gift_cards/{}",
+                skipped.original("gift_cards", index)
+            )),
         });
     }
     for (index, value) in input.locations.into_iter().enumerate() {
         merged.locations.push(Sourced {
             value,
-            origin: origin(format!("/locations/{index}")),
+            origin: origin(format!(
+                "/locations/{}",
+                skipped.original("locations", index)
+            )),
         });
     }
     for (index, value) in input.selling_plan_groups.into_iter().enumerate() {
         merged.selling_plan_groups.push(Sourced {
             value,
-            origin: origin(format!("/selling_plan_groups/{index}")),
+            origin: origin(format!(
+                "/selling_plan_groups/{}",
+                skipped.original("selling_plan_groups", index)
+            )),
         });
     }
     for (name, value) in input.swatches {
@@ -503,6 +727,7 @@ fn merge_store_file(
     }
     for (kind, entries) in input.metaobjects {
         for (index, value) in entries.into_iter().enumerate() {
+            let index = skipped.original(&format!("metaobjects/{kind}"), index);
             let origin = origin(format!("/metaobjects/{kind}/{index}"));
             merged
                 .metaobjects
@@ -1321,6 +1546,88 @@ mod tests {
                 .ends_with("did you mean \"designer/sam\"?")
         );
         assert_eq!(found.len(), 7, "{found:#?}");
+    }
+
+    #[test]
+    fn what_reads_of_a_file_with_errors_is_checked_in_the_same_run() {
+        let files = vec![
+            DataFile {
+                name: "store.json".to_string(),
+                kind: FileKind::Store,
+                content: r#"{
+                    "products": [
+                        {"title": "Broken", "price": 1.5},
+                        {"title": "Fine", "price": "2.00", "collections": ["nope"]}
+                    ],
+                    "collections": [{"title": "Picks", "products": ["broken", "fine", "gone"]}]
+                }"#
+                .to_string(),
+            },
+            DataFile {
+                name: "products/unread.json".to_string(),
+                kind: FileKind::Product,
+                content: r#"{"title": "Unread", "price": "1.00", "tags": 5}"#.to_string(),
+            },
+            DataFile {
+                name: "menus.json".to_string(),
+                kind: FileKind::Store,
+                content: r#"{"collections": [{"title": "More", "products": ["unread"]}]}"#
+                    .to_string(),
+            },
+        ];
+        let mut diagnostics = Diagnostics::new();
+        let merged = merge(files, &mut diagnostics);
+        let source = SourceData {
+            merged,
+            diagnostics,
+            files_directory: None,
+            images: Mutex::new(HashMap::new()),
+        };
+        let (store, diagnostics) = source.build(&LoadOptions::default(), &[]);
+        let found: Vec<String> = diagnostics
+            .items
+            .iter()
+            .map(|item| {
+                format!(
+                    "{} {} {} | {}",
+                    item.code,
+                    item.file,
+                    item.path,
+                    item.hint.as_deref().unwrap_or_default()
+                )
+            })
+            .collect();
+        // The product without errors of the file is read, with its own references.
+        assert!(store.product_by_handle("fine").is_some());
+        assert!(
+            found
+                .iter()
+                .any(|line| line
+                    .starts_with("unknown_collection store.json /products/1/collections/0")),
+            "{found:#?}"
+        );
+        // Its place in the file is the one it has there.
+        let picks = store.collection_by_handle("picks").expect("picks");
+        assert_eq!(picks.products.len(), 1);
+        // What names a product left out says why, rather than suggesting another.
+        let broken = found
+            .iter()
+            .find(|line| line.contains("/collections/0/products/0"))
+            .expect("broken");
+        assert!(broken.ends_with("the product \"broken\" is left out because store.json has errors: fix them, and this reference works"), "{broken}");
+        let unread = found
+            .iter()
+            .find(|line| line.starts_with("unknown_product menus.json"))
+            .expect("unread");
+        assert!(
+            unread.contains("because products/unread.json has errors"),
+            "{unread}"
+        );
+        let gone = found
+            .iter()
+            .find(|line| line.contains("/collections/0/products/2"))
+            .expect("gone");
+        assert!(!gone.contains("left out"), "{gone}");
     }
 
     #[test]

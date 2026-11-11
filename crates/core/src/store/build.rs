@@ -73,6 +73,19 @@ pub struct MergedInput {
     pub theme_settings: IndexMap<String, Json>,
     /// Where each of `theme_settings` is written.
     pub theme_settings_origins: IndexMap<String, Origin>,
+    /// The entities left out because their files have errors.
+    pub left_out: Vec<LeftOut>,
+}
+
+/// An entity of the data left out because it has errors: what names it is told so, rather
+/// than given the closest name of another.
+#[derive(Clone, Debug)]
+pub struct LeftOut {
+    /// `product`, `customer`, `collection` or `page`.
+    pub kind: &'static str,
+    /// What references name it by: its handle, or its email.
+    pub key: String,
+    pub file: String,
 }
 
 pub struct BuildOptions<'a> {
@@ -536,7 +549,33 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
     store.files = std::mem::take(&mut builder.files);
     store.index();
     resolve_references(&mut builder, &store);
+    explain_left_out(&mut builder.diagnostics, &input.left_out);
     (store, builder.diagnostics)
+}
+
+/// The references to an entity left out because of its errors say so, instead of naming the
+/// closest entity that was read: fixing the entity fixes them.
+fn explain_left_out(diagnostics: &mut Diagnostics, left_out: &[LeftOut]) {
+    if left_out.is_empty() {
+        return;
+    }
+    for item in &mut diagnostics.items {
+        let codes: &[&str] = match item.code {
+            "unknown_product" | "unknown_variant" => &["product"],
+            "unknown_customer" => &["customer"],
+            "unknown_collection" => &["collection"],
+            "unknown_reference" => &["product", "collection", "page"],
+            _ => continue,
+        };
+        if let Some(entity) = left_out.iter().find(|entity| {
+            codes.contains(&entity.kind) && item.message.contains(&format!("\"{}\"", entity.key))
+        }) {
+            item.hint = Some(format!(
+                "the {} \"{}\" is left out because {} has errors: fix them, and this reference works",
+                entity.kind, entity.key, entity.file
+            ));
+        }
+    }
 }
 
 /// Resolves the references of typed metafields, now that every entity they can name is built:

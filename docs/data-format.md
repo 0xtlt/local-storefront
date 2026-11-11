@@ -902,11 +902,12 @@ find them, whatever the id, since the store data does not know it.
 
 `path` is always a JSON pointer into `file`, so the value to fix can be located mechanically.
 
-A product or a customer with a value that cannot be read (a `wrong_type`, an `invalid_value`,
-an `invalid_format`, a `missing_field`) is left out, so each reference to it is an error too:
-an `unknown_product`, `unknown_variant`, `unknown_customer` or `unknown_reference` in another
-file. Fix the errors in `products/` and `customers.json` first, and run `validate` again before
-you edit a reference.
+An entity with a value that cannot be read (a `wrong_type`, an `invalid_value`, an
+`invalid_format`, a `missing_field`) is left out. The rest of its file is still read, with its
+references, so one run reports every problem. Each reference to the entity left out is an error
+too (`unknown_product`, `unknown_variant`, `unknown_customer`, `unknown_reference`), and its
+hint says so: `the product "a" is left out because products/a.json has errors`. Fix that file,
+and these errors go away with it.
 
 ## Field reference
 
