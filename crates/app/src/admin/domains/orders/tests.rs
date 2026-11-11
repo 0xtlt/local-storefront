@@ -1461,6 +1461,96 @@ fn draft_orders_are_created_calculated_updated_and_completed() {
     );
 }
 
+/// A draft's discounts become the order's manual discount applications, allocated on its lines,
+/// in the API and in the `orders/create` payload, whose totals agree.
+#[test]
+fn a_completed_draft_keeps_its_discounts_as_manual_applications() {
+    let mut shop = demo();
+    let variants: Vec<String> = shop.keys("ProductVariant").take(2).map(str::to_string).collect();
+    let price = |variant: &str| {
+        crate::admin::state::value::exact_cents(shop.get(variant).unwrap().get("price")).unwrap()
+    };
+    let (first, second) = (price(&variants[0]), price(&variants[1]));
+    let created = run(
+        &mut shop,
+        "mutation($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id
+            lineItems(first: 2) { nodes { originalUnitPrice discountedTotal totalDiscount } } } userErrors { message } } }",
+        json!({"input": {
+            "lineItems": [
+                {"variantId": variants[0], "quantity": 1, "appliedDiscount": {"valueType": "FIXED_AMOUNT", "value": 5.0, "title": "Loyal"}},
+                {"variantId": variants[1], "quantity": 2},
+            ],
+            "appliedDiscount": {"valueType": "PERCENTAGE", "value": 10.0, "title": "Spring"},
+        }}),
+    );
+    let draft = &created["data"]["draftOrderCreate"]["draftOrder"];
+    // The deprecated money fields read the line's amounts.
+    let money = crate::admin::state::value::money;
+    assert_eq!(
+        draft["lineItems"]["nodes"][0],
+        json!({"originalUnitPrice": money(first), "discountedTotal": money(first - 500), "totalDiscount": "5.00"})
+    );
+    assert!(created["extensions"]["lsf"].get("defaulted").is_none(), "{created}");
+    let id = draft["id"].as_str().unwrap().to_string();
+    let completed = run(
+        &mut shop,
+        "mutation($id: ID!) { draftOrderComplete(id: $id) { draftOrder { order { id totalDiscountsSet { shopMoney { amount } }
+            discountApplications(first: 5) { nodes { __typename index allocationMethod targetSelection targetType
+                value { ... on MoneyV2 { amount } ... on PricingPercentageValue { percentage } } ... on ManualDiscountApplication { title } } }
+            lineItems(first: 5) { nodes { totalDiscountSet { shopMoney { amount } }
+                discountAllocations { allocatedAmountSet { shopMoney { amount } } discountApplication { index } } } } } } userErrors { message } } }",
+        json!({"id": id}),
+    );
+    let order = &completed["data"]["draftOrderComplete"]["draftOrder"]["order"];
+    let order_discount = ((first - 500 + 2 * second) as f64 * 0.1).round() as i64;
+    let decimal = crate::admin::state::value::decimal;
+    assert_eq!(
+        order["totalDiscountsSet"]["shopMoney"]["amount"],
+        json!(decimal(500 + order_discount))
+    );
+    assert_eq!(
+        order["discountApplications"]["nodes"],
+        json!([
+            {"__typename": "ManualDiscountApplication", "index": 0, "allocationMethod": "EACH", "targetSelection": "EXPLICIT",
+             "targetType": "LINE_ITEM", "value": {"amount": "5.0"}, "title": "Loyal"},
+            {"__typename": "ManualDiscountApplication", "index": 1, "allocationMethod": "ACROSS", "targetSelection": "ALL",
+             "targetType": "LINE_ITEM", "value": {"percentage": 10.0}, "title": "Spring"},
+        ])
+    );
+    let lines = order["lineItems"]["nodes"].as_array().unwrap();
+    // A line's `totalDiscountSet` is its own discount; its allocations add the draft's share.
+    assert_eq!(lines[0]["totalDiscountSet"]["shopMoney"]["amount"], json!("5.0"));
+    let allocated: i64 = lines
+        .iter()
+        .flat_map(|line| line["discountAllocations"].as_array().unwrap().clone())
+        .map(|allocation| {
+            crate::admin::state::value::cents(Some(&allocation["allocatedAmountSet"]))
+        })
+        .sum();
+    assert_eq!(allocated, 500 + order_discount);
+    assert_eq!(lines[0]["discountAllocations"][0]["discountApplication"]["index"], json!(0));
+    assert_eq!(lines[1]["discountAllocations"][0]["discountApplication"]["index"], json!(1));
+    let order_id = order["id"].as_str().unwrap().to_string();
+    let rest = payload_of(&shop, "orders/create", &order_id);
+    assert_eq!(rest["total_discounts"], json!(money(500 + order_discount)));
+    assert_eq!(rest["discount_applications"][0]["type"], json!("manual"));
+    assert_eq!(rest["discount_applications"][0]["target_selection"], json!("explicit"));
+    assert_eq!(rest["discount_applications"][1]["value_type"], json!("percentage"));
+    assert_eq!(rest["discount_applications"][1]["title"], json!("Spring"));
+    assert_eq!(
+        rest["line_items"][0]["discount_allocations"][0]["discount_application_index"],
+        json!(0)
+    );
+    let rest_allocated: i64 = rest["line_items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|line| line["discount_allocations"].as_array().unwrap().clone())
+        .map(|allocation| crate::admin::state::value::cents(Some(&allocation["amount"])))
+        .sum();
+    assert_eq!(rest_allocated, 500 + order_discount);
+}
+
 #[test]
 fn draft_orders_answer_shopifys_errors_and_are_deleted() {
     let mut shop = demo();

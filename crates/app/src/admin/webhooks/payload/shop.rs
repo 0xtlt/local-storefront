@@ -37,10 +37,9 @@ pub(super) fn shop(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
             "id": id(&shop),
             "name": text(&shop, "name"),
             "email": text(&shop, "email"),
-            "domain": match field(&shop, "primaryDomain") {
-                Value::Object(domain) => text(domain, "host"),
-                _ => Value::Null,
-            },
+            // The primary domain is a `Domain` record (its GID), or inline.
+            "domain": resolve(field(&shop, "primaryDomain"), lookup)
+                .map_or(Value::Null, |domain| text(&domain, "host")),
             "province": text(&address, "province"),
             "country": first(&address, &["countryCodeV2", "countryCode"]),
             "address1": text(&address, "address1"),

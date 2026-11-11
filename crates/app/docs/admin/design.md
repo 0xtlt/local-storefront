@@ -700,8 +700,13 @@ field, in order:
    `metafields(namespace:, keys:)` of any owner read its `metafields`, `$app` and `$app:x` being
    the app's reserved namespaces (`app--<id>`, `app--<id>--x`; `metafield` without a namespace is
    in the app's). After it, when there is none: `legacyResourceId` (the number of the GID),
-   `defaultCursor` (the cursor of the record in the `ID` order of its type), and the `Count` of an
-   array (`variantsCount` of `variants`, with the field's `query`).
+   `defaultCursor` (the cursor of the record in the `ID` order of its type), the `Count` of an
+   array (`variantsCount` of `variants`, with the field's `query`), and a deprecated field whose
+   reason is "Use `x` instead." (`x` a field, or a path of fields, of the same object without
+   required arguments): `x`'s value, `Money` from the amount of a `MoneyV2` or the shop money of
+   a `MoneyBag`, `MoneyV2` from a `MoneyBag`, `Int` from a `Count`, a scalar from a scalar of its
+   kind (`resolve::successor_path`; `OTHER_VALUES` lists the two whose replacement holds another
+   value).
 6. **A default**: `null`; for a non-null field an empty list, `""`, `0`, `false`, `"0.00"` for
    `Money` and `"0.0"` for `Decimal`, the seed's fixed date for `DateTime`, the first enum value,
    or an object of defaults (the first possible type of an abstract one). Its path goes into

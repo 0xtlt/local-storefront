@@ -14,8 +14,11 @@
 //! - "Files are processed asynchronously": lsf has nothing to process, so a file is `READY` at
 //!   once (`fileStatus`, and `status` of a medium), which the polling of a backend sees on its
 //!   first read. Its URL is the source's: where the bytes are (Shopify's would be on its CDN).
-//!   Image sizes are not known (`width` and `height` are `null`; a video's are 1920×1080, the
-//!   seed's choice).
+//!   A source that is no staged upload is not downloaded: the file is `READY` whatever the URL
+//!   answers (Shopify's would be `FAILED`, with its `fileErrors`, for a URL that answers no
+//!   file), its image's `width` and `height` are `null`, and `extensions.lsf.notes` says so. A
+//!   staged upload's image has the width and height of its header (PNG, JPEG, GIF, WebP;
+//!   `uploads::image_size`). A video's are 1920×1080, the seed's choice.
 //! - `fileUpdate` changes `alt`, `filename` (a video's, a 3D model's), the content
 //!   (`originalSource`), and the products a file is the medium of (`referencesToAdd`,
 //!   `referencesToRemove`; `products/update` for each).
@@ -84,6 +87,8 @@ pub struct StagedUpload {
     pub filename: String,
     pub mime_type: String,
     pub size: u64,
+    /// An image's width and height, read from its header (`uploads::image_size`).
+    pub dimensions: Option<(u32, u32)>,
 }
 
 /// The upload behind a staged target's `resourceUrl` (or its key), when a file was uploaded
@@ -108,6 +113,7 @@ pub fn staged_upload(state: &ShopState, url: &str) -> Option<StagedUpload> {
             mime_type
         },
         size: blob.bytes.len() as u64,
+        dimensions: uploads::image_size(&blob.bytes),
     })
 }
 
@@ -230,13 +236,19 @@ fn content(
     url: &str,
     name: &str,
     alt: Option<&str>,
-    size: Option<u64>,
+    staged: Option<&StagedUpload>,
     mime: &str,
 ) -> Map<String, Value> {
     let format = extension(name);
+    let size = staged.map(|upload| upload.size);
+    let (width, height) = staged
+        .and_then(|upload| upload.dimensions)
+        .map_or((Value::Null, Value::Null), |(width, height)| {
+            (json!(width), json!(height))
+        });
     let fields = match type_name {
         "MediaImage" => {
-            let image = json!({"url": url, "altText": alt, "width": null, "height": null});
+            let image = json!({"url": url, "altText": alt, "width": width, "height": height});
             json!({
                 "mediaContentType": "IMAGE",
                 "mimeType": mime,
@@ -307,6 +319,15 @@ fn content(
     fields
 }
 
+/// What `extensions.lsf.notes` says of a source that is no staged upload: lsf does not download
+/// it, so the file is `READY` whatever the URL answers (Shopify's would be `FAILED` with its
+/// `fileErrors` when the URL does not answer an image), and an image's size is unknown.
+fn not_fetched(mutation: &str, url: &str) -> String {
+    format!(
+        "{mutation}: lsf did not download {url}: the file is READY without checking that the URL answers, and an image's width and height are null. Upload the file through stagedUploadsCreate to give lsf its bytes."
+    )
+}
+
 /// A source URL lsf takes: `http` or `https`, with a host.
 fn valid_source(url: &str) -> bool {
     let Some((scheme, rest)) = url.split_once("://") else {
@@ -322,7 +343,7 @@ struct Planned {
     url: String,
     name: String,
     alt: Option<String>,
-    size: Option<u64>,
+    staged: Option<StagedUpload>,
     mime: String,
     replaces: Option<String>,
 }
@@ -433,13 +454,18 @@ fn file_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             url,
             name,
             alt: get("alt").map(str::to_string),
-            size: staged.map(|upload| upload.size),
+            staged,
             mime,
             replaces,
         });
     }
     if !errors.is_empty() {
         return Ok(payload(json!({"files": null}), &errors));
+    }
+    for plan in &planned {
+        if plan.staged.is_none() && plan.type_name != "ExternalVideo" {
+            mutation.note(not_fetched("fileCreate", &plan.url));
+        }
     }
     let state = mutation.state_mut();
     let now = state.timestamp();
@@ -450,7 +476,7 @@ fn file_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             &plan.url,
             &plan.name,
             plan.alt.as_deref(),
-            plan.size,
+            plan.staged.as_ref(),
             &plan.mime,
         );
         if let Some(existing) = plan
@@ -598,6 +624,7 @@ fn file_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     if !errors.is_empty() {
         return Ok(payload(json!({"files": null}), &errors));
     }
+    let mut notes = Vec::new();
     let state = mutation.state_mut();
     let mut ids = Vec::new();
     for input in &inputs {
@@ -617,6 +644,9 @@ fn file_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             .map_or_else(|| filename_of(&record), str::to_string);
         if let Some(source) = input.get("originalSource").and_then(Value::as_str) {
             let staged = staged_upload(state, source);
+            if staged.is_none() && type_name != "ExternalVideo" {
+                notes.push(not_fetched("fileUpdate", source));
+            }
             let mime = staged
                 .as_ref()
                 .map_or_else(|| mime_type(&name), |upload| upload.mime_type.clone());
@@ -636,7 +666,7 @@ fn file_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
                 source,
                 &name,
                 alt.as_deref(),
-                staged.map(|upload| upload.size),
+                staged.as_ref(),
                 &mime,
             ));
         }
@@ -662,6 +692,9 @@ fn file_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             }
         }
         ids.push(id);
+    }
+    for note in notes {
+        mutation.note(note);
     }
     Ok(payload(json!({"files": ids}), &[]))
 }

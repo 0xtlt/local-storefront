@@ -827,6 +827,20 @@ fn product_set_creates_and_replaces_options_and_variants() {
         missing["data"]["productSet"]["userErrors"],
         json!([{"field": ["input", "variants"], "code": "VARIANTS_INPUT_MISSING"}])
     );
+    // A variant's value must be one `productOptions` declares: productSet adds none.
+    let undeclared = run(
+        &mut shop,
+        r#"mutation { productSet(input: {title: "Lamp", productOptions: [{name: "Color", values: [{name: "Red"}, {name: "Blue"}]}],
+            variants: [{optionValues: [{optionName: "Color", name: "Red"}]}, {optionValues: [{optionName: "Color", name: "Green"}]}]}) {
+            product { id } userErrors { field message code } } }"#,
+    );
+    assert_eq!(
+        undeclared["data"]["productSet"],
+        json!({"product": null, "userErrors": [{
+            "field": ["input", "variants", "1", "optionValues", "0", "name"],
+            "message": "Option value does not exist.",
+            "code": "OPTION_VALUE_DOES_NOT_EXIST"}]})
+    );
     assert_eq!(shop.count("Product"), before.count("Product"));
     assert!(shop.events().is_empty());
 }

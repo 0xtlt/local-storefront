@@ -352,6 +352,20 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 
 ### Fixed
 
+- **A completed draft order keeps its discounts.** `draftOrderComplete` made an order without
+  discount applications: each applied discount of the draft is now a `ManualDiscountApplication`
+  of the order, with its allocations on the lines, in the API and in the `orders/create` payload.
+- **Deprecated Admin API fields read their data.** A deprecated field that Shopify replaced
+  (`DraftOrderLineItem.originalUnitPrice`, `Order.totalPrice`, `Customer.email`, …) answered a
+  default (`"0.00"`) where its replacement had the value: it now reads the replacement's.
+- **`productSet` refuses an option value that `productOptions` does not declare**, with
+  `OPTION_VALUE_DOES_NOT_EXIST`, as Shopify does. It added the value to the option.
+- **The `shop/update` and `app/uninstalled` payloads have the shop's `domain`**, the host of its
+  primary domain. It was `null`.
+- **An image uploaded to a staged target has its `width` and `height`**, read from its PNG, JPEG,
+  GIF or WebP header. A `fileCreate` source lsf does not download is still `READY`, and
+  `extensions.lsf.notes` now says it was not downloaded.
+
 - **`/admin` without its slash opens the app in lsf's admin**, as `/admin/` does. It answered
   the storefront's 404.
 - **`lsf app webhook trigger --api-version` says what it sent.** The payload is built in that

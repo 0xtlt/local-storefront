@@ -315,19 +315,63 @@ fn defaults_are_reported() {
     let mut shop = demo();
     let answer = run(
         &mut shop,
-        r#"{ productByHandle(handle: "wool-beanie") { title category { id } descriptionPlainSummary events(first: 1) { nodes { id } } } }"#,
+        r#"{ productByHandle(handle: "wool-beanie") { title category { id } descriptionPlainSummary description events(first: 1) { nodes { id } } } }"#,
     );
     let product = &answer["data"]["productByHandle"];
     assert_eq!(product["category"], Value::Null);
-    assert_eq!(product["descriptionPlainSummary"], json!(""));
+    // A deprecated field reads the one that replaced it ("Use `description` instead.").
+    assert_eq!(product["descriptionPlainSummary"], product["description"]);
+    assert_ne!(product["description"], json!(""));
     assert_eq!(product["events"]["nodes"], json!([]));
     assert_eq!(
         answer["extensions"]["lsf"],
         json!({
-            "defaulted": ["productByHandle.category", "productByHandle.descriptionPlainSummary"],
-            "defaultedFields": ["Product.category", "Product.descriptionPlainSummary"],
+            "defaulted": ["productByHandle.category"],
+            "defaultedFields": ["Product.category"],
         })
     );
+}
+
+/// Every deprecated field Shopify replaced by another of its object reads the other's value,
+/// not a default: the money fields of the line items, drafts, orders and transactions, the
+/// counts, the URLs.
+#[test]
+fn deprecated_fields_read_their_successors() {
+    let mut shop = demo();
+    let answer = run(
+        &mut shop,
+        r#"{ orders(first: 1) { nodes { totalPrice totalPriceSet { shopMoney { amount } } subtotalPrice totalTax totalDiscounts
+            totalShippingPrice totalReceived totalRefunded netPayment totalCapturable cartDiscountAmount
+            lineItems(first: 1) { nodes { originalUnitPrice originalUnitPriceSet { shopMoney { amount } } originalTotal discountedTotal
+                discountedUnitPrice totalDiscount unfulfilledDiscountedTotal unfulfilledOriginalTotal } }
+            transactions(first: 1) { amount amountV2 { amount } amountSet { shopMoney { amount } } } } }
+          products(first: 1) { nodes { totalVariants variantsCount { count } bodyHtml descriptionHtml } } }"#,
+    );
+    assert!(
+        answer["extensions"]["lsf"].get("defaulted").is_none(),
+        "{answer}"
+    );
+    let order = &answer["data"]["orders"]["nodes"][0];
+    let money = |amount: &Value| {
+        crate::admin::state::value::money(crate::admin::state::value::cents(Some(amount)))
+    };
+    assert_eq!(
+        order["totalPrice"],
+        json!(money(&order["totalPriceSet"]["shopMoney"]["amount"]))
+    );
+    let line = &order["lineItems"]["nodes"][0];
+    assert_eq!(
+        line["originalUnitPrice"],
+        json!(money(&line["originalUnitPriceSet"]["shopMoney"]["amount"]))
+    );
+    let transaction = &order["transactions"][0];
+    assert_eq!(
+        transaction["amountV2"]["amount"],
+        transaction["amountSet"]["shopMoney"]["amount"]
+    );
+    let product = &answer["data"]["products"]["nodes"][0];
+    assert_eq!(product["totalVariants"], product["variantsCount"]["count"]);
+    assert_eq!(product["bodyHtml"], product["descriptionHtml"]);
 }
 
 #[test]
