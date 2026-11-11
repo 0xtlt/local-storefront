@@ -743,6 +743,70 @@ fn one_build_at_a_time_per_function_and_one_more_after_a_change_during_it() {
 
 // --- The watcher, on an app ----------------------------------------------------------------
 
+/// A Rust Function's `.graphql` changed alone: cargo would compile nothing (the `typegen` macro
+/// reads it without telling cargo), so the build touches the crate's root first. The touch is
+/// lsf's: it builds nothing again.
+#[test]
+fn a_change_to_the_query_of_a_rust_function_has_cargo_compile_it_again() {
+    let app = TempApp::new("typegen");
+    app.function("rs");
+    app.write("extensions/rs/Cargo.toml", "[package]\nname = \"rs\"\n");
+    app.write("extensions/rs/src/main.rs", "fn main() {}\n");
+    // The module is newer than the sources, as after a build.
+    app.write_bytes("extensions/rs/dist/function.wasm", &module("v1"));
+    let mut watching = Watching::start(&app, |_| {});
+    assert_eq!(app.builds("rs"), 0);
+
+    std::thread::sleep(Duration::from_millis(20));
+    app.write("extensions/rs/src/run.graphql", "query { cart { note } }\n");
+    let query = std::fs::metadata(app.path("extensions/rs/src/run.graphql"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    watching.settle();
+    assert_eq!(app.builds("rs"), 1, "{}", watching.said());
+    let said = watching.said();
+    assert!(
+        said.contains("↻ rs: src/run.graphql changed: src/main.rs touched, for cargo to compile the crate again"),
+        "{said}"
+    );
+    let root = std::fs::metadata(app.path("extensions/rs/src/main.rs"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert!(root >= query, "src/main.rs was not touched");
+    assert_eq!(
+        std::fs::read_to_string(app.path("extensions/rs/src/main.rs")).unwrap(),
+        "fn main() {}\n"
+    );
+    // The touch builds nothing again.
+    watching.settle();
+    watching.settle();
+    assert_eq!(app.builds("rs"), 1, "{}", watching.said());
+    // The build wrote the same module (as a compiler cache that does not see the query would
+    // have it): that is said.
+    assert!(
+        said.contains("! rs: the module did not change although a .graphql file did"),
+        "{said}"
+    );
+
+    // A module that changes says nothing of the kind.
+    std::thread::sleep(Duration::from_millis(20));
+    app.source("rs", "v2");
+    app.write(
+        "extensions/rs/src/run.graphql",
+        "query { cart { cost { totalAmount { amount } } } }\n",
+    );
+    watching.settle();
+    assert_eq!(app.builds("rs"), 2, "{}", watching.said());
+    assert_eq!(watching.served("rs"), "v2");
+    assert_eq!(
+        watching.said().matches("the module did not change").count(),
+        1
+    );
+    watching.stop();
+}
+
 #[test]
 fn a_save_builds_the_function_once_and_tells_the_pages_after_the_build() {
     let app = TempApp::new("burst");

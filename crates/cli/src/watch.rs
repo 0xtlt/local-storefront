@@ -487,6 +487,7 @@ impl Watcher {
             started: 0,
             looked: 0,
             shared_content: None,
+            typegen: BTreeMap::new(),
         };
         let first = coordinator.prepare();
         let thread = std::thread::Builder::new()
@@ -1677,6 +1678,9 @@ struct Coordinator {
     locks: Locks,
     /// A hash of the content of the shared files, by a hash of what the watcher saw of them.
     shared_content: Option<(u64, u64)>,
+    /// The Rust Functions whose build follows a change of a `.graphql` file, with the
+    /// [`module_hash`] of their module before it: one that comes out the same is said.
+    typegen: BTreeMap<String, String>,
 }
 
 impl Coordinator {
@@ -2054,6 +2058,30 @@ impl Coordinator {
         if self.initial.is_none() {
             (self.log)(&format!("↻ building {handle}…"));
         }
+        let touched = crate::checkout::refresh_typegen(&job.dir, &job.module);
+        if let Some((query, _)) = touched.first() {
+            let roots: Vec<String> = touched
+                .iter()
+                .map(|(_, root)| root.display().to_string())
+                .collect();
+            (self.log)(&format!(
+                "↻ {handle}: {} changed: {} touched, for cargo to compile the crate again",
+                query.display(),
+                roots.join(" and ")
+            ));
+            if let Ok(bytes) = std::fs::read(&job.module) {
+                self.typegen.insert(handle.clone(), module_hash(&bytes));
+            }
+            // The touch is lsf's, not a change to build again for.
+            if let Some(folder) = job.dir.file_name().map(|name| name.to_string_lossy()) {
+                let now = Snapshot::take(&self.root, &self.rules, self.data.as_deref());
+                if let Some(fingerprint) = now.extensions.get(&*folder) {
+                    self.seen
+                        .extensions
+                        .insert(folder.into_owned(), *fingerprint);
+                }
+            }
+        }
         // What it builds from, as it starts: what changes later builds again.
         let inputs = self.inputs(&job);
         let sender = self.sender.clone();
@@ -2093,6 +2121,7 @@ impl Coordinator {
     fn finished(&mut self, handle: &str, outcome: Outcome, inputs: u64) {
         match outcome {
             Outcome::Built(took, output) => {
+                let unchanged = self.typegen.remove(handle).as_ref() == Some(&output);
                 self.builds.set(handle, None);
                 if self.builds.owns(handle) {
                     self.record.set(handle, &Built::new(inputs, output));
@@ -2103,8 +2132,17 @@ impl Coordinator {
                 if self.initial.is_none() {
                     (self.log)(&format!("✓ {handle} built in {:.1}s", took.as_secs_f64()));
                 }
+                if unchanged {
+                    (self.log)(&format!(
+                        "! {handle}: the module did not change although a .graphql file did: \
+                         a compiler cache (sccache, a RUSTC_WRAPPER) may have answered the old \
+                         build, as it does not see the files the typegen macro reads; clear it, \
+                         or build without it"
+                    ));
+                }
             }
             Outcome::Failed(failure) => {
+                self.typegen.remove(handle);
                 let mut message = format!("✗ {handle}: {}", failure.reason);
                 for line in failure.output.lines() {
                     message.push_str("\n    ");

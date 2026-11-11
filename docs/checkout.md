@@ -140,6 +140,15 @@ of `--build`, `--watch` and `lsf app function build`, the module is the one the 
 byte. A module already linked is left as it is. Modules of the first version of the API
 (`shopify_function_v1`) are refused, as by the trampoline: update the `shopify_function` crate.
 
+The `typegen` macro of the `shopify_function` crate reads the input queries and
+`schema.graphql` without telling cargo, so a change to one of them alone compiles nothing. When
+one is newer than the module, lsf's builds (`--build`, `--watch`, `lsf app function build`)
+touch `src/main.rs` and `src/lib.rs` first (their time, not their text), and cargo compiles the
+crate again: `↻ delivery-rules: src/run.graphql changed: src/main.rs touched, for cargo to
+compile the crate again`. A compiler cache (sccache, a `RUSTC_WRAPPER`) may still answer the old
+build, as it does not see those files either: the watch then says that the module did not
+change.
+
 lsf does not run `wasm-opt -Oz`, which the CLI runs on a module before it links it: on the
 playground's Rust Functions it takes 5 to 6% off the module's size, and 0.25 to 0.5% off the
 instructions a run costs.

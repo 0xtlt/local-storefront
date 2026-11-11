@@ -512,6 +512,12 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   A run now stops at 110 million instructions, ten times Shopify's limit:
   `exceeded Shopify's limit of 11,000,000 instructions: stopped at 110,000,000 (an endless
   loop?)`. A run under that keeps its exact count.
+- **A change to a Rust Function's query builds it again.** The `typegen` macro reads the
+  `.graphql` files without telling cargo: after a change to one of them alone, `--watch` said
+  `✓ delivery-rules built` while cargo compiled nothing, and the old module ran on the new
+  query's input. lsf now touches `src/main.rs` (its time only) before the build when a
+  `.graphql` file is newer than the module, and the watch says when a module came out the same
+  (a compiler cache that does not see the change).
 
 ## 0.2.0 - 2026-10-30
 
