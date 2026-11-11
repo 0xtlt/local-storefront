@@ -988,6 +988,27 @@ mod tests {
     }
 
     #[test]
+    fn the_apps_section_shopify_supplies_is_not_missing() {
+        // The fixture theme names an `apps` section and has no `sections/apps.liquid`.
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/theme-app-extensions");
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: Some(fixture.join("app")),
+        };
+        let (files, tally) = check_theme(&fixture.join("theme"), &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let codes: Vec<&str> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["code"].as_str().unwrap())
+            .collect();
+        assert!(!codes.contains(&"missing_section"), "{report}");
+    }
+
+    #[test]
     fn what_the_theme_names_and_does_not_have_is_a_problem() {
         let root = std::env::temp_dir().join(format!("lsf-check-names-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);

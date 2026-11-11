@@ -331,7 +331,9 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   `number_integer`, a `weight` in `"kgs"`, a rating out of its scale) is an `invalid_metafield`,
   a type Shopify does not have an `unknown_metafield_type`, and a reference to a product,
   variant, collection, page, article or metaobject the data does not have an
-  `unknown_reference`, with the closest name. [Metafields](docs/data-format.md#metafields-and-metaobjects).
+  `unknown_reference`, with the closest name. A `weight`, `dimension` or `volume` takes the units of
+  Shopify's docs (`kilograms`) and their short forms (`kg`).
+  [Metafields](docs/data-format.md#metafields-and-metaobjects).
 - **`validate` checks `theme_settings`** against the theme's `config/settings_schema.json`: an id
   it does not have (`unknown_setting`, "did you mean"), a value its setting does not take
   (`invalid_setting`: a `select` option, a `range`, a `checkbox`). `PUT /__lsf/session` refuses

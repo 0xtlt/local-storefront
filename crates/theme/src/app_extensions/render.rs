@@ -601,18 +601,18 @@ pub fn decorate(ctx: &Context, mut html: String) -> String {
             assets.push_str(&format!("<script src=\"{url}\" async></script>"));
         }
     }
+    // As on Shopify, embeds go before the closing tags only: a page without them (a
+    // `{% layout none %}` template that writes JSON) stays as the theme wrote it.
     let in_head = format!("{compliance}{head}{assets}");
-    if !in_head.is_empty() {
-        match html.find("</head>") {
-            Some(index) => html.insert_str(index, &in_head),
-            None => html.insert_str(0, &in_head),
-        }
+    if !in_head.is_empty()
+        && let Some(index) = html.find("</head>")
+    {
+        html.insert_str(index, &in_head);
     }
-    if !body.is_empty() {
-        match html.rfind("</body>") {
-            Some(index) => html.insert_str(index, &body),
-            None => html.push_str(&body),
-        }
+    if !body.is_empty()
+        && let Some(index) = html.rfind("</body>")
+    {
+        html.insert_str(index, &body);
     }
     html
 }

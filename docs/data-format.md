@@ -811,7 +811,10 @@ inside `files/`.
 
 A typed value is checked against its type, as Shopify checks it. `{"type": "number_integer",
 "value": "two"}` is an `invalid_metafield` error, and so is a `weight` in `"kgs"` or a
-`rating` outside its scale. A type Shopify does not have is an `unknown_metafield_type`. A
+`rating` outside its scale. A `weight`, `dimension` or `volume` takes the units Shopify lists
+(`kilograms`, `centimeters`, `milliliters`...) and their short forms (`kg`, `cm`, `ml`). A
+`language` is a locale code (`fr`, `pt-BR`). A type Shopify does not have is an
+`unknown_metafield_type`. A
 reference that names nothing of the data is an `unknown_reference`, with the closest name:
 products, variants (by SKU or id), collections, pages, articles (`blog/article`) and
 metaobjects (`type/handle`). A `file_reference` to a file that is not in `files/` is no error:

@@ -45,7 +45,7 @@ pub const MEASUREMENTS: [&str; 32] = [
 ];
 
 /// The other types of Shopify, which can also be lists (`list.<type>`).
-const TYPES: [&str; 26] = [
+const TYPES: [&str; 27] = [
     "article_reference",
     "boolean",
     "collection_reference",
@@ -57,6 +57,7 @@ const TYPES: [&str; 26] = [
     "file_reference",
     "id",
     "json",
+    "language",
     "link",
     "metaobject_reference",
     "mixed_reference",
@@ -75,19 +76,54 @@ const TYPES: [&str; 26] = [
 ];
 
 /// The types that have no list: one value only.
-const SINGLE_ONLY: [&str; 4] = ["boolean", "json", "money", "rich_text_field"];
+const SINGLE_ONLY: [&str; 5] = ["boolean", "json", "language", "money", "rich_text_field"];
 
 /// Whether a type is a measurement (`weight`, `dimension`, …).
 pub fn is_measurement(kind: &str) -> bool {
     MEASUREMENTS.contains(&kind)
 }
 
-/// The units Shopify takes for the measurements whose units are few.
+/// The units Shopify takes for the measurements whose units are few: the names its docs list
+/// (`kilograms`), and the short forms (`kg`) older data and lsf's own examples use.
 fn units(kind: &str) -> Option<&'static [&'static str]> {
     match kind {
-        "weight" => Some(&["g", "kg", "lb", "oz"]),
-        "dimension" => Some(&["mm", "cm", "m", "in", "ft", "yd"]),
+        "weight" => Some(&[
+            "grams",
+            "kilograms",
+            "ounces",
+            "pounds",
+            "g",
+            "kg",
+            "lb",
+            "oz",
+        ]),
+        "dimension" => Some(&[
+            "millimeters",
+            "centimeters",
+            "meters",
+            "inches",
+            "feet",
+            "yards",
+            "mm",
+            "cm",
+            "m",
+            "in",
+            "ft",
+            "yd",
+        ]),
         "volume" => Some(&[
+            "milliliters",
+            "centiliters",
+            "liters",
+            "cubic_meters",
+            "us_fluid_ounces",
+            "us_pints",
+            "us_quarts",
+            "us_gallons",
+            "imperial_fluid_ounces",
+            "imperial_pints",
+            "imperial_quarts",
+            "imperial_gallons",
             "ml",
             "cl",
             "l",
@@ -226,9 +262,10 @@ fn example(kind: &str) -> &'static str {
         "money" => "{\"amount\": \"5.99\", \"currency_code\": \"USD\"}",
         "url" => "\"https://example.com\"",
         "link" => "{\"text\": \"Size guide\", \"url\": \"https://example.com\"}",
-        "weight" => "{\"value\": 2.5, \"unit\": \"kg\"}",
-        "dimension" => "{\"value\": 30, \"unit\": \"cm\"}",
-        "volume" => "{\"value\": 500, \"unit\": \"ml\"}",
+        "weight" => "{\"value\": 2.5, \"unit\": \"kilograms\"}",
+        "dimension" => "{\"value\": 30, \"unit\": \"centimeters\"}",
+        "volume" => "{\"value\": 500, \"unit\": \"milliliters\"}",
+        "language" => "\"fr\"",
         kind if is_measurement(kind) => "{\"value\": 2, \"unit\": \"...\"}",
         "variant_reference" => "\"SKU-1\"",
         "metaobject_reference" | "mixed_reference" => "\"designer/sam\"",
@@ -307,6 +344,14 @@ fn check_one(
             let day_only = text.is_some_and(|text| text.len() == 10);
             if parsed.is_none() || (kind == "date" && !day_only) {
                 wrong(format!("not a {kind}: {}", describe(value)));
+            }
+        }
+        "language" => {
+            if !text.is_some_and(is_locale_code) {
+                wrong(format!(
+                    "a language is a locale code (en, fr, pt-BR), not {}",
+                    describe(value)
+                ));
             }
         }
         "color" => {
@@ -446,11 +491,60 @@ fn is_url(text: &str) -> bool {
     }
 }
 
+/// Whether `text` is a locale code: a language (`fr`), maybe with a region or a script
+/// (`pt-BR`, `zh-Hant`).
+fn is_locale_code(text: &str) -> bool {
+    let mut parts = text.split('-');
+    let language = parts.next().unwrap_or_default();
+    (2..=3).contains(&language.len())
+        && language.chars().all(|c| c.is_ascii_lowercase())
+        && parts.all(|part| {
+            (2..=4).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn measurements_take_the_unit_names_of_shopifys_docs_and_the_short_forms() {
+        for (kind, unit) in [
+            ("weight", "kilograms"),
+            ("weight", "kg"),
+            ("dimension", "centimeters"),
+            ("dimension", "cm"),
+            ("volume", "liters"),
+            ("volume", "us_fluid_ounces"),
+            ("volume", "ml"),
+        ] {
+            assert!(
+                problems(kind, json!({"value": 2, "unit": unit})).is_empty(),
+                "{kind} {unit}"
+            );
+            let list = format!("list.{kind}");
+            assert!(
+                problems(&list, json!([{"value": 2, "unit": unit}])).is_empty(),
+                "{list} {unit}"
+            );
+        }
+        assert_eq!(
+            problems("weight", json!({"value": 2, "unit": "kilogram"})),
+            ["/value/unit \"kilogram\" is not a unit of weight"]
+        );
+    }
+
+    #[test]
+    fn a_language_is_a_locale_code() {
+        for code in ["en", "fr", "pt-BR", "zh-Hant"] {
+            assert!(problems("language", json!(code)).is_empty(), "{code}");
+        }
+        assert_eq!(problems("language", json!("French")).len(), 1);
+        assert!(is_known("language"));
+        assert!(!is_known("list.language"));
+    }
 
     fn problems(kind: &str, value: Json) -> Vec<String> {
         check(kind, &value)

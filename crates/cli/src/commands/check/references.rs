@@ -289,8 +289,9 @@ pub fn in_json_template(theme: &Theme, path: &str) -> Vec<Missing> {
         let Some(kind) = section.get("type").and_then(Json::as_str) else {
             continue;
         };
-        // The sections of apps live with the app, not in the theme.
-        if kind.contains("://") || sections.iter().any(|s| s == kind) {
+        // The sections of apps live with the app, not in the theme, and Shopify has its own
+        // `apps` section for a theme without `sections/apps.liquid`.
+        if kind.contains("://") || kind == "apps" || sections.iter().any(|s| s == kind) {
             continue;
         }
         let needle = format!("\"{kind}\"");

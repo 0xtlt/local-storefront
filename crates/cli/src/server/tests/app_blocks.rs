@@ -218,6 +218,14 @@ fn app_embed_blocks_render_before_the_end_of_the_head_and_of_the_body() {
 }
 
 #[test]
+fn app_embed_blocks_leave_a_page_without_head_or_body_as_the_theme_wrote_it() {
+    // `templates/product.data.liquid` writes JSON with `{% layout none %}`, while embeds are on.
+    let state = server();
+    let body = text(&get(&state, "/products/blue-shirt?view=data", "visitor"));
+    assert_eq!(body.trim(), r#"{"title": "Blue shirt"}"#);
+}
+
+#[test]
 fn the_schema_keeps_blocks_out_of_pages_and_the_session_data_turns_embeds_off() {
     let state = server();
     // `enabled_on` names templates only: the block of the footer group renders nothing.
