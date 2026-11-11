@@ -151,6 +151,10 @@ impl Admin {
             self.api.token(&shop)
         ));
         lines.push(format!("        client secret: {}", self.secret_line()));
+        lines.push(format!(
+            "        GraphiQL: {origin}{}   (queries in the browser, the token filled in)",
+            lsf_app::admin::graphiql::PATH
+        ));
         lines.push(format!("webhooks: {}", self.api.webhooks().summary()));
         lines
     }
@@ -242,6 +246,7 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
         || path.starts_with("/__lsf/admin/")
         || path == "/__lsf/webhooks"
         || path.starts_with("/__lsf/webhooks/")
+        || path.trim_end_matches('/') == lsf_app::admin::graphiql::PATH
         // The Partner API: `/{partner_id}/api/{version}/graphql.json`.
         || lsf_app::admin::partner::parse_path(path).is_some();
     if !ours {

@@ -1409,6 +1409,8 @@ fn build(
             "account": format!("{root}/account"),
             // lsf's admin with the app open, for an embedded app.
             "admin": state.admin.as_ref().and_then(|admin| admin.embedded_path()),
+            // GraphiQL on the Admin API, when the server runs it.
+            "graphiql": state.admin.as_ref().map(|_| lsf_app::admin::graphiql::PATH),
         },
     })
 }
@@ -2645,7 +2647,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
          <span class=\"lsf-brand\">{}</span><span class=\"lsf-muted\" title=\"{}\">{}</span></div>\
          <div class=\"lsf-h-top-actions\" data-section=\"open\">{}\
          <details class=\"lsf-h-more\"><summary class=\"lsf-h-btn\" aria-label=\"More ways to open a checkout\">More</summary>\
-         <div class=\"lsf-h-menu\"><a href=\"{}\">Every extension target</a><a href=\"{}\">Shop look</a></div></details>\
+         <div class=\"lsf-h-menu\"><a href=\"{}\">Every extension target</a><a href=\"{}\">Shop look</a>{}</div></details>\
          {}<a class=\"lsf-h-btn\" href=\"{}\" data-link=\"account\">Customer account</a>\
          <a class=\"lsf-h-btn is-primary\" href=\"{}\">Open the checkout</a></div></div>\
          <nav class=\"lsf-h-tabs\" role=\"tablist\" aria-label=\"Home\">{}{}{}{}</nav></header>",
@@ -2655,6 +2657,13 @@ pub fn render(home: &Json, check_now: &str) -> String {
         problem_pill(home),
         esc(text_of(&links["allTargets"])),
         esc(text_of(&links["shop"])),
+        links["graphiql"]
+            .as_str()
+            .map(|graphiql| format!(
+                "<a href=\"{}\" data-link=\"graphiql\" title=\"Queries on the Admin API\">GraphiQL</a>",
+                esc(graphiql)
+            ))
+            .unwrap_or_default(),
         links["admin"]
             .as_str()
             .map(|admin| format!(

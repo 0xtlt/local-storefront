@@ -10149,6 +10149,11 @@ fn the_admin_opens_the_embedded_app_serves_its_app_bridge_and_is_linked_from_hom
         home.contains("href=\"/admin/apps/checkout-fixtures\" data-link=\"admin\""),
         "{home}"
     );
+    assert!(
+        home.contains("href=\"/__lsf/graphiql\" data-link=\"graphiql\""),
+        "{home}"
+    );
+    assert_eq!(get(&state, "/__lsf/graphiql", "embedded").status, 200);
 }
 
 #[test]

@@ -155,6 +155,7 @@ fn is_admin_path(path: &str) -> bool {
         || under("/__lsf/admin")
         || under("/__lsf/webhooks")
         || under("/__lsf/polaris")
+        || under(lsf_app::admin::graphiql::PATH)
         || path.starts_with(super::polaris::PREFIX)
         || lsf_app::admin::partner::parse_path(path).is_some()
 }

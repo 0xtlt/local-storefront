@@ -1241,12 +1241,43 @@ fn the_access_scopes_of_a_token_are_listed() {
     // A write scope lists the read scope it implies, once.
     assert!(handles.contains(&"read_products"), "{scopes}");
     assert_eq!(
-        handles.iter().filter(|handle| **handle == "read_products").count(),
+        handles
+            .iter()
+            .filter(|handle| **handle == "read_products")
+            .count(),
         1
     );
     let denied = send(&api, "GET", "/admin/oauth/access_scopes.json", Value::Null);
     assert_eq!(denied.status, 401);
     assert_eq!(json_of(&denied), json!({"errors": INVALID_TOKEN}));
+}
+
+/// `GET /__lsf/graphiql` is lsf's GraphiQL, and a browser that opens the endpoint without a
+/// token is pointed there.
+#[test]
+fn graphiql_is_served_and_a_browser_is_pointed_there() {
+    let api = demo_api();
+    let page = send(&api, "GET", "/__lsf/graphiql", Value::Null);
+    assert_eq!(page.status, 200);
+    assert_eq!(
+        header(&page, "content-type"),
+        Some("text/html; charset=utf-8")
+    );
+    assert!(String::from_utf8_lossy(&page.body).contains("<title>GraphiQL · lsf</title>"));
+    let browser = api
+        .handle(&request(
+            "GET",
+            GRAPHQL,
+            &[("accept", "text/html,application/xhtml+xml")],
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(browser.status, 401);
+    assert!(
+        header(&browser, "x-lsf-reason")
+            .unwrap()
+            .ends_with("in a browser, open /__lsf/graphiql (GraphiQL, the token filled in)")
+    );
 }
 
 #[test]

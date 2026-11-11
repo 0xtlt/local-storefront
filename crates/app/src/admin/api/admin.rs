@@ -1086,6 +1086,9 @@ impl AdminApi {
                 ),
             });
         }
+        if path.trim_end_matches('/') == crate::admin::graphiql::PATH {
+            return Some(crate::admin::graphiql::page(request));
+        }
         if path.trim_end_matches('/') == ACCESS_SCOPES {
             return Some(self.access_scopes(request));
         }
@@ -1212,7 +1215,19 @@ impl AdminApi {
                 version,
             );
         }
+        // A browser that opens the endpoint is told where GraphiQL is.
+        let browser = request
+            .header("accept")
+            .is_some_and(|accept| accept.contains("text/html"));
         let unauthorized = |reason: String| {
+            let reason = if browser {
+                format!(
+                    "{reason}; in a browser, open {} (GraphiQL, the token filled in)",
+                    crate::admin::graphiql::PATH
+                )
+            } else {
+                reason
+            };
             Self::api_headers(
                 HttpResponse::json(401, &json!({ "errors": INVALID_TOKEN })),
                 version,
