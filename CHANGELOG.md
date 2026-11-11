@@ -149,6 +149,17 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
   and its `output` is checked. `--export <name>` picks the target of a Function that has several,
   as Shopify's `--export` does, and `--save-input <file>` writes the input lsf built for a
   scenario's run. [Checkout](docs/checkout.md#run-a-function-on-an-input).
+- **`lsf app function run --input <folder>`** runs each `*.json` fixture of the folder, as
+  the unit tests of Shopify's templates do: a line each, a summary, and exit `1` when one fails.
+  A fixture whose output is not the run's prints each path that differs, with what it expects
+  and what the run answered, instead of the expected output on one line. In an app with one
+  Function, or with the fixture in a Function's folder, the handle can be left out.
+- **`lsf app function run` builds a Function whose files changed after its module was built**,
+  as `shopify app function run` builds before it runs: it ran the old module, without a word.
+  Each build lsf makes records what it was built from, in the user's cache folder.
+- **`lsf app init` writes a stub of the settings of each UI extension** that declares some
+  (`[[extensions.settings.fields]]`): a value of each field's type in `app-settings.json`, to
+  fill in, as it does for the variables of a Function.
 - **`lsf app function run <handle>` says when the checkout of the store data would not run the
   Function.** A named Function runs whatever its owner, as before; when its payment customization
   (or other owner) is disabled in the store data, or there is none, the output says so first
@@ -452,6 +463,18 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
 
 #### Checkout and Functions
 
+- **`lsf app check` fails on what it cannot check, with why.** An extension the checkout does
+  not offer (an `api_version` other than `2026-10` and `2027-01`, no module or bundle, and for
+  one `--extension`, a scenario or a discount names, no target the checkout has) is a failure,
+  where it passed (`every Function ran`) or was said to run in no scenario. A Function whose
+  files changed after its module was built is `stale` unless `--build`. What Shopify rejects
+  in a theme app extension fails it too. JSON: `notOffered`, `stale`, `themeExtensions`.
+  [app check](docs/cli.md#app-check).
+- **`lsf validate` checks the theme app extensions of the app** as `lsf app build` does, and
+  exits with `1` on what Shopify rejects (a block without `{% schema %}`).
+- **A fixture's `target` or `export` that is not the Function's is an error** of `app function
+  run --input`, not left aside.
+
 - **A Function runs only through an enabled owner, as on Shopify.** At the shop's checkout (no
   scenario, or a scenario without `extensions`), a payment or delivery customization, validation
   or cart transform Function runs only when the shop has an enabled owner of it: the
@@ -638,9 +661,25 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
 - **`lsf app init` counts customer account UI extensions apart**: `for 5 Functions, 1 checkout
   UI extension and 1 customer account UI extension`, not `2 checkout UI extensions`.
 - **`lsf app function run` prints no discount as `discounts 0.00`**, not `-0.00`.
+- **`lsf app function run` says why shipping is 0 while a rate is listed:** no rate is
+  selected before a shipping address, as on Shopify, and the line gives the `--checkout` that
+  adds one.
+- **`--save-input tests/fixtures/x.json` creates `tests/fixtures/`**, as the quickstart runs it:
+  it stopped with "No such file or directory".
+- **`lsf app build` exits with `1` on an error of a theme app extension**, as on the other
+  errors to fix, not `2`.
+- **The home page counts only the scenarios with problems.** Settings of a UI extension that
+  do not fit, in one scenario, are that scenario's warning: every scenario that ran the
+  extension was said to have problems (`11 scenarios · 11 with problems`).
+- **A UI extension whose build fails under `--watch` says the previous bundle runs**, not "No
+  module of it built yet."
+- **A JSX build that misses `react/jsx-runtime` says what to add:** a Preact extension without
+  its `tsconfig.json` needs `"jsxImportSource": "preact"`.
 
 #### The command line
 
+- **The `next:` line of `lsf app init` drops `--app` in the app's folder**, where `app dev`
+  finds the app.
 - **The hints say `npx local-storefront` when it was installed with npm**, where `lsf` is not
   on the PATH: ``build it with `npx local-storefront app build x` ``, the `next:` lines, the home
   page. The launcher sets `LSF_COMMAND`; the binary of a release says `lsf`.

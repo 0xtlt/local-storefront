@@ -19,7 +19,7 @@ Installed with mise, from a release or from source, the command is `lsf`: `lsf s
 | Code | Meaning |
 |---|---|
 | `0` | Done, nothing to report. |
-| `1` | Done, and something to fix: data or app errors (`validate`), problems in the theme (`check`), Liquid errors in the page or nothing at its path (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run or did not run (`app function run`), a scenario that fails or whose `expect` is not met (`app check`), an extension that does not build (`app build`, `app function build`, `--build`), a webhook that was not delivered (`app webhook trigger`). |
+| `1` | Done, and something to fix: data or app errors, theme app extensions included (`validate`), problems in the theme (`check`), Liquid errors in the page or nothing at its path (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run or did not run, a fixture whose output, target or export is not the run's (`app function run`), a scenario that fails or whose `expect` is not met, an extension the checkout does not offer, a stale module, an error in a theme app extension (`app check`), an extension that does not build or a theme app extension Shopify rejects (`app build`, `app function build`, `--build`), a webhook that was not delivered (`app webhook trigger`). |
 | `2` | The command could not run: a wrong option, a theme or a file that cannot be read, a file `fmt` cannot write, a port `serve` cannot listen on. The message is on stderr, after `error:`. |
 
 ## Output
@@ -230,9 +230,12 @@ Writes checkout scenarios, the files of `checkouts/` in the store data, made for
 and checkout UI extensions of the app (a generic set outside an app, or when nothing matches).
 It gives each Function the settings its input query reads (`[extensions.input.variables]`) when
 the store data has none: those of the app's own `shopify-local/`, or empty values of the type of
-each variable, in `app-settings.json` (to fill in). It creates the data folder with the demo store when it does not exist, refreshes `schema/`, never
+each variable, in `app-settings.json` (to fill in). It gives each UI extension that declares
+settings (`[[extensions.settings.fields]]`) and has none in the store data a value of each
+field's type there too: its first choice, `false`, `0` or `""`. It creates the data folder with the demo store when it does not exist, refreshes `schema/`, never
 overwrites a scenario or a data file without `--force`, and prints what it wrote, what it kept
-and what it skipped and why. It writes to the same data folder as `init`, `--data` and
+and what it skipped and why, then what to run next (`next: lsf app dev`, with `--app` when
+the app is not the one of the current folder). It writes to the same data folder as `init`, `--data` and
 `LSF_DATA` included. Guide: [checkout](checkout.md#scenarios).
 
 ```bash
@@ -260,6 +263,7 @@ KB of CSS or 10 KB of JavaScript, gzipped, named by a schema), the schema of eac
 (`name`, `target`, settings with a `type` and a unique `id`, the files of `javascript` and
 `stylesheet`, `available_if`, not both `enabled_on` and `disabled_on`), and its Liquid, with
 Shopify's strict parser. Each one says `checked: <handle>: ...`; an error exits with `1`.
+`validate` and `app check` run the same checks.
 
 | Option | Environment variable | What it does |
 |---|---|---|
@@ -278,6 +282,26 @@ when there is no scenario at all (`app init` writes a set). No request of a `.fe
 sent.
 It builds nothing without `--build`: in a fresh clone, where `dist/` is not committed, give
 `--build` (or run `npx local-storefront app build` first).
+
+It also fails, with why, on:
+
+- an extension the checkout does not offer: an `api_version` lsf does not run (it runs
+  `2026-10` and `2027-01`), a Function with no module, a checkout UI extension with no bundle,
+  and, for one `--extension`, a scenario's `extensions` or a discount names, targets the local
+  checkout does not have. A UI extension with no checkout or customer account target (an admin
+  one) is left out unless named;
+- a Function whose files changed after its module was built: its module runs the old code. Give
+  `--build`, or build it (`app build`). lsf records what each build it makes was built from;
+  a module another tool built is stale when a file is newer than it by more than 2 seconds;
+- what Shopify rejects in a theme app extension, as `app build` checks it. `--extension` naming
+  other extensions only leaves them out.
+
+```text
+fails    ui-preact: api_version "2026-07" is not supported (supported: 2026-10, 2027-01): the extension is not offered to the checkout page
+stale    discount: extensions/discount/src/run.ts changed after its module was built, which runs the old code: run with --build (or `lsf app build discount`)
+invalid  badges: extensions/badges/blocks/stars.liquid: a block needs a {% schema %}
+checked 11 of 11 scenarios in 0.1 s: 0 failures, 0 invalid scenarios, 1 extension not offered, 1 stale module, 1 error in theme app extensions
+```
 
 A trap ends with the last message the Function logged, such as the one of a `throw`:
 
@@ -336,7 +360,7 @@ checked 8 of 8 scenarios in 0.1 s: every Function ran, the `expect` of 2 scenari
 | `--extension <handle>` | | Only these extensions. Repeat it for several. |
 | `--build` | | Builds the extensions first, as `app build` does. |
 | `--format text` | | Default. One line per problem, then a summary. |
-| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unchecked: [scenario], unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. A Function target that fails in several ways has a failure for each error, with the scenarios of that error; `logs` is what the Function logged in the first of them. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `unchecked` names the scenarios whose `expect` was not checked, as `--extension` leaves out a Function they run; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says (the entry, the list, the amount), `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran. |
+| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unchecked: [scenario], unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle], notOffered: [{handle, reason}], stale: [{handle, file}], themeExtensions: [{handle, severity, message}]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. A Function target that fails in several ways has a failure for each error, with the scenarios of that error; `logs` is what the Function logged in the first of them. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `unchecked` names the scenarios whose `expect` was not checked, as `--extension` leaves out a Function they run; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says (the entry, the list, the amount), `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran. `notOffered` has the extensions the checkout does not offer, `stale` the Functions whose `file` changed after their module was built, `themeExtensions` what Shopify rejects (`error`) or advises against (`warning`) in the theme app extensions. |
 | `--budget <seconds>` | | How long the Functions may run in all. Default 300. |
 
 ### app function run
@@ -346,6 +370,12 @@ checked 8 of 8 scenarios in 0.1 s: every Function ran, the `expect` of 2 scenari
 Runs the Functions of an app once, without a server. Builds the input of each from the store
 data, runs them in checkout order, and prints each input, output and log with the checkout that
 results. Guide: [checkout](checkout.md#run-a-function-without-a-server).
+
+A Function whose files changed after its module was built is built first, as `shopify app
+function run` builds before it runs: `build:  <handle>: <file> changed after its module was
+built: building it first`. One lsf cannot build (no build command) runs its old module, with a
+warning. Before the buyer gives a shipping address, no delivery rate is selected, as on Shopify:
+the shipping of the totals is `0.00`, and a line says so.
 
 ```bash
 npx local-storefront app function run volume-discount --app ../my-app --session '{"cart":{"items":[{"variant":"TEE-BLK-M","quantity":3}]}}'
@@ -362,12 +392,13 @@ npx local-storefront app function run volume-discount --app ../my-app --session 
 | `--locale <iso>` | | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |
 | `--step <step>` | | `interaction` or `completion` (the default): the step of the buyer journey, what validation Functions read as `buyerJourney.step`. |
 | `--format text` | | Default. Each run, then the checkout. |
-| `--format json` | | The checkout as the checkout page reads it, with every run in `runs`. With `--input`, the run: `{handle, target, export, input, output, logs, error, instructions}`. |
-| `--input <file>`, `-i` | | Runs one Function on this input, as `shopify app function run --input` does, instead of one built from the store data: a JSON file, or `-` for stdin. Name the Function, or run it in its folder. A fixture of the unit tests of Shopify's templates (`{"payload": {"export", "target", "input", "output"}}`) runs its target, and its `output` must be the run's. The output is checked against the schema of the Function's API and the instruction limit, as in a checkout. |
+| `--format json` | | The checkout as the checkout page reads it, with every run in `runs`. With `--input`, the run: `{handle, target, export, input, output, logs, error, instructions}`, and `mismatches: [{path, expected, actual}]` when a fixture expects another output. With `--input <folder>`: `{ok, handle, passed, failed, fixtures: [{file, ok, run, error}]}`. |
+| `--input <file>`, `-i` | | Runs one Function on this input, as `shopify app function run --input` does, instead of one built from the store data: a JSON file, `-` for stdin, or a folder, whose `*.json` fixtures each run, with a line each and a summary (`ran 4 fixtures of discount: 3 passed, 1 failed`). The Function is the one named, else the one whose folder holds the input or the current folder, else the app's only Function. A fixture of the unit tests of Shopify's templates (`{"payload": {"export", "target", "input", "output"}}`) runs its target: its `target` and `export` must be the Function's (and `--export`'s), and its `output` the run's; where it is not, each path that differs is printed, with what the fixture expects and what the run answered. The output is checked against the schema of the Function's API and the instruction limit, as in a checkout. |
 | `--export <name>`, `-e` | | The target to run, by its Wasm export (`cart-lines-discounts-generate-run`), as Shopify's `--export`, or by its name (`cart.lines.discounts.generate.run`): for `--input` and `--save-input`, when the Function has several targets. |
-| `--save-input <file>` | | Writes the input lsf built for the run of the Function named (and of `--export`) to this file, for `--input` or for a unit test's fixture. |
+| `--save-input <file>` | | Writes the input lsf built for the run of the Function named (and of `--export`) to this file, for `--input` or for a unit test's fixture. Its folders are created. |
 
-Exits with `1` when a Function fails to run, or when a Function named on the command line did not
+Exits with `1` when a Function fails to run, when a fixture of `--input` is not met or names
+a target or an export the Function does not have, or when a Function named on the command line did not
 run: it says why (no discount names a discount Function, the cart is empty, the `extensions` of
 the scenario leave it out, an error of the app…). A handle or a scenario that is close to an existing one is suggested. Errors a validation
 Function reports are part of the checkout and do not change the exit code.
@@ -548,7 +579,8 @@ checkout runs. A folder that is neither a theme nor an app, and has no store dat
 
 In a Shopify app (or with `--app`), it checks the app too: what its Functions and UI extensions
 get wrong (no build, an API version lsf does not run, an unknown target, an `owner_type`), and
-exits with `1` on an error of it.
+its theme app extensions as `app build` checks them (`app: badges: extensions/badges/blocks/stars.liquid:
+a block needs a {% schema %}`), and exits with `1` on an error of it.
 
 | Option | What it does |
 |---|---|

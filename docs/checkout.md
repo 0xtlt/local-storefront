@@ -57,7 +57,7 @@ npx local-storefront app dev --app ../my-app --build
 | `shopify app dev` | `lsf app dev --watch`: the checkout, the customer account and the Admin API, built again at each save ([watch mode](#watch-mode)) | No development store, tunnel or Partner account. The app's web server is yours to start: give its URL with `--app-url`. |
 | `shopify app build` | `lsf app build` | `wasm-opt` is not run on a Rust Function ([Rust Functions](#rust-functions)). |
 | `shopify app function build` | `lsf app function build` | `@shopify/shopify_function` 1.x ([JavaScript Functions](#javascript-and-typescript-functions)). |
-| `shopify app function run` | `lsf app function run --input <file>` (or `-`), `--export <name>`, `--format json`; with `--scenario`, on an input lsf builds from the store data ([run a Function](#run-a-function-without-a-server)) | |
+| `shopify app function run` | `lsf app function run --input <file>` (or `-`, or a folder of fixtures), `--export <name>`, `--format json`; with `--scenario`, on an input lsf builds from the store data ([run a Function](#run-a-function-without-a-server)). As Shopify's, it builds the Function first when its files changed after its module was built. | |
 | `shopify app function replay` | `lsf app function run --scenario <name> --save-input <file>`, then `--input <file>` | No run of a store to replay: lsf does not read Shopify's logs. |
 | `shopify app function typegen` | `lsf app function typegen` | A Rust Function's types come from the `typegen` macro, at its build. |
 | `shopify app function schema` | `lsf app function schema` | The schemas of fulfillment constraints, order routing and pickup generators. |
@@ -190,7 +190,9 @@ files. As Shopify's CLI does:
 - **The entry**: from API version 2025-10, each target's module is imported and its default
   export registered with `shopify.extend('<target>', …)`; before, each module is imported.
 - **JSX** calls the automatic runtime of the `jsxImportSource` of the closest `tsconfig.json`
-  (`preact` in Shopify's templates; `react` without one), in `.jsx`, `.tsx` and `.js` files.
+  (`preact` in Shopify's templates; `react` without one), in `.jsx`, `.tsx` and `.js` files. A
+  Preact extension without its `tsconfig.json` fails on `react/jsx-runtime`, and the error says
+  what to add: `{"compilerOptions": {"jsx": "react-jsx", "jsxImportSource": "preact"}}`.
 - **The bundle** is one minified script (`dist/<handle>.js`): the modules it imports, what nothing
   uses left out, `process.env.NODE_ENV` `production` and the other values of `process.env` from
   the environment or the app's `.env`.
@@ -1376,10 +1378,20 @@ It prints the run (input, output, logs, instructions), and `--format json` the r
 output is checked as in a checkout: against the schema of the API version, and the instruction
 limit. A fixture of the unit tests of Shopify's templates (`tests/fixtures/*.json`,
 `{"payload": {"export", "target", "input", "output"}}`) runs the target it names, and fails
-when its `output` is not the run's (it says `the output is the one the fixture expects` when it
-is). A Function with
+when its `output` is not the run's, with each path that differs (it says `the output is the one
+the fixture expects` when it is). Its `target` and `export` must be the Function's: a wrong one
+is an error, not left aside. A Function with
 several targets needs `--export` (its export, `cart-lines-discounts-generate-run`, or its name).
-In the Function's folder the handle can be left out.
+In the Function's folder, with a fixture in it, or in an app with one Function, the handle can
+be left out. `--input` with a folder runs each of its `*.json` fixtures and exits with `1` when
+one fails, as the unit tests of the templates do:
+
+```bash
+npx local-storefront app function run volume-discount --input extensions/volume-discount/tests/fixtures
+```
+
+`--save-input` creates the folders of its file. When a file of the Function changed after its
+module was built, the run builds it first, as `shopify app function run` does.
 
 ## Test it
 
@@ -1529,7 +1541,10 @@ extensions before checking them.
 `app check` fails on a scenario that does not validate, on a Function that traps or panics,
 runs past 11 million instructions or answers an output out of its schema, and on an
 [expectation](#expected-results) of a scenario that is not met: a discount of the wrong amount,
-PayPal left in the express buttons. A trap ends with the last message the Function logged
+PayPal left in the express buttons. It also fails on an extension the checkout does not offer
+(an `api_version` other than `2026-10` and `2027-01`, no module or bundle), on a Function whose
+files changed after its module was built (`stale`, unless `--build`), and on what Shopify
+rejects in a theme app extension. A trap ends with the last message the Function logged
 (`the Function trapped: Error: boom (in b2b)` for a `throw new Error("boom")`), and the JSON has
 the `logs` of each failure. For what `expect` cannot say, `app function run --format json` has the
 whole checkout (`lines`, `discounts`, `deliveryGroups`, `paymentMethods`, `expressMethods`,

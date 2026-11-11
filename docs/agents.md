@@ -299,8 +299,10 @@ For CI, `npx local-storefront app check --build --format json` builds the extens
 the Functions of every scenario and checks the `expect` of each, what its checkout must look like
 ([expected results](checkout.md#expected-results)): `ok`, `failures`, `invalid`, `expectations`
 (`checked`, and in `unmet` the `scenario`, the `assertion`, `expected` and `actual` of each
-expectation not met), and `ranInNoScenario`, the Functions no scenario ran (a warning: the exit
-code stays `0`). Assert what a Function decides with an `expect` rather than piping
+expectation not met), `notOffered` (an extension the checkout does not offer, and why),
+`stale` (a Function whose files changed after its module was built), `themeExtensions` (what
+Shopify rejects in a theme app extension), each a failure, and `ranInNoScenario`, the Functions
+no scenario ran (a warning: the exit code stays `0`). Assert what a Function decides with an `expect` rather than piping
 `app function run --format json` into `jq`.
 
 ### Test the backend of an app
