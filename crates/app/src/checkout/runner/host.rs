@@ -26,8 +26,6 @@ use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi::p1::WasiP1Ctx;
 use wasmtime_wasi::p2::pipe::{MemoryInputPipe, MemoryOutputPipe};
 
-const STARTING_FUEL: u64 = u64::MAX;
-
 /// One for the module, one for the memory of Javy's provider.
 const MAXIMUM_MEMORIES: usize = 2;
 
@@ -99,7 +97,8 @@ pub(super) fn encode_input(input: &Value, msgpack: bool) -> Result<Vec<u8>, Stri
     }
 }
 
-/// Runs `export` of `module` with `input` (as [`encode_input`] writes it), until `deadline`. The
+/// Runs `export` of `module` with `input` (as [`encode_input`] writes it), until `deadline` or
+/// until it ran `fuel` instructions (it then traps, and its count is `fuel`). The
 /// compiled providers are kept in `providers`, for the next runs on the same engine.
 pub(super) fn run(
     engine: &Engine,
@@ -109,6 +108,7 @@ pub(super) fn run(
     input: Vec<u8>,
     msgpack: bool,
     deadline: Deadline,
+    fuel: u64,
 ) -> wasmtime::Result<Run> {
     let provider = std_import(module)?;
     let mut io = if provider.as_ref().is_some_and(|p| p.mem_io) {
@@ -193,7 +193,7 @@ pub(super) fn run(
         }
     }
 
-    store.set_fuel(STARTING_FUEL)?;
+    store.set_fuel(fuel)?;
     store.set_epoch_deadline(1);
 
     let instance = linker.instantiate(&mut store, module)?;
@@ -208,7 +208,7 @@ pub(super) fn run(
         ))),
         None => Err(error),
     });
-    let instructions = STARTING_FUEL.saturating_sub(store.get_fuel().unwrap_or_default());
+    let instructions = fuel.saturating_sub(store.get_fuel().unwrap_or_default());
 
     let (output, mut logs) = match io {
         Io::Memory(instance) => {

@@ -33,15 +33,17 @@ use super::ServerState;
 /// page waits 30 s for the answer (`CHECK_TIMEOUT` in `home.js`).
 pub const BUDGET: Duration = Duration::from_secs(20);
 
-/// A Function target that fails, and the scenarios it fails in.
+/// A Function target that fails with one error, and the scenarios it fails with it in. A target
+/// that fails in two ways (a throw in one scenario, an output out of its schema in another) is
+/// two failures.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Failure {
     pub handle: String,
     pub target: String,
-    /// Why the run failed, as the first scenario it failed in says. A trap ends with the last
-    /// message the Function logged: `the Function trapped: Error: boom`.
+    /// Why the run failed. A trap ends with the last message the Function logged:
+    /// `the Function trapped: Error: boom`.
     pub error: String,
-    /// What the Function logged in the first scenario it failed in.
+    /// What the Function logged in the first scenario it failed in with this error.
     pub logs: String,
     pub scenarios: Vec<String>,
 }
@@ -291,11 +293,9 @@ fn check(
             }
         }
         for (handle, target, error, logs) in failed {
-            match report
-                .failures
-                .iter_mut()
-                .find(|failure| failure.handle == handle && failure.target == target)
-            {
+            match report.failures.iter_mut().find(|failure| {
+                failure.handle == handle && failure.target == target && failure.error == error
+            }) {
                 Some(failure) => {
                     if !failure.scenarios.contains(name) {
                         failure.scenarios.push(name.clone());

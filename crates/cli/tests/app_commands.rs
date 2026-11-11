@@ -839,6 +839,115 @@ type = "function"
     assert!(logs.starts_with("checking\nError: boom b2b\n"), "{logs}");
 }
 
+/// A JavaScript validation Function, `boom`, whose run is `body`, and a scenario for each of
+/// `quantities` (`q<quantity>`), with a line of that quantity.
+fn app_with_a_validation(name: &str, body: &str, quantities: &[u32]) -> App {
+    let app = App::new(name);
+    assert!(lsf(&app.0, &["init"]).status.success());
+    app.write(
+        "extensions/boom/shopify.extension.toml",
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Boom"
+handle = "boom"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/cart_validations_generate_run.graphql"
+  export = "cart-validations-generate-run"
+"#,
+    );
+    app.write(
+        "extensions/boom/package.json",
+        r#"{ "name": "boom", "type": "module", "dependencies": { "@shopify/shopify_function": "2.0.1" } }"#,
+    );
+    app.write(
+        "extensions/boom/src/index.js",
+        "export * from './cart_validations_generate_run';\n",
+    );
+    app.write(
+        "extensions/boom/src/cart_validations_generate_run.js",
+        &format!("export function cartValidationsGenerateRun(input) {{\n{body}\n}}\n"),
+    );
+    app.write(
+        "extensions/boom/src/cart_validations_generate_run.graphql",
+        "query Input { cart { lines { quantity } } }\n",
+    );
+    for quantity in quantities {
+        app.write(
+            &format!("shopify-local/checkouts/q{quantity}.json"),
+            &format!(
+                r#"{{"session": {{"cart": {{"items": [{{"variant": "TEE-BLK-M", "quantity": {quantity}}}]}}}}, "extensions": ["boom"]}}"#
+            ),
+        );
+    }
+    app
+}
+
+/// One Function that fails in three ways in three scenarios: each error is printed with its
+/// scenario and its logs, not the first one for all three. The endless loop stops at the
+/// instruction cap, in a moment, not after 10 s.
+#[test]
+fn app_check_says_each_way_a_function_fails() {
+    let app = app_with_a_validation(
+        "three-ways",
+        "  const quantity = input.cart.lines[0].quantity;\n  console.log(`quantity ${quantity}`);\n  \
+         if (quantity === 1) throw new Error('boom');\n  \
+         if (quantity === 2) return { operations: [{ validationAdd: { errorz: [] } }] };\n  \
+         while (true) {}",
+        &[1, 2, 3],
+    );
+    let check = ["app", "check", "--build", "--extension", "boom"];
+    let started = std::time::Instant::now();
+    let output = lsf(&app.0, &check);
+    let said = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{said}");
+    assert!(
+        said.contains(
+            "fails    boom · cart.validations.generate.run: the Function trapped: Error: boom (in q1)"
+        ),
+        "{said}"
+    );
+    assert!(
+        said.contains("`operations[0].validationAdd` has no field `errorz`")
+            && said.contains("(in q2)"),
+        "{said}"
+    );
+    assert!(
+        said.contains(
+            "fails    boom · cart.validations.generate.run: exceeded Shopify's limit of 11,000,000 instructions: stopped at 110,000,000 (an endless loop?) (in q3)"
+        ),
+        "{said}"
+    );
+    assert!(said.contains("3 failures"), "{said}");
+    // The build, three runs and one loop to the cap: far from the 10 s of the timeout.
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(8),
+        "{:?}",
+        started.elapsed()
+    );
+
+    let output = lsf(&app.0, &[&check[..], &["--format", "json"]].concat());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("JSON: {}", text(&output)));
+    let failures = json["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 3, "{json}");
+    for (failure, quantity) in failures.iter().zip(["1", "2", "3"]) {
+        assert_eq!(
+            failure["scenarios"],
+            serde_json::json!([format!("q{quantity}")]),
+            "{json}"
+        );
+        let logs = failure["logs"].as_str().unwrap();
+        assert!(
+            logs.starts_with(&format!("quantity {quantity}\n")),
+            "{logs}"
+        );
+    }
+}
+
 #[test]
 fn installed_with_npm_the_hints_say_npx_local_storefront() {
     let app = App::new("npx");

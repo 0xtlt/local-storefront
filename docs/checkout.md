@@ -399,7 +399,12 @@ The home page runs the Functions of every scenario that opens, as its checkout w
 opens (what `lsf app function run --scenario` does), and lists each Function target that fails, with
 the error and the scenarios it fails in: a trap or a panic, more than 11 million instructions,
 an output that does not fit the schema of its API version, a `.fetch` request out of Shopify's
-limits. The scenario and the Function get an error status.
+limits. A target that fails in several ways is listed once per error, each with its own
+scenarios and logs. The scenario and the Function get an error status.
+
+lsf stops a run at 110 million instructions, ten times Shopify's limit: an endless loop fails in
+a moment (`exceeded Shopify's limit of 11,000,000 instructions: stopped at 110,000,000`), and a
+run under that has its exact count.
 
 This check sends no HTTP request: opening the home page never calls a server. A `.fetch` target
 runs, and the request it asks for is checked against [Shopify's limits](#network-access) (a

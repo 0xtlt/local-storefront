@@ -503,6 +503,15 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   the folder was deleted by hand. The packages now live in the user's cache folder
   (`~/Library/Caches/lsf/` on macOS, `~/.cache/lsf/` on Linux). A folder with a file missing or
   changed is written again, safely when several lsf run at once.
+- **`lsf app check` prints each way a Function fails.** A Function that threw in one scenario
+  and answered a wrong output in another was printed with the first error for both, and the
+  JSON had the logs of the first. Each error is now a failure of its own, with its scenarios and
+  its logs, in the text, in `--format json` and on the home page.
+- **An endless loop in a Function stops in a moment.** It ran for 10 s (some 35 billion
+  instructions) before it was stopped, and three of them took the 20 s of the home page's check.
+  A run now stops at 110 million instructions, ten times Shopify's limit:
+  `exceeded Shopify's limit of 11,000,000 instructions: stopped at 110,000,000 (an endless
+  loop?)`. A run under that keeps its exact count.
 
 ## 0.2.0 - 2026-10-30
 

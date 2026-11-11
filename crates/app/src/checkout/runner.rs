@@ -22,8 +22,13 @@ use wasmtime::{Engine, Module};
 /// Shopify stops a Function after 11 million Wasm instructions.
 pub const INSTRUCTIONS_LIMIT: u64 = 11_000_000;
 
-/// A Function that runs longer than this is stopped. The runner itself counts instructions but
-/// never stops a Function: an endless loop would hang the checkout.
+/// lsf stops a Function after this many instructions, ten times Shopify's limit: an endless loop
+/// stops in a fraction of a second, and a Function past the limit by less than that has its exact
+/// count. A run stopped there used at least this many.
+pub const INSTRUCTIONS_CAP: u64 = 10 * INSTRUCTIONS_LIMIT;
+
+/// A Function that runs longer than this is stopped, whatever it spent: a host call that does
+/// not return.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What came out of one run.
@@ -77,6 +82,8 @@ const MODULES_KEPT: usize = 64;
 /// memory of its instance): the others wait for one to finish.
 pub struct Runner {
     timeout: Duration,
+    /// How many instructions a run may use: [`INSTRUCTIONS_CAP`].
+    cap: u64,
     max_concurrent: usize,
     engine: Result<Engine, String>,
     /// The modules compiled, the least recently used first: at most `capacity`, so that the
@@ -120,6 +127,7 @@ impl Runner {
     pub fn new() -> Runner {
         Runner {
             timeout: DEFAULT_TIMEOUT,
+            cap: INSTRUCTIONS_CAP,
             max_concurrent: std::thread::available_parallelism().map_or(4, |count| count.get()),
             engine: engine(),
             modules: Mutex::new(IndexMap::new()),
@@ -129,6 +137,12 @@ impl Runner {
             busy: Mutex::new(0),
             released: Condvar::new(),
         }
+    }
+
+    /// A runner that stops a Function after `cap` instructions ([`INSTRUCTIONS_CAP`] by default).
+    pub fn with_instructions_cap(mut self, cap: u64) -> Runner {
+        self.cap = cap;
+        self
     }
 
     /// A runner that runs at most `max_concurrent` Functions at once (at least one).
@@ -197,6 +211,7 @@ impl Runner {
             encoded,
             msgpack,
             deadline,
+            self.cap,
         );
         // The watchdog is over when `run` returns: the next runs are not ticked for.
         watchdog.stop();
@@ -230,6 +245,13 @@ impl Runner {
             error: None,
             instructions: result.instructions,
         };
+        if result.instructions >= self.cap {
+            // Out of fuel: the trap says nothing the count does not.
+            let (logs, _) = split_failure(&result.logs);
+            execution.logs = logs;
+            execution.error = Some(past_the_cap(self.cap));
+            return execution;
+        }
         if !result.success {
             // The trap or exit code is appended to the logs after what the Function printed.
             let (logs, error) = split_failure(&result.logs);
@@ -345,6 +367,28 @@ fn untrampolined(module: &Module) -> Option<String> {
                 lsf_core::util::command()
             )
         })
+}
+
+/// Why a run stopped at `cap` instructions failed.
+fn past_the_cap(cap: u64) -> String {
+    format!(
+        "exceeded Shopify's limit of {} instructions: stopped at {} (an endless loop?)",
+        thousands(INSTRUCTIONS_LIMIT),
+        thousands(cap)
+    )
+}
+
+/// `11000000` as `11,000,000`.
+fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
 }
 
 /// The host appends why a run failed to what the Function logged. Splits the two: a trap

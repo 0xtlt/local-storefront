@@ -562,8 +562,11 @@ impl<'a> Pipeline<'a> {
                 spec.result
             ));
         }
-        // Shopify stops a Function that runs past the limit: its output does not count.
-        if execution.instructions > runner::INSTRUCTIONS_LIMIT {
+        // Shopify stops a Function that runs past the limit: its output does not count. One lsf
+        // stopped says so already.
+        if execution.instructions > runner::INSTRUCTIONS_LIMIT
+            && execution.instructions < runner::INSTRUCTIONS_CAP
+        {
             let message = format!(
                 "used {} instructions: Shopify stops a Function past {}",
                 execution.instructions,
