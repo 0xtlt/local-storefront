@@ -18,7 +18,8 @@
 //!   `shopify-reload` of the bounce page, `X-Shopify-API-Request-Failure-Reauthorize-Url`), so
 //!   that the frame stays on the proxy;
 //! - the request reaches the backend as if it came to it: `Host`, `Origin` and `Referer` are
-//!   the backend's.
+//!   the backend's; and a `User-Agent` of headless Chromium (`HeadlessChrome`, which the
+//!   template's `isbot` answers `410 Gone`) is Chrome's.
 //!
 //! The proxy forwards plain HTTP: a WebSocket (Vite's HMR on the app's own port) does not pass,
 //! and the template's HMR has a port of its own. `LSF_ADMIN_FRAME=direct` opens the backend in
@@ -134,6 +135,9 @@ impl FrameProxy {
         }
         Some(match name.as_str() {
             "origin" | "referer" => value.replace(&self.origin, &self.upstream),
+            // Playwright's headless Chromium says `HeadlessChrome`, which the template's `isbot`
+            // answers `410 Gone`: in lsf's frame, it is the merchant's browser.
+            "user-agent" => value.replace("HeadlessChrome", "Chrome"),
             _ => value.to_string(),
         })
     }
@@ -351,6 +355,15 @@ mod tests {
         let proxy = proxy();
         assert_eq!(proxy.request_header("Host", "127.0.0.1:52011"), None);
         assert_eq!(proxy.request_header("accept-encoding", "gzip"), None);
+        assert_eq!(
+            proxy
+                .request_header(
+                    "user-agent",
+                    "Mozilla/5.0 HeadlessChrome/141.0.0.0 Safari/537.36"
+                )
+                .as_deref(),
+            Some("Mozilla/5.0 Chrome/141.0.0.0 Safari/537.36")
+        );
         assert_eq!(
             proxy
                 .request_header("origin", "http://127.0.0.1:52011")
