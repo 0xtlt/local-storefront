@@ -238,8 +238,7 @@ fn check_settings(parsed: &Parsed, list: &Json, pointer: &str, out: &mut Vec<Sch
                 let Some(options) = item.get("options") else {
                     continue;
                 };
-                let Some(options) = options.as_array().filter(|options| !options.is_empty())
-                else {
+                let Some(options) = options.as_array().filter(|options| !options.is_empty()) else {
                     problem(
                         "invalid_schema",
                         format!("the `options` of {name} are not a list of options"),
@@ -616,7 +615,8 @@ mod tests {
 }
 {% endschema %}"#;
         let found = codes(source);
-        let summary: Vec<(&str, usize)> = found.iter().map(|(code, line, _)| (*code, *line)).collect();
+        let summary: Vec<(&str, usize)> =
+            found.iter().map(|(code, line, _)| (*code, *line)).collect();
         assert_eq!(
             summary,
             [
@@ -635,10 +635,25 @@ mod tests {
         );
         let problems = check(source);
         assert_eq!(problems[0].hint.as_deref(), Some("did you mean \"text\"?"));
-        assert!(problems[1].message.contains("has no `label`"), "{}", problems[1].message);
-        assert!(problems[3].message.contains("\"center\""), "{}", problems[3].message);
-        assert!(problems[4].message.contains("not a step"), "{}", problems[4].message);
-        assert_eq!(problems[9].hint.as_deref(), Some("did you mean \"image_picker\"?"));
+        assert!(
+            problems[1].message.contains("has no `label`"),
+            "{}",
+            problems[1].message
+        );
+        assert!(
+            problems[3].message.contains("\"center\""),
+            "{}",
+            problems[3].message
+        );
+        assert!(
+            problems[4].message.contains("not a step"),
+            "{}",
+            problems[4].message
+        );
+        assert_eq!(
+            problems[9].hint.as_deref(),
+            Some("did you mean \"image_picker\"?")
+        );
     }
 
     #[test]
@@ -651,7 +666,11 @@ mod tests {
   "presets": [{ "name": "t:names.hero", "blocks": { "x": { "type": "prcie", "static": true } } }]
 }
 {% endschema %}"#;
-        let blocks = vec!["text".to_string(), "button".to_string(), "price".to_string()];
+        let blocks = vec![
+            "text".to_string(),
+            "button".to_string(),
+            "price".to_string(),
+        ];
         let locale = serde_json::json!({"names": {"hero": "Hero"}});
         let theme = ThemeNames {
             blocks: &blocks,
@@ -665,9 +684,21 @@ mod tests {
         assert_eq!(
             found,
             [
-                ("missing_block", 4, Some("did you mean \"button\"?".to_string())),
-                ("missing_schema_translation", 5, Some("add it to locales/en.default.schema.json".to_string())),
-                ("missing_block", 6, Some("did you mean \"price\"?".to_string())),
+                (
+                    "missing_block",
+                    4,
+                    Some("did you mean \"button\"?".to_string())
+                ),
+                (
+                    "missing_schema_translation",
+                    5,
+                    Some("add it to locales/en.default.schema.json".to_string())
+                ),
+                (
+                    "missing_block",
+                    6,
+                    Some("did you mean \"price\"?".to_string())
+                ),
             ]
         );
         // Local blocks name their own types, and their presets too.

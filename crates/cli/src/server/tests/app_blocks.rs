@@ -162,7 +162,9 @@ fn every_block_that_renders_nothing_is_in_the_reason() {
     let reason = header(&reply, "x-lsf-reason").expect("a reason");
     assert!(reason.starts_with("3 reasons: "), "{reason}");
     assert!(
-        reason.contains("reviewz") && reason.contains("another-app") && reason.contains("enabled_on"),
+        reason.contains("reviewz")
+            && reason.contains("another-app")
+            && reason.contains("enabled_on"),
         "{reason}"
     );
 }
@@ -179,7 +181,9 @@ fn without_an_app_an_app_embed_block_says_why_it_renders_nothing() {
         "{reason}"
     );
     assert!(
-        reason.contains("`reviews-widget` of `app.embeds` in the store data not rendered: no app is served"),
+        reason.contains(
+            "`reviews-widget` of `app.embeds` in the store data not rendered: no app is served"
+        ),
         "{reason}"
     );
 }

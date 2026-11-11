@@ -82,12 +82,19 @@ fn the_account_renders_as_serve_answers_it() {
         "{}",
         stdout(&output)
     );
-    assert!(stderr(&output).contains("status 200"), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("status 200"),
+        "{}",
+        stderr(&output)
+    );
 }
 
 #[test]
 fn the_section_id_of_the_query_renders_that_section() {
-    let output = render(&["/products/organic-cotton-t-shirt?section_id=nope", "--strict"]);
+    let output = render(&[
+        "/products/organic-cotton-t-shirt?section_id=nope",
+        "--strict",
+    ]);
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
 }
 
@@ -97,8 +104,16 @@ fn github_annotations_name_the_file_and_the_line_of_an_error() {
     let _ = std::fs::remove_dir_all(&theme);
     std::fs::create_dir_all(theme.join("layout")).unwrap();
     std::fs::create_dir_all(theme.join("templates")).unwrap();
-    std::fs::write(theme.join("layout/theme.liquid"), "{{ content_for_layout }}").unwrap();
-    std::fs::write(theme.join("templates/index.liquid"), "<p>\n{{ 1 | divided_by: 0 }}").unwrap();
+    std::fs::write(
+        theme.join("layout/theme.liquid"),
+        "{{ content_for_layout }}",
+    )
+    .unwrap();
+    std::fs::write(
+        theme.join("templates/index.liquid"),
+        "<p>\n{{ 1 | divided_by: 0 }}",
+    )
+    .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_lsf"))
         .arg("render")
         .args(["/", "--strict", "--format", "github"])

@@ -131,7 +131,10 @@ mod tests {
                 "sections/related.liquid",
                 "{% for p in recommendations.products %}{{ p.title }}{% endfor %}",
             ),
-            ("sections/predictive-search.liquid", "{{ predictive_search.performed }}"),
+            (
+                "sections/predictive-search.liquid",
+                "{{ predictive_search.performed }}",
+            ),
         ] {
             let path = root.join(path);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -165,8 +168,11 @@ mod tests {
         // Each one renders, the main section of the product page reads no recommendations.
         assert!(!all.iter().any(|route| route.contains("__main")));
         for route in &all {
-            let (status, errors, body) =
-                state.answer_get(route, "shop.test", state.initial_session(&state.loaded().store));
+            let (status, errors, body) = state.answer_get(
+                route,
+                "shop.test",
+                state.initial_session(&state.loaded().store),
+            );
             assert!(status < 400 && errors == 0, "{route}: {status} {body}");
         }
         let _ = std::fs::remove_dir_all(&root);
@@ -183,7 +189,10 @@ mod tests {
         let (status, _, body) = state.answer_get("/account", "shop.test", session);
         assert_eq!(status, 200);
         assert!(
-            body.contains(&format!("data-lsf-customer=\"{}\"", store.customers[0].email)),
+            body.contains(&format!(
+                "data-lsf-customer=\"{}\"",
+                store.customers[0].email
+            )),
             "{body}"
         );
     }

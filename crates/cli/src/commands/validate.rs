@@ -222,11 +222,7 @@ pub fn run(
             eprintln!(
                 "{}: {}, {}",
                 app.describe_source(),
-                count(
-                    diagnostics.error_count() + app_errors,
-                    "error",
-                    "errors"
-                ),
+                count(diagnostics.error_count() + app_errors, "error", "errors"),
                 count(
                     diagnostics.warning_count() + app_problems.len() - app_errors,
                     "warning",

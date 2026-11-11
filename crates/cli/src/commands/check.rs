@@ -1179,7 +1179,10 @@ mod tests {
             "snippets/head.liquid",
             "{{ 'base.css' | asset_url }}{{ 'app.js' | asset_url }}\n{{ 'bse.css' | asset_url | stylesheet_tag }}",
         );
-        write("blocks/price.liquid", "{% content_for 'block', type: 'pirce', id: 'x' %}");
+        write(
+            "blocks/price.liquid",
+            "{% content_for 'block', type: 'pirce', id: 'x' %}",
+        );
         write(
             "sections/main.liquid",
             "{% content_for 'blocks' %}\n{% schema %}\n{\n  \"name\": \"t:names.main\",\n  \"blocks\": [{ \"type\": \"@theme\" }],\n  \"settings\": [\n    { \"type\": \"chekbox\", \"id\": \"a\", \"label\": \"A\" }\n  ]\n}\n{% endschema %}",

@@ -73,7 +73,13 @@ fn source_file(theme: &Path, template: &str) -> Option<String> {
 }
 
 /// Prints an annotation of `render` on stderr: the HTML is on stdout.
-fn annotate(level: &'static str, file: Option<String>, line: Option<usize>, path: &str, message: String) {
+fn annotate(
+    level: &'static str,
+    file: Option<String>,
+    line: Option<usize>,
+    path: &str,
+    message: String,
+) {
     eprintln!(
         "{}",
         crate::output::Annotation {

@@ -2064,7 +2064,8 @@ fn a_schema_shopify_refuses_is_an_error_of_the_page_that_renders_it() {
     // Once each, though the hero renders twice; where the file has the problem.
     assert_eq!(errors.len(), 2, "{errors:#?}");
     assert!(
-        errors[0].starts_with("Liquid error (sections/hero line 3): the {% schema %} is not valid JSON"),
+        errors[0]
+            .starts_with("Liquid error (sections/hero line 3): the {% schema %} is not valid JSON"),
         "{errors:#?}"
     );
     assert!(
@@ -2089,5 +2090,8 @@ fn a_theme_folder_that_does_not_exist_says_so() {
         .err()
         .expect("an error")
         .to_string();
-    assert!(error.contains("does not look like a Shopify theme"), "{error}");
+    assert!(
+        error.contains("does not look like a Shopify theme"),
+        "{error}"
+    );
 }
