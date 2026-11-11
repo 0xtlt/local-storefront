@@ -159,7 +159,19 @@ impl Admin {
             ));
         }
         lines.push(format!("        client secret: {}", self.secret_line()));
-        lines.push(format!("webhooks: {}", self.api.webhooks().summary()));
+        let mut webhooks = self.api.webhooks().summary();
+        if let Some(app) = self.api.app()
+            && !app.config.event_subscriptions.is_empty()
+        {
+            let handles: Vec<&str> = app
+                .config
+                .event_subscriptions
+                .iter()
+                .map(|event| event.handle.as_str())
+                .collect();
+            webhooks.push_str(&format!("; Events ([events]): {}", handles.join(", ")));
+        }
+        lines.push(format!("webhooks: {webhooks}"));
         lines
     }
 

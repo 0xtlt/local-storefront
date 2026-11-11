@@ -224,9 +224,31 @@ fn trigger(
         at: Utc::now(),
     });
     if ids.is_empty() {
+        // An `[[events.subscription]]` of the same resource: an Event, not a webhook.
+        let events: Vec<&str> = lsf_app::admin::webhooks::events::topic_action(topic)
+            .map(|(resource, _)| {
+                config
+                    .event_subscriptions
+                    .iter()
+                    .filter(|event| event.topic == resource)
+                    .map(|event| event.handle.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let events = if events.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ". The [[events.subscription]] {} of [events] receive Events, not webhooks: \
+                 lsf sends them when a product changes through the Admin API while `serve` or \
+                 `app dev` runs (change a variant's price with productVariantsBulkUpdate), \
+                 with Shopify-Topic, Shopify-Action and Shopify-Handle headers",
+                events.join(", ")
+            )
+        };
         return Err(format!(
             "no subscription to `{topic}` in {}: give `--address URL`, or subscribe to it in \
-             [[webhooks.subscriptions]]",
+             [[webhooks.subscriptions]]{events}",
             config_name(app_dir.as_deref())
         ));
     }

@@ -75,6 +75,9 @@ impl ClientIdSource {
     }
 }
 
+/// The topics of `[[events.subscription]]` lsf delivers.
+pub const EVENT_TOPICS: &[&str] = &["Product"];
+
 /// What the client id is when `shopify.app.toml` has none: the message of the warning.
 pub const NO_CLIENT_ID: &str = "shopify.app.toml has no client_id (client_id = \"\", as the app template ships it), and neither the environment nor the app's .env has SHOPIFY_API_KEY: lsf uses its own client id, lsf-local-client-id, and the admin opens the app at /admin/apps/lsf-local-client-id. The backend's session tokens are refused unless its SHOPIFY_API_KEY is that value. Set client_id (shopify app config link writes it), or SHOPIFY_API_KEY in the app's .env to the backend's.";
 
@@ -166,6 +169,10 @@ pub struct AppConfig {
     pub webhook_subscriptions: Vec<WebhookSubscriptionConfig>,
     /// `[app_proxy]`: `url`, `subpath`, `prefix`.
     pub app_proxy: Option<AppProxyConfig>,
+    /// `[events] api_version`.
+    pub events_api_version: Option<String>,
+    /// `[[events.subscription]]`, in the order of the file: Shopify's Events.
+    pub event_subscriptions: Vec<EventSubscriptionConfig>,
     /// The order metafield definitions it declares (`[order.metafields.<namespace>.<key>]`), in
     /// the order of the file: what copies a cart metafield onto the order placed from the cart.
     /// The definitions of the other owner types are not read.
@@ -203,6 +210,28 @@ pub struct WebhookSubscriptionConfig {
     pub include_fields: Vec<String>,
     /// `name`.
     pub name: Option<String>,
+}
+
+/// A `[[events.subscription]]` of `shopify.app.toml`: Shopify's Events
+/// (<https://shopify.dev/docs/apps/build/events-webhooks>), delivered with `Shopify-*` headers
+/// and a body of what `query` answers.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EventSubscriptionConfig {
+    /// `handle`: in the body and in `Shopify-Handle`.
+    pub handle: String,
+    /// `topic`: a resource, `Product`.
+    pub topic: String,
+    /// `actions`: `create`, `update`, `delete`.
+    pub actions: Vec<String>,
+    /// `triggers`: the fields whose change is an `update` (`product.variants.price`,
+    /// `product.*`).
+    pub triggers: Vec<String>,
+    /// `uri`: as for a webhook subscription.
+    pub uri: String,
+    /// `query`: a GraphQL Admin API query run with the ids of what changed.
+    pub query: Option<String>,
+    /// `query_filter`: Shopify's search syntax over what `query` answers.
+    pub query_filter: Option<String>,
 }
 
 /// `[app_proxy]` of `shopify.app.toml`.
@@ -830,6 +859,16 @@ fn load_app_config(app: &mut App) {
     }
     app.config = app_config(&table);
     app.config.order_metafields = declared_definitions(app, &table, "order");
+    for event in app.config.event_subscriptions.clone() {
+        if !EVENT_TOPICS.contains(&event.topic.as_str()) {
+            app.warn_admin(format!(
+                "shopify.app.toml: [[events.subscription]] {}: lsf delivers the Events of topic {} only, not of {}: nothing is sent for it",
+                event.handle,
+                EVENT_TOPICS.join(", "),
+                event.topic
+            ));
+        }
+    }
 }
 
 /// The metafield definitions `shopify.app.toml` declares for an owner type
@@ -933,7 +972,29 @@ fn app_config(table: &toml::Table) -> AppConfig {
         subpath: text_in(Some(proxy), "subpath").unwrap_or_default(),
         prefix: text_in(Some(proxy), "prefix").unwrap_or_default(),
     });
+    let events = section("events");
+    let event_subscriptions = events
+        .and_then(|events| events.get("subscription"))
+        .and_then(|value| value.as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.as_table())
+                .map(|entry| EventSubscriptionConfig {
+                    handle: text_in(Some(entry), "handle").unwrap_or_default(),
+                    topic: text_in(Some(entry), "topic").unwrap_or_default(),
+                    actions: strings(entry.get("actions")),
+                    triggers: strings(entry.get("triggers")),
+                    uri: text_in(Some(entry), "uri").unwrap_or_default(),
+                    query: text_in(Some(entry), "query"),
+                    query_filter: text_in(Some(entry), "query_filter"),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     AppConfig {
+        events_api_version: text_in(events, "api_version"),
+        event_subscriptions,
         application_url: text_in(Some(table), "application_url"),
         embedded: table.get("embedded").and_then(|value| value.as_bool()),
         scopes: strings(access_scopes.and_then(|scopes| scopes.get("scopes"))),

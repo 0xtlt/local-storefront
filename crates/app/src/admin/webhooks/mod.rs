@@ -11,6 +11,7 @@
 
 mod control;
 pub mod delivery;
+pub mod events;
 pub mod payload;
 pub mod samples;
 pub mod sign;
