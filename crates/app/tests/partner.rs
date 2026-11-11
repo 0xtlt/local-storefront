@@ -282,12 +282,18 @@ fn without_the_legacy_features_the_subscription_has_no_legacy_id() {
     assert_eq!(active["billingPeriod"], "ANNUAL");
     assert_eq!(active["trialEndsAt"], Value::Null);
     let now = api.with_default_shop(|state| state.now()).unwrap();
-    let date =
-        |at: chrono::DateTime<chrono::Utc>| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    assert_eq!(
-        active["currentBillingCycle"],
-        json!({"startTime": date(now), "endTime": date(now + chrono::Duration::days(365))})
+    // The cycle starts when the plan was picked: a moment before `now`, maybe a second earlier.
+    let time = |key: &str| {
+        chrono::DateTime::parse_from_rfc3339(active["currentBillingCycle"][key].as_str().unwrap())
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    };
+    let start = time("startTime");
+    assert!(
+        (now - start).num_seconds().abs() <= 2,
+        "{start} is not {now}"
     );
+    assert_eq!(time("endTime"), start + chrono::Duration::days(365));
     assert_eq!(active["items"][0]["price"]["amount"], "49.00");
     assert_eq!(events(&api, json!({})), ["SUBSCRIPTION_CREATED"]);
 }
