@@ -953,7 +953,7 @@ impl AdminApi {
             if live.default {
                 self.sync.changed();
             }
-            tokens.revoke_shop(&domain, Revocation::Reset);
+            tokens.revoke_shop(&domain, Revocation::Reset, Utc::now());
             tokens.install(&domain, &self.auth.client_id, &self.scopes, Utc::now());
             live.auth_generation += 1;
             domains.push(domain);
@@ -1019,7 +1019,7 @@ impl AdminApi {
             }
         };
         // The map of the shops is released before the tokens are locked (see `AdminApi`).
-        let revoked = lock(&self.tokens).revoke_shop(&domain, Revocation::ShopDeleted);
+        let revoked = lock(&self.tokens).revoke_shop(&domain, Revocation::ShopDeleted, Utc::now());
         if let Some(shop) = shop {
             lock(&shop).auth_generation += 1;
         }
@@ -1930,7 +1930,7 @@ impl AdminApi {
         installed: bool,
         delivered: impl FnOnce(),
     ) -> (usize, usize) {
-        let revoked = lock(&self.tokens).uninstall(domain, &self.auth.client_id);
+        let revoked = lock(&self.tokens).uninstall(domain, &self.auth.client_id, Utc::now());
         self.auth_changed(domain);
         // From now on only `app/uninstalled` is delivered for the shop, through the
         // subscriptions it had; an app uninstalled already is not uninstalled again.

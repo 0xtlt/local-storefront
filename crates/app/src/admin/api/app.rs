@@ -254,7 +254,9 @@ fn app_admin_url(api: &AdminApi, url: &str, shop: &str) -> Option<String> {
     Some(local)
 }
 
-/// The confirmation page of a charge, in the look of lsf's pages.
+/// The confirmation page of a charge, in the look of lsf's pages. Shopify's is a page of the
+/// admin, never inside the app's frame: a backend that redirected its frame here (the frame's
+/// proxy points `https://<shop>/admin/charges/…` at lsf) sees the page take the whole window.
 fn charge_page(shop: &str, charge: &billing::Charge) -> String {
     let what = match (charge.kind, charge.pending_capped_amount.is_some()) {
         ("AppPurchaseOneTime", _) => "Approve a one-time charge",
@@ -323,7 +325,9 @@ fn charge_page(shop: &str, charge: &billing::Charge) -> String {
     body.push_str("</div></main>");
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>{} · {}</title><style>{STYLE}</style></head><body>{body}</body></html>",
+         <title>{} · {}</title><style>{STYLE}</style>\
+         <script>if (window.top !== window.self) {{ try {{ window.top.location.replace(window.location.href); }} catch (_) {{}} }}</script>\
+         </head><body>{body}</body></html>",
         escape_html(what),
         escape_html(&charge.app)
     )

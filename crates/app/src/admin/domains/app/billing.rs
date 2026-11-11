@@ -8,7 +8,7 @@
 //! - `appSubscriptionCreate` makes a `PENDING` subscription with its line items (one recurring
 //!   and one usage plan at most: "Only one pricing plan can be defined for each available
 //!   type"), and answers a `confirmationUrl` as Shopify's, on the shop's admin
-//!   ([`confirmation_url`]), which lsf's admin sends to `GET /__lsf/admin/charges/<n>?shop=…`:
+//!   (on lsf's for an app with `embedded = false`: [`confirmation_url`]), which lsf's admin sends to `GET /__lsf/admin/charges/<n>?shop=…`:
 //!   it shows the charge, approving redirects to `returnUrl` with `charge_id=<n>`, as Shopify does.
 //!   `POST /__lsf/admin/charges/<n>/approve` (or `/decline`) does it without the page.
 //! - Approved, the subscription is `ACTIVE` (2026-10: "When a merchant approves an app
@@ -182,10 +182,27 @@ pub enum Confirm {
 /// The page where the merchant approves a charge, as Shopify writes it: on the shop's admin,
 /// `https://<shop>/admin/charges/<app id>/<charge>/RecurringApplicationCharge/confirm_recurring_application_charge?signature=…`.
 /// That is what `@shopify/shopify-app-react-router` lets its exit-iframe page go to (`https`, a
-/// `*.myshopify.com` host, under `/admin`). lsf's admin serves the path (`api::embedded`), and
-/// redirects it to lsf's page of the charge, `/__lsf/admin/charges/<charge>?shop=<shop>`: a
-/// test opens it on lsf's origin in place of `https://<shop>`.
-pub fn confirmation_url(state: &ShopState, shop: &str, number: u64, confirm: Confirm) -> String {
+/// `*.myshopify.com` host, under `/admin`), and what an embedded app's loader sends the merchant
+/// to. lsf's admin serves the path (`api::embedded`), and redirects it to lsf's page of the
+/// charge, `/__lsf/admin/charges/<charge>?shop=<shop>`; lsf's admin, its App Bridge and the
+/// frame's proxy take Shopify's URL there.
+///
+/// An app with `embedded = false` gets the same path on lsf's `origin`, with `shop`: its backend
+/// redirects the merchant there plainly (the library does, without the exit-iframe page), and
+/// `https://<shop>` is Shopify's, not lsf's.
+pub fn confirmation_url(
+    state: &ShopState,
+    origin: &str,
+    shop: &str,
+    number: u64,
+    confirm: Confirm,
+) -> String {
+    let embedded = state
+        .all("App")
+        .next()
+        .and_then(|app| app.get("embedded"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
     let app = state
         .all("App")
         .next()
@@ -203,10 +220,17 @@ pub fn confirmation_url(state: &ShopState, shop: &str, number: u64, confirm: Con
     let signature = crate::admin::auth::signing::hex(&crate::admin::auth::signing::sha256(
         format!("lsf charge\0{shop}\0{number}").as_bytes(),
     ));
-    format!(
-        "https://{shop}/admin/charges/{app}/{number}/{kind}/{action}?signature={}",
+    let path = format!(
+        "/admin/charges/{app}/{number}/{kind}/{action}?signature={}",
         &signature[..32]
-    )
+    );
+    if embedded || origin.is_empty() {
+        format!("https://{shop}{path}")
+    } else {
+        let mut query = form_urlencoded::Serializer::new(String::new());
+        query.append_pair("shop", shop);
+        format!("{}{path}&{}", origin.trim_end_matches('/'), query.finish())
+    }
 }
 
 /// The charge a path of the admin confirms (`/charges/<app id>/<charge>/<kind>/<action>`, below
@@ -439,6 +463,7 @@ fn subscription_create(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let failed = json!({"appSubscription": null, "confirmationUrl": null});
+    let origin = mutation.origin().to_string();
     if mutation.managed_pricing() {
         let error = UserError::new(&[], super::pricing::BILLING_API_REFUSED);
         return Ok(payload(failed, &[error]));
@@ -545,7 +570,7 @@ fn subscription_create(
     Ok(payload(
         json!({
             "appSubscription": id,
-            "confirmationUrl": confirmation_url(state, &shop, number, Confirm::Subscription),
+            "confirmationUrl": confirmation_url(state, &origin, &shop, number, Confirm::Subscription),
         }),
         &[],
     ))
@@ -646,6 +671,7 @@ fn line_item_update(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let failed = json!({"appSubscription": null, "confirmationUrl": null});
+    let origin = mutation.origin().to_string();
     let line = ctx.arg_str("id").unwrap_or_default().to_string();
     let state = mutation.state();
     let details = (state.type_of(&line) == Some("AppSubscriptionLineItem"))
@@ -698,7 +724,7 @@ fn line_item_update(
     Ok(payload(
         json!({
             "appSubscription": subscription,
-            "confirmationUrl": confirmation_url(state, &shop, number, Confirm::CappedAmount),
+            "confirmationUrl": confirmation_url(state, &origin, &shop, number, Confirm::CappedAmount),
         }),
         &[],
     ))
@@ -820,6 +846,7 @@ fn purchase_create(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let failed = json!({"appPurchaseOneTime": null, "confirmationUrl": null});
+    let origin = mutation.origin().to_string();
     if mutation.managed_pricing() {
         let error = UserError::new(&[], super::pricing::BILLING_API_REFUSED);
         return Ok(payload(failed, &[error]));
@@ -864,7 +891,7 @@ fn purchase_create(
     Ok(payload(
         json!({
             "appPurchaseOneTime": id,
-            "confirmationUrl": confirmation_url(state, &shop, number, Confirm::OneTime),
+            "confirmationUrl": confirmation_url(state, &origin, &shop, number, Confirm::OneTime),
         }),
         &[],
     ))

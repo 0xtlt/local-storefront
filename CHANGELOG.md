@@ -367,7 +367,8 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 - **The embedded app opens in lsf's admin as the React Router template ships it.** The admin's
   frame goes through a proxy on a port of its own. It lets lsf's admin frame every page, the
   library's bounce page and `redirect(…, {target: "_top"})` page included, and gives the pages
-  lsf's App Bridge and Polaris. The `entry.server.tsx`, `app.tsx` and `polarisUrl` edits are no
+  lsf's App Bridge and Polaris; a `Content-Security-Policy` that allowed Shopify's CDN allows
+  lsf there too, so the browser loads them. The `entry.server.tsx`, `app.tsx` and `polarisUrl` edits are no
   longer needed. `LSF_ADMIN_FRAME=direct` opens the backend itself
   ([preview the embedded app](docs/admin.md#preview-the-embedded-app)).
 - **Shopify's Events of `[events]` in `shopify.app.toml`.** lsf delivers the `Product` Events
@@ -456,7 +457,10 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   of the order, with its allocations on the lines, in the API and in the `orders/create` payload.
 - **Deprecated Admin API fields read their data.** A deprecated field that Shopify replaced
   (`DraftOrderLineItem.originalUnitPrice`, `Order.totalPrice`, `Customer.email`, …) answered a
-  default (`"0.00"`) where its replacement had the value: it now reads the replacement's.
+  default (`"0.00"`) where its replacement had the value: it now reads the replacement's, with
+  the difference the schema states: `Product.descriptionPlainSummary` truncated to 60
+  characters, `Order.totalShippingPrice` before discounts, `ShippingLine.discountedPrice`
+  before the taxes an order includes.
 - **`productSet` refuses an option value that `productOptions` does not declare**, with
   `OPTION_VALUE_DOES_NOT_EXIST`, as Shopify does. It added the value to the option.
 - **The `shop/update` and `app/uninstalled` payloads have the shop's `domain`**, the host of its
@@ -678,13 +682,19 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   `metafield(namespace: "$app", key: "function-configuration")`, and `"$app:function-configuration"`
   says to write a dot.
 
-- **A backend's stored tokens work after lsf restarts.** Tokens are now derived from the
-  client id, the client secret, the shop and their rank, and lsf takes back one of an earlier run.
-  A token revoked in the run stays revoked ([tokens](docs/admin.md#tokens)).
+- **A backend's stored tokens work after lsf restarts.** Tokens are now sealed with the client
+  id and the client secret, and lsf takes back one of an earlier run, in whatever order the
+  backend presents them. A reset, a shop deleted or an uninstall stops it for the installation:
+  no token or refresh token of an earlier run is taken back after it, presented before or not,
+  while those issued after it are, after the next restart too. A token revoked in the run stays
+  revoked ([tokens](docs/admin.md#tokens)).
 - **`billing.require` and `billing.request` work in the loader of a page.** `confirmationUrl` is
   now Shopify's, on the shop's admin, which the library's exit-iframe page accepts. lsf's admin
-  serves that path. After the approval, a `returnUrl` on Shopify's admin or on the app comes back
-  to the app in lsf's admin.
+  serves that path, and the frame's proxy answers it on lsf's origin in a redirect and in
+  `X-Shopify-API-Request-Failure-Reauthorize-Url`, so that a backend's plain redirect stays on
+  lsf. An app with `embedded = false` gets the same path on lsf's origin, with `shop`: it works as
+  it is, outside any frame. After the approval, a `returnUrl` on Shopify's admin or on the app
+  comes back to the app in lsf's admin ([approve a charge](docs/admin.md#approve-a-charge)).
 - **`client_id = ""` is no longer replaced without a word.** lsf takes `SHOPIFY_API_KEY` of the
   environment or of the app's `.env`, and warns when it has to use `lsf-local-client-id` or when
   the two keys differ. The admin names the app by its `handle`, else its `name`.

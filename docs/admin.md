@@ -436,8 +436,16 @@ a Response thrown from a loader carries past `entry.server.tsx`. No local origin
 - `https://cdn.shopify.com/shopifycloud/app-bridge.js` is lsf's App Bridge, and
   `https://cdn.shopify.com/shopifycloud/polaris…` is lsf's `/__lsf/cdn/` (in the pages and in
   `Link`): Shopify's CDN online, lsf's copy offline;
+- each directive of `Content-Security-Policy` that lets the page load from Shopify's CDN
+  (`script-src`, `style-src`, `connect-src`, `font-src`, `img-src`, their `-elem` forms,
+  `default-src`) lets it load from lsf too, since lsf's App Bridge and Polaris come from there;
+  the other directives stay as they are;
 - the backend's origin is the proxy's (in the pages, `Location`, the `shopify-reload` of the
-  bounce page, `X-Shopify-API-Request-Failure-Reauthorize-Url`), so that the frame stays on it.
+  bounce page, `X-Shopify-API-Request-Failure-Reauthorize-Url`), so that the frame stays on it;
+- a URL of Shopify's admin in `Location` or `X-Shopify-API-Request-Failure-Reauthorize-Url`
+  (`https://<shop>/admin/charges/…`, the `confirmationUrl` of a charge) is lsf's admin's, with
+  `shop`: a backend that redirects its frame there plainly reaches lsf's charge page, which then
+  takes the whole window, as Shopify's admin page would.
 
 The backend sees each request as if it came to it (`Host`, `Origin` and `Referer` are its own).
 So the React Router template runs in lsf's admin as it ships: no edit of `entry.server.tsx`,
@@ -562,13 +570,20 @@ shop.
 
 **Tokens survive a restart of lsf.** lsf keeps its tokens in memory, and the backend keeps the
 ones it got in its session storage. So every token lsf issues (offline, expiring offline and its
-refresh token, client credentials) is derived from the client id, the client secret, the shop,
-its kind and its rank: the first offline token of a run is the first of every run. A token lsf
-does not know is looked for among those it would issue next, and taken back: the backend's
-stored session works after lsf restarts, with the scopes the app is installed with now (an
-expiring one for an hour from then), and the terminal says
-`admin:  took back an access token of an earlier run of lsf (shpat_3cbbea…)`. A token revoked
-in the run (an uninstall, a reset, a shop deleted), or one of this run that expired, is never
+refresh token, client credentials) is sealed with a key of the client id and the client secret:
+it holds the shop, the kind, the rank and the epoch of the installation it was issued in, which
+only lsf reads. Until a reset or an uninstall, the installation is in the same epoch every run,
+so the first offline token of a run is the first of every run. A token lsf does not know is
+opened, and one of an earlier run is taken back, in whatever order the backend presents them:
+the backend's stored session works after lsf restarts, with the scopes the app is installed with
+now (an expiring one for an hour from then), and the terminal says
+`admin:  took back an access token of an earlier run of lsf (shpat_3cbbea…)`.
+
+A reset (`DELETE /__lsf/admin`), a shop deleted or an uninstall closes the installation: from
+then on, no token of an earlier run is taken back for it, those the backend had not presented
+yet included, and its refresh tokens are refused too; the `401` says what revoked them. The
+tokens issued after it are of a new epoch, which no earlier run issued, and they are taken back
+after the next restart. A token of this run that expired, was migrated or was retired is never
 taken back; a token of another secret is unknown. Online tokens are not taken back: they last a
 day, and the libraries exchange a new session token after a `401`.
 
@@ -1013,20 +1028,31 @@ const { deliveries } = await webhooks({ topic: "orders/create", resource: order.
 ### Approve a charge
 
 The backend's billing request answers `401` with the charge's `confirmationUrl` in
-`X-Shopify-API-Request-Failure-Reauthorize-Url`, Shopify's, on the shop's admin:
+`X-Shopify-API-Request-Failure-Reauthorize-Url`. For an embedded app it is Shopify's, on the
+shop's admin, as the library's exit-iframe page requires (it refuses a URL with a port, or on
+`http`, so it would refuse lsf's):
 `https://test-1.myshopify.com/admin/charges/5662588352328/1/RecurringApplicationCharge/confirm_recurring_application_charge?signature=…`.
-Its fourth segment is the charge. Charges count from 1 in each shop, so approve that one, on
-its shop:
+lsf takes it to its own page where it passes through lsf: in lsf's admin (the exit-iframe page,
+`redirect(…, {target: "_top"})`, App Bridge's `401`), and in the frame's proxy, which answers
+it on lsf's origin in a redirect and in the header. A request through the frame's origin (the
+`embedded:` line names it), as the page's `fetch` makes it, gets
+`http://127.0.0.1:9292/admin/charges/…?signature=…&shop=test-1.myshopify.com`, which works as
+it is. An app with `embedded = false` gets that form from the API itself, wherever it is
+followed. Its fourth segment is the charge. Charges count from 1 in each shop, so approve that
+one, on its shop:
 
 ```js
 const answer = await callBackend(shop, "POST", "/api/billing/request");
 const confirmation = new URL(answer.headers.get("x-shopify-api-request-failure-reauthorize-url"));
 const charge = confirmation.pathname.split("/")[4];
-await fetch(`${LSF_URL}/__lsf/admin/charges/${charge}/approve?shop=${confirmation.host}`, { method: "POST" });
+const shop = confirmation.searchParams.get("shop") ?? confirmation.host;
+await fetch(`${LSF_URL}/__lsf/admin/charges/${charge}/approve?shop=${shop}`, { method: "POST" });
 ```
 
-In a browser, open the URL on lsf's origin (`confirmation.href.replace(confirmation.origin,
-LSF_URL)`): lsf's admin redirects it to the charge page, `/__lsf/admin/charges/<n>?shop=`. The
+In a browser, open the URL as it is when it is on lsf's origin; Shopify's form, which a test that
+calls the backend directly gets for an embedded app, opens on lsf's origin
+(`confirmation.href.replace(confirmation.origin, LSF_URL)`): `https://<shop>` is Shopify's.
+lsf's admin redirects it to the charge page, `/__lsf/admin/charges/<n>?shop=`. The
 subscription is then `ACTIVE`, and `app_subscriptions/update` is delivered if the app subscribes
 to it. `/decline` declines it.
 
