@@ -497,6 +497,9 @@ pub fn prepare<'s, 'q>(
         return Err(vec![Error::new("This query is too large to execute.")]);
     }
     let variables = coerce_variables(schema, definition, variables)?;
+    if let Some(error) = oversized_input(&document, definition, &variables) {
+        return Err(vec![error]);
+    }
     Ok(Prepared {
         schema,
         document,
@@ -579,6 +582,103 @@ fn coerce_variables(
     } else {
         Err(errors)
     }
+}
+
+/// The most items an input list takes: `nodes(ids:)`, `productVariantsBulkCreate(variants:)`,
+/// any list of an argument, written in the query or given by a variable. Shopify refuses a
+/// longer one before it runs anything, with `MAX_INPUT_SIZE_EXCEEDED` (shopify.dev changelog,
+/// "GraphQL input arrays limited to 250 items"; the wording of the message is lsf's
+/// recollection of Shopify's, not checked against a live shop).
+pub const MAX_INPUT_ITEMS: usize = 250;
+
+/// The error of the first input list of the operation longer than [`MAX_INPUT_ITEMS`], through
+/// its fragments.
+fn oversized_input(
+    document: &ast::Document<'_>,
+    operation: &ast::Operation<'_>,
+    variables: &Map<String, Value>,
+) -> Option<Error> {
+    fn longest_json(value: &Value) -> usize {
+        match value {
+            Value::Array(items) => items
+                .iter()
+                .map(longest_json)
+                .max()
+                .unwrap_or(0)
+                .max(items.len()),
+            Value::Object(fields) => fields.values().map(longest_json).max().unwrap_or(0),
+            _ => 0,
+        }
+    }
+    fn longest(value: &ast::Value<'_>, variables: &Map<String, Value>) -> usize {
+        match &value.kind {
+            ast::ValueKind::Variable(name) => variables.get(*name).map_or(0, longest_json),
+            ast::ValueKind::List(items) => items
+                .iter()
+                .map(|item| longest(item, variables))
+                .max()
+                .unwrap_or(0)
+                .max(items.len()),
+            ast::ValueKind::Object(fields) => fields
+                .iter()
+                .map(|field| longest(&field.value, variables))
+                .max()
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+    fn walk<'d, 'q>(
+        set: &'d ast::SelectionSet<'q>,
+        document: &'d ast::Document<'q>,
+        variables: &Map<String, Value>,
+        seen: &mut Vec<&'q str>,
+    ) -> Option<Error> {
+        for selection in &set.items {
+            let found = match selection {
+                ast::Selection::Field(field) => field
+                    .arguments
+                    .iter()
+                    .find_map(|argument| {
+                        let size = longest(&argument.value, variables);
+                        (size > MAX_INPUT_ITEMS).then(|| {
+                            Error::new(format!(
+                                "The input array size of {size} is greater than the maximum allowed of {MAX_INPUT_ITEMS}."
+                            ))
+                            .with_locations(vec![argument.pos])
+                            .with_path(vec![Value::from(field.name), Value::from(argument.name)])
+                            .with_extension("code", "MAX_INPUT_SIZE_EXCEEDED")
+                        })
+                    })
+                    .or_else(|| walk(&field.selection_set, document, variables, seen)),
+                ast::Selection::InlineFragment(inline) => {
+                    walk(&inline.selection_set, document, variables, seen)
+                }
+                ast::Selection::FragmentSpread(spread) => {
+                    if seen.contains(&spread.name) {
+                        None
+                    } else {
+                        seen.push(spread.name);
+                        document
+                            .fragments()
+                            .find(|fragment| fragment.name == spread.name)
+                            .and_then(|fragment| {
+                                walk(&fragment.selection_set, document, variables, seen)
+                            })
+                    }
+                }
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    walk(
+        &operation.selection_set,
+        document,
+        variables,
+        &mut Vec::new(),
+    )
 }
 
 /// Whether the operation nests deeper than [`parse::MAX_DEPTH`] once its fragments are spread:

@@ -956,3 +956,51 @@ fn deprecated_fields_keep_what_set_them_apart_from_their_successors() {
         json!("8.0")
     );
 }
+
+/// An input list longer than 250 items is refused before anything runs, as Shopify refuses it,
+/// whether the query writes it or a variable gives it: `nodes(ids:)` does not answer `null`s.
+#[test]
+fn input_lists_take_250_items_at_most() {
+    let mut shop = demo();
+    let ids: Vec<String> = (0..251)
+        .map(|n| format!("\"gid://shopify/Product/{n}\""))
+        .collect();
+    let written = run(
+        &mut shop,
+        &format!("{{ nodes(ids: [{}]) {{ id }} }}", ids.join(",")),
+    );
+    assert_eq!(written["data"], Value::Null, "{written}");
+    assert_eq!(
+        written["errors"][0]["extensions"]["code"],
+        json!("MAX_INPUT_SIZE_EXCEEDED")
+    );
+    assert_eq!(
+        written["errors"][0]["message"],
+        json!("The input array size of 251 is greater than the maximum allowed of 250.")
+    );
+    let mut resolver = ShopResolver::new(&mut shop, Registry::standard());
+    let ids: Vec<String> = (0..300)
+        .map(|n| format!("gid://shopify/Product/{n}"))
+        .collect();
+    let variable = graphql::run(
+        crate::admin::schema::admin(),
+        &mut resolver,
+        &Request::new("query($ids: [ID!]!) { nodes(ids: $ids) { id } }")
+            .with_variables(json!({"ids": ids})),
+        None,
+    )
+    .to_json();
+    assert_eq!(
+        variable["errors"][0]["extensions"]["code"],
+        json!("MAX_INPUT_SIZE_EXCEEDED"),
+        "{variable}"
+    );
+    let ids: Vec<String> = (0..250)
+        .map(|n| format!("\"gid://shopify/Product/{n}\""))
+        .collect();
+    let fine = run(
+        &mut shop,
+        &format!("{{ nodes(ids: [{}]) {{ id }} }}", ids.join(",")),
+    );
+    assert_eq!(fine["data"]["nodes"].as_array().map(Vec::len), Some(250));
+}

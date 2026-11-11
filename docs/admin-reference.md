@@ -11,13 +11,18 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
   `locations` and `extensions.code`, `you must provide one of first or last`, `first cannot
   exceed 250. …`, `ACCESS_DENIED`, `THROTTLED`, `MAX_COST_EXCEEDED`. A mutation's validation errors
   are its `userErrors`, and a mutation that fails changes nothing.
+- An input list takes 250 items at most, as on Shopify: `nodes(ids:)` with 251 ids, or any
+  longer list of an argument or a variable, is refused before anything runs, with
+  `MAX_INPUT_SIZE_EXCEEDED` (`The input array size of 251 is greater than the maximum allowed
+  of 250.`; the wording is not checked against a live shop).
 - `extensions.cost`: `requestedQueryCost`, `actualQueryCost` and `throttleStatus`, as Shopify
   computes them, from a leaky bucket per shop and app (`--admin-throttle`). With the header
   `Shopify-GraphQL-Cost-Debug: 1`, also `fields`, the cost of each field as Shopify lists it:
   its `path`, `definedCost`, `requestedTotalCost` and `requestedChildrenCost`, the children
   first.
 - Ids: a record lsf creates has a 13-digit id, as Shopify's do (`gid://shopify/DraftOrder/
-  4…`), the same every run for the same requests.
+  4…`), the same every run for the same requests. In a test shop the ids have up to 14 digits
+  and no other shop gives them ([a shop per test](admin.md#a-shop-per-test)).
 - `extensions.search`: Shopify's warnings when a `query:` names a field the connection does not
   have ("Invalid search field for this query."); the field is then ignored, as on Shopify.
 - Cursors are opaque, and resume as Shopify's do: right after their item in the connection's
