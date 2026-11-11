@@ -76,7 +76,7 @@ pub struct MetafieldIdentifier {
 #[serde(rename_all = "camelCase")]
 pub struct Subscription {
     /// `shopify.app.toml#2` for the second entry of the file; the GID
-    /// (`gid://shopify/WebhookSubscription/1`) for one created through the Admin API.
+    /// (`gid://shopify/WebhookSubscription/<13 digits>`) for one created through the Admin API.
     pub id: String,
     pub source: Source,
     /// The topic as written: `orders/create`.
@@ -517,8 +517,10 @@ impl Registry {
             return Err(errors);
         }
         self.last_id += 1;
+        // 13 digits, as Shopify's and the state's new records' (`state::first_id`).
+        let number = crate::admin::state::first_id("WebhookSubscription") + self.last_id - 1;
         let subscription = Subscription {
-            id: gid("WebhookSubscription", self.last_id),
+            id: gid("WebhookSubscription", number),
             source: Source::AdminApi {
                 shop: shop.to_string(),
             },
@@ -903,6 +905,8 @@ mod tests {
     fn the_registry_creates_updates_and_deletes_per_shop() {
         let mut registry = Registry::new();
         let now = Utc::now();
+        let first = crate::admin::state::first_id("WebhookSubscription");
+        let id = |n: u64| crate::admin::state::gid("WebhookSubscription", first + n);
         let input = SubscriptionInput {
             uri: Some("http://localhost:3000/webhooks".to_string()),
             include_fields: Some(vec!["id".to_string()]),
@@ -917,7 +921,7 @@ mod tests {
                 now,
             )
             .unwrap();
-        assert_eq!(created.id, "gid://shopify/WebhookSubscription/1");
+        assert_eq!(created.id, id(0));
         assert_eq!(created.topic, "products/update");
         // The same address for the same topic is taken; another shop has its own.
         let taken = registry
@@ -936,13 +940,9 @@ mod tests {
         let other = registry
             .create("b.myshopify.com", "PRODUCTS_UPDATE", input, "2026-10", now)
             .unwrap();
-        assert_eq!(other.id, "gid://shopify/WebhookSubscription/2");
+        assert_eq!(other.id, id(1));
         assert_eq!(registry.list("a.myshopify.com").len(), 1);
-        assert!(
-            registry
-                .get("b.myshopify.com", "gid://shopify/WebhookSubscription/1")
-                .is_none()
-        );
+        assert!(registry.get("b.myshopify.com", &id(0)).is_none());
 
         let updated = registry
             .update(
@@ -960,7 +960,7 @@ mod tests {
 
         let record = updated.to_record();
         assert_eq!(record["topic"], "PRODUCTS_UPDATE");
-        assert_eq!(record["legacyResourceId"], "1");
+        assert_eq!(record["legacyResourceId"], json!(first.to_string()));
         assert_eq!(record["format"], "JSON");
         assert_eq!(record["includeFields"], json!(["id"]));
         assert_eq!(record["apiVersion"]["handle"], "2026-10");

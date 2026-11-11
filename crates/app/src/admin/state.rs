@@ -1486,7 +1486,7 @@ fn record_type(record: &Record) -> String {
 /// Where the ids of new records of a counter's group start: a 13-digit number of the group's
 /// name (`DraftOrder/4…`), as lsf-core derives the ids of the store data's records. Ids then
 /// follow one another (`…012`, `…013`).
-fn first_id(group: &str) -> u64 {
+pub(crate) fn first_id(group: &str) -> u64 {
     lsf_core::util::stable_id("new_gid", group)
 }
 
@@ -2021,7 +2021,10 @@ mod tests {
         assert_eq!(state.picture(), before);
         assert!(state.journal.is_none());
         // New ids start where they did, and the next event has the next sequence.
-        assert_eq!(state.new_gid("Product"), gid("Product", first_id("Product")));
+        assert_eq!(
+            state.new_gid("Product"),
+            gid("Product", first_id("Product"))
+        );
         assert_eq!(state.changes().len(), 1);
     }
 
