@@ -164,6 +164,9 @@ product with options lists its variants; each gives one value per option:
   always available. `available` forces the answer either way. `"available": false` alone also
   makes the variant tracked with a quantity of 0, as a sold-out variant is on Shopify, so themes
   show "Sold out". Adding more than the stock to the cart fails as it does on Shopify.
+  `"available": false` with an `inventory_quantity` above 0 is a warning
+  (`unavailable_in_stock`): Shopify never has both. lsf keeps the variant unavailable with its
+  stock, which Horizon shows as "Unavailable".
 - `options` can spell out the order of the values:
   `{ "name": "Size", "values": ["S", "M", "L"] }`. A value can carry a [swatch](#swatches).
 - `selling_plan_groups` and `requires_selling_plan` sell the product by subscription: see
@@ -923,6 +926,7 @@ extensions:
 | `ambiguous_link` | A menu link that points at more than one thing. |
 | `missing_locale_file` (warning) | A language the theme has no `locales/<code>.json` for. |
 | `gift_card_balance` (warning) | A gift card whose balance is above its initial value. |
+| `unavailable_in_stock` (warning) | A variant with `"available": false` and an `inventory_quantity` above 0, which Shopify never has. It stays unavailable, with its stock. The hint says which field to remove. |
 
 `path` is always a JSON pointer into `file`, so the value to fix can be located mechanically.
 
