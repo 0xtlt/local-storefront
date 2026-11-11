@@ -1222,6 +1222,12 @@ impl AdminApi {
         };
         let started = std::time::Instant::now();
         let mut response = graphql::run(version.schema(), &mut resolver, &query, Some(bucket));
+        if request
+            .header("shopify-graphql-cost-debug")
+            .is_some_and(|flag| flag.trim() == "1")
+        {
+            graphql::add_cost_fields(version.schema(), &query, &mut response);
+        }
         response.extensions.extend(resolver.extensions());
         self.count_change(&live, before);
         let events = live.state.take_events();

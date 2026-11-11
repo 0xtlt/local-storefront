@@ -933,44 +933,104 @@ fn destination(input: &Value, previous: Option<&Value>) -> Value {
         .unwrap_or_else(|| json!({"__typename": "DiscountCountryAll", "allCountries": true}))
 }
 
-/// A short summary of a discount of Shopify's types, in the spirit of the admin's ("10% off
-/// entire order"): lsf's wording, the admin's is not published.
-fn summary(discount: &Record) -> String {
+/// The summary of a discount of Shopify's types, as the admin writes it: what it takes off, then
+/// its minimum, joined by " • " ("$5.00 off entire order • Minimum purchase of $50.00",
+/// "10% off 2 products", "Buy 2 items, get 1 item free", "Free shipping on all products"),
+/// amounts in the shop's money format. The short summary is the first part.
+fn summary(discount: &Record, money_format: &str) -> (String, String) {
+    let money = |amount: Option<&Value>| {
+        lsf_core::money::format_money(value::cents(amount), money_format)
+    };
+    let count = |value: Option<&Value>| -> u64 {
+        match value {
+            Some(Value::String(text)) => text.trim().parse().unwrap_or(0),
+            Some(Value::Number(number)) => number.as_u64().unwrap_or(0),
+            _ => 0,
+        }
+    };
+    let items = |n: u64| if n == 1 { "1 item".to_string() } else { format!("{n} items") };
+    let percent = |fraction: Option<&Value>| {
+        let percentage = fraction.and_then(Value::as_f64).unwrap_or(0.0) * 100.0;
+        let rounded = (percentage * 100.0).round() / 100.0;
+        format!("{rounded}%")
+    };
     let kind = text(discount, "__typename").unwrap_or_default();
-    if kind.ends_with("FreeShipping") {
-        return "Free shipping on all products".to_string();
-    }
-    if kind.ends_with("Bxgy") {
-        return "Buy X get Y".to_string();
-    }
     let gets = discount.get("customerGets");
     let value = gets.and_then(|gets| gets.get("value"));
-    let amount = match value
-        .and_then(|value| value.get("__typename"))
-        .and_then(Value::as_str)
-    {
-        Some("DiscountPercentage") => format!(
-            "{}%",
-            value
-                .and_then(|value| value.get("percentage"))
-                .and_then(Value::as_f64)
-                .map_or(0.0, |p| p * 100.0)
-                .round()
-        ),
-        _ => value
-            .and_then(|value| value.pointer("/amount/amount"))
+    let first = if kind.ends_with("FreeShipping") {
+        "Free shipping on all products".to_string()
+    } else if kind.ends_with("Bxgy") {
+        let buys = discount
+            .get("customerBuys")
+            .and_then(|buys| buys.get("value"));
+        let buys = match buys.and_then(|buys| buys.get("__typename")).and_then(Value::as_str) {
+            Some("DiscountPurchaseAmount") => {
+                format!("Spend {}", money(buys.and_then(|buys| buys.get("amount"))))
+            }
+            _ => format!("Buy {}", items(count(buys.and_then(|buys| buys.get("quantity"))))),
+        };
+        let quantity = count(value.and_then(|value| value.pointer("/quantity/quantity")));
+        let effect = value.and_then(|value| value.get("effect"));
+        let effect = match effect.and_then(|effect| effect.get("__typename")).and_then(Value::as_str) {
+            Some("DiscountAmount") => {
+                format!("at {} off", money(effect.and_then(|effect| effect.get("amount"))))
+            }
+            _ => match effect.and_then(|effect| effect.get("percentage")).and_then(Value::as_f64) {
+                Some(fraction) if fraction >= 1.0 => "free".to_string(),
+                _ => format!("at {} off", percent(effect.and_then(|effect| effect.get("percentage")))),
+            },
+        };
+        format!("{buys}, get {} {effect}", items(quantity))
+    } else {
+        let amount = match value
+            .and_then(|value| value.get("__typename"))
             .and_then(Value::as_str)
-            .map_or_else(String::new, str::to_string),
+        {
+            Some("DiscountPercentage") => percent(value.and_then(|value| value.get("percentage"))),
+            _ => money(value.and_then(|value| value.get("amount"))),
+        };
+        let listed = |field: &str| {
+            gets.and_then(|gets| gets.pointer(&format!("/items/{field}")))
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len)
+        };
+        let plural = |n: usize, one: &str| {
+            if n == 1 { format!("1 {one}") } else { format!("{n} {one}s") }
+        };
+        let target = match gets
+            .and_then(|gets| gets.pointer("/items/__typename"))
+            .and_then(Value::as_str)
+        {
+            Some("DiscountCollections") => plural(listed("collections"), "collection"),
+            Some("DiscountProducts") => {
+                plural(listed("products") + listed("productVariants"), "product")
+            }
+            _ => "entire order".to_string(),
+        };
+        format!("{amount} off {target}")
     };
-    let target = match gets
-        .and_then(|gets| gets.pointer("/items/__typename"))
+    let minimum = discount.get("minimumRequirement");
+    let minimum = match minimum
+        .and_then(|minimum| minimum.get("__typename"))
         .and_then(Value::as_str)
     {
-        Some("AllDiscountItems") => "entire order",
-        Some("DiscountCollections") => "collections",
-        _ => "products",
+        Some("DiscountMinimumSubtotal") => Some(format!(
+            "Minimum purchase of {}",
+            money(minimum.and_then(|minimum| minimum.get("greaterThanOrEqualToSubtotal")))
+        )),
+        Some("DiscountMinimumQuantity") => Some(format!(
+            "Minimum quantity of {}",
+            items(count(
+                minimum.and_then(|minimum| minimum.get("greaterThanOrEqualToQuantity"))
+            ))
+        )),
+        _ => None,
     };
-    format!("{amount} off {target}")
+    let full = match minimum {
+        Some(minimum) => format!("{first} • {minimum}"),
+        None => first.clone(),
+    };
+    (full, first)
 }
 
 /// Normalizes a list of tags: trimmed, no blanks, no repeats.
@@ -1445,9 +1505,16 @@ fn apply_input(
         }
     }
     if kind.family != Family::App {
-        let summary = summary(discount);
+        let format = state
+            .shop()
+            .and_then(|shop| shop.get("currencyFormats"))
+            .and_then(|formats| formats.get("moneyFormat"))
+            .and_then(Value::as_str)
+            .unwrap_or("${{amount}}")
+            .to_string();
+        let (summary, short) = summary(discount, &format);
         discount.insert("summary".into(), json!(summary));
-        discount.insert("shortSummary".into(), json!(summary));
+        discount.insert("shortSummary".into(), json!(short));
     }
     discount.insert(
         "status".into(),

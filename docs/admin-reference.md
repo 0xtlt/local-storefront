@@ -12,7 +12,12 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
   exceed 250. …`, `ACCESS_DENIED`, `THROTTLED`, `MAX_COST_EXCEEDED`. A mutation's validation errors
   are its `userErrors`, and a mutation that fails changes nothing.
 - `extensions.cost`: `requestedQueryCost`, `actualQueryCost` and `throttleStatus`, as Shopify
-  computes them, from a leaky bucket per shop and app (`--admin-throttle`).
+  computes them, from a leaky bucket per shop and app (`--admin-throttle`). With the header
+  `Shopify-GraphQL-Cost-Debug: 1`, also `fields`, the cost of each field as Shopify lists it:
+  its `path`, `definedCost`, `requestedTotalCost` and `requestedChildrenCost`, the children
+  first.
+- Ids: a record lsf creates has a 13-digit id, as Shopify's do (`gid://shopify/DraftOrder/
+  4…`), the same every run for the same requests.
 - `extensions.search`: Shopify's warnings when a `query:` names a field the connection does not
   have ("Invalid search field for this query."); the field is then ignored, as on Shopify.
 - Cursors are opaque, and resume as Shopify's do: right after their item in the connection's
@@ -1023,6 +1028,9 @@ checks them (a definition of the `DISCOUNT` owner type applies). The store sync 
 app discount back to the store data's `checkout.discounts` (its Function, title, first code,
 classes and metafields), so the local checkout runs it. Shopify's own types (basic, buy X get Y,
 free shipping, automatic and code) are kept as records: the local checkout runs Functions only.
+Their `summary` is the admin's: what the discount takes off, then its minimum, in the shop's
+money format (`$5.00 off entire order • Minimum purchase of $50.00`, `10% off 2 products`, `Buy
+2 items, get 1 item free`, `Free shipping on all products`), and `shortSummary` its first part.
 Also: `discountAutomaticActivate`/`Deactivate`/`Delete` and the code ones (a discount's `status`
 follows its dates), `discountAutomaticBulkDelete`, `discountCodeBulkActivate`/`Deactivate`/
 `Delete`, `discountRedeemCodeBulkAdd`, `discountCodeRedeemCodeBulkDelete`,

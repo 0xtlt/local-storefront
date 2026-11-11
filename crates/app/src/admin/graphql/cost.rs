@@ -89,6 +89,35 @@ pub(crate) fn shape(schema: &Schema, parent: &str, def: &FieldDef, mutation_root
 
 /// The requested cost of an operation.
 pub(crate) fn requested(context: &Context<'_>, operation: &Operation<'_>) -> u64 {
+    walk(context, operation, None)
+}
+
+/// The fields of an operation's requested cost, as Shopify lists them in `extensions.cost
+/// .fields` for a request with `Shopify-GraphQL-Cost-Debug: 1` (shopify.dev, "GraphQL Admin API
+/// rate limits", "Query cost debugging"): each field's `path` (its response keys), its
+/// `definedCost` (what one of its objects costs by itself), its `requestedTotalCost` (what it
+/// adds to the query, its children and the page sizes above it included) and its
+/// `requestedChildrenCost` (what its children add, `null` for a scalar), the children before
+/// their field. An interface or a union lists what its costliest possible type selects.
+pub(crate) fn requested_fields(context: &Context<'_>, operation: &Operation<'_>) -> Vec<Value> {
+    let mut report = Report {
+        path: Vec::new(),
+        multiplier: 1,
+        fields: Vec::new(),
+    };
+    walk(context, operation, Some(&mut report));
+    report.fields
+}
+
+/// What [`requested_fields`] collects as the cost is computed: where the walk is, how many
+/// times the objects there are counted, and the fields so far.
+struct Report {
+    path: Vec<String>,
+    multiplier: u64,
+    fields: Vec<Value>,
+}
+
+fn walk(context: &Context<'_>, operation: &Operation<'_>, report: Option<&mut Report>) -> u64 {
     let schema = context.schema;
     let (root, mutation) = match operation.kind {
         OperationKind::Mutation => (schema.mutation_type(), true),
@@ -97,7 +126,7 @@ pub(crate) fn requested(context: &Context<'_>, operation: &Operation<'_>) -> u64
     let Some(root) = root.and_then(|name| schema.get(name)) else {
         return 0;
     };
-    selection(context, root, &[&operation.selection_set], mutation, 1, 0)
+    selection(context, root, &[&operation.selection_set], mutation, 1, 0, report)
 }
 
 /// What a selection costs on an object of a type: for an interface or a union, the most it
@@ -109,20 +138,31 @@ fn selection<'a>(
     mutation_root: bool,
     items: u64,
     depth: usize,
+    report: Option<&mut Report>,
 ) -> u64 {
     // Deeper than a query may nest (through fragments), the executor refuses it.
     if depth > MAX_DEPTH {
         return 0;
     }
     if !ty.is_abstract() {
-        return object(context, ty, sets, mutation_root, items, depth);
+        return object(context, ty, sets, mutation_root, items, depth, report);
     }
-    ty.possible_types
+    let costliest = ty
+        .possible_types
         .iter()
         .filter_map(|name| context.schema.get(name))
-        .map(|possible| object(context, possible, sets, false, items, depth))
-        .max()
-        .unwrap_or(0)
+        .map(|possible| {
+            let cost = object(context, possible, sets, false, items, depth, None);
+            (cost, possible)
+        })
+        .max_by_key(|(cost, _)| *cost);
+    match (costliest, report) {
+        (Some((_, possible)), Some(report)) => {
+            object(context, possible, sets, false, items, depth, Some(report))
+        }
+        (Some((cost, _)), None) => cost,
+        (None, _) => 0,
+    }
 }
 
 fn object<'a>(
@@ -132,11 +172,21 @@ fn object<'a>(
     mutation_root: bool,
     items: u64,
     depth: usize,
+    mut report: Option<&mut Report>,
 ) -> u64 {
-    execute::collect_fields(context, Some(&ty.name), sets)
-        .values()
-        .map(|nodes| field(context, ty, nodes, mutation_root, items, depth))
-        .sum()
+    let mut total = 0;
+    for nodes in execute::collect_fields(context, Some(&ty.name), sets).values() {
+        total += field(
+            context,
+            ty,
+            nodes,
+            mutation_root,
+            items,
+            depth,
+            report.as_deref_mut(),
+        );
+    }
+    total
 }
 
 /// The requested cost of a field of an object. `items` is the size of the connection the
@@ -148,6 +198,7 @@ fn field<'a>(
     mutation_root: bool,
     items: u64,
     depth: usize,
+    mut report: Option<&mut Report>,
 ) -> u64 {
     let schema = context.schema;
     let node = nodes[0];
@@ -158,22 +209,57 @@ fn field<'a>(
         return 0;
     };
     let shape = shape(schema, &parent.name, def, mutation_root);
-    let Some(ty) = schema.get(def.ty.named()).filter(|ty| !ty.is_leaf()) else {
-        return shape.fixed;
+    // Where the report is: this field's path, and how often its objects are counted.
+    let outer = report.as_deref_mut().map(|report| {
+        report.path.push(node.response_key().to_string());
+        let outer = (report.multiplier, report.fields.len());
+        if shape.sum_items {
+            report.multiplier = report.multiplier.saturating_mul(items);
+        }
+        outer
+    });
+    let leaf = schema.get(def.ty.named()).is_none_or(TypeDef::is_leaf);
+    let cost = match schema.get(def.ty.named()).filter(|ty| !ty.is_leaf()) {
+        None => shape.fixed,
+        Some(ty) => {
+            let size = if schema.is_connection(&ty.name) {
+                page_size(context, def, node)
+            } else {
+                1
+            };
+            let children = if shape.free_children {
+                0
+            } else {
+                let sets: Vec<&'a SelectionSet<'a>> =
+                    nodes.iter().map(|n| &n.selection_set).collect();
+                selection(context, ty, &sets, false, size, depth + 1, report.as_deref_mut())
+            };
+            let one = shape.per_object + children;
+            shape.fixed + if shape.sum_items { one * items } else { one }
+        }
     };
-    let size = if schema.is_connection(&ty.name) {
-        page_size(context, def, node)
-    } else {
-        1
-    };
-    let children = if shape.free_children {
-        0
-    } else {
-        let sets: Vec<&'a SelectionSet<'a>> = nodes.iter().map(|n| &n.selection_set).collect();
-        selection(context, ty, &sets, false, size, depth + 1)
-    };
-    let one = shape.per_object + children;
-    shape.fixed + if shape.sum_items { one * items } else { one }
+    if let (Some(report), Some((multiplier, first_child))) = (report, outer) {
+        let children: Option<u64> = (!leaf).then(|| {
+            report.fields[first_child..]
+                .iter()
+                .filter(|entry| {
+                    entry["path"]
+                        .as_array()
+                        .is_some_and(|path| path.len() == report.path.len() + 1)
+                })
+                .filter_map(|entry| entry["requestedTotalCost"].as_u64())
+                .sum()
+        });
+        report.fields.push(json!({
+            "path": report.path,
+            "definedCost": shape.fixed + shape.per_object,
+            "requestedTotalCost": cost.saturating_mul(multiplier),
+            "requestedChildrenCost": children,
+        }));
+        report.path.pop();
+        report.multiplier = multiplier;
+    }
+    cost
 }
 
 /// The number of nodes a connection field asks for: `first` or `last`.

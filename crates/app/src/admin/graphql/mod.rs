@@ -667,6 +667,12 @@ impl<'s, 'q> Prepared<'s, 'q> {
         cost::requested(&self.context(), self.operation())
     }
 
+    /// The fields of the requested cost, as `Shopify-GraphQL-Cost-Debug: 1` lists them
+    /// ([`cost::requested_fields`]).
+    pub fn requested_cost_fields(&self) -> Vec<Value> {
+        cost::requested_fields(&self.context(), self.operation())
+    }
+
     /// Runs the operation.
     pub fn execute<R: Resolver>(&self, resolver: &mut R) -> Executed {
         let context = self.context();
@@ -676,6 +682,26 @@ impl<'s, 'q> Prepared<'s, 'q> {
             errors: executed.errors,
             actual_cost: executed.actual_cost,
         }
+    }
+}
+
+/// Adds the fields of the requested cost to `extensions.cost` (`fields`), as Shopify answers a
+/// request with `Shopify-GraphQL-Cost-Debug: 1`. Nothing for a request that does not prepare,
+/// which has no cost.
+pub fn add_cost_fields(schema: &Schema, request: &Request, response: &mut Response) {
+    let Ok(prepared) = prepare(
+        schema,
+        &request.query,
+        request.operation_name.as_deref(),
+        &request.variables,
+    ) else {
+        return;
+    };
+    if let Some(Value::Object(cost)) = response.extensions.get_mut("cost") {
+        cost.insert(
+            "fields".into(),
+            Value::Array(prepared.requested_cost_fields()),
+        );
     }
 }
 

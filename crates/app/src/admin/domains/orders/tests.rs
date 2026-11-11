@@ -1492,6 +1492,8 @@ fn a_completed_draft_keeps_its_discounts_as_manual_applications() {
     );
     assert!(created["extensions"]["lsf"].get("defaulted").is_none(), "{created}");
     let id = draft["id"].as_str().unwrap().to_string();
+    // A new record's id has 13 digits, as Shopify's do.
+    assert_eq!(crate::admin::state::gid_number(&id).to_string().len(), 13, "{id}");
     let completed = run(
         &mut shop,
         "mutation($id: ID!) { draftOrderComplete(id: $id) { draftOrder { order { id totalDiscountsSet { shopMoney { amount } }

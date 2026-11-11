@@ -352,6 +352,12 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 
 ### Fixed
 
+- **New Admin API records have 13-digit ids**, as Shopify's do, the same every run: a draft
+  order, a discount, a refund or a webhook subscription was `…/1`, `…/2`.
+- **Discount summaries read like the admin's**: `$5.00 off entire order • Minimum purchase of
+  $50.00`, in the shop's money format, where lsf wrote `5.0 off entire order`.
+- **`Shopify-GraphQL-Cost-Debug: 1` lists the cost of each field** in `extensions.cost.fields`,
+  as Shopify does. The header was ignored.
 - **A completed draft order keeps its discounts.** `draftOrderComplete` made an order without
   discount applications: each applied discount of the draft is now a `ManualDiscountApplication`
   of the order, with its allocations on the lines, in the API and in the `orders/create` payload.

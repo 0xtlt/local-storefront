@@ -159,6 +159,42 @@ fn pages_products_with_cursors_and_a_query() {
     assert_eq!(cost["throttleStatus"]["maximumAvailable"], json!(20000.0));
 }
 
+/// `Shopify-GraphQL-Cost-Debug: 1` adds the fields of the requested cost to `extensions.cost`,
+/// children first, as Shopify's example lists them; without it, there are none.
+#[test]
+fn the_cost_debug_header_lists_the_cost_of_each_field() {
+    let api = demo_api();
+    let token = default_token(&api);
+    let query = "{ products(first: 10) { edges { node { title } } } }";
+    let body = json!({ "query": query }).to_string();
+    let response = api
+        .handle(&request(
+            "POST",
+            GRAPHQL,
+            &[
+                ("content-type", "application/json"),
+                ("x-shopify-access-token", &token),
+                ("shopify-graphql-cost-debug", "1"),
+            ],
+            body.as_bytes(),
+        ))
+        .unwrap();
+    let answer = json_of(&response);
+    let cost = &answer["extensions"]["cost"];
+    assert_eq!(cost["requestedQueryCost"], json!(12));
+    assert_eq!(
+        cost["fields"],
+        json!([
+            {"path": ["products", "edges", "node", "title"], "definedCost": 0, "requestedTotalCost": 0, "requestedChildrenCost": null},
+            {"path": ["products", "edges", "node"], "definedCost": 1, "requestedTotalCost": 10, "requestedChildrenCost": 0},
+            {"path": ["products", "edges"], "definedCost": 0, "requestedTotalCost": 10, "requestedChildrenCost": 10},
+            {"path": ["products"], "definedCost": 2, "requestedTotalCost": 12, "requestedChildrenCost": 10},
+        ])
+    );
+    let (_, plain) = graphql(&api, &token, query, Value::Null);
+    assert!(plain["extensions"]["cost"].get("fields").is_none());
+}
+
 #[test]
 fn reads_any_record_by_node() {
     let api = demo_api();

@@ -602,8 +602,11 @@ storefront, the checkout and the Function inputs already use.
   resolver applies the `sortKey` and its default on top. The arrays of a record are in the order
   Shopify shows them (variants and media by position, the products of a collection in its manual
   order).
-- New records get ids from a counter per type that starts above every seeded id
-  (`ShopState::new_gid`; the discount nodes share one counter, as they share ids on Shopify).
+- New records get ids from a counter per type that starts above every seeded id, and at a
+  13-digit number of the type's name at least (`state::first_id`: `stable_id("new_gid",
+  type)`), so that a new draft order, refund or webhook subscription has an id like Shopify's
+  and the seeded products', the same every run (`ShopState::new_gid`; the discount nodes share
+  one counter, as they share ids on Shopify).
 - **An index** finds the records of a type by their `handle` (products, collections, metaobjects,
   pages, blogs, articles, markets, channels) and the orders by their `number`, without reading
   every record (`state::INDEXED`; `ShopState::with_handle`, `handle_taken`, `max_number`, and

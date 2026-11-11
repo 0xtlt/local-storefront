@@ -53,7 +53,7 @@ use crate::admin::graphql::{FieldContext, FieldError};
 use crate::admin::resolve::sort::SortValue;
 use crate::admin::resolve::{Mutation, Registry, UserError, payload};
 use crate::admin::search::SearchValue;
-use crate::admin::state::{Record, ShopState, gid_number, value};
+use crate::admin::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -430,8 +430,21 @@ struct NewTransfer {
 
 /// Makes a draft transfer and its lines. Returns its GID.
 fn insert_transfer(state: &mut ShopState, new: &NewTransfer) -> String {
+    // `#T1`, `#T2`, …: one above the highest of the shop's, whatever the ids.
+    let number = state
+        .all("InventoryTransfer")
+        .filter_map(|transfer| {
+            transfer
+                .get("name")?
+                .as_str()?
+                .strip_prefix("#T")?
+                .parse::<u64>()
+                .ok()
+        })
+        .max()
+        .unwrap_or(0)
+        + 1;
     let id = state.new_gid("InventoryTransfer");
-    let number = gid_number(&id);
     let now = state.timestamp();
     let record = value::object(json!({
         "__typename": "InventoryTransfer",
