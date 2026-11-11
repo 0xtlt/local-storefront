@@ -995,6 +995,179 @@ fn function_run_says_what_a_function_threw_and_a_failed_build_exits_with_1() {
     }
 }
 
+/// `--save-input` writes the input of a scenario's run, and `--input` (a file, or `-` for
+/// stdin) runs the Function on it, as Shopify's CLI does, or on a fixture of the unit tests of
+/// Shopify's templates, whose output it checks.
+#[test]
+fn function_run_takes_an_input_and_saves_one() {
+    let app = app_with_a_validation(
+        "input",
+        "  const quantity = input.cart.lines[0].quantity;\n  console.log(`quantity ${quantity}`);\n  \
+         return { operations: quantity > 2 ? [{ validationAdd: { errors: [{ message: 'too many', target: '$.cart' }] } }] : [] };",
+        &[1, 3],
+    );
+    let saved = app.0.join("q3.json");
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "function",
+            "run",
+            "boom",
+            "--scenario",
+            "q3",
+            "--build",
+            "--save-input",
+            saved.to_str().unwrap(),
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(text(&output).contains("wrote "), "{}", text(&output));
+    let input: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&saved).unwrap()).unwrap();
+    assert_eq!(input["cart"]["lines"][0]["quantity"], 3, "{input}");
+
+    // The file, in the Function's folder without naming it.
+    let output = lsf(
+        &app.0.join("extensions/boom"),
+        &[
+            "app",
+            "function",
+            "run",
+            "--input",
+            saved.to_str().unwrap(),
+            "--format",
+            "json",
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let run: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        run["output"]["operations"][0]["validationAdd"]["errors"][0]["message"], "too many",
+        "{run}"
+    );
+    assert_eq!(run["logs"], "quantity 3\n", "{run}");
+
+    // Stdin.
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_lsf"))
+        .args(["app", "function", "run", "boom", "--input", "-"])
+        .current_dir(&app.0)
+        .env_remove("LSF_APP")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(
+        child.stdin.as_mut().unwrap(),
+        br#"{"cart": {"lines": [{"quantity": 1}]}}"#,
+    )
+    .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("logs:\n  quantity 1\n"),
+        "{}",
+        text(&output)
+    );
+
+    // A fixture of Shopify's templates: its output is checked.
+    let fixture = |output: &str| {
+        let path = app.0.join("fixture.json");
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"payload": {{"export": "cart-validations-generate-run", "target": "cart.validations.generate.run", "input": {{"cart": {{"lines": [{{"quantity": 1}}]}}}}, "output": {output}}}}}"#
+            ),
+        )
+        .unwrap();
+        lsf(
+            &app.0,
+            &[
+                "app",
+                "function",
+                "run",
+                "boom",
+                "--input",
+                path.to_str().unwrap(),
+            ],
+        )
+    };
+    let output = fixture(r#"{"operations": []}"#);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("the output is the one the fixture expects"),
+        "{}",
+        text(&output)
+    );
+    let output = fixture(r#"{"operations": [{"validationAdd": {"errors": []}}]}"#);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains("error: the output is not the one the fixture expects"),
+        "{}",
+        text(&output)
+    );
+
+    // An output out of the schema fails, as in a checkout.
+    std::fs::write(
+        app.0.join("bad.json"),
+        r#"{"cart": {"lines": [{"quantity": 3}]}}"#,
+    )
+    .unwrap();
+    app.write(
+        "extensions/boom/src/cart_validations_generate_run.js",
+        "export function cartValidationsGenerateRun(input) {\n  return { operations: [{ validationAdd: { errorz: [] } }] };\n}\n",
+    );
+    let output = lsf(
+        &app.0,
+        &[
+            "app", "function", "run", "boom", "--build", "--input", "bad.json",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains("has no field `errorz`"),
+        "{}",
+        text(&output)
+    );
+
+    // A target `--export` does not name.
+    let output = lsf(
+        &app.0,
+        &[
+            "app", "function", "run", "boom", "--input", "bad.json", "--export", "nope",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(text(&output).contains("--export nope: boom has no such target (it has cart-validations-generate-run (cart.validations.generate.run))"), "{}", text(&output));
+}
+
+/// `app function typegen` writes the types of a JavaScript Function, as Shopify's CLI does.
+#[test]
+fn function_typegen_writes_the_types_of_a_javascript_function() {
+    let app = app_with_a_validation("typegen", "  return { operations: [] };", &[]);
+    app.write(
+        "extensions/boom/package.json",
+        r#"{ "name": "boom", "type": "module", "dependencies": { "@shopify/shopify_function": "2.0.1" },
+  "codegen": { "schema": "schema.graphql", "documents": "src/*.graphql", "generates": { "./generated/api.ts": { "plugins": ["typescript", "typescript-operations"] } } } }"#,
+    );
+    let output = lsf(
+        &app.0.join("extensions/boom/src"),
+        &["app", "function", "typegen"],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let types = std::fs::read_to_string(app.0.join("extensions/boom/generated/api.ts")).unwrap();
+    assert!(types.contains("export type InputQuery"), "{types}");
+    // A Rust or other Function says why it writes nothing.
+    let output = lsf(&app.0, &["app", "function", "typegen", "quantity-limit"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("typegen: quantity-limit: not a JavaScript Function built by lsf"),
+        "{}",
+        text(&output)
+    );
+}
+
 /// A scenario that does not validate is printed once, with its problems indented as a block.
 #[test]
 fn app_check_prints_an_invalid_scenario_once() {

@@ -156,6 +156,9 @@ fn run_on(data: &Path, scenario: &str, step: Step) -> CheckoutResult {
         locale: None,
         step,
         format: Format::Json,
+        input: None,
+        export: None,
+        save_input: None,
     };
     match compute(&dir, Some(data), &[], &args) {
         Ok(ran) => ran.result,

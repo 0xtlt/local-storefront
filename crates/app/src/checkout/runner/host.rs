@@ -100,6 +100,7 @@ pub(super) fn encode_input(input: &Value, msgpack: bool) -> Result<Vec<u8>, Stri
 /// Runs `export` of `module` with `input` (as [`encode_input`] writes it), until `deadline` or
 /// until it ran `fuel` instructions (it then traps, and its count is `fuel`). The
 /// compiled providers are kept in `providers`, for the next runs on the same engine.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     engine: &Engine,
     module: &Module,

@@ -352,7 +352,10 @@ npx local-storefront app function run volume-discount --app ../my-app --session 
 | `--locale <iso>` | | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |
 | `--step <step>` | | `interaction` or `completion` (the default): the step of the buyer journey, what validation Functions read as `buyerJourney.step`. |
 | `--format text` | | Default. Each run, then the checkout. |
-| `--format json` | | The checkout as the checkout page reads it, with every run in `runs`. |
+| `--format json` | | The checkout as the checkout page reads it, with every run in `runs`. With `--input`, the run: `{handle, target, export, input, output, logs, error, instructions}`. |
+| `--input <file>`, `-i` | | Runs one Function on this input, as `shopify app function run --input` does, instead of one built from the store data: a JSON file, or `-` for stdin. Name the Function, or run it in its folder. A fixture of the unit tests of Shopify's templates (`{"payload": {"export", "target", "input", "output"}}`) runs its target, and its `output` must be the run's. The output is checked against the schema of the Function's API and the instruction limit, as in a checkout. |
+| `--export <name>`, `-e` | | The target to run, by its Wasm export (`cart-lines-discounts-generate-run`), as Shopify's `--export`, or by its name (`cart.lines.discounts.generate.run`): for `--input` and `--save-input`, when the Function has several targets. |
+| `--save-input <file>` | | Writes the input lsf built for the run of the Function named (and of `--export`) to this file, for `--input` or for a unit test's fixture. |
 
 Exits with `1` when a Function fails to run, or when a Function named on the command line did not
 run: it says why (no discount names a discount Function, the cart is empty, the `extensions` of
@@ -371,6 +374,21 @@ TypeScript without a build command is built by lsf, without Node: its types
 | Option | Environment variable | What it does |
 |---|---|---|
 | `[handle]...` | | The Functions to build. Every Function of the app when none is given. |
+| `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
+
+### app function typegen
+
+`npx local-storefront app function typegen [handle]... --app <dir>`
+
+Writes the GraphQL types of a JavaScript or TypeScript Function, as `shopify app function
+typegen` does (the `typegen` script of Shopify's templates): the `codegen` section of its
+`package.json`, written as graphql-codegen writes it (`generated/api.ts`), from its
+`schema.graphql` or lsf's schema of its API version, offline. `app function build` writes them
+too. A Rust Function's types come from the `typegen` macro at its build: it writes nothing.
+
+| Option | Environment variable | What it does |
+|---|---|---|
+| `[handle]...` | | The Functions. Without them, the one the current folder is in, else every JavaScript Function. |
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
 
 ### app function schema

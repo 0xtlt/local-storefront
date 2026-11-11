@@ -50,6 +50,21 @@ npx local-storefront app build --app ../my-app      # every extension
 npx local-storefront app dev --app ../my-app --build
 ```
 
+### Coming from Shopify's CLI
+
+| Shopify CLI | lsf | What lsf does not do |
+|---|---|---|
+| `shopify app dev` | `lsf app dev --watch`: the checkout, the customer account and the Admin API, built again at each save ([watch mode](#watch-mode)) | No development store, tunnel or Partner account. The app's web server is yours to start: give its URL with `--app-url`. |
+| `shopify app build` | `lsf app build` | `wasm-opt` is not run on a Rust Function ([Rust Functions](#rust-functions)). |
+| `shopify app function build` | `lsf app function build` | `@shopify/shopify_function` 1.x ([JavaScript Functions](#javascript-and-typescript-functions)). |
+| `shopify app function run` | `lsf app function run --input <file>` (or `-`), `--export <name>`, `--format json`; with `--scenario`, on an input lsf builds from the store data ([run a Function](#run-a-function-without-a-server)) | |
+| `shopify app function replay` | `lsf app function run --scenario <name> --save-input <file>`, then `--input <file>` | No run of a store to replay: lsf does not read Shopify's logs. |
+| `shopify app function typegen` | `lsf app function typegen` | A Rust Function's types come from the `typegen` macro, at its build. |
+| `shopify app function schema` | `lsf app function schema` | The schemas of fulfillment constraints, order routing and pickup generators. |
+| `shopify app webhook trigger` | `lsf app webhook trigger` ([Admin API](admin.md)) | |
+| `shopify app generate extension` | Not covered: copy an extension of the [playground](https://github.com/0xtlt/local-storefront/tree/main/examples/checkout-playground/extensions) ([add a JavaScript Function](#add-a-javascript-function)). | |
+| `shopify app init`, `deploy`, `release`, `versions`, `env`, `config`, `info` | Not covered: they act on Shopify's servers. `lsf app init` writes checkout scenarios, not an app. | |
+
 ### What lsf builds without Node
 
 | Extension | Built by lsf when | Output |
@@ -75,7 +90,9 @@ npx local-storefront app function build --app ../my-app        # every Function
 npx local-storefront app function build discount --app ../my-app
 ```
 
-`--build` and `--watch` build it the same way. The steps are the CLI's:
+`--build` and `--watch` build it the same way, and `lsf app function typegen` writes its types
+alone, as `shopify app function typegen` does (the `typegen` script of Shopify's templates'
+`package.json`). The steps are the CLI's:
 
 1. **Types**: the `codegen` section of its `package.json` (graphql-codegen's config) is written
    as graphql-codegen writes it (`generated/api.ts`), from `schema.graphql`, or, when the
@@ -1318,11 +1335,35 @@ payment method has its placements: `[ACCELERATED_CHECKOUT]` is an express button
 | `--step interaction\|completion` | The step of the buyer journey, which validation Functions read as `buyerJourney.step`: `completion` (default) is the placing of the order, `interaction` is the page and its updates. |
 | `--format json` | The checkout as the page reads it, with every run in `runs`. For tools. |
 | `--build` | Builds the extensions first, as `lsf app build` does: each Function (its build command, or lsf's build of a JavaScript Function), then each UI extension that names its sources. |
+| `--input <file>` | Runs one Function on this input instead, as `shopify app function run --input` does: a JSON file, or `-` for stdin (see below). |
+| `--export <name>` | The target to run, by its Wasm export or its name, when the Function has several: for `--input` and `--save-input`. |
+| `--save-input <file>` | Writes the input lsf built for the run of the Function named to this file. |
 
 It exits with `1` when a Function fails to run (no module, a trap, an output that does not
 parse), or when a Function named on the command line did not run: it says why (no discount
 names a discount Function, the cart is empty, the scenario's `extensions` leaves it out…).
 Errors that a validation Function reports are part of the checkout, not a failure.
+
+### Run a Function on an input
+
+`--save-input` keeps the input lsf builds for a scenario, and `--input` runs a Function on an
+input, without the store data, as `shopify app function run --input` does:
+
+```bash
+npx local-storefront app function run volume-discount --scenario discount-code \
+  --export cart.lines.discounts.generate.run --save-input tests/fixtures/code.json
+npx local-storefront app function run volume-discount --input tests/fixtures/code.json
+cat input.json | npx local-storefront app function run volume-discount --input -
+```
+
+It prints the run (input, output, logs, instructions), and `--format json` the run as JSON. The
+output is checked as in a checkout: against the schema of the API version, and the instruction
+limit. A fixture of the unit tests of Shopify's templates (`tests/fixtures/*.json`,
+`{"payload": {"export", "target", "input", "output"}}`) runs the target it names, and fails
+when its `output` is not the run's (it says `the output is the one the fixture expects` when it
+is). A Function with
+several targets needs `--export` (its export, `cart-lines-discounts-generate-run`, or its name).
+In the Function's folder the handle can be left out.
 
 ## Test it
 

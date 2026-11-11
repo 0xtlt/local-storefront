@@ -39,6 +39,12 @@ enum Subcommand {
     /// schema` does: from the schemas lsf carries, without the network. Run it in the Function's
     /// folder, or name the Function (or give `--path`).
     Schema(schema::SchemaArgs),
+    /// Write the GraphQL types of a JavaScript or TypeScript Function, as `shopify app function
+    /// typegen` does: the `codegen` section of its `package.json` (graphql-codegen's config),
+    /// written as graphql-codegen writes it (`generated/api.ts`), from its `schema.graphql` or
+    /// lsf's schema of its API version, offline. `lsf app function build` does it too. Run it in
+    /// the Function's folder, or name the Functions; every JavaScript Function without either.
+    Typegen(BuildArgs),
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -119,6 +125,24 @@ struct RunArgs {
     /// How to print the result.
     #[arg(long, value_enum, default_value = "text")]
     format: Format,
+
+    /// Run one Function on this input instead of one built from the store data, as
+    /// `shopify app function run --input` does: a JSON file (a fixture of a unit test, one
+    /// `--save-input` wrote), or `-` for stdin. Name the Function, or run it in its folder.
+    #[arg(long, short = 'i', value_name = "FILE|-", conflicts_with_all = ["session", "scenario", "checkout", "locale", "save_input"])]
+    input: Option<String>,
+
+    /// The target to run, by the Wasm export it calls (`cart_lines_discounts_generate_run`), as
+    /// `shopify app function run --export`, or by its name (`cart.lines.discounts.generate.run`):
+    /// for `--input` and `--save-input`, when the Function has several targets.
+    #[arg(long, short = 'e', value_name = "EXPORT")]
+    export: Option<String>,
+
+    /// Write the input lsf built for a run to this file, as JSON, for `--input` or for the
+    /// fixture of a unit test: the run of the Function named (and of `--export` when it has
+    /// several targets).
+    #[arg(long, value_name = "FILE")]
+    save_input: Option<std::path::PathBuf>,
 }
 
 /// `lsf app function build`: builds the Functions, and says what it wrote.
@@ -129,6 +153,65 @@ fn build(args: &BuildArgs) -> Result<ExitCode, String> {
         "lsf app function build",
         checkout::build_functions,
     )
+}
+
+/// `lsf app function typegen`: the types of the JavaScript Functions named, the one of the
+/// current folder, or all of them.
+fn typegen(args: &BuildArgs) -> Result<ExitCode, String> {
+    let app_dir = checkout::app_of(args.app.as_deref(), "lsf app function typegen")?;
+    let app = lsf_app::config::load(&app_dir)?;
+    let current = std::env::current_dir().map_err(|error| error.to_string())?;
+    let functions: Vec<&lsf_app::config::FunctionExtension> = if !args.handles.is_empty() {
+        args.handles
+            .iter()
+            .map(|handle| {
+                schema::function_of(&app, Some(handle), &current, "lsf app function typegen")
+            })
+            .collect::<Result<_, _>>()?
+    } else if let Ok(function) =
+        schema::function_of(&app, None, &current, "lsf app function typegen")
+    {
+        vec![function]
+    } else {
+        app.functions
+            .iter()
+            .filter(|function| function.build() == Some(lsf_app::config::Build::JavaScript))
+            .collect()
+    };
+    if functions.is_empty() {
+        return Err("the app has no JavaScript Function to write the types of".to_string());
+    }
+    let mut failed = false;
+    for function in functions {
+        if function.build() != Some(lsf_app::config::Build::JavaScript) {
+            eprintln!(
+                "typegen: {}: not a JavaScript Function built by lsf: {}",
+                function.handle,
+                if function.dir.join("Cargo.toml").is_file() {
+                    "a Rust Function's types come from the `typegen` macro, at its build"
+                } else {
+                    "its build command writes its types"
+                }
+            );
+            continue;
+        }
+        match lsf_app::checkout::javascript::typegen(function) {
+            Ok(Some(path)) => eprintln!("typegen: {}: {}", function.handle, path.display()),
+            Ok(None) => eprintln!(
+                "typegen: {}: its package.json has no `codegen` section: nothing to write",
+                function.handle
+            ),
+            Err(error) => {
+                eprintln!("error: the typegen of {} failed: {error}", function.handle);
+                failed = true;
+            }
+        }
+    }
+    Ok(if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 /// JSON given on the command line, or the path of a file that holds it.
@@ -151,7 +234,11 @@ pub fn run(
         Subcommand::Run(args) => args,
         Subcommand::Build(args) => return build(&args),
         Subcommand::Schema(args) => return schema::run(&args),
+        Subcommand::Typegen(args) => return typegen(&args),
     };
+    if let Some(input) = &args.input {
+        return run_on_input(&args, input);
+    }
     let Ran {
         app: shopify_app,
         result,
@@ -160,6 +247,9 @@ pub fn run(
         named,
         forced,
     } = compute(theme, data, previews, &args)?;
+    if let Some(file) = &args.save_input {
+        save_input(&result, &args, file)?;
+    }
     let failed = result.runs.iter().any(|run| run.error.is_some());
     // A Function asked for by name that did not run is a failure, with why.
     let not_run: Vec<(String, String)> = args
@@ -235,6 +325,184 @@ pub fn run(
     } else {
         ExitCode::SUCCESS
     })
+}
+
+/// The target of `function` that `--export` names (by its export or its name), else its only
+/// one.
+fn target_of<'a>(
+    function: &'a lsf_app::config::FunctionExtension,
+    export: Option<&str>,
+) -> Result<&'a lsf_app::config::FunctionTarget, String> {
+    let listed = || {
+        function
+            .targets
+            .iter()
+            .map(|target| format!("{} ({})", target.export, target.target))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match export {
+        Some(export) => function
+            .targets
+            .iter()
+            .find(|target| target.export == export || target.target == export)
+            .ok_or_else(|| {
+                format!(
+                    "--export {export}: {} has no such target (it has {})",
+                    function.handle,
+                    listed()
+                )
+            }),
+        None => match function.targets.as_slice() {
+            [one] => Ok(one),
+            [] => Err(format!("{} has no target", function.handle)),
+            _ => Err(format!(
+                "{} has several targets: say which with `--export` ({})",
+                function.handle,
+                listed()
+            )),
+        },
+    }
+}
+
+/// `--input`: runs one Function on the input given, and prints its run.
+fn run_on_input(args: &RunArgs, input: &str) -> Result<ExitCode, String> {
+    let app_dir = &checkout::app_of(args.app.as_deref(), "lsf app function run")?;
+    let (shopify_app, _) = checkout::open(
+        &checkout::AppArgs {
+            app: Some(app_dir.clone()),
+            extensions: args.handles.clone(),
+            build: args.build,
+        },
+        app_dir,
+    )?;
+    if args.handles.len() > 1 {
+        return Err("--input runs one Function: name one".to_string());
+    }
+    let current = std::env::current_dir().map_err(|error| error.to_string())?;
+    let function = schema::function_of(
+        &shopify_app,
+        args.handles.first().map(String::as_str),
+        &current,
+        "lsf app function run --input <file>",
+    )?;
+    let text = if input == "-" {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+            .map_err(|error| format!("--input -: {error}"))?;
+        text
+    } else {
+        std::fs::read_to_string(input).map_err(|error| format!("--input {input}: {error}"))?
+    };
+    let mut input: Json = serde_json::from_str(&text)
+        .map_err(|error| format!("--input {input}: not valid JSON: {error}"))?;
+    // A fixture of the unit tests of Shopify's templates: `{"payload": {"export", "target",
+    // "input", "output"}}`. Its target is the one it names, and its output what the run must
+    // answer.
+    let mut expected = None;
+    let mut export = args.export.clone();
+    if let Some(payload) = input
+        .get("payload")
+        .filter(|payload| payload.get("input").is_some())
+    {
+        let payload = payload.clone();
+        export = export.or_else(|| {
+            payload["target"]
+                .as_str()
+                .or_else(|| payload["export"].as_str())
+                .map(str::to_string)
+        });
+        expected = payload.get("output").cloned();
+        input = payload["input"].clone();
+    }
+    let target = target_of(function, export.as_deref())?;
+    let mut run = pipeline::run_with_input(function, target, input);
+    if let (None, Some(expected), Some(output)) = (&run.error, &expected, &run.output)
+        && !same_json(expected, output)
+    {
+        run.error = Some(format!(
+            "the output is not the one the fixture expects: {}",
+            serde_json::to_string(expected).unwrap_or_default()
+        ));
+    }
+    match args.format {
+        Format::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&run).map_err(|error| error.to_string())?
+        ),
+        Format::Text => {
+            print_run(&run);
+            if run.error.is_none() && expected.is_some() {
+                println!("the output is the one the fixture expects");
+            }
+        }
+    }
+    Ok(if run.error.is_some() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// Whether two JSON values are the same as JavaScript compares them: `10` and `10.0` are.
+fn same_json(a: &Json, b: &Json) -> bool {
+    match (a, b) {
+        (Json::Number(a), Json::Number(b)) => a.as_f64() == b.as_f64(),
+        (Json::Array(a), Json::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_json(a, b))
+        }
+        (Json::Object(a), Json::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(key, value)| b.get(key).is_some_and(|other| same_json(value, other)))
+        }
+        _ => a == b,
+    }
+}
+
+/// `--save-input`: writes the input of the one run the command names to `file`.
+fn save_input(result: &CheckoutResult, args: &RunArgs, file: &Path) -> Result<(), String> {
+    let runs: Vec<&lsf_app::checkout::FunctionRun> = result
+        .runs
+        .iter()
+        .filter(|run| args.handles.is_empty() || args.handles.contains(&run.handle))
+        .filter(|run| {
+            args.export
+                .as_deref()
+                .is_none_or(|export| run.export == export || run.target == export)
+        })
+        .collect();
+    let run = match runs.as_slice() {
+        [run] => run,
+        [] => {
+            return Err(format!(
+                "--save-input {}: no run to save the input of (the Function did not run here)",
+                file.display()
+            ));
+        }
+        many => {
+            let listed: Vec<String> = many
+                .iter()
+                .map(|run| format!("{} · {} ({})", run.handle, run.target, run.export))
+                .collect();
+            return Err(format!(
+                "--save-input {}: {} runs, save one: name its Function, and `--export` for its target ({})",
+                file.display(),
+                many.len(),
+                listed.join(", ")
+            ));
+        }
+    };
+    let json = serde_json::to_string_pretty(&run.input).map_err(|error| error.to_string())?;
+    std::fs::write(file, format!("{json}\n"))
+        .map_err(|error| format!("--save-input {}: {error}", file.display()))?;
+    eprintln!(
+        "wrote {}: the input of {} · {}",
+        file.display(),
+        run.handle,
+        run.target
+    );
+    Ok(())
 }
 
 /// What a run of the Functions comes to.
@@ -537,6 +805,44 @@ fn indent(text: &str) -> String {
         .join("\n")
 }
 
+/// One run, as the text output prints it: its input, output, logs, instructions and error.
+fn print_run(run: &lsf_app::checkout::FunctionRun) {
+    println!("== {} · {} ({})", run.handle, run.target, run.export);
+    println!("input:");
+    println!(
+        "{}",
+        indent(&serde_json::to_string_pretty(&run.input).unwrap_or_default())
+    );
+    match &run.output {
+        Some(output) => {
+            println!("output:");
+            println!(
+                "{}",
+                indent(&serde_json::to_string_pretty(output).unwrap_or_default())
+            );
+        }
+        None => println!("output: none"),
+    }
+    if let Some(exchange) = &run.exchange {
+        println!(
+            "http: {} {} -> {}",
+            exchange.request.method.as_str(),
+            exchange.request.url,
+            exchange.response.status
+        );
+        println!("response body:");
+        println!("{}", indent(&exchange.response.body));
+    }
+    if !run.logs.trim().is_empty() {
+        println!("logs:");
+        println!("{}", indent(run.logs.trim_end()));
+    }
+    println!("instructions: {}", run.instructions);
+    if let Some(error) = &run.error {
+        println!("error: {error}");
+    }
+}
+
 fn print_text(result: &CheckoutResult) {
     let currency = result.cost.currency_code.as_str();
     if result.runs.is_empty() {
@@ -555,40 +861,7 @@ fn print_text(result: &CheckoutResult) {
         println!();
     }
     for run in &result.runs {
-        println!("== {} · {} ({})", run.handle, run.target, run.export);
-        println!("input:");
-        println!(
-            "{}",
-            indent(&serde_json::to_string_pretty(&run.input).unwrap_or_default())
-        );
-        match &run.output {
-            Some(output) => {
-                println!("output:");
-                println!(
-                    "{}",
-                    indent(&serde_json::to_string_pretty(output).unwrap_or_default())
-                );
-            }
-            None => println!("output: none"),
-        }
-        if let Some(exchange) = &run.exchange {
-            println!(
-                "http: {} {} -> {}",
-                exchange.request.method.as_str(),
-                exchange.request.url,
-                exchange.response.status
-            );
-            println!("response body:");
-            println!("{}", indent(&exchange.response.body));
-        }
-        if !run.logs.trim().is_empty() {
-            println!("logs:");
-            println!("{}", indent(run.logs.trim_end()));
-        }
-        println!("instructions: {}", run.instructions);
-        if let Some(error) = &run.error {
-            println!("error: {error}");
-        }
+        print_run(run);
         println!();
     }
 
@@ -770,6 +1043,9 @@ mod tests {
                     locale: Some(locale.to_string()),
                     step: Step::Completion,
                     format: Format::Json,
+                    input: None,
+                    export: None,
+                    save_input: None,
                 }),
             };
             run(&root, Some(&data), &[], args).map(|_| ())
@@ -810,6 +1086,9 @@ mod tests {
                 locale: None,
                 step,
                 format: Format::Json,
+                input: None,
+                export: None,
+                save_input: None,
             };
             let result = compute(&root, Some(&data), &[], &args).unwrap().result;
             let seen = result.runs[0].input["buyerJourney"]["step"].clone();
@@ -906,6 +1185,9 @@ mod tests {
                 locale: None,
                 step: Step::Completion,
                 format: Format::Json,
+                input: None,
+                export: None,
+                save_input: None,
             }),
         };
         let code = run(&root, Some(&data), &[], args).unwrap();
@@ -1028,6 +1310,9 @@ mod tests {
             locale: None,
             step: Step::Completion,
             format: Format::Json,
+            input: None,
+            export: None,
+            save_input: None,
         }
     }
 

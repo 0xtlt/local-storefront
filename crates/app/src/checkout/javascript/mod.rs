@@ -93,6 +93,17 @@ pub fn build(function: &FunctionExtension, app_dir: &Path) -> Result<Built, Stri
     })
 }
 
+/// The typegen of a JavaScript Function alone, as `shopify app function typegen` runs it: the
+/// types of the `codegen` section of its `package.json` (`generated/api.ts`), written when they
+/// changed. Returns their path, or `None` for a Function whose `package.json` has no `codegen`.
+pub fn typegen(function: &FunctionExtension) -> Result<Option<PathBuf>, String> {
+    let package = read_package(&function.dir)?;
+    match plan(&package)? {
+        Some(plan) => types(function, &plan).map(Some),
+        None => Ok(None),
+    }
+}
+
 /// Builds the checkout UI extension `extension` of the app in `app_dir`, as `shopify app build`
 /// bundles it: `dist/<handle>.js`, a minified script. Returns where it wrote it.
 ///

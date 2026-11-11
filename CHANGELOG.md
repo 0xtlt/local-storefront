@@ -295,6 +295,18 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   with its placements. The `payment-methods` scenario of `app init` has PayPal in both
   placements, as Shopify offers it with PayPal Express on.
 
+- **`lsf app function run --input <file>`** runs one Function on a JSON input (`-` for stdin),
+  as `shopify app function run --input` does, without the store data. A fixture of the unit
+  tests of Shopify's templates (`{"payload": {"target", "input", "output"}}`) runs as it is,
+  and its `output` is checked. `--export <name>` picks the target of a Function that has several,
+  as Shopify's `--export` does, and `--save-input <file>` writes the input lsf built for a
+  scenario's run. [Checkout](docs/checkout.md#run-a-function-on-an-input).
+- **`lsf app function typegen`** writes a JavaScript Function's GraphQL types
+  (`generated/api.ts`), offline, as `shopify app function typegen` does: the `typegen` script of
+  Shopify's templates works.
+- **A Shopify CLI to lsf table** in [checkout](docs/checkout.md#coming-from-shopifys-cli): each
+  `shopify app` command, lsf's, and what lsf does not do.
+
 ### Changed
 
 - **A Function runs only through an enabled owner, as on Shopify.** At the shop's checkout (no
