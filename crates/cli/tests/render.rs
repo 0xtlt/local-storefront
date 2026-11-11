@@ -72,3 +72,21 @@ fn a_session_that_names_nothing_of_the_data_is_refused() {
         stderr(&output)
     );
 }
+
+#[test]
+fn the_account_renders_as_serve_answers_it() {
+    let output = render(&["/account", "--customer", "default", "--strict"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("data-lsf-customer=\"jane.doe@example.com\""),
+        "{}",
+        stdout(&output)
+    );
+    assert!(stderr(&output).contains("status 200"), "{}", stderr(&output));
+}
+
+#[test]
+fn the_section_id_of_the_query_renders_that_section() {
+    let output = render(&["/products/organic-cotton-t-shirt?section_id=nope", "--strict"]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+}

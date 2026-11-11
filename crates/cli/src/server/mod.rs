@@ -715,6 +715,47 @@ impl ServerState {
         action(entry)
     }
 
+    /// Answers a `GET` of `path_and_query` as the server does, for a visitor whose session is
+    /// `session`: the status, how many Liquid errors the page has, and the body. `lsf render`
+    /// answers so the pages the server answers itself rather than the theme (`/account`,
+    /// `/recommendations/products`).
+    pub fn answer_get(
+        &self,
+        path_and_query: &str,
+        host: &str,
+        session: Session,
+    ) -> (u16, usize, String) {
+        const ID: &str = "lsf-render";
+        self.with_session(ID, |entry| entry.session = session);
+        let (path, query) = path_and_query
+            .split_once('?')
+            .unwrap_or((path_and_query, ""));
+        let mut headers = HashMap::new();
+        headers.insert(SESSION_HEADER.to_string(), ID.to_string());
+        headers.insert("host".to_string(), host.to_string());
+        let reply = self.dispatch(&Incoming {
+            method: "GET".to_string(),
+            path: path.to_string(),
+            query: params::query_pairs(query),
+            raw_query: query.to_string(),
+            headers,
+            params: Json::Object(Default::default()),
+            body: Default::default(),
+            host: host.to_string(),
+        });
+        let errors = reply
+            .headers
+            .iter()
+            .find(|(name, _)| name == "x-lsf-liquid-errors")
+            .and_then(|(_, count)| count.parse().ok())
+            .unwrap_or(0);
+        (
+            reply.status,
+            errors,
+            String::from_utf8_lossy(&reply.body).into_owned(),
+        )
+    }
+
     pub fn reset_session(&self, id: &str) {
         self.sessions.lock().expect("sessions poisoned").remove(id);
     }

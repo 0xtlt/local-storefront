@@ -131,6 +131,45 @@ pub(super) fn request_for(store: &Store, host: String, path_and_query: &str) -> 
     request
 }
 
+/// What the server answers itself, rather than with a page of the theme, for a path without
+/// its locale: how the summary names it.
+fn answered_by_the_server(path: &str) -> Option<&'static str> {
+    match path {
+        // It stands in for the customer accounts Shopify hosts.
+        "/account" => Some("a page of lsf's (the customer account), not of the theme"),
+        _ if path.starts_with("/account/") => {
+            Some("a page of lsf's (the customer account), not of the theme")
+        }
+        // A section rendered against their own objects (`recommendations`, `predictive_search`).
+        "/recommendations/products" => Some("product recommendations"),
+        "/search/suggest" => Some("predictive search"),
+        _ => None,
+    }
+}
+
+/// What to render: `--section-id`, else the sections the query asks for (`section_id`,
+/// `sections`), as the Section Rendering API does, else the page.
+fn target(args: &Args, request: &Request) -> Target {
+    if let Some(id) = &args.section_id {
+        return Target::Section(id.clone());
+    }
+    if let Some((_, id)) = request.query.iter().find(|(key, _)| key == "section_id") {
+        return Target::Section(id.clone());
+    }
+    let ids: Vec<String> = request
+        .query
+        .iter()
+        .filter(|(key, _)| key == "sections" || key == "sections[]")
+        .flat_map(|(_, value)| value.split(',').map(str::trim).map(str::to_string))
+        .filter(|id| !id.is_empty())
+        .collect();
+    if ids.is_empty() {
+        Target::Page
+    } else {
+        Target::Sections(ids)
+    }
+}
+
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
@@ -144,10 +183,7 @@ pub fn run(
     let store = Arc::new(store);
     let request = request_for(&store, args.host.clone(), &args.path);
 
-    let target = match args.section_id.clone() {
-        Some(id) => Target::Section(id),
-        None => Target::Page,
-    };
+    let target = target(&args, &request);
     let mut session = Session::initial(&store);
     if let Some(input) = session_input(&args)? {
         let mut problems = lsf_core::diagnostics::Diagnostics::new();
@@ -163,6 +199,36 @@ pub fn run(
             print_diagnostics(&problems);
             return Err("the session of --session, --customer or --cart names what the store data does not have".to_string());
         }
+    }
+    // What the server answers itself rather than with a page of the theme: answered as `serve`
+    // answers it.
+    if let Some(what) = answered_by_the_server(&request.path) {
+        let options = crate::server::ServeOptions {
+            // Its Liquid errors go to stderr, as those of a page do.
+            quiet: false,
+            ..super::routes::quiet_options()
+        };
+        let (state, _) = crate::server::ServerState::new(app, options);
+        let path = match &args.section_id {
+            Some(id) if !args.path.contains("section_id=") => format!(
+                "{}{}section_id={}",
+                args.path,
+                if args.path.contains('?') { "&" } else { "?" },
+                lsf_core::urls::encode_component(id)
+            ),
+            _ => args.path.clone(),
+        };
+        let (status, errors, body) = state.answer_get(&path, &args.host, session);
+        println!("{body}");
+        eprintln!(
+            "status {status} · {what} · {}",
+            count(errors, "Liquid error", "Liquid errors")
+        );
+        return Ok(if args.strict && (status >= 400 || errors > 0) {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        });
     }
     // `/robots.txt` is a template too, with rules of its own when the theme has none.
     let rendered = if request.path == "/robots.txt" {

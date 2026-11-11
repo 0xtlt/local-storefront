@@ -78,8 +78,9 @@ enum Command {
     Init(commands::init::Args),
     /// Print the JSON Schema of the store data format.
     Schema(commands::schema::Args),
-    /// List the URLs the store data gives a page to.
-    Routes,
+    /// List the URLs the store data gives a page to. `--all` adds the other languages, a search
+    /// and the sections the theme fetches.
+    Routes(commands::routes::Args),
     /// Parse every Liquid file of the theme and report what would not render on Shopify,
     /// including what Shopify's strict Liquid parser rejects. `--fix` rewrites that markup.
     Check(commands::check::Args),
@@ -119,7 +120,7 @@ fn end_quietly_on_a_closed_pipe(command: &Command) {
             | Command::Profile(_)
             | Command::Validate(_)
             | Command::Schema(_)
-            | Command::Routes
+            | Command::Routes(_)
             | Command::Check(_)
             | Command::Fmt(_)
             | Command::Docs(_)
@@ -164,7 +165,9 @@ fn main() -> ExitCode {
         }
         Command::Init(args) => commands::init::run(&cli.theme, cli.data.as_deref(), args),
         Command::Schema(args) => commands::schema::run(args),
-        Command::Routes => commands::routes::run(&cli.theme, cli.data.as_deref(), previews),
+        Command::Routes(args) => {
+            commands::routes::run(&cli.theme, cli.data.as_deref(), previews, args)
+        }
         Command::Check(args) => commands::check::run(&cli.theme, previews, args),
         Command::Fmt(args) => commands::fmt::run(&cli.theme, args),
         Command::Docs(args) => commands::docs::run(args),
