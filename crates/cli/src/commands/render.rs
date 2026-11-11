@@ -27,6 +27,72 @@ pub struct Args {
     /// Exit with an error when the page contains Liquid errors.
     #[arg(long)]
     strict: bool,
+
+    /// Render as this customer is logged in: the email of a customer of the data, `default`
+    /// for the first one, or `none`. Without it, the store data decides (`session.customer`).
+    #[arg(long, env = "LSF_CUSTOMER", value_name = "EMAIL")]
+    customer: Option<String>,
+
+    /// Put a variant in the cart: its SKU, its id or the handle of its product, with a quantity
+    /// after `=` (`--cart TEE-BLK-M=2`). Repeat it for several lines.
+    #[arg(long, value_name = "VARIANT[=QUANTITY]")]
+    cart: Vec<String>,
+
+    /// The session to render with, as `PUT /__lsf/session` takes it (`customer`, `cart`,
+    /// `country`, `company_location`): JSON, or the path of a JSON file. `--customer` and
+    /// `--cart` apply on top of it.
+    #[arg(long, value_name = "JSON|FILE")]
+    session: Option<String>,
+}
+
+/// The session `--session`, `--customer` and `--cart` describe, in the data format.
+fn session_input(args: &Args) -> Result<Option<lsf_core::store::model::SessionInput>, String> {
+    use lsf_core::store::model::{CartInput, CartLineInput, SessionInput};
+    if args.session.is_none() && args.customer.is_none() && args.cart.is_empty() {
+        return Ok(None);
+    }
+    let mut input = match &args.session {
+        None => SessionInput::default(),
+        Some(text) => {
+            let source = if text.trim_start().starts_with('{') {
+                text.clone()
+            } else {
+                std::fs::read_to_string(text)
+                    .map_err(|error| format!("cannot read the session {text}: {error}"))?
+            };
+            let json = lsf_core::json::parse_lenient("--session", &source)
+                .map_err(|error| error.to_string())?;
+            serde_json::from_value(json)
+                .map_err(|error| format!("--session is not a session: {error}"))?
+        }
+    };
+    if let Some(customer) = &args.customer {
+        input.customer = Some(customer.clone());
+    }
+    for line in &args.cart {
+        let (variant, quantity) = match line.rsplit_once('=') {
+            Some((variant, quantity)) => (
+                variant,
+                quantity.trim().parse::<u32>().map_err(|_| {
+                    format!("--cart {line}: the quantity after = must be a whole number")
+                })?,
+            ),
+            None => (line.as_str(), 1),
+        };
+        let variant = match variant.trim().parse::<u64>() {
+            Ok(id) => serde_json::json!(id),
+            Err(_) => serde_json::json!(variant.trim()),
+        };
+        let line: CartLineInput =
+            serde_json::from_value(serde_json::json!({"variant": variant, "quantity": quantity}))
+                .map_err(|error| format!("--cart {line}: {error}"))?;
+        input
+            .cart
+            .get_or_insert_with(CartInput::default)
+            .items
+            .push(line);
+    }
+    Ok(Some(input))
 }
 
 /// The request for a path given on the command line, with its query string.
@@ -76,13 +142,28 @@ pub fn run(
     let (store, diagnostics) = app.load_store();
     print_diagnostics(&diagnostics);
     let store = Arc::new(store);
-    let request = request_for(&store, args.host, &args.path);
+    let request = request_for(&store, args.host.clone(), &args.path);
 
-    let target = match args.section_id {
+    let target = match args.section_id.clone() {
         Some(id) => Target::Section(id),
         None => Target::Page,
     };
-    let session = Session::initial(&store);
+    let mut session = Session::initial(&store);
+    if let Some(input) = session_input(&args)? {
+        let mut problems = lsf_core::diagnostics::Diagnostics::new();
+        lsf_core::store::build::apply_session_input(
+            &store,
+            &input,
+            &mut session,
+            &mut problems,
+            "the session",
+            "",
+        );
+        if problems.has_errors() {
+            print_diagnostics(&problems);
+            return Err("the session of --session, --customer or --cart names what the store data does not have".to_string());
+        }
+    }
     // `/robots.txt` is a template too, with rules of its own when the theme has none.
     let rendered = if request.path == "/robots.txt" {
         app.renderer

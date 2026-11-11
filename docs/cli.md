@@ -474,6 +474,9 @@ npx local-storefront render '/collections/all?sort_by=price-ascending' --strict 
 | `--section-id <id>` | Renders one section, as the Section Rendering API does. |
 | `--host <host>` | The host of the URLs in the page. Default `localhost:9292`. |
 | `--strict` | Exits with `1` when the page has Liquid errors, or when nothing is at the path (the theme's 404 page). |
+| `--customer <email>` | Renders with this customer logged in: an email of the data, `default` for the first customer, or `none`. Also `LSF_CUSTOMER`. |
+| `--cart <variant>[=<quantity>]` | Puts a variant in the cart: its SKU, its id, or a product handle for its first variant. Repeatable: `--cart TEE-BLK-M=2 --cart ceramic-mug`. |
+| `--session <json>` | The session as `PUT /__lsf/session` takes it (`customer`, `cart`, `country`, `company_location`), as JSON or the path of a JSON file. `--customer` and `--cart` apply on top. A name the data does not have exits with `2`. |
 
 The HTML goes to stdout. On stderr: each Liquid error and each warning, then a summary.
 
