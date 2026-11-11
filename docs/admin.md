@@ -228,14 +228,15 @@ fixed, without a restart. The fetch function does nothing without `LSF_URL`, and
 then sends its token exchange and its Admin API calls to Shopify. lsf sees the pages fail
 instead: a request of the frame with a session token that fails (`500` when the token exchange
 fails, Shopify's `404` when an Admin API call does; not the library's `401`), while lsf has
-received no token exchange and no Admin API call from the backend since the admin opened the
-app, gets a banner in lsf's admin and a line in its terminal (`admin:  The app's backend
-answered 404 to /app.data, and lsf has received no request from it since the app was opened …
-Start it with LSF_URL=http://127.0.0.1:9292 …`). Only the backend's own calls count: a token
+received no token exchange and no Admin API call from the backend yet, gets a banner in lsf's
+admin and a line in its terminal (`admin:  The app's backend answered 404 to /app.data, and lsf
+has received nothing from it yet … If it was started without LSF_URL … start it with
+LSF_URL=http://127.0.0.1:9292 …`). Only the backend's own calls count: a token
 exchange, OAuth, an Admin API call with a token one of them issued. A test that calls the Admin
 API with the printed token, or the `/__lsf/` endpoints, does not hide a backend that bypasses
-lsf. Each load of the admin starts over, and so does a backend the frame finds stopped: a
-backend restarted without `LSF_URL` is told too. The banner goes with the backend's first call
+lsf. A backend that talked to lsf once is not blamed for a page that fails later (it may reuse a
+stored session and fail for a reason of its own); one the frame finds stopped is watched again,
+so a backend restarted without `LSF_URL` is told too. The banner goes with the backend's first call
 to lsf. Three things of the template to know:
 
 - **Export the route's `headers`.** `export const headers: HeadersFunction = (headersArgs) =>

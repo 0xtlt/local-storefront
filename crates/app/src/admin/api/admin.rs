@@ -737,12 +737,7 @@ impl AdminApi {
             now: Utc::now(),
         };
         let mut tokens = lock(&self.tokens);
-        let url = oauth::launch_url(&cx, &mut tokens, shop, path, user, locale);
-        drop(tokens);
-        if url.is_some() {
-            self.backend.launched();
-        }
-        url
+        oauth::launch_url(&cx, &mut tokens, shop, path, user, locale)
     }
 
     /// Whether a request of the Admin API carries a token issued to the backend (a token
@@ -1377,14 +1372,6 @@ impl AdminApi {
                 self.note_installs(&tokens);
                 response
             };
-            // A launch of the frame, as the admin's: the backend starts over.
-            if path.trim_end_matches('/') == "/__lsf/admin/launch"
-                && response
-                    .as_ref()
-                    .is_some_and(|response| (300..400).contains(&response.status))
-            {
-                self.backend.launched();
-            }
             // A grant may install the app again with fewer scopes, which narrows every token of
             // the installation: the requests waiting on a shop look their token up again.
             if path.trim_end_matches('/') == "/admin/oauth/access_token" {

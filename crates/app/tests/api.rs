@@ -449,10 +449,10 @@ fn exchanges_a_session_token_for_an_access_token() {
 }
 
 /// Only what the backend sends tells that it talks to lsf: a token exchange and the Admin API
-/// calls with the token it got, not a test's calls with the printed token or a test shop's. A
-/// launch of the frame starts over.
+/// calls with the token it got, not a test's calls with the printed token or a test shop's.
+/// Opening the app again does not start over.
 #[test]
-fn the_backend_is_seen_by_its_own_calls_since_the_launch() {
+fn the_backend_is_seen_by_its_own_calls() {
     let api = AdminApi::new(
         &support::demo_store(),
         options(None, Some("http://localhost:3000".to_string())),
@@ -498,21 +498,17 @@ fn the_backend_is_seen_by_its_own_calls_since_the_launch() {
     );
     assert_eq!(watch.calls(), 2);
 
-    // The admin opens the app again: the backend has not talked to lsf since.
+    // The admin opens the app again: what the backend did still counts (it may reuse its
+    // session and call lsf only when it needs to), so a page that fails is not blamed on it.
     assert!(
         api.launch_url(&api.default_shop(), "/app", 1, "en")
             .is_some()
     );
-    assert_eq!(watch.calls(), 0);
     let launched = send(&api, "GET", "/__lsf/admin/launch", Value::Null);
     assert!((300..400).contains(&launched.status), "{}", launched.status);
-    assert_eq!(
-        graphql(&api, &issued, "{ shop { id } }", Value::Null).0,
-        200
-    );
-    assert_eq!(watch.calls(), 1);
-    send(&api, "GET", "/__lsf/admin/launch", Value::Null);
-    assert_eq!(watch.calls(), 0);
+    assert_eq!(watch.calls(), 2);
+    assert_eq!(watch.failed("/app", 500, "http://127.0.0.1:9292"), None);
+    assert_eq!(watch.hint(), None);
 }
 
 #[test]

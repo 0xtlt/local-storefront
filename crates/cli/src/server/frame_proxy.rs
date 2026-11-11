@@ -32,9 +32,9 @@
 //!   template's `isbot` answers `410 Gone`) is Chrome's.
 //!
 //! A request with a session token that fails, while lsf has received no token exchange and no
-//! Admin API call with a token issued to the backend since the frame was launched (or since the
-//! backend could not be reached), is reported to the [`BackendWatch`]: the backend likely sends
-//! them to Shopify (no `LSF_URL`), and lsf's admin and its terminal say so.
+//! Admin API call with a token issued to the backend since lsf started (or since the backend could
+//! not be reached), is reported to the [`BackendWatch`]: the backend may send them to Shopify (no
+//! `LSF_URL`), and lsf's admin and its terminal say so, with an "if".
 //!
 //! The proxy forwards plain HTTP: a WebSocket (Vite's HMR on the app's own port) does not pass,
 //! and the template's HMR has a port of its own. `LSF_ADMIN_FRAME=direct` opens the backend in
