@@ -865,6 +865,7 @@ impl AdminApi {
     /// Seeds every shop again from new store data (the data changed on disk). The webhook
     /// subscriptions the backend made stay: they are the app's setup of the shop, not data.
     pub fn reseed(&self, store: &Store) -> Reseeded {
+        lock(&self.event_snapshots).clear();
         let mut seed = lock(&self.seed);
         let old_default = seed.default_domain().to_string();
         seed.reseed(store, self.app.as_ref());
@@ -956,6 +957,8 @@ impl AdminApi {
         }
         self.webhooks.registry().clear_all();
         self.throttle.reset();
+        // The products are the seed's again: the Events compare with them from the next change.
+        lock(&self.event_snapshots).clear();
         domains
     }
 
@@ -991,6 +994,7 @@ impl AdminApi {
     /// subscriptions deleted.
     pub fn delete_shop(&self, name: &str) -> Result<(String, usize, usize), (u16, String)> {
         let domain = oauth::normalize_shop(name);
+        lock(&self.event_snapshots).remove(&domain);
         let shop = {
             let mut shops = self
                 .shops
@@ -1542,13 +1546,14 @@ impl AdminApi {
         let mut tokens = lock(&self.tokens);
         let now = Utc::now();
         // A token of an earlier run of lsf, which the backend kept.
-        if tokens.lookup(token, now) == Err(TokenError::Unknown) && tokens.recognize(token, now) {
-            if let Some(log) = &self.log {
-                log(&format!(
-                    "took back an access token of an earlier run of lsf ({}…): tokens are the same every run of the app",
-                    &token[..token.len().min(12)]
-                ));
-            }
+        if tokens.lookup(token, now) == Err(TokenError::Unknown)
+            && tokens.recognize(token, now)
+            && let Some(log) = &self.log
+        {
+            log(&format!(
+                "took back an access token of an earlier run of lsf ({}…): tokens are the same every run of the app",
+                &token[..token.len().min(12)]
+            ));
         }
         let looked_up = tokens.lookup(token, now).cloned();
         match looked_up {

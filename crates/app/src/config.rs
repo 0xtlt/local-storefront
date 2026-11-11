@@ -856,6 +856,9 @@ fn load_app_config(app: &mut App) {
     };
     let text = |key: &str| table.get(key).and_then(|v| v.as_str()).map(str::to_string);
     app.name = text("name");
+    // `client_id = ""`, as the app template ships it (a file without the key is not one of
+    // Shopify's CLI: no warning).
+    let declared_empty = text("client_id").is_some_and(|id| id.trim().is_empty());
     app.client_id = text("client_id").filter(|id| !id.trim().is_empty());
     app.handle = text("handle");
     let dotenv_key = crate::admin::auth::dotenv_value(&app.root.join(".env"), "SHOPIFY_API_KEY");
@@ -869,8 +872,12 @@ fn load_app_config(app: &mut App) {
                 (Some(key), _) => (Some(key), ClientIdSource::Environment),
                 (None, Some(key)) => (Some(key), ClientIdSource::DotEnv),
                 (None, None) => {
-                    app.warn_admin(NO_CLIENT_ID.to_string());
-                    (None, ClientIdSource::None)
+                    if declared_empty {
+                        app.warn_admin(NO_CLIENT_ID.to_string());
+                        (None, ClientIdSource::None)
+                    } else {
+                        (None, ClientIdSource::File)
+                    }
                 }
             };
         }
