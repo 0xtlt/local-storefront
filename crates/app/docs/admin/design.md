@@ -714,9 +714,11 @@ field, in order:
    `Money` and `"0.0"` for `Decimal`, the seed's fixed date for `DateTime`, the first enum value,
    or an object of defaults (the first possible type of an abstract one). Its path goes into
    `extensions.lsf.defaulted` (the first 50, with `defaultedCount` past them) and its `Type.field`
-   into `defaultedFields`, except for lists and connections (empty by nature) and inside what lsf
-   builds whole (payloads, objects of defaults). An explicit `null` in a non-null field is a
-   default too.
+   into `defaultedFields`, except inside what lsf builds whole (payloads, objects of defaults). A
+   list or a connection a record lacks is reported too (`Order.agreements`, `Product.events`: lsf
+   does not compute them), unless lsf fills it as things happen (`resolve::SIMULATED_LISTS`:
+   `returns`, `refunds`, `fulfillmentOrders`, …), where missing means none. An explicit `null`
+   in a non-null field is a default too.
 
 **Connections** (`resolve::connection`): the items (GIDs or inline objects) go through the
 field's `query`, its `sortKey`, `reverse`, then `after`/`before`, then `first`/`last`. Shopify's

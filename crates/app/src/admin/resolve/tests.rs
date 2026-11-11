@@ -336,12 +336,13 @@ fn defaults_are_reported() {
             .count()
             <= 60
     );
+    // lsf keeps no `Event`s: the empty list is reported, as every list lsf does not compute.
     assert_eq!(product["events"]["nodes"], json!([]));
     assert_eq!(
         answer["extensions"]["lsf"],
         json!({
-            "defaulted": ["productByHandle.category"],
-            "defaultedFields": ["Product.category"],
+            "defaulted": ["productByHandle.category", "productByHandle.events"],
+            "defaultedFields": ["Product.category", "Product.events"],
         })
     );
 }
@@ -1003,4 +1004,24 @@ fn input_lists_take_250_items_at_most() {
         &format!("{{ nodes(ids: [{}]) {{ id }} }}", ids.join(",")),
     );
     assert_eq!(fine["data"]["nodes"].as_array().map(Vec::len), Some(250));
+}
+
+/// A list lsf does not compute answers empty and is reported in `extensions.lsf.defaulted`, so
+/// that nobody reads "no agreements" for "lsf does not know"; one lsf fills as things happen
+/// (`returns`) is not.
+#[test]
+fn lists_lsf_does_not_compute_are_reported() {
+    let mut shop = demo();
+    let answer = run(
+        &mut shop,
+        "{ orders(first: 1) { nodes { agreements(first: 5) { nodes { id } } events(first: 5) { nodes { id } } returns(first: 5) { nodes { id } } } } }",
+    );
+    let order = &answer["data"]["orders"]["nodes"][0];
+    assert_eq!(order["agreements"]["nodes"], json!([]), "{answer}");
+    let fields = answer["extensions"]["lsf"]["defaultedFields"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{answer}"));
+    assert!(fields.contains(&json!("Order.agreements")), "{answer}");
+    assert!(fields.contains(&json!("Order.events")), "{answer}");
+    assert!(!fields.contains(&json!("Order.returns")), "{answer}");
 }

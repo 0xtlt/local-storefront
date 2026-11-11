@@ -53,6 +53,7 @@ pub fn register(registry: &mut Registry) {
         .field("Metaobject", "field", metaobject_field)
         .field("Metaobject", "values", metaobject_values)
         .field("Metaobject", "thumbnailField", |_, _, _| Ok(Output::Null))
+        .field("Metaobject", "referencedBy", referenced_by)
         .default_text("Metaobject", |_r, record| {
             ["displayName", "handle"]
                 .iter()
@@ -162,6 +163,84 @@ fn metaobject_field(
         Some(Value::Object(field)) => Ok(Output::Object(Obj::inline("MetaobjectField", field))),
         _ => Ok(Output::Null),
     }
+}
+
+/// `Metaobject.referencedBy`: the metafields and the fields of other metaobjects that reference
+/// the entry (a `metaobject_reference`, a `mixed_reference`, or a list of them), as
+/// `MetafieldRelation`s: `key` and `namespace` of the metafield, or the field's key and the
+/// type of the metaobject that has it ("The namespace of the metafield making the reference,
+/// or type of the metaobject"); `name` the name of the definition, else the key; `referencer`
+/// the owner of the metafield, or the metaobject; `target` the entry. Metafields first, in
+/// creation order.
+fn referenced_by(
+    r: &ShopResolver<'_>,
+    ctx: &FieldContext<'_>,
+    object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    let Some(target) = object.key().map(str::to_string) else {
+        return r.connection(ctx, Vec::new());
+    };
+    let state = r.state();
+    let names = |value: &Value| -> bool {
+        value.get("reference").and_then(Value::as_str) == Some(target.as_str())
+            || value
+                .get("references")
+                .and_then(Value::as_array)
+                .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(&target)))
+    };
+    let mut items = Vec::new();
+    for id in state.keys("Metafield") {
+        let Some(metafield) = state.get(id) else {
+            continue;
+        };
+        if !names(&Value::Object(metafield.clone())) {
+            continue;
+        }
+        let key = text(metafield, "key");
+        let name = metafield
+            .get("definition")
+            .and_then(Value::as_str)
+            .and_then(|definition| state.get(definition))
+            .map(|definition| text(definition, "name"))
+            .filter(|name| !name.is_empty())
+            .unwrap_or(key);
+        items.push(json!({
+            "__typename": "MetafieldRelation",
+            "key": key,
+            "namespace": text(metafield, "namespace"),
+            "name": name,
+            "referencer": metafield.get("owner"),
+            "target": target,
+        }));
+    }
+    for id in state.keys("Metaobject") {
+        let Some(entry) = state.get(id) else {
+            continue;
+        };
+        for field in entry
+            .get("fields")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|field| names(field))
+        {
+            let key = field.get("key").and_then(Value::as_str).unwrap_or_default();
+            let name = field
+                .pointer("/definition/name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .unwrap_or(key);
+            items.push(json!({
+                "__typename": "MetafieldRelation",
+                "key": key,
+                "namespace": text(entry, "type"),
+                "name": name,
+                "referencer": id,
+                "target": target,
+            }));
+        }
+    }
+    r.connection(ctx, items)
 }
 
 /// `Metaobject.values`: every field of the definition by key, in alphabetical order, its JSON

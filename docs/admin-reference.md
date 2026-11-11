@@ -30,7 +30,9 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
   and `after: endCursor` answers the next ones, not those a page further).
 - `extensions.lsf`, only lsf's, only when there is something to say: `defaulted`, the paths of
   the fields answered with a default because the store data does not give them (and
-  `defaultedFields`, as `Type.field`), and `notes`, what lsf did not simulate in the request (an
+  `defaultedFields`, as `Type.field`), the empty lists lsf does not compute included
+  (`Order.agreements`, `Order.events`; not `Order.returns`, which lsf fills as returns are made),
+  and `notes`, what lsf did not simulate in the request (an
   input it ignored, a search filter it does not read, a file source it did not download), and
   `localConfirmationUrl`, the page of a billing mutation's `confirmationUrl` on lsf's origin
   ([billing](#billing-discounts-functions-and-bulk-operations)).
@@ -828,7 +830,8 @@ created, updated and deleted; the entries follow), `metaobjectDefinitionDelete` 
 entries), `metaobjectCreate`, `metaobjectUpdate`, `metaobjectUpsert`, `metaobjectDelete`,
 `metaobjectBulkDelete` (done at once: its `job` is `done`); `metaobjects(type:)` with `sortKey`
 and `query` (`fields.<key>:value`), `metaobjectByHandle`, `metaobjectDefinitionByType`,
-`Metaobject.field(key:)` and `values`.
+`Metaobject.field(key:)` and `values`, and `Metaobject.referencedBy`: the metafields and the
+metaobject fields that reference the entry (`namespace` is the metaobject's type for a field).
 
 - `$app:author` is the app's type (`app--<app id>--author` in the answers, as on Shopify). Its
   entries reach the storefront: the theme reads them as `metaobjects['app--<app id>--author']`

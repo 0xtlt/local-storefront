@@ -1557,3 +1557,68 @@ fn a_metaobject_reference_names_a_definition_of_the_shop() {
         json!(["definition", "fieldDefinitions", "0", "validations"])
     );
 }
+
+/// `Metaobject.referencedBy` lists the metafields and the metaobject fields that reference the
+/// entry.
+#[test]
+fn a_metaobject_lists_what_references_it() {
+    let mut shop = rich();
+    let product = shop.keys("Product").next().unwrap().to_string();
+    let created = run(
+        &mut shop,
+        r#"mutation {
+            metaobjectDefinitionCreate(definition: {type: "lsf_designer", fieldDefinitions: [{key: "name", type: "single_line_text_field"}]}) { metaobjectDefinition { id } userErrors { message } }
+        }"#,
+        json!({}),
+    );
+    let definition = created["data"]["metaobjectDefinitionCreate"]["metaobjectDefinition"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{created}"))
+        .to_string();
+    let entry = run(
+        &mut shop,
+        r#"mutation { metaobjectCreate(metaobject: {type: "lsf_designer", handle: "ada", fields: [{key: "name", value: "Ada"}]}) { metaobject { id } } }"#,
+        json!({}),
+    )["data"]["metaobjectCreate"]["metaobject"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let setup = run(
+        &mut shop,
+        r#"mutation($definition: String!, $product: ID!, $entry: String!) {
+            def: metafieldDefinitionCreate(definition: {name: "Designer", namespace: "lsf_test", key: "designer", ownerType: PRODUCT, type: "metaobject_reference", validations: [{name: "metaobject_definition_id", value: $definition}]}) { userErrors { message } }
+            book: metaobjectDefinitionCreate(definition: {type: "lsf_lookbook", fieldDefinitions: [{key: "by", name: "By", type: "metaobject_reference", validations: [{name: "metaobject_definition_id", value: $definition}]}]}) { userErrors { message } }
+            set: metafieldsSet(metafields: [{ownerId: $product, namespace: "lsf_test", key: "designer", type: "metaobject_reference", value: $entry}]) { userErrors { message } }
+        }"#,
+        json!({"definition": definition, "product": product, "entry": entry}),
+    );
+    assert_eq!(setup["data"]["def"]["userErrors"], json!([]), "{setup}");
+    assert_eq!(setup["data"]["book"]["userErrors"], json!([]), "{setup}");
+    assert_eq!(setup["data"]["set"]["userErrors"], json!([]), "{setup}");
+    let book = run(
+        &mut shop,
+        r#"mutation($entry: String!) { metaobjectCreate(metaobject: {type: "lsf_lookbook", handle: "spring", fields: [{key: "by", value: $entry}]}) { metaobject { id } userErrors { message } } }"#,
+        json!({"entry": entry}),
+    );
+    let book = book["data"]["metaobjectCreate"]["metaobject"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{book}"))
+        .to_string();
+    let answer = run(
+        &mut shop,
+        r#"query($id: ID!) { metaobject(id: $id) { referencedBy(first: 5) { nodes { key namespace name referencer { __typename ... on Product { id } ... on Metaobject { id } } target { ... on Metaobject { id } } } } } }"#,
+        json!({"id": entry}),
+    );
+    assert_eq!(
+        answer["data"]["metaobject"]["referencedBy"]["nodes"],
+        json!([
+            {"key": "designer", "namespace": "lsf_test", "name": "Designer", "referencer": {"__typename": "Product", "id": product}, "target": {"id": entry}},
+            {"key": "by", "namespace": "lsf_lookbook", "name": "By", "referencer": {"__typename": "Metaobject", "id": book}, "target": {"id": entry}},
+        ]),
+        "{answer}"
+    );
+    assert!(
+        answer["extensions"]["lsf"].get("defaulted").is_none(),
+        "{answer}"
+    );
+}

@@ -21,8 +21,8 @@
 //!    computed.
 //! 6. Otherwise a default ([`defaults`]): `null`, or for a non-null field an empty list, `""`,
 //!    `0`, `false`, the first enum value, an empty object. Its path goes into
-//!    `extensions.lsf.defaulted`, so that nobody mistakes it for data (lists and connections,
-//!    empty by nature, are not reported).
+//!    `extensions.lsf.defaulted`, so that nobody mistakes it for data (an empty list or
+//!    connection too, unless lsf fills it as things happen: `SIMULATED_LISTS`).
 //!
 //! See "How a field is resolved" and "Writing a resolver or a mutation" in
 //! `crates/app/docs/admin/design.md`.
@@ -135,6 +135,29 @@ struct Report {
     /// Fields of lsf's own for `extensions.lsf` (`localConfirmationUrl`).
     fields: Map<String, Value>,
 }
+
+/// The lists and connections a record has only once something put an item in them, which lsf
+/// simulates: missing, they are empty because nothing happened, and they are not reported as
+/// defaulted. Every other list or connection a record lacks is (`Order.agreements`,
+/// `Product.events`: lsf does not compute them).
+const SIMULATED_LISTS: &[&str] = &[
+    "bundleComponents",
+    "dispositions",
+    "fulfillmentHolds",
+    "fulfillmentOrders",
+    "fulfillments",
+    "lineItems",
+    "merchantRequests",
+    "payouts",
+    "productVariantComponents",
+    "refunds",
+    "requestedOrderEdits",
+    "returns",
+    "reverseDeliveries",
+    "reverseFulfillmentOrders",
+    "storeCreditAccounts",
+    "transactions",
+];
 
 /// How many defaulted paths `extensions.lsf.defaulted` lists; `defaultedFields` names them all.
 const DEFAULTED_PATHS: usize = 50;
@@ -700,15 +723,19 @@ impl<'a> ShopResolver<'a> {
     ) -> Result<Output<Obj>, FieldError> {
         let schema = ctx.schema();
         let named = ctx.ty().named();
-        if schema.is_connection(named) {
-            return self.connection_of(ctx, Vec::new(), reported);
-        }
-        if reported && !ctx.ty().is_list() {
+        let empty_list = ctx.ty().is_list() || schema.is_connection(named);
+        if reported && !(empty_list && SIMULATED_LISTS.contains(&ctx.field_name())) {
+            // A list or a connection lsf does not compute (`Order.agreements`, `Order.events`)
+            // is empty because lsf has nothing, not because the shop has nothing: it is
+            // reported too, unless lsf fills it as things happen ([`SIMULATED_LISTS`]).
             let mut report = self.report.borrow_mut();
             report.defaulted.insert(ctx.path_string());
             report
                 .defaulted_fields
                 .insert(format!("{}.{}", ctx.parent_type(), ctx.field_name()));
+        }
+        if schema.is_connection(named) {
+            return self.connection_of(ctx, Vec::new(), reported);
         }
         Ok(defaults::output(schema, ctx.ty()))
     }
