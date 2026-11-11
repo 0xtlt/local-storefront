@@ -81,8 +81,14 @@ impl ClientIdSource {
 /// The topics of `[[events.subscription]]` lsf delivers.
 pub const EVENT_TOPICS: &[&str] = &["Product"];
 
-/// What the client id is when `shopify.app.toml` has none: the message of the warning.
-pub const NO_CLIENT_ID: &str = "shopify.app.toml has no client_id (client_id = \"\", as the app template ships it), and neither the environment nor the app's .env has SHOPIFY_API_KEY: lsf uses its own client id, lsf-local-client-id, and the admin opens the app at /admin/apps/lsf-local-client-id. The backend's session tokens are refused unless its SHOPIFY_API_KEY is that value. Set client_id (shopify app config link writes it), or SHOPIFY_API_KEY in the app's .env to the backend's.";
+/// What the client id is when `shopify.app.toml` has none: the message of the warning, with
+/// the handle the admin opens the app at.
+pub fn no_client_id(handle: &str) -> String {
+    format!(
+        "shopify.app.toml has no client_id (client_id = \"\", as the app template ships it), and neither the environment nor the app's .env has SHOPIFY_API_KEY: lsf uses its own client id, {id}, and the admin opens the app at /admin/apps/{handle}. The backend's session tokens are refused unless its SHOPIFY_API_KEY is that value. Set client_id (shopify app config link writes it), or SHOPIFY_API_KEY in the app's .env to the backend's.",
+        id = crate::admin::domains::app::LOCAL_CLIENT_ID
+    )
+}
 
 impl App {
     /// The handle lsf's admin names the app by (`/admin/apps/<handle>`): `handle` of
@@ -1023,7 +1029,10 @@ fn load_app_config(app: &mut App) {
                 (None, Some(key)) => (Some(key), ClientIdSource::DotEnv),
                 (None, None) => {
                     if declared_empty {
-                        app.warn_admin(NO_CLIENT_ID.to_string());
+                        let handle = app.admin_handle().unwrap_or_else(|| {
+                            crate::admin::domains::app::LOCAL_CLIENT_ID.to_string()
+                        });
+                        app.warn_admin(no_client_id(&handle));
                         (None, ClientIdSource::None)
                     } else {
                         (None, ClientIdSource::File)
@@ -1807,7 +1816,8 @@ handle = "banner"
         if std::env::var("SHOPIFY_API_KEY").is_err() {
             assert_eq!(app.client_id, None);
             assert_eq!(app.client_id_source, ClientIdSource::None);
-            assert_eq!(app.admin_warnings, vec![NO_CLIENT_ID.to_string()]);
+            assert_eq!(app.admin_warnings, vec![no_client_id("gift-notes-co")]);
+            assert!(app.admin_warnings[0].contains("/admin/apps/gift-notes-co."));
             write(&root, ".env", "SHOPIFY_API_KEY=abc123\n");
             let app = load(&root).unwrap();
             assert_eq!(app.client_id.as_deref(), Some("abc123"));

@@ -469,6 +469,21 @@ pub fn run(
             // An app without extensions is a backend: the `app:` line says so.
             app.diagnostics
                 .retain(|diagnostic| diagnostic.message != lsf_app::config::NO_EXTENSIONS);
+            // `--build --watch`: the watcher builds every Function at start and says how it
+            // went, so a module not built yet is not a problem to print before it.
+            if args.watch && args.app.build {
+                let missing: Vec<(String, String)> = app
+                    .functions
+                    .iter()
+                    .map(|function| (function.handle.clone(), function.missing_build()))
+                    .collect();
+                app.diagnostics.retain(|diagnostic| {
+                    !missing.iter().any(|(handle, message)| {
+                        diagnostic.extension.as_deref() == Some(handle.as_str())
+                            && &diagnostic.message == message
+                    })
+                });
+            }
             checkout::print_app_diagnostics(&app, &selection);
             functions = selection.functions(&app).count();
             summary = Some(app_summary(
