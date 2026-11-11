@@ -82,7 +82,9 @@ pub struct AdminOptions {
     pub app_url: Option<String>,
     pub throttle: ThrottleSetting,
     pub delivery: DeliveryOptions,
-    /// Makes the tokens OAuth issues the same every run (tests). The default tokens are always.
+    /// Makes the tokens OAuth issues the same every run whatever the secret (tests). Without it,
+    /// they are the same every run of an app and its secret ([`Tokens::stable`]), and those of
+    /// an earlier run are taken back. The default tokens are always the same.
     pub token_seed: Option<u64>,
 }
 
@@ -283,7 +285,10 @@ impl AdminApi {
         };
         let throttle = Throttle::new(plan);
         throttle.set_enabled(setting != ThrottleSetting::Off);
-        let mut tokens = token_seed.map_or_else(Tokens::new, Tokens::with_seed);
+        let mut tokens = token_seed.map_or_else(
+            || Tokens::stable(&client_id, &auth.client_secret),
+            Tokens::with_seed,
+        );
         tokens.install(default.domain(), &client_id, &scopes, Utc::now());
         let mut shops = IndexMap::new();
         shops.insert(
@@ -1355,7 +1360,17 @@ impl AdminApi {
             return Err("no X-Shopify-Access-Token header: send the token the server printed when it started".to_string());
         };
         let mut tokens = lock(&self.tokens);
-        let looked_up = tokens.lookup(token, Utc::now()).cloned();
+        let now = Utc::now();
+        // A token of an earlier run of lsf, which the backend kept.
+        if tokens.lookup(token, now) == Err(TokenError::Unknown) && tokens.recognize(token, now) {
+            if let Some(log) = &self.log {
+                log(&format!(
+                    "took back an access token of an earlier run of lsf ({}…): tokens are the same every run of the app",
+                    &token[..token.len().min(12)]
+                ));
+            }
+        }
+        let looked_up = tokens.lookup(token, now).cloned();
         match looked_up {
             Ok(grant) => Ok(grant),
             Err(TokenError::Expired) => Err("the access token expired".to_string()),
