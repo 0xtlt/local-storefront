@@ -494,7 +494,7 @@ change, and `validate` checks them: run it in the app folder, no theme needed
 | a delivery customization | `delivery-options`: standard, express, local delivery and store pickup |
 | a payment customization | `payment-methods`: card, PayPal, cash on delivery and bank deposit in the list; PayPal, Shop Pay and Apple Pay as express buttons (PayPal in both placements, as with PayPal Express on) |
 | a validation Function | `validation`: a big cart, for the Function to refuse |
-| a checkout UI extension | `all-extensions`: a customer, several lines (one with a subscription), a code, shipping options |
+| a checkout UI extension | `all-extensions`: a customer, several lines (one with a subscription), shipping options, and with a discount Function, a discount of it with the code `SAVE10` entered |
 | (always) | `guest`, `customer` (with a note and an attribute), `b2b` (a company customer at another location), `abroad` (another country and language), `subscription`, `pre-order` (a deposit, the rest later), `shop-look`, `large-cart` |
 
 A scenario about one kind of Function runs that Function and the checkout UI extensions, and no
@@ -508,7 +508,7 @@ handle to them. The settings of your Functions are the store data's: the scenari
 with the settings (and the code) `checkout.discounts` gives them. The scenarios are a place to
 start: edit them.
 
-**A discount Function runs in `discount-automatic` and `discount-code` only.** It runs only for a
+**A discount Function runs in `discount-automatic`, `discount-code` and `all-extensions` only.** It runs only for a
 discount that names it ([set up the checkout](#set-up-the-checkout)), and the other scenarios
 (`b2b`, `abroad`, `large-cart`, …) have none: `app check` passes on them without running it. It
 warns only about a Function no scenario ran at all (`warning  <handle>: ran in no scenario, so
@@ -1035,7 +1035,8 @@ the app is installed again.
 of `app dev` only narrows the extensions: the shop's owners still decide which Functions run.
 
 A Function the shop's checkout leaves out is said: the home page warns that the shop has no
-enabled owner of it, the "Functions" dialog of the checkout lists it under "Functions not run",
+enabled owner of it when no scenario runs it either (the scenarios of `app init` name each
+Function, so it says nothing after them), the "Functions" dialog of the checkout lists it under "Functions not run",
 with why, and so does `lsf app function run` (`Not run: …`; `idle` in JSON).
 
 A scenario added or edited while lsf runs is read again without seeding the shops of the Admin

@@ -529,6 +529,12 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 - **`lsf app check` prints a scenario that does not validate once**, its problems indented under
   it, and no longer says `no scenario to check` when the only scenarios are invalid.
   `app function run --scenario` prints them once too.
+- **The home page has no warnings right after `lsf app init`.** It warned, for each Function
+  that is not a discount, that the shop has no customization that runs it, while the scenarios
+  `app init` wrote run each of them. It now warns only about a Function no scenario runs.
+- **`app init`'s `all-extensions` scenario runs the discount Functions.** It entered the code
+  `WELCOME`, which no discount had, and named the discount Functions, which then never ran. It
+  now has a discount of each, with the code `SAVE10` entered, as `discount-code` does.
 
 ## 0.2.0 - 2026-10-30
 

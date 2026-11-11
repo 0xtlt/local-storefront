@@ -314,8 +314,11 @@ fn function_json(
         ));
     }
     // Any other Function runs through an owner the app creates (a payment customization, …): a
-    // shop it was just installed on has none, and its checkout does not run the Function.
+    // shop it was just installed on has none, and its checkout does not run the Function. Said
+    // only when no scenario runs it either (one that names it in `extensions` does, as those
+    // `app init` writes): it is then tried nowhere.
     let owner_note = !store_note
+        && used_by == 0
         && function.owner_type().is_some()
         && owners.get(&function.handle) != Some(&true);
     if let (true, Some(owner)) = (owner_note, function.owner_type()) {
@@ -326,8 +329,8 @@ fn function_json(
             format!(
                 "{}, so the store's checkout does not run it, as on Shopify: the app creates one \
                  (`{}Create`), or the store data declares one, \
-                 `\"checkout\": {{\"functions\": {{\"{}\": {{\"enabled\": true}}}}}}`. The \
-                 scenarios that name it in `extensions` run it anyway",
+                 `\"checkout\": {{\"functions\": {{\"{}\": {{\"enabled\": true}}}}}}`. A \
+                 scenario that names it in `extensions` runs it anyway",
                 if declared {
                     format!("its {words} is disabled")
                 } else {

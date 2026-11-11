@@ -10242,6 +10242,35 @@ fn the_home_page_says_which_functions_the_shop_has_no_enabled_owner_of() {
             .contains("payment customization that runs it"),
         "{payment}"
     );
+
+    // Nor when a scenario runs it, as those of `app init` do: it is tried there.
+    let data = ScenarioData::new(
+        "home-owners-scenario",
+        &[(
+            "payment.json",
+            r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["payment-rules"]}"#,
+        )],
+    );
+    let state = data.server(&[], false);
+    let json = body_json(&get(&state, "/__lsf/checkouts?format=json", "home-owners"));
+    let function = |handle: &str| {
+        json["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|function| function["handle"] == handle)
+            .cloned()
+            .unwrap()
+    };
+    let payment = function("payment-rules");
+    assert!(!payment.to_string().contains("that runs it"), "{payment}");
+    // One no scenario runs is still said.
+    assert!(
+        function("delivery-rules")
+            .to_string()
+            .contains("the shop has no delivery customization that runs it"),
+        "{json}"
+    );
 }
 
 #[test]
