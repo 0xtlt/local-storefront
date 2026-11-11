@@ -171,7 +171,9 @@ it on with these. A test does it for its session alone with `PUT /__lsf/session`
 
 lsf says why, once in the terminal and in the `X-LSF-Reason` header of the page: the app has no
 block of that name, the block is another app's, no app is served (`--app`), `enabled_on` leaves
-the page out, `available_if` is not `true`. A Liquid error in a file of an extension is reported
+the page out, `available_if` is not `true`. An app embed block the theme turns on says so too
+when no app is served. When several blocks of a page render nothing, `X-LSF-Reason` gives them
+all: `3 reasons: … | … | …`. A Liquid error in a file of an extension is reported
 as the theme's are, with its path: `Liquid syntax error (extensions/reviews/snippets/stars line
 1): Unknown tag 'unknowntag'`.
 
@@ -179,8 +181,9 @@ At start, `serve` prints the blocks the theme names that the app does not have
 (`app: warning: ...`, with the name it probably meant), and the blocks no template uses or the
 app embed blocks that are off (`app: note: ...`). The home page of the app
 (`/__lsf/checkouts`) lists its extensions and their blocks. `check --app ../my-app` checks the
-app blocks of the theme, and `app build` checks the extensions as Shopify does when it deploys
-them ([CLI reference](cli.md#app-build)).
+app blocks of the theme, and exits with `1` for one that renders nothing (a block the app does
+not have, one its `enabled_on` keeps out of the template). `app build` checks the extensions as
+Shopify does when it deploys them ([CLI reference](cli.md#app-build)).
 
 With `--live-reload`, open pages reload when a file of an extension changes. The Section
 Rendering API (`?sections=`) renders app blocks as the page does. What differs from Shopify is

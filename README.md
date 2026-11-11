@@ -114,8 +114,9 @@ Guide: [strict Liquid](docs/strict-liquid.md).
 
 **Coming from `shopify theme dev`?** Add `--live-reload` to reload open pages as you edit, and
 leave it off in tests. The store is your JSON files, not a development store. `check` finds the
-Liquid that does not parse, the filters that do not exist, and the snippets, sections and
-translation keys the theme names but does not have. Theme Check's other lint rules
+Liquid that does not parse, the filters that do not exist, the `{% schema %}` Shopify refuses
+on upload, and the snippets, sections, blocks, assets and translation keys the theme names but
+does not have; `--format github` annotates a pull request. Theme Check's other lint rules
 (performance, accessibility) still need `shopify theme check`.
 
 ## Apps
@@ -180,11 +181,11 @@ To see the whole flow with Shopify's own libraries, read
 | `serve` | Serves the theme at <http://127.0.0.1:9292>. With `--app`, it also serves the app's checkout, its customer account and its Admin API. |
 | `init` | Creates `shopify-local/` with a demo store to edit. |
 | `validate` | Checks the store data and the checkout scenarios, with or without a theme. |
-| `check` | Checks every Liquid file, including what Shopify's strict parser rejects. `--fix` rewrites that markup. |
+| `check` | Checks every Liquid file and schema: what Shopify's strict parser rejects, what Shopify refuses on upload. `--fix` rewrites that markup. |
 | `fmt [paths]` | Formats Liquid files as Prettier does. Use `--check` in CI. |
 | `render <path>` | Prints the HTML of one page, without a server. |
 | `profile <path>` | Shows what a page spends its time on, or what it would cost Shopify. |
-| `routes` | Lists the pages the store data creates. |
+| `routes` | Lists the pages the store data creates. `--all` adds the other languages, a search and the sections the theme fetches. |
 | **Apps** | |
 | `app dev --app <dir>` | Serves an app without a theme: its checkout, its customer account and its Admin API. |
 | `app init` | Writes checkout scenarios made for the app's Functions and extensions. |

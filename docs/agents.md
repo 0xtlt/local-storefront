@@ -220,8 +220,9 @@ status 200 · template product · 1 Liquid error · 0 warnings
 
 With `--strict`, exit `1` when the page has Liquid errors, or when nothing is at the path
 (`error: nothing at /x: the page is the theme's 404`). `npx local-storefront routes` lists every
-page of the data, and each one renders: loop over it to check them all. It leaves out
-`/account`, a page of lsf's, which `render --strict` refuses.
+page of the data, and each one renders: loop over it to check them all (`--all` adds the other
+languages, a search and the sections the theme fetches). It leaves out `/account`, a page of
+lsf's, not of the theme.
 
 ### Run the checks in CI
 
@@ -239,22 +240,25 @@ jobs:
           node-version: 24 # 18 or later
           cache: npm
       - run: npm ci
-      - run: npx local-storefront validate
-      - run: npx local-storefront check
+      - run: npx local-storefront validate --format github
+      - run: npx local-storefront check --format github
       - name: Render every page, and fail on a Liquid error
         run: |
-          npx local-storefront routes > /dev/null # stops the step when `routes` cannot run
-          for route in $(npx local-storefront routes); do
-            npx local-storefront render "$route" --strict > /dev/null ||
-              { echo "::error::render failed: $route"; exit 1; }
-          done
+          npx local-storefront routes --all > routes.txt
+          failed=0
+          while read -r route; do
+            npx local-storefront render "$route" --strict --format github > /dev/null || failed=1
+          done < routes.txt
+          exit $failed
 ```
 
 `npm ci` needs `package-lock.json`: commit it with `package.json` after the
 `npm install --save-dev local-storefront` of the setup. Commit `shopify-local/` too, `schema/`
 and `README.md` included: the steps read the store data, and editors read `schema/`, which
-`init` writes again at each run. A `for` over `$(…)` ignores the exit code of `routes`: the
-first line of the step stops it when `routes` fails (a wrong `--theme`). Add
+`init` writes again at each run. `--format github` shows each problem on its line of the pull
+request. `routes --all` adds the other languages, a search and the sections the theme fetches;
+the step stops at once when `routes` fails (a wrong `--theme`), renders every route, and fails
+at the end if one has a Liquid error. Add
 `- run: npx local-storefront fmt --check` only once the theme is formatted: a stock theme is not.
 With browser tests: [testing](testing.md#in-ci).
 

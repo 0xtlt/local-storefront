@@ -63,8 +63,9 @@ npx local-storefront fmt --check    # 28 files to format, 256 already formatted
 ```
 
 `check` finds the Liquid Shopify's strict parser rejects (`check --fix` rewrites it), the filters
-that do not exist, and the snippets, sections and translation keys the theme names but does not
-have. `fmt --check` exits with `1` on a theme nobody formatted, as Horizon is: run
+that do not exist, the `{% schema %}` Shopify refuses on upload (an unknown setting type, a
+`select` default that is not an option), and the snippets, sections, blocks, assets and
+translation keys the theme names but does not have. `fmt --check` exits with `1` on a theme nobody formatted, as Horizon is: run
 `npx local-storefront fmt` once, in a commit of its own.
 
 ## 4. Write a browser test
@@ -136,19 +137,26 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx local-storefront validate
-      - run: npx local-storefront check
+      - run: npx local-storefront validate --format github
+      - run: npx local-storefront check --format github
       # - run: npx local-storefront fmt --check   # once the theme is formatted
       - name: Render every page, and fail on a Liquid error
         run: |
-          npx local-storefront routes > /dev/null
-          for route in $(npx local-storefront routes); do
-            npx local-storefront render "$route" --strict > /dev/null ||
-              { echo "::error::render failed: $route"; exit 1; }
-          done
+          npx local-storefront routes --all > routes.txt
+          failed=0
+          while read -r route; do
+            npx local-storefront render "$route" --strict --format github > /dev/null || failed=1
+          done < routes.txt
+          exit $failed
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
 ```
+
+`--format github` shows each problem on its line of the pull request. `routes --all` lists
+every page, each again in the other languages of the store, a search, and the sections the
+theme fetches (product recommendations, predictive search). The step stops at once if `routes`
+cannot run (a wrong `--theme`), then renders every route, and fails at the end if one of them
+has a Liquid error or is the theme's 404.
 
 ## What `shopify theme dev` does that lsf does not
 
@@ -157,7 +165,8 @@ jobs:
 - **A real store.** The products, customers and orders are your JSON files, not a development
   store's. Nothing is uploaded, and there is no `theme push` or `theme pull`.
 - **Shopify's checkout.** Without an app, `/checkout` sums up the cart.
-- **Theme Check's other rules** (performance, accessibility): use `shopify theme check` for those.
+- **Theme Check's other rules** (performance, accessibility, deprecated tags): use
+  `shopify theme check` for those.
 
 ## Next
 

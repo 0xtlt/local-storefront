@@ -550,15 +550,16 @@ jobs:
           node-version: 24 # 18 or later
           cache: npm
       - run: npm ci
-      - run: npx local-storefront validate # the store data
-      - run: npx local-storefront check # every Liquid file parses, and Shopify's strict parser accepts it
+      - run: npx local-storefront validate --format github # the store data
+      - run: npx local-storefront check --format github # what Shopify refuses on upload
       - name: Render every page, and fail on a Liquid error
         run: |
-          npx local-storefront routes > /dev/null # stops the step when `routes` cannot run
-          for route in $(npx local-storefront routes); do
-            npx local-storefront render "$route" --strict > /dev/null ||
-              { echo "::error::render failed: $route"; exit 1; }
-          done
+          npx local-storefront routes --all > routes.txt
+          failed=0
+          while read -r route; do
+            npx local-storefront render "$route" --strict --format github > /dev/null || failed=1
+          done < routes.txt
+          exit $failed
       # - run: npx local-storefront fmt --check # uncomment once `fmt` has run in its own commit
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
@@ -566,11 +567,13 @@ jobs:
 
 - `check` reads the files and renders none. A Liquid error at render time (a division by zero)
   shows only when the page renders: with `render --strict`, or in a test.
-- `routes` lists every page of the store data, and `render` answers each one, so the loop
-  renders the whole store. `/account`, a page of lsf's, is not listed. A `for` over `$(…)`
-  ignores the exit code of `routes`: the first line of the step stops it when `routes` fails (a
-  wrong `--theme`). Name the variable `route`, not `path`: in zsh, `path` is `PATH`, and the
-  loop would lose `npx`.
+- `routes --all` lists every page of the store data, each again in the other languages, a
+  search, and the sections the theme fetches (product recommendations, predictive search);
+  `render` answers each one, so the loop renders the whole store. `/account`, a page of lsf's,
+  is not listed. The step stops at once when `routes` fails (a wrong `--theme`), renders every
+  route, and fails at the end if one has a Liquid error. Name the variable `route`, not `path`:
+  in zsh, `path` is `PATH`, and the loop would lose `npx`.
+- `--format github` shows each problem on its line of the pull request.
 - `fmt --check` fails on a theme no one has formatted: Shopify's Horizon has 28 files to
   format. Run `npx local-storefront fmt` first, in a commit of its own, then uncomment the step.
 - The steps before Playwright take a few seconds, and fail before the browser tests start.

@@ -1332,6 +1332,26 @@ mod tests {
     }
 
     #[test]
+    fn a_github_annotation_carries_the_setting_the_fix_and_the_hint() {
+        let mut diagnostic = super::Diagnostic::new(
+            "error",
+            "unknown_filter",
+            super::Location {
+                setting: Some("sections.a.settings.code".to_string()),
+                ..super::Location::file("templates/index.json", Some(3))
+            },
+            "unknown filter `upcse`".to_string(),
+        );
+        diagnostic.hint = Some("did you mean \"upcase\"?".to_string());
+        assert_eq!(
+            diagnostic
+                .annotation(std::path::Path::new("theme"))
+                .to_string(),
+            "::error file=theme/templates/index.json,line=3,title=lsf check%3A unknown_filter::sections.a.settings.code: unknown filter `upcse`%0Ahint: did you mean \"upcase\"?"
+        );
+    }
+
+    #[test]
     fn a_report_shows_the_words_that_change() {
         assert_eq!(
             changed_words("'a', b: c and d, e: f", "'a', b: c, e: f"),

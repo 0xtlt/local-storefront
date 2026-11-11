@@ -67,6 +67,17 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
 - **`"available": false` alone makes a variant sold out**: tracked, with a quantity of 0
   (`inventory_management` is `"shopify"`), as on Shopify. In 0.2.0 it was untracked, and themes
   said "Unavailable". A page or a product JSON compared with 0.2.0's can change.
+- **`check` reports what Shopify refuses on upload, and exits with `1` for it.** A
+  `{% schema %}` that does not parse, a setting type Shopify does not have, a setting without
+  its `id` or `label`, two settings with one id, a `select` default that is not an option, a
+  `range` default that is not one of its steps (`invalid_schema`, `unknown_setting_type`,
+  `duplicate_setting_id`); a theme block that `blocks/` does not have (`missing_block`); a `t:`
+  key of a schema missing from the schema locale (`missing_schema_translation`). A section or a
+  block with such a schema also renders a Liquid error, so `render --strict` can fail on a page
+  that passed. Horizon and Dawn have none.
+- **`check --app` exits with `1` for an app block that renders nothing**: a block the app does
+  not have, or one its `enabled_on` or `disabled_on` keeps out of the template. These were
+  warnings, and the check passed.
 
 ### Added
 
@@ -119,6 +130,25 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
   (`missing_section_group`), a literal key of the `t` filter missing from the default locale
   (`missing_translation`). Each has its file, its line and the closest name, in text and in
   `--format json`. Horizon and Dawn have none.
+- **`check` checks the `{% schema %}` of sections and theme blocks**, as Shopify does on
+  upload, and the theme blocks that schemas, JSON templates, section groups and
+  `{% content_for 'block', type: '…' %}` name. Each problem has its line and, for a typo, the
+  name it probably is: `setting "align" is of type "selct"` gives `did you mean "select"?`.
+  A section or block whose schema Shopify refuses also counts as a Liquid error of the page that
+  renders it (`render --strict`, `x-lsf-liquid-errors`, the panel of `--live-reload`): its
+  settings had no default, and nothing said why. [check](docs/cli.md#check).
+- **`check` warns about `asset_url` of a file `assets/` does not have** (`missing_asset`), with
+  the closest name.
+- **`check`, `validate` and `render` take `--format github`**: each problem is a GitHub Actions
+  annotation, shown on its line of the pull request. `validate` gives the line of the value in
+  the file of the store data. [GitHub annotations](docs/cli.md#github-annotations).
+- **`routes --all`** adds every route in the other languages of the store (`/fr/…`), a search
+  that finds a product, and the sections the theme fetches: product recommendations and
+  predictive search. The CI loop of the [theme quickstart](docs/quickstart-theme.md#5-run-it-in-ci)
+  renders them all, and reports every page that fails, not only the first.
+- **`validate` warns about a variant with `"available": false` and stock**
+  (`unavailable_in_stock`): Shopify never has both. lsf keeps it unavailable with its stock,
+  which Horizon shows as "Unavailable", and the hint says which field to remove.
 
 #### Checkout and Functions
 
@@ -516,7 +546,10 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
 #### The command line
 
 - **`lsf serve --help` lists the theme's options first.** The options of an app are under
-  "App (with --app)", those of the Admin API and lsf's admin under their own heading.
+  "App (with --app)", those of the Admin API and lsf's admin under their own heading. Its first
+  line, in `lsf --help` too, is about the theme; the app comes after.
+- **`X-LSF-Reason` gives every reason of the page** when several app blocks render nothing
+  (`3 reasons: … | … | …`). It gave the first.
 - **For contributors, the crates are split along what they need.** `lsf-core` is the store data
   and what the storefront and the app share of it, `lsf-theme` the renderer (the old `lsf-core`),
   `lsf-app` the app (`lsf-checkout` and `lsf-admin` in one crate: `config`, `checkout`, `admin`)
@@ -554,9 +587,15 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
   English for the others.
 - **An unknown filter close to one of Shopify has a hint:** `{{ x | uppercas }}` gives
   `hint: did you mean "upcase"?`, in the text and the JSON of `check`.
-- **`lsf routes` no longer lists `/account`**, a page of lsf's that `render --strict` refuses:
-  a loop of `render --strict` over `routes` passes on a stock theme. `GET /__lsf/status` lists
-  the same routes.
+- **`lsf routes` no longer lists `/account`**, a page of lsf's, not of the theme. `GET
+  /__lsf/status` lists the same routes.
+- **`render /account` answers as `serve` does**, with the customer of `--customer`: it was the
+  theme's 404. `/recommendations/products` and `/search/suggest` are answered as `serve` answers
+  them too, and a `section_id` or `sections` in the query renders those sections.
+- **An app embed block the theme turns on says why it renders nothing without `--app`**, in the
+  terminal and in `X-LSF-Reason`, as an app block does.
+- **`--theme` naming a folder that does not exist says so.** It said the folder "does not look
+  like a theme".
 - **A control API body that is JSON is read as JSON** without `Content-Type: application/json`
   (`fetch` sends a string as `text/plain`): `PUT /__lsf/session` used to read it as a form.
 - **The docs no longer promise classic customer account pages.** `/account/login` and the

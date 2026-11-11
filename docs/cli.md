@@ -26,8 +26,9 @@ Installed with mise, from a release or from source, the command is `lsf`: `lsf s
 
 Results go to stdout; messages and summaries go to stderr. For a tool, `--format json` prints
 one JSON document on stdout: `validate`, `check`, `app check`, `app function run` and
-`app webhook trigger` take it. The other commands print text and refuse `--format`. What each
-one prints: [agents](agents.md#what-each-command-prints).
+`app webhook trigger` take it. For a workflow of GitHub Actions, `--format github` prints
+annotations: `check`, `validate` and `render` take it. The other commands print text and refuse
+`--format`. What each one prints: [agents](agents.md#what-each-command-prints).
 
 ## serve
 
@@ -505,6 +506,12 @@ npx local-storefront render '/collections/all?sort_by=price-ascending' --strict 
 | `--customer <email>` | Renders with this customer logged in: an email of the data, `default` for the first customer, or `none`. Also `LSF_CUSTOMER`. |
 | `--cart <variant>[=<quantity>]` | Puts a variant in the cart: its SKU, its id, or a product handle for its first variant. Repeatable: `--cart TEE-BLK-M=2 --cart ceramic-mug`. |
 | `--session <json>` | The session as `PUT /__lsf/session` takes it (`customer`, `cart`, `country`, `company_location`), as JSON or the path of a JSON file. `--customer` and `--cart` apply on top. A name the data does not have exits with `2`. |
+| `--format github` | Prints each Liquid error as a [GitHub Actions annotation](#github-annotations), on stderr, with its file and line. Default `text`. |
+
+`render` answers a path as `serve` does. A `section_id` or `sections` in the query renders those
+sections, as the Section Rendering API does. `/account` (lsf's page of the customer account),
+`/recommendations/products` and `/search/suggest` are answered by the server, as `serve`
+answers them.
 
 The HTML goes to stdout. On stderr: each Liquid error and each warning, then a summary.
 
@@ -555,6 +562,7 @@ exits with `1` on an error of it.
 | `--app <dir>` | The app to check too (`LSF_APP`). Defaults to the app the current folder is in. |
 | `--format text` | Default. One block per problem, for a person. |
 | `--format json` | One JSON document, for a tool: `errors`, `warnings` and `diagnostics` are those of the data and of the app together (an app's has the code `app` and its extension as `file`), `app` has the app's own when there is one. |
+| `--format github` | One [GitHub Actions annotation](#github-annotations) per problem, on stdout: the file of the store data, and the line of the value. |
 
 The text format:
 
@@ -595,22 +603,35 @@ alone exit with `0`.
 
 `npx local-storefront check`
 
-Parses every Liquid file of the theme and reports what would not render on Shopify:
-syntax errors, unknown filters, what Shopify's strict parser rejects, and what the theme names
-but does not have: a snippet of `render` or `include` (`missing_snippet`), a section of
-`{% section %}` or of a JSON template (`missing_section`), a group of `{% sections %}`
-(`missing_section_group`), a key of the `t` filter that the default locale does not have
-(`missing_translation`). Only names written as literals are checked. It reads `layout/`,
-`templates/`, `sections/`, `blocks/`, `snippets/`, and the `liquid` settings of the JSON
-templates, section groups and `config/settings_data.json`. Guide:
-[strict Liquid](strict-liquid.md).
+Parses every Liquid file of the theme and reports what would not render on Shopify, or what
+Shopify refuses on upload:
+
+- syntax errors, unknown filters, and what Shopify's strict parser rejects;
+- the `{% schema %}` of a section or a theme block that Shopify refuses: JSON that does not
+  parse, a setting type Shopify does not have, a setting without its `id` or `label`, two
+  settings with one id, a `select` or `radio` whose `default` is not one of its `options`, a
+  `range` whose `default` is outside `min` and `max` or not one of its steps, or that has more
+  than 101 steps (`invalid_schema`, `unknown_setting_type`, `duplicate_setting_id`);
+- what the theme names but does not have: a snippet of `render` or `include`
+  (`missing_snippet`), a section of `{% section %}` or of a JSON template (`missing_section`), a
+  group of `{% sections %}` (`missing_section_group`), a theme block of a schema, of a JSON
+  template, of a section group or of `{% content_for 'block', type: … %}` (`missing_block`), a
+  key of the `t` filter that the default locale does not have (`missing_translation`), a `t:` key
+  of a schema that the default schema locale does not have (`missing_schema_translation`);
+- as a warning, a file of `assets/` that `asset_url` names and the theme does not have
+  (`missing_asset`).
+
+Only names written as literals are checked. It reads `layout/`, `templates/`, `sections/`,
+`blocks/`, `snippets/`, and the `liquid` settings of the JSON templates, section groups and
+`config/settings_data.json`. Guide: [strict Liquid](strict-liquid.md).
 
 | Option | What it does |
 |---|---|
 | `--fix` | Rewrites what the strict parser rejects. A file is written only if it has not changed since it was read. Run twice, the second run writes nothing. |
-| `--app <dir>` | Checks the app blocks and app embed blocks the theme names against the [theme app extensions](storefront.md#theme-app-extensions) of this app: a block it does not have is a warning (with the name it probably meant), a block of another app a note. Without it, a note says how many the theme names, not checked. |
+| `--app <dir>` | Checks the app blocks and app embed blocks the theme names against the [theme app extensions](storefront.md#theme-app-extensions) of this app. A block that renders nothing is a problem, and the check exits with `1`: a block the app does not have (with the name it probably meant), an app embed block in a section, a block its `enabled_on` or `disabled_on` keeps out of the template or section group. A block of another app is a note. Without it, a note says how many the theme names, not checked. |
 | `--format text` | Default. One block per problem, for a person. |
 | `--format json` | One JSON document, for a tool. |
+| `--format github` | One [GitHub Actions annotation](#github-annotations) per problem, on stdout. |
 
 ### The text format
 
@@ -698,6 +719,13 @@ counts the others.
 | `unknown_filter` | A filter local-storefront does not know. Either a typo: Shopify skips an unknown filter, and the value comes out unchanged. A filter of Shopify one or two letters away, with the same letters, or a name of another template language (`uppercase`) is in the `hint`. Or a filter of Shopify that local-storefront lacks: [report it](https://github.com/0xtlt/local-storefront/issues). |
 | `block_outside_template` | `{% block %}` outside `layout/` and `templates/` (with `--preview liquid-july-26`). |
 | `invalid_json` | A JSON file that does not parse. |
+| `invalid_schema` | A `{% schema %}` Shopify refuses: JSON that does not parse, a setting without a required key (`id`, `label`, `options` of a `select`, `min`, `max` and `default` of a `range`), a `default` its setting does not take. A section or a block whose schema does not parse loses the defaults of its settings. |
+| `unknown_setting_type` | A setting of a schema whose `type` Shopify does not have. The `hint` gives the closest one. |
+| `duplicate_setting_id` | Two settings of one schema with the same `id`. |
+| `missing_block` | A theme block the theme names and `blocks/` does not have: in the `blocks` or the `presets` of a schema, in a JSON template or a section group, or in `{% content_for 'block', type: '…' %}`. A section with blocks of its own (with a `name`) names its own types. |
+| `missing_schema_translation` | A `t:` key of a schema that the default schema locale (`locales/en.default.schema.json`) does not have: the theme editor shows the key. |
+| `missing_asset` | A warning: `'x.js' \| asset_url` names a file `assets/` does not have (nor `assets/x.js.liquid`). The URL leads to nothing. |
+| `app_block` | With `--app`, an app block that renders nothing (an error), or a block of another app (a note). Without `--app`, a note. |
 | `fix_fallback` | A warning: what the code meant could not be written for this file, so only the fixes that keep the output were. |
 | `classic_customer_accounts` | A warning: the theme has `templates/customers`, the pages of classic customer accounts, which lsf never renders (`/account` stands for Shopify's new customer accounts). The theme is fine on Shopify. |
 
@@ -718,6 +746,19 @@ The diagnostics of the strict parser have more keys:
 | `hint` | For an `unknown_filter`, the filter of Shopify it is probably a typo of: `did you mean "upcase"?`. Absent when none is close. |
 
 Exits with `1` when a problem is left, whatever the format.
+
+### GitHub annotations
+
+`--format github` prints each problem as a workflow command of GitHub Actions, which shows it on
+its line in the pull request:
+
+```text
+::error file=sections/hero.liquid,line=40,title=lsf check%3A unknown_setting_type::setting "align" is of type "selct", which Shopify does not have: Shopify refuses the file%0Ahint: did you mean "select"?
+```
+
+The file is relative to the working directory, where the workflow runs. `validate` and
+`render` take `--format github` too: `validate` names the file of the store data and the line
+of the value, `render` the file and the line of each Liquid error.
 
 ## fmt
 
@@ -777,6 +818,17 @@ Prints the JSON Schema of the store data.
 Lists the URLs the store data gives a page to, one per line. Each one renders: a loop of
 `render --strict` over them checks every page. `/account`, a page of lsf's rather than of the
 theme, is not listed; `GET /__lsf/status` lists the same `routes`.
+
+| Option | What it does |
+|---|---|
+| `--all` | Adds the states a page has beyond its URL: a search that finds the first product (`/search?q=…`), the sections the theme's JavaScript fetches when the theme shows them (product recommendations of the product page, `/recommendations/products?…&section_id=…`; predictive search, `/search/suggest?…&section_id=predictive-search`), and then every route again in each other language of the store (`/fr/…`). |
+
+```bash
+npx local-storefront routes --all > routes.txt
+while read -r route; do
+  npx local-storefront render "$route" --strict > /dev/null || echo "failed: $route"
+done < routes.txt
+```
 
 ## docs
 

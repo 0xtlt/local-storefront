@@ -2,7 +2,7 @@
 
 > local-storefront runs a Shopify theme locally, rendered from JSON store data instead of the Shopify API, with the HTML Shopify renders. It serves the storefront for end-to-end tests, validates store data, finds and fixes what Shopify's strict Liquid parser rejects, formats Liquid as Prettier does, and profiles pages. For a Shopify app, it runs the Functions and checkout UI extensions on a local checkout, and serves a local GraphQL Admin API (2026-10) with OAuth and signed webhooks, to test the app's backend offline. Install with `npm install --save-dev local-storefront`, then `npx local-storefront init` writes store data to edit; run it as `npx local-storefront <command>` (never `npx lsf`, another package).
 
-Commands are non-interactive. Exit codes: 0 nothing to report, 1 something to fix, 2 the command could not run. Results go to stdout, messages to stderr. `--format json` prints one JSON document for `validate`, `check`, `app check`, `app function run` and `app webhook trigger`; `routes` prints one path per line, `render` the HTML; the other commands print text.
+Commands are non-interactive. Exit codes: 0 nothing to report, 1 something to fix, 2 the command could not run. Results go to stdout, messages to stderr. `--format json` prints one JSON document for `validate`, `check`, `app check`, `app function run` and `app webhook trigger`; `--format github` prints GitHub Actions annotations for `check`, `validate` and `render`; `routes` prints one path per line (`--all` adds the other languages, a search and the sections the theme fetches), `render` the HTML; the other commands print text.
 
 The links below are relative to this file. Read the docs of the version you run (`npx local-storefront --version`): installed from npm, they are in `node_modules/local-storefront/` (`llms.txt`, `docs/`); 0.2.0 and earlier ship none, so read them at the tag, `https://raw.githubusercontent.com/0xtlt/local-storefront/v0.2.0/docs/agents.md`. An `lsf` built from a checkout of the repository, not installed from npm, has the docs of that checkout, in its `docs/`, whatever `--version` says.
 
@@ -19,7 +19,7 @@ The links below are relative to this file. Read the docs of the version you run 
 
 - [Data format](docs/data-format.md): how to write the store data
 - [Testing](docs/testing.md): end-to-end tests, sessions, per-test data, slow networks, CI
-- [Strict Liquid](docs/strict-liquid.md): `npx local-storefront check` and `npx local-storefront check --fix`
+- [Strict Liquid](docs/strict-liquid.md): `npx local-storefront check` and `npx local-storefront check --fix`; `check` also reports the `{% schema %}` Shopify refuses, and the snippets, sections, blocks and assets a theme names and does not have ([CLI reference](docs/cli.md#check))
 - [Formatting](docs/formatting.md): `npx local-storefront fmt` and its options
 - [Performance](docs/performance.md): `npx local-storefront profile`, points, Server-Timing
 - [Checkout](docs/checkout.md): `npx local-storefront app dev --app`, `app init` (scenarios), `app check` (for CI: the Functions of every scenario run, and each scenario's `expect` holds: payment methods and express buttons, delivery options, discounts, lines, errors and totals, with `includes`, `excludes` and `equals`), `app function run` (`--input` runs one Function on a JSON input, `--save-input` writes the one lsf built), `app function schema` (a Function's `schema.graphql`, offline) and `app function typegen` (a JavaScript Function's `generated/api.ts`): the Functions and checkout UI extensions of a Shopify app
