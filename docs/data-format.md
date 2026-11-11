@@ -161,8 +161,9 @@ product with options lists its variants; each gives one value per option:
 - **Availability** follows Shopify's rules. A variant with `inventory_quantity` is tracked: it
   is available while the quantity is above zero, or always with
   `"inventory_policy": "continue"`. A variant without `inventory_quantity` is not tracked and
-  always available. `available` forces the answer either way. Adding more than the stock to the
-  cart fails as it does on Shopify.
+  always available. `available` forces the answer either way. `"available": false` alone also
+  makes the variant tracked with a quantity of 0, as a sold-out variant is on Shopify, so themes
+  show "Sold out". Adding more than the stock to the cart fails as it does on Shopify.
 - `options` can spell out the order of the values:
   `{ "name": "Size", "values": ["S", "M", "L"] }`. A value can carry a [swatch](#swatches).
 - `selling_plan_groups` and `requires_selling_plan` sell the product by subscription: see

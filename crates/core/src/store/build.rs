@@ -864,11 +864,15 @@ fn build_products(
                 .as_ref()
                 .or(input.compare_at_price.as_ref())
                 .map(|money| builder.money(money, &variant_origin.child("compare_at_price")));
-            let tracked = variant
-                .inventory_tracked
-                .unwrap_or(variant.inventory_quantity.is_some());
+            let forced = variant.available.or(input.available);
+            // On Shopify an untracked variant is always available: one said to be unavailable
+            // is tracked and out of stock, so that themes show it "Sold out".
+            let tracked = variant.inventory_tracked.unwrap_or(
+                variant.inventory_quantity.is_some()
+                    || (forced == Some(false) && variant.inventory_policy == InventoryPolicy::Deny),
+            );
             let quantity = variant.inventory_quantity.unwrap_or(0);
-            let available = variant.available.or(input.available).unwrap_or(
+            let available = forced.unwrap_or(
                 !tracked || quantity > 0 || variant.inventory_policy == InventoryPolicy::Continue,
             );
             let media_index = match &variant.image {

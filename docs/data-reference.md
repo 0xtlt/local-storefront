@@ -276,9 +276,9 @@ A product variant.
 | `compare_at_price` | [Money](#money) | The price before a sale. Must be higher than `price` to show as a discount. |
 | `sku` | string | Also a convenient way to reference the variant from carts and orders. |
 | `barcode` | string |  |
-| `available` | boolean | Whether the variant can be bought. Derived from the inventory fields when omitted. |
+| `available` | boolean | Whether the variant can be bought. Derived from the inventory fields when omitted. `false` alone makes the variant tracked and out of stock, as a sold-out variant is on Shopify. |
 | `inventory_quantity` | integer | Units in stock. Setting it turns inventory tracking on. |
-| `inventory_tracked` | boolean | Set to `false` to disable inventory tracking (the variant is then always available). Defaults to `true` when `inventory_quantity` is set, `false` otherwise. |
+| `inventory_tracked` | boolean | Set to `false` to disable inventory tracking (the variant is then always available). Defaults to `true` when `inventory_quantity` is set or `available` is `false`, `false` otherwise. |
 | `inventory_policy` | [InventoryPolicy](#inventorypolicy) | Defaults to `"deny"`. |
 | `weight` | integer | Weight in grams. |
 | `weight_unit` | string | The unit the weight is displayed in: `g`, `kg`, `oz` or `lb`. Defaults to `kg`. |

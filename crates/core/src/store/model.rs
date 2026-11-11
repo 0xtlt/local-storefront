@@ -386,13 +386,16 @@ pub struct VariantInput {
     #[serde(default)]
     pub barcode: Option<String>,
     /// Whether the variant can be bought. Derived from the inventory fields when omitted.
+    /// `false` alone makes the variant tracked and out of stock, as a sold-out variant is on
+    /// Shopify.
     #[serde(default)]
     pub available: Option<bool>,
     /// Units in stock. Setting it turns inventory tracking on.
     #[serde(default)]
     pub inventory_quantity: Option<i64>,
     /// Set to `false` to disable inventory tracking (the variant is then always available).
-    /// Defaults to `true` when `inventory_quantity` is set, `false` otherwise.
+    /// Defaults to `true` when `inventory_quantity` is set or `available` is `false`, `false`
+    /// otherwise.
     #[serde(default)]
     pub inventory_tracked: Option<bool>,
     #[serde(default)]

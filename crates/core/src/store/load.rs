@@ -1226,6 +1226,38 @@ mod tests {
     }
 
     #[test]
+    fn a_variant_said_unavailable_is_sold_out() {
+        // On Shopify an untracked variant is always available: `available: false` means tracked
+        // with nothing in stock, so that themes say "Sold out", not "Unavailable".
+        let (store, diagnostics) = inline(serde_json::json!({"products": [
+            {"title": "Sold out thing", "price": "10.00", "available": false},
+            {"title": "Backorder", "price": "10.00", "variants": [
+                {"available": false, "inventory_policy": "continue"},
+            ]},
+            {"title": "Untracked", "price": "10.00", "variants": [
+                {"available": false, "inventory_tracked": false},
+            ]},
+            {"title": "Counted", "price": "10.00", "variants": [
+                {"available": false, "inventory_quantity": 3},
+            ]},
+        ]}));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let variant =
+            |handle: &str| store.product_by_handle(handle).expect(handle).variants[0].clone();
+        let sold_out = variant("sold-out-thing");
+        assert!(!sold_out.available);
+        assert!(sold_out.inventory_tracked);
+        assert_eq!(sold_out.inventory_quantity, 0);
+        assert_eq!(sold_out.inventory_policy, model::InventoryPolicy::Deny);
+        // What the data says otherwise is kept.
+        assert!(!variant("backorder").inventory_tracked);
+        assert!(!variant("untracked").inventory_tracked);
+        let counted = variant("counted");
+        assert!(counted.inventory_tracked);
+        assert_eq!(counted.inventory_quantity, 3);
+    }
+
+    #[test]
     fn customers_are_named_by_email_default_or_none() {
         let (store, _) = load(&DataSource::Demo, &LoadOptions::default());
         let email = |who: &str| {
