@@ -7,7 +7,55 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 lsf now serves a local GraphQL Admin API (version 2026-10) and delivers an app's webhooks to its
 backend: the backend of a Shopify app runs and is tested offline, against the store data, with
-the same data every run.
+the same data every run. Some store data, extensions and tests written for 0.2.0 need a change:
+see Breaking changes.
+
+### Breaking changes
+
+What to change when you upgrade from 0.2.0. Each one is told in full under Changed or Fixed.
+
+- **A Function runs only when the shop has an enabled owner of it, as on Shopify.** At the
+  shop's checkout and in a scenario without `extensions`, a payment or delivery customization, a
+  validation or a cart transform that nothing enables no longer runs: in 0.2.0 every Function
+  ran. Enable it in the store data (`"enabled": true` in `checkout.functions.<handle>`), let the
+  backend create its owner through the Admin API, or name it in the scenario's `extensions`
+  ([what runs](docs/checkout.md#owners-and-scenarios)). Check:
+  - **the tests that drive the checkout** (`PUT /__lsf/session`, then `/checkout`): the
+    Functions no longer run there, and nothing in the test says so. A test that checks their
+    effect fails; one that only places an order passes without them. Give the session
+    `"enabled": true` in `data.checkout.functions.<handle>`, or open a scenario that names them
+    ([a checkout in a test](docs/testing.md#a-checkout-in-a-test));
+  - **`lsf app check`**: a Function that now runs in no scenario is no longer tested. The check
+    says so (`warning  <handle>: ran in no scenario, so nothing checks it`, `ranInNoScenario` in
+    JSON) and still exits with `0`;
+  - **the `all-extensions` scenario that `app init` wrote in 0.2.0**: it has no `extensions`.
+    List the app's extensions in it, or write it again with `lsf app init --force`, which
+    overwrites the other scenarios too.
+- **`shopify.appMetafields` has only the metafields an extension declares, as on Shopify.** In
+  0.2.0 it had every metafield of the cart, declared or not: an extension that read one locally
+  could read nothing on Shopify. Declare each one the extension reads in
+  `[[extensions.metafields]]` (`owner_type = "CART"` for the cart's), with the app's namespace
+  written `$app` or `$app:<name>`: Shopify does not support `app--<id>--<name>` there, so such a
+  declaration reads nothing, and the loader warns. [Checkout](docs/checkout.md).
+- **The dates of the store data are ISO 8601 only.** `May 1, 2024`, `2024/05/01`,
+  `05/01/2024`, `2024-5-1`, RFC 2822, an offset after a space and a time alone are now
+  `invalid_date` errors, and `validate` exits with `1`. Write `2024-05-01`, or
+  `2024-05-01T10:00:00Z`. The `date` filter of a theme still reads them all.
+- **The storefront opens in the shop's country**, not in the first country of the data:
+  `localization.country`, `Shopify.country` and the localization form of a visitor who chose
+  none can change, and so can a page a test compared with 0.2.0's. A test that needs another
+  country gives its session one (`PUT /__lsf/session` with `country`).
+- **Some results of the checkout change, to match Shopify's:**
+  - before an address with a country, no shipping rate is selected: `cost.shipping` is 0,
+    `cost.total` and `cost.dueNow` leave it out, and the Functions read
+    `selectedDeliveryOption: null`;
+  - with no address, the checkout UI extensions read the shop's country and its primary market,
+    as the Functions do (they read no country, and the market `primary`);
+  - a code whose discount Function answers a candidate of 0 is applied at 0, where it was "not
+    applicable".
+- **For contributors: the crates are renamed.** `cargo build -p lsf` is now
+  `cargo build -p lsf-cli`, and the renderer, `lsf-core` in 0.2.0, is `lsf-theme`.
+  `cargo install --path crates/cli` does not change. [Architecture](docs/architecture.md).
 
 ### Added
 
