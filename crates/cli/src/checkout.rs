@@ -140,6 +140,9 @@ pub fn build(app: &App, selection: &Selection) -> Result<(), String> {
 /// Function without one, lsf's build of it.
 pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
     for function in selection.functions(app) {
+        // What it is built from, read before the build: a file saved meanwhile is not taken to
+        // be in the module ([`crate::freshness`]).
+        let sources = crate::freshness::sources(function);
         match function.build() {
             None => eprintln!("build:  {} has no build command", function.handle),
             Some(Build::Command(command)) => {
@@ -175,8 +178,57 @@ pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
                 })?;
             }
         }
+        if function.built() {
+            crate::freshness::record(&app.root, &function.handle, &function.wasm_path, &sources);
+        }
     }
     Ok(())
+}
+
+/// Builds the Functions of `selection` whose module is older than their files, as
+/// `shopify app function run` builds a Function before it runs it, and answers the app as it
+/// is then. One lsf cannot build (no build command) runs its old module, with a warning.
+pub fn freshen(app_dir: &Path, app: App, selection: &Selection) -> Result<App, String> {
+    let mut stale = Vec::new();
+    for function in selection.functions(&app) {
+        let Some(file) = crate::freshness::stale(&app.root, function) else {
+            continue;
+        };
+        let file = crate::freshness::in_app(&app.root, function, &file);
+        if function.build().is_some() {
+            eprintln!(
+                "build:  {}: {file} changed after its module was built: building it first",
+                function.handle
+            );
+            stale.push(function.handle.clone());
+        } else {
+            eprintln!(
+                "warning: {}: {file} changed after its module was built, and it has no build \
+                 command lsf can run: this runs the old module",
+                function.handle
+            );
+        }
+    }
+    if stale.is_empty() {
+        return Ok(app);
+    }
+    build_functions(&app, &Selection::only(stale))?;
+    config::load(app_dir)
+}
+
+/// The Functions of `selection` whose module is older than their files: each handle, with the
+/// file that changed by its path in the app.
+pub fn stale_functions(app: &App, selection: &Selection) -> Vec<(String, String)> {
+    selection
+        .functions(app)
+        .filter_map(|function| {
+            let file = crate::freshness::stale(&app.root, function)?;
+            Some((
+                function.handle.clone(),
+                crate::freshness::in_app(&app.root, function, &file),
+            ))
+        })
+        .collect()
 }
 
 /// A Rust Function's types come from its `.graphql` files (the input queries, `schema.graphql`),
@@ -461,9 +513,10 @@ pub fn run_build(
         (0, false)
     };
     if failed {
-        return Err(
+        // The extension's to fix, as a build that fails: exit 1, not 2.
+        return Err(crate::output::fixable(
             "a theme app extension has errors that Shopify rejects (see above)".to_string(),
-        );
+        ));
     }
     if built == 0 && checked == 0 {
         return Err(

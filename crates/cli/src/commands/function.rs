@@ -395,7 +395,13 @@ fn run_on_input(args: &RunArgs, input: &str) -> Result<ExitCode, String> {
         .handle
         .clone()
     };
-    let (shopify_app, _) = open(vec![handle.clone()], args.build)?;
+    let (shopify_app, selection) = open(vec![handle.clone()], args.build)?;
+    // Built first when its files changed after its module was built, as Shopify's CLI does.
+    let shopify_app = if args.build {
+        shopify_app
+    } else {
+        checkout::freshen(app_dir, shopify_app, &selection)?
+    };
     let function = schema::function_of(
         &shopify_app,
         Some(&handle),
@@ -510,6 +516,15 @@ fn save_input(result: &CheckoutResult, args: &RunArgs, file: &Path) -> Result<()
         }
     };
     let json = serde_json::to_string_pretty(&run.input).map_err(|error| error.to_string())?;
+    // `tests/fixtures/` need not exist yet, as for `--save-input tests/fixtures/x.json` of the
+    // quickstart.
+    if let Some(parent) = file
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("--save-input {}: {error}", file.display()))?;
+    }
     std::fs::write(file, format!("{json}\n"))
         .map_err(|error| format!("--save-input {}: {error}", file.display()))?;
     eprintln!(
@@ -651,6 +666,13 @@ fn compute(
     let selection = match scenario {
         Some(scenario) => checkout::narrow_to_scenario(&shopify_app, selection, scenario)?,
         None => selection,
+    };
+    // A Function whose files changed after its module was built is built first, as
+    // `shopify app function run` builds before it runs (`--build` built them all already).
+    let shopify_app = if args.build {
+        shopify_app
+    } else {
+        checkout::freshen(app_dir, shopify_app, &selection)?
     };
 
     let mut session = Session::initial(&store);

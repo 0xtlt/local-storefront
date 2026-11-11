@@ -3,6 +3,7 @@
 mod app;
 mod checkout;
 mod commands;
+mod freshness;
 mod output;
 mod profile;
 mod server;
