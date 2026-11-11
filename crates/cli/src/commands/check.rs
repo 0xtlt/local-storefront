@@ -830,6 +830,8 @@ fn check_theme(
     }
     // The keys of the `t` filter are looked up in the default locale.
     let locale = references::default_locale(&theme);
+    // The schemas are checked against the theme blocks and the default schema locale.
+    let schema_names = references::SchemaNames::of(&theme);
     for directory in [
         "layout",
         "templates",
@@ -880,6 +882,26 @@ fn check_theme(
                     Location::file(&path, Some(line)),
                     "the block tag can only be used in layout/ and templates/ files".to_string(),
                 );
+            }
+            if matches!(directory, "sections" | "blocks") {
+                for problem in schema_names.problems(&source) {
+                    tally.problem_with_hint(
+                        problem.code,
+                        Location::file(&path, Some(problem.line)),
+                        problem.message,
+                        problem.hint,
+                    );
+                }
+            }
+            for missing in references::missing_assets(&theme, &source) {
+                let mut diagnostic = Diagnostic::new(
+                    "warning",
+                    missing.code,
+                    Location::file(&path, Some(missing.line)),
+                    missing.message,
+                );
+                diagnostic.hint = missing.hint;
+                tally.report(diagnostic);
             }
             for missing in references::in_liquid(&theme, &source, locale.as_deref()) {
                 tally.problem_with_hint(
@@ -942,8 +964,13 @@ fn check_theme(
         }
     }
     // The app blocks the templates name: against the theme app extensions of `--app`.
+    // With `--app`, an app block that renders nothing is an error: the check is asked for.
     for finding in crate::theme_extensions::check_lines(&theme, args.app.as_deref())? {
         let severity = match finding.level {
+            lsf_theme::app_extensions::references::Level::Warning if args.app.is_some() => {
+                tally.problems += 1;
+                "error"
+            }
             lsf_theme::app_extensions::references::Level::Warning => "warning",
             lsf_theme::app_extensions::references::Level::Info => "info",
         };

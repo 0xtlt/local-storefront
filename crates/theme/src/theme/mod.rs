@@ -4,6 +4,7 @@
 pub mod liquid_settings;
 pub mod locales;
 pub mod schema;
+pub mod schema_check;
 pub mod template_json;
 
 use std::collections::HashMap;
@@ -26,6 +27,9 @@ pub struct LiquidFile {
     pub template: Arc<Template>,
     /// The `{% schema %}` of a section or block file.
     pub schema: Arc<Schema>,
+    /// What Shopify refuses in that schema, which the file alone shows: a section or a theme
+    /// block renders them as errors.
+    pub schema_problems: Vec<schema_check::SchemaProblem>,
 }
 
 struct Cached<T> {
@@ -251,9 +255,16 @@ impl Theme {
                         })
                         .map(Schema::from_json)
                         .unwrap_or_default();
+                    let schema_problems =
+                        if path.starts_with("sections/") || path.starts_with("blocks/") {
+                            schema_check::check(source)
+                        } else {
+                            Vec::new()
+                        };
                     Arc::new(LiquidFile {
                         template: Arc::new(template),
                         schema: Arc::new(schema),
+                        schema_problems,
                     })
                 })
             })

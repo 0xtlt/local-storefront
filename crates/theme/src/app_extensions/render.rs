@@ -495,6 +495,9 @@ fn embeds(ctx: &Context, state: &RenderState, apps: &AppExtensions) -> Vec<Embed
                 },
                 true,
             )),
+            None if apps.is_empty() => state.notice(format!(
+                "app embed block `{name}` of `app.embeds` in the store data not rendered: no app is served (`--app DIR` serves an app and its theme app extensions)"
+            )),
             None => {
                 let known: Vec<String> = apps
                     .blocks()
@@ -530,7 +533,8 @@ pub fn decorate(ctx: &Context, mut html: String) -> String {
     };
     let apps = state.site.theme.app_extensions();
     let (mut compliance, mut head, mut body) = (String::new(), String::new(), String::new());
-    if !apps.is_empty() || !state.site.store.app.embeds.is_empty() {
+    // Without an app, the app embed blocks the theme turns on still say why they do not render.
+    {
         let template = template_type(state);
         let closest = page_closest(ctx);
         for embed in embeds(ctx, state, &apps) {

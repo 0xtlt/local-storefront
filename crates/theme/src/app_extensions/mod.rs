@@ -501,6 +501,8 @@ impl Extension {
                     Arc::new(LiquidFile {
                         template: Arc::new(template),
                         schema: Arc::new(schema),
+                        // `lsf app build` checks the schema of an app block.
+                        schema_problems: Vec::new(),
                     })
                 })
             })

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value as Json;
 
-use super::{AppExtensions, Lookup, is_app_type};
+use super::{AppExtensions, Lookup, Place, is_app_type};
 use crate::Theme;
 
 /// An app block a theme file names.
@@ -125,6 +125,33 @@ pub fn references(theme: &Theme) -> Vec<Reference> {
     out
 }
 
+/// Where a block of a theme file renders, as `enabled_on` names it: the template type of a
+/// JSON template (`product` for `templates/product.alternate.json`, `customers/account`), the
+/// type of a section group. `None` for the theme settings.
+fn place_of(theme: &Theme, file: &str) -> Option<(String, bool)> {
+    let name = file.strip_suffix(".json")?;
+    if let Some(template) = name.strip_prefix("templates/") {
+        let (directory, base) = match template.rsplit_once('/') {
+            Some((directory, base)) => (Some(directory), base),
+            None => (None, template),
+        };
+        let kind = base.split('.').next().unwrap_or(base);
+        return Some((
+            match directory {
+                Some(directory) => format!("{directory}/{kind}"),
+                None => kind.to_string(),
+            },
+            false,
+        ));
+    }
+    if name.starts_with("sections/") {
+        let json = theme.json(file).ok().flatten()?;
+        let kind = json.get("type").and_then(Json::as_str)?;
+        return Some((kind.to_string(), true));
+    }
+    None
+}
+
 /// What is wrong with the app blocks of `theme` for the apps of `apps`: what renders nothing
 /// (warnings), and the blocks of the app that never render (information). `store_embeds` are the
 /// app embed blocks the store data turns on (`app.embeds`).
@@ -157,6 +184,20 @@ pub fn check(theme: &Theme, apps: &AppExtensions, store_embeds: &[String]) -> Ve
                         "{} is an app embed block: in a section it renders nothing (it renders from `current.blocks` of config/settings_data.json, or `app.embeds` of the store data)",
                         block.path()
                     )));
+                } else if !reference.embed
+                    && let Some((name, group)) = place_of(theme, &reference.file)
+                {
+                    let place = if group {
+                        Place::Group(&name)
+                    } else {
+                        Place::Template(&name)
+                    };
+                    if let Err(reason) = block.allowed_at(&place) {
+                        findings.push(warning(format!(
+                            "{} renders nothing here: {reason}",
+                            block.path()
+                        )));
+                    }
                 }
             }
             Lookup::Broken { path, error } => {

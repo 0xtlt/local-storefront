@@ -155,6 +155,36 @@ fn a_block_the_app_does_not_have_says_why_it_renders_nothing() {
 }
 
 #[test]
+fn every_block_that_renders_nothing_is_in_the_reason() {
+    // The product page names a block the app does not have and a block of another app, and
+    // its footer a block its `enabled_on` leaves out.
+    let reply = get(&server(), "/products/blue-shirt", "visitor");
+    let reason = header(&reply, "x-lsf-reason").expect("a reason");
+    assert!(reason.starts_with("3 reasons: "), "{reason}");
+    assert!(
+        reason.contains("reviewz") && reason.contains("another-app") && reason.contains("enabled_on"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn without_an_app_an_app_embed_block_says_why_it_renders_nothing() {
+    let state = server_of(&fixture().join("no-such-app"), Revalidate::Never);
+    let reply = get(&state, "/cart", "visitor");
+    let reason = header(&reply, "x-lsf-reason").expect("a reason");
+    // Turned on by config/settings_data.json, and by `app.embeds` of the store data.
+    assert!(
+        reason.contains("app embed block shopify://apps/product-reviews/blocks/reviews-loader")
+            && reason.contains("no app is served"),
+        "{reason}"
+    );
+    assert!(
+        reason.contains("`reviews-widget` of `app.embeds` in the store data not rendered: no app is served"),
+        "{reason}"
+    );
+}
+
+#[test]
 fn content_for_blocks_renders_app_blocks_and_the_apps_section_wraps_them() {
     let state = server();
     let html = text(&get(&state, "/", "visitor"));

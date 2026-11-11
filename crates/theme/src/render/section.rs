@@ -13,7 +13,7 @@ use super::settings;
 use super::state::RenderState;
 use crate::app_extensions::is_app_type;
 use crate::app_extensions::render::{self as app_blocks, AppBlockData};
-use crate::theme::{BlockInstance, Schema, SectionInstance, Wrapper};
+use crate::theme::{BlockInstance, LiquidFile, Schema, SectionInstance, Wrapper};
 
 /// The context variable holding the [`Container`] `content_for` renders blocks from. The name
 /// cannot be written in Liquid, so templates cannot see or shadow it.
@@ -233,6 +233,30 @@ pub struct Placement<'a> {
     pub group: Option<&'a str>,
 }
 
+/// Records what Shopify refuses in the schema of a section or a theme block as errors of the
+/// page, once each: Shopify would not have taken the file, and its settings lose their defaults.
+fn report_schema(ctx: &Context, path: &str, file: &LiquidFile) {
+    if file.schema_problems.is_empty() {
+        return;
+    }
+    let name: Arc<str> = path.strip_suffix(".liquid").unwrap_or(path).into();
+    let recorded: Vec<String> = ctx.errors().iter().map(ToString::to_string).collect();
+    for problem in &file.schema_problems {
+        let message = if problem.message.starts_with("the {% schema %}") {
+            problem.message.clone()
+        } else {
+            format!("{{% schema %}}: {}", problem.message)
+        };
+        let line = u32::try_from(problem.line).unwrap_or(u32::MAX);
+        let error = Error::standard(message)
+            .with_template(Some(name.clone()))
+            .with_line(line);
+        if !recorded.contains(&error.to_string()) {
+            ctx.handle_error(error, line);
+        }
+    }
+}
+
 /// Renders a section: its Liquid, wrapped in `<div id="shopify-section-...">`.
 pub fn render_section(
     ctx: &Context,
@@ -272,6 +296,7 @@ pub fn render_section(
         }
         Error::standard(message)
     })?;
+    report_schema(ctx, &path, &file);
     let schema = &file.schema;
     let closest = page_closest(ctx);
     let section = Value::object(SectionDrop {
@@ -420,6 +445,7 @@ pub fn render_block(
         .theme
         .liquid(&path)?
         .ok_or_else(|| Error::standard(format!("Could not find asset {path}")))?;
+    report_schema(ctx, &path, &file);
     let schema = &file.schema;
     let id = theme_block_id(&container.section_id, key);
     let closest_value = Value::object(ClosestDrop(closest.clone()));
@@ -505,6 +531,7 @@ pub fn render_called_block(
             .theme
             .liquid(&path)?
             .ok_or_else(|| Error::standard(format!("Could not find asset {path}")))?;
+        report_schema(ctx, &path, &file);
         // Each call is a block of its own, numbered in the order the page renders them.
         let key = format!("{kind}-{}", state.blocks_so_far() + 1);
         let id = theme_block_id("block", &key);

@@ -366,9 +366,14 @@ pub(super) fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target)
     if !rendered.errors.is_empty() {
         reply = reply.header("x-lsf-liquid-errors", rendered.errors.len().to_string());
     }
-    // An app block that renders nothing is easy to miss: the first reason of the page.
-    if let Some(notice) = rendered.notices.first() {
-        reply = reply.header("x-lsf-reason", header_text(notice));
+    // An app block that renders nothing is easy to miss: every reason of the page.
+    match rendered.notices.as_slice() {
+        [] => {}
+        [notice] => reply = reply.header("x-lsf-reason", header_text(notice)),
+        notices => {
+            let all = format!("{} reasons: {}", notices.len(), notices.join(" | "));
+            reply = reply.header("x-lsf-reason", header_text(&all));
+        }
     }
     if !rendered.preloads.is_empty() {
         reply = reply.header("link", rendered.preloads.join(", "));
