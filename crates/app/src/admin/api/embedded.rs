@@ -147,7 +147,7 @@ fn viewer(api: &AdminApi, request: &HttpRequest) -> Result<Viewer, HttpResponse>
 /// The handle the admin's URLs name the app by: its handle, else its client id.
 pub(super) fn app_key(api: &AdminApi) -> String {
     api.app()
-        .and_then(|app| app.handle.clone())
+        .and_then(|app| app.admin_handle())
         .unwrap_or_else(|| api.client_id().to_string())
 }
 
@@ -378,6 +378,13 @@ pub(super) fn admin_config(
             "base": format!("/admin/apps/{}", app_key(api)),
             "scopes": {"granted": granted, "required": required, "optional": optional},
         }),
+    );
+    config.insert(
+        "warnings".into(),
+        json!(
+            app.map(|app| app.admin_warnings.clone())
+                .unwrap_or_default()
+        ),
     );
     config.insert(
         "endpoints".into(),

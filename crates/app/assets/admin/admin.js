@@ -747,6 +747,8 @@ export function startAdmin(env) {
   }
 
   markCurrent();
+  // What shopify.app.toml gets wrong for the embedded app (no client_id, …).
+  (config.warnings ?? []).forEach((message, index) => banner(`config-${index}`, 'warning', message));
   // The frame may have loaded before this module ran: wait for its App Bridge from now on.
   if (frame) frameLoaded();
   return { state, receive, frameLoaded, frameUnloaded, renderTitle, renderNav, openResourcePicker, openPicker };

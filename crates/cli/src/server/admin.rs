@@ -150,6 +150,14 @@ impl Admin {
             "        X-Shopify-Access-Token: {}   (shop: {shop})",
             self.api.token(&shop)
         ));
+        if let Some(app) = self.api.app()
+            && let Some(source) = app.client_id_source.describe()
+        {
+            lines.push(format!(
+                "        client id: {}   ({source})",
+                self.api.client_id()
+            ));
+        }
         lines.push(format!("        client secret: {}", self.secret_line()));
         lines.push(format!("webhooks: {}", self.api.webhooks().summary()));
         lines
@@ -164,8 +172,7 @@ impl Admin {
             return None;
         }
         let key = app
-            .handle
-            .clone()
+            .admin_handle()
             .unwrap_or_else(|| self.api.client_id().to_string());
         Some(format!("/admin/apps/{key}"))
     }
@@ -192,7 +199,11 @@ impl Admin {
         let (pricing, source) = self.api.pricing()?;
         let handle = self.api.app().and_then(|app| app.handle.clone());
         let no_handle = self.api.app().is_some() && handle.is_none();
-        let key = handle.unwrap_or_else(|| self.api.client_id().to_string());
+        let key = self
+            .api
+            .app()
+            .and_then(|app| app.admin_handle())
+            .unwrap_or_else(|| self.api.client_id().to_string());
         Some(format!(
             "pricing: {} ({source}): {origin}/admin/charges/{key}/pricing_plans   (managed pricing: the Billing API creates no charge{})",
             crate::output::count(pricing.plans.len(), "plan", "plans"),
