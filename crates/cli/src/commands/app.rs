@@ -196,10 +196,21 @@ fn check(
         &store,
         std::time::Duration::from_secs(args.budget),
     );
-    let invalid: Vec<&lsf_core::store::CheckoutScenario> = store
+    // A scenario that does not validate, or that names an extension the app does not have: it
+    // does not run, so it fails the check rather than leaving it with nothing to check.
+    let invalid: Vec<(&lsf_core::store::CheckoutScenario, Vec<String>)> = store
         .scenarios
         .iter()
-        .filter(|scenario| !scenario.problems.is_empty())
+        .filter_map(|scenario| {
+            let mut problems = scenario.problems.clone();
+            if problems.is_empty()
+                && let Err(problem) =
+                    crate::checkout::narrow_to_scenario(&shopify_app, selection.clone(), scenario)
+            {
+                problems.push(problem);
+            }
+            (!problems.is_empty()).then_some((scenario, problems))
+        })
         .collect();
     let complete = report.checked == report.total;
     // No scenario, nothing checked: a check that cannot fail is not one.
@@ -228,7 +239,7 @@ fn check(
             }
             json["invalid"] = serde_json::json!(invalid
                 .iter()
-                .map(|scenario| serde_json::json!({"scenario": scenario.name, "file": scenario.file, "problems": scenario.problems}))
+                .map(|(scenario, problems)| serde_json::json!({"scenario": scenario.name, "file": scenario.file, "problems": problems}))
                 .collect::<Vec<_>>());
             json["expectations"] = serde_json::json!({
                 "checked": report.expectations,
@@ -254,9 +265,9 @@ fn check(
             );
         }
         Format::Text => {
-            for scenario in &invalid {
+            for (scenario, problems) in &invalid {
                 println!("invalid  {} ({})", scenario.name, scenario.file);
-                for problem in &scenario.problems {
+                for problem in problems {
                     for line in problem.lines() {
                         println!("         {line}");
                     }

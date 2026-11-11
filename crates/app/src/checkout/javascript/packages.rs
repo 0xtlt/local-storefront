@@ -31,12 +31,17 @@ const RECHECK: Duration = Duration::from_secs(60);
 pub fn root() -> Result<PathBuf, String> {
     static ROOT: Mutex<Option<(PathBuf, Instant)>> = Mutex::new(None);
     let mut cached = ROOT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((root, checked)) = cached.as_ref()
-        && (checked.elapsed() < RECHECK || root.parent().is_some_and(|base| complete(base, false)))
-    {
-        let root = root.clone();
-        *cached = Some((root.clone(), Instant::now()));
-        return Ok(root);
+    if let Some((root, checked)) = cached.as_ref() {
+        // Within a minute of a check, the folder is taken as it was. The time is that of the
+        // check, not of the last use: a server used every few seconds still checks again.
+        if checked.elapsed() < RECHECK {
+            return Ok(root.clone());
+        }
+        if root.parent().is_some_and(|base| complete(base, false)) {
+            let root = root.clone();
+            *cached = Some((root.clone(), Instant::now()));
+            return Ok(root);
+        }
     }
     let root = write()?;
     *cached = Some((root.clone(), Instant::now()));

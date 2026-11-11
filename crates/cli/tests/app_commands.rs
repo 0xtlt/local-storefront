@@ -1456,3 +1456,77 @@ fn function_schema_writes_the_schema_of_the_functions_api_and_version() {
         text(&output)
     );
 }
+
+/// A scenario that names an extension the app does not have does not run: `app check` says so
+/// and fails, rather than passing with nothing checked.
+#[test]
+fn app_check_fails_on_a_scenario_that_names_a_missing_extension() {
+    let app = App::new("missing-extension");
+    assert!(lsf(&app.0, &["init"]).status.success());
+    app.write(
+        "shopify-local/checkouts/ghost.json",
+        r#"{"extensions": ["missing-function"], "session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}}"#,
+    );
+    let output = lsf(&app.0, &["app", "check", "--format", "json"]);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert_eq!(report["ok"], false, "{report}");
+    let invalid = report["invalid"].as_array().unwrap();
+    assert!(
+        invalid
+            .iter()
+            .any(|scenario| scenario["scenario"] == "ghost"
+                && scenario["problems"][0]
+                    .as_str()
+                    .unwrap()
+                    .contains("missing-function")),
+        "{report}"
+    );
+}
+
+/// `--input --build`, in a Function's folder: it builds that Function only, not another
+/// extension of the app that does not build.
+#[test]
+fn function_run_with_input_builds_only_its_function() {
+    let app = app_with_a_validation("input-build", "  return { operations: [] };", &[]);
+    app.write(
+        "extensions/broken/shopify.extension.toml",
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Broken"
+handle = "broken"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart-validations-generate-run"
+"#,
+    );
+    app.write(
+        "extensions/broken/package.json",
+        r#"{ "name": "broken", "type": "module", "dependencies": { "@shopify/shopify_function": "2.0.1" } }"#,
+    );
+    app.write("extensions/broken/src/index.js", "export function (\n");
+    app.write(
+        "extensions/broken/src/run.graphql",
+        "query Input { cart { lines { quantity } } }\n",
+    );
+    app.write("input.json", r#"{"cart": {"lines": [{"quantity": 1}]}}"#);
+    let input = app.0.join("input.json");
+    let output = lsf(
+        &app.0.join("extensions/boom"),
+        &[
+            "app",
+            "function",
+            "run",
+            "--input",
+            input.to_str().unwrap(),
+            "--build",
+        ],
+    );
+    let said = text(&output);
+    assert!(output.status.success(), "{said}");
+    assert!(!said.contains("broken"), "{said}");
+}

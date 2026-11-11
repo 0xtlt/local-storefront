@@ -368,21 +368,37 @@ fn target_of<'a>(
 /// `--input`: runs one Function on the input given, and prints its run.
 fn run_on_input(args: &RunArgs, input: &str) -> Result<ExitCode, String> {
     let app_dir = &checkout::app_of(args.app.as_deref(), "lsf app function run")?;
-    let (shopify_app, _) = checkout::open(
-        &checkout::AppArgs {
-            app: Some(app_dir.clone()),
-            extensions: args.handles.clone(),
-            build: args.build,
-        },
-        app_dir,
-    )?;
     if args.handles.len() > 1 {
         return Err("--input runs one Function: name one".to_string());
     }
+    let open = |extensions: Vec<String>, build: bool| {
+        checkout::open(
+            &checkout::AppArgs {
+                app: Some(app_dir.clone()),
+                extensions,
+                build,
+            },
+            app_dir,
+        )
+    };
+    // The Function first (named, or the one of the current directory), then `--build` builds it
+    // alone: the other extensions of the app are none of this run's business.
     let current = std::env::current_dir().map_err(|error| error.to_string())?;
+    let handle = {
+        let (shopify_app, _) = open(args.handles.clone(), false)?;
+        schema::function_of(
+            &shopify_app,
+            args.handles.first().map(String::as_str),
+            &current,
+            "lsf app function run --input <file>",
+        )?
+        .handle
+        .clone()
+    };
+    let (shopify_app, _) = open(vec![handle.clone()], args.build)?;
     let function = schema::function_of(
         &shopify_app,
-        args.handles.first().map(String::as_str),
+        Some(&handle),
         &current,
         "lsf app function run --input <file>",
     )?;
