@@ -810,7 +810,10 @@ shop, the app's installation).
 namespaces and for reference types with metafields), `metafieldDefinitionPin`,
 `metafieldDefinitionUnpin`; `metafieldDefinitions(ownerType:, namespace:, key:, pinnedStatus:,
 sortKey:)` and `metafieldDefinition(identifier:)`. A definition created where metafields exist
-takes them and checks them (`validationStatus`). `capabilities` are kept as given; of their
+takes them and checks them (`validationStatus`). A `metaobject_reference` (and its list) needs
+`metaobject_definition_id`, a `mixed_reference` `metaobject_definition_ids`, naming definitions
+the shop has: otherwise an `INVALID_OPTION` user error, for metafield definitions and the field
+definitions of metaobjects alike (the wording of the message is lsf's). `capabilities` are kept as given; of their
 effects, only `cartToOrderCopyable` of an ORDER definition is simulated: it copies a cart
 metafield onto the order placed from the cart ([admin](admin.md#what-the-storefront-and-the-checkout-see)).
 The order definitions `shopify.app.toml` declares (`[order.metafields.app.<key>]`) are

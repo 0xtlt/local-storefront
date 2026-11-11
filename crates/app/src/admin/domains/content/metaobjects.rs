@@ -293,6 +293,7 @@ fn check_type(kind: &str, field: &[&str], errors: &mut Vec<MetaobjectError>) {
 
 /// A `MetaobjectFieldDefinition` from its input, checked (`path` is the input's).
 fn field_definition(
+    state: &ShopState,
     input: &Map<String, Value>,
     path: &[&str],
     errors: &mut Vec<MetaobjectError>,
@@ -328,6 +329,7 @@ fn field_definition(
     let mut field = path.to_vec();
     field.push("validations");
     let validations = super::metafield_definitions::checked_validations(
+        state,
         kind,
         input.get("validations"),
         &field,
@@ -434,7 +436,7 @@ fn definition_create(
         let path = ["definition", "fieldDefinitions", index.as_str()];
         let Some(field) = field
             .as_object()
-            .and_then(|field| field_definition(field, &path, &mut errors))
+            .and_then(|field| field_definition(state, field, &path, &mut errors))
         else {
             continue;
         };
@@ -536,7 +538,7 @@ fn definition_update(
         let index = index.to_string();
         if let Some(create) = operation.get("create").and_then(Value::as_object) {
             let path = ["definition", "fieldDefinitions", index.as_str(), "create"];
-            if let Some(field) = field_definition(create, &path, &mut errors) {
+            if let Some(field) = field_definition(state, create, &path, &mut errors) {
                 let key = field["key"].as_str().unwrap_or_default().to_string();
                 if fields
                     .iter()
@@ -591,6 +593,7 @@ fn definition_update(
                 path.push("validations");
                 let mut validation_errors = Vec::new();
                 let validations = super::metafield_definitions::checked_validations(
+                    state,
                     &kind,
                     update.get("validations"),
                     &path,
