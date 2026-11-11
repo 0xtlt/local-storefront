@@ -2078,3 +2078,30 @@ fn handles_that_differ_have_files_that_differ() {
     assert!(!record.has("fn_a"));
     assert_eq!(record.get("fn_a"), None);
 }
+
+/// A checkout UI extension whose bundle failed says whether the bundle of a build before is
+/// there, which the pages load meanwhile; one that bundled again has no failure.
+#[test]
+fn a_failed_bundle_says_whether_the_previous_one_runs() {
+    let builds = Builds::publishing(Modules::create().unwrap());
+    let failure = || Failure {
+        reason: "src/Checkout.jsx:61:1: Expected `}` but found `EOF`".to_string(),
+        output: String::new(),
+    };
+    builds.set_bundle("ui-preact", Some(failure()), true);
+    builds.set_bundle("fresh-ui", Some(failure()), false);
+    let json = builds.to_json();
+    assert_eq!(json[0]["handle"], "fresh-ui", "{json}");
+    assert_eq!(json[0]["kind"], "ui", "{json}");
+    assert_eq!(json[0]["built"], false, "{json}");
+    assert_eq!(json[1]["kind"], "ui", "{json}");
+    assert_eq!(json[1]["built"], true, "{json}");
+    builds.set_bundle("ui-preact", None, true);
+    builds.set_bundle("fresh-ui", None, true);
+    assert_eq!(builds.to_json(), serde_json::json!([]));
+    // A Function without a published module has none built.
+    builds.set("fn-a", Some(failure()));
+    assert_eq!(builds.to_json()[0]["kind"], "function");
+    assert_eq!(builds.to_json()[0]["built"], false);
+    builds.close();
+}

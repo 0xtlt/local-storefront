@@ -434,13 +434,24 @@ fn ui_extension_json(
         .map(|(name, _)| name.as_str())
         .collect();
     let mut problems = ui_problems(app, extension);
-    // The settings the store data or a scenario gives it that it does not declare.
+    // The settings the store data or a scenario gives it that it does not declare. Those of a
+    // scenario are that scenario's: the others that run the extension are not wrong.
+    let own = problems.len();
+    let given: Vec<&crate::checkout::SettingsProblem> = settings
+        .iter()
+        .filter(|problem| problem.handle == extension.handle)
+        .collect();
     problems.extend(
-        settings
+        given
             .iter()
-            .filter(|problem| problem.handle == extension.handle)
             .map(|settings| problem(Level::Warning, settings.to_string())),
     );
+    let mut problems_listed = problems_json(&problems);
+    for (listed, settings) in problems_listed[own..].iter_mut().zip(&given) {
+        if let Some(file) = &settings.file {
+            listed["scenario"] = json!(file);
+        }
+    }
     let selected = selection.contains(&extension.handle);
     // Whether the checkout loads it: every error keeps it out (not built, an API version it
     // does not run, an `owner_type` that is wrong or missing); a warning does not.
@@ -467,7 +478,7 @@ fn ui_extension_json(
         "built": extension.built(),
         "selected": selected,
         "status": extension_status(&problems, &[], selected),
-        "problems": problems_json(&problems),
+        "problems": problems_listed,
         "scenarios": used_by,
         "loads": loads,
         "script": script,
@@ -729,6 +740,9 @@ struct Context<'a> {
     /// The worst level of the problems of each extension, by handle, from its own problems
     /// only (`None`: it has none).
     statuses: HashMap<String, Option<Level>>,
+    /// The settings the store data and the scenarios give the UI extensions that do not fit
+    /// them: a scenario's are its own warnings.
+    settings: &'a [crate::checkout::SettingsProblem],
 }
 
 /// The extensions a scenario runs: the ones it names, or every one that is selected.
@@ -796,11 +810,19 @@ fn scenario_json(context: &Context, scenario: &CheckoutScenario) -> Json {
         (Some(report), true) => report.failing_in(&scenario.name),
         _ => Vec::new(),
     };
-    // The worst of its own problems and the Functions that fail in it (errors), and of the
-    // problems of the extensions it runs (each at its own level).
+    // The settings it gives a UI extension that do not fit it: warnings of its own.
+    let warnings: Vec<String> = context
+        .settings
+        .iter()
+        .filter(|settings| settings.file.as_deref() == Some(scenario.file.as_str()))
+        .map(ToString::to_string)
+        .collect();
+    // The worst of its own problems and the Functions that fail in it (errors), its warnings,
+    // and the problems of the extensions it runs (each at its own level).
     let own = (!problems.is_empty() || !failing.is_empty()).then_some(Level::Error);
+    let warned = (!warnings.is_empty()).then_some(Level::Warning);
     let status = status_of(
-        own.into_iter().chain(
+        own.into_iter().chain(warned).chain(
             handles
                 .iter()
                 .filter_map(|handle| context.statuses.get(*handle).copied().flatten()),
@@ -817,6 +839,7 @@ fn scenario_json(context: &Context, scenario: &CheckoutScenario) -> Json {
         "facts": facts,
         "summary": summary,
         "problems": problems,
+        "warnings": warnings,
         // The extensions it runs: the ones it names, or every one (`allExtensions`).
         "allExtensions": scenario.extensions.is_none(),
         "functions": functions,
@@ -1294,6 +1317,7 @@ fn build(
         root,
         report,
         statuses: HashMap::new(),
+        settings: &settings,
     };
 
     // How many scenarios that open run each extension, and the one its problems open: the one
@@ -1390,7 +1414,7 @@ fn build(
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|problem| problem["store"] != true)
+            .filter(|problem| problem["store"] != true && problem["scenario"].is_null())
             .map(Level::of_json);
         context
             .statuses
@@ -2127,6 +2151,7 @@ fn scenario_html(scenario: &Json, dir: &str, group: Option<&str>) -> String {
     let functions = strings(&scenario["functions"]);
     let ui = strings(&scenario["uiExtensions"]);
     let problems = strings(&scenario["problems"]);
+    let warnings = strings(&scenario["warnings"]);
     let failing = strings(&scenario["failing"]);
     let description = scenario["description"].as_str().unwrap_or_default();
 
@@ -2170,6 +2195,11 @@ fn scenario_html(scenario: &Json, dir: &str, group: Option<&str>) -> String {
             "<span class=\"lsf-h-meta is-error\">Fails: {}</span>",
             esc(&failing.join(", "))
         ),
+        (None, true) if !warnings.is_empty() => format!(
+            "<span class=\"lsf-h-meta is-warning\" title=\"{}\">{}</span>",
+            esc(warnings[0]),
+            message_html(warnings[0], dir)
+        ),
         // What it is about: its description, else the cart and the buyer in a few words.
         (None, true) => {
             let text = if description.is_empty() {
@@ -2195,7 +2225,7 @@ fn scenario_html(scenario: &Json, dir: &str, group: Option<&str>) -> String {
         code(name),
         esc(text_of(&scenario["file"]))
     ));
-    for problem in &problems {
+    for problem in problems.iter().chain(&warnings) {
         body.push_str(&format!(
             "<pre class=\"lsf-home-problem\" title=\"{}\">{}</pre>",
             esc(problem),

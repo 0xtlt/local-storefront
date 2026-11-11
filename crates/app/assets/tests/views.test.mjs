@@ -548,7 +548,7 @@ test('a build of --watch that failed shows in a banner, in the badge and on the 
   const tree = page(checkoutState({ builds }));
   const [banner] = findAll(tree, (node) => node.props['data-banner'] === 'build');
   assert.equal(banner.props['data-build'], 'volume-discount');
-  assert.match(text(banner), /volume-discount: build failed \(exit status: 101\)\. The checkout runs the last module that built\..*E0425/);
+  assert.match(text(banner), /volume-discount: build failed \(exit status: 101\)\. The last build failed: the checkout runs the module of the previous one\..*E0425/);
   const [badge] = byClass(tree, 'lsf-fn-badge');
   assert.equal(badge.props['data-status'], 'failed');
   assert.match(badge.props['aria-label'], /1 build error/);
@@ -563,9 +563,13 @@ test('a build of --watch that failed shows in a banner, in the badge and on the 
 test('the banner of a build that failed says whether a module of it runs', () => {
   const failure = { handle: 'volume-discount', reason: 'build failed (exit status: 101)', output: '' };
   const said = (build) => text(findAll(page(checkoutState({ builds: [build] })), (node) => node.props['data-banner'] === 'build')[0]);
-  assert.equal(said({ ...failure, built: true }), 'volume-discount: build failed (exit status: 101). The checkout runs the last module that built.');
+  assert.equal(said({ ...failure, built: true }), 'volume-discount: build failed (exit status: 101). The last build failed: the checkout runs the module of the previous one.');
   assert.equal(said({ ...failure, built: false }), 'volume-discount: build failed (exit status: 101). No module of it built yet.');
-  assert.doesNotMatch(said({ ...failure, built: false }), /last module/);
+  assert.doesNotMatch(said({ ...failure, built: false }), /previous one/);
+  // A UI extension whose bundle failed runs the bundle of its build before, when there is one.
+  const ui = { handle: 'ui-preact', kind: 'ui', reason: 'src/Checkout.jsx:61:1: Expected `}` but found `EOF`', output: '' };
+  assert.equal(said({ ...ui, built: true }), 'ui-preact: src/Checkout.jsx:61:1: Expected `}` but found `EOF`. The last build failed: the page runs the bundle of the previous one.');
+  assert.equal(said({ ...ui, built: false }), 'ui-preact: src/Checkout.jsx:61:1: Expected `}` but found `EOF`. No bundle of it built yet.');
 });
 
 test('the banners open the main column, so the summary panel starts under the header', () => {

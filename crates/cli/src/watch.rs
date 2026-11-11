@@ -69,6 +69,9 @@ pub struct Builds {
     modules: Option<Modules>,
     /// The Functions the watcher builds, whose copy the checkout runs.
     owned: Mutex<BTreeSet<String>>,
+    /// The checkout UI extensions whose last bundle failed, and whether a bundle of them is
+    /// there all the same (`dist/<handle>.js`, of a build before), which the pages load.
+    bundles: Mutex<BTreeMap<String, bool>>,
 }
 
 /// Why a build failed.
@@ -119,6 +122,19 @@ impl Builds {
         };
     }
 
+    /// How the last bundle of the checkout UI extension `handle` went: `failure`, and whether
+    /// a bundle of an earlier build is there, which the pages load meanwhile.
+    pub(crate) fn set_bundle(&self, handle: &str, failure: Option<Failure>, built: bool) {
+        let mut bundles = self.bundles.lock().expect("builds poisoned");
+        if failure.is_some() {
+            bundles.insert(handle.to_string(), built);
+        } else {
+            bundles.remove(handle);
+        }
+        drop(bundles);
+        self.set(handle, failure);
+    }
+
     /// Forgets the Functions that are not in `handles` any more.
     fn retain(&self, handles: &BTreeSet<String>) {
         let mut failures = self.failures.lock().expect("builds poisoned");
@@ -133,12 +149,26 @@ impl Builds {
             self.failures()
                 .into_iter()
                 .map(|(handle, failure)| {
-                    let built = self
-                        .modules
-                        .as_ref()
-                        .is_none_or(|modules| modules.path(&handle).is_file());
+                    let bundle = self
+                        .bundles
+                        .lock()
+                        .expect("builds poisoned")
+                        .get(&handle)
+                        .copied();
+                    // A UI extension runs the bundle of its last build that worked, when there
+                    // is one; a Function, the module published.
+                    let (kind, built) = match bundle {
+                        Some(built) => ("ui", built),
+                        None => (
+                            "function",
+                            self.modules
+                                .as_ref()
+                                .is_none_or(|modules| modules.path(&handle).is_file()),
+                        ),
+                    };
                     json!({
                         "handle": handle,
+                        "kind": kind,
                         "reason": failure.reason,
                         "output": failure.output,
                         "built": built,
@@ -1967,10 +1997,12 @@ impl Coordinator {
     /// the build of a Function does, and has the pages reload.
     fn build_ui(&mut self, handle: &str) {
         let started = Instant::now();
+        let mut bundle = None;
         let built = config::load(&self.root).and_then(|app| {
             let extension = app
                 .ui_extension(handle)
                 .ok_or_else(|| format!("{handle} is not an extension of the app"))?;
+            bundle = Some(extension.bundle.clone());
             lsf_app::checkout::javascript::build_extension(extension, &self.root)
         });
         match built {
@@ -1979,16 +2011,17 @@ impl Coordinator {
                     "✓ {handle} built in {:.1}s",
                     started.elapsed().as_secs_f64()
                 ));
-                self.builds.set(handle, None);
+                self.builds.set_bundle(handle, None, true);
             }
             Err(error) => {
                 (self.log)(&format!("✗ {handle}: {error}"));
-                self.builds.set(
+                self.builds.set_bundle(
                     handle,
                     Some(Failure {
                         reason: error,
                         output: String::new(),
                     }),
+                    bundle.is_some_and(|bundle| bundle.is_file()),
                 );
             }
         }
