@@ -310,7 +310,22 @@ fn product_create(
 
     state.emit("products/create", &product);
     emit_new_inventory(state, &variant);
+    note_unpublishable(mutation, "productCreate");
     Ok(payload(json!({"product": product}), &[]))
+}
+
+/// The note of a product created by a token that cannot publish it: a product the Admin API
+/// creates is on no sales channel, so the storefront does not show it, and putting it on the
+/// Online Store (`publishablePublish`) needs `write_publications`, a scope apps often leave out.
+pub(super) fn note_unpublishable(mutation: &mut Mutation<'_>, name: &str) {
+    if mutation
+        .grant()
+        .is_some_and(|grant| !grant.covers("write_publications"))
+    {
+        mutation.note(format!(
+            "{name}: the product is published on no sales channel, so the storefront does not show it; publishing it on the Online Store (publishablePublish) needs the write_publications scope, which this token does not have"
+        ));
+    }
 }
 
 /// A new product record, not inserted yet: no options, variants or media, unpublished, `ACTIVE`,

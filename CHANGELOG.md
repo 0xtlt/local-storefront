@@ -59,6 +59,10 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 
 ### Added
 
+- **GraphiQL for the Admin API** at `/__lsf/graphiql`: the shops, their tokens and the served
+  API versions filled in, the schema's docs, the cost debug header. It works offline. The start
+  lines and the app's home page link to it. A browser that opens the GraphQL endpoint is
+  pointed there.
 - **A local GraphQL Admin API, version 2026-10, with every mutation.** A server with `--app`
   answers `POST /admin/api/2026-10/graphql.json` over the store data, with the ids the storefront, the
   checkout and the Function inputs use. Queries follow Shopify's 2026-10 schema (its
@@ -363,6 +367,32 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   declaration is added, as the playground's `ui-preact` now does.
 
 ### Fixed
+
+- **A product created without `write_publications` says it is not on the storefront.**
+  `productCreate` and `productSet` add a note to `extensions.lsf.notes`: publishing a product
+  needs that scope.
+- **`GET /admin/oauth/access_scopes.json` lists the token's scopes**, in Shopify's shape. It
+  answered `404`, and so did the other REST paths with a reason about the theme part: they now
+  answer JSON that says lsf does not simulate the REST Admin API.
+- **New Admin API records have 13-digit ids**, as Shopify's do, the same every run: a draft
+  order, a discount, a refund or a webhook subscription was `…/1`, `…/2`.
+- **Discount summaries read like the admin's**: `$5.00 off entire order • Minimum purchase of
+  $50.00`, in the shop's money format, where lsf wrote `5.0 off entire order`.
+- **`Shopify-GraphQL-Cost-Debug: 1` lists the cost of each field** in `extensions.cost.fields`,
+  as Shopify does. The header was ignored.
+- **A completed draft order keeps its discounts.** `draftOrderComplete` made an order without
+  discount applications: each applied discount of the draft is now a `ManualDiscountApplication`
+  of the order, with its allocations on the lines, in the API and in the `orders/create` payload.
+- **Deprecated Admin API fields read their data.** A deprecated field that Shopify replaced
+  (`DraftOrderLineItem.originalUnitPrice`, `Order.totalPrice`, `Customer.email`, …) answered a
+  default (`"0.00"`) where its replacement had the value: it now reads the replacement's.
+- **`productSet` refuses an option value that `productOptions` does not declare**, with
+  `OPTION_VALUE_DOES_NOT_EXIST`, as Shopify does. It added the value to the option.
+- **The `shop/update` and `app/uninstalled` payloads have the shop's `domain`**, the host of its
+  primary domain. It was `null`.
+- **An image uploaded to a staged target has its `width` and `height`**, read from its PNG, JPEG,
+  GIF or WebP header. A `fileCreate` source lsf does not download is still `READY`, and
+  `extensions.lsf.notes` now says it was not downloaded.
 
 - **`/admin` without its slash opens the app in lsf's admin**, as `/admin/` does. It answered
   the storefront's 404.

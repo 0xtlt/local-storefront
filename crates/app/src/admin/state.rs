@@ -762,7 +762,9 @@ impl ShopState {
         if let Some((gid_type, id)) = parse_gid(&key) {
             let group = counter_group(gid_type);
             let before = self.counters.get(&group).copied();
-            let next = before.unwrap_or(1).max(id.saturating_add(1));
+            let next = before
+                .unwrap_or_else(|| first_id(&group))
+                .max(id.saturating_add(1));
             if before != Some(next) {
                 self.counters.insert(group.clone(), next);
                 self.log(|| Undo::Counter { group, before });
@@ -901,12 +903,14 @@ impl ShopState {
     }
 
     /// A new GID for a record of `type_name`, from a counter that starts above every id of the
-    /// type the state holds. The discount nodes (`DiscountAutomaticNode`, `DiscountCodeNode`,
-    /// `DiscountNode`) share a counter, as they share their ids on Shopify.
+    /// type the state holds, and at [`first_id`] of the type at least: the ids of new records
+    /// have 13 digits, as Shopify's and the seeded products' do, and are the same every run. The
+    /// discount nodes (`DiscountAutomaticNode`, `DiscountCodeNode`, `DiscountNode`) share a
+    /// counter, as they share their ids on Shopify.
     pub fn new_gid(&mut self, type_name: &str) -> String {
         let group = counter_group(type_name);
         let before = self.counters.get(&group).copied();
-        let id = before.unwrap_or(1);
+        let id = before.unwrap_or_else(|| first_id(&group));
         self.counters.insert(group.clone(), id + 1);
         self.log(|| Undo::Counter { group, before });
         gid(type_name, id)
@@ -1479,6 +1483,13 @@ fn record_type(record: &Record) -> String {
 
 /// The counter a type takes its new ids from: its own, except the discount nodes, which share
 /// one.
+/// Where the ids of new records of a counter's group start: a 13-digit number of the group's
+/// name (`DraftOrder/4…`), as lsf-core derives the ids of the store data's records. Ids then
+/// follow one another (`…012`, `…013`).
+pub(crate) fn first_id(group: &str) -> u64 {
+    lsf_core::util::stable_id("new_gid", group)
+}
+
 fn counter_group(type_name: &str) -> String {
     match type_name {
         "DiscountAutomaticNode" | "DiscountCodeNode" | "DiscountNode" => "DiscountNode".to_string(),
@@ -1808,13 +1819,19 @@ mod tests {
         assert_eq!(ids, ["gid://shopify/Product/9", "gid://shopify/Product/3"]);
         assert_eq!(state.count("Product"), 2);
         assert_eq!(state.all_of(&["Collection", "Product"]).count(), 3);
-        // A new id is above every id of the type.
-        assert_eq!(state.new_gid("Product"), "gid://shopify/Product/10");
-        assert_eq!(state.new_gid("Product"), "gid://shopify/Product/11");
-        assert_eq!(state.new_gid("Order"), "gid://shopify/Order/1");
+        // A new id is above every id of the type, and has 13 digits, the same every run.
+        let first = first_id("Product");
+        assert_eq!(first.to_string().len(), 13);
+        assert_eq!(state.new_gid("Product"), gid("Product", first));
+        assert_eq!(state.new_gid("Product"), gid("Product", first + 1));
+        assert_eq!(state.new_gid("Order"), gid("Order", first_id("Order")));
+        state.insert(record(
+            json!({"__typename": "Product", "id": gid("Product", first + 10)}),
+        ));
+        assert_eq!(state.new_gid("Product"), gid("Product", first + 11));
         // A record without an id gets a new one.
         let new = state.insert(record(json!({"__typename": "Product", "title": "New"})));
-        assert_eq!(new, "gid://shopify/Product/12");
+        assert_eq!(new, gid("Product", first + 12));
         assert_eq!(state.get(&new).unwrap()["id"], json!(new));
         // Replacing keeps the position; removing forgets it.
         state.insert(record(
@@ -1825,19 +1842,20 @@ mod tests {
             Some("gid://shopify/Product/9")
         );
         assert!(state.remove("gid://shopify/Product/3").is_some());
-        assert_eq!(state.count("Product"), 2);
+        assert_eq!(state.count("Product"), 3);
         assert!(state.get("gid://shopify/Product/3").is_none());
     }
 
     #[test]
     fn discount_nodes_share_their_ids() {
         let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        let first = first_id("DiscountNode");
         state.insert(record(
-            json!({"__typename": "DiscountCodeNode", "id": "gid://shopify/DiscountCodeNode/2"}),
+            json!({"__typename": "DiscountCodeNode", "id": gid("DiscountCodeNode", first + 1)}),
         ));
         assert_eq!(
             state.new_gid("DiscountAutomaticNode"),
-            "gid://shopify/DiscountAutomaticNode/3"
+            gid("DiscountAutomaticNode", first + 2)
         );
     }
 
@@ -2003,7 +2021,10 @@ mod tests {
         assert_eq!(state.picture(), before);
         assert!(state.journal.is_none());
         // New ids start where they did, and the next event has the next sequence.
-        assert_eq!(state.new_gid("Product"), "gid://shopify/Product/7");
+        assert_eq!(
+            state.new_gid("Product"),
+            gid("Product", first_id("Product"))
+        );
         assert_eq!(state.changes().len(), 1);
     }
 

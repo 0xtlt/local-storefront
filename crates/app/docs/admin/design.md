@@ -602,8 +602,11 @@ storefront, the checkout and the Function inputs already use.
   resolver applies the `sortKey` and its default on top. The arrays of a record are in the order
   Shopify shows them (variants and media by position, the products of a collection in its manual
   order).
-- New records get ids from a counter per type that starts above every seeded id
-  (`ShopState::new_gid`; the discount nodes share one counter, as they share ids on Shopify).
+- New records get ids from a counter per type that starts above every seeded id, and at a
+  13-digit number of the type's name at least (`state::first_id`: `stable_id("new_gid",
+  type)`), so that a new draft order, refund or webhook subscription has an id like Shopify's
+  and the seeded products', the same every run (`ShopState::new_gid`; the discount nodes share
+  one counter, as they share ids on Shopify).
 - **An index** finds the records of a type by their `handle` (products, collections, metaobjects,
   pages, blogs, articles, markets, channels) and the orders by their `number`, without reading
   every record (`state::INDEXED`; `ShopState::with_handle`, `handle_taken`, `max_number`, and
@@ -700,8 +703,13 @@ field, in order:
    `metafields(namespace:, keys:)` of any owner read its `metafields`, `$app` and `$app:x` being
    the app's reserved namespaces (`app--<id>`, `app--<id>--x`; `metafield` without a namespace is
    in the app's). After it, when there is none: `legacyResourceId` (the number of the GID),
-   `defaultCursor` (the cursor of the record in the `ID` order of its type), and the `Count` of an
-   array (`variantsCount` of `variants`, with the field's `query`).
+   `defaultCursor` (the cursor of the record in the `ID` order of its type), the `Count` of an
+   array (`variantsCount` of `variants`, with the field's `query`), and a deprecated field whose
+   reason is "Use `x` instead." (`x` a field, or a path of fields, of the same object without
+   required arguments): `x`'s value, `Money` from the amount of a `MoneyV2` or the shop money of
+   a `MoneyBag`, `MoneyV2` from a `MoneyBag`, `Int` from a `Count`, a scalar from a scalar of its
+   kind (`resolve::successor_path`; `OTHER_VALUES` lists the two whose replacement holds another
+   value).
 6. **A default**: `null`; for a non-null field an empty list, `""`, `0`, `false`, `"0.00"` for
    `Money` and `"0.0"` for `Decimal`, the seed's fixed date for `DateTime`, the first enum value,
    or an object of defaults (the first possible type of an abstract one). Its path goes into
@@ -936,7 +944,9 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 | Path | What answers |
 |---|---|
 | `POST\|GET /admin/api/<version>/graphql.json` | The version (`Served::resolve`: served, fallen forward, or `404`), the token (`401` as Shopify, `X-Lsf-Reason` saying why), what the shop's clock passed since the last request (`domains::tick`, see "The shop's clock"), the GraphQL request (JSON, `application/graphql`, `?query=`; `400` `{"errors": {"query": "Required parameter missing or invalid"}}` without one), then `graphql::run` with the bucket of the shop and app, `X-Shopify-API-Version` and `X-Request-Id`. The events the request emitted are handed to `Webhooks::emit` with a lookup over the shop: the payloads are built then, the deliveries queued for the worker, nothing waits on the backend. |
-| other `/admin/api/<v>/…` | `404`: another version, or the REST Admin API, which lsf does not serve. |
+| other `/admin/api/<v>/…`, `/admin/*.json`, another `/admin/oauth/*` | `404` in JSON: another version, or the REST Admin API, which lsf does not simulate (`version::rest_not_served_by`, also the `X-Lsf-Reason`). |
+| `GET /admin/oauth/access_scopes.json` | The REST endpoint of the token's scopes (`AdminApi::access_scopes`), each write scope followed by the read scope it implies; `401` as the GraphQL endpoint. |
+| `GET /__lsf/graphiql` | `graphiql`: lsf's GraphiQL, one page embedded in the binary (`assets/graphiql/graphiql.html`), which reads the shops, tokens and versions of `GET /__lsf/admin` and posts to the GraphQL endpoint. |
 | `/admin/oauth/*`, `/__lsf/admin/session-token`, `/__lsf/admin/launch` | `auth::oauth::handle`, with `oauth::Shops` over the shops and the system clock. |
 | `/__lsf/admin` (`GET` status, `DELETE` reset), `/__lsf/admin/shops`, `/__lsf/admin/uninstall`, `/__lsf/admin/install` | The control endpoints of `docs/control-api.md`. |
 | `/__lsf/admin/charges/<n>` (`GET` the page, `POST …/approve`, `…/decline`), `/__lsf/admin/uploads/<shop>[/<key>]`, `/__lsf/admin/bulk/<shop>/<n>.jsonl` | `api::app`: the merchant's approval of a charge, staged uploads, bulk operations' results; no token, as Shopify's admin page and signed URLs need none from the app. The URLs the mutations answer for them are on the origin the request reached lsf at (`http://<Host>`, `ShopResolver::with_origin`). |

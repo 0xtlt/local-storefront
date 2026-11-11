@@ -181,6 +181,16 @@ pub fn choices(
                         .iter()
                         .find(|(_, known)| known.eq_ignore_ascii_case(name))
                 });
+                // `productSet` declares every value in `productOptions`: a variant's value must
+                // be one of them. The bulk mutations add a value they do not know to its option.
+                if value.is_none() && matches!(reader, Reader::Set) {
+                    errors.push(error(
+                        &["optionValues", &position, "name"],
+                        "Option value does not exist.",
+                        "OPTION_VALUE_DOES_NOT_EXIST",
+                    ));
+                    continue;
+                }
                 Choice {
                     option: options[option].id.clone(),
                     name: value.map_or(name, |(_, known)| known.as_str()).to_string(),

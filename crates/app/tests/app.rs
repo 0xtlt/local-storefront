@@ -701,6 +701,35 @@ fn discounts_are_updated_activated_deactivated_and_deleted() {
 }
 
 #[test]
+fn discounts_have_the_admins_summaries() {
+    let (_, mut shop) = rich();
+    // The admin's summaries: what a discount takes off, then its minimum, in the shop's format.
+    let summaries = run(
+        &mut shop,
+        r#"mutation {
+            fixed: discountAutomaticBasicCreate(automaticBasicDiscount: {title: "Five off", startsAt: "2026-01-01T00:00:00Z",
+                customerGets: {value: {discountAmount: {amount: "5.00", appliesOnEachItem: false}}, items: {all: true}},
+                minimumRequirement: {quantity: {greaterThanOrEqualToQuantity: "2"}}}) {
+                automaticDiscountNode { automaticDiscount { ... on DiscountAutomaticBasic { summary shortSummary } } } userErrors { message } }
+            bxgy: discountAutomaticBxgyCreate(automaticBxgyDiscount: {title: "Two for one", startsAt: "2026-01-01T00:00:00Z",
+                customerBuys: {value: {quantity: "2"}, items: {all: true}},
+                customerGets: {value: {discountOnQuantity: {quantity: "1", effect: {percentage: 1.0}}}, items: {all: true}}}) {
+                automaticDiscountNode { automaticDiscount { ... on DiscountAutomaticBxgy { summary } } } userErrors { message } } }"#,
+        Value::Null,
+    );
+    assert_eq!(
+        summaries["data"]["fixed"]["automaticDiscountNode"]["automaticDiscount"],
+        json!({"summary": "€5,00 off entire order • Minimum quantity of 2 items", "shortSummary": "€5,00 off entire order"}),
+        "{summaries}"
+    );
+    assert_eq!(
+        summaries["data"]["bxgy"]["automaticDiscountNode"]["automaticDiscount"]["summary"],
+        json!("Buy 2 items, get 1 item free"),
+        "{summaries}"
+    );
+}
+
+#[test]
 fn discount_nodes_list_search_and_sort_every_kind() {
     let (_, mut shop) = rich();
     let basic = run(
@@ -715,7 +744,7 @@ fn discount_nodes_list_search_and_sort_every_kind() {
     let node = &data(&basic, "discountCodeBasicCreate")["codeDiscountNode"];
     assert_eq!(
         node["codeDiscount"],
-        json!({"title": "Ten off", "summary": "10% off entire order", "discountClasses": ["ORDER"],
+        json!({"title": "Ten off", "summary": "10% off entire order • Minimum purchase of €50,00", "discountClasses": ["ORDER"],
             "customerGets": {"value": {"percentage": 0.1}, "items": {"allItems": true}},
             "minimumRequirement": {"greaterThanOrEqualToSubtotal": {"amount": "50.0", "currencyCode": "EUR"}}})
     );

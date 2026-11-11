@@ -159,6 +159,42 @@ fn pages_products_with_cursors_and_a_query() {
     assert_eq!(cost["throttleStatus"]["maximumAvailable"], json!(20000.0));
 }
 
+/// `Shopify-GraphQL-Cost-Debug: 1` adds the fields of the requested cost to `extensions.cost`,
+/// children first, as Shopify's example lists them; without it, there are none.
+#[test]
+fn the_cost_debug_header_lists_the_cost_of_each_field() {
+    let api = demo_api();
+    let token = default_token(&api);
+    let query = "{ products(first: 10) { edges { node { title } } } }";
+    let body = json!({ "query": query }).to_string();
+    let response = api
+        .handle(&request(
+            "POST",
+            GRAPHQL,
+            &[
+                ("content-type", "application/json"),
+                ("x-shopify-access-token", &token),
+                ("shopify-graphql-cost-debug", "1"),
+            ],
+            body.as_bytes(),
+        ))
+        .unwrap();
+    let answer = json_of(&response);
+    let cost = &answer["extensions"]["cost"];
+    assert_eq!(cost["requestedQueryCost"], json!(12));
+    assert_eq!(
+        cost["fields"],
+        json!([
+            {"path": ["products", "edges", "node", "title"], "definedCost": 0, "requestedTotalCost": 0, "requestedChildrenCost": null},
+            {"path": ["products", "edges", "node"], "definedCost": 1, "requestedTotalCost": 10, "requestedChildrenCost": 0},
+            {"path": ["products", "edges"], "definedCost": 0, "requestedTotalCost": 10, "requestedChildrenCost": 10},
+            {"path": ["products"], "definedCost": 2, "requestedTotalCost": 12, "requestedChildrenCost": 10},
+        ])
+    );
+    let (_, plain) = graphql(&api, &token, query, Value::Null);
+    assert!(plain["extensions"]["cost"].get("fields").is_none());
+}
+
 #[test]
 fn reads_any_record_by_node() {
     let api = demo_api();
@@ -1179,6 +1215,71 @@ fn refuses_requests_without_a_valid_token() {
     );
 }
 
+/// `GET /admin/oauth/access_scopes.json` lists the token's scopes in Shopify's shape, and
+/// refuses a request without a token as the GraphQL Admin API does.
+#[test]
+fn the_access_scopes_of_a_token_are_listed() {
+    let api = demo_api();
+    let token = default_token(&api);
+    let response = api
+        .handle(&request(
+            "GET",
+            "/admin/oauth/access_scopes.json",
+            &[("x-shopify-access-token", &token)],
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(response.status, 200);
+    let scopes = json_of(&response)["access_scopes"].clone();
+    let handles: Vec<&str> = scopes
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|scope| scope["handle"].as_str().unwrap())
+        .collect();
+    assert!(handles.contains(&"write_products"), "{scopes}");
+    // A write scope lists the read scope it implies, once.
+    assert!(handles.contains(&"read_products"), "{scopes}");
+    assert_eq!(
+        handles
+            .iter()
+            .filter(|handle| **handle == "read_products")
+            .count(),
+        1
+    );
+    let denied = send(&api, "GET", "/admin/oauth/access_scopes.json", Value::Null);
+    assert_eq!(denied.status, 401);
+    assert_eq!(json_of(&denied), json!({"errors": INVALID_TOKEN}));
+}
+
+/// `GET /__lsf/graphiql` is lsf's GraphiQL, and a browser that opens the endpoint without a
+/// token is pointed there.
+#[test]
+fn graphiql_is_served_and_a_browser_is_pointed_there() {
+    let api = demo_api();
+    let page = send(&api, "GET", "/__lsf/graphiql", Value::Null);
+    assert_eq!(page.status, 200);
+    assert_eq!(
+        header(&page, "content-type"),
+        Some("text/html; charset=utf-8")
+    );
+    assert!(String::from_utf8_lossy(&page.body).contains("<title>GraphiQL · lsf</title>"));
+    let browser = api
+        .handle(&request(
+            "GET",
+            GRAPHQL,
+            &[("accept", "text/html,application/xhtml+xml")],
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(browser.status, 401);
+    assert!(
+        header(&browser, "x-lsf-reason")
+            .unwrap()
+            .ends_with("in a browser, open /__lsf/graphiql (GraphiQL, the token filled in)")
+    );
+}
+
 #[test]
 fn says_the_rest_api_and_other_versions_are_not_served() {
     let api = demo_api();
@@ -1188,8 +1289,19 @@ fn says_the_rest_api_and_other_versions_are_not_served() {
         json_of(&rest)["errors"]
             .as_str()
             .unwrap()
-            .contains("does not serve the REST Admin API")
+            .contains("does not simulate the REST Admin API (products.json), except GET /admin/oauth/access_scopes.json")
     );
+    // The REST paths without a version, and those under OAuth's, say the same, in JSON.
+    for path in ["/admin/products.json", "/admin/oauth/access_scopes_v2.json"] {
+        let rest = send(&api, "GET", path, Value::Null);
+        assert_eq!(rest.status, 404, "{path}");
+        assert!(
+            header(&rest, "x-lsf-reason")
+                .unwrap()
+                .starts_with("lsf does not simulate the REST Admin API"),
+            "{path}"
+        );
+    }
     let other = send(
         &api,
         "POST",

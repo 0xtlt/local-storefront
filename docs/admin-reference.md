@@ -12,7 +12,12 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
   exceed 250. …`, `ACCESS_DENIED`, `THROTTLED`, `MAX_COST_EXCEEDED`. A mutation's validation errors
   are its `userErrors`, and a mutation that fails changes nothing.
 - `extensions.cost`: `requestedQueryCost`, `actualQueryCost` and `throttleStatus`, as Shopify
-  computes them, from a leaky bucket per shop and app (`--admin-throttle`).
+  computes them, from a leaky bucket per shop and app (`--admin-throttle`). With the header
+  `Shopify-GraphQL-Cost-Debug: 1`, also `fields`, the cost of each field as Shopify lists it:
+  its `path`, `definedCost`, `requestedTotalCost` and `requestedChildrenCost`, the children
+  first.
+- Ids: a record lsf creates has a 13-digit id, as Shopify's do (`gid://shopify/DraftOrder/
+  4…`), the same every run for the same requests.
 - `extensions.search`: Shopify's warnings when a `query:` names a field the connection does not
   have ("Invalid search field for this query."); the field is then ignored, as on Shopify.
 - Cursors are opaque, and resume as Shopify's do: right after their item in the connection's
@@ -21,7 +26,11 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
 - `extensions.lsf`, only lsf's, only when there is something to say: `defaulted`, the paths of
   the fields answered with a default because the store data does not give them (and
   `defaultedFields`, as `Type.field`), and `notes`, what lsf did not simulate in the request (an
-  input it ignored, a search filter it does not read).
+  input it ignored, a search filter it does not read, a file source it did not download).
+- A deprecated field that Shopify replaced by another of the same object ("Use
+  `originalUnitPriceSet` instead.") reads that one's value: `DraftOrderLineItem
+  .originalUnitPrice`, `Order.totalPrice`, `LineItem.discountedTotal`, `Product.totalVariants`,
+  `Customer.email`, and about a hundred more, never a default `"0.00"`.
 - A money input of ten trillion or more in the currency's unit (`Money`, `MoneyInput.amount`, a
   discount's amount, …), or a line or an order whose total would be, answers a `userError`
   ("Price must be less than 10000000000000") and changes nothing. Shopify publishes no limit:
@@ -29,8 +38,11 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
 - Nothing answers a silent success for what lsf does not do: an input it ignores is in
   `extensions.lsf.notes`, and a mutation it did not simulate would answer an error with
   `extensions.code: LSF_NOT_SIMULATED` (no mutation of the versions it serves does). The REST
-  Admin API (`/admin/api/2026-10/products.json`) answers `404`: lsf serves the GraphQL Admin API
-  only.
+  Admin API (`/admin/api/2026-10/products.json`, `/admin/products.json`) answers `404` with
+  JSON that says so: lsf serves the GraphQL Admin API, and of REST only `GET
+  /admin/oauth/access_scopes.json`, the scopes of the token (`{"access_scopes": [{"handle":
+  "write_products"}, {"handle": "read_products"}]}`, a write scope followed by the read scope
+  it implies), with the same `X-Shopify-Access-Token`.
 - A bug of lsf while a mutation runs (a panic, in the mutation or in what follows it: segments,
   listings, product feeds) answers Shopify's internal error: `Internal error. Looks like
   something went wrong on our end.` with `extensions.code: INTERNAL_SERVER_ERROR`, a
@@ -89,7 +101,9 @@ How they behave, as shopify.dev documents it:
   "The variant 'Red / S' already exists.", "Option 'Color' already exists.", "Can't manually
   remove products from a smart collection", "The location cannot be deleted while it is
   active.", … Where Shopify documents an error by its code only, the message is the code's
-  description in the 2026-10 schema.
+  description in the 2026-10 schema. A `productSet` variant whose option value is not among
+  those `productOptions` declares answers `OPTION_VALUE_DOES_NOT_EXIST` ("Option value does not
+  exist."), where `productVariantsBulkCreate` and `…BulkUpdate` add the value to its option.
 - **Metafields** given to `productCreate`, `productUpdate`, `productSet`, the variant
   mutations, collections, locations and selling plans (and to customers, app discounts and the
   owners of Functions) are checked as `metafieldsSet` checks them
@@ -165,8 +179,9 @@ How they behave, as shopify.dev documents it:
   sent: each is an email in the shop's [outbox](#the-outbox) (`gift_card_created` to the card's
   customer, `gift_card_recipient` with the recipient's message); a card disabled, expired or
   spent is refused (`INVALID`).
-- **Media given by URL** is recorded, not downloaded: `image.url` is the URL, the size unknown,
-  and the medium is `READY` at once (Shopify answers `UPLOADED` and processes it later).
+- **Media given by URL** is recorded, not downloaded: `image.url` is the URL, the size unknown
+  (an image uploaded to a staged target has the size of its header), and the medium is `READY`
+  at once (Shopify answers `UPLOADED` and processes it later).
 - **Queries**: `products` and `productVariants` take their documented sort keys
   (`INVENTORY_TOTAL`, `FULL_TITLE`, `SKU`, …) and search filters (`sku`, `barcode`, `price`,
   `inventory_total`, `is_price_reduced`, `out_of_stock_somewhere`, `published_status`,
@@ -264,7 +279,9 @@ specific webhooks").
   `requestedOrderEditCalculate`.
 - **Draft orders**: `draftOrderCreate`, `draftOrderUpdate`, `draftOrderDelete`,
   `draftOrderCalculate`, `draftOrderComplete` (an order, paid unless `paymentPending` or payment
-  terms), `draftOrderDuplicate`, `draftOrderInvoiceSend` (the invoice in the shop's outbox),
+  terms; each applied discount is a `ManualDiscountApplication` of the order, a line's
+  `EXPLICIT` and `EACH`, the draft's `ALL` and `ACROSS`, with its `discountAllocations` on the
+  lines and in the `orders/create` payload), `draftOrderDuplicate`, `draftOrderInvoiceSend` (the invoice in the shop's outbox),
   `draftOrderInvoicePreview`, `draftOrderCreateFromOrder`,
   `draftOrderBulkAddTags`, `draftOrderBulkRemoveTags`, `draftOrderBulkDelete`; B2B drafts
   (`purchasingEntity.purchasingCompany`: the location's addresses and payment terms). Taxes are
@@ -819,8 +836,13 @@ content, the products a file is a medium of), `fileDelete`; `files` searched by 
 sorted by `FILENAME`. A file is `READY` as soon as it is created: lsf has nothing to process, so
 a backend that polls `fileStatus` sees it at once. Its URL is the source's. From a staged upload
 (`originalSource` the target's `resourceUrl`, once the file is uploaded), the file has the name
-the target was made for, the MIME type it was uploaded with, and its size (`originalFileSize`,
-`originalSource.fileSize`); its URL serves the bytes.
+the target was made for, the MIME type it was uploaded with, its size (`originalFileSize`,
+`originalSource.fileSize`), and an image its `width` and `height` (read from a PNG, JPEG, GIF or
+WebP header); its URL serves the bytes. Another URL is not downloaded: the file is `READY`
+whatever the URL answers, an image's `width` and `height` are `null`, and
+`extensions.lsf.notes` says so (`fileCreate: lsf did not download <url>: …`). Shopify downloads
+it, and a URL that answers no file ends `FAILED` with `fileErrors`, which lsf does not
+simulate: give a test the bytes through `stagedUploadsCreate`.
 
 **Translations.** `translationsRegister` and `translationsRemove`; `translatableResource`,
 `translatableResources(resourceType:)`, `translatableResourcesByIds`, and `translations(locale:)`
@@ -1009,6 +1031,9 @@ checks them (a definition of the `DISCOUNT` owner type applies). The store sync 
 app discount back to the store data's `checkout.discounts` (its Function, title, first code,
 classes and metafields), so the local checkout runs it. Shopify's own types (basic, buy X get Y,
 free shipping, automatic and code) are kept as records: the local checkout runs Functions only.
+Their `summary` is the admin's: what the discount takes off, then its minimum, in the shop's
+money format (`$5.00 off entire order • Minimum purchase of $50.00`, `10% off 2 products`, `Buy
+2 items, get 1 item free`, `Free shipping on all products`), and `shortSummary` its first part.
 Also: `discountAutomaticActivate`/`Deactivate`/`Delete` and the code ones (a discount's `status`
 follows its dates), `discountAutomaticBulkDelete`, `discountCodeBulkActivate`/`Deactivate`/
 `Delete`, `discountRedeemCodeBulkAdd`, `discountCodeRedeemCodeBulkDelete`,
@@ -1315,7 +1340,7 @@ backend lsf is pointed at: [where they go](admin.md#webhooks).)
   "channel": "email",
   "to": "buyer@example.com",
   "what": "payment_reminder",
-  "about": "gid://shopify/PaymentSchedule/1",
+  "about": "gid://shopify/PaymentSchedule/6936761535489",
   "subject": "Payment reminder for order #1001",
   "body": "120.0 USD is due on 2026-12-10 for order #1001."
 }

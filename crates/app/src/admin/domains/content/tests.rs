@@ -1175,6 +1175,56 @@ const FILE_CREATE: &str = "mutation($files: [FileCreateInput!]!) { fileCreate(fi
         ... on Video { filename } }
     userErrors { field message code } } }";
 
+/// An image uploaded to a staged target has the size of its header; a URL lsf does not download
+/// is `READY` with a note that says so.
+#[test]
+fn a_staged_image_has_its_size_and_an_external_url_a_note() {
+    let mut shop = rich();
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    png.extend(64u32.to_be_bytes());
+    png.extend(32u32.to_be_bytes());
+    png.extend([8, 6, 0, 0, 0]);
+    crate::admin::domains::app::uploads::store(
+        &mut shop,
+        "tmp/42/files/9a/tiny.png",
+        png,
+        "image/png",
+    );
+    let staged = format!(
+        "http://127.0.0.1:9292/__lsf/admin/uploads/{}/tmp/42/files/9a/tiny.png",
+        shop.domain()
+    );
+    let created = run(
+        &mut shop,
+        "mutation($files: [FileCreateInput!]!) { fileCreate(files: $files) { files { fileStatus
+            ... on MediaImage { image { width height } } } userErrors { code } } }",
+        json!({"files": [{"originalSource": staged}]}),
+    );
+    assert_eq!(
+        created["data"]["fileCreate"]["files"],
+        json!([{"fileStatus": "READY", "image": {"width": 64, "height": 32}}]),
+        "{created}"
+    );
+    assert!(
+        created["extensions"]["lsf"].get("notes").is_none(),
+        "{created}"
+    );
+    let external = run(
+        &mut shop,
+        "mutation($files: [FileCreateInput!]!) { fileCreate(files: $files) { files { fileStatus } userErrors { code } } }",
+        json!({"files": [{"originalSource": "https://unreachable.invalid/missing.png"}]}),
+    );
+    assert_eq!(
+        external["data"]["fileCreate"]["files"],
+        json!([{"fileStatus": "READY"}])
+    );
+    let notes = external["extensions"]["lsf"]["notes"].to_string();
+    assert!(
+        notes.contains("lsf did not download https://unreachable.invalid/missing.png"),
+        "{external}"
+    );
+}
+
 #[test]
 fn creates_updates_and_deletes_files() {
     let mut shop = rich();

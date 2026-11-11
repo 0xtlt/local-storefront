@@ -72,6 +72,67 @@ pub fn bytes<'s>(state: &'s ShopState, url_or_path: &str) -> Option<&'s Blob> {
     state.blob(&key_of(url_or_path)?)
 }
 
+/// The width and height of an image, from the header of its bytes: PNG, JPEG, GIF and WebP
+/// (lossy, lossless and extended). `None` for another format or bytes too short to say.
+pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    let be16 = |at: usize| {
+        Some(u32::from(u16::from_be_bytes(
+            bytes.get(at..at + 2)?.try_into().ok()?,
+        )))
+    };
+    let le16 = |at: usize| {
+        Some(u32::from(u16::from_le_bytes(
+            bytes.get(at..at + 2)?.try_into().ok()?,
+        )))
+    };
+    let le24 = |at: usize| {
+        let b = bytes.get(at..at + 3)?;
+        Some(u32::from(b[0]) | u32::from(b[1]) << 8 | u32::from(b[2]) << 16)
+    };
+    let be32 = |at: usize| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    let size = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        // The IHDR chunk comes first: its width and height, big-endian.
+        (bytes.get(12..16)? == b"IHDR").then_some(())?;
+        (be32(16)?, be32(20)?)
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        (le16(6)?, le16(8)?)
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12)? == b"WEBP" {
+        match bytes.get(12..16)? {
+            b"VP8 " => (le16(26)? & 0x3fff, le16(28)? & 0x3fff),
+            b"VP8L" => {
+                let bits = u32::from_le_bytes(bytes.get(21..25)?.try_into().ok()?);
+                ((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1)
+            }
+            b"VP8X" => (le24(24)? + 1, le24(27)? + 1),
+            _ => return None,
+        }
+    } else if bytes.starts_with(&[0xff, 0xd8]) {
+        // The segments up to the first start of frame (SOF0 to SOF15 but DHT, JPG and DAC).
+        let mut at = 2;
+        loop {
+            while *bytes.get(at)? != 0xff {
+                at += 1;
+            }
+            while *bytes.get(at)? == 0xff {
+                at += 1;
+            }
+            let marker = *bytes.get(at)?;
+            at += 1;
+            if matches!(marker, 0xd8 | 0x01 | 0xd0..=0xd7) {
+                continue;
+            }
+            let length = be16(at)? as usize;
+            if (0xc0..=0xcf).contains(&marker) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
+                break (be16(at + 5)?, be16(at + 3)?);
+            }
+            at += length;
+        }
+    } else {
+        return None;
+    };
+    (size.0 > 0 && size.1 > 0).then_some(size)
+}
+
 /// Keeps what a client uploaded to a target.
 pub fn store(state: &mut ShopState, key: &str, bytes: Vec<u8>, content_type: &str) {
     state.put_blob(key, Blob::new(bytes, content_type));
@@ -278,6 +339,48 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The headers of the image formats: their sizes are read, others are not.
+    #[test]
+    fn reads_the_size_of_an_image_from_its_header() {
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        png.extend(640u32.to_be_bytes());
+        png.extend(480u32.to_be_bytes());
+        png.extend([8, 6, 0, 0, 0]);
+        assert_eq!(image_size(&png), Some((640, 480)));
+        let mut gif = b"GIF89a".to_vec();
+        gif.extend(300u16.to_le_bytes());
+        gif.extend(200u16.to_le_bytes());
+        assert_eq!(image_size(&gif), Some((300, 200)));
+        // A JPEG: SOI, an APP0 segment, then SOF0 (precision, height, width).
+        let mut jpeg = vec![0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x4a, 0x46];
+        jpeg.extend([0xff, 0xc0, 0x00, 0x11, 0x08]);
+        jpeg.extend(1080u16.to_be_bytes());
+        jpeg.extend(1920u16.to_be_bytes());
+        jpeg.extend([0x03; 12]);
+        assert_eq!(image_size(&jpeg), Some((1920, 1080)));
+        // WebP: lossy (VP8), lossless (VP8L), extended (VP8X).
+        let webp = |chunk: &[u8], body: &[u8]| {
+            let mut bytes = b"RIFF\0\0\0\0WEBP".to_vec();
+            bytes.extend(chunk);
+            bytes.extend([0; 4]);
+            bytes.extend(body);
+            bytes
+        };
+        let mut lossy = vec![0, 0, 0, 0x9d, 0x01, 0x2a];
+        lossy.extend(800u16.to_le_bytes());
+        lossy.extend(600u16.to_le_bytes());
+        assert_eq!(image_size(&webp(b"VP8 ", &lossy)), Some((800, 600)));
+        let bits: u32 = (100 - 1) | ((50 - 1) << 14);
+        let mut lossless = vec![0x2f];
+        lossless.extend(bits.to_le_bytes());
+        assert_eq!(image_size(&webp(b"VP8L", &lossless)), Some((100, 50)));
+        let mut extended = vec![0; 4];
+        extended.extend([0x1f, 0x03, 0x00, 0x57, 0x02, 0x00]);
+        assert_eq!(image_size(&webp(b"VP8X", &extended)), Some((800, 600)));
+        assert_eq!(image_size(b"%PDF-1.7"), None);
+        assert_eq!(image_size(&png[..20]), None);
+    }
 
     #[test]
     fn reads_keys_from_urls_paths_and_keys() {
