@@ -1126,6 +1126,174 @@ mod tests {
     }
 
     #[test]
+    fn schemas_block_types_and_assets_are_checked() {
+        let root = std::env::temp_dir().join(format!("lsf-check-schema-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write("layout/theme.liquid", "{{ content_for_layout }}");
+        write("assets/base.css", "");
+        write("assets/app.js.liquid", "");
+        write(
+            "snippets/head.liquid",
+            "{{ 'base.css' | asset_url }}{{ 'app.js' | asset_url }}\n{{ 'bse.css' | asset_url | stylesheet_tag }}",
+        );
+        write("blocks/price.liquid", "{% content_for 'block', type: 'pirce', id: 'x' %}");
+        write(
+            "sections/main.liquid",
+            "{% content_for 'blocks' %}\n{% schema %}\n{\n  \"name\": \"t:names.main\",\n  \"blocks\": [{ \"type\": \"@theme\" }],\n  \"settings\": [\n    { \"type\": \"chekbox\", \"id\": \"a\", \"label\": \"A\" }\n  ]\n}\n{% endschema %}",
+        );
+        write(
+            "sections/broken.liquid",
+            "<p>\n{% schema %}\n{ \"name\": \"Broken\", }\n{% endschema %}",
+        );
+        write(
+            "sections/slides.liquid",
+            r#"{% schema %}{"name": "Slides", "blocks": [{"type": "slide", "name": "Slide"}]}{% endschema %}"#,
+        );
+        write(
+            "locales/en.default.schema.json",
+            r#"{"names": {"other": "Other"}}"#,
+        );
+        write(
+            "templates/index.json",
+            r#"{
+  "sections": {
+    "main": {
+      "type": "main",
+      "blocks": {
+        "p": {
+          "type": "pricee",
+          "blocks": { "q": { "type": "price" } }
+        }
+      }
+    },
+    "slides": {
+      "type": "slides",
+      "blocks": { "s": { "type": "slide" }, "t": { "type": "slid" } }
+    }
+  },
+  "order": ["main", "slides"]
+}"#,
+        );
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(String, String, String, u64, String)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["severity"].as_str().unwrap().to_string(),
+                    d["code"].as_str().unwrap().to_string(),
+                    d["file"].as_str().unwrap().to_string(),
+                    d["line"].as_u64().unwrap_or(0),
+                    d["hint"].as_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        let expected = |severity: &str, code: &str, file: &str, line: u64, hint: &str| {
+            (
+                severity.to_string(),
+                code.to_string(),
+                file.to_string(),
+                line,
+                hint.to_string(),
+            )
+        };
+        assert_eq!(
+            found,
+            [
+                expected("error", "invalid_schema", "sections/broken.liquid", 3, ""),
+                expected(
+                    "error",
+                    "missing_schema_translation",
+                    "sections/main.liquid",
+                    4,
+                    "add it to locales/en.default.schema.json"
+                ),
+                expected(
+                    "error",
+                    "unknown_setting_type",
+                    "sections/main.liquid",
+                    7,
+                    "did you mean \"checkbox\"?"
+                ),
+                expected(
+                    "error",
+                    "missing_block",
+                    "blocks/price.liquid",
+                    1,
+                    "did you mean \"price\"?"
+                ),
+                expected(
+                    "warning",
+                    "missing_asset",
+                    "snippets/head.liquid",
+                    2,
+                    "did you mean \"base.css\"?"
+                ),
+                expected(
+                    "error",
+                    "missing_block",
+                    "templates/index.json",
+                    7,
+                    "did you mean \"price\"?"
+                ),
+                expected(
+                    "error",
+                    "missing_block",
+                    "templates/index.json",
+                    14,
+                    "did you mean \"slide\"?"
+                ),
+            ],
+            "{report:#}"
+        );
+        assert_eq!(report["problems"], 6);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn with_an_app_a_block_that_renders_nothing_is_a_problem() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/theme-app-extensions");
+        let report = |app: Option<std::path::PathBuf>| {
+            let args = Args {
+                fix: false,
+                format: Format::Json,
+                app,
+            };
+            let (files, tally) = check_theme(&fixture.join("theme"), &[], &args).unwrap();
+            json_report(files, &tally)
+        };
+        let with_app = report(Some(fixture.join("app")));
+        let errors: Vec<&str> = with_app["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["code"] == "app_block" && d["severity"] == "error")
+            .map(|d| d["message"].as_str().unwrap())
+            .collect();
+        assert_eq!(errors.len(), 2, "{with_app:#}");
+        assert!(errors[0].contains("no block `reviewz`: did you mean `reviews`?"));
+        assert!(errors[1].contains("its `enabled_on` leaves out the footer section group"));
+        assert_eq!(with_app["problems"], 2);
+        assert_eq!(with_app["ok"], false);
+        // Without the app, a note: they are not checked.
+        let without = report(None);
+        assert_eq!(without["problems"], 0, "{without:#}");
+    }
+
+    #[test]
     fn a_report_shows_the_words_that_change() {
         assert_eq!(
             changed_words("'a', b: c and d, e: f", "'a', b: c, e: f"),
@@ -1232,7 +1400,7 @@ mod tests {
         );
         write(
             "sections/custom.liquid",
-            "{{ section.settings.code }}{% schema %}{\"settings\": [{\"type\": \"liquid\", \"id\": \"code\"}]}{% endschema %}",
+            "{{ section.settings.code }}{% schema %}{\"settings\": [{\"type\": \"liquid\", \"id\": \"code\", \"label\": \"Code\"}]}{% endschema %}",
         );
         write(
             "templates/index.json",

@@ -2030,3 +2030,47 @@ fn the_payment_button_speaks_the_language_of_the_storefront() {
     // A language Shopify's button has no words for is in English.
     assert!(button("eo").contains(">Buy it now</button>"));
 }
+
+#[test]
+fn a_schema_shopify_refuses_is_an_error_of_the_page_that_renders_it() {
+    let fixture = theme_of(
+        "schema-errors",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.json",
+                r#"{"sections": {"a": {"type": "hero"}, "b": {"type": "hero"}, "c": {"type": "list", "blocks": {"x": {"type": "item"}}, "block_order": ["x"]}}, "order": ["a", "b", "c"]}"#,
+            ),
+            (
+                "sections/hero.liquid",
+                "<h1>{{ section.settings.title }}</h1>\n{% schema %}\n{\"name\": \"Hero\", \"settings\": [{\"type\": \"text\", \"id\": \"title\", \"label\": \"Title\", \"default\": \"Hello\"},]}\n{% endschema %}",
+            ),
+            (
+                "sections/list.liquid",
+                "{% content_for 'blocks' %}{% schema %}{\"name\": \"List\", \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            (
+                "blocks/item.liquid",
+                "<i>{{ block.settings.size }}</i>\n{% schema %}\n{\"name\": \"Item\", \"settings\": [\n{\"type\": \"range\", \"id\": \"size\", \"label\": \"Size\", \"min\": 0, \"max\": 10, \"step\": 2, \"default\": 3}\n]}\n{% endschema %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    let errors: Vec<String> = rendered.errors.iter().map(ToString::to_string).collect();
+    // Once each, though the hero renders twice; where the file has the problem.
+    assert_eq!(errors.len(), 2, "{errors:#?}");
+    assert!(
+        errors[0].starts_with("Liquid error (sections/hero line 3): the {% schema %} is not valid JSON"),
+        "{errors:#?}"
+    );
+    assert!(
+        errors[1].starts_with("Liquid error (blocks/item line 4): {% schema %}: the default 3 of setting \"size\" is not a step of the range"),
+        "{errors:#?}"
+    );
+    // The settings have no default, as on a store that would have taken the file.
+    assert!(rendered.body.contains("<h1></h1>"), "{}", rendered.body);
+}
