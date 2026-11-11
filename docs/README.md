@@ -1,6 +1,7 @@
 # Documentation
 
-local-storefront runs a Shopify theme on your machine, without Shopify, from JSON store data.
+local-storefront runs a Shopify theme, and the checkout and the Admin API of an app, on your
+machine, without Shopify, from JSON store data.
 
 ## Get started
 
@@ -15,6 +16,17 @@ npx local-storefront init         # writes shopify-local/, the store data to edi
 Write `npx local-storefront`, not `npx lsf`: `lsf` is another package on npm. Other ways to
 install (mise, a binary, from source):
 [the project's README](https://github.com/0xtlt/local-storefront#other-ways-to-install).
+
+## Start here
+
+One page each, from the first command to a test in CI.
+
+| Quickstart | For |
+|---|---|
+| [A theme](quickstart-theme.md) | Serving a theme, writing store data, `validate`, `check`, a Playwright test. |
+| [Functions](quickstart-functions.md) | Running an app's Functions and checkout UI extensions: scenarios, `expect`, `app check` in CI. |
+| [An Admin API backend](quickstart-admin-api.md) | A backend against the local Admin API: the token, a first query, webhooks, resets, the clock. |
+| [A public app](quickstart-app.md) | The React Router template end to end: the embedded admin, Events, billing, a theme app extension, the app proxy. |
 
 ## Guides
 

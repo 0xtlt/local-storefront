@@ -206,6 +206,17 @@ the [CLI reference](docs/cli.md).
 
 ## Documentation
 
+**Start here.** One page each, from the first command to a test in CI:
+
+| I work on... | Quickstart |
+|---|---|
+| A theme | [A theme](docs/quickstart-theme.md): serve, store data, checks, a Playwright test |
+| An app's Functions and checkout UI extensions | [Functions](docs/quickstart-functions.md): scenarios, `app function run`, `expect`, `app check` |
+| An app's backend | [An Admin API backend](docs/quickstart-admin-api.md): the token, a first query, webhooks, resets |
+| A public app made from the React Router template | [A public app](docs/quickstart-app.md): the embedded admin, billing, a theme app extension, the app proxy |
+
+Then the guides:
+
 | I want to... | Read |
 |---|---|
 | Write store data | [Data format](docs/data-format.md), then the [field reference](docs/data-reference.md) |
