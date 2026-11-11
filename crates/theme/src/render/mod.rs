@@ -219,6 +219,15 @@ fn wrapper_tags(wrapper: &str) -> (String, String) {
     (open, format!("</{tag}>"))
 }
 
+/// The line of a JSON parse error: `invalid JSON at line 3, column 5: …` → 3.
+fn json_error_line(message: &str) -> Option<u32> {
+    let rest = &message[message.find("at line ")? + "at line ".len()..];
+    rest.split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
+}
+
 /// The page of a render that spent its budget (`lsf_liquid::RenderLimits`): Liquid's error,
 /// and what lsf counted.
 fn budget_page(template: &str, score: u64, took: std::time::Duration) -> String {
@@ -478,7 +487,14 @@ impl Renderer {
                     };
                     match render_section(ctx, &placement, instance) {
                         Ok(html) => content.push_str(&html),
-                        Err(error) => content.push_str(&ctx.handle_error(error, 1)),
+                        // A section of the template that does not render (its type has no
+                        // file) is the template's error: it says where.
+                        Err(error) => {
+                            let path = format!("templates/{name}.json");
+                            let line = self.json_line(&path, &instance.kind);
+                            let error = error.with_template(Some(path.into())).with_line(line);
+                            content.push_str(&ctx.handle_error(error, line));
+                        }
                     }
                 }
                 if let Some(wrapper) = &template.wrapper {
@@ -492,9 +508,21 @@ impl Renderer {
                 return (content, layout);
             }
             Ok(None) => {}
+            // Shopify refuses to save such a file: here it is an error of the page, counted
+            // with its Liquid errors, so that `--strict` and the `X-LSF-Liquid-Errors` header
+            // see it.
             Err(error) => {
+                let path = format!("templates/{name}.json");
+                let message = match error {
+                    lsf_core::error::Error::Json { message, .. } => message,
+                    other => other.to_string(),
+                };
+                let line = json_error_line(&message).unwrap_or(1);
+                let error = lsf_liquid::Error::standard(message)
+                    .with_template(Some(path.into()))
+                    .with_line(line);
                 return (
-                    format!("<pre>{}</pre>", escape_html(&error.to_string())),
+                    format!("<pre>{}</pre>", escape_html(&ctx.handle_error(error, line))),
                     default_layout,
                 );
             }
@@ -509,6 +537,21 @@ impl Renderer {
             Ok(None) => (self.builtin_template(ctx, page), default_layout),
             Err(error) => (ctx.handle_error(error, 1), default_layout),
         }
+    }
+
+    /// The line of a JSON file of the theme where a section of type `kind` is placed, for the
+    /// errors of that section. 1 when it cannot be told.
+    fn json_line(&self, path: &str, kind: &str) -> u32 {
+        let needle = format!("\"{kind}\"");
+        self.theme
+            .files()
+            .read(path)
+            .and_then(|source| {
+                source
+                    .lines()
+                    .position(|line| line.contains("\"type\"") && line.contains(&needle))
+            })
+            .map_or(1, |index| index as u32 + 1)
     }
 
     /// Renders Liquid given as text the way a Liquid template of the theme is rendered: in a

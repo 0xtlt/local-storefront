@@ -1890,3 +1890,54 @@ fn the_entries_of_a_metaobject_type_have_pages() {
         rendered.body
     );
 }
+
+#[test]
+fn a_broken_json_template_is_an_error_of_the_page() {
+    let fixture = theme_of(
+        "broken-json-template",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.json",
+                "{\n  \"sections\": {\n    \"a\": {\"type\": \"main\",}\n  }\n}",
+            ),
+            (
+                "templates/page.json",
+                "{\"sections\": {\"a\": {\"type\": \"main-prodcut\"}}, \"order\": [\"a\"]}",
+            ),
+            ("sections/main.liquid", "<p>main</p>"),
+            ("sections/main-product.liquid", "<p>product</p>"),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_eq!(rendered.errors.len(), 1, "{}", rendered.body);
+    let message = rendered.errors[0].to_string();
+    assert!(message.contains("templates/index.json line 3"), "{message}");
+    assert!(message.contains("invalid JSON"), "{message}");
+    assert!(
+        rendered.body.contains("<pre>Liquid error"),
+        "{}",
+        rendered.body
+    );
+
+    // A section type without a file: the error names the template and the closest type.
+    let site = fixture.renderer.site(
+        fixture.store.clone(),
+        request("/pages/contact"),
+        Session::initial(&fixture.store),
+    );
+    let page = Page::new("page", Resource::Index);
+    let rendered = fixture.renderer.render_page(&site, page, &Target::Page);
+    assert_eq!(rendered.errors.len(), 1, "{}", rendered.body);
+    let message = rendered.errors[0].to_string();
+    assert!(message.contains("templates/page.json line 1"), "{message}");
+    assert!(
+        message
+            .contains("'main-prodcut' is not a valid section type (did you mean 'main-product'?)"),
+        "{message}"
+    );
+}
