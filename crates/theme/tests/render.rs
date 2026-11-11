@@ -2074,3 +2074,20 @@ fn a_schema_shopify_refuses_is_an_error_of_the_page_that_renders_it() {
     // The settings have no default, as on a store that would have taken the file.
     assert!(rendered.body.contains("<h1></h1>"), "{}", rendered.body);
 }
+
+#[test]
+fn a_theme_folder_that_does_not_exist_says_so() {
+    let missing = std::env::temp_dir().join(format!("lsf-no-theme-{}", std::process::id()));
+    let env = Arc::new(lsf_theme::environment());
+    let error = Theme::open(&missing, env.clone(), Revalidate::Never)
+        .err()
+        .expect("an error")
+        .to_string();
+    assert!(error.contains("does not exist"), "{error}");
+    // A folder that is not a theme is told apart.
+    let error = Theme::open(std::env::temp_dir(), env, Revalidate::Never)
+        .err()
+        .expect("an error")
+        .to_string();
+    assert!(error.contains("does not look like a Shopify theme"), "{error}");
+}

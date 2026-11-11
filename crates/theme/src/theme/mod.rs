@@ -108,6 +108,18 @@ impl Theme {
         revalidate: Revalidate,
     ) -> Result<Theme> {
         let root = root.as_ref();
+        if !root.exists() {
+            return Err(Error::Theme(format!(
+                "the theme folder {} does not exist: give `--theme` the folder of a theme (the one with layout/ and templates/)",
+                root.display()
+            )));
+        }
+        if !root.is_dir() {
+            return Err(Error::Theme(format!(
+                "{} is a file, not a folder: give `--theme` the folder of a theme (the one with layout/ and templates/)",
+                root.display()
+            )));
+        }
         if !root.join("layout").is_dir() && !root.join("templates").is_dir() {
             return Err(Error::Theme(format!(
                 "{} does not look like a Shopify theme: it has neither a layout/ nor a templates/ directory",

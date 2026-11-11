@@ -58,9 +58,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Serve the theme over HTTP. With `--app`, its `/checkout` runs the Functions and shows the
-    /// checkout UI extensions of a Shopify app, its `/account` shows its customer account UI
-    /// extensions, and a local Admin API serves the app's backend.
+    /// Serve the theme over HTTP, with the store data: its pages, cart and customer accounts.
+    ///
+    /// `--live-reload` reloads a page when a file changes. With `--app`, a Shopify app joins
+    /// it: the theme renders its app blocks, `/checkout` runs its Functions and shows its
+    /// checkout UI extensions, `/account` its customer account UI extensions, and a local Admin
+    /// API serves its backend.
     Serve(commands::serve::Args),
     /// The commands of a Shopify app: `dev` serves it alone (its checkout, its customer account
     /// and the Admin API of its backend), `init` writes checkout scenarios to try it with, `build`
@@ -220,6 +223,15 @@ mod tests {
         for of_admin in ["--admin-throttle", "--pricing-plans", "--polaris"] {
             assert!(admin < at(of_admin), "{of_admin}");
         }
+    }
+
+    #[test]
+    fn the_help_of_serve_starts_with_the_theme() {
+        let mut command = Cli::command();
+        let serve = command.find_subcommand_mut("serve").expect("serve");
+        let about = serve.get_about().expect("about").to_string();
+        assert!(about.starts_with("Serve the theme"), "{about}");
+        assert!(!about.contains("--app"), "{about}");
     }
 
     #[test]
