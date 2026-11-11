@@ -497,6 +497,12 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   that takes something off the option the buyer selected. An automatic discount of 0 shows too,
   at 0 (a Function that reads its percentage from settings that are not set)
   ([#26](https://github.com/0xtlt/local-storefront/issues/26)).
+- **JavaScript, TypeScript and Preact builds no longer break after macOS empties the temporary
+  folder.** lsf's copy of the npm packages lived in `$TMPDIR`; once macOS's cleaner deleted its
+  files and kept its folders, every build failed with `cannot write lsf's npm packages` until
+  the folder was deleted by hand. The packages now live in the user's cache folder
+  (`~/Library/Caches/lsf/` on macOS, `~/.cache/lsf/` on Linux). A folder with a file missing or
+  changed is written again, safely when several lsf run at once.
 
 ## 0.2.0 - 2026-10-30
 

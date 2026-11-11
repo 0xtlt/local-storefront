@@ -148,6 +148,24 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
     previous[b.len()]
 }
 
+/// The user's cache folder: `~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on
+/// Linux, `%LOCALAPPDATA%` on Windows. Unlike the system's temporary folder, nothing empties it
+/// behind lsf's back.
+pub fn user_cache_dir() -> Option<std::path::PathBuf> {
+    let var = |name: &str| {
+        std::env::var_os(name)
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from)
+    };
+    if cfg!(windows) {
+        var("LOCALAPPDATA")
+    } else if cfg!(target_os = "macos") {
+        var("HOME").map(|home| home.join("Library").join("Caches"))
+    } else {
+        var("XDG_CACHE_HOME").or_else(|| var("HOME").map(|home| home.join(".cache")))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -360,27 +360,11 @@ pub fn record_dir(root: &Path) -> Option<PathBuf> {
     let mut hasher = Fnv::default();
     hasher.write(root.as_os_str().as_encoded_bytes());
     Some(
-        cache_dir()?
+        lsf_core::util::user_cache_dir()?
             .join("lsf")
             .join("watch")
             .join(format!("{:016x}", hasher.finish())),
     )
-}
-
-/// The user's cache folder.
-fn cache_dir() -> Option<PathBuf> {
-    let var = |name: &str| {
-        std::env::var_os(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    };
-    if cfg!(windows) {
-        var("LOCALAPPDATA")
-    } else if cfg!(target_os = "macos") {
-        var("HOME").map(|home| home.join("Library").join("Caches"))
-    } else {
-        var("XDG_CACHE_HOME").or_else(|| var("HOME").map(|home| home.join(".cache")))
-    }
 }
 
 /// Where the watcher says what it does: a line at a time.
