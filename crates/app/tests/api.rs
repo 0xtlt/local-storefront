@@ -1705,3 +1705,112 @@ fn a_revoked_token_says_what_revoked_it_and_how_to_recover_once_in_the_log() {
     );
     assert_eq!(said.lock().unwrap().len(), 3);
 }
+
+/// A run of lsf whose tokens are the same every run of the app and its secret, as `serve` runs.
+fn stable_api() -> AdminApi {
+    let mut options = options(None, None);
+    options.token_seed = None;
+    AdminApi::new(&support::demo_store(), options)
+}
+
+/// An expiring offline token and its refresh token, by token exchange.
+fn exchange_expiring(api: &AdminApi) -> (String, String) {
+    let minted = send(api, "POST", "/__lsf/admin/session-token", json!({}));
+    let session_token = json_of(&minted)["token"].as_str().unwrap().to_string();
+    let exchanged = send(
+        api,
+        "POST",
+        "/admin/oauth/access_token",
+        json!({
+            "client_id": api.client_id(),
+            "client_secret": SECRET,
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": session_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+            "requested_token_type": "urn:shopify:params:oauth:token-type:offline-access-token",
+            "expiring": "1",
+        }),
+    );
+    assert_eq!(exchanged.status, 200);
+    let issued = json_of(&exchanged);
+    (
+        issued["access_token"].as_str().unwrap().to_string(),
+        issued["refresh_token"].as_str().unwrap().to_string(),
+    )
+}
+
+fn refresh(api: &AdminApi, refresh_token: &str) -> HttpResponse {
+    send(
+        api,
+        "POST",
+        "/admin/oauth/access_token",
+        json!({
+            "client_id": api.client_id(),
+            "client_secret": SECRET,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }),
+    )
+}
+
+#[test]
+fn after_a_restart_a_reset_or_an_uninstall_revokes_the_tokens_of_the_earlier_run() {
+    for close in ["DELETE /__lsf/admin", "POST /__lsf/admin/uninstall"] {
+        // The backend kept two pairs from a first run of lsf.
+        let first = stable_api();
+        let (older, older_refresh) = exchange_expiring(&first);
+        let (newer, newer_refresh) = exchange_expiring(&first);
+        drop(first);
+
+        // lsf restarts: they work again, the second presented first.
+        let api = stable_api();
+        let shop = "{ shop { myshopifyDomain } }";
+        assert_eq!(graphql(&api, &newer, shop, Value::Null).0, 200, "{close}");
+        assert_eq!(graphql(&api, &older, shop, Value::Null).0, 200, "{close}");
+
+        // The reset (or the uninstall) revokes them, and the earlier run's refresh tokens,
+        // presented before or not.
+        let (method, path) = close.split_once(' ').unwrap();
+        assert!(send(&api, method, path, json!({})).status < 300, "{close}");
+        if method == "POST" {
+            send(&api, "POST", "/__lsf/admin/install", json!({}));
+        }
+        for token in [&older, &newer] {
+            let response = api
+                .handle(&request(
+                    "POST",
+                    GRAPHQL,
+                    &[
+                        ("content-type", "application/json"),
+                        ("x-shopify-access-token", token),
+                    ],
+                    json!({"query": shop}).to_string().as_bytes(),
+                ))
+                .unwrap();
+            assert_eq!(response.status, 401, "{close}");
+            assert!(
+                header(&response, "x-lsf-reason")
+                    .is_some_and(|reason| reason.contains("was revoked")),
+                "{close}: {:?}",
+                header(&response, "x-lsf-reason")
+            );
+        }
+        for token in [&older_refresh, &newer_refresh] {
+            let refused = refresh(&api, token);
+            assert_eq!(refused.status, 401, "{close}");
+            assert!(
+                header(&refused, "x-lsf-reason").is_some_and(|reason| reason.contains("revoked")),
+                "{close}"
+            );
+        }
+
+        // A pair issued after it works, and after the next restart too.
+        let (fresh, fresh_refresh) = exchange_expiring(&api);
+        assert_ne!(fresh, older);
+        assert_ne!(fresh, newer);
+        assert_eq!(graphql(&api, &fresh, shop, Value::Null).0, 200, "{close}");
+        let next = stable_api();
+        assert_eq!(graphql(&next, &fresh, shop, Value::Null).0, 200, "{close}");
+        assert_eq!(refresh(&next, &fresh_refresh).status, 200, "{close}");
+    }
+}

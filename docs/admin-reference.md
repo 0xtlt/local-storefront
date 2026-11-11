@@ -30,7 +30,16 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
 - A deprecated field that Shopify replaced by another of the same object ("Use
   `originalUnitPriceSet` instead.") reads that one's value: `DraftOrderLineItem
   .originalUnitPrice`, `Order.totalPrice`, `LineItem.discountedTotal`, `Product.totalVariants`,
-  `Customer.email`, and about a hundred more, never a default `"0.00"`.
+  `Customer.email`, and about a hundred more, never a default `"0.00"`. Where the schema says
+  the deprecated field held something else than its replacement, lsf applies the difference:
+  `Product.descriptionPlainSummary` is `description` on one line, truncated to 60 characters
+  (the last three `...`, *chosen*: Shopify does not say how it ends); `Order.totalShippingPrice`
+  is "before discounts", the original prices of the shipping lines, where lsf's
+  `totalShippingPriceSet` is after them; `ShippingLine.discountedPrice` is "pre-tax", without the
+  line's taxes when the order's `taxesIncluded` is true. The others read their replacement as it
+  is: their descriptions differ in the currencies they name (lsf's shop and presentment amounts
+  are those of the order), or in nothing lsf models (`Customer.validEmailAddress` also checked
+  that the email's domain exists, which lsf cannot know offline: it is `validFormat`).
 - A money input of ten trillion or more in the currency's unit (`Money`, `MoneyInput.amount`, a
   discount's amount, …), or a line or an order whose total would be, answers a `userError`
   ("Price must be less than 10000000000000") and changes nothing. Shopify publishes no limit:
@@ -994,9 +1003,15 @@ in a route the front end fetches (["Billing"](admin.md#javascript-the-react-rout
   `appPurchaseOneTimeCreate` make a `PENDING` charge and answer a `confirmationUrl` as
   Shopify's, on the shop's admin:
   `https://<shop>/admin/charges/<app id>/<n>/RecurringApplicationCharge/confirm_recurring_application_charge?signature=…`
-  (`ApplicationCharge/confirm_application_charge` for a one-time purchase). lsf's admin serves
+  (`ApplicationCharge/confirm_application_charge` for a one-time purchase): the library's
+  exit-iframe page takes no other (`https`, no port, `*.myshopify.com` under `/admin`, or
+  `admin.shopify.com`), and its loader sends an embedded app's merchant there. lsf's admin serves
   that path on its origin and redirects it to lsf's charge page,
-  `/__lsf/admin/charges/<n>?shop=…`. The page shows the charge; **Approve** (or **Decline**)
+  `/__lsf/admin/charges/<n>?shop=…`; lsf's admin and the frame's proxy (in a redirect and in
+  `X-Shopify-API-Request-Failure-Reauthorize-Url`) take Shopify's URL there. An app with
+  `embedded = false` gets the same path on lsf's origin, with `&shop=<shop>`
+  (`http://127.0.0.1:9292/admin/charges/…?signature=…&shop=test-1.myshopify.com`): its backend
+  redirects to it plainly, outside any frame, and it works as it is. The page shows the charge; **Approve** (or **Decline**)
   sends the merchant back to `returnUrl` with `charge_id=<n>`, as Shopify does; a `returnUrl`
   on Shopify's admin or on the app is the app in lsf's admin. In a test,
   `POST /__lsf/admin/charges/<n>/approve?shop=<shop>` (or `/decline`) does it without the page.

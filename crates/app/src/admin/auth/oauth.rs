@@ -409,15 +409,19 @@ pub fn access_token(request: &HttpRequest, cx: &Context, tokens: &mut Tokens) ->
                     401,
                     "invalid_request",
                     "This request requires an active refresh_token",
-                    match error {
+                    &match error {
                         RefreshError::Retired => {
-                            "the refresh token was replaced by a newer one the app used, or by a new grant"
+                            "the refresh token was replaced by a newer one the app used, or by a new grant".to_string()
                         }
                         RefreshError::Expired => {
-                            "the refresh token expired (90 days, or 30 days after its first use)"
+                            "the refresh token expired (90 days, or 30 days after its first use)".to_string()
                         }
-                        RefreshError::OtherClient => "the refresh token is another app's",
-                        RefreshError::Unknown => "lsf issued no such refresh token for this shop",
+                        RefreshError::OtherClient => "the refresh token is another app's".to_string(),
+                        RefreshError::Unknown => "lsf issued no such refresh token for this shop".to_string(),
+                        RefreshError::Revoked { shop, by } => format!(
+                            "this refresh token of {shop} was revoked {}: run the token exchange or OAuth again for a new one",
+                            by.what(&shop)
+                        ),
                     },
                 ),
             }

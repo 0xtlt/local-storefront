@@ -222,7 +222,8 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
   A failed mutation changes nothing. New records have 13-digit ids, as Shopify's do, the same
   every run. Discount summaries read like the admin's (`$5.00 off entire order • Minimum
   purchase of $50.00`), a completed draft order keeps its discounts, a deprecated field reads
-  what its replacement has, `productSet` refuses an option value `productOptions` does not
+  what its replacement has (truncated, before discounts or before taxes where the schema says
+  so), `productSet` refuses an option value `productOptions` does not
   declare, the `shop/update` and `app/uninstalled` payloads have the shop's `domain`, and an
   image uploaded to a staged target has its `width` and `height`. A product created without
   `write_publications`, or a `fileCreate` source lsf does not download, gets a note in
@@ -259,9 +260,11 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
   - expiring offline tokens and their refresh, and client credentials;
   - a launch URL that opens the backend as Shopify's admin opens an embedded app.
 
-  Tokens have the scopes of `shopify.app.toml`. They are derived from the client id, the client
-  secret, the shop and their rank: the same every run, so a backend's stored session works
-  after lsf restarts ([tokens](docs/admin.md#tokens)). With `client_id = ""`, as the template
+  Tokens have the scopes of `shopify.app.toml`. They are sealed with the client id and the
+  client secret, and lsf takes back one of an earlier run, in whatever order the backend presents
+  them, so a backend's stored session works after lsf restarts. A reset, a shop deleted or an
+  uninstall stops that for the installation: no token of an earlier run is taken back after it,
+  presented before or not ([tokens](docs/admin.md#tokens)). With `client_id = ""`, as the template
   ships it, lsf takes `SHOPIFY_API_KEY` of the environment or of the app's `.env`, and warns when
   it has to use its own. The guide says what Shopify's libraries need to reach lsf.
 - **Webhooks, signed as Shopify signs them.** The subscriptions of `shopify.app.toml` and those
@@ -388,7 +391,8 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
 - **The embedded app opens in lsf's admin as the React Router template ships it.** The admin's
   frame goes through a proxy on a port of its own. It lets lsf's admin frame every page, the
   library's bounce page and `redirect(…, {target: "_top"})` page included, gives the pages lsf's
-  App Bridge and Polaris, and says Chrome to the template's bot check, so that Playwright's
+  App Bridge and Polaris (a `Content-Security-Policy` that allowed Shopify's CDN allows lsf there
+  too), and says Chrome to the template's bot check, so that Playwright's
   headless Chromium gets no `410 Gone`. The template's one edit is the fetch function, for the
   Admin API: lsf warns, on the home page and in its admin, when `app/shopify.server.ts` has none
   or `app/routes/app.tsx` has no `headers` export. `LSF_ADMIN_FRAME=direct` opens the backend
@@ -405,7 +409,9 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
 - **Billing.** `appSubscriptionCreate` and `appPurchaseOneTimeCreate` answer a
   `confirmationUrl` on the shop's admin, as Shopify's, which the library's exit-iframe page
   accepts: `billing.require` and `billing.request` work in the loader of a page. lsf's admin
-  serves that path and shows a local approval page. Approving goes to the `returnUrl`, and the
+  serves that path and shows a local approval page, and the frame's proxy answers it on lsf's
+  origin in a redirect and in `X-Shopify-API-Request-Failure-Reauthorize-Url`. An app with
+  `embedded = false` gets the same path on lsf's origin, which works as it is. Approving goes to the `returnUrl`, and the
   charge is active. Subscriptions renew on the shop's clock: past `currentPeriodEnd`, the
   period moves on by its interval, the usage balance starts again, and a limited discount has
   an interval less. [Approve a charge](docs/admin.md#approve-a-charge).

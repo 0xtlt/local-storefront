@@ -319,9 +319,23 @@ fn defaults_are_reported() {
     );
     let product = &answer["data"]["productByHandle"];
     assert_eq!(product["category"], Value::Null);
-    // A deprecated field reads the one that replaced it ("Use `description` instead.").
-    assert_eq!(product["descriptionPlainSummary"], product["description"]);
+    // A deprecated field reads the one that replaced it ("Use `description` instead."), with
+    // what it said of itself: on one line, truncated to 60 characters.
     assert_ne!(product["description"], json!(""));
+    assert_eq!(
+        product["descriptionPlainSummary"],
+        json!(super::plain_summary(
+            product["description"].as_str().unwrap()
+        ))
+    );
+    assert!(
+        product["descriptionPlainSummary"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count()
+            <= 60
+    );
     assert_eq!(product["events"]["nodes"], json!([]));
     assert_eq!(
         answer["extensions"]["lsf"],
@@ -866,4 +880,79 @@ fn a_product_created_without_the_publication_scopes_says_it_is_not_on_the_storef
         Some(&grant(&["write_products", "write_publications"])),
     );
     assert!(with["extensions"]["lsf"].get("notes").is_none(), "{with}");
+}
+
+/// A deprecated field whose replacement says something else than it did reads the replacement
+/// with the difference: the summary of a description is cut to 60 characters, an order's
+/// shipping price is before its discounts, a shipping line's discounted price before its taxes.
+#[test]
+fn deprecated_fields_keep_what_set_them_apart_from_their_successors() {
+    use crate::admin::state::value::money_bag;
+    let mut shop = demo();
+    let created = run(
+        &mut shop,
+        r#"mutation { productCreate(product: {title: "Long", descriptionHtml: "<p>A long description,</p>\n<p>on two paragraphs, that goes past sixty characters for sure.</p>"}) { product { description descriptionPlainSummary } } }"#,
+    );
+    let product = &created["data"]["productCreate"]["product"];
+    let summary = product["descriptionPlainSummary"].as_str().unwrap();
+    assert_eq!(summary.chars().count(), 60, "{summary}");
+    assert!(summary.ends_with("..."), "{summary}");
+    assert!(!summary.contains('\n'));
+    assert!(
+        product["description"]
+            .as_str()
+            .unwrap()
+            .starts_with(&summary[..57])
+    );
+    assert_eq!(super::plain_summary("  Short\n text "), "Short text");
+
+    // An order whose shipping of 10.00 is discounted to 8.00, 1.33 of it taxes included.
+    let order = shop.keys("Order").next().unwrap().to_string();
+    let currency = shop.currency();
+    let record = shop.get_mut(&order).unwrap();
+    record.insert("taxesIncluded".into(), json!(true));
+    record.insert("totalShippingPriceSet".into(), money_bag(800, &currency));
+    record.insert(
+        "shippingLines".into(),
+        json!([{
+            "title": "Standard",
+            "originalPriceSet": money_bag(1000, &currency),
+            "discountedPriceSet": money_bag(800, &currency),
+            "taxLines": [{"title": "VAT", "rate": 0.2, "priceSet": money_bag(133, &currency)}],
+        }]),
+    );
+    let answer = run(
+        &mut shop,
+        &format!(
+            r#"{{ order(id: "{order}") {{ totalShippingPrice totalShippingPriceSet {{ shopMoney {{ amount }} }}
+                shippingLines(first: 1) {{ nodes {{ discountedPrice {{ amount currencyCode }} discountedPriceSet {{ shopMoney {{ amount }} }} }} }} }} }}"#
+        ),
+    );
+    let order_answer = &answer["data"]["order"];
+    assert_eq!(
+        order_answer["totalShippingPrice"],
+        json!("10.00"),
+        "{answer}"
+    );
+    assert_eq!(
+        order_answer["totalShippingPriceSet"]["shopMoney"]["amount"],
+        json!("8.0")
+    );
+    let line = &order_answer["shippingLines"]["nodes"][0];
+    assert_eq!(line["discountedPrice"]["amount"], json!("6.67"), "{answer}");
+    assert_eq!(line["discountedPrice"]["currencyCode"], json!(currency));
+    // Taxes not included: the discounted price is pre-tax already.
+    shop.get_mut(&order)
+        .unwrap()
+        .insert("taxesIncluded".into(), json!(false));
+    let answer = run(
+        &mut shop,
+        &format!(
+            r#"{{ order(id: "{order}") {{ shippingLines(first: 1) {{ nodes {{ discountedPrice {{ amount }} }} }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        answer["data"]["order"]["shippingLines"]["nodes"][0]["discountedPrice"]["amount"],
+        json!("8.0")
+    );
 }

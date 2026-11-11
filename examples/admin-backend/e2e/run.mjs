@@ -157,9 +157,10 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
     const answer = await fetch(`${lsf}/__lsf/admin/session-token`, { method: "POST", body: JSON.stringify({ shop }) });
     return (await answer.json()).token;
   };
-  // A call of the app's front end: fetch with the session token App Bridge adds.
-  const app = async (method, path, body, { shop } = {}) => {
-    const answer = await browser.fetch(`${appUrl}${path}`, {
+  // A call of the app's front end: fetch with the session token App Bridge adds. `origin`:
+  // `frameOrigin` for the call of a page in lsf's admin, which goes through the frame's proxy.
+  const app = async (method, path, body, { shop, origin = appUrl } = {}) => {
+    const answer = await browser.fetch(`${origin}${path}`, {
       method,
       headers: { Authorization: `Bearer ${await sessionToken(shop)}`, "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -665,12 +666,18 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
 
   // The app: billing, bulk operations, files.
   await check("billing", "billing: billing.request → approval page → returnUrl → billing.check", async () => {
-    const requested = await app("POST", "/api/billing/request");
+    // The backend answers Shopify's confirmationUrl, on the shop's admin, as an embedded app gets
+    // it (the library's exit-iframe page takes no other).
+    const direct = await app("POST", "/api/billing/request");
+    const shopify = direct.headers.get("x-shopify-api-request-failure-reauthorize-url");
+    assert(direct.status === 401 && shopify?.startsWith(`https://${SHOP}/admin/charges/`), "not Shopify's confirmation URL", shopify);
+    // The page in lsf's admin calls the backend through the frame's proxy, which points the URL
+    // at lsf's admin: followed as it is, it stays on lsf.
+    const requested = await app("POST", "/api/billing/request", undefined, { origin: frameOrigin });
     const reauthorize = requested.headers.get("x-shopify-api-request-failure-reauthorize-url");
     assert(requested.status === 401 && reauthorize, `billing.request answered ${requested.status}`, requested.body);
-    // Shopify's confirmationUrl, on the shop's admin: lsf's admin serves its path.
-    assert(reauthorize.startsWith(`https://${SHOP}/admin/charges/`), "not Shopify's confirmation URL", reauthorize);
-    const served = await browser.fetch(reauthorize.replace(`https://${SHOP}`, lsf));
+    assert(reauthorize.startsWith(`${lsf}/admin/charges/`) && new URL(reauthorize).searchParams.get("shop") === SHOP, "the frame's proxy did not point the confirmation URL at lsf", reauthorize);
+    const served = await browser.fetch(reauthorize);
     assert(served.status === 302, `lsf's admin answered ${served.status} for the confirmation URL`);
     const confirmation = new URL(served.headers.get("location"), lsf).href;
     const page = await browser.fetch(confirmation);

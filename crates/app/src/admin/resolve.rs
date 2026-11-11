@@ -781,6 +781,9 @@ impl<'a> ShopResolver<'a> {
         if OTHER_VALUES.contains(&(parent, ctx.field_name())) {
             return None;
         }
+        if let Some(value) = self.transformed_successor(parent, ctx.field_name(), map) {
+            return Some(value);
+        }
         let field = schema.field(parent, ctx.field_name())?;
         let path = successor_path(field.deprecation.as_deref()?)?;
         let target = &field.ty;
@@ -845,6 +848,83 @@ impl<'a> ShopResolver<'a> {
             ("MoneyV2", "MoneyV2") => value.clone(),
             _ => return None,
         })
+    }
+
+    /// The deprecated fields whose replacement says something else than they did, as the
+    /// schema's descriptions tell, read from it with the difference applied:
+    ///
+    /// - `Product.descriptionPlainSummary` is "single line with HTML tags removed. Truncated to
+    ///   60 characters", where `description` is whole: on one line, cut to 60 characters
+    ///   ending in `...` past them (Rails' `truncate`; *chosen*, Shopify does not say how it
+    ///   ends);
+    /// - `Order.totalShippingPrice` is "before discounts and returns", where lsf's
+    ///   `totalShippingPriceSet` is after the shipping discounts: the original prices of its
+    ///   shipping lines;
+    /// - `ShippingLine.discountedPrice` is "the pre-tax shipping price with discounts applied",
+    ///   where `discountedPriceSet` includes the taxes of an order whose `taxesIncluded` is
+    ///   true: without the line's tax lines then.
+    ///
+    /// `None` for another field, or when the record lacks what the difference needs.
+    fn transformed_successor(&self, parent: &str, field: &str, map: &Record) -> Option<Value> {
+        use crate::admin::state::value;
+        match (parent, field) {
+            ("Product", "descriptionPlainSummary") => {
+                let description = map
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| {
+                        map.get("descriptionHtml")
+                            .and_then(Value::as_str)
+                            .map(value::plain_text)
+                    })?;
+                Some(json!(plain_summary(&description)))
+            }
+            ("Order", "totalShippingPrice") => {
+                let Some(Value::Array(lines)) = map.get("shippingLines") else {
+                    return None;
+                };
+                let original: i64 = lines
+                    .iter()
+                    .filter_map(|line| self.item_map(line))
+                    .filter(|line| line.get("isRemoved").and_then(Value::as_bool) != Some(true))
+                    .map(|line| value::cents(line.get("originalPriceSet")))
+                    .sum();
+                Some(json!(value::money(original)))
+            }
+            ("ShippingLine", "discountedPrice") => {
+                let discounted = map.get("discountedPriceSet")?.get("shopMoney")?;
+                let currency = discounted.get("currencyCode")?.as_str()?.to_string();
+                let mut cents = value::cents(Some(discounted));
+                let included = self.state.keys("Order").any(|order| {
+                    self.state.get(order).is_some_and(|record| {
+                        record.get("taxesIncluded").and_then(Value::as_bool) == Some(true)
+                            && record
+                                .get("shippingLines")
+                                .and_then(Value::as_array)
+                                .is_some_and(|lines| {
+                                    lines.iter().any(|line| line.as_object() == Some(map))
+                                })
+                    })
+                });
+                if included {
+                    let taxes: i64 = map
+                        .get("taxLines")
+                        .and_then(Value::as_array)
+                        .map(|lines| {
+                            lines
+                                .iter()
+                                .filter_map(|line| self.item_map(line))
+                                .map(|line| value::cents(line.get("priceSet")))
+                                .sum()
+                        })
+                        .unwrap_or(0);
+                    cents -= taxes;
+                }
+                Some(value::money_v2(cents, &currency))
+            }
+            _ => None,
+        }
     }
 
     /// `metafield(namespace:, key:)` and `metafields(namespace:, keys:)` of an owner, the
@@ -1178,6 +1258,19 @@ pub fn camel_case(snake: &str) -> String {
         }
     }
     camel
+}
+
+/// A description as `Product.descriptionPlainSummary` gives it: on one line, at most 60
+/// characters, the last three `...` when it is cut.
+fn plain_summary(description: &str) -> String {
+    const LENGTH: usize = 60;
+    let line = description.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= LENGTH {
+        return line;
+    }
+    let mut cut: String = line.chars().take(LENGTH - 3).collect();
+    cut.push_str("...");
+    cut
 }
 
 /// The deprecated fields whose replacement holds another value: a payout's `gross` is not its
