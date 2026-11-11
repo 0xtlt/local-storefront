@@ -861,7 +861,11 @@ find them, whatever the id, since the store data does not know it.
   previous one: `{{ 'now' | date: '%N' }}` gives `000000000`, then `000000001`, and so on, so
   ids built from it differ. Without `now`, `'now'` reads the real clock each time.
 - `theme_settings` overrides values of `config/settings_data.json` by setting id, without
-  touching the theme: `"theme_settings": { "cart_type": "drawer" }`.
+  touching the theme: `"theme_settings": { "cart_type": "drawer" }`. Each id and value is
+  checked against the theme's `config/settings_schema.json`: an id the theme does not have is
+  an `unknown_setting`, and a value its setting does not take (an option a `select` does not
+  have, a `range` out of bounds, a `checkbox` that is not `true` or `false`) an
+  `invalid_setting`. Without a theme, `validate` cannot check them, and a warning says so.
 
 ## Error codes
 
@@ -886,6 +890,8 @@ find them, whatever the id, since the store data does not know it.
 | `invalid_throttle` | The `throttle` of a session sent to `PUT /__lsf/session` is not one `--throttle` takes. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
 | `invalid_metafield`, `unknown_metafield_type` | A typed metafield (or field of a metaobject) whose value its type refuses, or whose type Shopify does not have. The hint shows how the type is written. |
+| `unknown_setting`, `invalid_setting` | A `theme_settings` id that `config/settings_schema.json` does not have, or a value its setting does not take. The hint suggests the closest id or option. |
+| `unchecked_theme_settings` (warning) | The data has `theme_settings` and there is no theme to check them against. |
 | `invalid_color`, `empty_swatch` | A swatch whose color is not a CSS color, or that has neither a color nor an image. |
 | `missing_price` | A product without a price on itself or on its variants. |
 | `missing_variants`, `missing_options`, `option_mismatch`, `too_many_options` | The options of a product and the option values of its variants do not line up. |

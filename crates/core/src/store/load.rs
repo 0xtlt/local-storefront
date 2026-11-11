@@ -510,6 +510,11 @@ fn merge_store_file(
         }
     }
     merged.files.extend(input.files);
+    for key in input.theme_settings.keys() {
+        merged
+            .theme_settings_origins
+            .insert(key.clone(), origin(format!("/theme_settings/{key}")));
+    }
     merged.theme_settings.extend(input.theme_settings);
 }
 
@@ -518,6 +523,9 @@ fn merge_store_file(
 pub struct LoadOptions {
     /// The locales the theme has translations for, default first.
     pub theme_locales: Vec<String>,
+    /// The theme's `config/settings_schema.json`, which the `theme_settings` of the data are
+    /// checked against. `None` without a theme: they are not checked.
+    pub settings_schema: Option<std::sync::Arc<Json>>,
 }
 
 /// Loads and validates the store. The store is returned even when the data has errors (built
@@ -840,6 +848,11 @@ fn apply_overlay(
         });
     }
     merged.files.extend(input.files);
+    for key in input.theme_settings.keys() {
+        merged
+            .theme_settings_origins
+            .insert(key.clone(), origin(format!("/theme_settings/{key}")));
+    }
     merged.theme_settings.extend(input.theme_settings);
 }
 
@@ -1125,6 +1138,7 @@ impl SourceData {
             merged,
             &BuildOptions {
                 theme_locales: options.theme_locales.clone(),
+                settings_schema: options.settings_schema.as_deref(),
                 probe_image: &probe,
             },
         );

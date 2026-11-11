@@ -71,11 +71,15 @@ pub struct MergedInput {
     pub scenarios: Vec<MergedScenario>,
     pub now: Option<Sourced<String>>,
     pub theme_settings: IndexMap<String, Json>,
+    /// Where each of `theme_settings` is written.
+    pub theme_settings_origins: IndexMap<String, Origin>,
 }
 
 pub struct BuildOptions<'a> {
     /// The locales the theme has translations for, default first.
     pub theme_locales: Vec<String>,
+    /// The theme's `config/settings_schema.json`, which `theme_settings` are checked against.
+    pub settings_schema: Option<&'a Json>,
     /// Reads the pixel size of a file in `files/`, when it exists.
     pub probe_image: &'a dyn Fn(&str) -> Option<(u32, u32)>,
 }
@@ -441,6 +445,12 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
             unlisted_products.push(product);
         }
     }
+    super::theme_settings::check(
+        &input.theme_settings,
+        &input.theme_settings_origins,
+        options.settings_schema,
+        &mut builder.diagnostics,
+    );
     let mut store = Store {
         shop,
         products,

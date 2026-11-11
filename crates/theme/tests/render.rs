@@ -26,6 +26,7 @@ fn fixture() -> Fixture {
     let theme = Arc::new(Theme::open(&directory, env, Revalidate::Never).expect("fixture theme"));
     let options = LoadOptions {
         theme_locales: vec!["en".to_string(), "fr".to_string()],
+        ..LoadOptions::default()
     };
     let (mut store, diagnostics) = load(&DataSource::Demo, &options);
     assert!(diagnostics.is_empty(), "{diagnostics}");
@@ -828,6 +829,7 @@ fn a_liquid_asset_gets_a_new_url_when_the_settings_change() {
     assert_eq!(url(fixture.store.clone()).0, colors);
     let options = LoadOptions {
         theme_locales: vec!["en".to_string(), "fr".to_string()],
+        ..LoadOptions::default()
     };
     let overlay = serde_json::json!({"theme_settings": {"page_size": 3}});
     let (other, diagnostics) =
@@ -1296,6 +1298,7 @@ fn what_is_loaded_is_charged_once() {
     });
     let options = LoadOptions {
         theme_locales: vec!["en".to_string(), "fr".to_string()],
+        ..LoadOptions::default()
     };
     let (store, diagnostics) =
         lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));

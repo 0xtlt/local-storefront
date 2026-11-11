@@ -117,3 +117,42 @@ fn live_reload_shows_the_errors_of_the_data_and_of_the_page_in_it() {
     assert!(!html.contains("data-lsf-errors"), "{html}");
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn a_theme_setting_of_a_session_that_the_theme_does_not_have_is_refused() {
+    let root = theme_dir(
+        "settings",
+        &[
+            LAYOUT,
+            ("templates/index.liquid", "{{ settings.cart_type }}"),
+            (
+                "config/settings_schema.json",
+                r#"[{"name": "Cart", "settings": [{"type": "select", "id": "cart_type", "options": [{"value": "page", "label": "Page"}, {"value": "drawer", "label": "Drawer"}]}]}]"#,
+            ),
+        ],
+    );
+    let state = serve(&root, false);
+    let put = |settings: serde_json::Value| {
+        state.dispatch(&super::request(
+            "PUT",
+            "/__lsf/session",
+            serde_json::json!({"data": {"theme_settings": settings}}),
+            "settings",
+        ))
+    };
+    let refused = put(serde_json::json!({"cart_typ": "page", "cart_type": "bogus"}));
+    assert_eq!(refused.status, 422, "{}", text(&refused));
+    let answer = super::body_json(&refused);
+    assert_eq!(answer["errors"], 2, "{answer}");
+    assert_eq!(answer["diagnostics"][0]["code"], "unknown_setting");
+    assert_eq!(
+        answer["diagnostics"][0]["hint"],
+        "did you mean \"cart_type\"?"
+    );
+    assert_eq!(answer["diagnostics"][1]["code"], "invalid_setting");
+
+    let taken = put(serde_json::json!({"cart_type": "drawer"}));
+    assert_eq!(taken.status, 200, "{}", text(&taken));
+    assert!(text(&get(&state, "/", "settings")).contains("drawer"));
+    let _ = std::fs::remove_dir_all(root);
+}
