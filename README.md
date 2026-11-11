@@ -114,8 +114,9 @@ Guide: [strict Liquid](docs/strict-liquid.md).
 
 **Coming from `shopify theme dev`?** Add `--live-reload` to reload open pages as you edit, and
 leave it off in tests. The store is your JSON files, not a development store. `check` finds the
-Liquid that does not parse and the filters that do not exist. Theme Check's lint rules
-(performance, accessibility, translations) still need `shopify theme check`.
+Liquid that does not parse, the filters that do not exist, and the snippets, sections and
+translation keys the theme names but does not have. Theme Check's other lint rules
+(performance, accessibility) still need `shopify theme check`.
 
 ## Apps
 

@@ -56,6 +56,16 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 - **For contributors: the crates are renamed.** `cargo build -p lsf` is now
   `cargo build -p lsf-cli`, and the renderer, `lsf-core` in 0.2.0, is `lsf-theme`.
   `cargo install --path crates/cli` does not change. [Architecture](docs/architecture.md).
+- **`validate` and `check` find more problems, and exit with `1` for them.** `validate` now
+  checks typed metafields against their type and resolves their references
+  (`invalid_metafield`, `unknown_metafield_type`, `unknown_reference`), and checks
+  `theme_settings` against the theme's `config/settings_schema.json` (`unknown_setting`,
+  `invalid_setting`). `check` reports a snippet, a section, a section group or a key of the `t`
+  filter the theme names and does not have. Data and themes that passed with 0.2.0 can fail:
+  each problem has its file, its place and a hint.
+- **`"available": false` alone makes a variant sold out**: tracked, with a quantity of 0
+  (`inventory_management` is `"shopify"`), as on Shopify. In 0.2.0 it was untracked, and themes
+  said "Unavailable". A page or a product JSON compared with 0.2.0's can change.
 
 ### Added
 
@@ -294,6 +304,28 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   `expressMethods`, and every method its `placements`; `lsf app function run` prints each method
   with its placements. The `payment-methods` scenario of `app init` has PayPal in both
   placements, as Shopify offers it with PayPal Express on.
+- **`lsf render --customer`, `--cart` and `--session`** render a page as a visitor with that
+  session: `--customer jane@example.com` (or `default`, `none`), `--cart TEE-BLK-M=2`
+  (repeatable), or the JSON of `PUT /__lsf/session`. A name the data does not have exits with
+  `2`. [render](docs/cli.md#render).
+- **Under `--live-reload`, the page shows its problems.** A small panel, closed with its button,
+  lists the store data errors, the Liquid errors of the page and why a page is the 404 page.
+  Without `--live-reload` (tests, `--static`) pages are as Shopify renders them.
+- **`validate` checks typed metafields.** A value its type refuses (`"two"` for a
+  `number_integer`, a `weight` in `"kgs"`, a rating out of its scale) is an `invalid_metafield`,
+  a type Shopify does not have an `unknown_metafield_type`, and a reference to a product,
+  variant, collection, page, article or metaobject the data does not have an
+  `unknown_reference`, with the closest name. [Metafields](docs/data-format.md#metafields-and-metaobjects).
+- **`validate` checks `theme_settings`** against the theme's `config/settings_schema.json`: an id
+  it does not have (`unknown_setting`, "did you mean"), a value its setting does not take
+  (`invalid_setting`: a `select` option, a `range`, a `checkbox`). `PUT /__lsf/session` refuses
+  them too. Without a theme, a warning says they are not checked.
+- **`check` finds what the theme names and does not have:** `{% render 'x' %}` and
+  `{% include %}` of a missing snippet (`missing_snippet`), `{% section %}` and the section
+  types of JSON templates and section groups (`missing_section`), `{% sections %}`
+  (`missing_section_group`), a literal key of the `t` filter missing from the default locale
+  (`missing_translation`). Each has its file, its line and the closest name, in text and in
+  `--format json`. Horizon and Dawn have none.
 
 ### Changed
 
@@ -349,6 +381,8 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   (`owner_type = "CART"`). Shopify's checkout UI template in Preact reads
   `$app.requestedFreeGift` without declaring it: its checkbox does not stay ticked until the
   declaration is added, as the playground's `ui-preact` now does.
+- **`lsf serve --help` lists the theme's options first.** The options of an app are under
+  "App (with --app)", those of the Admin API and lsf's admin under their own heading.
 
 ### Fixed
 
@@ -497,6 +531,30 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   that takes something off the option the buyer selected. An automatic discount of 0 shows too,
   at 0 (a Function that reads its percentage from settings that are not set)
   ([#26](https://github.com/0xtlt/local-storefront/issues/26)).
+- **`--live-reload` no longer breaks a template that writes JSON.** Its script went at the end
+  of every response, `{% layout none %}` ones included (`?view=json-data`). It now goes only in
+  HTML pages with a `</body>` or an `</html>`.
+- **A JSON template that is not valid JSON, or names a section type the theme does not have, is
+  an error of the page.** It counts in `x-lsf-liquid-errors`, makes `render --strict` fail and is
+  in the log of `serve`, with the template, its line and the closest section type. The page
+  showed it with a 200 and 0 errors.
+- **`?section_id=` and `?sections=` say which section is missing.** `x-lsf-not-found` names the
+  ids the page does not have, the closest one, and the ids it has. The 404 had no reason.
+- **`/de/` says the store has no German language**, when the theme has `locales/de.json` and
+  `localization.languages` does not list it, with what to add.
+- **`'gift-card/card.svg' | shopify_asset_url` is served**, as a drawing of the size of
+  Shopify's: the gift card page of Dawn and Horizon showed a broken image.
+- **`payment_button` speaks the language of the storefront.** "Buy it now" was English on
+  `/fr/` too; it is in the language of the page, for the languages of Shopify's checkout, and in
+  English for the others.
+- **`validate` reports every problem in one run.** A data file with an error was left out whole,
+  so the problems of the rest of it showed only once that error was fixed. Its entries without
+  errors are now read and checked. A reference to an entity left out because of its errors says
+  so (`the product "a" is left out because products/a.json has errors`), rather than suggesting
+  another.
+- **The docs no longer promise classic customer account pages.** `/account/login` and the
+  other account URLs lead to `/account`, as [storefront](docs/storefront.md) says;
+  [testing](docs/testing.md) said otherwise.
 
 ## 0.2.0 - 2026-10-30
 
