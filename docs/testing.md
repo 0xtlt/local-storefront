@@ -421,7 +421,8 @@ writes (cart changes, forms) are estimates. `slow` is not measured.
 - **Pages that are not found.** A 404 renders the theme's `404` template, so a wrong URL looks
   like a page that works. The response carries `x-lsf-not-found` with the cause (`no product
   with the handle "x"`, `no page at "/x"`, `no metaobject "type/x" in the store data`, `the
-  theme has no templates/metaobject/<type>.json...`) and the server prints it in its log. To
+  theme has no templates/metaobject/<type>.json...`, `no section "x" on the page...`) and the
+  server prints it in its log. To
   fail a test on a link that leads nowhere:
 
   ```ts
@@ -457,11 +458,11 @@ Everything a theme talks to on a storefront:
 
 | Area | Endpoints |
 |---|---|
-| Pages | `/`, `/products/<handle>`, `/collections`, `/collections/<handle>`, `/collections/<handle>/<tag>`, `/collections/<handle>/products/<handle>`, `/pages/<handle>`, `/blogs/<handle>`, `/blogs/<handle>/tagged/<tag>`, `/blogs/<blog>/<article>`, `/cart`, `/search`, `/policies/<handle>`, `/gift_cards/<shop id>/<token>`, `/password`, `/account` and, with legacy customer accounts, `/account/login`, `/account/register`, `/account/addresses`, `/account/orders/<id>`. A 404 for the rest. Each also under a locale prefix (`/fr/...`). |
+| Pages | `/`, `/products/<handle>`, `/collections`, `/collections/<handle>`, `/collections/<handle>/<tag>`, `/collections/<handle>/products/<handle>`, `/pages/<handle>`, `/blogs/<handle>`, `/blogs/<handle>/tagged/<tag>`, `/blogs/<blog>/<article>`, `/cart`, `/search`, `/policies/<handle>`, `/gift_cards/<shop id>/<token>`, `/password`, `/account`. A 404 for the rest. Each also under a locale prefix (`/fr/...`). |
 | Customer accounts | With new customer accounts, `/account` is a page of local-storefront where the visitor chooses who is logged in; `/account/login`, `/customer_authentication/login` and the other account URLs redirect to it. `/company_location/update?location_id=<id>&return_to=<path>` changes the location of a B2B customer. |
 | Robots and sitemaps | `/robots.txt` (from `templates/robots.txt.liquid`, or Shopify's default rules), `/sitemap.xml` and `/sitemap_<products|pages|collections|blogs>_1.xml`. |
 | Alternate templates | `?view=<suffix>` and the `template_suffix` of the resource. |
-| Section Rendering API | `?section_id=<id>` and `?sections=<id>,<id>` on any page. |
+| Section Rendering API | `?section_id=<id>` and `?sections=<id>,<id>` on any page. An id the page does not have is a 404 for `section_id` and `null` in `sections`; either way `x-lsf-not-found` names it and lists the ids the page has. |
 | Cart Ajax API | `GET /cart.js`, `POST /cart/add.js`, `/cart/change.js`, `/cart/update.js`, `/cart/clear.js` (with `sections` and `sections_url`), and the form posts `/cart/add`, `/cart`. Stock limits answer `422` like Shopify. |
 | Product and search JSON | `/products/<handle>.js`, `/products.json`, `/collections/<handle>/products.json`, `/search/suggest.json`, `/search/suggest?section_id=`, `/recommendations/products.json`, `/recommendations/products?section_id=&product_id=`. |
 | Forms | Contact, newsletter (`customer`), blog comment, customer logout, localization (country and language), storefront password. The outcome shows in `form.posted_successfully?` and `form.errors` on the next page, once. A wrong storefront password comes back to `/password` with the error; the right one (`password`, or `shop.password`) goes to the home page. |
