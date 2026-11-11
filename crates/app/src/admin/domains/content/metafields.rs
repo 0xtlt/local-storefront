@@ -840,7 +840,8 @@ fn metafields_set(
         .filter_map(|input| input.as_object().cloned())
         .collect();
     if inputs.len() > MAX_INPUTS {
-        // lsf's wording: Shopify's message is not published.
+        // The GraphQL layer refuses a longer list first (`graphql::INPUT_LIMITS`), as Shopify
+        // does; this stays for a caller that runs the mutation without it. lsf's wording.
         let error = UserError::new(
             &["metafields"],
             format!("Exceeded the maximum metafields input limit of {MAX_INPUTS}."),

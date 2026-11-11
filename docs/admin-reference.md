@@ -795,7 +795,8 @@ shop, the app's installation).
   a string amount in the shop's currency, measurements as `{"value", "unit"}`, references as
   GIDs of records that exist. `metafieldDefinitionTypes` lists the types with their categories and
   validations.
-- 25 inputs at most, all or nothing: one error and nothing is set. Errors have Shopify's `field`
+- 25 inputs at most (26 is `MAX_INPUT_SIZE_EXCEEDED`, before anything runs), all or nothing:
+  one error and nothing is set. Errors have Shopify's `field`
   (`["metafields", "0", "value"]`) and `code` (`INVALID_VALUE`, `INVALID_TYPE`, `BLANK`,
   `APP_NOT_AUTHORIZED`, `STALE_OBJECT`, …).
 - `namespace` omitted, `$app` and `$app:x` are the app's reserved namespaces (`app--<id>`,

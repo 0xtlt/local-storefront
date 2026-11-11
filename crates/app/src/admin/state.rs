@@ -1786,7 +1786,12 @@ mod tests {
             };
             names
                 .iter()
-                .map(|name| (name.to_string(), shops.create(name).unwrap().new_gid("Product")))
+                .map(|name| {
+                    (
+                        name.to_string(),
+                        shops.create(name).unwrap().new_gid("Product"),
+                    )
+                })
                 .collect::<HashMap<_, _>>()
         };
         let forward = product(&["test-286", "test-542"]);

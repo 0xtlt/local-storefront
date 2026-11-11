@@ -471,7 +471,9 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
   in its admin, when `app/shopify.server.ts` has none or `app/routes/app.tsx` has no `headers`
   export. The admin reads the files again at each load, so the warning goes once they are
   fixed. A backend started without `LSF_URL` sends its calls to Shopify: when a page of it fails
-  and lsf has received nothing from it, the admin and the terminal name `LSF_URL`.
+  and lsf has received nothing from it since the admin opened the app (a token exchange, OAuth, an
+  Admin API call with a token they issued: not a test's calls with the printed token), the
+  admin and the terminal name `LSF_URL`.
   `LSF_ADMIN_FRAME=direct` opens the backend
   itself, and the admin says when the app runs Shopify's App Bridge instead
   ([preview the embedded app](docs/admin.md#preview-the-embedded-app)).

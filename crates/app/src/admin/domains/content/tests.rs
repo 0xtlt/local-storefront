@@ -194,15 +194,16 @@ fn refuses_wrong_metafields_and_changes_nothing() {
     assert_eq!(invalid["errors"][0]["message"], "invalid id", "{invalid}");
     assert_eq!(invalid["data"]["metafieldsSet"], Value::Null);
 
-    // More than 25.
+    // More than 25: the input list is refused before the mutation runs, as Shopify does.
     let many: Vec<Value> = (0..26)
         .map(|n| json!({"ownerId": product, "namespace": "lsf_test", "key": format!("k{n}"), "type": "boolean", "value": "true"}))
         .collect();
     let refused = run(&mut shop, SET, json!({"metafields": many}));
     assert_eq!(
-        refused["data"]["metafieldsSet"]["userErrors"][0]["code"],
-        "LESS_THAN_OR_EQUAL_TO"
+        refused["errors"][0]["extensions"]["code"], "MAX_INPUT_SIZE_EXCEEDED",
+        "{refused}"
     );
+    assert_eq!(shop.get(&product).cloned(), before, "nothing changed");
 }
 
 #[test]

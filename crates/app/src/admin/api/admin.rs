@@ -15,7 +15,7 @@ use super::sync::{StoreSync, Synced};
 use super::{HttpRequest, HttpResponse};
 use crate::admin::auth::oauth::{self, AppAuth};
 use crate::admin::auth::scopes::{self, ALL_SCOPES};
-use crate::admin::auth::tokens::{Grant, Revocation, TokenError, Tokens};
+use crate::admin::auth::tokens::{Grant, GrantSource, Revocation, TokenError, Tokens};
 use crate::admin::domains::app::pricing::Pricing;
 use crate::admin::domains::platform::{self, access::AuthEffect};
 use crate::admin::domains::{app as app_domain, orders};
@@ -737,7 +737,20 @@ impl AdminApi {
             now: Utc::now(),
         };
         let mut tokens = lock(&self.tokens);
-        oauth::launch_url(&cx, &mut tokens, shop, path, user, locale)
+        let url = oauth::launch_url(&cx, &mut tokens, shop, path, user, locale);
+        drop(tokens);
+        if url.is_some() {
+            self.backend.launched();
+        }
+        url
+    }
+
+    /// Whether a request of the Admin API carries a token issued to the backend (a token
+    /// exchange, OAuth, a refresh, an earlier run's), not the token lsf installs and prints, which
+    /// a test's fixtures use as well: what tells that the backend itself talks to lsf.
+    fn sent_by_backend(&self, request: &HttpRequest) -> bool {
+        self.grant_of(request)
+            .is_ok_and(|grant| grant.source != GrantSource::Install)
     }
 
     /// The token the app is installed with on `shop`: [`crate::admin::auth::default_token`].
@@ -1300,7 +1313,9 @@ impl AdminApi {
             return Some(super::partner::handle(self, request, partner_id, version));
         }
         if let Some(admin) = version::parse_path(path) {
-            self.backend.called();
+            if self.sent_by_backend(request) {
+                self.backend.called();
+            }
             let primary = self.versions.primary();
             return Some(match admin {
                 AdminPath::Graphql(asked) => match self.versions.resolve(asked) {
@@ -1362,6 +1377,14 @@ impl AdminApi {
                 self.note_installs(&tokens);
                 response
             };
+            // A launch of the frame, as the admin's: the backend starts over.
+            if path.trim_end_matches('/') == "/__lsf/admin/launch"
+                && response
+                    .as_ref()
+                    .is_some_and(|response| (300..400).contains(&response.status))
+            {
+                self.backend.launched();
+            }
             // A grant may install the app again with fewer scopes, which narrows every token of
             // the installation: the requests waiting on a shop look their token up again.
             if path.trim_end_matches('/') == "/admin/oauth/access_token" {

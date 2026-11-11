@@ -647,7 +647,9 @@ fn oversized_list(
         }
         (TypeRef::List(item), single) => oversized_list(schema, single, item, MAX_INPUT_ITEMS),
         (TypeRef::Named(name), Value::Object(fields)) => {
-            let def = schema.get(name).filter(|def| def.kind == Kind::InputObject)?;
+            let def = schema
+                .get(name)
+                .filter(|def| def.kind == Kind::InputObject)?;
             fields.iter().find_map(|(key, value)| {
                 let field = def.input_field(key)?;
                 let limit = input_limit(&format!("{name}.{key}"));

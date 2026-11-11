@@ -448,6 +448,73 @@ fn exchanges_a_session_token_for_an_access_token() {
     );
 }
 
+/// Only what the backend sends tells that it talks to lsf: a token exchange and the Admin API
+/// calls with the token it got, not a test's calls with the printed token or a test shop's. A
+/// launch of the frame starts over.
+#[test]
+fn the_backend_is_seen_by_its_own_calls_since_the_launch() {
+    let api = AdminApi::new(
+        &support::demo_store(),
+        options(None, Some("http://localhost:3000".to_string())),
+    );
+    let watch = api.backend_watch();
+    let (status, _) = graphql(&api, &default_token(&api), "{ shop { id } }", Value::Null);
+    assert_eq!(status, 200);
+    let created = send(
+        &api,
+        "POST",
+        "/__lsf/admin/shops",
+        json!({"shop": "fixtures"}),
+    );
+    let token = json_of(&created)["token"].as_str().unwrap().to_string();
+    assert_eq!(graphql(&api, &token, "{ shop { id } }", Value::Null).0, 200);
+    assert_eq!(watch.calls(), 0);
+    assert!(watch.failed("/app", 500, "http://127.0.0.1:9292").is_some());
+
+    let minted = send(&api, "POST", "/__lsf/admin/session-token", json!({}));
+    let session_token = json_of(&minted)["token"].as_str().unwrap().to_string();
+    let exchanged = send(
+        &api,
+        "POST",
+        "/admin/oauth/access_token",
+        json!({
+            "client_id": api.client_id(),
+            "client_secret": SECRET,
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": session_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+            "requested_token_type": "urn:shopify:params:oauth:token-type:offline-access-token",
+        }),
+    );
+    let issued = json_of(&exchanged)["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(watch.calls(), 1);
+    assert_eq!(watch.hint(), None);
+    assert_eq!(
+        graphql(&api, &issued, "{ shop { id } }", Value::Null).0,
+        200
+    );
+    assert_eq!(watch.calls(), 2);
+
+    // The admin opens the app again: the backend has not talked to lsf since.
+    assert!(
+        api.launch_url(&api.default_shop(), "/app", 1, "en")
+            .is_some()
+    );
+    assert_eq!(watch.calls(), 0);
+    let launched = send(&api, "GET", "/__lsf/admin/launch", Value::Null);
+    assert!((300..400).contains(&launched.status), "{}", launched.status);
+    assert_eq!(
+        graphql(&api, &issued, "{ shop { id } }", Value::Null).0,
+        200
+    );
+    assert_eq!(watch.calls(), 1);
+    send(&api, "GET", "/__lsf/admin/launch", Value::Null);
+    assert_eq!(watch.calls(), 0);
+}
+
 #[test]
 fn isolates_the_shops_it_creates() {
     let api = demo_api();

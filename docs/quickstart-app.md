@@ -51,8 +51,8 @@ if (lsf) {
 Without `LSF_URL`, the app talks to Shopify as before. Until the edit is there, lsf's admin
 says so; it reads the file again at each load, so the banner goes once the edit is saved. A
 backend started without `LSF_URL` sends its calls to Shopify: when a page of it fails and lsf has
-received nothing from it, lsf's admin and its terminal name `LSF_URL`. Nothing else changes:
-lsf's admin gives the pages its App Bridge and Polaris.
+received nothing from it since the admin opened the app, lsf's admin and its terminal name
+`LSF_URL`. Nothing else changes: lsf's admin gives the pages its App Bridge and Polaris.
 
 ## 3. Run lsf and the backend
 

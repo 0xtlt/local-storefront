@@ -32,8 +32,9 @@
 //!   template's `isbot` answers `410 Gone`) is Chrome's.
 //!
 //! A request with a session token that fails, while lsf has received no token exchange and no
-//! Admin API call from the backend, is reported to the [`BackendWatch`]: the backend likely
-//! sends them to Shopify (no `LSF_URL`), and lsf's admin and its terminal say so.
+//! Admin API call with a token issued to the backend since the frame was launched (or since the
+//! backend could not be reached), is reported to the [`BackendWatch`]: the backend likely sends
+//! them to Shopify (no `LSF_URL`), and lsf's admin and its terminal say so.
 //!
 //! The proxy forwards plain HTTP: a WebSocket (Vite's HMR on the app's own port) does not pass,
 //! and the template's HMR has a port of its own. `LSF_ADMIN_FRAME=direct` opens the backend in
@@ -235,6 +236,12 @@ impl FrameProxy {
         let response = match sent {
             Ok(response) => response,
             Err(error) => {
+                // Refused or cut: the backend is not there (a timeout is a slow page).
+                if let Some(watch) = &self.watch
+                    && matches!(error, ureq::Error::ConnectionFailed | ureq::Error::Io(_))
+                {
+                    watch.unreachable();
+                }
                 let message = format!(
                     "lsf's admin frame could not reach the app's backend at {url}: {error}. Is it running, and is --app-url where it listens?"
                 );
@@ -846,5 +853,42 @@ mod tests {
         let hint = watch.hint().expect("a hint");
         assert!(hint.contains("answered 500 to /broken,"), "{hint}");
         assert!(hint.contains("LSF_URL=http://127.0.0.1:9292"), "{hint}");
+    }
+
+    /// A backend the frame cannot reach went away: what it did before tells nothing of the
+    /// process started next.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_backend_gone_away_starts_over() {
+        // A port nothing listens on.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream = format!("http://{}", closed.local_addr().unwrap());
+        drop(closed);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let watch = Arc::new(BackendWatch::default());
+        watch.called();
+        tokio::spawn(serve(
+            Arc::new(
+                FrameProxy::new(&upstream, &origin, "http://127.0.0.1:9292")
+                    .with_watch(watch.clone()),
+            ),
+            listener,
+        ));
+        let status = tokio::task::spawn_blocking(move || {
+            let agent: ureq::Agent = ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .build()
+                .into();
+            agent
+                .get(format!("{origin}/app"))
+                .call()
+                .unwrap()
+                .status()
+                .as_u16()
+        })
+        .await
+        .unwrap();
+        assert_eq!(status, 502);
+        assert_eq!(watch.calls(), 0);
     }
 }
