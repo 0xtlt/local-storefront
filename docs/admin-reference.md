@@ -1340,7 +1340,7 @@ backend lsf is pointed at: [where they go](admin.md#webhooks).)
   "channel": "email",
   "to": "buyer@example.com",
   "what": "payment_reminder",
-  "about": "gid://shopify/PaymentSchedule/1",
+  "about": "gid://shopify/PaymentSchedule/6936761535489",
   "subject": "Payment reminder for order #1001",
   "body": "120.0 USD is due on 2026-12-10 for order #1001."
 }

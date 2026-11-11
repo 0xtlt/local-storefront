@@ -846,3 +846,24 @@ fn a_version_adapts_the_arguments_it_is_given_and_the_fields_it_reads() {
     );
     assert_eq!(read["data"]["product"]["title"], json!("RAIN JACKET"));
 }
+
+/// A product created by a token without `write_publications` is on no channel, and the answer
+/// says how to put it on the storefront; with the scope, it says nothing.
+#[test]
+fn a_product_created_without_the_publication_scopes_says_it_is_not_on_the_storefront() {
+    let mut shop = demo();
+    let create = r#"mutation { productCreate(product: {title: "Desk lamp"}) { product { id } userErrors { message } } }"#;
+    let without = run_as(&mut shop, create, Some(&grant(&["write_products"])));
+    let notes = without["extensions"]["lsf"]["notes"].to_string();
+    assert!(
+        notes.contains("productCreate: the product is published on no sales channel")
+            && notes.contains("write_publications"),
+        "{without}"
+    );
+    let with = run_as(
+        &mut shop,
+        create,
+        Some(&grant(&["write_products", "write_publications"])),
+    );
+    assert!(with["extensions"]["lsf"].get("notes").is_none(), "{with}");
+}

@@ -32,6 +32,7 @@ serving: checkout, admin
 admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
         X-Shopify-Access-Token: shpat_4f…   (shop: local-supply-co.myshopify.com)
         client secret: from SHOPIFY_API_SECRET of ../my-app/.env
+        GraphiQL: http://127.0.0.1:9292/__lsf/graphiql   (queries in the browser, the token filled in)
 webhooks: 3 subscriptions of shopify.app.toml → http://localhost:3000
 embedded: http://127.0.0.1:9292/admin/apps/my-app   (the app in lsf's admin; its pages load http://127.0.0.1:9292/__lsf/admin/app-bridge.js)
 ready:  http://127.0.0.1:9292/   (extensions and checkout scenarios; …)
@@ -127,6 +128,33 @@ so that the same code talks to Shopify when it is not set. Those that take an ac
 `SHOPIFY_ACCESS_TOKEN`: the token printed at start, also `shops[0].token` of `GET /__lsf/admin`
 ([tokens](#tokens)).
 
+### JavaScript: `@shopify/admin-api-client`
+
+A backend that only calls the Admin API (a sync job, a worker, a script) needs this recipe
+alone: the token is the one printed at start, and there is no OAuth to set up.
+
+`createAdminApiClient` takes a `customFetchApi` (`dist/graphql/client.mjs` of 2.0.1). It always
+builds an `https://` URL from `storeDomain` (`validateDomainAndGetStoreUrl` of
+`@shopify/graphql-client` sets the protocol to `https`), so rewrite the URL in the fetch:
+
+```js
+import { createAdminApiClient } from "@shopify/admin-api-client";
+
+const lsf = process.env.LSF_URL; // http://127.0.0.1:9292
+const client = createAdminApiClient({
+  storeDomain: "local-supply-co.myshopify.com",
+  apiVersion: "2026-10",
+  accessToken: process.env.SHOPIFY_ACCESS_TOKEN,
+  customFetchApi: lsf
+    ? (url, init) => fetch(String(url).replace(/^https:\/\/[^/]+/, lsf), init)
+    : fetch,
+});
+
+const { data, errors, extensions } = await client.request(
+  `query { products(first: 3) { nodes { id title } } }`,
+);
+```
+
 ### JavaScript: the React Router app and `@shopify/shopify-api`
 
 Every request of `@shopify/shopify-api` (the Admin API clients, token exchange, OAuth) goes
@@ -211,30 +239,6 @@ to a client whose `User-Agent` looks like a bot (the `isbot` package): curl's an
 `authenticate.webhook` verifies the webhooks lsf delivers with `apiSecretKey`: give lsf the same
 secret.
 
-### JavaScript: `@shopify/admin-api-client`
-
-`createAdminApiClient` takes a `customFetchApi` (`dist/graphql/client.mjs` of 2.0.1). It always
-builds an `https://` URL from `storeDomain` (`validateDomainAndGetStoreUrl` of
-`@shopify/graphql-client` sets the protocol to `https`), so rewrite the URL in the fetch:
-
-```js
-import { createAdminApiClient } from "@shopify/admin-api-client";
-
-const lsf = process.env.LSF_URL; // http://127.0.0.1:9292
-const client = createAdminApiClient({
-  storeDomain: "local-supply-co.myshopify.com",
-  apiVersion: "2026-10",
-  accessToken: process.env.SHOPIFY_ACCESS_TOKEN,
-  customFetchApi: lsf
-    ? (url, init) => fetch(String(url).replace(/^https:\/\/[^/]+/, lsf), init)
-    : fetch,
-});
-
-const { data, errors, extensions } = await client.request(
-  `query { products(first: 3) { nodes { id title } } }`,
-);
-```
-
 ### Ruby: the `shopify_api` gem
 
 Every request of the gem (`Clients::Graphql::Admin`, token exchange, OAuth, refresh, client
@@ -314,6 +318,31 @@ curl -s http://127.0.0.1:9292/admin/api/2026-10/graphql.json \
 ```
 
 `application/graphql` bodies (the query alone) and `GET ?query=` work too, as on Shopify.
+
+### GraphiQL in the browser
+
+`http://127.0.0.1:9292/__lsf/graphiql` is a query editor for the local Admin API: the shop, its
+token and the API version are filled in from `GET /__lsf/admin` (pick another shop or a served
+version), **Docs** browses the schema of the version, **Cost debug** sends
+`Shopify-GraphQL-Cost-Debug: 1` (`extensions.cost.fields`), and Ctrl+Enter (⌘+Enter) runs the
+query. It is lsf's own page, not Shopify's GraphiQL app: it loads nothing from the internet. The
+home page of the app links to it (**More**), and a browser that opens the GraphQL endpoint
+itself gets the `401` Shopify answers without a token, with an `X-LSF-Reason` that points there.
+
+### Types from the schema (GraphQL Codegen)
+
+`@graphql-codegen/cli` reads the schema from lsf's introspection, as from Shopify's: point it at
+`http://127.0.0.1:9292/admin/api/2026-10/graphql.json` with the `X-Shopify-Access-Token`
+header. Use `graphql@16`, as `@shopify/api-codegen-preset` does: `graphql@17` refuses Shopify's
+2026-10 schema itself ("Interface field HasMetafields.metafield is not deprecated, so
+implementation field MediaImage.metafield must not be deprecated", and the same of
+`ChannelDefinition.id`, which `Node.id` is not). Those deprecations are Shopify's: lsf's schema
+is the introspection of Shopify's Admin API, unchanged, and the same codegen fails against a
+development store.
+
+```bash
+npm install --save-dev graphql@16
+```
 
 ## Preview the embedded app
 
@@ -1210,9 +1239,16 @@ tokens itself fails until they are gone. So do one of these:
 
 ### Dates, throttling and the outbox
 
-- **Fixed dates**: with `now` in the store data, every record created or changed is dated then,
-  and the same run gives the same answers; [`POST /__lsf/admin/clock`](admin-reference.md#the-shops-clock)
-  moves it on (a checkout abandoned, a payment due, a charge expired).
+- **Dates follow the system clock** unless the store data sets `now`: a record the backend
+  creates is dated at the time it ran (`createdAt`, `updatedAt`, to the second), so two runs
+  give two dates. With `now` in the store data, every record created or changed is dated then,
+  and the same run gives the same answers.
+- **Moving the clock freezes it.** [`POST /__lsf/admin/clock`](admin-reference.md#the-shops-clock)
+  `{"advance": "31d"}` or `{"now": "…"}` moves the shop's time on (a checkout abandoned, a
+  payment due, a charge expired) and leaves it there: the answer says `"frozen": true`, and every
+  record after it is dated at that instant until the next move. A test that moves the clock so
+  reads the same dates every run. `DELETE /__lsf/admin` puts back the store data's clock (the
+  system's, or `now`).
 - **Throttling**: `--admin-throttle legacy` (1000 points, 50 a second) reaches `THROTTLED`
   sooner; `--admin-throttle off` never does.
 - **What the backend would have sent** (emails, labels, Flow triggers) is in the shop's
@@ -1451,7 +1487,11 @@ What the backend changes through the Admin API is what the storefront and the
 
 - a product it creates is on the theme's pages and in the collections it joined, once it is
   `ACTIVE` and published on the Online Store; set to `DRAFT` or `ARCHIVED`, or unpublished, it
-  leaves them;
+  leaves them. **A product the Admin API creates is published nowhere**, as on Shopify:
+  `publishablePublish` on the Online Store's publication puts it on the storefront, and needs
+  `write_publications` (and `read_publications` to find the publication with `publications`).
+  An app whose `[access_scopes]` leaves them out creates products the storefront never shows:
+  `productCreate` and `productSet` then say so in `extensions.lsf.notes`;
 - a customer it creates can log in, at `/__lsf/login?customer=<email>` and at the checkout;
 - a metafield it sets is read by Liquid (`product.metafields.custom.care`, `shop.metafields…`)
   and by the Function inputs: the `$app:config` settings of a discount, a validation, a

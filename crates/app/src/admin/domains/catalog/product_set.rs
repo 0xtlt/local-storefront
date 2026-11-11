@@ -463,10 +463,16 @@ fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             "status": "COMPLETE",
             "userErrors": [],
         })));
+        if created {
+            products::note_unpublishable(mutation, "productSet");
+        }
         return Ok(payload(
             json!({"product": null, "productSetOperation": operation}),
             &[],
         ));
+    }
+    if created {
+        products::note_unpublishable(mutation, "productSet");
     }
     Ok(payload(
         json!({"product": product, "productSetOperation": null}),

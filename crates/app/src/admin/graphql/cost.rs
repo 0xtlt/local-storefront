@@ -126,7 +126,15 @@ fn walk(context: &Context<'_>, operation: &Operation<'_>, report: Option<&mut Re
     let Some(root) = root.and_then(|name| schema.get(name)) else {
         return 0;
     };
-    selection(context, root, &[&operation.selection_set], mutation, 1, 0, report)
+    selection(
+        context,
+        root,
+        &[&operation.selection_set],
+        mutation,
+        1,
+        0,
+        report,
+    )
 }
 
 /// What a selection costs on an object of a type: for an interface or a union, the most it
@@ -232,7 +240,15 @@ fn field<'a>(
             } else {
                 let sets: Vec<&'a SelectionSet<'a>> =
                     nodes.iter().map(|n| &n.selection_set).collect();
-                selection(context, ty, &sets, false, size, depth + 1, report.as_deref_mut())
+                selection(
+                    context,
+                    ty,
+                    &sets,
+                    false,
+                    size,
+                    depth + 1,
+                    report.as_deref_mut(),
+                )
             };
             let one = shape.per_object + children;
             shape.fixed + if shape.sum_items { one * items } else { one }

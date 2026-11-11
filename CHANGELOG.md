@@ -59,6 +59,10 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 
 ### Added
 
+- **GraphiQL for the Admin API** at `/__lsf/graphiql`: the shops, their tokens and the served
+  API versions filled in, the schema's docs, the cost debug header. It works offline. The start
+  lines and the app's home page link to it. A browser that opens the GraphQL endpoint is
+  pointed there.
 - **A local GraphQL Admin API, version 2026-10, with every mutation.** A server with `--app`
   answers `POST /admin/api/2026-10/graphql.json` over the store data, with the ids the storefront, the
   checkout and the Function inputs use. Queries follow Shopify's 2026-10 schema (its
@@ -352,6 +356,9 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 
 ### Fixed
 
+- **A product created without `write_publications` says it is not on the storefront.**
+  `productCreate` and `productSet` add a note to `extensions.lsf.notes`: publishing a product
+  needs that scope.
 - **`GET /admin/oauth/access_scopes.json` lists the token's scopes**, in Shopify's shape. It
   answered `404`, and so did the other REST paths with a reason about the theme part: they now
   answer JSON that says lsf does not simulate the REST Admin API.

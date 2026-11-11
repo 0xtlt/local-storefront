@@ -75,8 +75,16 @@ pub fn bytes<'s>(state: &'s ShopState, url_or_path: &str) -> Option<&'s Blob> {
 /// The width and height of an image, from the header of its bytes: PNG, JPEG, GIF and WebP
 /// (lossy, lossless and extended). `None` for another format or bytes too short to say.
 pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
-    let be16 = |at: usize| Some(u32::from(u16::from_be_bytes(bytes.get(at..at + 2)?.try_into().ok()?)));
-    let le16 = |at: usize| Some(u32::from(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?)));
+    let be16 = |at: usize| {
+        Some(u32::from(u16::from_be_bytes(
+            bytes.get(at..at + 2)?.try_into().ok()?,
+        )))
+    };
+    let le16 = |at: usize| {
+        Some(u32::from(u16::from_le_bytes(
+            bytes.get(at..at + 2)?.try_into().ok()?,
+        )))
+    };
     let le24 = |at: usize| {
         let b = bytes.get(at..at + 3)?;
         Some(u32::from(b[0]) | u32::from(b[1]) << 8 | u32::from(b[2]) << 16)

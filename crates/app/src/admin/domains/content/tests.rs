@@ -1184,7 +1184,12 @@ fn a_staged_image_has_its_size_and_an_external_url_a_note() {
     png.extend(64u32.to_be_bytes());
     png.extend(32u32.to_be_bytes());
     png.extend([8, 6, 0, 0, 0]);
-    crate::admin::domains::app::uploads::store(&mut shop, "tmp/42/files/9a/tiny.png", png, "image/png");
+    crate::admin::domains::app::uploads::store(
+        &mut shop,
+        "tmp/42/files/9a/tiny.png",
+        png,
+        "image/png",
+    );
     let staged = format!(
         "http://127.0.0.1:9292/__lsf/admin/uploads/{}/tmp/42/files/9a/tiny.png",
         shop.domain()
@@ -1200,7 +1205,10 @@ fn a_staged_image_has_its_size_and_an_external_url_a_note() {
         json!([{"fileStatus": "READY", "image": {"width": 64, "height": 32}}]),
         "{created}"
     );
-    assert!(created["extensions"]["lsf"].get("notes").is_none(), "{created}");
+    assert!(
+        created["extensions"]["lsf"].get("notes").is_none(),
+        "{created}"
+    );
     let external = run(
         &mut shop,
         "mutation($files: [FileCreateInput!]!) { fileCreate(files: $files) { files { fileStatus } userErrors { code } } }",

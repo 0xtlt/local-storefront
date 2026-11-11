@@ -1466,7 +1466,11 @@ fn draft_orders_are_created_calculated_updated_and_completed() {
 #[test]
 fn a_completed_draft_keeps_its_discounts_as_manual_applications() {
     let mut shop = demo();
-    let variants: Vec<String> = shop.keys("ProductVariant").take(2).map(str::to_string).collect();
+    let variants: Vec<String> = shop
+        .keys("ProductVariant")
+        .take(2)
+        .map(str::to_string)
+        .collect();
     let price = |variant: &str| {
         crate::admin::state::value::exact_cents(shop.get(variant).unwrap().get("price")).unwrap()
     };
@@ -1490,10 +1494,17 @@ fn a_completed_draft_keeps_its_discounts_as_manual_applications() {
         draft["lineItems"]["nodes"][0],
         json!({"originalUnitPrice": money(first), "discountedTotal": money(first - 500), "totalDiscount": "5.00"})
     );
-    assert!(created["extensions"]["lsf"].get("defaulted").is_none(), "{created}");
+    assert!(
+        created["extensions"]["lsf"].get("defaulted").is_none(),
+        "{created}"
+    );
     let id = draft["id"].as_str().unwrap().to_string();
     // A new record's id has 13 digits, as Shopify's do.
-    assert_eq!(crate::admin::state::gid_number(&id).to_string().len(), 13, "{id}");
+    assert_eq!(
+        crate::admin::state::gid_number(&id).to_string().len(),
+        13,
+        "{id}"
+    );
     let completed = run(
         &mut shop,
         "mutation($id: ID!) { draftOrderComplete(id: $id) { draftOrder { order { id totalDiscountsSet { shopMoney { amount } }
@@ -1521,7 +1532,10 @@ fn a_completed_draft_keeps_its_discounts_as_manual_applications() {
     );
     let lines = order["lineItems"]["nodes"].as_array().unwrap();
     // A line's `totalDiscountSet` is its own discount; its allocations add the draft's share.
-    assert_eq!(lines[0]["totalDiscountSet"]["shopMoney"]["amount"], json!("5.0"));
+    assert_eq!(
+        lines[0]["totalDiscountSet"]["shopMoney"]["amount"],
+        json!("5.0")
+    );
     let allocated: i64 = lines
         .iter()
         .flat_map(|line| line["discountAllocations"].as_array().unwrap().clone())
@@ -1530,14 +1544,26 @@ fn a_completed_draft_keeps_its_discounts_as_manual_applications() {
         })
         .sum();
     assert_eq!(allocated, 500 + order_discount);
-    assert_eq!(lines[0]["discountAllocations"][0]["discountApplication"]["index"], json!(0));
-    assert_eq!(lines[1]["discountAllocations"][0]["discountApplication"]["index"], json!(1));
+    assert_eq!(
+        lines[0]["discountAllocations"][0]["discountApplication"]["index"],
+        json!(0)
+    );
+    assert_eq!(
+        lines[1]["discountAllocations"][0]["discountApplication"]["index"],
+        json!(1)
+    );
     let order_id = order["id"].as_str().unwrap().to_string();
     let rest = payload_of(&shop, "orders/create", &order_id);
     assert_eq!(rest["total_discounts"], json!(money(500 + order_discount)));
     assert_eq!(rest["discount_applications"][0]["type"], json!("manual"));
-    assert_eq!(rest["discount_applications"][0]["target_selection"], json!("explicit"));
-    assert_eq!(rest["discount_applications"][1]["value_type"], json!("percentage"));
+    assert_eq!(
+        rest["discount_applications"][0]["target_selection"],
+        json!("explicit")
+    );
+    assert_eq!(
+        rest["discount_applications"][1]["value_type"],
+        json!("percentage")
+    );
     assert_eq!(rest["discount_applications"][1]["title"], json!("Spring"));
     assert_eq!(
         rest["line_items"][0]["discount_allocations"][0]["discount_application_index"],

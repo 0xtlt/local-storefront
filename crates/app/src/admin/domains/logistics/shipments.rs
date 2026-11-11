@@ -266,7 +266,11 @@ fn insert_shipment(
         .get(transfer)
         .and_then(|record| record.get("name"))
         .and_then(Value::as_str)
-        .map(|name| name.trim_start_matches('#').trim_start_matches('T').to_string())
+        .map(|name| {
+            name.trim_start_matches('#')
+                .trim_start_matches('T')
+                .to_string()
+        })
         .unwrap_or_else(|| gid_number(transfer).to_string());
     let id = state.new_gid("InventoryShipment");
     let now = state.timestamp();

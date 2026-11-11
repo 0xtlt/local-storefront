@@ -938,9 +938,8 @@ fn destination(input: &Value, previous: Option<&Value>) -> Value {
 /// "10% off 2 products", "Buy 2 items, get 1 item free", "Free shipping on all products"),
 /// amounts in the shop's money format. The short summary is the first part.
 fn summary(discount: &Record, money_format: &str) -> (String, String) {
-    let money = |amount: Option<&Value>| {
-        lsf_core::money::format_money(value::cents(amount), money_format)
-    };
+    let money =
+        |amount: Option<&Value>| lsf_core::money::format_money(value::cents(amount), money_format);
     let count = |value: Option<&Value>| -> u64 {
         match value {
             Some(Value::String(text)) => text.trim().parse().unwrap_or(0),
@@ -948,7 +947,13 @@ fn summary(discount: &Record, money_format: &str) -> (String, String) {
             _ => 0,
         }
     };
-    let items = |n: u64| if n == 1 { "1 item".to_string() } else { format!("{n} items") };
+    let items = |n: u64| {
+        if n == 1 {
+            "1 item".to_string()
+        } else {
+            format!("{n} items")
+        }
+    };
     let percent = |fraction: Option<&Value>| {
         let percentage = fraction.and_then(Value::as_f64).unwrap_or(0.0) * 100.0;
         let rounded = (percentage * 100.0).round() / 100.0;
@@ -963,21 +968,39 @@ fn summary(discount: &Record, money_format: &str) -> (String, String) {
         let buys = discount
             .get("customerBuys")
             .and_then(|buys| buys.get("value"));
-        let buys = match buys.and_then(|buys| buys.get("__typename")).and_then(Value::as_str) {
+        let buys = match buys
+            .and_then(|buys| buys.get("__typename"))
+            .and_then(Value::as_str)
+        {
             Some("DiscountPurchaseAmount") => {
                 format!("Spend {}", money(buys.and_then(|buys| buys.get("amount"))))
             }
-            _ => format!("Buy {}", items(count(buys.and_then(|buys| buys.get("quantity"))))),
+            _ => format!(
+                "Buy {}",
+                items(count(buys.and_then(|buys| buys.get("quantity"))))
+            ),
         };
         let quantity = count(value.and_then(|value| value.pointer("/quantity/quantity")));
         let effect = value.and_then(|value| value.get("effect"));
-        let effect = match effect.and_then(|effect| effect.get("__typename")).and_then(Value::as_str) {
+        let effect = match effect
+            .and_then(|effect| effect.get("__typename"))
+            .and_then(Value::as_str)
+        {
             Some("DiscountAmount") => {
-                format!("at {} off", money(effect.and_then(|effect| effect.get("amount"))))
+                format!(
+                    "at {} off",
+                    money(effect.and_then(|effect| effect.get("amount")))
+                )
             }
-            _ => match effect.and_then(|effect| effect.get("percentage")).and_then(Value::as_f64) {
+            _ => match effect
+                .and_then(|effect| effect.get("percentage"))
+                .and_then(Value::as_f64)
+            {
                 Some(fraction) if fraction >= 1.0 => "free".to_string(),
-                _ => format!("at {} off", percent(effect.and_then(|effect| effect.get("percentage")))),
+                _ => format!(
+                    "at {} off",
+                    percent(effect.and_then(|effect| effect.get("percentage")))
+                ),
             },
         };
         format!("{buys}, get {} {effect}", items(quantity))
@@ -995,7 +1018,11 @@ fn summary(discount: &Record, money_format: &str) -> (String, String) {
                 .map_or(0, Vec::len)
         };
         let plural = |n: usize, one: &str| {
-            if n == 1 { format!("1 {one}") } else { format!("{n} {one}s") }
+            if n == 1 {
+                format!("1 {one}")
+            } else {
+                format!("{n} {one}s")
+            }
         };
         let target = match gets
             .and_then(|gets| gets.pointer("/items/__typename"))
@@ -1020,9 +1047,9 @@ fn summary(discount: &Record, money_format: &str) -> (String, String) {
         )),
         Some("DiscountMinimumQuantity") => Some(format!(
             "Minimum quantity of {}",
-            items(count(
-                minimum.and_then(|minimum| minimum.get("greaterThanOrEqualToQuantity"))
-            ))
+            items(count(minimum.and_then(|minimum| {
+                minimum.get("greaterThanOrEqualToQuantity")
+            })))
         )),
         _ => None,
     };

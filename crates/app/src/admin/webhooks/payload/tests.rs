@@ -577,7 +577,8 @@ fn the_compliance_payloads_name_the_shop() {
 #[test]
 fn the_shop_payload_names_its_primary_domain() {
     let domain = record(json!({"id": "gid://shopify/Domain/5", "host": "supply.example.com"}));
-    let shop = record(json!({"id": "gid://shopify/Shop/7", "primaryDomain": "gid://shopify/Domain/5"}));
+    let shop =
+        record(json!({"id": "gid://shopify/Shop/7", "primaryDomain": "gid://shopify/Domain/5"}));
     let lookup = Records::of([domain], Some(shop.clone()));
     for topic in ["shop/update", "app/uninstalled"] {
         assert_eq!(
@@ -585,7 +586,9 @@ fn the_shop_payload_names_its_primary_domain() {
             json!("supply.example.com")
         );
     }
-    let inline = record(json!({"id": "gid://shopify/Shop/7", "primaryDomain": {"host": "inline.example.com"}}));
+    let inline = record(
+        json!({"id": "gid://shopify/Shop/7", "primaryDomain": {"host": "inline.example.com"}}),
+    );
     assert_eq!(
         payload("shop/update", &inline, &Records::default()).unwrap()["domain"],
         json!("inline.example.com")
