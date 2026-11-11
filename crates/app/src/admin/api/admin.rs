@@ -145,6 +145,9 @@ pub struct AdminApi {
     /// ([`ShopState::set_id_slot`]): what keeps two shops from creating the same id. Written
     /// with the map of the shops held.
     id_slots: Mutex<HashMap<String, u64>>,
+    /// The stamp of the app's configuration file when it was last looked at, and the scopes it
+    /// declared then (sorted): what [`AdminApi::app_scopes_changed`] compares with.
+    app_config_seen: Mutex<AppConfigSeen>,
     tokens: Mutex<Tokens>,
     webhooks: Webhooks,
     throttle: Throttle,
@@ -203,6 +206,21 @@ struct PricingPlans {
 }
 
 /// The size and the modification time of a file, to tell that it changed.
+/// The stamp of a file and the scopes the app's configuration declared ([`AdminApi::
+/// app_scopes_changed`]).
+type AppConfigSeen = (Option<(u64, u128)>, Option<Vec<String>>);
+
+/// The app's configuration file as the server starts: what a later look compares with.
+fn app_config_seen(app: Option<&App>) -> AppConfigSeen {
+    let Some(app) = app else {
+        return (None, None);
+    };
+    let stamp = scopes::app_config_file(&app.root).and_then(|file| file_stamp(&file));
+    let mut declared = app.config.scopes.clone();
+    declared.sort();
+    (stamp, Some(declared))
+}
+
 fn file_stamp(path: &std::path::Path) -> Option<(u64, u128)> {
     let metadata = std::fs::metadata(path).ok()?;
     let modified = metadata
@@ -314,6 +332,7 @@ impl AdminApi {
             seed: Mutex::new(seed),
             shops: RwLock::new(shops),
             id_slots: Mutex::new(HashMap::new()),
+            app_config_seen: Mutex::new(app_config_seen(app.as_ref())),
             tokens: Mutex::new(tokens),
             webhooks,
             throttle,
@@ -532,6 +551,29 @@ impl AdminApi {
             return Ok(None);
         }
         self.reload_pricing_file()
+    }
+
+    /// Looks at the app's configuration file again when it changed since it was last looked at
+    /// (a server without `--static`): when its `[access_scopes] scopes` are not those the app
+    /// was installed with at start, what to do about it ([`scopes::scopes_changed`]), once per
+    /// set of scopes. `None` otherwise, and without an app.
+    pub fn app_scopes_changed(&self) -> Option<String> {
+        let root = self.app.as_ref()?.root.clone();
+        let file = scopes::app_config_file(&root)?;
+        let stamp = file_stamp(&file);
+        let mut seen = lock(&self.app_config_seen);
+        if seen.0 == stamp {
+            return None;
+        }
+        seen.0 = stamp;
+        let (_, declared) = scopes::declared_scopes(&root)?;
+        let mut sorted = declared.clone();
+        sorted.sort();
+        if seen.1.as_ref() == Some(&sorted) {
+            return None;
+        }
+        seen.1 = Some(sorted);
+        scopes::scopes_changed(&self.scopes, &declared)
     }
 
     /// The file of `--pricing-plans`, when the plans come from one.

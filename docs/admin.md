@@ -606,6 +606,13 @@ scopes: `POST /__lsf/admin/install {"scopes": "read_orders"}` installs the app a
 (every token of the app on the shop now reads less, the printed one and those of token exchange
 and OAuth alike, and `app/scopes_update` is delivered).
 
+**Scopes changed in `shopify.app.toml`** while lsf runs do not change the installation: the app
+keeps the scopes lsf started with, as an installed app keeps what the merchant granted on
+Shopify until they approve the new ones. The terminal says so at the next request (`admin:
+shopify.app.toml changed its scopes (added …)`): restart lsf, or grant them with
+`POST /__lsf/admin/install {"scopes": "…"}` on each shop. With `--static`, the file is not looked
+at again.
+
 **Uninstall.** `POST /__lsf/admin/uninstall` does what Shopify does when a merchant uninstalls
 the app: it revokes the app's tokens on the shop, cancels its subscription, removes its
 Functions with every object that runs them, its script tags and its web pixel, stops rendering
