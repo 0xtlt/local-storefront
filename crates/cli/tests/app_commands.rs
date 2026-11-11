@@ -1929,3 +1929,92 @@ fn function_run_input_runs_a_folder_of_fixtures() {
         text(&output)
     );
 }
+
+/// `quantity-limit` with the build command `command` (none with `None`), checked by one scenario.
+fn with_build_command(name: &str, command: Option<&str>) -> App {
+    let app = App::new(name);
+    assert!(lsf(&app.0, &["init"]).status.success());
+    app.write(
+        "shopify-local/checkouts/tees.json",
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}, "extensions": ["quantity-limit"]}"#,
+    );
+    let path = app
+        .0
+        .join("extensions/quantity-limit/shopify.extension.toml");
+    let toml = std::fs::read_to_string(&path).unwrap();
+    let start = toml.find("  [extensions.build]").unwrap();
+    let build = match command {
+        Some(command) => format!(
+            "  [extensions.build]\n  command = \"{command}\"\n  path = \"dist/function.wasm\"\n"
+        ),
+        None => String::new(),
+    };
+    std::fs::write(&path, format!("{}{build}", &toml[..start])).unwrap();
+    app
+}
+
+/// `--build` of a Function with no build command builds nothing, so its module stays stale.
+#[test]
+fn build_without_a_build_command_leaves_a_stale_module_stale() {
+    let app = with_build_command("stale-no-command", None);
+    make_stale(&app, "quantity-limit");
+    let check = ["app", "check", "--extension", "quantity-limit"];
+    for args in [&[&check[..], &["--build"]].concat(), &check.to_vec()] {
+        let output = lsf(&app.0, args);
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {}", text(&output));
+        assert!(
+            text(&output).contains("1 stale module"),
+            "{}",
+            text(&output)
+        );
+    }
+}
+
+/// A lock file the build writes is not a change after it, and a change to a file the Functions
+/// share (the app's `Cargo.toml`) is.
+#[test]
+fn a_lock_file_the_build_writes_is_fresh_and_a_shared_file_is_a_source() {
+    let app = with_build_command("stale-lock", Some("echo built > Cargo.lock"));
+    let check = ["app", "check", "--extension", "quantity-limit"];
+    let output = lsf(&app.0, &[&check[..], &["--build"]].concat());
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(app.0.join("extensions/quantity-limit/Cargo.lock").is_file());
+    let output = lsf(&app.0, &check);
+    assert!(output.status.success(), "{}", text(&output));
+
+    app.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"extensions/*\"]\nresolver = \"2\"\n",
+    );
+    let output = lsf(&app.0, &check);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains("stale    quantity-limit: Cargo.toml changed"),
+        "{}",
+        text(&output)
+    );
+}
+
+/// `--extension` naming theme app extensions only checks those: not every Function.
+#[test]
+fn naming_only_a_theme_app_extension_checks_it_alone() {
+    let app = with_build_command("theme-only", None);
+    make_stale(&app, "quantity-limit");
+    app.write(
+        "extensions/badges/shopify.extension.toml",
+        "name = \"Badges\"\ntype = \"theme\"\nhandle = \"badges\"\n",
+    );
+    app.write(
+        "extensions/badges/blocks/badge.liquid",
+        "<p>badge</p>\n{% schema %}\n{\"name\": \"Badge\", \"target\": \"section\"}\n{% endschema %}\n",
+    );
+    let output = lsf(&app.0, &["app", "check", "--extension", "badges"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        !text(&output).contains("quantity-limit"),
+        "{}",
+        text(&output)
+    );
+    let output = lsf(&app.0, &["app", "check"]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+}

@@ -1543,8 +1543,10 @@ runs past 11 million instructions or answers an output out of its schema, and on
 [expectation](#expected-results) of a scenario that is not met: a discount of the wrong amount,
 PayPal left in the express buttons. It also fails on an extension the checkout does not offer
 (an `api_version` other than `2026-10` and `2027-01`, no module or bundle), on a Function whose
-files changed after its module was built (`stale`, unless `--build`), and on what Shopify
-rejects in a theme app extension. A trap ends with the last message the Function logged
+files changed after its module was built (`stale`, unless `--build`: its folder, and the app's
+files every build reads, such as a workspace's `Cargo.toml` or a shared package; a lock file
+the build writes itself does not count), and on what Shopify rejects in a theme app extension.
+`--extension` naming theme app extensions only checks those. A trap ends with the last message the Function logged
 (`the Function trapped: Error: boom (in b2b)` for a `throw new Error("boom")`), and the JSON has
 the `logs` of each failure. For what `expect` cannot say, `app function run --format json` has the
 whole checkout (`lines`, `discounts`, `deliveryGroups`, `paymentMethods`, `expressMethods`,

@@ -4,8 +4,10 @@
 //! `--build`.
 //!
 //! Each build lsf makes (`app build`, `app function build`, `--build`, `--watch`) records what
-//! the module was built from: a hash of each file of the Function's folder, and of the module,
-//! in the user's cache folder, never in the app. A module that is the one recorded is stale when
+//! the module was built from: a hash of each file of the Function's folder and of the app's
+//! files every build may read (a workspace's manifest and lock file, a crate or a package the
+//! Functions share, as the watch follows them), and of the module, in the user's cache folder,
+//! never in the app. A lock file the build itself writes is taken as the build left it. A module that is the one recorded is stale when
 //! a file changed since, whatever the times of the files say (a `git checkout` touches them all;
 //! a build that compiles nothing leaves the module's time). A module lsf did not build (Shopify's
 //! CLI, a build by hand, a fresh clone) is stale when a file is newer than it by more than
@@ -41,13 +43,89 @@ fn skipped(relative: &Path, outputs: &[PathBuf]) -> bool {
     })
 }
 
-/// Each file `function` is built from, with its time.
-fn files(function: &FunctionExtension) -> Vec<(String, PathBuf, Option<SystemTime>)> {
-    files_in(&function.dir, &crate::watch::outputs_of(function))
+/// The prefix of the app's shared files among a Function's sources: `@app/Cargo.lock`.
+const SHARED: &str = "@app/";
+
+/// The lock files a build may write or update itself (`cargo build` writes `Cargo.lock`).
+const LOCK_FILES: [&str; 7] = [
+    "Cargo.lock",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+];
+
+/// Whether a source, by its path, is a lock file.
+fn is_lock_file(path: &str) -> bool {
+    LOCK_FILES
+        .iter()
+        .any(|lock| path == *lock || path.ends_with(&format!("/{lock}")))
 }
 
-/// Each file of the folder `dir` of a Function whose build writes `outputs`, with its time.
-fn files_in(dir: &Path, outputs: &[PathBuf]) -> Vec<(String, PathBuf, Option<SystemTime>)> {
+/// Each file `function`, of the app in `root`, is built from, with its time.
+fn files(root: &Path, function: &FunctionExtension) -> Vec<(String, PathBuf, Option<SystemTime>)> {
+    files_in(root, &function.dir, &crate::watch::outputs_of(function))
+}
+
+/// Each file of the folder `dir` of a Function whose build writes `outputs`, with its time,
+/// then the files of the app in `root` that every build may read ([`SHARED`]).
+fn files_in(
+    root: &Path,
+    dir: &Path,
+    outputs: &[PathBuf],
+) -> Vec<(String, PathBuf, Option<SystemTime>)> {
+    let mut found = own_files(dir, outputs);
+    found.extend(shared_files(root));
+    found
+}
+
+/// The files of the app in `root`, out of `extensions/`, that the builds of its Functions may
+/// read: what the watch builds every Function again for.
+fn shared_files(root: &Path) -> Vec<(String, PathBuf, Option<SystemTime>)> {
+    let mut found = Vec::new();
+    let mut entries: Vec<_> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .collect();
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        if name == "extensions" || !crate::watch::shared_input(Path::new(&name), &path, root, None)
+        {
+            continue;
+        }
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if !metadata.is_dir() {
+            found.push((format!("{SHARED}{name}"), path, metadata.modified().ok()));
+            continue;
+        }
+        crate::watch::walk(
+            &path,
+            &|relative| crate::watch::ignored(relative, &[]),
+            &mut |relative, file, metadata| {
+                found.push((
+                    format!(
+                        "{SHARED}{name}/{}",
+                        relative.to_string_lossy().replace('\\', "/")
+                    ),
+                    file.to_path_buf(),
+                    metadata.modified().ok(),
+                ));
+            },
+            &mut |_| {},
+        );
+    }
+    found
+}
+
+/// Each file of the Function's own folder `dir`, whose build writes `outputs`, with its time.
+fn own_files(dir: &Path, outputs: &[PathBuf]) -> Vec<(String, PathBuf, Option<SystemTime>)> {
     let mut found = Vec::new();
     crate::watch::walk(
         dir,
@@ -64,15 +142,31 @@ fn files_in(dir: &Path, outputs: &[PathBuf]) -> Vec<(String, PathBuf, Option<Sys
     found
 }
 
-/// What `function` is built from, as it is now: read before a build, recorded once it is over.
-pub fn sources(function: &FunctionExtension) -> Sources {
-    sources_in(&function.dir, &crate::watch::outputs_of(function))
+impl Sources {
+    /// What a build read before it started (`self`), with what the build wrote itself, read
+    /// once it is over (`after`): a file that was not there before, and the lock files it
+    /// updates. A source edited during the build keeps its hash of before: it is not in the
+    /// module.
+    pub fn after_build(mut self, after: Sources) -> Sources {
+        for (path, hash) in after.files {
+            if is_lock_file(&path) || !self.files.contains_key(&path) {
+                self.files.insert(path, hash);
+            }
+        }
+        self
+    }
+}
+
+/// What `function`, of the app in `root`, is built from, as it is now: read before a build,
+/// recorded once it is over ([`Sources::after_build`]).
+pub fn sources(root: &Path, function: &FunctionExtension) -> Sources {
+    sources_in(root, &function.dir, &crate::watch::outputs_of(function))
 }
 
 /// [`sources`] of the Function in the folder `dir`, whose build writes `outputs`.
-pub fn sources_in(dir: &Path, outputs: &[PathBuf]) -> Sources {
+pub fn sources_in(root: &Path, dir: &Path, outputs: &[PathBuf]) -> Sources {
     Sources {
-        files: files_in(dir, outputs)
+        files: files_in(root, dir, outputs)
             .into_iter()
             .filter_map(|(relative, path, _)| {
                 let bytes = std::fs::read(path).ok()?;
@@ -147,7 +241,7 @@ pub fn stale(root: &Path, function: &FunctionExtension) -> Option<String> {
         .and_then(|metadata| metadata.modified())
         .ok()?;
     if let Some(recorded) = recorded(root, function) {
-        let now = sources(function);
+        let now = sources(root, function);
         return now
             .files
             .iter()
@@ -162,7 +256,7 @@ pub fn stale(root: &Path, function: &FunctionExtension) -> Option<String> {
                     .cloned()
             });
     }
-    files(function)
+    files(root, function)
         .into_iter()
         .filter_map(|(relative, _, modified)| Some((modified?, relative)))
         .filter(|(modified, _)| {
@@ -175,8 +269,11 @@ pub fn stale(root: &Path, function: &FunctionExtension) -> Option<String> {
 }
 
 /// How a message names the file [`stale`] found: by its path in the app
-/// (`extensions/discount/src/run.ts`).
+/// (`extensions/discount/src/run.ts`, or `Cargo.lock` for a file the Functions share).
 pub fn in_app(root: &Path, function: &FunctionExtension, file: &str) -> String {
+    if let Some(shared) = file.strip_prefix(SHARED) {
+        return shared.to_string();
+    }
     let folder = function
         .dir
         .strip_prefix(root)
@@ -232,7 +329,7 @@ mod tests {
     #[test]
     fn a_module_lsf_built_is_stale_once_a_file_changes() {
         let (root, function) = function("recorded");
-        let before = sources(&function);
+        let before = sources(&root, &function);
         record(&root, &function.handle, &function.wasm_path, &before);
         assert_eq!(stale(&root, &function), None);
         // Touched, not changed: a checkout of another branch and back.
@@ -257,7 +354,7 @@ mod tests {
             &root,
             &function.handle,
             &function.wasm_path,
-            &sources(&function),
+            &sources(&root, &function),
         );
         assert_eq!(stale(&root, &function), None);
         std::fs::remove_file(function.dir.join("src/run.graphql")).unwrap();
@@ -284,7 +381,7 @@ mod tests {
             &root,
             &function.handle,
             &function.wasm_path,
-            &sources(&function),
+            &sources(&root, &function),
         );
         std::fs::write(&function.wasm_path, b"\0asm\x01").unwrap();
         std::fs::write(

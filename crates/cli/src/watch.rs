@@ -1110,7 +1110,7 @@ const MANIFEST_DEPTH: usize = 3;
 /// more than its Functions: its own sources (`src/`, `app/`), its pages, its documents. Those
 /// are the app's business, whose dev server rebuilds them: following them would build every
 /// Function and reload the pages each time it does.
-fn shared_input(name: &Path, path: &Path, root: &Path, data: Option<&Path>) -> bool {
+pub(crate) fn shared_input(name: &Path, path: &Path, root: &Path, data: Option<&Path>) -> bool {
     if ignored(name, &[])
         || name == Path::new(crate::app::DEFAULT_DATA_DIRECTORY)
         || OUTPUT_FOLDERS
@@ -2124,7 +2124,7 @@ impl Coordinator {
         let inputs = self.inputs(&job);
         self.sources.insert(
             handle.clone(),
-            crate::freshness::sources_in(&job.dir, &job.outputs),
+            crate::freshness::sources_in(&self.root, &job.dir, &job.outputs),
         );
         let sender = self.sender.clone();
         let shared = self.shared.clone();
@@ -2167,6 +2167,11 @@ impl Coordinator {
                 if let (Some(sources), Some(job)) =
                     (sources, self.jobs().find(|job| job.handle == handle))
                 {
+                    let sources = sources.after_build(crate::freshness::sources_in(
+                        &self.root,
+                        &job.dir,
+                        &job.outputs,
+                    ));
                     crate::freshness::record(&self.root, handle, &job.module, &sources);
                 }
                 let unchanged = self.typegen.remove(handle).as_ref() == Some(&output);

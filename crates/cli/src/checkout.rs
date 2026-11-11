@@ -142,9 +142,13 @@ pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
     for function in selection.functions(app) {
         // What it is built from, read before the build: a file saved meanwhile is not taken to
         // be in the module ([`crate::freshness`]).
-        let sources = crate::freshness::sources(function);
+        let sources = crate::freshness::sources(&app.root, function);
         match function.build() {
-            None => eprintln!("build:  {} has no build command", function.handle),
+            None => {
+                // Nothing was built: what the module was built from is not known any better.
+                eprintln!("build:  {} has no build command", function.handle);
+                continue;
+            }
             Some(Build::Command(command)) => {
                 eprintln!("build:  {}: {command}", function.handle);
                 for (query, root) in refresh_typegen(&function.dir, &function.wasm_path) {
@@ -179,6 +183,7 @@ pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
             }
         }
         if function.built() {
+            let sources = sources.after_build(crate::freshness::sources(&app.root, function));
             crate::freshness::record(&app.root, &function.handle, &function.wasm_path, &sources);
         }
     }

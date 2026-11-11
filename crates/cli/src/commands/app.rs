@@ -241,6 +241,15 @@ fn check(
             .cloned()
             .partition(|handle| app.theme_extension(handle).is_some())
     };
+    // `--extension` names theme app extensions only: they are checked, and nothing else is
+    // (an empty selection of the others would mean all of them).
+    if !args.extensions.is_empty() && extensions.is_empty() {
+        let app = lsf_app::config::load(&app_dir)?;
+        return Ok(theme_extensions_only(
+            &crate::theme_extensions::diagnostics(&app, &themes),
+            args.format,
+        ));
+    }
     let (shopify_app, selection) = crate::checkout::open(
         &crate::checkout::AppArgs {
             app: Some(app_dir.clone()),
@@ -547,6 +556,55 @@ fn check(
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// `app check --extension <theme app extension>`: what Shopify rejects in the extensions
+/// named, and no scenario.
+fn theme_extensions_only(problems: &[lsf_app::config::Diagnostic], format: Format) -> ExitCode {
+    let errors = problems
+        .iter()
+        .filter(|problem| problem.severity == lsf_app::config::Severity::Error)
+        .count();
+    match format {
+        Format::Json => {
+            let json = serde_json::json!({
+                "ok": errors == 0,
+                "checked": 0,
+                "total": 0,
+                "themeExtensions": problems
+                    .iter()
+                    .map(|problem| serde_json::json!({
+                        "handle": problem.extension,
+                        "severity": if problem.severity == lsf_app::config::Severity::Error { "error" } else { "warning" },
+                        "message": problem.message,
+                    }))
+                    .collect::<Vec<_>>(),
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json).unwrap_or_default()
+            );
+        }
+        Format::Text => {
+            for problem in problems {
+                let level = if problem.severity == lsf_app::config::Severity::Error {
+                    "invalid "
+                } else {
+                    "warning "
+                };
+                println!("{level} {problem}");
+            }
+            println!(
+                "checked the theme app extensions named: {}",
+                count(errors, "error", "errors")
+            );
+        }
+    }
+    if errors == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 /// An expectation that is not met, as `app check` prints it: the scenario and the assertion,
