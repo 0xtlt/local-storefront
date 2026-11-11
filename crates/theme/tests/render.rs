@@ -1961,3 +1961,34 @@ fn a_broken_json_template_is_an_error_of_the_page() {
         "{message}"
     );
 }
+
+#[test]
+fn a_locale_of_the_theme_the_store_does_not_sell_in_says_so() {
+    let fixture = theme_of(
+        "missing-language",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            ("templates/index.liquid", "home"),
+            ("locales/en.default.json", "{}"),
+            ("locales/de.json", "{}"),
+        ],
+    );
+    let rendered = fixture.page("/de/");
+    assert_eq!(rendered.status, 404);
+    assert_eq!(
+        rendered.not_found.as_deref(),
+        Some(
+            "no page at \"/de/\": the theme has a de locale but the store data has no German \
+             language; add {\"iso_code\": \"de\"} to localization.languages"
+        )
+    );
+    // A path that names no locale is only missing.
+    assert_eq!(
+        fixture.page("/nope").not_found.as_deref(),
+        Some("no page at \"/nope\"")
+    );
+}
