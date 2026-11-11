@@ -255,10 +255,69 @@ fn default_errors(input: &Value, _args: &FilterArgs, _ctx: &Context) -> Result<V
     Ok(Value::from(out))
 }
 
-fn payment_button(_input: &Value, _args: &FilterArgs, _ctx: &Context) -> Result<Value> {
-    Ok(Value::str(
-        "<div data-shopify=\"payment-button\" class=\"shopify-payment-button\"><button type=\"button\" class=\"shopify-payment-button__button shopify-payment-button__button--unbranded\">Buy it now</button></div>",
-    ))
+/// The words of Shopify's unbranded payment button, by locale. Shopify writes them in the
+/// language of the storefront, from its checkout's translations, not the theme's.
+const BUY_IT_NOW: &[(&str, &str)] = &[
+    ("ar", "اشترِ الآن"),
+    ("bg", "Купете сега"),
+    ("cs", "Koupit nyní"),
+    ("da", "Køb nu"),
+    ("de", "Jetzt kaufen"),
+    ("el", "Αγορά τώρα"),
+    ("es", "Comprar ahora"),
+    ("et", "Osta kohe"),
+    ("fi", "Osta nyt"),
+    ("fr", "Acheter maintenant"),
+    ("he", "קנה עכשיו"),
+    ("hi", "अभी खरीदें"),
+    ("hr", "Kupi odmah"),
+    ("hu", "Vásárlás most"),
+    ("id", "Beli sekarang"),
+    ("it", "Acquista ora"),
+    ("ja", "今すぐ購入"),
+    ("ko", "지금 구매"),
+    ("lt", "Pirkti dabar"),
+    ("lv", "Pirkt tagad"),
+    ("ms", "Beli sekarang"),
+    ("nb", "Kjøp nå"),
+    ("nl", "Nu kopen"),
+    ("pl", "Kup teraz"),
+    ("pt", "Comprar agora"),
+    ("pt-BR", "Comprar agora"),
+    ("pt-PT", "Comprar agora"),
+    ("ro", "Cumpără acum"),
+    ("ru", "Купить сейчас"),
+    ("sk", "Kúpiť teraz"),
+    ("sl", "Kupi zdaj"),
+    ("sv", "Köp nu"),
+    ("th", "ซื้อเลย"),
+    ("tr", "Hemen satın al"),
+    ("uk", "Купити зараз"),
+    ("vi", "Mua ngay"),
+    ("zh-CN", "立即购买"),
+    ("zh-TW", "立即購買"),
+];
+
+/// "Buy it now" in `locale` (`fr`, `pt-BR`), falling back from the region to the language, and
+/// to English.
+pub fn buy_it_now(locale: &str) -> &'static str {
+    let language = locale.split('-').next().unwrap_or(locale);
+    [locale, language]
+        .iter()
+        .find_map(|candidate| {
+            BUY_IT_NOW
+                .iter()
+                .find(|(code, _)| code.eq_ignore_ascii_case(candidate))
+        })
+        .map_or("Buy it now", |(_, words)| words)
+}
+
+fn payment_button(_input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<Value> {
+    let words = site(ctx).map_or("Buy it now", |site| buy_it_now(&site.request.locale));
+    Ok(Value::from(format!(
+        "<div data-shopify=\"payment-button\" class=\"shopify-payment-button\"><button type=\"button\" class=\"shopify-payment-button__button shopify-payment-button__button--unbranded\">{}</button></div>",
+        escape_html(words)
+    )))
 }
 
 fn empty(_input: &Value, _args: &FilterArgs, _ctx: &Context) -> Result<Value> {

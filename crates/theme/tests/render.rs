@@ -1992,3 +1992,27 @@ fn a_locale_of_the_theme_the_store_does_not_sell_in_says_so() {
         Some("no page at \"/nope\"")
     );
 }
+
+#[test]
+fn the_payment_button_speaks_the_language_of_the_storefront() {
+    let fixture = theme_of(
+        "payment-button",
+        &[],
+        &[("templates/index.liquid", "{{ product | payment_button }}")],
+    );
+    let button = |locale: &str| {
+        let mut request = request("/");
+        request.locale = locale.to_string();
+        let rendered =
+            fixture.render_with(request, Session::initial(&fixture.store), &Target::Page);
+        assert_clean(&rendered);
+        rendered.body
+    };
+    assert!(button("en").contains(">Buy it now</button>"));
+    assert!(button("fr").contains(">Acheter maintenant</button>"));
+    assert!(button("de").contains(">Jetzt kaufen</button>"));
+    assert!(button("pt-BR").contains(">Comprar agora</button>"));
+    assert!(button("fr-CA").contains(">Acheter maintenant</button>"));
+    // A language Shopify's button has no words for is in English.
+    assert!(button("eo").contains(">Buy it now</button>"));
+}
