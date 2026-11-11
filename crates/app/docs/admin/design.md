@@ -1062,12 +1062,25 @@ of the CDN script 0.41.4 where shopify.dev leaves it open:
 
 The parts the admin draws, in the admin page: toasts, the loading bar, the title bar, the nav
 items, the save bar (in place of the top bar, as Shopify's), the resource picker and the picker
-(`<dialog>`s), the confirmations (leave, discard). **Modals are drawn in the app's frame**, over
-the app, from a shadow root on the element (its children stay where the app put them, React
-keeps them, their handlers work); the admin dims what is around the frame. Shopify draws them
-over the whole admin, in a frame of its own whose document the app's frame fills; lsf's are as
-large as the app's frame. A modal's `src` is an `<iframe name="lsf-modal:<n>">` on the app's
-origin, whose page takes the opener's `shopify`.
+(`<dialog>`s), the confirmations (leave, discard), and the dialog of an `edit:` intent.
+**Modals are drawn in the app's frame**, from a shadow root on the element (its children stay
+where the app put them, React keeps them, their handlers work), and Polaris's `s-modal` draws
+itself there (App Bridge hears its `show` and `hide`). While one shows, the frame is **lifted
+over the whole window**: the admin sends `modal.lift` with the frame's box, the page sets
+`position: fixed` on its body in that box (the frame's background and radius, the scroll kept)
+and a transparent image on its root (with none, the body's background would paint the whole
+canvas), answers `lifted`, and the admin then makes the frame cover the window. The admin shows
+through, under the modal's backdrop, and the modal is centered over the whole admin, as
+Shopify's. `modal.unlift` puts the styles back. Shopify draws modals in a frame of its own; lsf
+cannot move the app's DOM out of its frame without cutting React's handlers off. A modal's `src`
+is an `<iframe name="lsf-modal:<n>">` on the app's origin, whose page takes the opener's
+`shopify`.
+
+**Intents**: `shopify.intents.invoke('edit:shopify/Product', {value})` (and `…/ProductVariant`,
+`…/Collection`, or the object form) asks the admin, which fetches the resource from
+`/__lsf/admin/resources` (`id:` or `variant_id:`) and shows it in a dialog: lsf has no editor,
+so closing it completes the activity with `{code: 'closed'}`. Another intent completes with
+`{code: 'error'}`, its message saying lsf does not simulate it, and joins the banner.
 
 The resource picker reads `GET /__lsf/admin/resources`: one query of the shop
 (`products` with their `variants` and `media`, or `collections`) run with every scope and no cost
@@ -1087,15 +1100,28 @@ Shopify's syntax; `selectionIds` are fetched by id (`id:`, `variant_id:`).
   answers `410` to a bot's user agent, `401` to a revoked token), the frame was refused (the
   template's `Content-Security-Policy: frame-ancestors`), or the page loads no App Bridge.
 - A call of what lsf does not simulate: listed in a banner.
+- What the template lacks (`config::template_warnings`: no `setAbstractFetchFunc` in
+  `app/shopify.server.ts`, no `boundary.headers` in `app/routes/app.tsx`): read again at each
+  load of the admin and of a page of the frame (`GET /__lsf/admin/warnings`), so a fixed file
+  loses its banner without a restart.
+- A backend that bypasses lsf (`api::BackendWatch`): the frame's proxy reports a request with a
+  session token (`id_token`, `Authorization: Bearer`) answered `400` or more (not `401`, the
+  library's own flows, nor `410`, its bot answer) while lsf has received no token exchange and
+  no Admin API call yet. A backend without `LSF_URL` does exactly that: its token exchange fails
+  at Shopify (`500`), or its Admin API call does (Shopify's status, `404` for a shop it does not
+  have). The terminal says it once; the admin shows it (App Bridge posts `failed` when a
+  `fetch()` of the app fails, and the admin asks again) until a call of the backend arrives.
 
 ### What is not simulated
 
 The admin itself (its pages, its search, its other apps); Polaris itself (lsf serves Shopify's,
-or its copy of it, and does not draw a component of its own); `shopify.scanner`, `pos`, `intents` (`invoke`, `register`), `webVitals`, `support`,
+or its copy of it, and does not draw a component of its own); `shopify.scanner`, `pos`,
+`intents.register` and the intents other than `edit:` of a product, a variant or a collection,
+`webVitals`, `support`,
 `reviews`, `scopes.request` and `revoke`, `app.extensions`, `shopifyQL`, `sidekick`, `tools`
 (they reject or warn with "lsf does not simulate shopify.<name>"); Direct API access
-(`fetch("shopify:admin/api/…")`); `extension:` links; the mobile and POS environments; modals
-over the whole admin; the admin's keyboard shortcuts; `?shopify-reload=` by `fetch` and
+(`fetch("shopify:admin/api/…")`); `extension:` links; the mobile and POS environments; the
+admin's keyboard shortcuts; `?shopify-reload=` by `fetch` and
 `document.write`. `shopify.user()` has `accountAccess` `"Account owner"` or `"Full access"`,
 lsf's choice: shopify.dev's example says `"full"`, and the CDN script leaves it to the admin.
 
