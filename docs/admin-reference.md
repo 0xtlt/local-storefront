@@ -38,8 +38,11 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
 - Nothing answers a silent success for what lsf does not do: an input it ignores is in
   `extensions.lsf.notes`, and a mutation it did not simulate would answer an error with
   `extensions.code: LSF_NOT_SIMULATED` (no mutation of the versions it serves does). The REST
-  Admin API (`/admin/api/2026-10/products.json`) answers `404`: lsf serves the GraphQL Admin API
-  only.
+  Admin API (`/admin/api/2026-10/products.json`, `/admin/products.json`) answers `404` with
+  JSON that says so: lsf serves the GraphQL Admin API, and of REST only `GET
+  /admin/oauth/access_scopes.json`, the scopes of the token (`{"access_scopes": [{"handle":
+  "write_products"}, {"handle": "read_products"}]}`, a write scope followed by the read scope
+  it implies), with the same `X-Shopify-Access-Token`.
 - A bug of lsf while a mutation runs (a panic, in the mutation or in what follows it: segments,
   listings, product feeds) answers Shopify's internal error: `Internal error. Looks like
   something went wrong on our end.` with `extensions.code: INTERNAL_SERVER_ERROR`, a

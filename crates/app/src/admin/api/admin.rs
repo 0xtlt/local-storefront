@@ -29,6 +29,9 @@ use crate::admin::webhooks::{
 use crate::config::App;
 
 /// The answer to a request without a valid access token: Shopify's, word for word.
+/// Shopify's REST endpoint of a token's scopes, the one REST path lsf serves.
+pub const ACCESS_SCOPES: &str = "/admin/oauth/access_scopes.json";
+
 pub const INVALID_TOKEN: &str =
     "[API] Invalid API key or access token (unrecognized login or wrong password)";
 
@@ -1083,6 +1086,9 @@ impl AdminApi {
                 ),
             });
         }
+        if path.trim_end_matches('/') == ACCESS_SCOPES {
+            return Some(self.access_scopes(request));
+        }
         if path.starts_with("/admin/oauth/")
             || path.trim_end_matches('/') == "/__lsf/admin/session-token"
             || path.trim_end_matches('/') == "/__lsf/admin/launch"
@@ -1107,7 +1113,15 @@ impl AdminApi {
                     self.auth_changed(&domain);
                 }
             }
-            return response;
+            // Another path of OAuth's (a REST endpoint lsf does not have) says so.
+            return response.or_else(|| {
+                path.starts_with("/admin/oauth/")
+                    .then(|| self.rest_not_simulated(path))
+            });
+        }
+        // A REST path without a version (`/admin/products.json`, `/admin/shop.json`).
+        if path.starts_with("/admin/") && path.trim_end_matches('/').ends_with(".json") {
+            return Some(self.rest_not_simulated(path));
         }
         if let Some(response) = super::embedded::handle(self, request) {
             return Some(response);
@@ -1127,6 +1141,54 @@ impl AdminApi {
                 });
         }
         None
+    }
+
+    /// `GET /admin/oauth/access_scopes.json`: the scopes of the request's access token, as
+    /// Shopify's REST endpoint lists them (`{"access_scopes": [{"handle": "read_products"}]}`),
+    /// a scope it implies after each (`read_orders` after `write_orders`, as shopify.dev's
+    /// example). The same token as the GraphQL Admin API's, or `401`.
+    fn access_scopes(&self, request: &HttpRequest) -> HttpResponse {
+        let primary = self.versions.primary();
+        let method = request.method.to_ascii_uppercase();
+        if method != "GET" && method != "HEAD" {
+            return Self::api_headers(HttpResponse::not_allowed(&method), primary);
+        }
+        let grant = match self.grant_of(request) {
+            Ok(grant) => grant,
+            Err(reason) => {
+                return Self::api_headers(
+                    HttpResponse::json(401, &json!({ "errors": INVALID_TOKEN })),
+                    primary,
+                )
+                .header("x-lsf-reason", reason);
+            }
+        };
+        let mut handles: Vec<String> = Vec::new();
+        for scope in &grant.scopes {
+            let scope = scope.trim().to_string();
+            let implied = crate::admin::auth::scopes::implied(&scope);
+            for handle in std::iter::once(scope).chain(implied) {
+                if !handle.is_empty() && !handles.contains(&handle) {
+                    handles.push(handle);
+                }
+            }
+        }
+        let scopes: Vec<Value> = handles
+            .into_iter()
+            .map(|handle| json!({ "handle": handle }))
+            .collect();
+        Self::api_headers(
+            HttpResponse::json(200, &json!({ "access_scopes": scopes })),
+            primary,
+        )
+    }
+
+    /// The `404` of a path of the REST Admin API lsf does not have.
+    fn rest_not_simulated(&self, path: &str) -> HttpResponse {
+        let primary = self.versions.primary();
+        let body = version::rest_not_served_by(&self.versions, path.trim_start_matches("/admin/"));
+        let reason = body["errors"].as_str().unwrap_or_default().to_string();
+        Self::api_headers(HttpResponse::json(404, &body), primary).header("x-lsf-reason", reason)
     }
 
     /// The headers of every answer of the Admin API: `X-Shopify-API-Version`, the version that

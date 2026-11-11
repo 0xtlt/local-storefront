@@ -1215,6 +1215,40 @@ fn refuses_requests_without_a_valid_token() {
     );
 }
 
+/// `GET /admin/oauth/access_scopes.json` lists the token's scopes in Shopify's shape, and
+/// refuses a request without a token as the GraphQL Admin API does.
+#[test]
+fn the_access_scopes_of_a_token_are_listed() {
+    let api = demo_api();
+    let token = default_token(&api);
+    let response = api
+        .handle(&request(
+            "GET",
+            "/admin/oauth/access_scopes.json",
+            &[("x-shopify-access-token", &token)],
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(response.status, 200);
+    let scopes = json_of(&response)["access_scopes"].clone();
+    let handles: Vec<&str> = scopes
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|scope| scope["handle"].as_str().unwrap())
+        .collect();
+    assert!(handles.contains(&"write_products"), "{scopes}");
+    // A write scope lists the read scope it implies, once.
+    assert!(handles.contains(&"read_products"), "{scopes}");
+    assert_eq!(
+        handles.iter().filter(|handle| **handle == "read_products").count(),
+        1
+    );
+    let denied = send(&api, "GET", "/admin/oauth/access_scopes.json", Value::Null);
+    assert_eq!(denied.status, 401);
+    assert_eq!(json_of(&denied), json!({"errors": INVALID_TOKEN}));
+}
+
 #[test]
 fn says_the_rest_api_and_other_versions_are_not_served() {
     let api = demo_api();
@@ -1224,8 +1258,19 @@ fn says_the_rest_api_and_other_versions_are_not_served() {
         json_of(&rest)["errors"]
             .as_str()
             .unwrap()
-            .contains("does not serve the REST Admin API")
+            .contains("does not simulate the REST Admin API (products.json), except GET /admin/oauth/access_scopes.json")
     );
+    // The REST paths without a version, and those under OAuth's, say the same, in JSON.
+    for path in ["/admin/products.json", "/admin/oauth/access_scopes_v2.json"] {
+        let rest = send(&api, "GET", path, Value::Null);
+        assert_eq!(rest.status, 404, "{path}");
+        assert!(
+            header(&rest, "x-lsf-reason")
+                .unwrap()
+                .starts_with("lsf does not simulate the REST Admin API"),
+            "{path}"
+        );
+    }
     let other = send(
         &api,
         "POST",

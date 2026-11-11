@@ -469,7 +469,7 @@ pub fn is_version_name(version: &str) -> bool {
 pub fn rest_not_served_by(served: &Served, resource: &str) -> Value {
     json!({
         "errors": format!(
-            "lsf does not serve the REST Admin API ({resource}): use the GraphQL Admin API at /admin/api/{}/graphql.json",
+            "lsf does not simulate the REST Admin API ({resource}), except GET /admin/oauth/access_scopes.json: use the GraphQL Admin API at /admin/api/{}/graphql.json",
             served.primary()
         )
     })

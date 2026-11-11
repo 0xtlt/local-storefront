@@ -352,6 +352,9 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 
 ### Fixed
 
+- **`GET /admin/oauth/access_scopes.json` lists the token's scopes**, in Shopify's shape. It
+  answered `404`, and so did the other REST paths with a reason about the theme part: they now
+  answer JSON that says lsf does not simulate the REST Admin API.
 - **New Admin API records have 13-digit ids**, as Shopify's do, the same every run: a draft
   order, a discount, a refund or a webhook subscription was `…/1`, `…/2`.
 - **Discount summaries read like the admin's**: `$5.00 off entire order • Minimum purchase of
