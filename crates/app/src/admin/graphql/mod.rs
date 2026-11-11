@@ -66,7 +66,7 @@ mod input;
 mod introspection;
 pub mod parse;
 pub(crate) mod print;
-mod validate;
+pub(crate) mod validate;
 
 use std::collections::HashMap;
 

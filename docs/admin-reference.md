@@ -1099,7 +1099,9 @@ reinstall brings none back ([uninstall](admin.md#tokens)). Titles are the Functi
 connection, and writes JSON Lines as Shopify does (one line per node, nested connections on lines
 of their own with `__parentId`); Shopify's restrictions are checked (a connection, five at most,
 two levels deep, no top-level `node`). `bulkOperationRunMutation` runs the mutation once per line
-of a staged upload. Both finish within the request: the payload says `CREATED`, as Shopify's
+of a staged upload; a mutation the schema refuses, or one with no mutation field or more than one,
+is an `INVALID_MUTATION` user error and starts nothing (the messages are lsf's). lsf does not
+check Shopify's list of the mutations a bulk operation may run. Both finish within the request: the payload says `CREATED`, as Shopify's
 does, the next query reads `COMPLETED` with its `url`, `objectCount` and `fileSize`, and
 `bulk_operations/finish` is delivered. The file is at
 `http://127.0.0.1:9292/__lsf/admin/bulk/<shop>/<n>.jsonl`. `bulkOperation`, `bulkOperations`
