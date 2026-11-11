@@ -296,7 +296,8 @@ pub struct ShopState {
     counters: HashMap<String, u64>,
     /// What the ids of the records this shop creates are moved by, so that they are unique
     /// across the shops of the server, as Shopify's are: 0 for the default shop, a multiple of
-    /// [`ID_STRIDE`] for a shop made with `POST /__lsf/admin/shops` ([`ShopState::set_id_slot`]).
+    /// [`ID_STRIDE`] from 10¹³ for a shop made with `POST /__lsf/admin/shops`
+    /// ([`ShopState::set_id_slot`]).
     id_offset: u64,
     clock: Clock,
     events: Vec<Event>,
@@ -1529,23 +1530,29 @@ pub(crate) fn first_id(group: &str) -> u64 {
     lsf_core::util::stable_id("new_gid", group)
 }
 
-/// How far apart the ids of two shops are ([`ShopState::set_id_slot`]): a shop creates up to
-/// a hundred million records of a type before it reaches the ids of the next slot.
-pub const ID_STRIDE: u64 = 100_000_000;
+/// How far apart the ids of two shops are ([`ShopState::set_id_slot`]): a shop creates up to a
+/// million records of a type before it reaches the ids of the next slot.
+pub const ID_STRIDE: u64 = 1_000_000;
 
-/// How many slots of ids there are besides the default shop's. The ids stay below
-/// 2⁵³ (`Number.MAX_SAFE_INTEGER` of JavaScript): at most 14 digits.
-const ID_SLOTS: u64 = 89_999;
+/// The first slot of a test shop: its ids start at 10¹³, above every id of the store data and
+/// of the default shop (13 digits), so that a test shop's ids have 14 digits.
+const FIRST_SLOT: u64 = 10_000_000;
+
+/// How many slots of ids there are for test shops. The last one ends below 10¹⁴: ids keep 14
+/// digits, below 2⁵³ (`Number.MAX_SAFE_INTEGER` of JavaScript).
+const ID_SLOTS: u64 = 80_000_000;
 
 /// The slot of ids of a shop made under `domain` ([`ShopState::set_id_slot`]): a number of the
-/// domain, the same every run, else the next one `taken` does not refuse (two domains of the
-/// same number, rarely). Never 0, the default shop's.
+/// domain alone, the same every run whatever other shops exist. Two domains share one once in
+/// 80 million pairs; `taken` then gives the next free one, so that ids stay unique across shops.
+/// Never 0, the default shop's.
 pub fn id_slot(domain: &str, taken: impl Fn(u64) -> bool) -> u64 {
-    let first = lsf_core::util::stable_id("id slot", domain) % ID_SLOTS;
+    // `stable_id` is 10¹² + an FNV-1a hash modulo 8·10¹², which `ID_SLOTS` divides.
+    let first = (lsf_core::util::stable_id("id slot", domain) - 1_000_000_000_000) % ID_SLOTS;
     (0..ID_SLOTS)
-        .map(|step| 1 + (first + step) % ID_SLOTS)
+        .map(|step| FIRST_SLOT + (first + step) % ID_SLOTS)
         .find(|slot| !taken(*slot))
-        .unwrap_or(1 + first)
+        .unwrap_or(FIRST_SLOT + first)
 }
 
 fn counter_group(type_name: &str) -> String {
@@ -1766,6 +1773,36 @@ mod tests {
         let first = id_slot("a.myshopify.com", |_| false);
         assert_ne!(first, 0);
         assert_ne!(id_slot("a.myshopify.com", |slot| slot == first), first);
+    }
+
+    /// A test shop's ids are a number of its name alone: the order the shops are made in does
+    /// not change them. `test-286` and `test-542` shared a slot when there were 89,999.
+    #[test]
+    fn a_shop_has_the_same_ids_whatever_shops_came_before() {
+        let product = |names: &[&str]| {
+            let mut shops = Shops {
+                seed: ShopState::new("seed.myshopify.com", Clock::System),
+                shops: IndexMap::new(),
+            };
+            names
+                .iter()
+                .map(|name| (name.to_string(), shops.create(name).unwrap().new_gid("Product")))
+                .collect::<HashMap<_, _>>()
+        };
+        let forward = product(&["test-286", "test-542"]);
+        let backward = product(&["test-542", "test-286"]);
+        assert_eq!(forward, backward);
+        assert_ne!(forward["test-286"], forward["test-542"]);
+        for id in forward.values() {
+            let number = gid_number(id);
+            assert_eq!(number.to_string().len(), 14, "{id}");
+            assert!(number < 1 << 53, "{id}");
+        }
+        // No two of a thousand names share a slot.
+        let slots: std::collections::HashSet<u64> = (0..1000)
+            .map(|n| id_slot(&format!("test-{n}.myshopify.com"), |_| false))
+            .collect();
+        assert_eq!(slots.len(), 1000);
     }
 
     #[test]

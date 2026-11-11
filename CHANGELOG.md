@@ -413,8 +413,9 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
 - **Ids are unique across shops.** A record a test shop creates (`POST /__lsf/admin/shops`)
   has an id no other shop gives: a product, an order, a customer, a metafield, a charge. A
   backend that keeps every test shop in one database does not mix them up. The ids of a shop
-  are a number of its name, the same every run; the store data's records keep their ids in every
-  shop. A test shop's ids have up to 14 digits, and its charges no longer count from 1:
+  are a number of its name alone, the same every run whatever other shops the run makes and in
+  whatever order; the store data's records keep their ids in every shop. A test shop's ids have
+  14 digits, and its charges no longer count from 1:
   `/__lsf/admin/charges/<n>` takes the number of the charge's id, as the `confirmationUrl` gives
   it. The default shop does not change.
 - **Webhooks:** a subscription made with `metafieldNamespaces` (or `metafields`) gets the

@@ -21,8 +21,9 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
   its `path`, `definedCost`, `requestedTotalCost` and `requestedChildrenCost`, the children
   first.
 - Ids: a record lsf creates has a 13-digit id, as Shopify's do (`gid://shopify/DraftOrder/
-  4…`), the same every run for the same requests. In a test shop the ids have up to 14 digits
-  and no other shop gives them ([a shop per test](admin.md#a-shop-per-test)).
+  4…`), the same every run for the same requests. In a test shop the ids have 14 digits, are a
+  number of the shop's name, and no other shop gives them
+  ([a shop per test](admin.md#a-shop-per-test)).
 - `extensions.search`: Shopify's warnings when a `query:` names a field the connection does not
   have ("Invalid search field for this query."); the field is then ignored, as on Shopify.
 - Cursors are opaque, and resume as Shopify's do: right after their item in the connection's

@@ -1182,7 +1182,9 @@ Every id is a function of the data: the same data gives the same records every r
 The records the Admin API creates take their ids from a counter per type (`state::first_id`),
 and in a shop other than the default one the counter is moved by the shop's slot times
 `ID_STRIDE` (`ShopState::set_id_slot`): ids are unique across shops, as on Shopify. The slot is
-a number of the domain (`state::id_slot`), the next free one when two domains share it. An id
+a number of the domain alone (`state::id_slot`), one of 80 million from 10¹³ (a million ids per
+type each, 14 digits), so that the order shops are made in does not change their ids; the next
+free one when two live domains share it, once in 80 million pairs. An id
 lsf derives from a name in the default shop (a metafield, a metaobject, a menu, a market) is a
 new one of the counter in another shop (`ShopState::created_gid`). Charges count from 1 in the
 default shop and from the shop's offset in another.

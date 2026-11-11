@@ -996,8 +996,9 @@ shop changes stays in the Admin API.
 
 **Ids are unique across shops**, as on Shopify: a product, an order or a charge a test shop
 creates has an id no other shop gives, so a backend that keeps every shop in one database does
-not mix them up. The ids of a shop are a number of its name: the same name gives the same ids
-every run. The records of the store data keep their ids in every shop.
+not mix them up. The ids of a shop are a number of its name alone: the same name gives the same
+ids every run, whatever other shops the run makes and in whatever order. A test shop's ids have
+14 digits; the records of the store data keep their ids in every shop.
 
 ### Wait for a webhook
 
