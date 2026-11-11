@@ -41,7 +41,7 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 use serde_json::{Map, Value, json};
 
-use crate::admin::state::{Record, parse_gid};
+use crate::admin::state::{Record, gid_type, parse_gid};
 
 /// What a payload builder reads from the state, besides the record it is given.
 pub trait Lookup {
@@ -584,6 +584,78 @@ pub fn include_fields(payload: &Value, fields: &[String]) -> Value {
         }
     }
     project(payload, &tree)
+}
+
+/// The `metafields` of a payload whose subscription asks for some (`metafieldNamespaces`,
+/// `metafields`): those of `owner` that `wanted` takes (its namespace and key), in the shape
+/// of the REST Admin API's `Metafield`, which the payloads of webhooks follow. `None` when the
+/// owner has no metafields at all (its type has none: an `inventory_levels/update`).
+///
+/// Shopify does not document the shape on shopify.dev; these are the fields of the REST
+/// resource (`id`, `namespace`, `key`, `value`, `description`, `owner_id`, `created_at`,
+/// `updated_at`, `owner_resource`, `type`, `admin_graphql_api_id`).
+pub fn metafields(
+    owner: &Record,
+    lookup: &dyn Lookup,
+    wanted: &dyn Fn(&str, &str) -> bool,
+) -> Option<Value> {
+    let ids = owner.get("metafields")?;
+    let owner_type = owner
+        .get("__typename")
+        .and_then(Value::as_str)
+        .or_else(|| owner.get("id").and_then(Value::as_str).and_then(gid_type))
+        .unwrap_or_default();
+    let owner_resource = match owner_type {
+        "ProductVariant" => "variant".to_string(),
+        other => snake(other),
+    };
+    let metafields = records(ids, lookup)
+        .into_iter()
+        .filter(|metafield| {
+            wanted(
+                metafield
+                    .get("namespace")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                metafield
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )
+        })
+        .map(|metafield| {
+            json!({
+                "id": id(&metafield),
+                "namespace": text(&metafield, "namespace"),
+                "key": text(&metafield, "key"),
+                "value": text(&metafield, "value"),
+                "description": text(&metafield, "description"),
+                "owner_id": id(owner),
+                "created_at": time(field(&metafield, "createdAt")),
+                "updated_at": time(field(&metafield, "updatedAt")),
+                "owner_resource": owner_resource,
+                "type": text(&metafield, "type"),
+                "admin_graphql_api_id": text(&metafield, "id"),
+            })
+        })
+        .collect();
+    Some(Value::Array(metafields))
+}
+
+/// `DraftOrder` → `draft_order`.
+fn snake(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for (index, c) in name.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if index > 0 {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// The fields `include_fields` keeps, as a tree: a node keeps all of its value (`whole`) or the

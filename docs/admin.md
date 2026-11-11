@@ -772,6 +772,15 @@ Each place that shows extensions says why they are gone, "the app is not install
 - **Payloads** are Shopify's JSON for the topic (the REST representation of the resource), built
   from the record as the change left it, cut to `include_fields`, and checked against `filter`.
   A topic whose payload lsf does not build is logged as not sent, never sent with a made-up body.
+- **`filter` and `include_fields`**: Shopify requires every field a filter reads in
+  `include_fields` when it is set. A subscription that breaks the rule is created (with a note in
+  `extensions.lsf`), and its deliveries are `not_sent`, their `reason` naming the fields to add.
+- **Metafields**: a subscription made with `metafieldNamespaces` (or `metafields`) gets the
+  record's metafields of those namespaces in its payload, as `metafields`, in the REST shape (`id`,
+  `namespace`, `key`, `value`, `type`, `owner_id`, `owner_resource`, …). `$app` and `$app:<name>`
+  name the app's namespaces. A record with no metafields (an inventory level) gets none, and the
+  delivery's notes say so. With `include_fields`, name `metafields` there too. Shopify does not
+  document the shape; lsf follows the REST `Metafield` resource.
 - **Headers**: `X-Shopify-Topic`, `X-Shopify-Hmac-Sha256` (base64 HMAC-SHA256 of the body with the
   client secret), `X-Shopify-Shop-Domain`, `X-Shopify-API-Version` (the version the payload is
   built in: the subscription's, `2026-10` by default),

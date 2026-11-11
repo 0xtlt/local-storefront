@@ -70,6 +70,52 @@ pub struct MetafieldIdentifier {
     pub key: String,
 }
 
+/// Whether a namespace a subscription names (`custom`, `$app`, `$app:reviews`) is the namespace
+/// of a metafield as the Admin API writes it (`custom`, `app--<id>`, `app--<id>--reviews`).
+fn same_namespace(wanted: &str, namespace: &str) -> bool {
+    if wanted == namespace {
+        return true;
+    }
+    let Some(rest) = namespace.strip_prefix("app--") else {
+        return false;
+    };
+    let (id, name) = rest.split_once("--").unwrap_or((rest, ""));
+    let app = !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit());
+    match wanted.strip_prefix("$app") {
+        Some("") => app && name.is_empty(),
+        Some(suffix) => app && !name.is_empty() && suffix.strip_prefix(':') == Some(name),
+        None => false,
+    }
+}
+
+/// The fields `filter` reads that `include_fields` leaves out (none when `include_fields` is
+/// empty: the payload is whole). A field is in when `include_fields` names it or a field above
+/// it (`variants` holds `variants.price`).
+pub fn filter_fields_left_out(filter: Option<&str>, include_fields: &[String]) -> Vec<String> {
+    let Some(filter) = filter.filter(|filter| !filter.trim().is_empty()) else {
+        return Vec::new();
+    };
+    if include_fields.is_empty() {
+        return Vec::new();
+    }
+    let Ok(parsed) = crate::admin::search::filter::Filter::parse(filter) else {
+        return Vec::new();
+    };
+    parsed
+        .fields()
+        .into_iter()
+        .filter(|field| {
+            !include_fields.iter().any(|included| {
+                let included = included.trim();
+                field == included
+                    || field
+                        .strip_prefix(included)
+                        .is_some_and(|rest| rest.starts_with('.'))
+            })
+        })
+        .collect()
+}
+
 /// One subscription to one topic. A `[[webhooks.subscriptions]]` with several topics is one
 /// subscription per topic, as Shopify stores it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -104,6 +150,31 @@ impl Subscription {
     /// Whether it is one of the compliance topics, which are only sent on demand.
     pub fn is_compliance(&self) -> bool {
         topics::is_compliance(&self.topic)
+    }
+
+    /// Whether its payloads carry metafields: it names namespaces (`metafieldNamespaces`) or
+    /// metafields (`metafields`).
+    pub fn wants_metafields(&self) -> bool {
+        !self.metafield_namespaces.is_empty() || !self.metafields.is_empty()
+    }
+
+    /// Whether the metafield of `namespace` and `key` goes in its payloads: its namespace is one
+    /// of `metafieldNamespaces`, or it is one of `metafields`. `$app` and `$app:<name>` are the
+    /// app's reserved namespaces (`app--<id>`, `app--<id>--<name>`).
+    pub fn wants_metafield(&self, namespace: &str, key: &str) -> bool {
+        self.metafield_namespaces
+            .iter()
+            .any(|wanted| same_namespace(wanted, namespace))
+            || self
+                .metafields
+                .iter()
+                .any(|wanted| wanted.key == key && same_namespace(&wanted.namespace, namespace))
+    }
+
+    /// The fields its `filter` reads that its `include_fields` leaves out: Shopify requires each
+    /// field of a filter in `include_fields`, when there are some ("Filter webhook deliveries").
+    pub fn filter_fields_left_out(&self) -> Vec<String> {
+        filter_fields_left_out(self.filter.as_deref(), &self.include_fields)
     }
 
     /// The record of a subscription created through the Admin API, in the shape of the
