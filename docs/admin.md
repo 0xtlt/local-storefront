@@ -1050,8 +1050,17 @@ const shop = confirmation.searchParams.get("shop") ?? confirmation.host;
 await fetch(`${LSF_URL}/__lsf/admin/charges/${charge}/approve?shop=${shop}`, { method: "POST" });
 ```
 
-In a browser, open the URL as it is when it is on lsf's origin; Shopify's form, which a test that
-calls the backend directly gets for an embedded app, opens on lsf's origin
+In a browser, open the URL as it is when it is on lsf's origin. A test that calls the Admin API
+itself finds the same page on lsf's origin in the answer's `extensions.lsf.localConfirmationUrl`,
+next to Shopify's `confirmationUrl`, and opens that one as it is:
+
+```js
+const { data, extensions } = await graphql(SUBSCRIPTION_CREATE, variables);
+await page.goto(extensions.lsf.localConfirmationUrl); // lsf's charge page
+```
+
+Shopify's form, which a test that calls the backend gets for an embedded app (the library does
+not pass `extensions` on), opens on lsf's origin
 (`confirmation.href.replace(confirmation.origin, LSF_URL)`): `https://<shop>` is Shopify's.
 lsf's admin redirects it to the charge page, `/__lsf/admin/charges/<n>?shop=`. The
 subscription is then `ACTIVE`, and `app_subscriptions/update` is delivered if the app subscribes

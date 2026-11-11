@@ -411,7 +411,9 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
   accepts: `billing.require` and `billing.request` work in the loader of a page. lsf's admin
   serves that path and shows a local approval page, and the frame's proxy answers it on lsf's
   origin in a redirect and in `X-Shopify-API-Request-Failure-Reauthorize-Url`. An app with
-  `embedded = false` gets the same path on lsf's origin, which works as it is. Approving goes to the `returnUrl`, and the
+  `embedded = false` gets the same path on lsf's origin, which works as it is; for an embedded
+  app, the answer's `extensions.lsf.localConfirmationUrl` has it, for a test that opens the page
+  itself. Approving goes to the `returnUrl`, and the
   charge is active. Subscriptions renew on the shop's clock: past `currentPeriodEnd`, the
   period moves on by its interval, the usage balance starts again, and a limited discount has
   an interval less. [Approve a charge](docs/admin.md#approve-a-charge).

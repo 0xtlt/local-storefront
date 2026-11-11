@@ -132,6 +132,8 @@ struct Report {
     search: Vec<Value>,
     /// What lsf did not simulate in this request, in plain words.
     notes: IndexSet<String>,
+    /// Fields of lsf's own for `extensions.lsf` (`localConfirmationUrl`).
+    fields: Map<String, Value>,
 }
 
 /// How many defaulted paths `extensions.lsf.defaulted` lists; `defaultedFields` names them all.
@@ -338,6 +340,9 @@ impl<'a> ShopResolver<'a> {
         if !report.notes.is_empty() {
             lsf.insert("notes".into(), json!(report.notes));
         }
+        for (key, value) in &report.fields {
+            lsf.insert(key.clone(), value.clone());
+        }
         if !lsf.is_empty() {
             extensions.insert("lsf".into(), Value::Object(lsf));
         }
@@ -348,6 +353,11 @@ impl<'a> ShopResolver<'a> {
     /// a search field it does not read), in plain words.
     pub fn note(&self, text: impl Into<String>) {
         self.report.borrow_mut().notes.insert(text.into());
+    }
+
+    /// Sets a field of lsf's own in `extensions.lsf`, from `Mutation::extension`.
+    pub fn lsf_extension(&self, key: String, value: Value) {
+        self.report.borrow_mut().fields.insert(key, value);
     }
 
     /// The record or the inline value of an object, `None` for the roots and for a record that

@@ -227,10 +227,34 @@ pub fn confirmation_url(
     if embedded || origin.is_empty() {
         format!("https://{shop}{path}")
     } else {
-        let mut query = form_urlencoded::Serializer::new(String::new());
-        query.append_pair("shop", shop);
-        format!("{}{path}&{}", origin.trim_end_matches('/'), query.finish())
+        local(origin, shop, &path)
     }
+}
+
+/// The same page on lsf's `origin`, with `shop`: the URL a test or a script opens as it is. An
+/// embedded app's `confirmationUrl` is Shopify's, for the library's exit-iframe page; this one
+/// is in `extensions.lsf.localConfirmationUrl` ([`note_local_url`]).
+fn local(origin: &str, shop: &str, path: &str) -> String {
+    let mut query = form_urlencoded::Serializer::new(String::new());
+    query.append_pair("shop", shop);
+    format!("{}{path}&{}", origin.trim_end_matches('/'), query.finish())
+}
+
+/// Puts the page of a `confirmationUrl` on lsf's origin in `extensions.lsf.localConfirmationUrl`,
+/// when the URL is Shopify's: a test that opens it itself, outside lsf's admin, opens that one.
+fn note_local_url(mutation: &mut Mutation<'_>, url: &str) {
+    let origin = mutation.origin().to_string();
+    let Some(rest) = url.strip_prefix("https://") else {
+        return;
+    };
+    let Some((shop, path)) = rest.split_once('/') else {
+        return;
+    };
+    if origin.is_empty() {
+        return;
+    }
+    let local = local(&origin, shop, &format!("/{path}"));
+    mutation.extension("localConfirmationUrl", json!(local));
 }
 
 /// The charge a path of the admin confirms (`/charges/<app id>/<charge>/<kind>/<action>`, below
@@ -567,10 +591,12 @@ fn subscription_create(
     })));
     // A charge waiting for the merchant is no status change: no webhook, but a change.
     state.emit(CHANGED, &id);
+    let url = confirmation_url(state, &origin, &shop, number, Confirm::Subscription);
+    note_local_url(mutation, &url);
     Ok(payload(
         json!({
             "appSubscription": id,
-            "confirmationUrl": confirmation_url(state, &origin, &shop, number, Confirm::Subscription),
+            "confirmationUrl": url,
         }),
         &[],
     ))
@@ -721,10 +747,12 @@ fn line_item_update(
     }
     state.emit(CHANGED, &line);
     let number = gid_number(&subscription);
+    let url = confirmation_url(state, &origin, &shop, number, Confirm::CappedAmount);
+    note_local_url(mutation, &url);
     Ok(payload(
         json!({
             "appSubscription": subscription,
-            "confirmationUrl": confirmation_url(state, &origin, &shop, number, Confirm::CappedAmount),
+            "confirmationUrl": url,
         }),
         &[],
     ))
@@ -888,10 +916,12 @@ fn purchase_create(
         "updatedAt": now,
     })));
     state.emit(CHANGED, &id);
+    let url = confirmation_url(state, &origin, &shop, number, Confirm::OneTime);
+    note_local_url(mutation, &url);
     Ok(payload(
         json!({
             "appPurchaseOneTime": id,
-            "confirmationUrl": confirmation_url(state, &origin, &shop, number, Confirm::OneTime),
+            "confirmationUrl": url,
         }),
         &[],
     ))

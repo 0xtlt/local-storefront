@@ -316,6 +316,24 @@ fn the_billing_helpers_of_shopify_api_work_against_lsf() {
         ),
         "{confirmation}"
     );
+    // The same page on lsf's origin, for a test that opens it itself: followed as it is, it
+    // leads to the charge page, as Shopify's does through lsf's admin.
+    let local = requested["extensions"]["lsf"]["localConfirmationUrl"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{requested}"))
+        .to_string();
+    assert!(
+        local.starts_with(&format!("http://{HOST}/admin/charges/")),
+        "{local}"
+    );
+    assert!(local.ends_with(&format!("&shop={shop}")), "{local}");
+    let followed = send(&api, "GET", &local, &[], b"");
+    assert_eq!(followed.status, 302, "{local}");
+    assert_eq!(
+        header(&followed, "location"),
+        Some(charge_page(&api, &confirmation).as_str()),
+        "{local}"
+    );
     let on_lsf = send(
         &api,
         "GET",

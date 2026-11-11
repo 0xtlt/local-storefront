@@ -47,6 +47,8 @@ pub struct Mutation<'m> {
     fetched: Option<&'m crate::admin::sources::Fetched>,
     billing: Billing,
     notes: Vec<String>,
+    /// What the mutation adds to `extensions.lsf`, by key ([`Mutation::extension`]).
+    extensions: Vec<(String, Value)>,
     /// Whether the changes stay when the payload has user errors (a partial update).
     keep: bool,
 }
@@ -171,6 +173,12 @@ impl Mutation<'_> {
     /// Says what the mutation did not simulate (an input it ignored), in `extensions.lsf.notes`.
     pub fn note(&mut self, text: impl Into<String>) {
         self.notes.push(text.into());
+    }
+
+    /// Adds a field of lsf's own to `extensions.lsf` of the answer (`localConfirmationUrl`):
+    /// what a test needs that Shopify's answer has no place for.
+    pub fn extension(&mut self, key: &str, value: Value) {
+        self.extensions.push((key.to_string(), value));
     }
 
     /// Keeps the changes made even though the payload reports user errors: a mutation that
@@ -345,6 +353,7 @@ pub(super) fn run(
         fetched: resolver.fetched,
         billing: resolver.billing,
         notes: Vec::new(),
+        extensions: Vec::new(),
         keep: false,
     };
     // A panic is a bug of lsf: the shop goes back as it was, and the answer is Shopify's
@@ -357,6 +366,7 @@ pub(super) fn run(
     let Mutation {
         savepoint,
         notes,
+        extensions,
         keep,
         ..
     } = mutation;
@@ -375,6 +385,11 @@ pub(super) fn run(
     }
     for note in notes {
         resolver.note(note);
+    }
+    if !failed {
+        for (key, value) in extensions {
+            resolver.lsf_extension(key, value);
+        }
     }
     let Value::Object(mut payload) = result? else {
         return Ok(Output::Null);

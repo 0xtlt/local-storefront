@@ -26,7 +26,9 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
 - `extensions.lsf`, only lsf's, only when there is something to say: `defaulted`, the paths of
   the fields answered with a default because the store data does not give them (and
   `defaultedFields`, as `Type.field`), and `notes`, what lsf did not simulate in the request (an
-  input it ignored, a search filter it does not read, a file source it did not download).
+  input it ignored, a search filter it does not read, a file source it did not download), and
+  `localConfirmationUrl`, the page of a billing mutation's `confirmationUrl` on lsf's origin
+  ([billing](#billing-discounts-functions-and-bulk-operations)).
 - A deprecated field that Shopify replaced by another of the same object ("Use
   `originalUnitPriceSet` instead.") reads that one's value: `DraftOrderLineItem
   .originalUnitPrice`, `Order.totalPrice`, `LineItem.discountedTotal`, `Product.totalVariants`,
@@ -1008,7 +1010,9 @@ in a route the front end fetches (["Billing"](admin.md#javascript-the-react-rout
   `admin.shopify.com`), and its loader sends an embedded app's merchant there. lsf's admin serves
   that path on its origin and redirects it to lsf's charge page,
   `/__lsf/admin/charges/<n>?shop=…`; lsf's admin and the frame's proxy (in a redirect and in
-  `X-Shopify-API-Request-Failure-Reauthorize-Url`) take Shopify's URL there. An app with
+  `X-Shopify-API-Request-Failure-Reauthorize-Url`) take Shopify's URL there, and the answer's
+  `extensions.lsf.localConfirmationUrl` has the same page on lsf's origin, which a test opens as
+  it is. An app with
   `embedded = false` gets the same path on lsf's origin, with `&shop=<shop>`
   (`http://127.0.0.1:9292/admin/charges/…?signature=…&shop=test-1.myshopify.com`): its backend
   redirects to it plainly, outside any frame, and it works as it is. The page shows the charge; **Approve** (or **Decline**)
