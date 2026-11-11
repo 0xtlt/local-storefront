@@ -12,6 +12,57 @@ enum Format {
     Text,
     /// A JSON document: `{ok, errors, warnings, data, diagnostics: [{severity, code, file, path, message, hint}], app}`.
     Json,
+    /// GitHub Actions annotations, one per problem (`::error file=…,line=…::message`): a
+    /// workflow shows each on its line of the pull request.
+    Github,
+}
+
+/// The line of the value at `pointer` in a JSON file, or of the closest value above it.
+fn line_of(file: &Path, pointer: &str) -> Option<usize> {
+    let source = std::fs::read_to_string(file).ok()?;
+    let lines = lsf_core::json::value_lines(&lsf_core::json::strip_comments(&source));
+    let mut pointer = pointer;
+    loop {
+        if let Some(line) = lines.get(pointer) {
+            return Some(*line);
+        }
+        pointer = pointer.rsplit_once('/')?.0;
+    }
+}
+
+/// The diagnostics of the store data as GitHub Actions annotations, their files in `data`.
+fn annotations(
+    diagnostics: &lsf_core::diagnostics::Diagnostics,
+    data: Option<&Path>,
+) -> Vec<crate::output::Annotation> {
+    diagnostics
+        .items
+        .iter()
+        .map(|item| {
+            let file = data
+                .map(|data| data.join(&item.file))
+                .filter(|file| file.is_file());
+            let mut message = item.message.clone();
+            if !item.path.is_empty() {
+                message = format!("at {}: {message}", item.path);
+            }
+            if let Some(hint) = &item.hint {
+                message.push_str(&format!("\nhint: {hint}"));
+            }
+            crate::output::Annotation {
+                level: match item.severity {
+                    lsf_core::diagnostics::Severity::Error => "error",
+                    _ => "warning",
+                },
+                line: file.as_deref().and_then(|file| line_of(file, &item.path)),
+                file: file.as_ref().and_then(|_| {
+                    data.map(|data| crate::output::annotation_path(data, &item.file))
+                }),
+                title: format!("lsf validate: {}", item.code),
+                message,
+            }
+        })
+        .collect()
 }
 
 #[derive(clap::Args)]
@@ -137,6 +188,50 @@ pub fn run(
             println!(
                 "{}",
                 serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+            );
+        }
+        Format::Github => {
+            for annotation in annotations(&diagnostics, app.data_dir().as_deref()) {
+                println!("{annotation}");
+            }
+            for diagnostic in &app_problems {
+                let file = app_dir.as_deref().map(|dir| {
+                    crate::output::annotation_path(
+                        dir,
+                        &diagnostic.extension.as_ref().map_or_else(
+                            || "shopify.app.toml".to_string(),
+                            |handle| format!("extensions/{handle}"),
+                        ),
+                    )
+                });
+                let level = match diagnostic.severity {
+                    lsf_app::config::Severity::Error => "error",
+                    _ => "warning",
+                };
+                println!(
+                    "{}",
+                    crate::output::Annotation {
+                        level,
+                        file,
+                        line: None,
+                        title: "lsf validate: app".to_string(),
+                        message: diagnostic.message.clone(),
+                    }
+                );
+            }
+            eprintln!(
+                "{}: {}, {}",
+                app.describe_source(),
+                count(
+                    diagnostics.error_count() + app_errors,
+                    "error",
+                    "errors"
+                ),
+                count(
+                    diagnostics.warning_count() + app_problems.len() - app_errors,
+                    "warning",
+                    "warnings"
+                )
             );
         }
         Format::Text => {

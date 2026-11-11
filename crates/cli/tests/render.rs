@@ -90,3 +90,31 @@ fn the_section_id_of_the_query_renders_that_section() {
     let output = render(&["/products/organic-cotton-t-shirt?section_id=nope", "--strict"]);
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
 }
+
+#[test]
+fn github_annotations_name_the_file_and_the_line_of_an_error() {
+    let theme = std::env::temp_dir().join(format!("lsf-render-github-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&theme);
+    std::fs::create_dir_all(theme.join("layout")).unwrap();
+    std::fs::create_dir_all(theme.join("templates")).unwrap();
+    std::fs::write(theme.join("layout/theme.liquid"), "{{ content_for_layout }}").unwrap();
+    std::fs::write(theme.join("templates/index.liquid"), "<p>\n{{ 1 | divided_by: 0 }}").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_lsf"))
+        .arg("render")
+        .args(["/", "--strict", "--format", "github"])
+        .current_dir(&theme)
+        .env_remove("LSF_THEME")
+        .env_remove("LSF_DATA")
+        .env_remove("LSF_CUSTOMER")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains(
+            "::error file=templates/index.liquid,line=2,title=lsf render /::Liquid error (templates/index line 2): divided by 0"
+        ),
+        "{}",
+        stderr(&output)
+    );
+    let _ = std::fs::remove_dir_all(&theme);
+}

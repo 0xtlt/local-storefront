@@ -132,3 +132,27 @@ fn a_reader_that_stops_early_ends_a_printing_command_quietly() {
     assert_eq!(output.status.signal(), Some(13), "{:?}", output.status);
     assert_eq!(String::from_utf8_lossy(&output.stderr), "");
 }
+
+#[test]
+fn github_annotations_name_the_file_and_the_line() {
+    let folder = Folder::new("github");
+    folder.write("layout/theme.liquid", "{{ content_for_layout }}");
+    folder.write("shopify-local/store.json", SHOP);
+    folder.write(
+        "shopify-local/products/shirt.json",
+        "{\n  \"title\": \"Shirt\",\n  \"price\": \"10.00\",\n  \"variants\": [\n    {\"sku\": \"S\", \"available\": false, \"inventory_quantity\": 2}\n  ],\n  \"titel\": \"x\"\n}",
+    );
+    let output = validate(&folder.0, &["--format", "github"]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "::error file=shopify-local/products/shirt.json,line=7,title=lsf validate%3A unknown_field::at /titel: unknown field \"titel\"%0Ahint: did you mean \"title\"?",
+            "::warning file=shopify-local/products/shirt.json,line=5,title=lsf validate%3A unavailable_in_stock::at /variants/0/available: \"available\": false with an \"inventory_quantity\" of 2: on Shopify a variant with stock is available. lsf keeps it unavailable with 2 in stock, which themes such as Horizon show as \"Unavailable\", not \"Sold out\"%0Ahint: for a sold-out variant, remove \"inventory_quantity\" or make it 0; for one in stock, remove \"available\"",
+        ],
+        "{}",
+        text(&output)
+    );
+}

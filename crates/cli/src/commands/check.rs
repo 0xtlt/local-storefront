@@ -21,6 +21,9 @@ pub enum Format {
     /// One JSON document, for a tool: `{ok, files, problems, fixable, fixed, changes_output,
     /// diagnostics: [{severity, code, file, line, message, ...}]}`.
     Json,
+    /// GitHub Actions annotations, one per problem (`::error file=…,line=…::message`): a
+    /// workflow shows each on its line of the pull request.
+    Github,
 }
 
 #[derive(clap::Args)]
@@ -436,6 +439,36 @@ impl Diagnostic {
         }
     }
 
+    /// The diagnostic as a GitHub Actions annotation, its file in `base`.
+    fn annotation(&self, base: &Path) -> crate::output::Annotation {
+        let mut message = self.message.clone();
+        if let Some(setting) = &self.location.setting {
+            message = format!("{setting}: {message}");
+        }
+        if let Some(fix) = &self.fix {
+            message.push_str(&format!("\nfix: {}", one_line(&fix.markup)));
+            if !fix.before.is_empty() {
+                message.push_str(&format!("\nbefore it: {}", fix.before.join("; ")));
+            }
+            if let Some(change) = &fix.changes_output {
+                message.push_str(&format!("\nchanges the output: {change}"));
+            }
+        }
+        if let Some(reason) = &self.no_fix {
+            message.push_str(&format!("\nno automatic fix: {reason}"));
+        }
+        if let Some(hint) = &self.hint {
+            message.push_str(&format!("\nhint: {hint}"));
+        }
+        crate::output::Annotation {
+            level: crate::output::Annotation::level_of(self.severity),
+            file: Some(crate::output::annotation_path(base, &self.location.file)),
+            line: self.location.line,
+            title: format!("lsf check: {}", self.code),
+            message,
+        }
+    }
+
     /// Prints the diagnostic for a person.
     fn print(&self) {
         // A warning says so: it is not one of the problems the summary counts.
@@ -531,6 +564,8 @@ struct Tally {
     fixed: usize,
     /// Kept for the JSON report; printed at once for a person.
     json: bool,
+    /// For `--format github`: the theme folder, which the files of the annotations are in.
+    github: Option<PathBuf>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -538,6 +573,8 @@ impl Tally {
     fn report(&mut self, diagnostic: Diagnostic) {
         if self.json {
             self.diagnostics.push(diagnostic);
+        } else if let Some(base) = &self.github {
+            println!("{}", diagnostic.annotation(base));
         } else {
             diagnostic.print();
         }
@@ -817,6 +854,7 @@ fn check_theme(
     let mut files = 0;
     let mut tally = Tally {
         json: args.format == Format::Json,
+        github: (args.format == Format::Github).then(|| theme_dir.to_path_buf()),
         ..Tally::default()
     };
     // A warning, which is not a problem: the theme is fine on Shopify.

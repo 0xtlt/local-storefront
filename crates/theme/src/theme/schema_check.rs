@@ -78,107 +78,6 @@ fn meant_type(kind: &str) -> Option<&'static str> {
 /// The most steps a `range` may have.
 const MOST_STEPS: f64 = 101.0;
 
-/// The line of each value of a JSON text, by JSON pointer (`/settings/2/default`). The text
-/// parses: [`check`] read it with serde first.
-fn value_lines(text: &str) -> HashMap<String, usize> {
-    struct Walker<'a> {
-        bytes: &'a [u8],
-        at: usize,
-        line: usize,
-        lines: HashMap<String, usize>,
-    }
-    impl Walker<'_> {
-        fn skip(&mut self) {
-            while let Some(&byte) = self.bytes.get(self.at) {
-                match byte {
-                    b'\n' => self.line += 1,
-                    b' ' | b'\t' | b'\r' | b',' | b':' => {}
-                    _ => return,
-                }
-                self.at += 1;
-            }
-        }
-        fn string(&mut self) -> String {
-            // At the opening quote.
-            self.at += 1;
-            let start = self.at;
-            while let Some(&byte) = self.bytes.get(self.at) {
-                match byte {
-                    b'\\' => self.at += 1,
-                    b'"' => break,
-                    b'\n' => self.line += 1,
-                    _ => {}
-                }
-                self.at += 1;
-            }
-            let raw = String::from_utf8_lossy(&self.bytes[start..self.at.min(self.bytes.len())]);
-            self.at += 1;
-            serde_json::from_str::<String>(&format!("\"{raw}\"")).unwrap_or_else(|_| raw.into())
-        }
-        fn value(&mut self, pointer: String) {
-            self.skip();
-            self.lines.insert(pointer.clone(), self.line);
-            match self.bytes.get(self.at) {
-                Some(b'{') => {
-                    self.at += 1;
-                    loop {
-                        self.skip();
-                        match self.bytes.get(self.at) {
-                            Some(b'}') | None => {
-                                self.at += 1;
-                                return;
-                            }
-                            Some(b'"') => {
-                                let key = self.string();
-                                let escaped = key.replace('~', "~0").replace('/', "~1");
-                                self.value(format!("{pointer}/{escaped}"));
-                            }
-                            Some(_) => self.at += 1,
-                        }
-                    }
-                }
-                Some(b'[') => {
-                    self.at += 1;
-                    let mut index = 0;
-                    loop {
-                        self.skip();
-                        match self.bytes.get(self.at) {
-                            Some(b']') | None => {
-                                self.at += 1;
-                                return;
-                            }
-                            Some(_) => {
-                                self.value(format!("{pointer}/{index}"));
-                                index += 1;
-                            }
-                        }
-                    }
-                }
-                Some(b'"') => {
-                    self.string();
-                }
-                Some(_) => {
-                    while let Some(&byte) = self.bytes.get(self.at) {
-                        if matches!(byte, b',' | b'}' | b']' | b' ' | b'\n' | b'\r' | b'\t') {
-                            break;
-                        }
-                        self.at += 1;
-                    }
-                }
-                None => {}
-            }
-        }
-    }
-    let mut walker = Walker {
-        bytes: text.as_bytes(),
-        at: 0,
-        line: 1,
-        lines: HashMap::new(),
-    };
-    walker.value(String::new());
-    walker.lines
-}
-
 /// A parsed schema, and where its values are in the file.
 struct Parsed {
     json: Json,
@@ -214,7 +113,7 @@ fn parse(source: &str) -> Option<Result<Parsed, SchemaProblem>> {
     let text = lsf_core::json::strip_comments(body);
     Some(match serde_json::from_str::<Json>(&text) {
         Ok(json) => Ok(Parsed {
-            lines: value_lines(&text),
+            lines: lsf_core::json::value_lines(&text),
             json,
             first_line,
         }),

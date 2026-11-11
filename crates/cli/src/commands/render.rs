@@ -43,6 +43,47 @@ pub struct Args {
     /// `--cart` apply on top of it.
     #[arg(long, value_name = "JSON|FILE")]
     session: Option<String>,
+
+    /// How to print the Liquid errors, on stderr.
+    #[arg(long, value_enum, default_value = "text")]
+    format: Format,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum Format {
+    /// For a person: the error as Liquid prints it.
+    #[default]
+    Text,
+    /// GitHub Actions annotations (`::error file=…,line=…::message`), on stderr: a workflow
+    /// shows each on its line of the pull request.
+    Github,
+}
+
+/// The file of the theme a template name of an error is (`sections/header` →
+/// `sections/header.liquid`), as an annotation names it.
+fn source_file(theme: &Path, template: &str) -> Option<String> {
+    [
+        format!("{template}.liquid"),
+        template.to_string(),
+        format!("{template}.json"),
+    ]
+    .into_iter()
+    .find(|candidate| theme.join(candidate).is_file())
+    .map(|candidate| crate::output::annotation_path(theme, &candidate))
+}
+
+/// Prints an annotation of `render` on stderr: the HTML is on stdout.
+fn annotate(level: &'static str, file: Option<String>, line: Option<usize>, path: &str, message: String) {
+    eprintln!(
+        "{}",
+        crate::output::Annotation {
+            level,
+            file,
+            line,
+            title: format!("lsf render {path}"),
+            message,
+        }
+    );
 }
 
 /// The session `--session`, `--customer` and `--cart` describe, in the data format.
@@ -220,6 +261,18 @@ pub fn run(
         };
         let (status, errors, body) = state.answer_get(&path, &args.host, session);
         println!("{body}");
+        if args.format == Format::Github && (errors > 0 || status >= 400) {
+            annotate(
+                if args.strict { "error" } else { "warning" },
+                None,
+                None,
+                &args.path,
+                format!(
+                    "status {status}, {}",
+                    count(errors, "Liquid error", "Liquid errors")
+                ),
+            );
+        }
         eprintln!(
             "status {status} · {what} · {}",
             count(errors, "Liquid error", "Liquid errors")
@@ -242,10 +295,23 @@ pub fn run(
     let mut seen = Vec::new();
     for error in &rendered.errors {
         let message = error.to_string();
-        if !seen.contains(&message) {
-            eprintln!("{message}");
-            seen.push(message);
+        if seen.contains(&message) {
+            continue;
         }
+        match args.format {
+            Format::Text => eprintln!("{message}"),
+            Format::Github => annotate(
+                if args.strict { "error" } else { "warning" },
+                error
+                    .template_name
+                    .as_deref()
+                    .and_then(|name| source_file(theme, name)),
+                error.line.map(|line| line as usize),
+                &args.path,
+                message.clone(),
+            ),
+        }
+        seen.push(message);
     }
     for warning in &rendered.warnings {
         eprintln!("warning: {warning}");
@@ -262,10 +328,11 @@ pub fn run(
     Ok(
         if args.strict && (!rendered.errors.is_empty() || rendered.status == 404) {
             if rendered.status == 404 && rendered.errors.is_empty() {
-                eprintln!(
-                    "error: nothing at {}: the page is the theme's 404",
-                    args.path
-                );
+                let message = format!("nothing at {}: the page is the theme's 404", args.path);
+                match args.format {
+                    Format::Text => eprintln!("error: {message}"),
+                    Format::Github => annotate("error", None, None, &args.path, message),
+                }
             }
             ExitCode::FAILURE
         } else {
