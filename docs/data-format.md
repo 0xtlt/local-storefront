@@ -595,10 +595,10 @@ changes nothing for a theme.
         "function": "volume-discount",
         "title": "Volume",
         "classes": ["PRODUCT"],
-        "metafields": { "$app:config.settings": { "type": "json", "value": { "percentage": 10 } } }
+        "metafields": { "$app.function-configuration": { "type": "json", "value": { "percentage": 10 } } }
       }
     ],
-    "functions": { "delivery-rules": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": {} } } } },
+    "functions": { "delivery-rules": { "enabled": true, "metafields": { "$app.function-configuration": { "type": "json", "value": {} } } } },
     "tax_rate": 20
   }
 }

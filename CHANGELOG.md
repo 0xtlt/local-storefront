@@ -554,6 +554,11 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 - **`app init`'s `all-extensions` scenario runs the discount Functions.** It entered the code
   `WELCOME`, which no discount had, and named the discount Functions, which then never ran. It
   now has a discount of each, with the code `SAVE10` entered, as `discount-code` does.
+- **The metafields of a discount or a Function's owner take Shopify's forms.** Besides
+  `"namespace.key"`, a list of `{namespace, key, type, value}`, as `metafieldsSet` takes it, is
+  read. The docs write them as Shopify's templates do, `"$app.function-configuration"` for
+  `metafield(namespace: "$app", key: "function-configuration")`, and `"$app:function-configuration"`
+  says to write a dot.
 
 ## 0.2.0 - 2026-10-30
 

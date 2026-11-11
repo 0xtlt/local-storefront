@@ -1859,6 +1859,61 @@ mod tests {
         assert_eq!(checkout.functions["payment-rules"][0].value, "on");
     }
 
+    /// The metafields of an owner by `"namespace.key"`, or as Shopify's Admin API takes them:
+    /// a list of `{namespace, key, type, value}`, a `json` value as its text or as JSON.
+    #[test]
+    fn owner_metafields_are_read_by_name_or_as_shopify_s_list() {
+        let overlay = serde_json::json!({"checkout": {
+            "discounts": [{"function": "volume-discount", "metafields": [
+                {"namespace": "$app", "key": "function-configuration", "type": "json", "value": "{\"percentage\":10}"}
+            ]}],
+            "functions": {
+                "payment-rules": {"metafields": [
+                    {"namespace": "$app", "key": "function-configuration", "type": "json", "value": {"hide": ["cod"]}},
+                    {"namespace": "custom", "key": "mode", "value": "on"}
+                ]},
+                "delivery-rules": {"metafields": {"$app.function-configuration": {"type": "json", "value": {"hide": []}}}}
+            }
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(!diagnostics.has_errors(), "{diagnostics}");
+        let field = |metafield: &crate::store::CheckoutMetafield| {
+            (
+                metafield.namespace.clone(),
+                metafield.key.clone(),
+                metafield.kind.clone(),
+                metafield.value.clone(),
+            )
+        };
+        let configuration = |value: &str| {
+            (
+                "$app".to_string(),
+                "function-configuration".to_string(),
+                "json".to_string(),
+                value.to_string(),
+            )
+        };
+        assert_eq!(
+            field(&store.checkout.discounts[0].metafields[0]),
+            configuration(r#"{"percentage":10}"#)
+        );
+        let payment = &store.checkout.functions["payment-rules"];
+        assert_eq!(field(&payment[0]), configuration(r#"{"hide":["cod"]}"#));
+        assert_eq!(
+            (
+                payment[1].namespace.as_str(),
+                payment[1].key.as_str(),
+                payment[1].value.as_str()
+            ),
+            ("custom", "mode", "on")
+        );
+        assert_eq!(
+            field(&store.checkout.functions["delivery-rules"][0]),
+            configuration(r#"{"hide":[]}"#)
+        );
+    }
+
     #[test]
     fn the_checkout_section_is_resolved() {
         let overlay = serde_json::json!({"checkout": {

@@ -541,7 +541,7 @@ every scenario, a B2B buyer, another country and a large cart included, give it 
       {
         "function": "my-discount",
         "title": "My discount",
-        "metafields": { "$app:config.settings": { "type": "json", "value": { "percentage": 10 } } }
+        "metafields": { "$app.function-configuration": { "type": "json", "value": { "percentage": 10 } } }
       }
     ]
   }
@@ -849,13 +849,13 @@ settings of your other Functions, and a tax rate.
         "code": null,
         "classes": ["PRODUCT"],
         "metafields": {
-          "$app:config.settings": { "type": "json", "value": { "minimumQuantity": 3, "percentage": 10 } }
+          "$app.function-configuration": { "type": "json", "value": { "minimumQuantity": 3, "percentage": 10 } }
         }
       }
     ],
     "functions": {
       "delivery-rules": {
-        "metafields": { "$app:config.settings": { "type": "json", "value": { "hide": ["express"] } } }
+        "metafields": { "$app.function-configuration": { "type": "json", "value": { "hide": ["express"] } } }
       }
     },
     "tax_rate": 20
@@ -874,9 +874,15 @@ settings of your other Functions, and a tax rate.
 - A Function that is not a discount (cart transform, delivery or payment customization,
   validation) has its metafields under `functions`, by its handle, and `"enabled"` when the shop
   has an owner of it: see [what runs](#owners-and-scenarios).
-- A metafield is written `"namespace.key"`, with a [typed value](data-format.md#metafields-and-metaobjects).
-  The input query of a Function reads it; `[extensions.input.variables]` of the Function says
-  which one.
+- A metafield is written `"namespace.key"`, with a [typed value](data-format.md#metafields-and-metaobjects):
+  the namespace and the key the input query reads, joined by a dot. Shopify's templates read
+  `metafield(namespace: "$app", key: "function-configuration")`, and name it in
+  `[extensions.input.variables]` (`namespace = "$app"`, `key = "function-configuration"`):
+  that is `"$app.function-configuration": {"type": "json", "value": {…}}`. A namespace
+  `$app:<name>` keeps its colon: `"$app:config.settings"` is the key `settings` of
+  `$app:config`. Shopify's list of `{namespace, key, type, value}`, as `metafieldsSet` takes
+  it, is read too:
+  `"metafields": [{"namespace": "$app", "key": "function-configuration", "type": "json", "value": "{\"percentage\": 10}"}]`.
 - The **settings of a UI extension** are what the merchant fills in in the checkout editor:
   `checkout.extensions.<handle>.settings`, by the `key` of each field of its
   `[extensions.settings]`, read as `shopify.settings` (`useSettings`). A scenario's replace the
@@ -1035,7 +1041,7 @@ The owners come from two places:
   settings alone: the shop has no owner of the Function.
 
 ```json
-{ "checkout": { "functions": { "payment-rules": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": { "hide": ["paypal"] } } } } } } }
+{ "checkout": { "functions": { "payment-rules": { "enabled": true, "metafields": { "$app.function-configuration": { "type": "json", "value": { "hide": ["paypal"] } } } } } } }
 ```
 
 lsf creates no owner at install: `paymentCustomizations` answers none, as Shopify does, and an

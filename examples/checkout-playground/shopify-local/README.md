@@ -595,10 +595,10 @@ changes nothing for a theme.
         "function": "volume-discount",
         "title": "Volume",
         "classes": ["PRODUCT"],
-        "metafields": { "$app:config.settings": { "type": "json", "value": { "percentage": 10 } } }
+        "metafields": { "$app.function-configuration": { "type": "json", "value": { "percentage": 10 } } }
       }
     ],
-    "functions": { "delivery-rules": { "enabled": true, "metafields": { "$app:config.settings": { "type": "json", "value": {} } } } },
+    "functions": { "delivery-rules": { "enabled": true, "metafields": { "$app.function-configuration": { "type": "json", "value": {} } } } },
     "tax_rate": 20
   }
 }
@@ -1848,13 +1848,35 @@ A discount backed by a discount Function of the app.
 | `title` | string | What the buyer sees. Defaults to the handle of the Function. |
 | `code` | string | The code that triggers the discount. Without one the discount is automatic. |
 | `classes` | array of [CheckoutDiscountClass](#checkoutdiscountclass) | What the discount may reduce. All three when omitted. |
-| `metafields` | map of [Metafield](#metafield) | The metafields of the discount, which its Function's input query reads, by `"namespace.key"`: `{"$app:config.settings": {"type": "json", "value": {"percent": 10}}}`. |
+| `metafields` | [OwnerMetafields](#ownermetafields) | The metafields of the discount, which its Function's input query reads, by `"namespace.key"`: `{"$app.function-configuration": {"type": "json", "value": {"percentage": 10}}}` for `metafield(namespace: "$app", key: "function-configuration")`. Shopify's list of `{namespace, key, type, value}` is taken too. |
 
 ### CheckoutDiscountClass
 
 What a discount may reduce.
 
 One of: `"PRODUCT"`, `"ORDER"`, `"SHIPPING"`.
+
+### OwnerMetafields
+
+The metafields of a discount or of the owner of a Function: by `"namespace.key"`, or as
+Shopify's Admin API takes them (`metafieldsSet`, `discountAutomaticAppCreate`), a list of
+`{namespace, key, type, value}`.
+
+One of:
+
+- map of [Metafield](#metafield): `{"$app.function-configuration": {"type": "json", "value": {…}}}`.
+- array of [OwnerMetafield](#ownermetafield): `[{"namespace": "$app", "key": "function-configuration", "type": "json", "value": {…}}]`.
+
+### OwnerMetafield
+
+A metafield as Shopify's Admin API takes it.
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | string | **Required.** `$app`, `$app:<name>`, or another namespace. |
+| `key` | string | **Required.** |
+| `type` | string | The metafield type: `json`, `single_line_text_field`, … Inferred from the value when omitted. |
+| `value` | any JSON value | **Required.** The value: JSON, or the text Shopify stores (`"{\"percentage\":10}"` for `json`). |
 
 ### CheckoutFunction
 
@@ -1864,7 +1886,7 @@ validation): its owner in the shop, and its settings.
 | Field | Type | Description |
 |---|---|---|
 | `enabled` | boolean | Whether the shop has an owner of the Function (the payment or delivery customization, validation or cart transform an app creates for it), and it is enabled. As on Shopify, the Function runs at the checkout only through an enabled owner: `true` runs it, `false` is an owner that is turned off. Without it, the shop has no owner of it, as after an install: the Function runs only for a scenario that names it in `extensions`, or for `app function run <handle>`, with these metafields. |
-| `metafields` | map of [Metafield](#metafield) | The metafields of the object the Function belongs to, by `"namespace.key"`. |
+| `metafields` | [OwnerMetafields](#ownermetafields) | The metafields of the object the Function belongs to, by `"namespace.key"`: `{"$app.function-configuration": {"type": "json", "value": {…}}}` for `metafield(namespace: "$app", key: "function-configuration")`. Shopify's list of `{namespace, key, type, value}` is taken too. |
 
 ### CheckoutExtension
 
