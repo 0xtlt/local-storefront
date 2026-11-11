@@ -6,8 +6,10 @@ mod date;
 pub mod demo;
 pub mod docs;
 pub mod load;
+pub mod metafield_types;
 pub mod model;
 pub mod reference;
+pub mod theme_settings;
 pub mod validate;
 
 use std::collections::HashMap;

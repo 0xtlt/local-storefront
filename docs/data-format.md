@@ -161,8 +161,9 @@ product with options lists its variants; each gives one value per option:
 - **Availability** follows Shopify's rules. A variant with `inventory_quantity` is tracked: it
   is available while the quantity is above zero, or always with
   `"inventory_policy": "continue"`. A variant without `inventory_quantity` is not tracked and
-  always available. `available` forces the answer either way. Adding more than the stock to the
-  cart fails as it does on Shopify.
+  always available. `available` forces the answer either way. `"available": false` alone also
+  makes the variant tracked with a quantity of 0, as a sold-out variant is on Shopify, so themes
+  show "Sold out". Adding more than the stock to the cart fails as it does on Shopify.
 - `options` can spell out the order of the values:
   `{ "name": "Size", "values": ["S", "M", "L"] }`. A value can carry a [swatch](#swatches).
 - `selling_plan_groups` and `requires_selling_plan` sell the product by subscription: see
@@ -808,6 +809,14 @@ inside `files/`.
 `{{ product.metafields.custom.size_guide.value.title }}` then behave as on Shopify, including
 `metafield_tag` and `metafield_text`.
 
+A typed value is checked against its type, as Shopify checks it. `{"type": "number_integer",
+"value": "two"}` is an `invalid_metafield` error, and so is a `weight` in `"kgs"` or a
+`rating` outside its scale. A type Shopify does not have is an `unknown_metafield_type`. A
+reference that names nothing of the data is an `unknown_reference`, with the closest name:
+products, variants (by SKU or id), collections, pages, articles (`blog/article`) and
+metaobjects (`type/handle`). A `file_reference` to a file that is not in `files/` is no error:
+it shows as a placeholder.
+
 A `file_reference` is an image when its extension is one (`.jpg`, `.png`, `.webp`...) and a
 video for `.mp4`, `.mov`, `.webm` and `.m4v`: `sources`, `preview_image`, `video_tag` and
 `metafield_tag` work.
@@ -852,7 +861,11 @@ find them, whatever the id, since the store data does not know it.
   previous one: `{{ 'now' | date: '%N' }}` gives `000000000`, then `000000001`, and so on, so
   ids built from it differ. Without `now`, `'now'` reads the real clock each time.
 - `theme_settings` overrides values of `config/settings_data.json` by setting id, without
-  touching the theme: `"theme_settings": { "cart_type": "drawer" }`.
+  touching the theme: `"theme_settings": { "cart_type": "drawer" }`. Each id and value is
+  checked against the theme's `config/settings_schema.json`: an id the theme does not have is
+  an `unknown_setting`, and a value its setting does not take (an option a `select` does not
+  have, a `range` out of bounds, a `checkbox` that is not `true` or `false`) an
+  `invalid_setting`. Without a theme, `validate` cannot check them, and a warning says so.
 
 ## The app
 
@@ -890,13 +903,16 @@ extensions:
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
 | `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
-| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a shipping rate or a payment method a scenario's `entered` names. |
+| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield, and a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
 | `unknown_return_line` | A return of an order names a variant that is not a line of the order. |
 | `expect_checks_nothing` (warning) | An `excludes` of a scenario's `expect` names a payment method, express button or delivery option the checkout does not offer, so it checks nothing. The hint lists what it offers. |
 | `invalid_throttle` | The `throttle` of a session sent to `PUT /__lsf/session` is not one `--throttle` takes. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
+| `invalid_metafield`, `unknown_metafield_type` | A typed metafield (or field of a metaobject) whose value its type refuses, or whose type Shopify does not have. The hint shows how the type is written. |
+| `unknown_setting`, `invalid_setting` | A `theme_settings` id that `config/settings_schema.json` does not have, or a value its setting does not take. The hint suggests the closest id or option. |
+| `unchecked_theme_settings` (warning) | The data has `theme_settings` and there is no theme to check them against. |
 | `invalid_color`, `empty_swatch` | A swatch whose color is not a CSS color, or that has neither a color nor an image. |
 | `missing_price` | A product without a price on itself or on its variants. |
 | `missing_variants`, `missing_options`, `option_mismatch`, `too_many_options` | The options of a product and the option values of its variants do not line up. |
@@ -907,11 +923,12 @@ extensions:
 
 `path` is always a JSON pointer into `file`, so the value to fix can be located mechanically.
 
-A product or a customer with a value that cannot be read (a `wrong_type`, an `invalid_value`,
-an `invalid_format`, a `missing_field`) is left out, so each reference to it is an error too:
-an `unknown_product`, `unknown_variant`, `unknown_customer` or `unknown_reference` in another
-file. Fix the errors in `products/` and `customers.json` first, and run `validate` again before
-you edit a reference.
+An entity with a value that cannot be read (a `wrong_type`, an `invalid_value`, an
+`invalid_format`, a `missing_field`) is left out. The rest of its file is still read, with its
+references, so one run reports every problem. Each reference to the entity left out is an error
+too (`unknown_product`, `unknown_variant`, `unknown_customer`, `unknown_reference`), and its
+hint says so: `the product "a" is left out because products/a.json has errors`. Fix that file,
+and these errors go away with it.
 
 ## Field reference
 

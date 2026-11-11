@@ -10,5 +10,6 @@ https://shopify.dev/docs/api/liquid/filters/shopify_asset_url.
 | `shopify_common.js` | Our own small implementation of `Shopify.formatMoney` and `Shopify.resizeImage`. |
 | `option_selection.js`, `api.jquery.js`, `customer_area.js`, `currencies.js` | A `console.warn`: Shopify's files are proprietary and are not emulated. |
 | `customer.css` | An empty stylesheet. |
+| `gift-card/card.svg` | A drawing of our own, of the size of Shopify's, for the gift card templates of Dawn and Horizon. |
 
 Shopify's proprietary files are not copied here.

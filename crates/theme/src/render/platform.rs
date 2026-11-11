@@ -25,7 +25,14 @@ const PARTIAL_RENDERING: &str = include_str!("../../assets/platform/partial-rend
 
 /// Shopify's global assets, by their name for `shopify_asset_url`, with the type they are
 /// served as.
-const GLOBAL_ASSETS: [(&str, &str, &str); 8] = [
+const GLOBAL_ASSETS: [(&str, &str, &str); 9] = [
+    // The generic gift card the gift card templates of Dawn and Horizon show without a logo:
+    // a drawing of our own, of the size of Shopify's.
+    (
+        "gift-card/card.svg",
+        include_str!("../../assets/platform/themes_support/gift-card/card.svg"),
+        "image/svg+xml",
+    ),
     (
         "vendor/qrcode.js",
         include_str!("../../assets/platform/themes_support/vendor/qrcode.js"),

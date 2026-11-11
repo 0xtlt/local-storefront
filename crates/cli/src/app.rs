@@ -175,7 +175,14 @@ impl App {
                 .into_iter()
                 .filter(|locale| *locale != default),
         );
-        LoadOptions { theme_locales }
+        LoadOptions {
+            theme_locales,
+            settings_schema: self
+                .theme
+                .json("config/settings_schema.json")
+                .ok()
+                .flatten(),
+        }
     }
 
     pub fn load_store(&self) -> (Store, Diagnostics) {

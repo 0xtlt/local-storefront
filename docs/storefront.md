@@ -13,7 +13,12 @@ prints the address.
 
 `--live-reload` reloads open pages as soon as you edit the theme or the data. The page listens
 on a WebSocket, and asks the server every 700 ms where a socket cannot be opened. It adds a
-script to the pages: leave it off for tests.
+script to the pages: leave it off for tests. Only HTML pages get it: a `{% layout none %}`
+template that writes JSON is left as it is.
+
+With `--live-reload`, a page with problems also shows a small panel: the errors of the store
+data, the Liquid errors of the page, and why a page is the 404 page. Its button closes it. The
+terminal has the same problems.
 
 ## Log in as a customer
 

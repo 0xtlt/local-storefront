@@ -331,13 +331,30 @@ pub(super) fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target)
     if let Some(reason) = &rendered.not_found
         && !visit.state.options.quiet
     {
-        eprintln!("    404: {reason}");
+        eprintln!("    {}: {reason}", rendered.status);
     }
     visit.state.timings.add(&rendered, target);
     let timings = timing::of_render(&rendered.timings, visit.state.options.timings);
     let mut body = rendered.body;
-    if visit.state.options.live_reload && *target == Target::Page {
+    if visit.state.options.live_reload
+        && *target == Target::Page
+        && live_reload::is_html(rendered.content_type)
+    {
         live_reload::inject(&mut body);
+        let loaded = visit.state.loaded();
+        let data_errors: Vec<String> = loaded
+            .diagnostics
+            .items
+            .iter()
+            .filter(|item| item.severity == lsf_core::diagnostics::Severity::Error)
+            .map(|item| format!("{}: {}", item.file, item.message))
+            .collect();
+        let liquid_errors: Vec<String> = rendered.errors.iter().map(|e| e.to_string()).collect();
+        if let Some(overlay) =
+            live_reload::overlay(&data_errors, &liquid_errors, rendered.not_found.as_deref())
+        {
+            live_reload::inject_markup(&mut body, &overlay);
+        }
     }
     let mut reply = Reply::new(rendered.status, rendered.content_type, body.into_bytes())
         .header("x-lsf-template", rendered.template)

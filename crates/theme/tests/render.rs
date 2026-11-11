@@ -26,6 +26,7 @@ fn fixture() -> Fixture {
     let theme = Arc::new(Theme::open(&directory, env, Revalidate::Never).expect("fixture theme"));
     let options = LoadOptions {
         theme_locales: vec!["en".to_string(), "fr".to_string()],
+        ..LoadOptions::default()
     };
     let (mut store, diagnostics) = load(&DataSource::Demo, &options);
     assert!(diagnostics.is_empty(), "{diagnostics}");
@@ -412,6 +413,26 @@ fn section_rendering_api() {
             .starts_with("<div id=\"shopify-section-footer\"")
     );
     assert!(json["nope"].is_null());
+    // What is missing is said, with the sections the page has.
+    let reason = many.not_found.as_deref().expect("a reason");
+    assert!(
+        reason.starts_with("no section \"nope\" on the page of template index"),
+        "{reason}"
+    );
+    assert!(reason.contains(&id), "{reason}");
+    assert!(one.not_found.is_none());
+
+    let typo = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &Target::Section(id.replace("__hero", "__heor")),
+    );
+    assert_eq!(typo.status, 404);
+    let reason = typo.not_found.as_deref().expect("a reason");
+    assert!(
+        reason.contains(&format!("did you mean \"{id}\"?")),
+        "{reason}"
+    );
 
     // The id of a template section names its template, so another page can ask for it: a
     // cart drawer on a product page loads a section of the cart template this way.
@@ -808,6 +829,11 @@ fn a_liquid_asset_gets_a_new_url_when_the_settings_change() {
     assert_eq!(url(fixture.store.clone()).0, colors);
     let options = LoadOptions {
         theme_locales: vec!["en".to_string(), "fr".to_string()],
+        settings_schema: fixture
+            .renderer
+            .theme()
+            .json("config/settings_schema.json")
+            .unwrap(),
     };
     let overlay = serde_json::json!({"theme_settings": {"page_size": 3}});
     let (other, diagnostics) =
@@ -1276,6 +1302,7 @@ fn what_is_loaded_is_charged_once() {
     });
     let options = LoadOptions {
         theme_locales: vec!["en".to_string(), "fr".to_string()],
+        ..LoadOptions::default()
     };
     let (store, diagnostics) =
         lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
@@ -1659,7 +1686,14 @@ fn an_article_handle_that_two_blogs_have_names_neither() {
         &LoadOptions::default(),
         Some(&overlay),
     );
-    assert!(diagnostics.is_empty(), "{diagnostics}");
+    // `validate` says so: the loose handle names no article.
+    assert_eq!(diagnostics.error_count(), 1, "{diagnostics}");
+    let error = &diagnostics.items[0];
+    assert_eq!(error.path, "/metaobjects/note/0/fields/loose/value");
+    assert!(
+        error.message.starts_with("several blogs have an article"),
+        "{diagnostics}"
+    );
     let fixture = Fixture {
         store: Arc::new(store),
         ..fixture()
@@ -1889,4 +1923,110 @@ fn the_entries_of_a_metaobject_type_have_pages() {
         "{}",
         rendered.body
     );
+}
+
+#[test]
+fn a_broken_json_template_is_an_error_of_the_page() {
+    let fixture = theme_of(
+        "broken-json-template",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.json",
+                "{\n  \"sections\": {\n    \"a\": {\"type\": \"main\",}\n  }\n}",
+            ),
+            (
+                "templates/page.json",
+                "{\"sections\": {\"a\": {\"type\": \"main-prodcut\"}}, \"order\": [\"a\"]}",
+            ),
+            ("sections/main.liquid", "<p>main</p>"),
+            ("sections/main-product.liquid", "<p>product</p>"),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_eq!(rendered.errors.len(), 1, "{}", rendered.body);
+    let message = rendered.errors[0].to_string();
+    assert!(message.contains("templates/index.json line 3"), "{message}");
+    assert!(message.contains("invalid JSON"), "{message}");
+    assert!(
+        rendered.body.contains("<pre>Liquid error"),
+        "{}",
+        rendered.body
+    );
+
+    // A section type without a file: the error names the template and the closest type.
+    let site = fixture.renderer.site(
+        fixture.store.clone(),
+        request("/pages/contact"),
+        Session::initial(&fixture.store),
+    );
+    let page = Page::new("page", Resource::Index);
+    let rendered = fixture.renderer.render_page(&site, page, &Target::Page);
+    assert_eq!(rendered.errors.len(), 1, "{}", rendered.body);
+    let message = rendered.errors[0].to_string();
+    assert!(message.contains("templates/page.json line 1"), "{message}");
+    assert!(
+        message
+            .contains("'main-prodcut' is not a valid section type (did you mean 'main-product'?)"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_locale_of_the_theme_the_store_does_not_sell_in_says_so() {
+    let fixture = theme_of(
+        "missing-language",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            ("templates/index.liquid", "home"),
+            ("locales/en.default.json", "{}"),
+            ("locales/de.json", "{}"),
+        ],
+    );
+    let rendered = fixture.page("/de/");
+    assert_eq!(rendered.status, 404);
+    assert_eq!(
+        rendered.not_found.as_deref(),
+        Some(
+            "no page at \"/de/\": the theme has a de locale but the store data has no German \
+             language; add {\"iso_code\": \"de\"} to localization.languages"
+        )
+    );
+    // A path that names no locale is only missing.
+    assert_eq!(
+        fixture.page("/nope").not_found.as_deref(),
+        Some("no page at \"/nope\"")
+    );
+}
+
+#[test]
+fn the_payment_button_speaks_the_language_of_the_storefront() {
+    let fixture = theme_of(
+        "payment-button",
+        &[],
+        &[("templates/index.liquid", "{{ product | payment_button }}")],
+    );
+    let button = |locale: &str| {
+        let mut request = request("/");
+        request.locale = locale.to_string();
+        let rendered =
+            fixture.render_with(request, Session::initial(&fixture.store), &Target::Page);
+        assert_clean(&rendered);
+        rendered.body
+    };
+    assert!(button("en").contains(">Buy it now</button>"));
+    assert!(button("fr").contains(">Acheter maintenant</button>"));
+    assert!(button("de").contains(">Jetzt kaufen</button>"));
+    assert!(button("pt-BR").contains(">Comprar agora</button>"));
+    assert!(button("fr-CA").contains(">Acheter maintenant</button>"));
+    // A language Shopify's button has no words for is in English.
+    assert!(button("eo").contains(">Buy it now</button>"));
 }

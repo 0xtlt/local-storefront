@@ -13,6 +13,7 @@ use super::{Incoming, SESSION_HEADER, ServeOptions, ServerState};
 use crate::app::App;
 
 mod app_blocks;
+mod dev_pages;
 mod parts;
 mod polaris;
 mod store_base;
@@ -575,6 +576,15 @@ fn the_cdn_serves_the_global_assets_of_shopify_asset_url() {
     );
     assert_eq!(badge.status, 200);
     assert_eq!(header(&badge, "content-type"), Some("image/svg+xml"));
+    // The generic card of the gift card templates of Dawn and Horizon.
+    let card = get(
+        &state,
+        &shopify_asset_path(&state, "gift-card/card.svg"),
+        "cdn",
+    );
+    assert_eq!(card.status, 200);
+    assert_eq!(header(&card, "content-type"), Some("image/svg+xml"));
+    assert!(text(&card).contains("width=\"334\" height=\"200\""));
     let unknown_image = get(&state, &shopify_asset_path(&state, "unknown.svg"), "cdn");
     assert_eq!(unknown_image.status, 404);
 }

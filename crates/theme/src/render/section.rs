@@ -254,10 +254,23 @@ pub fn render_section(
         return render_apps_section(ctx, placement, instance, state, blocks_before, started);
     }
     let file = theme.liquid(&path)?.ok_or_else(|| {
-        Error::standard(format!(
+        let mut message = format!(
             "Error in tag 'section' - '{}' is not a valid section type",
             instance.kind
-        ))
+        );
+        let sections: Vec<String> = theme
+            .files()
+            .list("sections")
+            .iter()
+            .filter_map(|file| file.strip_suffix(".liquid"))
+            .map(str::to_string)
+            .collect();
+        if let Some(close) =
+            lsf_core::util::closest_match(&instance.kind, sections.iter().map(String::as_str))
+        {
+            message.push_str(&format!(" (did you mean '{close}'?)"));
+        }
+        Error::standard(message)
     })?;
     let schema = &file.schema;
     let closest = page_closest(ctx);
