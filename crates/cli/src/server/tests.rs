@@ -5870,6 +5870,66 @@ fn a_guest_without_an_address_is_in_the_shop_country_and_pays_no_shipping_yet() 
     assert_eq!(amount("dueNow"), amount("total"));
 }
 
+/// The settings a merchant fills in for a UI extension: those of the store data, or of a
+/// scenario, reach `shopify.settings`; one the extension does not declare, or of the wrong type,
+/// is a warning of the extension on the home page.
+#[test]
+fn a_scenario_sets_the_settings_of_a_ui_extension() {
+    let data = ScenarioData::new(
+        "ui-settings",
+        &[
+            (
+                "gift.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}},
+                    "checkout": {"extensions": {"gift-message": {"settings": {"max_length": 80}}}}}"#,
+            ),
+            (
+                "typo.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}},
+                    "checkout": {"extensions": {"gift-message": {"settings": {"max_lenght": 80, "max_length": "80"}}, "nope": {"settings": {}}}}}"#,
+            ),
+        ],
+    );
+    let state = data.server(&[], true);
+    let reply = get(&state, "/checkout?scenario=gift", "viewer");
+    let id = session_cookie(&reply);
+    let location = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{location}.json"), &id));
+    let gift = json["extensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|extension| extension["handle"] == "gift-message")
+        .unwrap();
+    assert_eq!(gift["settings"], json!({"max_length": 80}), "{gift}");
+
+    // What does not fit is said on the home page.
+    let home = body_json(&get(&state, "/__lsf/checkouts?format=json", "home"));
+    let gift = home["uiExtensions"]
+        .as_array()
+        .or_else(|| home["ui_extensions"].as_array())
+        .unwrap_or_else(|| panic!("{home}"))
+        .iter()
+        .find(|extension| extension["handle"] == "gift-message")
+        .cloned()
+        .unwrap();
+    let said = gift["problems"].to_string();
+    assert!(
+        said.contains("has no setting `max_lenght`: did you mean `max_length`?"),
+        "{said}"
+    );
+    assert!(
+        said.contains("its value is a whole number, not `\\\"80\\\"`"),
+        "{said}"
+    );
+    assert!(said.contains("checkouts/typo.json"), "{said}");
+    assert!(
+        home.to_string()
+            .contains("the app has no UI extension `nope`"),
+        "{home}"
+    );
+}
+
 #[test]
 fn a_scenario_opens_a_new_checkout_set_up_as_it_says() {
     let data = ScenarioData::new("opens", &[("tees.json", TEES)]);
@@ -10258,6 +10318,35 @@ fn the_home_page_says_which_functions_the_shop_has_no_enabled_owner_of() {
             .to_string()
             .contains("payment customization that runs it"),
         "{payment}"
+    );
+
+    // Nor when a scenario runs it, as those of `app init` do: it is tried there.
+    let data = ScenarioData::new(
+        "home-owners-scenario",
+        &[(
+            "payment.json",
+            r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["payment-rules"]}"#,
+        )],
+    );
+    let state = data.server(&[], false);
+    let json = body_json(&get(&state, "/__lsf/checkouts?format=json", "home-owners"));
+    let function = |handle: &str| {
+        json["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|function| function["handle"] == handle)
+            .cloned()
+            .unwrap()
+    };
+    let payment = function("payment-rules");
+    assert!(!payment.to_string().contains("that runs it"), "{payment}");
+    // One no scenario runs is still said.
+    assert!(
+        function("delivery-rules")
+            .to_string()
+            .contains("the shop has no delivery customization that runs it"),
+        "{json}"
     );
 }
 

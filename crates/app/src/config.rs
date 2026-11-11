@@ -412,6 +412,105 @@ impl UiExtension {
         self.buildable()
             .then(|| format!("{} app build {}", lsf_core::util::command(), self.handle))
     }
+
+    /// The fields of its `[extensions.settings]`: `(key, type)`, as declared.
+    pub fn setting_fields(&self) -> Vec<(&str, &str)> {
+        self.settings["fields"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|field| {
+                Some((field["key"].as_str()?, field["type"].as_str().unwrap_or("")))
+            })
+            .collect()
+    }
+
+    /// What is wrong with `values`, the settings a merchant gave it, against the fields of its
+    /// `[extensions.settings]`: a key that is not a field, a value not of the field's type, one
+    /// that is not among its `choices`. Each problem names the key.
+    pub fn check_settings(
+        &self,
+        values: &indexmap::IndexMap<String, Value>,
+    ) -> Vec<(String, String)> {
+        let fields = self.setting_fields();
+        let mut problems = Vec::new();
+        for (key, value) in values {
+            let Some((_, kind)) = fields.iter().find(|(field, _)| field == key) else {
+                let known: Vec<&str> = fields.iter().map(|(key, _)| *key).collect();
+                problems.push((
+                    key.clone(),
+                    if known.is_empty() {
+                        format!(
+                            "`{}` declares no settings (`[[extensions.settings.fields]]`)",
+                            self.handle
+                        )
+                    } else {
+                        let close = lsf_core::util::closest_match(key, known.iter().copied())
+                            .map(|close| format!("did you mean `{close}`? "))
+                            .unwrap_or_default();
+                        format!(
+                            "`{}` has no setting `{key}`: {close}its fields are {}",
+                            self.handle,
+                            known.join(", ")
+                        )
+                    },
+                ));
+                continue;
+            };
+            let fits = match *kind {
+                "boolean" => value.is_boolean(),
+                "number_integer" => value.is_i64() || value.is_u64(),
+                "number_decimal" => value.is_number(),
+                // Text, dates, references: a string, as the editor stores them.
+                _ => value.is_string(),
+            };
+            if !fits {
+                let wanted = match *kind {
+                    "boolean" => "`true` or `false`",
+                    "number_integer" => "a whole number",
+                    "number_decimal" => "a number",
+                    _ => "a string",
+                };
+                problems.push((
+                    key.clone(),
+                    format!(
+                        "`{key}` is a `{kind}` field of `{}`: its value is {wanted}, not `{value}`",
+                        self.handle
+                    ),
+                ));
+                continue;
+            }
+            let field = self.settings["fields"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|field| field["key"] == key.as_str());
+            let choices: Option<Vec<Value>> = field
+                .and_then(|field| field["validations"].as_array())
+                .into_iter()
+                .flatten()
+                .find(|validation| validation["name"] == "choices")
+                .and_then(|validation| match &validation["value"] {
+                    Value::String(text) => serde_json::from_str::<Vec<Value>>(text).ok(),
+                    Value::Array(items) => Some(items.clone()),
+                    _ => None,
+                });
+            if let Some(choices) = choices
+                && !choices.contains(value)
+            {
+                let listed: Vec<String> = choices.iter().map(Value::to_string).collect();
+                problems.push((
+                    key.clone(),
+                    format!(
+                        "`{key}` of `{}` is one of {}, not `{value}`",
+                        self.handle,
+                        listed.join(", ")
+                    ),
+                ));
+            }
+        }
+        problems
+    }
 }
 
 /// A metafield a checkout UI extension declares: `[[extensions.metafields]]`, or
@@ -1421,6 +1520,77 @@ fn toml_to_json(value: &toml::Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The settings a merchant gives an extension are checked against its fields: the key, the
+    /// type of the value, and its `choices`.
+    #[test]
+    fn the_settings_of_an_extension_are_checked_against_its_fields() {
+        let root = temp_app("settings-fields");
+        write(&root, "shopify.app.toml", "name = \"Demo\"\n");
+        write(
+            &root,
+            "extensions/banner/shopify.extension.toml",
+            r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Banner"
+type = "ui_extension"
+handle = "banner"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+  module = "./src/Checkout.jsx"
+
+  [extensions.settings]
+    [[extensions.settings.fields]]
+    key = "title"
+    type = "single_line_text_field"
+    [[extensions.settings.fields]]
+    key = "threshold"
+    type = "number_decimal"
+    [[extensions.settings.fields]]
+    key = "count"
+    type = "number_integer"
+    [[extensions.settings.fields]]
+    key = "show"
+    type = "boolean"
+    [[extensions.settings.fields]]
+    key = "status"
+    type = "single_line_text_field"
+      [[extensions.settings.fields.validations]]
+      name = "choices"
+      value = '["info", "warning"]'
+"#,
+        );
+        let app = load(&root).unwrap();
+        let banner = app.ui_extension("banner").unwrap();
+        let values = |json: serde_json::Value| -> indexmap::IndexMap<String, Value> {
+            serde_json::from_value(json).unwrap()
+        };
+        let fine = values(serde_json::json!({
+            "title": "Hi", "threshold": 12.5, "count": 3, "show": true, "status": "info"
+        }));
+        assert_eq!(banner.check_settings(&fine), vec![]);
+        let wrong = values(serde_json::json!({
+            "titel": "Hi", "count": 1.5, "show": "yes", "status": "error", "threshold": "1"
+        }));
+        let problems: Vec<String> = banner
+            .check_settings(&wrong)
+            .into_iter()
+            .map(|(key, message)| format!("{key}: {message}"))
+            .collect();
+        assert_eq!(
+            problems,
+            [
+                "titel: `banner` has no setting `titel`: did you mean `title`? its fields are title, threshold, count, show, status",
+                "count: `count` is a `number_integer` field of `banner`: its value is a whole number, not `1.5`",
+                "show: `show` is a `boolean` field of `banner`: its value is `true` or `false`, not `\"yes\"`",
+                "status: `status` of `banner` is one of \"info\", \"warning\", not `\"error\"`",
+                "threshold: `threshold` is a `number_decimal` field of `banner`: its value is a number, not `\"1\"`",
+            ]
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     fn write(root: &Path, path: &str, content: &str) {
         let file = root.join(path);

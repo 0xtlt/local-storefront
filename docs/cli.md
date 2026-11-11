@@ -19,7 +19,7 @@ Installed with mise, from a release or from source, the command is `lsf`: `lsf s
 | Code | Meaning |
 |---|---|
 | `0` | Done, nothing to report. |
-| `1` | Done, and something to fix: data or app errors (`validate`), problems in the theme (`check`), Liquid errors in the page or nothing at its path (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run or did not run (`app function run`), a scenario that fails or whose `expect` is not met (`app check`), a webhook that was not delivered (`app webhook trigger`). |
+| `1` | Done, and something to fix: data or app errors (`validate`), problems in the theme (`check`), Liquid errors in the page or nothing at its path (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run or did not run (`app function run`), a scenario that fails or whose `expect` is not met (`app check`), an extension that does not build (`app build`, `app function build`, `--build`), a webhook that was not delivered (`app webhook trigger`). |
 | `2` | The command could not run: a wrong option, a theme or a file that cannot be read, a file `fmt` cannot write, a port `serve` cannot listen on. The message is on stderr, after `error:`. |
 
 ## Output
@@ -336,7 +336,7 @@ checked 8 of 8 scenarios in 0.1 s: every Function ran, the `expect` of 2 scenari
 | `--extension <handle>` | | Only these extensions. Repeat it for several. |
 | `--build` | | Builds the extensions first, as `app build` does. |
 | `--format text` | | Default. One line per problem, then a summary. |
-| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unchecked: [scenario], unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `unchecked` names the scenarios whose `expect` was not checked, as `--extension` leaves out a Function they run; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says (the entry, the list, the amount), `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran. |
+| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unchecked: [scenario], unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. A Function target that fails in several ways has a failure for each error, with the scenarios of that error; `logs` is what the Function logged in the first of them. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `unchecked` names the scenarios whose `expect` was not checked, as `--extension` leaves out a Function they run; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says (the entry, the list, the amount), `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran. |
 | `--budget <seconds>` | | How long the Functions may run in all. Default 300. |
 
 ### app function run
@@ -362,7 +362,10 @@ npx local-storefront app function run volume-discount --app ../my-app --session 
 | `--locale <iso>` | | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |
 | `--step <step>` | | `interaction` or `completion` (the default): the step of the buyer journey, what validation Functions read as `buyerJourney.step`. |
 | `--format text` | | Default. Each run, then the checkout. |
-| `--format json` | | The checkout as the checkout page reads it, with every run in `runs`. |
+| `--format json` | | The checkout as the checkout page reads it, with every run in `runs`. With `--input`, the run: `{handle, target, export, input, output, logs, error, instructions}`. |
+| `--input <file>`, `-i` | | Runs one Function on this input, as `shopify app function run --input` does, instead of one built from the store data: a JSON file, or `-` for stdin. Name the Function, or run it in its folder. A fixture of the unit tests of Shopify's templates (`{"payload": {"export", "target", "input", "output"}}`) runs its target, and its `output` must be the run's. The output is checked against the schema of the Function's API and the instruction limit, as in a checkout. |
+| `--export <name>`, `-e` | | The target to run, by its Wasm export (`cart-lines-discounts-generate-run`), as Shopify's `--export`, or by its name (`cart.lines.discounts.generate.run`): for `--input` and `--save-input`, when the Function has several targets. |
+| `--save-input <file>` | | Writes the input lsf built for the run of the Function named (and of `--export`) to this file, for `--input` or for a unit test's fixture. |
 
 Exits with `1` when a Function fails to run, or when a Function named on the command line did not
 run: it says why (no discount names a discount Function, the cart is empty, the `extensions` of
@@ -381,6 +384,21 @@ TypeScript without a build command is built by lsf, without Node: its types
 | Option | Environment variable | What it does |
 |---|---|---|
 | `[handle]...` | | The Functions to build. Every Function of the app when none is given. |
+| `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
+
+### app function typegen
+
+`npx local-storefront app function typegen [handle]... --app <dir>`
+
+Writes the GraphQL types of a JavaScript or TypeScript Function, as `shopify app function
+typegen` does (the `typegen` script of Shopify's templates): the `codegen` section of its
+`package.json`, written as graphql-codegen writes it (`generated/api.ts`), from its
+`schema.graphql` or lsf's schema of its API version, offline. `app function build` writes them
+too. A Rust Function's types come from the `typegen` macro at its build: it writes nothing.
+
+| Option | Environment variable | What it does |
+|---|---|---|
+| `[handle]...` | | The Functions. Without them, the one the current folder is in, else every JavaScript Function. |
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
 
 ### app function schema

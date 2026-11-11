@@ -212,6 +212,12 @@ fn state_json(
             )
         })
         .collect();
+    // What the merchant filled in for each extension: the scenario's of the session, else the
+    // store's.
+    let scenario = state.with_session(session_id, |entry| entry.checkout.state.scenario.clone());
+    let settings = &crate::checkout::scenario_named(&store, scenario.as_deref())
+        .map_or(&store.checkout, |scenario| &scenario.checkout)
+        .extensions;
     let mut json = json!({
         "surface": "customer-account",
         "page": page.name(),
@@ -249,7 +255,7 @@ fn state_json(
         ),
         "profiles": profiles,
         // The checkout's extensions have nothing to show here.
-        "extensions": checkout::extensions_json(&app, &selection)
+        "extensions": checkout::extensions_json(&app, &selection, settings)
             .as_array()
             .into_iter()
             .flatten()

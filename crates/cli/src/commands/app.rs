@@ -48,7 +48,7 @@ enum Subcommand {
 enum Format {
     /// One line per problem.
     Text,
-    /// `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unchecked: [scenario], unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. `logs` is what the Function logged in the first scenario it failed in. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `unchecked` names the scenarios whose `expect` was not checked, as `--extension` leaves out a Function they run; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says, `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran.
+    /// `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unchecked: [scenario], unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. A Function target that fails in several ways has a failure for each error, with the scenarios of that error; `logs` is what the Function logged in the first of them. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `unchecked` names the scenarios whose `expect` was not checked, as `--extension` leaves out a Function they run; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says, `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran.
     Json,
 }
 
@@ -178,10 +178,18 @@ fn check(
             }),
         },
     );
-    if matches!(args.format, Format::Text) {
-        crate::output::print_diagnostics(&diagnostics);
-    }
     let store = state.loaded().store.clone();
+    if matches!(args.format, Format::Text) {
+        // The problems of a scenario that does not validate are printed with it, below.
+        let mut rest = diagnostics.clone();
+        rest.items.retain(|item| {
+            !store
+                .scenarios
+                .iter()
+                .any(|scenario| !scenario.problems.is_empty() && scenario.file == item.file)
+        });
+        crate::output::print_diagnostics(&rest);
+    }
     let report = crate::server::check_scenarios(
         &state,
         &shopify_app,
@@ -195,7 +203,7 @@ fn check(
         .collect();
     let complete = report.checked == report.total;
     // No scenario, nothing checked: a check that cannot fail is not one.
-    let empty = report.total == 0;
+    let empty = store.scenarios.is_empty();
     let ok = report.failures.is_empty()
         && invalid.is_empty()
         && report.unmet.is_empty()
@@ -203,7 +211,7 @@ fn check(
         && !empty;
     // The Functions no scenario ran: nothing checks them. A warning, not a failure: a Function
     // may be meant for a case the scenarios leave aside. Only known once every scenario ran.
-    let ran_nowhere: Vec<&lsf_app::config::FunctionExtension> = if complete && !empty {
+    let ran_nowhere: Vec<&lsf_app::config::FunctionExtension> = if complete && report.total > 0 {
         selection
             .functions(&shopify_app)
             .filter(|function| !report.ran.contains(&function.handle))
@@ -249,7 +257,9 @@ fn check(
             for scenario in &invalid {
                 println!("invalid  {} ({})", scenario.name, scenario.file);
                 for problem in &scenario.problems {
-                    println!("         {problem}");
+                    for line in problem.lines() {
+                        println!("         {line}");
+                    }
                 }
             }
             for function in &ran_nowhere {

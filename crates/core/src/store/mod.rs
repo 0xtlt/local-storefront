@@ -907,6 +907,8 @@ pub struct CheckoutSettings {
     pub owners: IndexMap<String, bool>,
     /// Basis points: 2000 is 20 %.
     pub tax_rate_bps: i64,
+    /// UI extension handle → the values of its settings, by key (`shopify.settings`).
+    pub extensions: IndexMap<String, IndexMap<String, Json>>,
 }
 
 impl Default for CheckoutSettings {
@@ -935,6 +937,7 @@ impl Default for CheckoutSettings {
             functions: IndexMap::new(),
             owners: IndexMap::new(),
             tax_rate_bps: 0,
+            extensions: IndexMap::new(),
         }
     }
 }
@@ -962,7 +965,7 @@ pub struct CheckoutScenario {
     /// The settings of the store with this scenario's overrides on top.
     pub checkout: CheckoutSettings,
     /// What the scenario overrides of the `checkout` section: `shipping_rates`,
-    /// `payment_methods`, `discounts`, `functions`, `tax_rate`.
+    /// `payment_methods`, `discounts`, `functions`, `extensions`, `tax_rate`.
     pub overrides: Vec<&'static str>,
     /// What the checkout must look like once the Functions ran, which `lsf app check` checks.
     /// Its amounts are valid: those that are not are in `problems`.

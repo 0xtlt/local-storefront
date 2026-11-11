@@ -343,6 +343,25 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   (`missing_translation`). Each has its file, its line and the closest name, in text and in
   `--format json`. Horizon and Dawn have none.
 
+- **`lsf app function run --input <file>`** runs one Function on a JSON input (`-` for stdin),
+  as `shopify app function run --input` does, without the store data. A fixture of the unit
+  tests of Shopify's templates (`{"payload": {"target", "input", "output"}}`) runs as it is,
+  and its `output` is checked. `--export <name>` picks the target of a Function that has several,
+  as Shopify's `--export` does, and `--save-input <file>` writes the input lsf built for a
+  scenario's run. [Checkout](docs/checkout.md#run-a-function-on-an-input).
+- **`lsf app function typegen`** writes a JavaScript Function's GraphQL types
+  (`generated/api.ts`), offline, as `shopify app function typegen` does: the `typegen` script of
+  Shopify's templates works.
+- **A Shopify CLI to lsf table** in [checkout](docs/checkout.md#coming-from-shopifys-cli): each
+  `shopify app` command, lsf's, and what lsf does not do.
+
+- **The settings of a UI extension can be set.** `checkout.extensions.<handle>.settings` of
+  the store data or of a scenario are the values `shopify.settings` (`useSettings`) reads, in
+  the checkout and the customer account, as a merchant fills them in. `validate` and the home
+  page warn about a key the extension's `[extensions.settings]` does not declare, a value of the
+  wrong type, or one not among its `choices`. `shopify.settings.value` was always empty.
+  [Checkout](docs/checkout.md#set-up-the-checkout).
+
 ### Changed
 
 - **A Function runs only through an enabled owner, as on Shopify.** At the shop's checkout (no
@@ -597,6 +616,49 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
 - **The docs no longer promise classic customer account pages.** `/account/login` and the
   other account URLs lead to `/account`, as [storefront](docs/storefront.md) says;
   [testing](docs/testing.md) said otherwise.
+- **JavaScript, TypeScript and Preact builds no longer break after macOS empties the temporary
+  folder.** lsf's copy of the npm packages lived in `$TMPDIR`; once macOS's cleaner deleted its
+  files and kept its folders, every build failed with `cannot write lsf's npm packages` until
+  the folder was deleted by hand. The packages now live in the user's cache folder
+  (`~/Library/Caches/lsf/` on macOS, `~/.cache/lsf/` on Linux). A folder with a file missing or
+  changed is written again, safely when several lsf run at once.
+- **`lsf app check` prints each way a Function fails.** A Function that threw in one scenario
+  and answered a wrong output in another was printed with the first error for both, and the
+  JSON had the logs of the first. Each error is now a failure of its own, with its scenarios and
+  its logs, in the text, in `--format json` and on the home page.
+- **An endless loop in a Function stops in a moment.** It ran for 10 s (some 35 billion
+  instructions) before it was stopped, and three of them took the 20 s of the home page's check.
+  A run now stops at 110 million instructions, ten times Shopify's limit:
+  `exceeded Shopify's limit of 11,000,000 instructions: stopped at 110,000,000 (an endless
+  loop?)`. A run under that keeps its exact count.
+- **A change to a Rust Function's query builds it again.** The `typegen` macro reads the
+  `.graphql` files without telling cargo: after a change to one of them alone, `--watch` said
+  `✓ delivery-rules built` while cargo compiled nothing, and the old module ran on the new
+  query's input. lsf now touches `src/main.rs` (its time only) before the build when a
+  `.graphql` file is newer than the module, and the watch says when a module came out the same
+  (a compiler cache that does not see the change).
+- **`lsf app function run` says what a Function threw**: `error: the Function trapped: Error:
+  boom`, as `app check` does, where it said `the Function trapped` alone. The checkout's
+  Functions dialog and the JSON have the message too.
+- **An extension that does not build exits with `1`**, as the exit codes say of something to
+  fix (`app build`, `app function build`, `--build`). It exited with `2`, "could not run".
+- **`lsf app init` counts customer account UI extensions apart**: `for 5 Functions, 1 checkout
+  UI extension and 1 customer account UI extension`, not `2 checkout UI extensions`.
+- **`lsf app function run` prints no discount as `discounts 0.00`**, not `-0.00`.
+- **`lsf app check` prints a scenario that does not validate once**, its problems indented under
+  it, and no longer says `no scenario to check` when the only scenarios are invalid.
+  `app function run --scenario` prints them once too.
+- **The home page has no warnings right after `lsf app init`.** It warned, for each Function
+  that is not a discount, that the shop has no customization that runs it, while the scenarios
+  `app init` wrote run each of them. It now warns only about a Function no scenario runs.
+- **`app init`'s `all-extensions` scenario runs the discount Functions.** It entered the code
+  `WELCOME`, which no discount had, and named the discount Functions, which then never ran. It
+  now has a discount of each, with the code `SAVE10` entered, as `discount-code` does.
+- **The metafields of a discount or a Function's owner take Shopify's forms.** Besides
+  `"namespace.key"`, a list of `{namespace, key, type, value}`, as `metafieldsSet` takes it, is
+  read. The docs write them as Shopify's templates do, `"$app.function-configuration"` for
+  `metafield(namespace: "$app", key: "function-configuration")`, and `"$app:function-configuration"`
+  says to write a dot.
 
 ## 0.2.0 - 2026-10-30
 

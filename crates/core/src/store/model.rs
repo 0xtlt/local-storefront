@@ -1609,9 +1609,69 @@ pub struct CheckoutDiscountInput {
     #[serde(default)]
     pub classes: Vec<CheckoutDiscountClass>,
     /// The metafields of the discount, which its Function's input query reads, by
-    /// `"namespace.key"`: `{"$app:config.settings": {"type": "json", "value": {"percent": 10}}}`.
-    #[serde(default)]
+    /// `"namespace.key"`: `{"$app.function-configuration": {"type": "json", "value":
+    /// {"percentage": 10}}}` for `metafield(namespace: "$app", key: "function-configuration")`.
+    /// Shopify's list of `{namespace, key, type, value}` is taken too.
+    #[serde(default, deserialize_with = "owner_metafields")]
+    #[schemars(with = "OwnerMetafields")]
     pub metafields: IndexMap<String, MetafieldInput>,
+}
+
+/// The metafields of a discount or of the owner of a Function: by `"namespace.key"`, or as
+/// Shopify's Admin API takes them (`metafieldsSet`, `discountAutomaticAppCreate`), a list of
+/// `{namespace, key, type, value}`.
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
+#[allow(dead_code)]
+enum OwnerMetafields {
+    /// `{"$app.function-configuration": {"type": "json", "value": {…}}}`.
+    ByName(IndexMap<String, MetafieldInput>),
+    /// `[{"namespace": "$app", "key": "function-configuration", "type": "json", "value": {…}}]`.
+    List(Vec<OwnerMetafield>),
+}
+
+/// A metafield as Shopify's Admin API takes it.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct OwnerMetafield {
+    /// `$app`, `$app:<name>`, or another namespace.
+    namespace: String,
+    key: String,
+    /// The metafield type: `json`, `single_line_text_field`, … Inferred from the value when
+    /// omitted.
+    #[serde(default, rename = "type")]
+    kind: Option<String>,
+    /// The value: JSON, or the text Shopify stores (`"{\"percentage\":10}"` for `json`).
+    value: Json,
+}
+
+/// [`OwnerMetafields`], read as metafields by `"namespace.key"`.
+fn owner_metafields<'de, D>(deserializer: D) -> Result<IndexMap<String, MetafieldInput>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match OwnerMetafields::deserialize(deserializer)? {
+        OwnerMetafields::ByName(map) => map,
+        OwnerMetafields::List(list) => list
+            .into_iter()
+            .map(|field| {
+                let value = match (field.kind.as_deref(), field.value) {
+                    // Shopify takes a JSON value as its text.
+                    (Some(kind), Json::String(text))
+                        if kind == "json" || kind.starts_with("list.") =>
+                    {
+                        serde_json::from_str(&text).unwrap_or(Json::String(text))
+                    }
+                    (_, value) => value,
+                };
+                let input = match field.kind {
+                    Some(kind) => MetafieldInput::Typed(TypedMetafield { kind, value }),
+                    None => MetafieldInput::Value(value),
+                };
+                (format!("{}.{}", field.namespace, field.key), input)
+            })
+            .collect(),
+    })
 }
 
 /// A Function that is not a discount (cart transform, delivery or payment customization,
@@ -1627,9 +1687,24 @@ pub struct CheckoutFunctionInput {
     /// `app function run <handle>`, with these metafields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
-    /// The metafields of the object the Function belongs to, by `"namespace.key"`.
-    #[serde(default)]
+    /// The metafields of the object the Function belongs to, by `"namespace.key"`:
+    /// `{"$app.function-configuration": {"type": "json", "value": {…}}}` for
+    /// `metafield(namespace: "$app", key: "function-configuration")`. Shopify's list of
+    /// `{namespace, key, type, value}` is taken too.
+    #[serde(default, deserialize_with = "owner_metafields")]
+    #[schemars(with = "OwnerMetafields")]
     pub metafields: IndexMap<String, MetafieldInput>,
+}
+
+/// A checkout or customer account UI extension of the app, as the merchant set it up.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutExtensionInput {
+    /// The values of the fields of its `[extensions.settings]`, by `key`, as the merchant fills
+    /// them in the checkout editor: `{"title": "Free gift", "threshold": 50, "show": true}`. A
+    /// field left out has no value (`undefined`), as on Shopify.
+    #[serde(default)]
+    pub settings: IndexMap<String, Json>,
 }
 
 /// How the local checkout (`lsf app dev --app`) is set up. Every field has a default.
@@ -1648,6 +1723,10 @@ pub struct CheckoutInput {
     /// The settings of the other Functions, by the handle of the Function.
     #[serde(default)]
     pub functions: IndexMap<String, CheckoutFunctionInput>,
+    /// What the merchant filled in for the UI extensions of the app, by the handle of the
+    /// extension: the values its `shopify.settings` (`useSettings`) reads.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub extensions: IndexMap<String, CheckoutExtensionInput>,
     /// Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when
     /// omitted.
     #[serde(default)]
@@ -1745,7 +1824,8 @@ pub struct CheckoutScenarioInput {
     pub language: Option<String>,
     /// Overrides of the `checkout` section of the store data: every field that is present
     /// replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`,
-    /// `tax_rate`), except `functions`, which replaces the settings of the Functions it names.
+    /// `tax_rate`), except `functions` and `extensions`, which replace the settings of the
+    /// Functions and extensions they name.
     #[serde(default)]
     pub checkout: Option<CheckoutInput>,
     /// The look of the page. Defaults to the one of the server (`--variant`).

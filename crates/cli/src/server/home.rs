@@ -314,8 +314,11 @@ fn function_json(
         ));
     }
     // Any other Function runs through an owner the app creates (a payment customization, …): a
-    // shop it was just installed on has none, and its checkout does not run the Function.
+    // shop it was just installed on has none, and its checkout does not run the Function. Said
+    // only when no scenario runs it either (one that names it in `extensions` does, as those
+    // `app init` writes): it is then tried nowhere.
     let owner_note = !store_note
+        && used_by == 0
         && function.owner_type().is_some()
         && owners.get(&function.handle) != Some(&true);
     if let (true, Some(owner)) = (owner_note, function.owner_type()) {
@@ -326,8 +329,8 @@ fn function_json(
             format!(
                 "{}, so the store's checkout does not run it, as on Shopify: the app creates one \
                  (`{}Create`), or the store data declares one, \
-                 `\"checkout\": {{\"functions\": {{\"{}\": {{\"enabled\": true}}}}}}`. The \
-                 scenarios that name it in `extensions` run it anyway",
+                 `\"checkout\": {{\"functions\": {{\"{}\": {{\"enabled\": true}}}}}}`. A \
+                 scenario that names it in `extensions` runs it anyway",
                 if declared {
                     format!("its {words} is disabled")
                 } else {
@@ -406,6 +409,7 @@ fn ui_extension_json(
     selection: &Selection,
     extension: &UiExtension,
     used_by: usize,
+    settings: &[crate::checkout::SettingsProblem],
 ) -> Json {
     let targets: Vec<Json> = extension
         .targets
@@ -429,7 +433,14 @@ fn ui_extension_json(
         .filter(|(_, value)| value.as_bool() == Some(true))
         .map(|(name, _)| name.as_str())
         .collect();
-    let problems = ui_problems(app, extension);
+    let mut problems = ui_problems(app, extension);
+    // The settings the store data or a scenario gives it that it does not declare.
+    problems.extend(
+        settings
+            .iter()
+            .filter(|problem| problem.handle == extension.handle)
+            .map(|settings| problem(Level::Warning, settings.to_string())),
+    );
     let selected = selection.contains(&extension.handle);
     // Whether the checkout loads it: every error keeps it out (not built, an API version it
     // does not run, an `owner_type` that is wrong or missing); a warning does not.
@@ -1261,6 +1272,7 @@ fn build(
 ) -> Json {
     let selection =
         Selection::resolve(app, &options.extensions).unwrap_or_else(|_| Selection::all());
+    let settings = crate::checkout::settings_problems(app, store);
     // The discount Functions a discount of the store data, or of a scenario, runs.
     let discounted: std::collections::HashSet<&str> = store
         .checkout
@@ -1336,7 +1348,15 @@ fn build(
     let ui_extensions: Vec<Json> = app
         .ui_extensions
         .iter()
-        .map(|extension| ui_extension_json(app, &selection, extension, used(&extension.handle)))
+        .map(|extension| {
+            ui_extension_json(
+                app,
+                &selection,
+                extension,
+                used(&extension.handle),
+                &settings,
+            )
+        })
         .map(runs_in)
         .map(|mut extension| {
             // Where a problem the page finds when it loads the bundle shows (`home.js`): the
@@ -1381,7 +1401,30 @@ fn build(
         .iter()
         .map(|scenario| scenario_json(&context, scenario))
         .collect();
-    let problems = problem_list(state, app, &functions, &ui_extensions, &scenarios, report);
+    let mut problems = problem_list(state, app, &functions, &ui_extensions, &scenarios, report);
+    // Settings for a UI extension the app does not have: the others are the extension's.
+    for unknown in settings
+        .iter()
+        .filter(|problem| app.ui_extension(&problem.handle).is_none())
+    {
+        problems.push(Problem {
+            level: Level::Warning,
+            kind: "store",
+            subject: Some(
+                unknown
+                    .file
+                    .clone()
+                    .unwrap_or_else(|| "checkout".to_string()),
+            ),
+            message: unknown.to_string(),
+            target: None,
+            link: None,
+            scenarios: Vec::new(),
+            open: None,
+            detail: None,
+        });
+    }
+    problems.sort_by_key(Problem::rank);
     let errors = problems
         .iter()
         .filter(|problem| problem.level == Level::Error)

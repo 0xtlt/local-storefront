@@ -3445,6 +3445,11 @@ fn override_checkout(
             ),
         });
     }
+    for (handle, extension) in &input.extensions {
+        settings
+            .extensions
+            .insert(handle.clone(), extension.settings.clone());
+    }
     for (handle, function) in &input.functions {
         let metafields = checkout_metafields(
             builder,
@@ -3625,6 +3630,9 @@ fn resolve_scenario(
         }
         if !checkout.functions.is_empty() {
             scenario.overrides.push("functions");
+        }
+        if !checkout.extensions.is_empty() {
+            scenario.overrides.push("extensions");
         }
         if checkout.tax_rate.is_some() {
             scenario.overrides.push("tax_rate");
@@ -3854,13 +3862,34 @@ fn checkout_metafields(
             .split_once('.')
             .filter(|(namespace, key)| !namespace.is_empty() && !key.is_empty())
         else {
+            // `$app:function-configuration`: the key after a colon, where a dot goes.
+            let example = match name.split_once(':') {
+                Some((namespace, key)) if !namespace.is_empty() && !key.is_empty() => {
+                    format!("{namespace}.{key}")
+                }
+                _ => format!(
+                    "$app.{}",
+                    if name.is_empty() {
+                        "function-configuration"
+                    } else {
+                        name
+                    }
+                ),
+            };
             builder
                 .error(
                     "invalid_value",
                     &origin.child(name),
                     format!("\"{name}\" is not a metafield name"),
                 )
-                .hint("write the namespace, a dot and the key: \"$app:config.settings\"");
+                .hint(format!(
+                    "write the namespace, a dot and the key, as the input query reads them: \
+                     \"{example}\" for `metafield(namespace: \"{}\", key: \"{}\")`",
+                    example
+                        .split_once('.')
+                        .map_or("", |(namespace, _)| namespace),
+                    example.split_once('.').map_or("", |(_, key)| key),
+                ));
             continue;
         };
         let Metafield { kind, value } = metafield(field);

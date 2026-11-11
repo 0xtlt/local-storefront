@@ -732,20 +732,31 @@ fn plan(store: &Store, app: Option<&ShopifyApp>, app_store: Option<&Store>) -> P
             .map(|function| &function.handle)
             .chain(&kinds.ui)
             .collect();
-        plan.add(
-            "all-extensions",
-            json!({
-                "title": "Everything at once",
-                "description": "A logged-in customer, several lines, shipping options, a code and a note, with every Function and every checkout UI extension running. Open it \"With every extension target\" to see each extension at every target it declares.",
-                "session": {"customer": "default", "cart": {"items": lines, "note": "For the extensions to read"}},
-                "entered": {"shipping_address": address(&home), "discount_codes": ["WELCOME"]},
-                "checkout": {"shipping_rates": [
-                    {"handle": "standard", "title": "Standard", "price": "4.90"},
-                    {"handle": "express", "title": "Express", "price": "12.90"},
-                ]},
-                "extensions": every,
-            }),
-        );
+        let mut scenario = json!({
+            "title": "Everything at once",
+            "description": "A logged-in customer, several lines, shipping options and a note, with every Function and every UI extension running. Open it \"With every extension target\" to see each extension at every target it declares.",
+            "session": {"customer": "default", "cart": {"items": lines, "note": "For the extensions to read"}},
+            "entered": {"shipping_address": address(&home)},
+            "checkout": {"shipping_rates": [
+                {"handle": "standard", "title": "Standard", "price": "4.90"},
+                {"handle": "express", "title": "Express", "price": "12.90"},
+            ]},
+            "extensions": every,
+        });
+        // A discount Function runs only for a discount that names it: one for each, with the
+        // code the buyer entered, as in `discount-code`.
+        if !kinds.discount.is_empty() {
+            let with_code = discounts(store, app_store, app, &kinds.discount, Some("SAVE10"));
+            let codes = codes_of(&with_code);
+            scenario["description"] = json!(format!(
+                "A logged-in customer, several lines, shipping options, the code {} and a note, with every Function and every UI extension running: {}. Open it \"With every extension target\" to see each extension at every target it declares.",
+                codes.join(", "),
+                applies_as_code(&kinds.discount)
+            ));
+            scenario["entered"]["discount_codes"] = json!(codes);
+            scenario["checkout"]["discounts"] = with_code;
+        }
+        plan.add("all-extensions", scenario);
     }
     plan
 }
@@ -849,16 +860,40 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
         write_settings(&directory, &settings)?;
     }
     let target = match &shopify_app {
-        Some(app) => format!(
-            "{} and {} of {}",
-            count(app.functions.len(), "Function", "Functions"),
-            count(
-                app.ui_extensions.len(),
-                "checkout UI extension",
-                "checkout UI extensions"
-            ),
-            app.name.as_deref().unwrap_or("the app")
-        ),
+        Some(app) => {
+            // An extension with a target in the checkout is a checkout UI extension; one whose
+            // targets are all in the customer account, a customer account UI extension.
+            let (checkout, account): (Vec<_>, Vec<_>) =
+                app.ui_extensions.iter().partition(|extension| {
+                    extension.targets.is_empty()
+                        || extension.targets.iter().any(|target| {
+                            lsf_app::checkout::placement::surface(&target.target)
+                                != Some("customer-account")
+                        })
+                });
+            let mut parts = vec![count(app.functions.len(), "Function", "Functions")];
+            if !checkout.is_empty() || account.is_empty() {
+                parts.push(count(
+                    checkout.len(),
+                    "checkout UI extension",
+                    "checkout UI extensions",
+                ));
+            }
+            if !account.is_empty() {
+                parts.push(count(
+                    account.len(),
+                    "customer account UI extension",
+                    "customer account UI extensions",
+                ));
+            }
+            let last = parts.pop().expect("a part");
+            let parts = if parts.is_empty() {
+                last
+            } else {
+                format!("{} and {last}", parts.join(", "))
+            };
+            format!("{parts} of {}", app.name.as_deref().unwrap_or("the app"))
+        }
         None => "no app: the generic set".to_string(),
     };
     eprintln!(
@@ -1122,6 +1157,14 @@ mod tests {
                 "{handle}: {every}"
             );
         }
+        // Its discount Functions run: a discount names each, with the code it enters.
+        let all = read(&root, "all-extensions");
+        assert_eq!(all["entered"]["discount_codes"], json!(["SAVE10"]), "{all}");
+        assert_eq!(
+            all["checkout"]["discounts"][0]["function"],
+            "volume-discount"
+        );
+        assert_eq!(all["checkout"]["discounts"][0]["code"], "SAVE10");
         assert_eq!(read(&root, "guest")["extensions"], Json::Null);
         // The discount code is entered, and the discount has it.
         let code = read(&root, "discount-code");

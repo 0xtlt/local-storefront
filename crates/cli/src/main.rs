@@ -173,7 +173,9 @@ fn main() -> ExitCode {
         Ok(code) => code,
         Err(message) => {
             eprintln!("error: {message}");
-            ExitCode::from(2)
+            // A build of the user's extension that fails is theirs to fix, as a Function that
+            // fails is; anything else kept the command from running.
+            ExitCode::from(if output::is_fixable() { 1 } else { 2 })
         }
     }
 }

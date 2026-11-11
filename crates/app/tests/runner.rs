@@ -131,11 +131,35 @@ fn a_module_that_was_not_trampolined_says_so() {
 fn an_endless_function_is_stopped() {
     let dir = temp_dir("forever");
     let wasm = write(&dir, "forever.wasm", FOREVER);
-    let runner = Runner::new().with_timeout(Duration::from_millis(200));
+    let runner = Runner::new()
+        .with_instructions_cap(u64::MAX)
+        .with_timeout(Duration::from_millis(200));
     let started = std::time::Instant::now();
     let execution = runner.run(&wasm, "_start", &json!({}));
     assert!(started.elapsed() < Duration::from_secs(5));
     assert!(execution.error.unwrap().contains("was stopped"));
+}
+
+/// An endless loop stops at the instruction cap, at once, not at the timeout.
+#[test]
+fn an_endless_function_stops_at_the_instruction_cap() {
+    let dir = temp_dir("cap");
+    let wasm = write(&dir, "forever.wasm", FOREVER);
+    let started = std::time::Instant::now();
+    let execution = runner::run(&wasm, "_start", &json!({}));
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(execution.instructions, runner::INSTRUCTIONS_CAP);
+    assert_eq!(
+        execution.error.as_deref(),
+        Some(
+            "exceeded Shopify's limit of 11,000,000 instructions: stopped at 110,000,000 \
+             (an endless loop?)"
+        )
+    );
 }
 
 #[test]
@@ -145,9 +169,12 @@ fn only_the_overdue_run_is_stopped() {
     let timeout = Duration::from_millis(600);
     let dir = temp_dir("overlap");
     let wasm = write(&dir, "forever.wasm", FOREVER);
-    let runner = Runner::new().with_timeout(timeout);
+    let runner = Runner::new()
+        .with_instructions_cap(u64::MAX)
+        .with_timeout(timeout);
     // Compile the module before the clock starts.
     let _ = Runner::new()
+        .with_instructions_cap(u64::MAX)
         .with_timeout(Duration::from_millis(1))
         .run(&wasm, "_start", &json!({}));
 
@@ -179,7 +206,9 @@ fn a_run_survives_the_timeout_of_another_one() {
     let dir = temp_dir("survive");
     let endless = write(&dir, "forever.wasm", FOREVER);
     let echo = write(&dir, "echo.wasm", ECHO);
-    let runner = Runner::new().with_timeout(timeout);
+    let runner = Runner::new()
+        .with_instructions_cap(u64::MAX)
+        .with_timeout(timeout);
     let input = json!({"a": 1});
     // Compile the modules before the clock starts.
     assert_eq!(runner.run(&echo, "_start", &input).error, None);
@@ -269,7 +298,10 @@ fn concurrent_runs_are_bounded_and_the_others_wait() {
     let timeout = Duration::from_millis(300);
     // Two at a time: four runs that each last until the timeout take two rounds. The time a run
     // waits is not part of its timeout.
-    let runner = Runner::new().with_timeout(timeout).with_max_concurrent(2);
+    let runner = Runner::new()
+        .with_instructions_cap(u64::MAX)
+        .with_timeout(timeout)
+        .with_max_concurrent(2);
     let started = std::time::Instant::now();
     std::thread::scope(|scope| {
         for _ in 0..4 {
@@ -298,7 +330,9 @@ fn a_deadline_that_passes_before_the_run_starts_still_stops_it() {
         let (done, wait) = std::sync::mpsc::channel();
         let wasm = wasm.clone();
         std::thread::spawn(move || {
-            let runner = Runner::new().with_timeout(Duration::ZERO);
+            let runner = Runner::new()
+                .with_instructions_cap(u64::MAX)
+                .with_timeout(Duration::ZERO);
             let _ = done.send(runner.run(&wasm, "_start", &json!({})));
         });
         let execution = wait

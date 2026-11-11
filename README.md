@@ -190,9 +190,10 @@ To see the whole flow with Shopify's own libraries, read
 | `app init` | Writes checkout scenarios made for the app's Functions and extensions. |
 | `app check` | Runs every scenario and checks each `expect`. Exits with 1 on a failure, for CI. |
 | `app build` | Builds the app's extensions as `shopify app build` does, without Node. |
-| `app function run` | Runs the Functions once and prints each input, output and log. |
+| `app function run` | Runs the Functions once and prints each input, output and log. `--input` runs one on a given input, as `shopify app function run` does. |
 | `app function build` | Builds the Functions, including JavaScript and TypeScript ones, without Node. |
 | `app function schema` | Writes a Function's `schema.graphql`, offline. |
+| `app function typegen` | Writes a JavaScript Function's GraphQL types (`generated/api.ts`), offline. |
 | `app webhook trigger` | Sends one webhook to the backend, signed, as `shopify app webhook trigger` does. |
 | **Store data** | |
 | `schema [kind]` | Prints the JSON Schema of the store data. |

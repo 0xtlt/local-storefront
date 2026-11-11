@@ -254,7 +254,7 @@ await setSession(page, {
           function: 'discount-codes',
           title: '10% off',
           code: 'SAVE10',
-          metafields: { '$app:config.settings': { type: 'json', value: { percentage: 10 } } },
+          metafields: { '$app.function-configuration': { type: 'json', value: { percentage: 10 } } },
         },
       ],
     },
