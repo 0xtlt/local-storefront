@@ -189,6 +189,34 @@ mod tests {
     }
 
     #[test]
+    fn the_help_of_serve_lists_the_options_of_the_theme_first() {
+        let mut command = Cli::command();
+        let help = command
+            .find_subcommand_mut("serve")
+            .expect("serve")
+            .render_help()
+            .to_string();
+        let at = |text: &str| help.find(text).unwrap_or_else(|| panic!("{text}: {help}"));
+        let app = at("App (with --app):");
+        let admin = at("Admin API and embedded admin (with --app):");
+        for theme in [
+            "--live-reload",
+            "--port",
+            "--static",
+            "--throttle",
+            "--customer",
+        ] {
+            assert!(at(theme) < app, "{theme}");
+        }
+        for of_app in ["--app <DIR>", "--watch", "--variant", "--app-url"] {
+            assert!(app < at(of_app) && at(of_app) < admin, "{of_app}");
+        }
+        for of_admin in ["--admin-throttle", "--pricing-plans", "--polaris"] {
+            assert!(admin < at(of_admin), "{of_admin}");
+        }
+    }
+
+    #[test]
     fn the_commands_of_an_app_are_under_app() {
         let parse = |words: &[&str]| {
             Cli::try_parse_from(std::iter::once("lsf").chain(words.iter().copied()))
