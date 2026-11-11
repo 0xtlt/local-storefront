@@ -674,14 +674,14 @@ fn a_filter_is_noted_until_an_evaluator_is_plugged_in() {
         deliveries[1].reason.as_deref(),
         Some("the filter `status:draft` does not match the payload")
     );
-    assert!(
-        deliveries[2]
-            .reason
-            .as_deref()
-            .unwrap()
-            .contains("cannot be evaluated (the payload has no `status`)")
+    // A filter on a field `include_fields` leaves out: Shopify requires the field in
+    // `include_fields`, and the reason names it.
+    assert_eq!(
+        deliveries[2].reason.as_deref(),
+        Some(
+            "the filter `status:active` reads `status`, which includeFields leaves out of the payload: Shopify requires every field of a filter in includeFields; add `status` to includeFields"
+        )
     );
-    assert_eq!(seen.lock().unwrap()[2].1, json!({"id": 1}));
 }
 
 #[test]
@@ -1496,4 +1496,96 @@ fn the_control_endpoints_say_what_is_wrong() {
             )
             .is_none()
     );
+}
+
+/// A subscription that names metafield namespaces (or metafields) gets the owner's metafields of
+/// those namespaces in its payload, as `metafields`, in the REST shape; one that names none gets
+/// no `metafields`.
+#[test]
+fn the_metafields_a_subscription_names_are_in_its_payload() {
+    let backend = Backend::start(|_| (200, Duration::ZERO));
+    let webhooks = webhooks(Vec::new(), &backend.url, options());
+    let metafield = |id: u64, namespace: &str, key: &str| -> Record {
+        json!({
+            "__typename": "Metafield",
+            "id": format!("gid://shopify/Metafield/{id}"),
+            "namespace": namespace,
+            "key": key,
+            "value": "Cotton",
+            "type": "single_line_text_field",
+            "owner": "gid://shopify/Product/1",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+        })
+        .as_object()
+        .unwrap()
+        .clone()
+    };
+    let mut owner = product();
+    owner.insert(
+        "metafields".to_string(),
+        json!([
+            "gid://shopify/Metafield/11",
+            "gid://shopify/Metafield/12",
+            "gid://shopify/Metafield/13"
+        ]),
+    );
+    let records = Records::of(
+        [
+            owner,
+            metafield(11, "custom", "material"),
+            metafield(12, "other", "secret"),
+            metafield(13, "app--42--reviews", "count"),
+        ],
+        None,
+    );
+    let input = |namespaces: Option<Vec<&str>>, uri: &str| SubscriptionInput {
+        uri: Some(format!("{}{uri}", backend.url)),
+        metafield_namespaces: namespaces
+            .map(|namespaces| namespaces.into_iter().map(str::to_string).collect()),
+        ..Default::default()
+    };
+    for (namespaces, uri) in [
+        (Some(vec!["custom", "$app:reviews"]), "/named"),
+        (None, "/plain"),
+    ] {
+        webhooks
+            .registry()
+            .create(
+                SHOP,
+                "PRODUCTS_UPDATE",
+                input(namespaces, uri),
+                API_VERSION,
+                Utc::now(),
+            )
+            .unwrap();
+    }
+    webhooks.emit(
+        &event("products/update", "gid://shopify/Product/1"),
+        &records,
+    );
+    wait_for(&webhooks, 2);
+    let received = backend.received();
+    let named = received.iter().find(|r| r.path == "/named").unwrap().json();
+    let plain = received.iter().find(|r| r.path == "/plain").unwrap().json();
+    assert!(plain.get("metafields").is_none(), "{plain}");
+    let metafields = named["metafields"].as_array().unwrap();
+    assert_eq!(metafields.len(), 2, "{named}");
+    assert_eq!(
+        metafields[0],
+        json!({
+            "id": 11,
+            "namespace": "custom",
+            "key": "material",
+            "value": "Cotton",
+            "description": null,
+            "owner_id": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "owner_resource": "product",
+            "type": "single_line_text_field",
+            "admin_graphql_api_id": "gid://shopify/Metafield/11",
+        })
+    );
+    assert_eq!(metafields[1]["namespace"], "app--42--reviews");
 }

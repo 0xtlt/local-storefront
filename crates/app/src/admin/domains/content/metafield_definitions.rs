@@ -299,8 +299,10 @@ fn metafield_definition_types(
 
 /// The `MetafieldDefinitionValidation`s of an input (`{name, value}`), with their `type`, checked
 /// against what the type supports. `field` is the path of the input's `validations`. The field
-/// definitions of metaobjects take the same.
+/// definitions of metaobjects take the same. A reference to metaobjects names the definition of
+/// the metaobjects it takes, which must be one of the shop's.
 pub(super) fn checked_validations(
+    state: &ShopState,
     kind: &str,
     input: Option<&Value>,
     field: &[&str],
@@ -354,6 +356,7 @@ pub(super) fn checked_validations(
         }
         validations.push(json!({"name": name, "type": value_type, "value": value}));
     }
+    check_metaobject_definitions(state, kind, &validations, field, errors);
     if types::base(kind) == "rating" {
         for required in ["scale_min", "scale_max"] {
             if !validations
@@ -368,6 +371,55 @@ pub(super) fn checked_validations(
         }
     }
     validations
+}
+
+/// A `metaobject_reference` names the definition of the metaobjects it takes in
+/// `metaobject_definition_id`, a `mixed_reference` those in `metaobject_definition_ids`: Shopify
+/// requires them, and refuses one the shop does not have. The messages follow those of the
+/// other options (`Validations must include …`, `Validations has an invalid value for …`);
+/// Shopify's own wording for these two is not known.
+fn check_metaobject_definitions(
+    state: &ShopState,
+    kind: &str,
+    validations: &[Value],
+    field: &[&str],
+    errors: &mut Vec<UserError>,
+) {
+    let name = match types::base(kind) {
+        "metaobject_reference" => "metaobject_definition_id",
+        "mixed_reference" => "metaobject_definition_ids",
+        _ => return,
+    };
+    let Some(value) = validations
+        .iter()
+        .find(|known| known.get("name").and_then(Value::as_str) == Some(name))
+        .and_then(|known| known.get("value"))
+        .and_then(Value::as_str)
+    else {
+        errors.push(
+            UserError::new(field, format!("Validations must include '{name}'."))
+                .code("INVALID_OPTION"),
+        );
+        return;
+    };
+    let ids: Vec<String> = if name == "metaobject_definition_ids" {
+        serde_json::from_str(value).unwrap_or_default()
+    } else {
+        vec![value.to_string()]
+    };
+    if ids.is_empty()
+        || ids
+            .iter()
+            .any(|id| !state.is_of(id, "MetaobjectDefinition"))
+    {
+        errors.push(
+            UserError::new(
+                field,
+                format!("Validations has an invalid value for '{name}': '{value}'."),
+            )
+            .code("INVALID_OPTION"),
+        );
+    }
 }
 
 /// Whether the value of a validation is one of its type: a number for `min` of a number, a
@@ -604,6 +656,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         );
     }
     let validations = checked_validations(
+        state,
         &kind,
         input.get("validations"),
         &["definition", "validations"],
@@ -740,6 +793,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     check_name(&input, false, &mut errors);
     let validations = input.contains_key("validations").then(|| {
         checked_validations(
+            state,
             &kind,
             input.get("validations"),
             &["definition", "validations"],

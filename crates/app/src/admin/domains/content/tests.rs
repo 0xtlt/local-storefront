@@ -1503,3 +1503,122 @@ fn registers_and_removes_translations() {
     );
     assert!(shop.get(&format!("translations/{product}")).is_none());
 }
+
+/// A reference to metaobjects names a definition of the shop: none, or one the shop does not
+/// have, is a user error of the metafield definition and of the metaobject field definition.
+#[test]
+fn a_metaobject_reference_names_a_definition_of_the_shop() {
+    let mut shop = rich();
+    let definition = shop
+        .keys("MetaobjectDefinition")
+        .next()
+        .unwrap()
+        .to_string();
+    let metafield = "mutation($definition: MetafieldDefinitionInput!) {
+        metafieldDefinitionCreate(definition: $definition) { createdDefinition { id } userErrors { field message code } }
+    }";
+    let create = |shop: &mut ShopState, key: &str, validations: Value| {
+        run(
+            shop,
+            metafield,
+            json!({"definition": {"name": "Author", "namespace": "custom", "key": key, "ownerType": "PRODUCT", "type": "metaobject_reference", "validations": validations}}),
+        )["data"]["metafieldDefinitionCreate"]
+            .clone()
+    };
+    let none = create(&mut shop, "author_a", json!([]));
+    assert_eq!(none["createdDefinition"], Value::Null, "{none}");
+    assert_eq!(
+        none["userErrors"][0]["message"],
+        "Validations must include 'metaobject_definition_id'."
+    );
+    let junk = create(
+        &mut shop,
+        "author_b",
+        json!([{"name": "metaobject_definition_id", "value": "REPLACE"}]),
+    );
+    assert_eq!(junk["createdDefinition"], Value::Null, "{junk}");
+    assert_eq!(junk["userErrors"][0]["code"], "INVALID_OPTION");
+    let fine = create(
+        &mut shop,
+        "author_c",
+        json!([{"name": "metaobject_definition_id", "value": definition}]),
+    );
+    assert_eq!(fine["userErrors"], json!([]), "{fine}");
+
+    let metaobject = run(
+        &mut shop,
+        "mutation { metaobjectDefinitionCreate(definition: {type: \"lsf_book\", fieldDefinitions: [{key: \"author\", type: \"list.metaobject_reference\", validations: [{name: \"metaobject_definition_id\", value: \"gid://shopify/MetaobjectDefinition/1\"}]}]}) { metaobjectDefinition { id } userErrors { field message code } } }",
+        json!({}),
+    );
+    let created = &metaobject["data"]["metaobjectDefinitionCreate"];
+    assert_eq!(created["metaobjectDefinition"], Value::Null, "{metaobject}");
+    assert_eq!(
+        created["userErrors"][0]["field"],
+        json!(["definition", "fieldDefinitions", "0", "validations"])
+    );
+}
+
+/// `Metaobject.referencedBy` lists the metafields and the metaobject fields that reference the
+/// entry.
+#[test]
+fn a_metaobject_lists_what_references_it() {
+    let mut shop = rich();
+    let product = shop.keys("Product").next().unwrap().to_string();
+    let created = run(
+        &mut shop,
+        r#"mutation {
+            metaobjectDefinitionCreate(definition: {type: "lsf_designer", fieldDefinitions: [{key: "name", type: "single_line_text_field"}]}) { metaobjectDefinition { id } userErrors { message } }
+        }"#,
+        json!({}),
+    );
+    let definition = created["data"]["metaobjectDefinitionCreate"]["metaobjectDefinition"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{created}"))
+        .to_string();
+    let entry = run(
+        &mut shop,
+        r#"mutation { metaobjectCreate(metaobject: {type: "lsf_designer", handle: "ada", fields: [{key: "name", value: "Ada"}]}) { metaobject { id } } }"#,
+        json!({}),
+    )["data"]["metaobjectCreate"]["metaobject"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let setup = run(
+        &mut shop,
+        r#"mutation($definition: String!, $product: ID!, $entry: String!) {
+            def: metafieldDefinitionCreate(definition: {name: "Designer", namespace: "lsf_test", key: "designer", ownerType: PRODUCT, type: "metaobject_reference", validations: [{name: "metaobject_definition_id", value: $definition}]}) { userErrors { message } }
+            book: metaobjectDefinitionCreate(definition: {type: "lsf_lookbook", fieldDefinitions: [{key: "by", name: "By", type: "metaobject_reference", validations: [{name: "metaobject_definition_id", value: $definition}]}]}) { userErrors { message } }
+            set: metafieldsSet(metafields: [{ownerId: $product, namespace: "lsf_test", key: "designer", type: "metaobject_reference", value: $entry}]) { userErrors { message } }
+        }"#,
+        json!({"definition": definition, "product": product, "entry": entry}),
+    );
+    assert_eq!(setup["data"]["def"]["userErrors"], json!([]), "{setup}");
+    assert_eq!(setup["data"]["book"]["userErrors"], json!([]), "{setup}");
+    assert_eq!(setup["data"]["set"]["userErrors"], json!([]), "{setup}");
+    let book = run(
+        &mut shop,
+        r#"mutation($entry: String!) { metaobjectCreate(metaobject: {type: "lsf_lookbook", handle: "spring", fields: [{key: "by", value: $entry}]}) { metaobject { id } userErrors { message } } }"#,
+        json!({"entry": entry}),
+    );
+    let book = book["data"]["metaobjectCreate"]["metaobject"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{book}"))
+        .to_string();
+    let answer = run(
+        &mut shop,
+        r#"query($id: ID!) { metaobject(id: $id) { referencedBy(first: 5) { nodes { key namespace name referencer { __typename ... on Product { id } ... on Metaobject { id } } target { ... on Metaobject { id } } } } } }"#,
+        json!({"id": entry}),
+    );
+    assert_eq!(
+        answer["data"]["metaobject"]["referencedBy"]["nodes"],
+        json!([
+            {"key": "designer", "namespace": "lsf_test", "name": "Designer", "referencer": {"__typename": "Product", "id": product}, "target": {"id": entry}},
+            {"key": "by", "namespace": "lsf_lookbook", "name": "By", "referencer": {"__typename": "Metaobject", "id": book}, "target": {"id": entry}},
+        ]),
+        "{answer}"
+    );
+    assert!(
+        answer["extensions"]["lsf"].get("defaulted").is_none(),
+        "{answer}"
+    );
+}

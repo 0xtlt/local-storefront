@@ -496,8 +496,10 @@ fn run_query(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     Ok(payload(json!({ "bulkOperation": created }), &[]))
 }
 
-/// The problems of the mutation of a bulk mutation: one mutation operation, not a bulk one.
-fn check_mutation(query: &str) -> Option<String> {
+/// The problems of the mutation of a bulk mutation: one mutation operation, valid against the
+/// schema, that runs one mutation field, not a bulk one, as Shopify's "Bulk import data" asks
+/// (one mutation per bulk operation). The wording of these messages is lsf's.
+fn check_mutation(schema: &Schema, query: &str) -> Option<String> {
     let document = match graphql::parse::parse(query) {
         Ok(document) => document,
         Err(error) => return Some(format!("Invalid mutation: {}", error.message)),
@@ -522,13 +524,27 @@ fn check_mutation(query: &str) -> Option<String> {
                 .to_string(),
         );
     }
+    if let Some(error) = graphql::validate::validate(schema, &document).first() {
+        return Some(format!("Invalid mutation: {}", error.message));
+    }
+    let named: Vec<&str> = top
+        .iter()
+        .map(|(field, _)| field.name)
+        .filter(|name| *name != "__typename")
+        .collect();
+    if named.len() != 1 {
+        return Some(format!(
+            "The mutation of a bulk operation runs a single mutation field: it has {}.",
+            named.len()
+        ));
+    }
     None
 }
 
 fn run_mutation(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let text = ctx.arg_str("mutation").unwrap_or_default().to_string();
     let path = ctx.arg_str("stagedUploadPath").unwrap_or_default();
-    if let Some(problem) = check_mutation(&text) {
+    if let Some(problem) = check_mutation(ctx.schema(), &text) {
         let error = UserError::new(&["mutation"], problem).code("INVALID_MUTATION");
         return Ok(payload(json!({"bulkOperation": null}), &[error]));
     }

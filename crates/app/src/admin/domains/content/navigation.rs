@@ -240,11 +240,7 @@ fn menu_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     }
     let state = mutation.state_mut();
     let stable = menu_gid(&handle);
-    let id = if state.contains(&stable) {
-        state.new_gid("Menu")
-    } else {
-        stable
-    };
+    let id = state.created_gid("Menu", stable);
     let now = state.timestamp();
     state.insert(value::object(json!({
         "__typename": "Menu",

@@ -21,7 +21,7 @@ use crate::admin::domains::platform::{self, access::AuthEffect};
 use crate::admin::domains::{app as app_domain, orders};
 use crate::admin::graphql::{self, Bucket, Request};
 use crate::admin::resolve::{Registry, ShopResolver};
-use crate::admin::state::{Clock, Event, ShopState, Shops};
+use crate::admin::state::{self, Clock, Event, ShopState, Shops};
 use crate::admin::throttle::{self, Plan, Throttle};
 use crate::admin::version::{self, AdminPath, ApiVersion, Resolution, Served};
 use crate::admin::webhooks::{
@@ -141,6 +141,13 @@ pub struct AdminApi {
     seed: Mutex<Shops>,
     /// The shops, by domain, the default one first.
     shops: RwLock<IndexMap<String, Arc<Mutex<LiveShop>>>>,
+    /// The slot of ids of each shop [`AdminApi::create_shop`] made
+    /// ([`ShopState::set_id_slot`]): what keeps two shops from creating the same id. Written
+    /// with the map of the shops held.
+    id_slots: Mutex<HashMap<String, u64>>,
+    /// The stamp of the app's configuration file when it was last looked at, and the scopes it
+    /// declared then (sorted): what [`AdminApi::app_scopes_changed`] compares with.
+    app_config_seen: Mutex<AppConfigSeen>,
     tokens: Mutex<Tokens>,
     webhooks: Webhooks,
     throttle: Throttle,
@@ -201,6 +208,21 @@ struct PricingPlans {
 }
 
 /// The size and the modification time of a file, to tell that it changed.
+/// The stamp of a file and the scopes the app's configuration declared ([`AdminApi::
+/// app_scopes_changed`]).
+type AppConfigSeen = (Option<(u64, u128)>, Option<Vec<String>>);
+
+/// The app's configuration file as the server starts: what a later look compares with.
+fn app_config_seen(app: Option<&App>) -> AppConfigSeen {
+    let Some(app) = app else {
+        return (None, None);
+    };
+    let stamp = scopes::app_config_file(&app.root).and_then(|file| file_stamp(&file));
+    let mut declared = app.config.scopes.clone();
+    declared.sort();
+    (stamp, Some(declared))
+}
+
 fn file_stamp(path: &std::path::Path) -> Option<(u64, u128)> {
     let metadata = std::fs::metadata(path).ok()?;
     let modified = metadata
@@ -311,6 +333,8 @@ impl AdminApi {
             registry: Registry::standard(),
             seed: Mutex::new(seed),
             shops: RwLock::new(shops),
+            id_slots: Mutex::new(HashMap::new()),
+            app_config_seen: Mutex::new(app_config_seen(app.as_ref())),
             tokens: Mutex::new(tokens),
             webhooks,
             throttle,
@@ -530,6 +554,29 @@ impl AdminApi {
             return Ok(None);
         }
         self.reload_pricing_file()
+    }
+
+    /// Looks at the app's configuration file again when it changed since it was last looked at
+    /// (a server without `--static`): when its `[access_scopes] scopes` are not those the app
+    /// was installed with at start, what to do about it ([`scopes::scopes_changed`]), once per
+    /// set of scopes. `None` otherwise, and without an app.
+    pub fn app_scopes_changed(&self) -> Option<String> {
+        let root = self.app.as_ref()?.root.clone();
+        let file = scopes::app_config_file(&root)?;
+        let stamp = file_stamp(&file);
+        let mut seen = lock(&self.app_config_seen);
+        if seen.0 == stamp {
+            return None;
+        }
+        seen.0 = stamp;
+        let (_, declared) = scopes::declared_scopes(&root)?;
+        let mut sorted = declared.clone();
+        sorted.sort();
+        if seen.1.as_ref() == Some(&sorted) {
+            return None;
+        }
+        seen.1 = Some(sorted);
+        scopes::scopes_changed(&self.scopes, &declared)
     }
 
     /// The file of `--pricing-plans`, when the plans come from one.
@@ -976,7 +1023,7 @@ impl AdminApi {
 
     /// Creates a shop seeded from the same data, with the app installed: its domain and token.
     pub fn create_shop(&self, name: &str) -> Result<(String, String), (u16, String)> {
-        let shop = lock(&self.seed)
+        let mut shop = lock(&self.seed)
             .new_shop(name)
             .map_err(|error| (422, error))?;
         let domain = shop.domain().to_string();
@@ -988,6 +1035,11 @@ impl AdminApi {
             if shops.contains_key(&domain) {
                 return Err((409, format!("the shop {domain} already exists")));
             }
+            let mut slots = lock(&self.id_slots);
+            let slot = state::id_slot(&domain, |slot| slots.values().any(|taken| *taken == slot));
+            slots.insert(domain.clone(), slot);
+            drop(slots);
+            shop.set_id_slot(slot);
             shops.insert(
                 domain.clone(),
                 Arc::new(Mutex::new(LiveShop::new(shop, false))),
@@ -1024,7 +1076,10 @@ impl AdminApi {
                         ),
                     ));
                 }
-                Some(_) => shops.shift_remove(&domain),
+                Some(_) => {
+                    lock(&self.id_slots).remove(&domain);
+                    shops.shift_remove(&domain)
+                }
             }
         };
         // The map of the shops is released before the tokens are locked (see `AdminApi`).

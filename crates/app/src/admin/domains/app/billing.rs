@@ -159,7 +159,9 @@ fn currency_of(money: Option<&Value>) -> String {
         .to_string()
 }
 
-/// The next number of a charge: subscriptions and one-time purchases share them.
+/// The next number of a charge: subscriptions and one-time purchases share them. They count from
+/// 1 in the default shop; a shop made with `POST /__lsf/admin/shops` counts from its own
+/// [`ShopState::id_offset`], so that no two shops have the same charge id, as on Shopify.
 pub(super) fn next_charge(state: &ShopState) -> u64 {
     state
         .keys("AppSubscription")
@@ -168,6 +170,7 @@ pub(super) fn next_charge(state: &ShopState) -> u64 {
         .map(|(_, id)| id)
         .max()
         .unwrap_or(0)
+        .max(state.id_offset())
         + 1
 }
 

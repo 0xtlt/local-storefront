@@ -618,6 +618,13 @@ scopes: `POST /__lsf/admin/install {"scopes": "read_orders"}` installs the app a
 (every token of the app on the shop now reads less, the printed one and those of token exchange
 and OAuth alike, and `app/scopes_update` is delivered).
 
+**Scopes changed in `shopify.app.toml`** while lsf runs do not change the installation: the app
+keeps the scopes lsf started with, as an installed app keeps what the merchant granted on
+Shopify until they approve the new ones. The terminal says so at the next request (`admin:
+shopify.app.toml changed its scopes (added …)`): restart lsf, or grant them with
+`POST /__lsf/admin/install {"scopes": "…"}` on each shop. With `--static`, the file is not looked
+at again.
+
 **Uninstall.** `POST /__lsf/admin/uninstall` does what Shopify does when a merchant uninstalls
 the app: it revokes the app's tokens on the shop, cancels its subscription, removes its
 Functions with every object that runs them, its script tags and its web pixel, stops rendering
@@ -786,6 +793,15 @@ Each place that shows extensions says why they are gone, "the app is not install
 - **Payloads** are Shopify's JSON for the topic (the REST representation of the resource), built
   from the record as the change left it, cut to `include_fields`, and checked against `filter`.
   A topic whose payload lsf does not build is logged as not sent, never sent with a made-up body.
+- **`filter` and `include_fields`**: Shopify requires every field a filter reads in
+  `include_fields` when it is set. A subscription that breaks the rule is created (with a note in
+  `extensions.lsf`), and its deliveries are `not_sent`, their `reason` naming the fields to add.
+- **Metafields**: a subscription made with `metafieldNamespaces` (or `metafields`) gets the
+  record's metafields of those namespaces in its payload, as `metafields`, in the REST shape (`id`,
+  `namespace`, `key`, `value`, `type`, `owner_id`, `owner_resource`, …). `$app` and `$app:<name>`
+  name the app's namespaces. A record with no metafields (an inventory level) gets none, and the
+  delivery's notes say so. With `include_fields`, name `metafields` there too. Shopify does not
+  document the shape; lsf follows the REST `Metafield` resource.
 - **Headers**: `X-Shopify-Topic`, `X-Shopify-Hmac-Sha256` (base64 HMAC-SHA256 of the body with the
   client secret), `X-Shopify-Shop-Domain`, `X-Shopify-API-Version` (the version the payload is
   built in: the subscription's, `2026-10` by default),
@@ -978,6 +994,11 @@ The default shop's token, for a test that calls the Admin API itself, is `shops[
 default shop [syncs to the storefront](#what-the-storefront-and-the-checkout-see): what a test
 shop changes stays in the Admin API.
 
+**Ids are unique across shops**, as on Shopify: a product, an order or a charge a test shop
+creates has an id no other shop gives, so a backend that keeps every shop in one database does
+not mix them up. The ids of a shop are a number of its name: the same name gives the same ids
+every run. The records of the store data keep their ids in every shop.
+
 ### Wait for a webhook
 
 `GET /__lsf/webhooks?topic=products/create&shop=test-1&wait=1` answers once one delivery that
@@ -988,9 +1009,9 @@ counts only the deliveries that match every filter. Filter it:
 
 - `shop=`: a test shop, by its name (`test-1`, in any case) or its domain.
 - `resource=<gid>`: the deliveries about one record (the order a test placed, the product it
-  made), as each delivery's `resource` gives it. Shops seeded from the same data give the same
-  ids, so two test shops can make the same product GID: give `shop=` with it. Ids come back
-  after a reset too: after `DELETE /__lsf/admin`, the next order has the id of the run before's,
+  made), as each delivery's `resource` gives it. Two shops never create the same id, but a
+  record of the store data has the same id in every shop: give `shop=` with it. Ids come back
+  after a reset: after `DELETE /__lsf/admin`, the next order has the id of the run before's,
   whose delivery the log still has. Give `since=` with it, or reset the log as well.
 - `since=<id>`: the deliveries after that one. Every answer has `last`, the newest id of the
   log (`0` before the first). Ids are never given twice, even after a `DELETE`: read `last`
@@ -1072,8 +1093,9 @@ it on lsf's origin in a redirect and in the header. A request through the frame'
 `embedded:` line names it), as the page's `fetch` makes it, gets
 `http://127.0.0.1:9292/admin/charges/…?signature=…&shop=test-1.myshopify.com`, which works as
 it is. An app with `embedded = false` gets that form from the API itself, wherever it is
-followed. Its fourth segment is the charge. Charges count from 1 in each shop, so approve that
-one, on its shop:
+followed. Its fourth segment is the charge, the number of its id (`AppSubscription/<n>`). Charges
+count from 1 in the default shop; a test shop counts from a number of its own, so that no two
+shops have the same charge id. Approve that one, on its shop:
 
 ```js
 const answer = await callBackend(shop, "POST", "/api/billing/request");

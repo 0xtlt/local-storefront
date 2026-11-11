@@ -491,6 +491,21 @@ impl ServerState {
         }
     }
 
+    /// Says when `shopify.app.toml` declares other scopes than those the app was installed with
+    /// at start (a server without `--static`): the tokens keep the old ones until lsf restarts
+    /// or `POST /__lsf/admin/install` grants the new ones. Said once per set of scopes, even
+    /// with `--quiet`: every request of the backend reads with the old ones meanwhile.
+    fn warn_if_scopes_changed(&self) {
+        if !self.options.watch {
+            return;
+        }
+        if let Some(admin) = &self.admin
+            && let Some(warning) = admin.api.app_scopes_changed()
+        {
+            eprintln!("admin:  {warning}");
+        }
+    }
+
     /// Reloads the store when its files changed since they were last read (`--watch`). The
     /// files are looked at every 300 ms at most, unless the caller knows that they changed
     /// (`now`). A change of checkout scenarios alone reads the files again without touching
@@ -840,6 +855,7 @@ impl ServerState {
         }
         // The plans of `--pricing-plans`, which every kind of request below reads.
         self.refresh_pricing_if_changed();
+        self.warn_if_scopes_changed();
         // The Admin API, OAuth and their control endpoints come first: a backend's request is
         // never a page.
         if let Some(reply) = admin::route(self, incoming) {

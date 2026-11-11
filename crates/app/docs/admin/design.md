@@ -714,9 +714,11 @@ field, in order:
    `Money` and `"0.0"` for `Decimal`, the seed's fixed date for `DateTime`, the first enum value,
    or an object of defaults (the first possible type of an abstract one). Its path goes into
    `extensions.lsf.defaulted` (the first 50, with `defaultedCount` past them) and its `Type.field`
-   into `defaultedFields`, except for lists and connections (empty by nature) and inside what lsf
-   builds whole (payloads, objects of defaults). An explicit `null` in a non-null field is a
-   default too.
+   into `defaultedFields`, except inside what lsf builds whole (payloads, objects of defaults). A
+   list or a connection a record lacks is reported too (`Order.agreements`, `Product.events`: lsf
+   does not compute them), unless lsf fills it as things happen (`resolve::SIMULATED_LISTS`:
+   `returns`, `refunds`, `fulfillmentOrders`, …), where missing means none. An explicit `null`
+   in a non-null field is a default too.
 
 **Connections** (`resolve::connection`): the items (GIDs or inline objects) go through the
 field's `query`, its `sortKey`, `reverse`, then `after`/`before`, then `first`/`last`. Shopify's
@@ -1176,6 +1178,14 @@ Discount API (`shopifyFunctions` example). Not verified, chosen by analogy: the 
 | inline objects with an id | `MailingAddress/<lsf-core address id>?model_name=CustomerAddress` (address book) or `Address` (order); `ImageSource`/`CollectionImage`/`ArticleImage` + lsf-core's image id; `MenuItem`: `stable_id("menu_item", "<menu>/<i>/<j>…")`; `MarketRegionCountry`: `stable_id("market_region", code)`; others `stable_id(<snake type>, …)` |
 
 Every id is a function of the data: the same data gives the same records every run.
+
+The records the Admin API creates take their ids from a counter per type (`state::first_id`),
+and in a shop other than the default one the counter is moved by the shop's slot times
+`ID_STRIDE` (`ShopState::set_id_slot`): ids are unique across shops, as on Shopify. The slot is
+a number of the domain (`state::id_slot`), the next free one when two domains share it. An id
+lsf derives from a name in the default shop (a metafield, a metaobject, a menu, a market) is a
+new one of the counter in another shop (`ShopState::created_gid`). Charges count from 1 in the
+default shop and from the shop's offset in another.
 
 ### Catalog (`domains/catalog.rs`)
 

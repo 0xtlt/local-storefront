@@ -25,6 +25,11 @@ api_version = "2026-10"
   uri = "/webhooks"
 ```
 
+The token gets these scopes and no others, as on Shopify: with `read_orders` alone, an order
+reads, but its `customer` (`read_customers`), its returns (`read_returns`) and its fulfillment
+orders (`read_merchant_managed_fulfillment_orders`) answer `ACCESS_DENIED`, which names the scope
+to add. Add the scopes your backend reads, then restart lsf or call `POST /__lsf/admin/install`.
+
 It signs webhooks with the client secret: `SHOPIFY_API_SECRET` of the environment or of the
 app's `.env`, where `shopify app env pull` writes it. In the app's folder:
 
@@ -49,6 +54,9 @@ ready:  http://127.0.0.1:9292/   (status and control API: http://127.0.0.1:9292/
 `--only admin` serves the Admin API alone. `--app-url` is where your backend listens: webhooks
 go there, and nowhere off this machine. `app dev --app . --app-url …` serves the app's checkout
 too.
+
+What the Admin API creates lives in memory: a restart of lsf puts every shop back to the store
+data. The tokens survive it: the backend's stored sessions keep working.
 
 ## 2. Query it
 

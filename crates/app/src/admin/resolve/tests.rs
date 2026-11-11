@@ -336,12 +336,13 @@ fn defaults_are_reported() {
             .count()
             <= 60
     );
+    // lsf keeps no `Event`s: the empty list is reported, as every list lsf does not compute.
     assert_eq!(product["events"]["nodes"], json!([]));
     assert_eq!(
         answer["extensions"]["lsf"],
         json!({
-            "defaulted": ["productByHandle.category"],
-            "defaultedFields": ["Product.category"],
+            "defaulted": ["productByHandle.category", "productByHandle.events"],
+            "defaultedFields": ["Product.category", "Product.events"],
         })
     );
 }
@@ -955,4 +956,72 @@ fn deprecated_fields_keep_what_set_them_apart_from_their_successors() {
         answer["data"]["order"]["shippingLines"]["nodes"][0]["discountedPrice"]["amount"],
         json!("8.0")
     );
+}
+
+/// An input list longer than 250 items is refused before anything runs, as Shopify refuses it,
+/// whether the query writes it or a variable gives it: `nodes(ids:)` does not answer `null`s.
+#[test]
+fn input_lists_take_250_items_at_most() {
+    let mut shop = demo();
+    let ids: Vec<String> = (0..251)
+        .map(|n| format!("\"gid://shopify/Product/{n}\""))
+        .collect();
+    let written = run(
+        &mut shop,
+        &format!("{{ nodes(ids: [{}]) {{ id }} }}", ids.join(",")),
+    );
+    assert_eq!(written["data"], Value::Null, "{written}");
+    assert_eq!(
+        written["errors"][0]["extensions"]["code"],
+        json!("MAX_INPUT_SIZE_EXCEEDED")
+    );
+    assert_eq!(
+        written["errors"][0]["message"],
+        json!("The input array size of 251 is greater than the maximum allowed of 250.")
+    );
+    let mut resolver = ShopResolver::new(&mut shop, Registry::standard());
+    let ids: Vec<String> = (0..300)
+        .map(|n| format!("gid://shopify/Product/{n}"))
+        .collect();
+    let variable = graphql::run(
+        crate::admin::schema::admin(),
+        &mut resolver,
+        &Request::new("query($ids: [ID!]!) { nodes(ids: $ids) { id } }")
+            .with_variables(json!({"ids": ids})),
+        None,
+    )
+    .to_json();
+    assert_eq!(
+        variable["errors"][0]["extensions"]["code"],
+        json!("MAX_INPUT_SIZE_EXCEEDED"),
+        "{variable}"
+    );
+    let ids: Vec<String> = (0..250)
+        .map(|n| format!("\"gid://shopify/Product/{n}\""))
+        .collect();
+    let fine = run(
+        &mut shop,
+        &format!("{{ nodes(ids: [{}]) {{ id }} }}", ids.join(",")),
+    );
+    assert_eq!(fine["data"]["nodes"].as_array().map(Vec::len), Some(250));
+}
+
+/// A list lsf does not compute answers empty and is reported in `extensions.lsf.defaulted`, so
+/// that nobody reads "no agreements" for "lsf does not know"; one lsf fills as things happen
+/// (`returns`) is not.
+#[test]
+fn lists_lsf_does_not_compute_are_reported() {
+    let mut shop = demo();
+    let answer = run(
+        &mut shop,
+        "{ orders(first: 1) { nodes { agreements(first: 5) { nodes { id } } events(first: 5) { nodes { id } } returns(first: 5) { nodes { id } } } } }",
+    );
+    let order = &answer["data"]["orders"]["nodes"][0];
+    assert_eq!(order["agreements"]["nodes"], json!([]), "{answer}");
+    let fields = answer["extensions"]["lsf"]["defaultedFields"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{answer}"));
+    assert!(fields.contains(&json!("Order.agreements")), "{answer}");
+    assert!(fields.contains(&json!("Order.events")), "{answer}");
+    assert!(!fields.contains(&json!("Order.returns")), "{answer}");
 }

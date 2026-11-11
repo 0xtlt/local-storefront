@@ -11,13 +11,18 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
   `locations` and `extensions.code`, `you must provide one of first or last`, `first cannot
   exceed 250. …`, `ACCESS_DENIED`, `THROTTLED`, `MAX_COST_EXCEEDED`. A mutation's validation errors
   are its `userErrors`, and a mutation that fails changes nothing.
+- An input list takes 250 items at most, as on Shopify: `nodes(ids:)` with 251 ids, or any
+  longer list of an argument or a variable, is refused before anything runs, with
+  `MAX_INPUT_SIZE_EXCEEDED` (`The input array size of 251 is greater than the maximum allowed
+  of 250.`; the wording is not checked against a live shop).
 - `extensions.cost`: `requestedQueryCost`, `actualQueryCost` and `throttleStatus`, as Shopify
   computes them, from a leaky bucket per shop and app (`--admin-throttle`). With the header
   `Shopify-GraphQL-Cost-Debug: 1`, also `fields`, the cost of each field as Shopify lists it:
   its `path`, `definedCost`, `requestedTotalCost` and `requestedChildrenCost`, the children
   first.
 - Ids: a record lsf creates has a 13-digit id, as Shopify's do (`gid://shopify/DraftOrder/
-  4…`), the same every run for the same requests.
+  4…`), the same every run for the same requests. In a test shop the ids have up to 14 digits
+  and no other shop gives them ([a shop per test](admin.md#a-shop-per-test)).
 - `extensions.search`: Shopify's warnings when a `query:` names a field the connection does not
   have ("Invalid search field for this query."); the field is then ignored, as on Shopify.
 - Cursors are opaque, and resume as Shopify's do: right after their item in the connection's
@@ -25,7 +30,9 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
   and `after: endCursor` answers the next ones, not those a page further).
 - `extensions.lsf`, only lsf's, only when there is something to say: `defaulted`, the paths of
   the fields answered with a default because the store data does not give them (and
-  `defaultedFields`, as `Type.field`), and `notes`, what lsf did not simulate in the request (an
+  `defaultedFields`, as `Type.field`), the empty lists lsf does not compute included
+  (`Order.agreements`, `Order.events`; not `Order.returns`, which lsf fills as returns are made),
+  and `notes`, what lsf did not simulate in the request (an
   input it ignored, a search filter it does not read, a file source it did not download), and
   `localConfirmationUrl`, the page of a billing mutation's `confirmationUrl` on lsf's origin
   ([billing](#billing-discounts-functions-and-bulk-operations)).
@@ -805,7 +812,10 @@ shop, the app's installation).
 namespaces and for reference types with metafields), `metafieldDefinitionPin`,
 `metafieldDefinitionUnpin`; `metafieldDefinitions(ownerType:, namespace:, key:, pinnedStatus:,
 sortKey:)` and `metafieldDefinition(identifier:)`. A definition created where metafields exist
-takes them and checks them (`validationStatus`). `capabilities` are kept as given; of their
+takes them and checks them (`validationStatus`). A `metaobject_reference` (and its list) needs
+`metaobject_definition_id`, a `mixed_reference` `metaobject_definition_ids`, naming definitions
+the shop has: otherwise an `INVALID_OPTION` user error, for metafield definitions and the field
+definitions of metaobjects alike (the wording of the message is lsf's). `capabilities` are kept as given; of their
 effects, only `cartToOrderCopyable` of an ORDER definition is simulated: it copies a cart
 metafield onto the order placed from the cart ([admin](admin.md#what-the-storefront-and-the-checkout-see)).
 The order definitions `shopify.app.toml` declares (`[order.metafields.app.<key>]`) are
@@ -820,7 +830,8 @@ created, updated and deleted; the entries follow), `metaobjectDefinitionDelete` 
 entries), `metaobjectCreate`, `metaobjectUpdate`, `metaobjectUpsert`, `metaobjectDelete`,
 `metaobjectBulkDelete` (done at once: its `job` is `done`); `metaobjects(type:)` with `sortKey`
 and `query` (`fields.<key>:value`), `metaobjectByHandle`, `metaobjectDefinitionByType`,
-`Metaobject.field(key:)` and `values`.
+`Metaobject.field(key:)` and `values`, and `Metaobject.referencedBy`: the metafields and the
+metaobject fields that reference the entry (`namespace` is the metaobject's type for a field).
 
 - `$app:author` is the app's type (`app--<app id>--author` in the answers, as on Shopify). Its
   entries reach the storefront: the theme reads them as `metaobjects['app--<app id>--author']`
@@ -1019,7 +1030,8 @@ in a route the front end fetches (["Billing"](admin.md#javascript-the-react-rout
   sends the merchant back to `returnUrl` with `charge_id=<n>`, as Shopify does; a `returnUrl`
   on Shopify's admin or on the app is the app in lsf's admin. In a test,
   `POST /__lsf/admin/charges/<n>/approve?shop=<shop>` (or `/decline`) does it without the page.
-  Charges count from 1 in each shop, on the shop of the URL (see
+  `<n>` is the number of the charge's id; charges count from 1 in the default shop and from a
+  number of its own in a test shop, so that ids are unique across shops. Use the shop of the URL (see
   [approve a charge](admin.md#approve-a-charge)).
 - Approved, a subscription is `ACTIVE` and the app's other active subscription `CANCELLED`;
   `currentAppInstallation { activeSubscriptions oneTimePurchases allSubscriptions }` list them. A
@@ -1090,7 +1102,9 @@ reinstall brings none back ([uninstall](admin.md#tokens)). Titles are the Functi
 connection, and writes JSON Lines as Shopify does (one line per node, nested connections on lines
 of their own with `__parentId`); Shopify's restrictions are checked (a connection, five at most,
 two levels deep, no top-level `node`). `bulkOperationRunMutation` runs the mutation once per line
-of a staged upload. Both finish within the request: the payload says `CREATED`, as Shopify's
+of a staged upload; a mutation the schema refuses, or one with no mutation field or more than one,
+is an `INVALID_MUTATION` user error and starts nothing (the messages are lsf's). lsf does not
+check Shopify's list of the mutations a bulk operation may run. Both finish within the request: the payload says `CREATED`, as Shopify's
 does, the next query reads `COMPLETED` with its `url`, `objectCount` and `fileSize`, and
 `bulk_operations/finish` is delivered. The file is at
 `http://127.0.0.1:9292/__lsf/admin/bulk/<shop>/<n>.jsonl`. `bulkOperation`, `bulkOperations`

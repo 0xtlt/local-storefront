@@ -280,9 +280,52 @@ impl Webhooks {
             at: event.at,
             resource: Some(&event.gid),
         };
+        let gone = event.topic.ends_with("/delete") || event.topic == "inventory_levels/disconnect";
         subscriptions
             .iter()
-            .map(|subscription| self.deliver(subscription, &occurrence, payload.as_ref()))
+            .map(|subscription| {
+                let Ok(body) = &payload else {
+                    return self.deliver(subscription, &occurrence, payload.as_ref(), Vec::new());
+                };
+                if !subscription.wants_metafields() {
+                    return self.deliver(subscription, &occurrence, Ok(body), Vec::new());
+                }
+                // The metafields the subscription names, read from the record as the change
+                // left it. A `…/delete` payload is the id alone, as on Shopify.
+                let owner = (!gone)
+                    .then(|| lookup.record(&event.gid))
+                    .flatten()
+                    .filter(|_| body.is_object());
+                let wanted = |namespace: &str, key: &str| subscription.wants_metafield(namespace, key);
+                match owner.and_then(|owner| payload::metafields(&owner, &lookup, &wanted)) {
+                    Some(metafields) => {
+                        let mut body = body.clone();
+                        if let Some(object) = body.as_object_mut() {
+                            object.insert("metafields".to_string(), metafields);
+                        }
+                        let cut = !subscription.include_fields.is_empty()
+                            && !subscription
+                                .include_fields
+                                .iter()
+                                .any(|field| field.trim() == "metafields");
+                        let notes = if cut {
+                            vec!["includeFields leaves `metafields` out, so the payload has none: add `metafields` to includeFields (lsf applies includeFields to them; Shopify does not document it)".to_string()]
+                        } else {
+                            Vec::new()
+                        };
+                        self.deliver(subscription, &occurrence, Ok(&body), notes)
+                    }
+                    None => self.deliver(
+                        subscription,
+                        &occurrence,
+                        Ok(body),
+                        vec![format!(
+                            "the subscription names metafields, and the payload of `{}` has none: what `{}` is has no metafields, or lsf does not add them to this topic",
+                            event.topic, event.gid
+                        )],
+                    ),
+                }
+            })
             .collect()
     }
 
@@ -319,12 +362,25 @@ impl Webhooks {
                 created_at: trigger.at,
                 updated_at: trigger.at,
             };
-            return vec![self.deliver_to(&subscription, None, &occurrence, Ok(trigger.payload))];
+            return vec![self.deliver_to(
+                &subscription,
+                None,
+                &occurrence,
+                Ok(trigger.payload),
+                Vec::new(),
+            )];
         }
         self.subscriptions(trigger.shop)
             .iter()
             .filter(|subscription| subscription.topic == trigger.topic)
-            .map(|subscription| self.deliver(subscription, &occurrence, Ok(trigger.payload)))
+            .map(|subscription| {
+                let notes = if subscription.wants_metafields() {
+                    vec!["a triggered webhook is the topic's sample: the metafields the subscription names are not added".to_string()]
+                } else {
+                    Vec::new()
+                };
+                self.deliver(subscription, &occurrence, Ok(trigger.payload), notes)
+            })
             .collect()
     }
 
@@ -333,12 +389,14 @@ impl Webhooks {
         subscription: &Subscription,
         occurrence: &Occurrence,
         payload: Result<&Value, &String>,
+        notes: Vec<String>,
     ) -> u64 {
         self.deliver_to(
             subscription,
             Some(SubscriptionRef::of(subscription)),
             occurrence,
             payload,
+            notes,
         )
     }
 
@@ -352,6 +410,7 @@ impl Webhooks {
         reference: Option<SubscriptionRef>,
         occurrence: &Occurrence,
         payload: Result<&Value, &String>,
+        mut notes: Vec<String>,
     ) -> u64 {
         let Occurrence {
             topic,
@@ -360,7 +419,6 @@ impl Webhooks {
             at,
             resource,
         } = *occurrence;
-        let mut notes = Vec::new();
         let (version, note) = match self.payload_version {
             Some(version) => (
                 version,
@@ -429,7 +487,21 @@ impl Webhooks {
         }
         let body = payload::include_fields(payload, &subscription.include_fields);
         let mut filtered_out = None;
-        if let Some(filter) = &subscription.filter {
+        let left_out = subscription.filter_fields_left_out();
+        if let Some(filter) = &subscription.filter
+            && !left_out.is_empty()
+        {
+            // "If `include_fields` is set, all fields referenced in the filter must also appear
+            // in `include_fields`" (shopify.dev, "Filter webhook deliveries"). What Shopify does
+            // otherwise is not documented; a filter on a field the payload lacks delivers
+            // nothing, so lsf delivers nothing either, and says why.
+            let fields: Vec<String> = left_out.iter().map(|field| format!("`{field}`")).collect();
+            filtered_out = Some(format!(
+                "the filter `{filter}` reads {}, which includeFields leaves out of the payload: Shopify requires every field of a filter in includeFields; add {} to includeFields",
+                fields.join(", "),
+                fields.join(", ")
+            ));
+        } else if let Some(filter) = &subscription.filter {
             match &self.filter {
                 None => notes.push(format!(
                     "the filter `{filter}` was not evaluated: lsf delivered as if it matched"

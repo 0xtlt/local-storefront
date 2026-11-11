@@ -1288,6 +1288,34 @@ fn a_bulk_mutation_runs_once_per_line_of_its_staged_upload() {
         data(&missing, "bulkOperationRunMutation")["userErrors"][0]["code"],
         json!("NO_SUCH_FILE")
     );
+    // A mutation the schema refuses, or one with no mutation field or two, starts nothing.
+    for (invalid, says) in [
+        ("mutation { shop { id } }", "Invalid mutation: "),
+        (
+            "mutation { productNoSuchField(input: {}) { userErrors { message } } }",
+            "Invalid mutation: ",
+        ),
+        (
+            "mutation($product: ProductCreateInput!) { a: productCreate(product: $product) { product { id } } b: productCreate(product: $product) { product { id } } }",
+            "a single mutation field",
+        ),
+    ] {
+        let refused = run(
+            &mut shop,
+            r#"mutation($mutation: String!, $path: String!) { bulkOperationRunMutation(mutation: $mutation, stagedUploadPath: $path) { bulkOperation { id } userErrors { field message code } } }"#,
+            json!({"mutation": invalid, "path": key}),
+        );
+        let payload = data(&refused, "bulkOperationRunMutation");
+        assert_eq!(payload["bulkOperation"], Value::Null, "{refused}");
+        assert_eq!(payload["userErrors"][0]["code"], json!("INVALID_MUTATION"));
+        assert!(
+            payload["userErrors"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains(says),
+            "{refused}"
+        );
+    }
 }
 
 #[test]

@@ -221,7 +221,32 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     let created = webhooks_of(mutation)?
         .registry()
         .create(&shop, &topic, input, &version, now);
+    note_filter_fields(mutation, &created);
     Ok(answered(created))
+}
+
+/// Says when the filter of a subscription reads a field its `includeFields` leaves out. Shopify
+/// creates such a subscription ("An invalid field ... allows the subscription to be created but
+/// suppresses all deliveries", shopify.dev, "Filter webhook deliveries"), and requires "all
+/// fields referenced in the filter" in `include_fields`: its deliveries are `not_sent`, and
+/// their reason names the fields.
+fn note_filter_fields(
+    mutation: &mut Mutation<'_>,
+    result: &Result<Subscription, Vec<RegistryError>>,
+) {
+    let Ok(subscription) = result else {
+        return;
+    };
+    let left_out = subscription.filter_fields_left_out();
+    if left_out.is_empty() {
+        return;
+    }
+    let fields: Vec<String> = left_out.iter().map(|field| format!("`{field}`")).collect();
+    mutation.note(format!(
+        "webhookSubscription: the filter reads {}, which includeFields leaves out: Shopify requires every field of a filter in includeFields, so this subscription delivers nothing. Add {} to includeFields.",
+        fields.join(", "),
+        fields.join(", ")
+    ));
 }
 
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
@@ -235,6 +260,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     let updated = webhooks_of(mutation)?
         .registry()
         .update(&shop, &id, input, chrono::Utc::now());
+    note_filter_fields(mutation, &updated);
     Ok(answered(updated))
 }
 
