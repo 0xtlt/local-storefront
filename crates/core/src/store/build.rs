@@ -584,6 +584,11 @@ fn explain_left_out(diagnostics: &mut Diagnostics, left_out: &[LeftOut]) {
 fn resolve_references(builder: &mut Builder<'_>, store: &Store) {
     for (origin, reference) in std::mem::take(&mut builder.references) {
         let text = reference.value.as_str().unwrap_or_default();
+        // A global id is what the Admin API writes: one that names an entity deleted since
+        // reads nothing, as on Shopify, and is no mistake of the data.
+        if text.starts_with("gid://") {
+            continue;
+        }
         let at = Origin::new(
             origin.file.clone(),
             format!("{}{}", origin.pointer, reference.pointer),
@@ -695,6 +700,22 @@ fn resolve_references(builder: &mut Builder<'_>, store: &Store) {
         } else {
             text.to_string()
         };
+        let ambiguous = reference.kind == "article_reference"
+            && !text.contains('/')
+            && (0..store.blogs.len())
+                .filter(|blog| store.article_index(*blog, text).is_some())
+                .count()
+                > 1;
+        if ambiguous {
+            builder
+                .error(
+                    "unknown_reference",
+                    &at,
+                    format!("several blogs have an article \"{text}\": this article_reference names none of them"),
+                )
+                .hint("name the article with its blog: \"<blog>/<article>\"");
+            continue;
+        }
         let diagnostic = builder.error(
             "unknown_reference",
             &at,

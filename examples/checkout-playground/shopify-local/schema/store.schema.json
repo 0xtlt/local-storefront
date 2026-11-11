@@ -1137,7 +1137,7 @@
           "default": null
         },
         "available": {
-          "description": "Whether the variant can be bought. Derived from the inventory fields when omitted.",
+          "description": "Whether the variant can be bought. Derived from the inventory fields when omitted.\n`false` alone makes the variant tracked and out of stock, as a sold-out variant is on\nShopify.",
           "type": [
             "boolean",
             "null"
@@ -1154,7 +1154,7 @@
           "default": null
         },
         "inventory_tracked": {
-          "description": "Set to `false` to disable inventory tracking (the variant is then always available).\nDefaults to `true` when `inventory_quantity` is set, `false` otherwise.",
+          "description": "Set to `false` to disable inventory tracking (the variant is then always available).\nDefaults to `true` when `inventory_quantity` is set or `available` is `false`, `false`\notherwise.",
           "type": [
             "boolean",
             "null"

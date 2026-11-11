@@ -227,7 +227,6 @@ pub fn video_from_src(site: &SiteRef, src: &str) -> Media {
 }
 
 /// The metafield types whose value is a measurement: a number and its unit.
-
 pub fn is_measurement(kind: &str) -> bool {
     lsf_core::store::metafield_types::is_measurement(kind)
 }

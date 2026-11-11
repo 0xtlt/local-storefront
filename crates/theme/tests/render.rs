@@ -829,7 +829,11 @@ fn a_liquid_asset_gets_a_new_url_when_the_settings_change() {
     assert_eq!(url(fixture.store.clone()).0, colors);
     let options = LoadOptions {
         theme_locales: vec!["en".to_string(), "fr".to_string()],
-        ..LoadOptions::default()
+        settings_schema: fixture
+            .renderer
+            .theme()
+            .json("config/settings_schema.json")
+            .unwrap(),
     };
     let overlay = serde_json::json!({"theme_settings": {"page_size": 3}});
     let (other, diagnostics) =
@@ -1682,7 +1686,14 @@ fn an_article_handle_that_two_blogs_have_names_neither() {
         &LoadOptions::default(),
         Some(&overlay),
     );
-    assert!(diagnostics.is_empty(), "{diagnostics}");
+    // `validate` says so: the loose handle names no article.
+    assert_eq!(diagnostics.error_count(), 1, "{diagnostics}");
+    let error = &diagnostics.items[0];
+    assert_eq!(error.path, "/metaobjects/note/0/fields/loose/value");
+    assert!(
+        error.message.starts_with("several blogs have an article"),
+        "{diagnostics}"
+    );
     let fixture = Fixture {
         store: Arc::new(store),
         ..fixture()
