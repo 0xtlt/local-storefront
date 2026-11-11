@@ -337,10 +337,16 @@ fn check_one(
                 Json::Number(number) => number.as_f64().map(|n| (n * 100.0).round() as i64),
                 _ => None,
             });
-            let currency = value.get("currency_code").and_then(Json::as_str);
-            if amount.is_none() || !currency.is_some_and(|code| code.len() == 3) {
+            // Without a currency, the shop's.
+            let currency = value.get("currency_code");
+            let currency_ok = currency.is_none_or(|code| {
+                code.as_str().is_some_and(|code| {
+                    code.len() == 3 && code.chars().all(|c| c.is_ascii_alphabetic())
+                })
+            });
+            if amount.is_none() || !currency_ok {
                 wrong(format!(
-                    "money is an \"amount\" and a \"currency_code\", not {}",
+                    "money is an \"amount\" and a \"currency_code\" (the shop's when left out), not {}",
                     describe(value)
                 ));
             }

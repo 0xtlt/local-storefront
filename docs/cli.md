@@ -568,7 +568,11 @@ alone exit with `0`.
 `npx local-storefront check`
 
 Parses every Liquid file of the theme and reports what would not render on Shopify:
-syntax errors, unknown filters, what Shopify's strict parser rejects. It reads `layout/`,
+syntax errors, unknown filters, what Shopify's strict parser rejects, and what the theme names
+but does not have: a snippet of `render` or `include` (`missing_snippet`), a section of
+`{% section %}` or of a JSON template (`missing_section`), a group of `{% sections %}`
+(`missing_section_group`), a key of the `t` filter that the default locale does not have
+(`missing_translation`). Only names written as literals are checked. It reads `layout/`,
 `templates/`, `sections/`, `blocks/`, `snippets/`, and the `liquid` settings of the JSON
 templates, section groups and `config/settings_data.json`. Guide:
 [strict Liquid](strict-liquid.md).

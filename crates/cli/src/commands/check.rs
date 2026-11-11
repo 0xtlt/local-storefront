@@ -11,6 +11,8 @@ use serde::Serialize;
 
 use crate::output::count;
 
+mod references;
+
 #[derive(Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum Format {
     /// For a person: a line per problem, with indented details.
@@ -820,6 +822,8 @@ fn check_theme(
             note,
         ));
     }
+    // The keys of the `t` filter are looked up in the default locale.
+    let locale = references::default_locale(&theme);
     for directory in [
         "layout",
         "templates",
@@ -871,6 +875,14 @@ fn check_theme(
                     "the block tag can only be used in layout/ and templates/ files".to_string(),
                 );
             }
+            for missing in references::in_liquid(&theme, &source, locale.as_deref()) {
+                tally.problem_with_hint(
+                    missing.code,
+                    Location::file(&path, Some(missing.line)),
+                    missing.message,
+                    missing.hint,
+                );
+            }
             let mut reported = Vec::new();
             for (filter, line) in filters_used(&source) {
                 if env.filter(&filter).is_none() && !reported.contains(&filter) {
@@ -911,6 +923,16 @@ fn check_theme(
             if holds_settings(&path) {
                 check_liquid_settings(&theme, &env, &path, args.writes(), &mut tally);
             }
+            if matches!(directory, "templates" | "templates/customers" | "sections") {
+                for missing in references::in_json_template(&theme, &path) {
+                    tally.problem_with_hint(
+                        missing.code,
+                        Location::file(&path, Some(missing.line)),
+                        missing.message,
+                        missing.hint,
+                    );
+                }
+            }
         }
     }
     Ok((files, tally))
@@ -940,6 +962,95 @@ mod tests {
         // Nothing close: no guess.
         assert_eq!(meant("frobnicate"), None);
         assert_eq!(meant("nope"), None);
+    }
+
+    #[test]
+    fn what_the_theme_names_and_does_not_have_is_a_problem() {
+        let root = std::env::temp_dir().join(format!("lsf-check-names-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write(
+            "layout/theme.liquid",
+            "{% sections 'header-group' %}{% sections 'footr-group' %}{{ content_for_layout }}",
+        );
+        write(
+            "sections/header-group.json",
+            r#"{"type": "header", "name": "Header", "sections": {}, "order": []}"#,
+        );
+        write("sections/main-product.liquid", "{% render 'price' %}");
+        write("snippets/price.liquid", "{{ 'products.price' | t }}");
+        write(
+            "snippets/card.liquid",
+            "<p>\n{% render 'prcie' %}\n{{ 'products.foo' | t }}\n{{ 'products.price' | t }}\n{% render 'price' %}",
+        );
+        write(
+            "locales/en.default.json",
+            r#"{"products": {"price": "Price"}}"#,
+        );
+        write(
+            "templates/product.json",
+            r#"{
+  "sections": {
+    "main": {
+      "type": "main-prodcut"
+    }
+  },
+  "order": ["main"]
+}"#,
+        );
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(String, String, u64, String)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["code"].as_str().unwrap().to_string(),
+                    d["file"].as_str().unwrap().to_string(),
+                    d["line"].as_u64().unwrap_or(0),
+                    d["hint"].as_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        let expected = |code: &str, file: &str, line: u64, hint: &str| {
+            (code.to_string(), file.to_string(), line, hint.to_string())
+        };
+        assert_eq!(
+            found,
+            [
+                expected("missing_section_group", "layout/theme.liquid", 1, ""),
+                expected(
+                    "missing_snippet",
+                    "snippets/card.liquid",
+                    2,
+                    "did you mean \"price\"?"
+                ),
+                expected(
+                    "missing_translation",
+                    "snippets/card.liquid",
+                    3,
+                    "add it to locales/en.default.json"
+                ),
+                expected(
+                    "missing_section",
+                    "templates/product.json",
+                    4,
+                    "did you mean \"main-product\"?"
+                ),
+            ],
+            "{report:#}"
+        );
+        assert_eq!(report["problems"], 4);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
