@@ -324,7 +324,7 @@ pub(super) fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target)
     if let Some(reason) = &rendered.not_found
         && !visit.state.options.quiet
     {
-        eprintln!("    404: {reason}");
+        eprintln!("    {}: {reason}", rendered.status);
     }
     visit.state.timings.add(&rendered, target);
     let timings = timing::of_render(&rendered.timings, visit.state.options.timings);

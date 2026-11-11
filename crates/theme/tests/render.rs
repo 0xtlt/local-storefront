@@ -412,6 +412,26 @@ fn section_rendering_api() {
             .starts_with("<div id=\"shopify-section-footer\"")
     );
     assert!(json["nope"].is_null());
+    // What is missing is said, with the sections the page has.
+    let reason = many.not_found.as_deref().expect("a reason");
+    assert!(
+        reason.starts_with("no section \"nope\" on the page of template index"),
+        "{reason}"
+    );
+    assert!(reason.contains(&id), "{reason}");
+    assert!(one.not_found.is_none());
+
+    let typo = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &Target::Section(id.replace("__hero", "__heor")),
+    );
+    assert_eq!(typo.status, 404);
+    let reason = typo.not_found.as_deref().expect("a reason");
+    assert!(
+        reason.contains(&format!("did you mean \"{id}\"?")),
+        "{reason}"
+    );
 
     // The id of a template section names its template, so another page can ask for it: a
     // cart drawer on a product page loads a section of the cart template this way.

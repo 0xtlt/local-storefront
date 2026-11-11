@@ -362,6 +362,8 @@ impl Renderer {
         // What Shopify preloads on its own comes first, then what the theme asks for.
         let mut preloads = Vec::new();
         let mut timings = Timings::default();
+        // The sections the Section Rendering API asks for and the page does not have.
+        let mut missing_sections = Vec::new();
         let (status, content_type, body) = match target {
             Target::Page => {
                 let template_started = Instant::now();
@@ -390,13 +392,19 @@ impl Renderer {
             }
             Target::Section(id) => match self.render_section_by_id(&ctx, &page, id) {
                 Some(html) => (200, "text/html; charset=utf-8", html),
-                None => (404, "text/html; charset=utf-8", String::new()),
+                None => {
+                    missing_sections.push(id.clone());
+                    (404, "text/html; charset=utf-8", String::new())
+                }
             },
             Target::Sections(ids) => {
                 let sections: serde_json::Map<String, serde_json::Value> = ids
                     .iter()
                     .map(|id| {
                         let html = self.render_section_by_id(&ctx, &page, id);
+                        if html.is_none() {
+                            missing_sections.push(id.clone());
+                        }
                         (
                             id.clone(),
                             html.map_or(serde_json::Value::Null, serde_json::Value::String),
@@ -438,6 +446,9 @@ impl Renderer {
             template: page.template.full(),
             not_found: match (&page.resource, target) {
                 (Resource::NotFound(reason), Target::Page) => Some(reason.clone()),
+                _ if !missing_sections.is_empty() => {
+                    Some(self.missing_sections_reason(&page, &missing_sections))
+                }
                 _ => None,
             },
             timings: Timings {
@@ -701,6 +712,45 @@ impl Renderer {
             ));
         }
         None
+    }
+
+    /// Why the Section Rendering API found no section: the ids asked for, and the ids the page
+    /// has (its template's sections, those of the section groups).
+    fn missing_sections_reason(&self, page: &Page, missing: &[String]) -> String {
+        let name = page.template.full();
+        let mut ids = Vec::new();
+        if let Some(template) = self.template_json(page) {
+            for key in &template.order {
+                ids.push(template_section_id(&name, key));
+            }
+        }
+        for file in self.theme.files().list("sections").iter() {
+            let Some(group_name) = file.strip_suffix(".json") else {
+                continue;
+            };
+            if let Ok(Some(group)) = self.theme.template_json(&format!("sections/{file}")) {
+                let prefix = crate::tags::group_id_prefix(group_name);
+                ids.extend(group.order.iter().map(|key| format!("{prefix}{key}")));
+            }
+        }
+        let quoted: Vec<String> = missing.iter().map(|id| format!("\"{id}\"")).collect();
+        let mut reason = format!(
+            "no section {} on the page of template {name}",
+            quoted.join(", ")
+        );
+        let hint = missing
+            .iter()
+            .find_map(|id| lsf_core::util::closest_match(id, ids.iter().map(String::as_str)));
+        if let Some(close) = hint {
+            reason.push_str(&format!(" (did you mean \"{close}\"?)"));
+        }
+        if ids.is_empty() {
+            reason.push_str("; it has no JSON template or section group sections");
+        } else {
+            reason.push_str(&format!("; its sections are {}", ids.join(", ")));
+        }
+        reason.push_str(", or the name of any file of sections/");
+        reason
     }
 
     /// Renders a piece of Liquid as if it were part of the page: with the page's global objects
