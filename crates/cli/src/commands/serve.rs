@@ -237,9 +237,10 @@ async fn start_frame_proxy(admin: &crate::server::admin::Admin, host: &str, lsf:
         return;
     };
     let origin = format!("http://{address}");
-    let proxy = std::sync::Arc::new(crate::server::frame_proxy::FrameProxy::new(
-        &upstream, &origin, lsf,
-    ));
+    let proxy = std::sync::Arc::new(
+        crate::server::frame_proxy::FrameProxy::new(&upstream, &origin, lsf)
+            .with_watch(admin.api.backend_watch()),
+    );
     admin.api.set_frame_origin(Some(origin));
     tokio::spawn(crate::server::frame_proxy::serve(proxy, listener));
 }

@@ -383,8 +383,9 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
     const csp = page.headers.get("content-security-policy");
     assert(!/frame-ancestors/.test(csp ?? ""), "the page through lsf's frame does not let lsf's admin frame it", csp);
     const scripts = [...body.matchAll(/<script src="([^"]+)"/g)].map((match) => match[1]);
-    // Shopify's tag is lsf's too, through the proxy.
-    assert(scripts[0] === `${lsf}/__lsf/admin/app-bridge.js` && scripts[1] === `${lsf}/__lsf/admin/app-bridge.js`, "lsf's App Bridge is not the first script", scripts);
+    // Shopify's tag is lsf's too, through the proxy, marked for lsf's App Bridge to put the CDN's
+    // URL back before React hydrates the page.
+    assert(scripts[0] === `${lsf}/__lsf/admin/app-bridge.js` && scripts[1] === `${lsf}/__lsf/admin/app-bridge.js#lsf-cdn`, "lsf's App Bridge is not the first script", scripts);
     for (const part of ["<s-app-nav>", "<ui-title-bar", "data-save-bar", "<ui-modal", 'href="shopify://admin/products"']) {
       assert(body.includes(part), `the page has no ${part}`);
     }
