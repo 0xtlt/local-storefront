@@ -294,6 +294,10 @@ pub struct ShopState {
     by_type: HashMap<String, IndexSet<String>>,
     /// The next numeric id of each group of types (see [`counter_group`]).
     counters: HashMap<String, u64>,
+    /// What the ids of the records this shop creates are moved by, so that they are unique
+    /// across the shops of the server, as Shopify's are: 0 for the default shop, a multiple of
+    /// [`ID_STRIDE`] for a shop made with `POST /__lsf/admin/shops` ([`ShopState::set_id_slot`]).
+    id_offset: u64,
     clock: Clock,
     events: Vec<Event>,
     /// How many events the shop emitted, ever (a reset does not restart it). Event ids are random
@@ -435,6 +439,7 @@ impl ShopState {
             records: IndexMap::new(),
             by_type: HashMap::new(),
             counters: HashMap::new(),
+            id_offset: 0,
             clock,
             events: Vec::new(),
             emitted: 0,
@@ -763,7 +768,7 @@ impl ShopState {
             let group = counter_group(gid_type);
             let before = self.counters.get(&group).copied();
             let next = before
-                .unwrap_or_else(|| first_id(&group))
+                .unwrap_or_else(|| first_id(&group) + self.id_offset)
                 .max(id.saturating_add(1));
             if before != Some(next) {
                 self.counters.insert(group.clone(), next);
@@ -907,13 +912,46 @@ impl ShopState {
     /// have 13 digits, as Shopify's and the seeded products' do, and are the same every run. The
     /// discount nodes (`DiscountAutomaticNode`, `DiscountCodeNode`, `DiscountNode`) share a
     /// counter, as they share their ids on Shopify.
+    ///
+    /// A shop other than the default one has ids of its own ([`ShopState::set_id_slot`]): a
+    /// record it creates has an id no other shop gives.
     pub fn new_gid(&mut self, type_name: &str) -> String {
         let group = counter_group(type_name);
         let before = self.counters.get(&group).copied();
-        let id = before.unwrap_or_else(|| first_id(&group));
+        let id = before.unwrap_or_else(|| first_id(&group) + self.id_offset);
         self.counters.insert(group.clone(), id + 1);
         self.log(|| Undo::Counter { group, before });
         gid(type_name, id)
+    }
+
+    /// The id of a record the Admin API creates whose id lsf derives from what names it
+    /// (`stable`: a metafield from its owner, namespace and key, a metaobject from its type and
+    /// handle), as the store data's are: `stable` in the default shop when no record has it, a
+    /// new id of the counter otherwise. Another shop always takes a new id: it would share
+    /// `stable` with every shop made from the same seed.
+    pub fn created_gid(&mut self, type_name: &str, stable: String) -> String {
+        if self.id_offset == 0 && !self.contains(&stable) {
+            stable
+        } else {
+            self.new_gid(type_name)
+        }
+    }
+
+    /// What the ids of the records this shop creates are moved by: 0 for the default shop.
+    pub fn id_offset(&self) -> u64 {
+        self.id_offset
+    }
+
+    /// Gives the shop its ids: those of the records it creates from now on are moved by `slot`
+    /// times [`ID_STRIDE`], above every id of the seed, so that two shops never create the same
+    /// id. Slot 0 is the default shop's. The records already there keep theirs.
+    pub fn set_id_slot(&mut self, slot: u64) {
+        let offset = slot * ID_STRIDE;
+        let shift = offset.wrapping_sub(self.id_offset);
+        for counter in self.counters.values_mut() {
+            *counter = counter.wrapping_add(shift);
+        }
+        self.id_offset = offset;
     }
 
     /// Sets `updatedAt` of a record to now, when the record has that field. Returns whether the
@@ -1449,13 +1487,14 @@ impl ShopState {
     /// and the event sequence kept. The revision moves on: a reset is a write.
     fn reset_from(&mut self, seed: &ShopState) {
         let domain = self.domain.clone();
-        let (emitted, revision) = (self.emitted, self.revision);
+        let (emitted, revision, slot) = (self.emitted, self.revision, self.id_offset / ID_STRIDE);
         *self = seed.clone();
         self.emitted = emitted;
         self.revision = revision + 1;
         if domain != self.domain {
             self.rehost(&domain);
         }
+        self.set_id_slot(slot);
     }
 }
 
@@ -1488,6 +1527,25 @@ fn record_type(record: &Record) -> String {
 /// follow one another (`…012`, `…013`).
 pub(crate) fn first_id(group: &str) -> u64 {
     lsf_core::util::stable_id("new_gid", group)
+}
+
+/// How far apart the ids of two shops are ([`ShopState::set_id_slot`]): a shop creates up to
+/// a hundred million records of a type before it reaches the ids of the next slot.
+pub const ID_STRIDE: u64 = 100_000_000;
+
+/// How many slots of ids there are besides the default shop's. The ids stay below
+/// 2⁵³ (`Number.MAX_SAFE_INTEGER` of JavaScript): at most 14 digits.
+const ID_SLOTS: u64 = 89_999;
+
+/// The slot of ids of a shop made under `domain` ([`ShopState::set_id_slot`]): a number of the
+/// domain, the same every run, else the next one `taken` does not refuse (two domains of the
+/// same number, rarely). Never 0, the default shop's.
+pub fn id_slot(domain: &str, taken: impl Fn(u64) -> bool) -> u64 {
+    let first = lsf_core::util::stable_id("id slot", domain) % ID_SLOTS;
+    (0..ID_SLOTS)
+        .map(|step| 1 + (first + step) % ID_SLOTS)
+        .find(|slot| !taken(*slot))
+        .unwrap_or(1 + first)
 }
 
 fn counter_group(type_name: &str) -> String {
@@ -1583,11 +1641,15 @@ impl Shops {
         }
         let mut shop = self.seed.clone();
         shop.rehost(&domain);
+        let taken: Vec<u64> = self.shops.values().map(|shop| shop.id_offset).collect();
+        shop.set_id_slot(id_slot(&domain, |slot| taken.contains(&(slot * ID_STRIDE))));
         Ok(self.shops.entry(domain).or_insert(shop))
     }
 
     /// A shop seeded from the same data under the domain of `name`, as [`Shops::create`] makes
-    /// it, but not kept here: for a server that keeps each shop behind a lock of its own.
+    /// it, but not kept here: for a server that keeps each shop behind a lock of its own. It
+    /// creates the ids of the default shop until it is given a slot of its own
+    /// ([`ShopState::set_id_slot`]).
     pub fn new_shop(&self, name: &str) -> Result<ShopState, String> {
         let domain = shop_domain(name)?;
         let mut shop = self.seed.clone();
@@ -1677,6 +1739,33 @@ mod tests {
             Value::Object(map) => map,
             _ => unreachable!(),
         }
+    }
+
+    /// Two shops never create the same id, a reset keeps a shop's ids, and two domains of the
+    /// same slot get two.
+    #[test]
+    fn shops_create_ids_of_their_own() {
+        let mut shops = Shops {
+            seed: ShopState::new("seed.myshopify.com", Clock::System),
+            shops: IndexMap::new(),
+        };
+        let default = shops.seed.clone().new_gid("Product");
+        let one = shops.create("one").unwrap().new_gid("Product");
+        let two = shops.create("two").unwrap().new_gid("Product");
+        assert_ne!(one, two);
+        assert_ne!(one, default);
+        assert!(gid_number(&one) < 1 << 53, "{one}");
+        shops.reset();
+        assert_eq!(
+            shops
+                .get_mut("one.myshopify.com")
+                .unwrap()
+                .new_gid("Product"),
+            one
+        );
+        let first = id_slot("a.myshopify.com", |_| false);
+        assert_ne!(first, 0);
+        assert_ne!(id_slot("a.myshopify.com", |slot| slot == first), first);
     }
 
     #[test]

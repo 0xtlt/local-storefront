@@ -1019,7 +1019,8 @@ in a route the front end fetches (["Billing"](admin.md#javascript-the-react-rout
   sends the merchant back to `returnUrl` with `charge_id=<n>`, as Shopify does; a `returnUrl`
   on Shopify's admin or on the app is the app in lsf's admin. In a test,
   `POST /__lsf/admin/charges/<n>/approve?shop=<shop>` (or `/decline`) does it without the page.
-  Charges count from 1 in each shop, on the shop of the URL (see
+  `<n>` is the number of the charge's id; charges count from 1 in the default shop and from a
+  number of its own in a test shop, so that ids are unique across shops. Use the shop of the URL (see
   [approve a charge](admin.md#approve-a-charge)).
 - Approved, a subscription is `ACTIVE` and the app's other active subscription `CANCELLED`;
   `currentAppInstallation { activeSubscriptions oneTimePurchases allSubscriptions }` list them. A

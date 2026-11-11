@@ -864,7 +864,9 @@ fn a_standalone_app_gets_a_confirmation_url_on_lsf_that_works_as_it_is() {
     let followed = send(&api, "GET", &confirmation, &[], b"");
     assert_eq!(followed.status, 302);
     let page = header(&followed, "location").unwrap().to_string();
-    assert!(page.starts_with("/__lsf/admin/charges/1?shop="), "{page}");
+    // The charge's number is its id, which a shop of its own counts from its own offset.
+    assert!(!page.starts_with("/__lsf/admin/charges/1?"), "{page}");
+    assert!(page.starts_with("/__lsf/admin/charges/"), "{page}");
     assert!(page.contains(&shop), "{page}");
     let html = send(&api, "GET", &page, &[], b"");
     assert_eq!(html.status, 200);
@@ -883,5 +885,121 @@ fn a_standalone_app_gets_a_confirmation_url_on_lsf_that_works_as_it_is() {
     assert!(
         confirmation.starts_with(&format!("https://{}/admin/charges/", api.default_shop())),
         "{confirmation}"
+    );
+}
+
+/// The ids of the records two shops create are not the same, as on Shopify where ids are unique
+/// across shops: a backend that keeps the records of every test shop in one database does not
+/// mix them up. The ids stay the same every run, and the seeded records keep theirs.
+#[test]
+fn records_created_in_two_shops_have_different_ids() {
+    let seeded = {
+        let api = api(&support::demo_store(), None);
+        graphql(&api, "{ products(first: 1) { nodes { id } } }", json!({}))["data"]["products"]
+            ["nodes"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let created_in = |api: &AdminApi, name: &str| -> Vec<String> {
+        let (shop, token) = if name.is_empty() {
+            (api.default_shop(), api.token(&api.default_shop()))
+        } else {
+            let created = json_of(&send(
+                api,
+                "POST",
+                "/__lsf/admin/shops",
+                &[("content-type", "application/json")],
+                json!({"shop": name}).to_string().as_bytes(),
+            ));
+            (
+                created["shop"].as_str().unwrap().to_string(),
+                created["token"].as_str().unwrap().to_string(),
+            )
+        };
+        let body = json!({"query": r#"mutation {
+            productCreate(product: {title: "Mug"}) { product { id } }
+            customerCreate(input: {email: "jo@example.com"}) { customer { id } }
+            metafieldsSet(metafields: [{ownerId: "OWNER", namespace: "custom", key: "kind", type: "single_line_text_field", value: "v"}]) { metafields { id } userErrors { message } }
+            appSubscriptionCreate(name: "Pro", returnUrl: "http://localhost:3000/", test: true, lineItems: [{plan: {appRecurringPricingDetails: {price: {amount: 10, currencyCode: USD}}}}]) { appSubscription { id } confirmationUrl }
+        }"#.replace("OWNER", &seeded)}).to_string();
+        let answer = json_of(&send(
+            api,
+            "POST",
+            GRAPHQL,
+            &[
+                ("content-type", "application/json"),
+                ("x-shopify-access-token", &token),
+            ],
+            body.as_bytes(),
+        ));
+        let data = &answer["data"];
+        let subscription = data["appSubscriptionCreate"]["appSubscription"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{answer}"))
+            .to_string();
+        // The control API takes the charge by the number of its id, in any shop.
+        let number = subscription.rsplit('/').next().unwrap();
+        let page = send(
+            api,
+            "GET",
+            &format!("/__lsf/admin/charges/{number}?shop={shop}&format=json"),
+            &[],
+            b"",
+        );
+        assert_eq!(page.status, 200, "{}", String::from_utf8_lossy(&page.body));
+        vec![
+            data["productCreate"]["product"]["id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            data["customerCreate"]["customer"]["id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            subscription,
+            // A metafield of a seeded product: an id lsf derives from its owner and key in the
+            // default shop, a new one in another.
+            data["metafieldsSet"]["metafields"][0]["id"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{answer}"))
+                .to_string(),
+        ]
+    };
+    let api = api(&support::demo_store(), None);
+    let default = created_in(&api, "");
+    let one = created_in(&api, "ids-one");
+    let two = created_in(&api, "ids-two");
+    for (index, id) in one.iter().enumerate() {
+        assert_ne!(*id, two[index]);
+        assert_ne!(*id, default[index]);
+    }
+    // The default shop counts its charges from 1, as the docs say.
+    assert_eq!(default[2], "gid://shopify/AppSubscription/1");
+
+    // The same every run: a server made again gives the same ids, and so does a reset.
+    let again = self::api(&support::demo_store(), None);
+    assert_eq!(created_in(&again, ""), default);
+    assert_eq!(created_in(&again, "ids-one"), one);
+    assert_eq!(send(&again, "DELETE", "/__lsf/admin", &[], b"").status, 200);
+    let token = json_of(&send(&again, "GET", "/__lsf/admin", &[], b""))["shops"][1]["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let answer = json_of(&send(
+        &again,
+        "POST",
+        GRAPHQL,
+        &[
+            ("content-type", "application/json"),
+            ("x-shopify-access-token", &token),
+        ],
+        json!({"query": r#"mutation { productCreate(product: {title: "Mug"}) { product { id } } }"#})
+            .to_string()
+            .as_bytes(),
+    ));
+    assert_eq!(
+        answer["data"]["productCreate"]["product"]["id"],
+        json!(one[0])
     );
 }

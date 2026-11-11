@@ -1151,6 +1151,14 @@ Discount API (`shopifyFunctions` example). Not verified, chosen by analogy: the 
 
 Every id is a function of the data: the same data gives the same records every run.
 
+The records the Admin API creates take their ids from a counter per type (`state::first_id`),
+and in a shop other than the default one the counter is moved by the shop's slot times
+`ID_STRIDE` (`ShopState::set_id_slot`): ids are unique across shops, as on Shopify. The slot is
+a number of the domain (`state::id_slot`), the next free one when two domains share it. An id
+lsf derives from a name in the default shop (a metafield, a metaobject, a menu, a market) is a
+new one of the counter in another shop (`ShopState::created_gid`). Charges count from 1 in the
+default shop and from the shop's offset in another.
+
 ### Catalog (`domains/catalog.rs`)
 
 - **`Location`**: those of the data; when there are none, one named "Shop location" at the shop's

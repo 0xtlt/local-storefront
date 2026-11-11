@@ -21,7 +21,7 @@ use crate::admin::domains::platform::{self, access::AuthEffect};
 use crate::admin::domains::{app as app_domain, orders};
 use crate::admin::graphql::{self, Bucket, Request};
 use crate::admin::resolve::{Registry, ShopResolver};
-use crate::admin::state::{Clock, Event, ShopState, Shops};
+use crate::admin::state::{self, Clock, Event, ShopState, Shops};
 use crate::admin::throttle::{self, Plan, Throttle};
 use crate::admin::version::{self, AdminPath, ApiVersion, Resolution, Served};
 use crate::admin::webhooks::{
@@ -141,6 +141,10 @@ pub struct AdminApi {
     seed: Mutex<Shops>,
     /// The shops, by domain, the default one first.
     shops: RwLock<IndexMap<String, Arc<Mutex<LiveShop>>>>,
+    /// The slot of ids of each shop [`AdminApi::create_shop`] made
+    /// ([`ShopState::set_id_slot`]): what keeps two shops from creating the same id. Written
+    /// with the map of the shops held.
+    id_slots: Mutex<HashMap<String, u64>>,
     tokens: Mutex<Tokens>,
     webhooks: Webhooks,
     throttle: Throttle,
@@ -309,6 +313,7 @@ impl AdminApi {
             registry: Registry::standard(),
             seed: Mutex::new(seed),
             shops: RwLock::new(shops),
+            id_slots: Mutex::new(HashMap::new()),
             tokens: Mutex::new(tokens),
             webhooks,
             throttle,
@@ -967,7 +972,7 @@ impl AdminApi {
 
     /// Creates a shop seeded from the same data, with the app installed: its domain and token.
     pub fn create_shop(&self, name: &str) -> Result<(String, String), (u16, String)> {
-        let shop = lock(&self.seed)
+        let mut shop = lock(&self.seed)
             .new_shop(name)
             .map_err(|error| (422, error))?;
         let domain = shop.domain().to_string();
@@ -979,6 +984,11 @@ impl AdminApi {
             if shops.contains_key(&domain) {
                 return Err((409, format!("the shop {domain} already exists")));
             }
+            let mut slots = lock(&self.id_slots);
+            let slot = state::id_slot(&domain, |slot| slots.values().any(|taken| *taken == slot));
+            slots.insert(domain.clone(), slot);
+            drop(slots);
+            shop.set_id_slot(slot);
             shops.insert(
                 domain.clone(),
                 Arc::new(Mutex::new(LiveShop::new(shop, false))),
@@ -1015,7 +1025,10 @@ impl AdminApi {
                         ),
                     ));
                 }
-                Some(_) => shops.shift_remove(&domain),
+                Some(_) => {
+                    lock(&self.id_slots).remove(&domain);
+                    shops.shift_remove(&domain)
+                }
             }
         };
         // The map of the shops is released before the tokens are locked (see `AdminApi`).

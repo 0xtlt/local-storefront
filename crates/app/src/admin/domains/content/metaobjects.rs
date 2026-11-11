@@ -481,11 +481,7 @@ fn definition_create(
     let state = mutation.state_mut();
     let now = state.timestamp();
     let stable = metaobject_definition_gid(&data_type(state.app_id(), &kind));
-    let id = if state.contains(&stable) {
-        state.new_gid("MetaobjectDefinition")
-    } else {
-        stable
-    };
+    let id = state.created_gid("MetaobjectDefinition", stable);
     let app = state.app_gid().map(str::to_string);
     state.insert(value::object(json!({
         "__typename": "MetaobjectDefinition",
@@ -1348,11 +1344,7 @@ fn plan(
 fn insert_entry(state: &mut ShopState, definition: &str, kind: &str, planned: Planned) -> String {
     let now = state.timestamp();
     let stable = metaobject_gid(&data_type(state.app_id(), kind), &planned.handle);
-    let id = if state.contains(&stable) {
-        state.new_gid("Metaobject")
-    } else {
-        stable
-    };
+    let id = state.created_gid("Metaobject", stable);
     let app = state.app_gid().map(str::to_string);
     state.insert(value::object(json!({
         "__typename": "Metaobject",

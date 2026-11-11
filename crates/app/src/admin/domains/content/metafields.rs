@@ -446,11 +446,7 @@ pub fn set(
         .and_then(owner_type)
         .unwrap_or_default();
     let stable = metafield_gid(owner, namespace, key);
-    let id = if state.contains(&stable) {
-        state.new_gid("Metafield")
-    } else {
-        stable
-    };
+    let id = state.created_gid("Metafield", stable);
     let mut record = value::object(json!({
         "__typename": "Metafield",
         "id": id,
