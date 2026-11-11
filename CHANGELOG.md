@@ -367,6 +367,28 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
     it.
   - `--admin-source <url>=<file>`: a URL of your backend's own answered with a file, never
     downloaded; `PUT /__lsf/admin/sources?url=` stubs one from a test.
+- **Ids are unique across shops.** A record a test shop creates (`POST /__lsf/admin/shops`)
+  has an id no other shop gives: a product, an order, a customer, a metafield, a charge. A
+  backend that keeps every test shop in one database does not mix them up. The ids of a shop
+  are a number of its name, the same every run; the store data's records keep their ids in every
+  shop. A test shop's ids have up to 14 digits, and its charges no longer count from 1:
+  `/__lsf/admin/charges/<n>` takes the number of the charge's id, as the `confirmationUrl` gives
+  it. The default shop does not change.
+- **Webhooks:** a subscription made with `metafieldNamespaces` (or `metafields`) gets the
+  record's metafields of those namespaces in its payload, as `metafields`. A `filter` that reads
+  a field `includeFields` leaves out delivers nothing, as Shopify requires the field in
+  `includeFields`: the subscription's answer and each `not_sent` delivery name the field to add.
+- **`Metaobject.referencedBy`** lists the metafields and metaobject fields that reference the
+  entry. A list lsf does not compute (`Order.agreements`, `Order.events`) is now in
+  `extensions.lsf.defaulted`.
+- **More of Shopify's checks:** an input list over 250 items (`nodes(ids:)` with 251 ids) is
+  refused with `MAX_INPUT_SIZE_EXCEEDED`; a `metaobject_reference` definition needs a
+  `metaobject_definition_id` the shop has; `bulkOperationRunMutation` refuses a mutation the
+  schema refuses, or one with more than one mutation field (`INVALID_MUTATION`).
+- **`description`** keeps words whole: `it<em>s</em>` reads `its`; only block tags and `<br>`
+  separate words.
+- **Scopes changed in `shopify.app.toml`** while lsf runs are said in the terminal, with how to
+  grant them (restart, or `POST /__lsf/admin/install`).
 - **`examples/admin-backend`:** a backend written with Shopify's libraries
   (`@shopify/shopify-app-react-router`, `@shopify/shopify-api`), with a script that runs it
   against lsf end to end (`mise run admin:e2e`).
