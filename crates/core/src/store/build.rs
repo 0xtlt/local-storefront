@@ -71,6 +71,8 @@ pub struct MergedInput {
     pub scenarios: Vec<MergedScenario>,
     pub now: Option<Sourced<String>>,
     pub theme_settings: IndexMap<String, Json>,
+    /// The `app` sections, merged.
+    pub app: model::AppInstallationInput,
 }
 
 pub struct BuildOptions<'a> {
@@ -435,6 +437,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         scenarios: Vec::new(),
         now: None,
         theme_settings: input.theme_settings,
+        app: AppInstallation::default(),
         product_handles: HashMap::new(),
         product_ids: HashMap::new(),
         variant_ids: HashMap::new(),
@@ -491,6 +494,27 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         let parsed = builder.date(&Some(now.value.clone()), &now.origin, epoch());
         store.now = Some(parsed);
     }
+    store.app = AppInstallation {
+        metafields: builder.metafields(&input.app.metafields),
+        embeds: input
+            .app
+            .embeds
+            .iter()
+            .map(|(name, embed)| {
+                let embed = match embed {
+                    model::AppEmbedInput::Enabled(enabled) => AppEmbed {
+                        enabled: *enabled,
+                        settings: None,
+                    },
+                    model::AppEmbedInput::Settings(settings) => AppEmbed {
+                        enabled: true,
+                        settings: Some(settings.settings.clone()),
+                    },
+                };
+                (name.clone(), embed)
+            })
+            .collect(),
+    };
     store.files = builder.files;
     store.index();
     (store, builder.diagnostics)

@@ -25,6 +25,11 @@ struct Inner {
     sections: Vec<SectionTiming>,
     /// The theme blocks of the sections being rendered, until their section takes them.
     blocks: Vec<BlockTiming>,
+    /// Why app blocks of the page were not rendered, once each.
+    notices: Vec<String>,
+    /// The `stylesheet` (`true`) and `javascript` files of the app blocks rendered, by URL, in
+    /// the order they were first rendered.
+    app_assets: Vec<(bool, String)>,
 }
 
 pub struct RenderState {
@@ -166,6 +171,34 @@ impl RenderState {
             durations: Vec::new(),
         });
         Ok(inner.blocks.len() - 1)
+    }
+
+    /// Says why something of the page was not rendered: an app block the app does not have, or
+    /// that its schema leaves out of the page.
+    pub fn notice(&self, message: String) {
+        let mut inner = self.inner();
+        if !inner.notices.contains(&message) {
+            inner.notices.push(message);
+        }
+    }
+
+    /// What [`RenderState::notice`] was told, in order.
+    pub fn notices(&self) -> Vec<String> {
+        self.inner().notices.clone()
+    }
+
+    /// Notes a stylesheet (`true`) or a script of an app block that rendered: the page loads
+    /// each once.
+    pub fn add_app_asset(&self, stylesheet: bool, url: String) {
+        let mut inner = self.inner();
+        if !inner.app_assets.iter().any(|(_, known)| *known == url) {
+            inner.app_assets.push((stylesheet, url));
+        }
+    }
+
+    /// The stylesheets (`true`) and scripts of the app blocks rendered.
+    pub fn app_assets(&self) -> Vec<(bool, String)> {
+        self.inner().app_assets.clone()
     }
 
     pub fn leave_block(&self, entered: usize, duration: Duration) {

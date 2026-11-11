@@ -1,0 +1,24 @@
+{
+  "sections": {
+    "main": {
+      "type": "main-product",
+      "blocks": {
+        "intro": { "type": "text", "settings": { "text": "Intro" } },
+        "reviews_app": {
+          "type": "shopify://apps/product-reviews/blocks/reviews/5b1c7a52-2d0e-4c8a-9a3e-6f1d2b7c9e01",
+          "settings": { "heading": "Loved by customers", "rating": 5 }
+        },
+        "other_app": {
+          "type": "shopify://apps/another-app/blocks/widget/0000",
+          "settings": {}
+        },
+        "typo": {
+          "type": "shopify://apps/product-reviews/blocks/reviewz/5b1c7a52-2d0e-4c8a-9a3e-6f1d2b7c9e01",
+          "settings": {}
+        }
+      },
+      "block_order": ["intro", "reviews_app", "other_app", "typo"]
+    }
+  },
+  "order": ["main"]
+}

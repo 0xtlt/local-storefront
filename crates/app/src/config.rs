@@ -1,7 +1,7 @@
 //! Reads a Shopify app directory: `shopify.app.toml` and `extensions/*/shopify.extension.toml`.
 //!
-//! Functions and checkout UI extensions are described; other extension types are listed and
-//! ignored. Problems that do not prevent loading (a missing build, an unknown target, a query
+//! Functions, checkout UI extensions and theme app extensions are described; other extension
+//! types are listed and ignored. Problems that do not prevent loading (a missing build, an unknown target, a query
 //! file that does not exist) become [`Diagnostic`]s so the checkout can still run what works.
 //!
 //! [`version`] holds the API releases of Functions and UI extensions, and the Function API schema
@@ -31,7 +31,10 @@ pub struct App {
     pub config: AppConfig,
     pub functions: Vec<FunctionExtension>,
     pub ui_extensions: Vec<UiExtension>,
-    /// Extensions of another type (theme app extension, admin action, ...): listed, not used.
+    /// Theme app extensions (`type = "theme"`): their app blocks and app embed blocks render in
+    /// the theme (`lsf-theme`).
+    pub theme_extensions: Vec<ThemeExtension>,
+    /// Extensions of another type (admin action, ...): listed, not used.
     pub other: Vec<OtherExtension>,
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -47,6 +50,23 @@ impl App {
         self.ui_extensions
             .iter()
             .find(|extension| extension.handle == handle)
+    }
+
+    pub fn theme_extension(&self, handle: &str) -> Option<&ThemeExtension> {
+        self.theme_extensions
+            .iter()
+            .find(|extension| extension.handle == handle)
+    }
+
+    /// The handle the app has in the `shopify://apps/<handle>/blocks/...` types of its blocks:
+    /// `handle` of `shopify.app.toml`, else its `name` as a handle (`Product Reviews` →
+    /// `product-reviews`).
+    pub fn block_handle(&self) -> Option<String> {
+        self.handle
+            .clone()
+            .filter(|handle| !handle.is_empty())
+            .or_else(|| self.name.as_deref().map(handleize))
+            .filter(|handle| !handle.is_empty())
     }
 
     /// Leaves out the Functions, and what is said of them: `--no-functions`, which serves the
@@ -414,6 +434,32 @@ pub struct UiTarget {
     pub module: Option<String>,
 }
 
+/// A theme app extension: `extensions/<dir>/shopify.extension.toml` with `type = "theme"`, and its
+/// `blocks/`, `snippets/`, `assets/` and `locales/`.
+#[derive(Clone, Debug)]
+pub struct ThemeExtension {
+    pub handle: String,
+    pub name: Option<String>,
+    /// `uid`: the id Shopify CLI writes, the last part of the `shopify://apps/...` types of the
+    /// blocks when it has one.
+    pub uid: Option<String>,
+    /// The directory of the extension.
+    pub dir: PathBuf,
+}
+
+/// A text as a Shopify handle: lowercase letters and digits, the rest turned into single dashes.
+fn handleize(text: &str) -> String {
+    let mut handle = String::new();
+    for c in text.chars().flat_map(char::to_lowercase) {
+        if c.is_alphanumeric() {
+            handle.push(c);
+        } else if !handle.is_empty() && !handle.ends_with('-') {
+            handle.push('-');
+        }
+    }
+    handle.trim_end_matches('-').to_string()
+}
+
 #[derive(Clone, Debug)]
 pub struct OtherExtension {
     pub handle: String,
@@ -684,6 +730,11 @@ impl App {
             .iter()
             .map(|function| &function.handle)
             .chain(self.ui_extensions.iter().map(|extension| &extension.handle))
+            .chain(
+                self.theme_extensions
+                    .iter()
+                    .map(|extension| &extension.handle),
+            )
             .chain(self.other.iter().map(|extension| &extension.handle));
         for handle in handles {
             if !seen.insert(handle.clone()) {
@@ -921,6 +972,16 @@ fn load_extension_file(app: &mut App, file: &Path) {
                 let extension = load_ui_extension(app, &dir, &handle, name, api_version, entry);
                 app.ui_extensions.push(extension);
             }
+            "theme" => app.theme_extensions.push(ThemeExtension {
+                handle,
+                name,
+                uid: entry
+                    .get("uid")
+                    .or_else(|| table.get("uid"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                dir: dir.clone(),
+            }),
             "" => app.error(Some(&handle), "no `type` in the extension file".to_string()),
             other => app.other.push(OtherExtension {
                 handle,
@@ -1691,8 +1752,11 @@ handle = "banner"
         assert_eq!(banner.capabilities["network_access"], Value::Bool(true));
         assert_eq!(banner.settings["fields"][0]["key"], "title");
 
-        assert_eq!(app.other.len(), 1);
-        assert_eq!(app.other[0].kind, "theme");
+        assert!(app.other.is_empty());
+        let theme = app.theme_extension("theme-ext").unwrap();
+        assert_eq!(theme.name.as_deref(), Some("Theme"));
+        assert!(theme.dir.ends_with("extensions/theme"));
+        assert_eq!(app.block_handle().as_deref(), Some("demo"));
 
         let messages: Vec<String> = app.diagnostics.iter().map(ToString::to_string).collect();
         assert!(

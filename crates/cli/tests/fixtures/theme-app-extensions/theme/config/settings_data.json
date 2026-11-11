@@ -1,0 +1,21 @@
+{
+  "current": {
+    "blocks": {
+      "11223344556677889900": {
+        "type": "shopify://apps/product-reviews/blocks/reviews-loader/5b1c7a52-2d0e-4c8a-9a3e-6f1d2b7c9e01",
+        "disabled": false,
+        "settings": { "api_key": "theme-key" }
+      },
+      "99887766554433221100": {
+        "type": "shopify://apps/product-reviews/blocks/reviews-widget/5b1c7a52-2d0e-4c8a-9a3e-6f1d2b7c9e01",
+        "disabled": true,
+        "settings": { "position": "left" }
+      },
+      "55555555555555555555": {
+        "type": "shopify://apps/product-reviews/blocks/consent/5b1c7a52-2d0e-4c8a-9a3e-6f1d2b7c9e01",
+        "disabled": false,
+        "settings": {}
+      }
+    }
+  }
+}

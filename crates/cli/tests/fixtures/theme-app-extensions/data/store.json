@@ -1,0 +1,9 @@
+{
+  "shop": { "name": "Reviews Demo", "currency": "USD" },
+  "products": [{ "title": "Blue shirt", "price": "19.99" }],
+  "localization": { "languages": [{ "iso_code": "en" }, { "iso_code": "fr" }] },
+  "app": {
+    "metafields": { "reviews": { "badge_enabled": true } },
+    "embeds": { "reviews-widget": true }
+  }
+}

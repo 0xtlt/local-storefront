@@ -4,6 +4,7 @@
 //! - [`drops`], [`filters`] and [`tags`] implement Shopify's Liquid objects, filters and tags.
 //! - [`render`] ties it together: a request goes in, a page comes out.
 
+pub mod app_extensions;
 pub mod drops;
 pub mod filters;
 pub mod fonts;

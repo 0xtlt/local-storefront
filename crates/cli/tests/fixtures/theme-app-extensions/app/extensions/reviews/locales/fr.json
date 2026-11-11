@@ -1,0 +1,4 @@
+{
+  "reviews": { "for": "Avis sur {{ title }}" },
+  "widget": { "title": "Avis clients" }
+}

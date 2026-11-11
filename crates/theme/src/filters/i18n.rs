@@ -79,10 +79,42 @@ pub fn translate(site: &Site, key: &str, named: &[(String, Value)]) -> Option<St
     })
 }
 
+/// A key of `t` in the Liquid of a theme app extension: looked up in its own `locales/`, never
+/// in the theme's.
+fn translate_in_extension(
+    extension: &crate::app_extensions::Extension,
+    site: &Site,
+    key: &str,
+    named: &[(String, Value)],
+) -> Option<String> {
+    let count = named
+        .iter()
+        .find(|(name, _)| name == "count")
+        .and_then(|(_, value)| match value {
+            Value::Int(count) => Some(*count),
+            Value::Float(count) => Some(*count as i64),
+            Value::Str(text) => text.parse().ok(),
+            _ => None,
+        });
+    extension
+        .translations(&site.request.locale)
+        .iter()
+        .find_map(|(locale, translations)| {
+            translations
+                .lookup(key)
+                .and_then(|node| plural_form(node, locale, count))
+                .map(|text| interpolate(text, named))
+        })
+}
+
 fn t(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let site = site(ctx)?;
     let key = input.to_str();
-    match translate(site, &key, &args.named) {
+    let translated = match crate::app_extensions::render::extension_of(ctx) {
+        Some(extension) => translate_in_extension(&extension, site, &key, &args.named),
+        None => translate(site, &key, &args.named),
+    };
+    match translated {
         Some(text) => {
             // Translations are escaped unless their key ends in `_html`.
             let is_html = key.ends_with("_html") || key.ends_with(".html");

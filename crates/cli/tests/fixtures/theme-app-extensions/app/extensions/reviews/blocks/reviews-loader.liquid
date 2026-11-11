@@ -1,0 +1,11 @@
+<script>window.productReviews = { shop: {{ shop.name | json }}, key: {{ block.settings.api_key | json }} };</script>
+
+{% schema %}
+{
+  "name": "Reviews loader",
+  "target": "head",
+  "settings": [
+    { "type": "text", "id": "api_key", "label": "API key", "default": "demo-key" }
+  ]
+}
+{% endschema %}

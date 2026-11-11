@@ -1,0 +1,23 @@
+<div class="reviews" style="--star-color: {{ block.settings.star_color }}" {{ block.shopify_attributes }}>
+  <h2>{{ block.settings.heading }}</h2>
+  <p class="reviews__product">{{ 'reviews.for' | t: title: product.title }}</p>
+  {% render 'stars', rating: block.settings.rating %}
+  <img src="{{ 'star.svg' | asset_url }}" alt="" width="16" height="16">
+  <p class="reviews__ids">{{ section.id }} {{ block.id }} {{ block.type }}</p>
+</div>
+
+{% schema %}
+{
+  "name": "t:blocks.reviews.name",
+  "target": "section",
+  "stylesheet": "reviews.css",
+  "javascript": "reviews.js",
+  "class": "reviews-block",
+  "enabled_on": { "templates": ["product", "index"] },
+  "settings": [
+    { "type": "text", "id": "heading", "label": "Heading", "default": "t:blocks.reviews.heading" },
+    { "type": "color", "id": "star_color", "label": "Star color", "default": "#f5a623" },
+    { "type": "range", "id": "rating", "label": "Rating", "min": 1, "max": 5, "step": 1, "default": 4 }
+  ]
+}
+{% endschema %}

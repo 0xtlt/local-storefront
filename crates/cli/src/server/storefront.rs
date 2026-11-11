@@ -301,6 +301,13 @@ fn log_problems(state: &ServerState, rendered: &Rendered) {
             seen.push(message);
         }
     }
+    // Why app blocks did not render: said once, until the files change.
+    let mut said = super::lock(&state.notices);
+    for notice in &rendered.notices {
+        if said.insert(notice.clone()) {
+            eprintln!("    {notice}");
+        }
+    }
 }
 
 /// A reason (of a 404, of an app proxy that got no answer) as a header value: printable ASCII
@@ -341,6 +348,10 @@ pub(super) fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target)
     }
     if !rendered.errors.is_empty() {
         reply = reply.header("x-lsf-liquid-errors", rendered.errors.len().to_string());
+    }
+    // An app block that renders nothing is easy to miss: the first reason of the page.
+    if let Some(notice) = rendered.notices.first() {
+        reply = reply.header("x-lsf-reason", header_text(notice));
     }
     if !rendered.preloads.is_empty() {
         reply = reply.header("link", rendered.preloads.join(", "));

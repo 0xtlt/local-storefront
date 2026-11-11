@@ -1,0 +1,7 @@
+# An invented app with a theme app extension: a reviews block for product pages, a badge shown
+# when an app-data metafield allows it, and three app embed blocks.
+client_id = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+name = "Product Reviews"
+handle = "product-reviews"
+application_url = "https://product-reviews.example.com"
+embedded = true

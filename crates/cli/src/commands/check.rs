@@ -33,6 +33,12 @@ pub struct Args {
     /// How to print the result.
     #[arg(long, value_enum, default_value = "text")]
     format: Format,
+
+    /// The directory of a Shopify app: the app blocks the theme names are checked against its
+    /// theme app extensions. Without it, they are not checked, and a note says how many there
+    /// are.
+    #[arg(long, value_name = "DIR")]
+    app: Option<PathBuf>,
 }
 
 /// What `lsf check` writes into a file.
@@ -431,10 +437,10 @@ impl Diagnostic {
     /// Prints the diagnostic for a person.
     fn print(&self) {
         // A warning says so: it is not one of the problems the summary counts.
-        let warning = if self.severity == "warning" {
-            "warning: "
-        } else {
-            ""
+        let warning = match self.severity {
+            "warning" => "warning: ",
+            "info" => "note: ",
+            _ => "",
         };
         let Some(markup) = &self.markup else {
             println!("{}: {warning}{}", self.location, self.message);
@@ -913,6 +919,23 @@ fn check_theme(
             }
         }
     }
+    // The app blocks the templates name: against the theme app extensions of `--app`.
+    for finding in crate::theme_extensions::check_lines(&theme, args.app.as_deref())? {
+        let severity = match finding.level {
+            lsf_theme::app_extensions::references::Level::Warning => "warning",
+            lsf_theme::app_extensions::references::Level::Info => "info",
+        };
+        let location = Location {
+            setting: finding.pointer,
+            ..Location::file(&finding.file, None)
+        };
+        tally.report(Diagnostic::new(
+            severity,
+            "app_block",
+            location,
+            finding.message,
+        ));
+    }
     Ok((files, tally))
 }
 
@@ -974,6 +997,7 @@ mod tests {
             let args = Args {
                 fix,
                 format: Format::Json,
+                app: None,
             };
             let (files, tally) = check_theme(&root, &[], &args).unwrap();
             json_report(files, &tally)
@@ -1061,6 +1085,7 @@ mod tests {
                 Args {
                     fix,
                     format: Format::Text,
+                    app: None,
                 },
             )
             .unwrap()

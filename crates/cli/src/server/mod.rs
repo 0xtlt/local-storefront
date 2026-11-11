@@ -168,6 +168,9 @@ pub struct ServerState {
     pub app_proxy: Option<app_proxy::AppProxy>,
     /// The Polaris mode, which the control API changes (`/__lsf/polaris`).
     pub polaris: polaris::Polaris,
+    /// What the terminal was told of the app blocks pages did not render, once each until the
+    /// files change.
+    pub(crate) notices: Mutex<std::collections::HashSet<String>>,
 }
 
 /// One HTTP request, decoded.
@@ -354,6 +357,7 @@ impl ServerState {
             admin,
             app_proxy,
             polaris,
+            notices: Mutex::default(),
         };
         (state, diagnostics)
     }
@@ -577,6 +581,10 @@ impl ServerState {
         for directory in THEME_DIRECTORIES {
             hasher.write_u64(fingerprint(&root.join(directory)));
         }
+        // The theme app extensions of `--app`, whose blocks the pages render.
+        for directory in self.app.theme.app_extensions().directories() {
+            hasher.write_u64(fingerprint(&directory));
+        }
         if let Some(directory) = self.app.data_dir() {
             hasher.write_u64(fingerprint(&directory));
         }
@@ -593,6 +601,8 @@ impl ServerState {
         let token = self.change_token();
         if self.last_token.swap(token, Ordering::Relaxed) != token {
             self.app.theme.files().expire();
+            self.app.theme.app_extensions().expire();
+            lock(&self.notices).clear();
             self.refresh_if_changed(true);
         }
         token

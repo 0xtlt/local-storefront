@@ -1,0 +1,11 @@
+<meta name="reviews-consent" content="{{ block.settings.mode }}">
+
+{% schema %}
+{
+  "name": "Consent",
+  "target": "compliance_head",
+  "settings": [
+    { "type": "text", "id": "mode", "label": "Mode", "default": "opt-in" }
+  ]
+}
+{% endschema %}

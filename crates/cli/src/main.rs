@@ -6,6 +6,7 @@ mod commands;
 mod output;
 mod profile;
 mod server;
+mod theme_extensions;
 mod watch;
 
 use std::path::PathBuf;

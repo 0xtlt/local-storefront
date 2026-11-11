@@ -1,0 +1,19 @@
+<h1>{{ product.title }}</h1>
+{% for block in section.blocks %}
+  {% case block.type %}
+    {% when '@app' %}
+      {% render block %}
+    {% when 'text' %}
+      <p class="text">{{ block.settings.text }}</p>
+  {% endcase %}
+{% endfor %}
+
+{% schema %}
+{
+  "name": "Product",
+  "blocks": [
+    { "type": "@app" },
+    { "type": "text", "name": "Text", "settings": [{ "type": "text", "id": "text", "label": "Text" }] }
+  ]
+}
+{% endschema %}

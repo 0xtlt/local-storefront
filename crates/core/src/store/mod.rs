@@ -97,6 +97,23 @@ pub struct Metafield {
 
 pub type Metafields = IndexMap<String, IndexMap<String, Metafield>>;
 
+/// The app of `--app` as the store has it installed (`app` of the store data).
+#[derive(Clone, Debug, Default)]
+pub struct AppInstallation {
+    /// Its app-data metafields: what `app.metafields` reads in the Liquid of its blocks.
+    pub metafields: Metafields,
+    /// Its app embed blocks turned on or off, by the name of their file.
+    pub embeds: IndexMap<String, AppEmbed>,
+}
+
+/// An app embed block the store data turns on or off.
+#[derive(Clone, Debug)]
+pub struct AppEmbed {
+    pub enabled: bool,
+    /// The settings it is turned on with; `None` for those of the theme, or the defaults.
+    pub settings: Option<serde_json::Map<String, Json>>,
+}
+
 /// How an option value is shown instead of its name.
 #[derive(Clone, Debug)]
 pub struct Swatch {
@@ -983,6 +1000,9 @@ pub struct Store {
     /// The frozen clock, if the data sets one.
     pub now: Option<DateTime<Utc>>,
     pub theme_settings: IndexMap<String, Json>,
+    /// The app of `--app` as the store has it installed: its app-data metafields and its app
+    /// embed blocks turned on or off.
+    pub app: AppInstallation,
 
     product_handles: HashMap<String, usize>,
     product_ids: HashMap<u64, usize>,

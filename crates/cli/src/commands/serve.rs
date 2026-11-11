@@ -492,6 +492,16 @@ pub fn run(
         })?;
         crate::app::note_missing_previews(&app.theme, previews);
         crate::app::note_classic_accounts(&app.theme);
+        // The app blocks and app embed blocks of its theme app extensions render in the theme.
+        if let Some(dir) = &app_dir {
+            crate::theme_extensions::attach(&app.theme, dir, revalidate);
+            if let Some(line) = crate::theme_extensions::summary(&app.theme.app_extensions()) {
+                match summary.as_mut() {
+                    Some(summary) => summary.push_str(&format!(", {line}")),
+                    None => summary = Some(line),
+                }
+            }
+        }
         app
     } else {
         App::open_without_theme(theme, data, previews)?
@@ -515,6 +525,9 @@ pub fn run(
         },
     );
     print_diagnostics(&diagnostics);
+    if parts.theme {
+        crate::theme_extensions::print_findings(&state.app.theme, &state.loaded().store);
+    }
     if let Some(who) = &args.customer {
         state
             .loaded()

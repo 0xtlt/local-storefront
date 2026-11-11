@@ -1,0 +1,22 @@
+<div class="reviews-widget" data-position="{{ block.settings.position }}">{{ 'widget.title' | t }}</div>
+
+{% schema %}
+{
+  "name": "Reviews widget",
+  "target": "body",
+  "javascript": "widget.js",
+  "disabled_on": { "templates": ["cart"] },
+  "settings": [
+    {
+      "type": "select",
+      "id": "position",
+      "label": "Position",
+      "options": [
+        { "value": "left", "label": "Left" },
+        { "value": "right", "label": "Right" }
+      ],
+      "default": "right"
+    }
+  ]
+}
+{% endschema %}

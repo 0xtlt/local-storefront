@@ -2036,6 +2036,46 @@ pub struct StoreInput {
     /// Overrides for theme settings (`config/settings_data.json`), by setting id.
     #[serde(default)]
     pub theme_settings: IndexMap<String, Json>,
+    /// The app of `--app` as this store has it installed: what its theme app extensions read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<AppInstallationInput>,
+}
+
+/// The app of `--app` as the store has it installed, for its theme app extensions: its
+/// app-data metafields and the app embed blocks turned on.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AppInstallationInput {
+    /// The app-data metafields of the installation, by namespace then key:
+    /// `{"conditions": {"reviews_enabled": true}}`. The Liquid of the app's blocks reads them as
+    /// `app.metafields.conditions.reviews_enabled`, and an `available_if` of a block tests them.
+    #[serde(default)]
+    pub metafields: Metafields,
+    /// App embed blocks turned on or off, by the name of their file in the extension's
+    /// `blocks/` (`"chat-bubble"` for `blocks/chat-bubble.liquid`): `true` turns one on, with
+    /// the settings `config/settings_data.json` gives it or else its defaults; `false` turns it
+    /// off; `{"settings": {...}}` turns it on with these settings. The embeds of
+    /// `config/settings_data.json` that this does not name stay as the theme has them.
+    #[serde(default)]
+    pub embeds: IndexMap<String, AppEmbedInput>,
+}
+
+/// An app embed block turned on (`true`) or off (`false`), or turned on with its settings.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum AppEmbedInput {
+    Enabled(bool),
+    Settings(AppEmbedSettings),
+}
+
+/// An app embed block turned on with settings of its own.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AppEmbedSettings {
+    /// The values of the settings of the block's schema, by setting id. The others have their
+    /// defaults.
+    #[serde(default)]
+    pub settings: serde_json::Map<String, Json>,
 }
 
 #[cfg(test)]

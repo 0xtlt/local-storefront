@@ -12,6 +12,7 @@ use super::throttle::Throttle;
 use super::{Incoming, SESSION_HEADER, ServeOptions, ServerState};
 use crate::app::App;
 
+mod app_blocks;
 mod parts;
 mod polaris;
 mod store_base;
@@ -6830,10 +6831,9 @@ fn the_home_page_says_what_is_wrong_with_the_extensions() {
         }),
         "{chat}"
     );
-    assert_eq!(
-        json["otherExtensions"],
-        json!([{"handle": "theme-widget", "type": "theme"}])
-    );
+    // A theme app extension is listed with its blocks, apart from the extensions not used.
+    assert_eq!(json["otherExtensions"], json!([]));
+    assert_eq!(json["themeExtensions"][0]["handle"], "theme-widget");
 
     let app = app_with_oddities("wrong-html");
     let state = checkout_server_with_data(app.clone(), &[], true, None);

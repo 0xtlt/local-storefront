@@ -1003,6 +1003,48 @@ fn only_in_account(extension: &Json) -> bool {
 
 /// Everything that is wrong, errors first: the store data, the app, the Functions that fail
 /// when the scenarios run, the extensions, the scenarios.
+/// The theme app extensions of the home page, each with its blocks.
+fn theme_extensions_html(themes: &[Json]) -> String {
+    let items: String = themes
+        .iter()
+        .map(|extension| {
+            let blocks: String = extension["blocks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|block| match block["error"].as_str() {
+                    Some(error) => format!(
+                        "<li>{} <span class=\"lsf-muted\">{}</span></li>",
+                        code(text_of(&block["path"])),
+                        esc(error)
+                    ),
+                    None => format!(
+                        "<li>{} <span class=\"lsf-muted\">{} · {}</span></li>",
+                        code(text_of(&block["name"])),
+                        if block["embed"] == true {
+                            "app embed block"
+                        } else {
+                            "app block"
+                        },
+                        esc(text_of(&block["target"]))
+                    ),
+                })
+                .collect();
+            format!(
+                "<li>{} <span class=\"lsf-muted\">{}</span><ul class=\"lsf-h-plain\">{blocks}</ul></li>",
+                code(text_of(&extension["handle"])),
+                esc(text_of(&extension["path"]))
+            )
+        })
+        .collect();
+    format!(
+        "<div class=\"lsf-h-others\" data-section=\"theme-extensions\"><h3>Theme app extensions <span class=\"lsf-h-n\">{}</span></h3>\
+         <p class=\"lsf-muted lsf-h-note\">Their app blocks render in the theme of <code>serve --app</code>, where its templates name them; their app embed blocks where <code>config/settings_data.json</code> or <code>app.embeds</code> of the store data turn them on.</p>\
+         <ul class=\"lsf-h-plain\">{items}</ul></div>",
+        themes.len()
+    )
+}
+
 fn problem_list(
     state: &ServerState,
     app: &App,
@@ -1063,6 +1105,14 @@ fn problem_list(
             diagnostic.message.clone(),
             None,
         );
+    }
+    // The app blocks the theme names that render nothing.
+    if state.app.has_theme() {
+        for (place, message) in
+            crate::theme_extensions::warnings(&state.app.theme, &state.loaded().store)
+        {
+            add(&mut list, Level::Warning, "app", Some(place), message, None);
+        }
     }
     for (kind, extensions, label) in [
         ("function", functions, "Functions"),
@@ -1375,6 +1425,12 @@ fn build(
         "otherExtensions": app.other.iter()
             .map(|other| json!({"handle": other.handle, "type": other.kind}))
             .collect::<Vec<_>>(),
+        // The theme app extensions, with their app blocks and app embed blocks.
+        "themeExtensions": crate::theme_extensions::home(&crate::theme_extensions::of(
+            app,
+            state.app.theme.environment().clone(),
+            lsf_core::theme::Revalidate::Never,
+        )),
         "scenarios": scenarios,
         // The login profiles: the customers of the store data, each with a checkout logged in as
         // them. A scenario gives it a cart, the session's own may well be empty: the first that
@@ -2790,6 +2846,10 @@ pub fn render(home: &Json, check_now: &str) -> String {
         .as_array()
         .cloned()
         .unwrap_or_default();
+    let themes = home["themeExtensions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     for (index, list) in lists.iter().enumerate() {
         let with_problems = list
             .extensions
@@ -2843,6 +2903,9 @@ pub fn render(home: &Json, check_now: &str) -> String {
                     ""
                 }
             ));
+        }
+        if index == lists.len() - 1 && !themes.is_empty() {
+            body.push_str(&theme_extensions_html(&themes));
         }
         body.push_str("</div></section>");
     }

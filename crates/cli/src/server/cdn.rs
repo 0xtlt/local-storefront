@@ -43,6 +43,10 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
     match segments.as_slice() {
         ["shop", "t", _, "assets", rest @ ..] => asset(state, incoming, &rest.join("/")),
         ["shop", "t", _, "compiled_assets", name] => compiled(state, incoming, name),
+        // The assets of a theme app extension of `--app`.
+        ["extensions", id, "assets", rest @ ..] => {
+            extension_asset(state, incoming, id, &rest.join("/"))
+        }
         [
             "shop",
             "files" | "products" | "collections" | "articles",
@@ -96,6 +100,49 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
             format!("/* {path} is served by Shopify and is not available locally */"),
         ),
         _ => Reply::not_found(),
+    }
+}
+
+/// A file of the `assets/` of a theme app extension, as the theme's assets are served: images
+/// through the image CDN, stylesheets and scripts minified.
+fn extension_asset(state: &ServerState, incoming: &Incoming, id: &str, name: &str) -> Reply {
+    let missing = || Reply::not_found().cached(cache::MISSING_ASSET);
+    let apps = state.app.theme.app_extensions();
+    let Some(owner) = apps.extension_by_id(id) else {
+        return missing();
+    };
+    let relative = format!("assets/{name}");
+    let Some(path) = owner
+        .files()
+        .resolve(&relative)
+        .filter(|path| path.is_file())
+    else {
+        // The source map of a stylesheet or a script served minified.
+        if let Some(original) = name.strip_suffix(".map")
+            && let Some(bytes) = owner
+                .files()
+                .resolve(&format!("assets/{original}"))
+                .and_then(|path| std::fs::read(path).ok())
+        {
+            return source_map(state, incoming, &bytes);
+        }
+        return missing();
+    };
+    if RASTER_EXTENSIONS.contains(&extension(name).as_str()) {
+        let transform = Transform::from_query(query_of(incoming));
+        let version = owner.files().version(&relative);
+        return picture(
+            state,
+            incoming,
+            &format!("extensions/{id}/{relative}@{version}?{transform:?}"),
+            Some(&path),
+            &transform,
+            |accepted| transform_file(&path, &transform, accepted),
+        );
+    }
+    match std::fs::read(&path) {
+        Ok(bytes) => theme_file(state, incoming, content_type(name), bytes).cached(cache::ASSET),
+        Err(_) => missing(),
     }
 }
 

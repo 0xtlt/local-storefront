@@ -109,6 +109,8 @@ pub struct Rendered {
     pub errors: Vec<lsf_liquid::Error>,
     /// Non-fatal problems: unknown filters, missing translations, missing assets.
     pub warnings: Vec<String>,
+    /// What the page left out and why: the app blocks it names that did not render.
+    pub notices: Vec<String>,
     /// The template that rendered the page, e.g. `product.alternate`.
     pub template: String,
     /// Why a page is the 404 page: what its URL asks for and the store does not have.
@@ -373,6 +375,8 @@ impl Renderer {
                 {
                     state.add_preload(&url, &[("as", Some("style")), ("rel", Some("preload"))]);
                 }
+                // The app embed blocks, and the scripts and stylesheets of the app blocks.
+                let html = crate::app_extensions::render::decorate(&ctx, html);
                 (
                     page.status,
                     "text/html; charset=utf-8",
@@ -426,6 +430,7 @@ impl Renderer {
             },
             errors: ctx.errors(),
             warnings: ctx.warnings(),
+            notices: state.notices(),
             template: page.template.full(),
             not_found: match (&page.resource, target) {
                 (Resource::NotFound(reason), Target::Page) => Some(reason.clone()),
@@ -697,6 +702,7 @@ impl Renderer {
             preloads: Vec::new(),
             errors: ctx.errors(),
             warnings: ctx.warnings(),
+            notices: Vec::new(),
             template: page.template.full(),
             not_found: None,
             timings: Timings {

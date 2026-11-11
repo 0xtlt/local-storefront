@@ -32,6 +32,7 @@ data directory is one of these, and they are merged, so you can split the data a
 | `checkout` | [Checkout](#checkout) | The fake checkout of `lsf app dev --app`: shipping rates, payment methods, discounts and Function settings. At most one data file may define it. |
 | `now` | string | Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`. Set it to make renders reproducible; each `'now'` of a render is then one nanosecond after the previous one, so `%N` still differs between calls. Defaults to the real time, read at each `'now'`. |
 | `theme_settings` | map of any JSON value | Overrides for theme settings (`config/settings_data.json`), by setting id. |
+| `app` | [AppInstallation](#appinstallation) | The app of `--app` as this store has it installed: what its theme app extensions read. |
 
 ## Shop
 
@@ -972,6 +973,33 @@ validation): its owner in the shop, and its settings.
 |---|---|---|
 | `enabled` | boolean | Whether the shop has an owner of the Function (the payment or delivery customization, validation or cart transform an app creates for it), and it is enabled. As on Shopify, the Function runs at the checkout only through an enabled owner: `true` runs it, `false` is an owner that is turned off. Without it, the shop has no owner of it, as after an install: the Function runs only for a scenario that names it in `extensions`, or for `app function run <handle>`, with these metafields. |
 | `metafields` | map of [Metafield](#metafield) | The metafields of the object the Function belongs to, by `"namespace.key"`. |
+
+## AppInstallation
+
+The app of `--app` as the store has it installed, for its theme app extensions: its
+app-data metafields and the app embed blocks turned on.
+
+| Field | Type | Description |
+|---|---|---|
+| `metafields` | map of map of [Metafield](#metafield) | The app-data metafields of the installation, by namespace then key: `{"conditions": {"reviews_enabled": true}}`. The Liquid of the app's blocks reads them as `app.metafields.conditions.reviews_enabled`, and an `available_if` of a block tests them. |
+| `embeds` | map of [AppEmbed](#appembed) | App embed blocks turned on or off, by the name of their file in the extension's `blocks/` (`"chat-bubble"` for `blocks/chat-bubble.liquid`): `true` turns one on, with the settings `config/settings_data.json` gives it or else its defaults; `false` turns it off; `{"settings": {...}}` turns it on with these settings. The embeds of `config/settings_data.json` that this does not name stay as the theme has them. |
+
+## AppEmbed
+
+An app embed block turned on (`true`) or off (`false`), or turned on with its settings.
+
+One of:
+
+- boolean
+- [AppEmbedSettings](#appembedsettings)
+
+## AppEmbedSettings
+
+An app embed block turned on with settings of its own.
+
+| Field | Type | Description |
+|---|---|---|
+| `settings` | map of any JSON value | The values of the settings of the block's schema, by setting id. The others have their defaults. |
 
 ## Checkout scenario
 

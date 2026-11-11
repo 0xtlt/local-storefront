@@ -1,0 +1,26 @@
+{
+  "sections": {
+    "featured": {
+      "type": "featured",
+      "blocks": {
+        "note": { "type": "text", "settings": { "text": "Featured" } },
+        "reviews_featured": {
+          "type": "shopify://apps/product-reviews/blocks/reviews/5b1c7a52-2d0e-4c8a-9a3e-6f1d2b7c9e01",
+          "settings": {}
+        }
+      },
+      "block_order": ["note", "reviews_featured"]
+    },
+    "apps": {
+      "type": "apps",
+      "blocks": {
+        "badge": {
+          "type": "shopify://apps/product-reviews/blocks/stars-badge/5b1c7a52-2d0e-4c8a-9a3e-6f1d2b7c9e01",
+          "settings": {}
+        }
+      },
+      "block_order": ["badge"]
+    }
+  },
+  "order": ["featured", "apps"]
+}

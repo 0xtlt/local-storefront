@@ -275,7 +275,17 @@ pub fn run_build(
 ) -> Result<std::process::ExitCode, String> {
     let app_dir = app_of(app, command)?;
     let shopify_app = config::load(&app_dir)?;
-    let selection = Selection::resolve(&shopify_app, handles)?;
+    // `lsf app build` checks the theme app extensions as Shopify does: there is nothing to build.
+    let themes = command == "lsf app build";
+    let (theme_handles, handles): (Vec<String>, Vec<String>) = handles
+        .iter()
+        .cloned()
+        .partition(|handle| themes && shopify_app.theme_extension(handle).is_some());
+    let selection = if handles.is_empty() && !theme_handles.is_empty() {
+        Selection::only(Vec::<String>::new())
+    } else {
+        Selection::resolve(&shopify_app, &handles)?
+    };
     build(&shopify_app, &selection)?;
     let shopify_app = config::load(&app_dir)?;
     let mut built = 0;
@@ -299,7 +309,17 @@ pub fn run_build(
             built += 1;
         }
     }
-    if built == 0 {
+    let (checked, failed) = if themes && (handles.is_empty() || !theme_handles.is_empty()) {
+        crate::theme_extensions::validate_app(&shopify_app, &theme_handles)
+    } else {
+        (0, false)
+    };
+    if failed {
+        return Err(
+            "a theme app extension has errors that Shopify rejects (see above)".to_string(),
+        );
+    }
+    if built == 0 && checked == 0 {
         return Err(
             "nothing was built: the app has no extension lsf or its build command builds"
                 .to_string(),

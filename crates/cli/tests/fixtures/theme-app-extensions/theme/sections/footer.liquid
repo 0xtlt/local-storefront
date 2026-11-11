@@ -1,0 +1,8 @@
+<footer>{% for block in section.blocks %}{% render block %}{% endfor %}</footer>
+
+{% schema %}
+{
+  "name": "Footer",
+  "blocks": [{ "type": "@app" }]
+}
+{% endschema %}

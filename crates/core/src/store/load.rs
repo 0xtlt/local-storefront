@@ -7,7 +7,7 @@
 //!   *.json            any number of files, each holding any of: shop, products, collections,
 //!                     pages, blogs, menus, customers, companies, gift_cards, locations,
 //!                     selling_plan_groups, swatches, metaobjects, localization, files,
-//!                     session, checkout, now, theme_settings. They are merged.
+//!                     session, checkout, now, theme_settings, app. They are merged.
 //!   products/*.json   one product per file (or an array); the file name is the default handle
 //!   collections/*.json, pages/*.json, blogs/*.json, customers/*.json, menus/*.json
 //!   checkouts/*.json  checkout scenarios, one per file
@@ -511,6 +511,23 @@ fn merge_store_file(
     }
     merged.files.extend(input.files);
     merged.theme_settings.extend(input.theme_settings);
+    merge_app(&mut merged.app, input.app);
+}
+
+/// Merges the `app` of a data file into what the others gave: metafield by metafield, embed by
+/// embed.
+fn merge_app(merged: &mut model::AppInstallationInput, input: Option<model::AppInstallationInput>) {
+    let Some(input) = input else {
+        return;
+    };
+    for (namespace, fields) in input.metafields {
+        merged
+            .metafields
+            .entry(namespace)
+            .or_default()
+            .extend(fields);
+    }
+    merged.embeds.extend(input.embeds);
 }
 
 /// Options that depend on the theme being served.
@@ -841,6 +858,7 @@ fn apply_overlay(
     }
     merged.files.extend(input.files);
     merged.theme_settings.extend(input.theme_settings);
+    merge_app(&mut merged.app, input.app);
 }
 
 /// An entity of a list that an overlay upserts into ([`upsert`]).
