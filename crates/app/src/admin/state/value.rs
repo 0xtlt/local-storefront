@@ -292,21 +292,32 @@ pub fn mailing_address(address: &Address, model: &str) -> Value {
 }
 
 /// The text of some HTML, as `description` and `bodySummary` give it: the tags dropped, the
-/// common entities decoded, the white space collapsed.
+/// common entities decoded, the white space collapsed. A block tag (`<p>`, `<br>`, `<li>`, …)
+/// separates words; an inline one (`<b>`, `<em>`, `<a>`, `<span>`, …) does not:
+/// `<p>Hello <b>world</b>, it<em>s</em></p>` reads `Hello world, its`.
 pub fn plain_text(html: &str) -> String {
     let mut text = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for c in html.chars() {
-        match c {
-            '<' => {
-                in_tag = true;
-                text.push(' ');
-            }
-            '>' if in_tag => in_tag = false,
-            c if !in_tag => text.push(c),
-            _ => {}
+    let mut rest = html;
+    while let Some(start) = rest.find('<') {
+        text.push_str(&rest[..start]);
+        let tag = &rest[start + 1..];
+        let Some(end) = tag.find('>') else {
+            // A `<` that opens no tag is text.
+            text.push_str(&rest[start..]);
+            rest = "";
+            break;
+        };
+        let name: String = tag[..end]
+            .trim_start_matches(['/', '!'])
+            .chars()
+            .take_while(char::is_ascii_alphanumeric)
+            .collect();
+        if is_block_tag(&name.to_ascii_lowercase()) {
+            text.push(' ');
         }
+        rest = &tag[end + 1..];
     }
+    text.push_str(rest);
     let text = text
         .replace("&nbsp;", " ")
         .replace("&lt;", "<")
@@ -315,6 +326,52 @@ pub fn plain_text(html: &str) -> String {
         .replace("&#39;", "'")
         .replace("&amp;", "&");
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Whether a tag starts a line of its own: the block elements of HTML, `br` and the cells of a
+/// table. The others are inline: they sit within a word.
+fn is_block_tag(name: &str) -> bool {
+    matches!(
+        name,
+        "address"
+            | "article"
+            | "aside"
+            | "blockquote"
+            | "br"
+            | "dd"
+            | "details"
+            | "div"
+            | "dl"
+            | "dt"
+            | "figcaption"
+            | "figure"
+            | "footer"
+            | "form"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "header"
+            | "hr"
+            | "li"
+            | "main"
+            | "nav"
+            | "ol"
+            | "p"
+            | "pre"
+            | "section"
+            | "summary"
+            | "table"
+            | "tbody"
+            | "td"
+            | "tfoot"
+            | "th"
+            | "thead"
+            | "tr"
+            | "ul"
+    )
 }
 
 /// A name for a handle or a key: `care-guide` → `Care guide`.
@@ -454,6 +511,15 @@ mod tests {
         assert_eq!(
             plain_text("<p>Soft &amp; warm.</p>\n<p>Wash cold.</p>"),
             "Soft & warm. Wash cold."
+        );
+        // Inline tags sit within words; block tags and `<br>` separate them.
+        assert_eq!(
+            plain_text("<p>Hello <b>world</b>, it<em>s</em> fine</p><p>Next<br/>line</p>"),
+            "Hello world, its fine Next line"
+        );
+        assert_eq!(
+            plain_text("<ul><li>One</li><li>Two</li></ul><a href=\"/x\">Lin</a>k 1 < 2"),
+            "One Two Link 1 < 2"
         );
         assert_eq!(humanize("care-guide"), "Care guide");
         assert_eq!(humanize("shoe_size"), "Shoe size");
