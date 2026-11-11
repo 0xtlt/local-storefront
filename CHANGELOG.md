@@ -518,6 +518,17 @@ What to change when you upgrade from 0.2.0. Each one is told in full under Chang
   query's input. lsf now touches `src/main.rs` (its time only) before the build when a
   `.graphql` file is newer than the module, and the watch says when a module came out the same
   (a compiler cache that does not see the change).
+- **`lsf app function run` says what a Function threw**: `error: the Function trapped: Error:
+  boom`, as `app check` does, where it said `the Function trapped` alone. The checkout's
+  Functions dialog and the JSON have the message too.
+- **An extension that does not build exits with `1`**, as the exit codes say of something to
+  fix (`app build`, `app function build`, `--build`). It exited with `2`, "could not run".
+- **`lsf app init` counts customer account UI extensions apart**: `for 5 Functions, 1 checkout
+  UI extension and 1 customer account UI extension`, not `2 checkout UI extensions`.
+- **`lsf app function run` prints no discount as `discounts 0.00`**, not `-0.00`.
+- **`lsf app check` prints a scenario that does not validate once**, its problems indented under
+  it, and no longer says `no scenario to check` when the only scenarios are invalid.
+  `app function run --scenario` prints them once too.
 
 ## 0.2.0 - 2026-10-30
 

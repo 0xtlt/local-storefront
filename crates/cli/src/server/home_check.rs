@@ -212,12 +212,7 @@ fn check(
                             ran.push(run.handle.clone());
                         }
                         if let Some(error) = run.error {
-                            failed.push((
-                                run.handle,
-                                run.target,
-                                with_message(error, &run.logs),
-                                run.logs,
-                            ));
+                            failed.push((run.handle, run.target, error, run.logs));
                         }
                     }
                 }
@@ -313,23 +308,6 @@ fn check(
     }
     report.elapsed = started.elapsed();
     report
-}
-
-/// A trap says nothing of why: what the Function logged last does (`Error: boom`, the message
-/// of what a JavaScript Function threw, before the lines of its stack).
-fn with_message(error: String, logs: &str) -> String {
-    if error != "the Function trapped" {
-        return error;
-    }
-    let message = logs
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with("at "));
-    match message {
-        Some(message) => format!("{error}: {message}"),
-        None => error,
-    }
 }
 
 /// What a check was run on: the very store that was loaded, the app as its files are, and
@@ -431,29 +409,5 @@ impl Cache {
             *self.last.lock().expect("check cache poisoned") = Some((before, report.clone()));
         }
         report
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::with_message;
-
-    #[test]
-    fn a_trap_ends_with_the_last_message_the_function_logged() {
-        let thrown = "checking\nError: boom\n    at run (function.mjs:3:9)\n    at main (function.mjs:9:2)\n";
-        assert_eq!(
-            with_message("the Function trapped".into(), thrown),
-            "the Function trapped: Error: boom"
-        );
-        // Nothing logged: nothing to add.
-        assert_eq!(
-            with_message("the Function trapped".into(), ""),
-            "the Function trapped"
-        );
-        // Another error says why already.
-        assert_eq!(
-            with_message("module exited with code: 1".into(), thrown),
-            "module exited with code: 1"
-        );
     }
 }

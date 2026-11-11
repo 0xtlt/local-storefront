@@ -849,16 +849,40 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
         write_settings(&directory, &settings)?;
     }
     let target = match &shopify_app {
-        Some(app) => format!(
-            "{} and {} of {}",
-            count(app.functions.len(), "Function", "Functions"),
-            count(
-                app.ui_extensions.len(),
-                "checkout UI extension",
-                "checkout UI extensions"
-            ),
-            app.name.as_deref().unwrap_or("the app")
-        ),
+        Some(app) => {
+            // An extension with a target in the checkout is a checkout UI extension; one whose
+            // targets are all in the customer account, a customer account UI extension.
+            let (checkout, account): (Vec<_>, Vec<_>) =
+                app.ui_extensions.iter().partition(|extension| {
+                    extension.targets.is_empty()
+                        || extension.targets.iter().any(|target| {
+                            lsf_app::checkout::placement::surface(&target.target)
+                                != Some("customer-account")
+                        })
+                });
+            let mut parts = vec![count(app.functions.len(), "Function", "Functions")];
+            if !checkout.is_empty() || account.is_empty() {
+                parts.push(count(
+                    checkout.len(),
+                    "checkout UI extension",
+                    "checkout UI extensions",
+                ));
+            }
+            if !account.is_empty() {
+                parts.push(count(
+                    account.len(),
+                    "customer account UI extension",
+                    "customer account UI extensions",
+                ));
+            }
+            let last = parts.pop().expect("a part");
+            let parts = if parts.is_empty() {
+                last
+            } else {
+                format!("{} and {last}", parts.join(", "))
+            };
+            format!("{parts} of {}", app.name.as_deref().unwrap_or("the app"))
+        }
         None => "no app: the generic set".to_string(),
     };
     eprintln!(

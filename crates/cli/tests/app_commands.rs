@@ -110,12 +110,13 @@ fn checkout_check_runs_every_scenario_and_fails_on_one_that_fails() {
     let output = lsf(&app.0, &["app", "check"]);
     assert_eq!(output.status.code(), Some(1), "{}", text(&output));
     assert!(text(&output).contains("invalid  typo"), "{}", text(&output));
-    // Counted in the singular.
+    // Counted in the singular, and its problem printed once, with it.
     assert!(
-        text(&output).contains("1 error, 0 warnings in the store data"),
+        text(&output).contains(": 0 failures, 1 invalid scenario"),
         "{}",
         text(&output)
     );
+    assert_eq!(text(&output).matches("\"NOPE\" is neither").count(), 1);
 }
 
 /// Makes `quantity-limit` read its settings as the variables of its input query: without them
@@ -770,11 +771,6 @@ fn app_check_help_describes_the_json_it_prints() {
         "{}",
         text(&output)
     );
-    assert!(
-        text(&output).contains("1 error, 0 warnings in the store data"),
-        "{}",
-        text(&output)
-    );
 }
 
 #[test]
@@ -948,6 +944,80 @@ fn app_check_says_each_way_a_function_fails() {
     }
 }
 
+/// `app function run` says what a Function threw, prints no `-0.00` discount, and a build that
+/// fails exits with 1, as a Function that fails does.
+#[test]
+fn function_run_says_what_a_function_threw_and_a_failed_build_exits_with_1() {
+    let app = app_with_a_validation(
+        "run-threw",
+        "  console.log('checking');\n  throw new Error('boom');",
+        &[1],
+    );
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "function",
+            "run",
+            "boom",
+            "--scenario",
+            "q1",
+            "--build",
+        ],
+    );
+    let said = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{said}");
+    assert!(
+        said.contains("\nerror: the Function trapped: Error: boom\n"),
+        "{said}"
+    );
+    assert!(said.contains("logs:\n  checking\n"), "{said}");
+    assert!(said.contains(" · discounts 0.00 USD · "), "{said}");
+    assert!(!said.contains("-0.00"), "{said}");
+
+    // A syntax error: the user's code does not build.
+    app.write(
+        "extensions/boom/src/cart_validations_generate_run.js",
+        "export function cartValidationsGenerateRun(input) {\n",
+    );
+    for args in [
+        &["app", "function", "build", "boom"][..],
+        &["app", "build", "boom"],
+        &["app", "check", "--build", "--extension", "boom"],
+    ] {
+        let output = lsf(&app.0, args);
+        let said = text(&output);
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {said}");
+        assert!(
+            said.contains("error: the build of boom failed: "),
+            "{args:?}: {said}"
+        );
+    }
+}
+
+/// A scenario that does not validate is printed once, with its problems indented as a block.
+#[test]
+fn app_check_prints_an_invalid_scenario_once() {
+    let app = App::new("invalid-once");
+    assert!(lsf(&app.0, &["init"]).status.success());
+    app.write(
+        "shopify-local/checkouts/bad.json",
+        r#"{"titel": "x", "session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}}"#,
+    );
+    let output = lsf(&app.0, &["app", "check"]);
+    let said = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{said}");
+    assert_eq!(said.matches("unknown field \"titel\"").count(), 1, "{said}");
+    assert!(
+        said.contains(
+            "invalid  bad (checkouts/bad.json)\n         error[unknown_field]: unknown field \"titel\"\n           --> checkouts/bad.json at /titel\n"
+        ),
+        "{said}"
+    );
+    assert!(said.contains(": 0 failures, 1 invalid scenario"), "{said}");
+    assert!(!said.contains("no scenario to check"), "{said}");
+}
+
 #[test]
 fn installed_with_npm_the_hints_say_npx_local_storefront() {
     let app = App::new("npx");
@@ -1081,6 +1151,30 @@ fn init_and_app_init_count_in_the_singular_for_one() {
     let output = lsf(&app.0, &["app", "init"]);
     assert!(
         text(&output).contains(": wrote 1 scenario, kept "),
+        "{}",
+        text(&output)
+    );
+
+    // A customer account UI extension is counted as one, not as a checkout UI extension.
+    app.write(
+        "extensions/account-block/shopify.extension.toml",
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Account block"
+handle = "account-block"
+type = "ui_extension"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-index.block.render"
+  module = "./src/Block.jsx"
+"#,
+    );
+    let output = lsf(&app.0, &["app", "init"]);
+    assert!(
+        text(&output).contains(
+            "for 5 Functions, 2 checkout UI extensions and 1 customer account UI extension of "
+        ),
         "{}",
         text(&output)
     );

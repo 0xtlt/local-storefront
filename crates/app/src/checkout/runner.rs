@@ -257,7 +257,7 @@ impl Runner {
             let (logs, error) = split_failure(&result.logs);
             execution.error = Some(match panic_message(&logs) {
                 Some(message) => format!("the Function panicked: {message}"),
-                None => error,
+                None => with_message(error, &logs),
             });
             execution.logs = logs;
             return execution;
@@ -410,6 +410,23 @@ fn split_failure(logs: &str) -> (String, String) {
     }
 }
 
+/// A trap says nothing of why: what the Function logged last does (`Error: boom`, the message
+/// of what a JavaScript Function threw, before the lines of its stack).
+fn with_message(error: String, logs: &str) -> String {
+    if error != "the Function trapped" {
+        return error;
+    }
+    let message = logs
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("at "));
+    match message {
+        Some(message) => format!("{error}: {message}"),
+        None => error,
+    }
+}
+
 /// The message of a Rust panic in the logs: `panicked at src/lib.rs:1:1:\nmessage`.
 fn panic_message(logs: &str) -> Option<&str> {
     let (_, after) = logs.split_once("panicked at ")?;
@@ -475,6 +492,25 @@ mod tests {
         let (before, error) = split_failure(logs);
         assert_eq!(before, "hello\nwasm trap reason\n");
         assert_eq!(error, "the Function trapped");
+    }
+
+    #[test]
+    fn a_trap_ends_with_the_last_message_the_function_logged() {
+        let thrown = "checking\nError: boom\n    at run (function.mjs:3:9)\n    at main (function.mjs:9:2)\n";
+        assert_eq!(
+            with_message("the Function trapped".into(), thrown),
+            "the Function trapped: Error: boom"
+        );
+        // Nothing logged: nothing to add.
+        assert_eq!(
+            with_message("the Function trapped".into(), ""),
+            "the Function trapped"
+        );
+        // Another error says why already.
+        assert_eq!(
+            with_message("module exited with code: 1".into(), thrown),
+            "module exited with code: 1"
+        );
     }
 
     #[test]

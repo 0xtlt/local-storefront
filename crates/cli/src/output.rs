@@ -18,3 +18,18 @@ pub fn print_diagnostics(diagnostics: &Diagnostics) {
         count(diagnostics.warning_count(), "warning", "warnings")
     );
 }
+
+/// Set when the error a command stops with is the user's to fix (their extension does not
+/// build), not one that kept the command from running: it then exits with `1`, not `2`.
+static FIXABLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `message`, an error the user fixes in their code: the command exits with `1`.
+pub fn fixable(message: String) -> String {
+    FIXABLE.store(true, std::sync::atomic::Ordering::Relaxed);
+    message
+}
+
+/// Whether the error the command stops with is one [`fixable`] made.
+pub fn is_fixable() -> bool {
+    FIXABLE.load(std::sync::atomic::Ordering::Relaxed)
+}

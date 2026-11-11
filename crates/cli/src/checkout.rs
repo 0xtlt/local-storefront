@@ -158,17 +158,21 @@ pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
                         format!("cannot run the build of {}: {error}", function.handle)
                     })?;
                 if !status.success() {
-                    return Err(format!(
+                    return Err(crate::output::fixable(format!(
                         "the build of {} failed ({status})",
                         function.handle
-                    ));
+                    )));
                 }
                 link(function)?;
             }
             Some(Build::JavaScript) => {
                 eprintln!("build:  {}: JavaScript, built by lsf", function.handle);
-                lsf_app::checkout::javascript::build(function, &app.root)
-                    .map_err(|error| format!("the build of {} failed: {error}", function.handle))?;
+                lsf_app::checkout::javascript::build(function, &app.root).map_err(|error| {
+                    crate::output::fixable(format!(
+                        "the build of {} failed: {error}",
+                        function.handle
+                    ))
+                })?;
             }
         }
     }
@@ -243,9 +247,9 @@ pub fn link(function: &config::FunctionExtension) -> Result<(), String> {
     if !function.wasm_path.is_file() {
         return Ok(());
     }
-    if lsf_app::checkout::trampoline::apply(&function.wasm_path)
-        .map_err(|error| format!("the build of {} failed: {error}", function.handle))?
-    {
+    if lsf_app::checkout::trampoline::apply(&function.wasm_path).map_err(|error| {
+        crate::output::fixable(format!("the build of {} failed: {error}", function.handle))
+    })? {
         eprintln!(
             "build:  {}: linked to the Function Wasm API (shopify-function-trampoline)",
             function.handle
@@ -263,8 +267,9 @@ pub fn build_ui_extensions(app: &App, selection: &Selection) -> Result<(), Strin
             continue;
         }
         let started = std::time::Instant::now();
-        lsf_app::checkout::javascript::build_extension(extension, &app.root)
-            .map_err(|error| format!("the build of {} failed: {error}", extension.handle))?;
+        lsf_app::checkout::javascript::build_extension(extension, &app.root).map_err(|error| {
+            crate::output::fixable(format!("the build of {} failed: {error}", extension.handle))
+        })?;
         eprintln!(
             "build:  {}: built by lsf in {}ms",
             extension.handle,

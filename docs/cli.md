@@ -19,7 +19,7 @@ Installed with mise, from a release or from source, the command is `lsf`: `lsf s
 | Code | Meaning |
 |---|---|
 | `0` | Done, nothing to report. |
-| `1` | Done, and something to fix: data or app errors (`validate`), problems in the theme (`check`), Liquid errors in the page or nothing at its path (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run or did not run (`app function run`), a scenario that fails or whose `expect` is not met (`app check`), a webhook that was not delivered (`app webhook trigger`). |
+| `1` | Done, and something to fix: data or app errors (`validate`), problems in the theme (`check`), Liquid errors in the page or nothing at its path (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run or did not run (`app function run`), a scenario that fails or whose `expect` is not met (`app check`), an extension that does not build (`app build`, `app function build`, `--build`), a webhook that was not delivered (`app webhook trigger`). |
 | `2` | The command could not run: a wrong option, a theme or a file that cannot be read, a file `fmt` cannot write, a port `serve` cannot listen on. The message is on stderr, after `error:`. |
 
 ## Output

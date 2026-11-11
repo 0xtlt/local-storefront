@@ -520,10 +520,8 @@ fn scenario_to_run<'a>(
             }
         }
     })?;
+    // Its problems are among the diagnostics of the store data, printed already.
     if !scenario.problems.is_empty() {
-        for problem in &scenario.problems {
-            eprintln!("{problem}");
-        }
         return Err(format!(
             "--scenario {name}: {} has errors (see above)",
             scenario.file
@@ -694,8 +692,10 @@ fn print_text(result: &CheckoutResult) {
     }
     let cost = &result.cost;
     println!(
-        "  subtotal {} · discounts -{} · shipping {} · tax {} · total {}",
+        "  subtotal {} · discounts {}{} · shipping {} · tax {} · total {}",
         display_money(cost.subtotal, currency),
+        // No discount is 0.00, not -0.00.
+        if cost.discounts == 0 { "" } else { "-" },
         display_money(cost.discounts, currency),
         display_money(cost.shipping, currency),
         display_money(cost.tax, currency),
