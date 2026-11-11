@@ -1258,6 +1258,58 @@ mod tests {
     }
 
     #[test]
+    fn typed_metafields_are_checked_against_their_type() {
+        let (_, diagnostics) = inline(serde_json::json!({
+            "products": [{"title": "Thing", "price": "1.00", "metafields": {"custom": {
+                "count": {"type": "number_integer", "value": "two"},
+                "related": {"type": "list.product_reference", "value": ["ceramic-mug", "ceramic-mugg", "does-not-exist"]},
+                "guide": {"type": "page_reference", "value": "contact"},
+                "weight": {"type": "weight", "value": {"value": 2, "unit": "kgs"}},
+                "kind": {"type": "number_interger", "value": 2},
+                "plain": "inferred, never wrong",
+            }}}],
+            "metaobjects": {"designer": [{"handle": "sam", "fields": {
+                "age": {"type": "number_integer", "value": 3.5},
+                "friend": {"type": "metaobject_reference", "value": "designer/samm"},
+            }}]},
+        }));
+        let found: Vec<String> = diagnostics
+            .items
+            .iter()
+            .map(|item| {
+                format!(
+                    "{} {} {}",
+                    item.code,
+                    item.path,
+                    item.hint.as_deref().unwrap_or_default()
+                )
+            })
+            .collect();
+        let at = |path: &str| {
+            found
+                .iter()
+                .find(|line| line.contains(&format!(" {path} ")))
+                .unwrap_or_else(|| panic!("nothing at {path}: {found:#?}"))
+                .clone()
+        };
+        let base = "/products/0/metafields/custom";
+        assert!(at(&format!("{base}/count/value")).starts_with("invalid_metafield"));
+        assert_eq!(
+            at(&format!("{base}/related/value/1")),
+            format!("unknown_reference {base}/related/value/1 did you mean \"ceramic-mug\"?")
+        );
+        assert!(at(&format!("{base}/related/value/2")).starts_with("unknown_reference"));
+        assert!(at(&format!("{base}/weight/value/unit")).ends_with("did you mean \"kg\"?"));
+        assert!(at(&format!("{base}/kind/type")).starts_with("unknown_metafield_type"));
+        assert!(at("/metaobjects/designer/0/fields/age/value").starts_with("invalid_metafield"));
+        assert!(
+            at("/metaobjects/designer/0/fields/friend/value")
+                .ends_with("did you mean \"designer/sam\"?")
+        );
+        assert_eq!(found.len(), 7, "{found:#?}");
+    }
+
+    #[test]
     fn customers_are_named_by_email_default_or_none() {
         let (store, _) = load(&DataSource::Demo, &LoadOptions::default());
         let email = |who: &str| {

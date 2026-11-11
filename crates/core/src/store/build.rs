@@ -102,6 +102,9 @@ struct Builder<'a> {
     /// The handles of the products that are not on the storefront: what names one leaves it
     /// out without an error.
     unlisted: HashSet<String>,
+    /// The references of typed metafields, resolved once the store is built: where the
+    /// metafield is, and what it names.
+    references: Vec<(Origin, super::metafield_types::Reference)>,
 }
 
 impl Builder<'_> {
@@ -181,7 +184,9 @@ impl Builder<'_> {
         }
     }
 
-    fn metafields(&mut self, input: &model::Metafields) -> Metafields {
+    /// The metafields of an entity, `origin` being where they are written (its `metafields`).
+    /// A typed value that its type refuses is an error.
+    fn metafields(&mut self, input: &model::Metafields, origin: &Origin) -> Metafields {
         input
             .iter()
             .map(|(namespace, fields)| {
@@ -189,11 +194,34 @@ impl Builder<'_> {
                     namespace.clone(),
                     fields
                         .iter()
-                        .map(|(key, field)| (key.clone(), metafield(field)))
+                        .map(|(key, field)| {
+                            self.check_metafield(field, &origin.child(namespace).child(key));
+                            (key.clone(), metafield(field))
+                        })
                         .collect(),
                 )
             })
             .collect()
+    }
+
+    /// Checks a typed metafield (or field of a metaobject) against its type, and keeps its
+    /// references for [`resolve_references`].
+    fn check_metafield(&mut self, field: &MetafieldInput, origin: &Origin) {
+        let MetafieldInput::Typed(typed) = field else {
+            return;
+        };
+        let (problems, references) = super::metafield_types::check(&typed.kind, &typed.value);
+        for problem in problems {
+            let at = Origin::new(
+                origin.file.clone(),
+                format!("{}{}", origin.pointer, problem.pointer),
+            );
+            self.error(problem.code, &at, problem.message)
+                .hint(problem.hint);
+        }
+        for reference in references {
+            self.references.push((origin.clone(), reference));
+        }
     }
 
     /// A swatch, or nothing when it has neither a valid color nor an image.
@@ -364,6 +392,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
             })
             .collect(),
         unlisted: HashSet::new(),
+        references: Vec::new(),
     };
 
     if let Some(timezone) = &shop_input.timezone {
@@ -381,7 +410,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         }
     }
 
-    let shop = build_shop(&mut builder, &shop_input);
+    let shop = build_shop(&mut builder, &shop_input, &shop_origin);
     let locations = build_locations(&mut builder, &input.locations);
     // The store's swatches, by the lowercase name of the option value they are for.
     let swatches: HashMap<String, Swatch> = input
@@ -475,7 +504,10 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
                 .value
                 .fields
                 .iter()
-                .map(|(key, field)| (key.clone(), metafield(field)))
+                .map(|(key, field)| {
+                    builder.check_metafield(field, &entry.origin.child("fields").child(key));
+                    (key.clone(), metafield(field))
+                })
                 .collect(),
             template_suffix: entry.value.template_suffix.clone(),
         });
@@ -491,12 +523,153 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         let parsed = builder.date(&Some(now.value.clone()), &now.origin, epoch());
         store.now = Some(parsed);
     }
-    store.files = builder.files;
+    store.files = std::mem::take(&mut builder.files);
     store.index();
+    resolve_references(&mut builder, &store);
     (store, builder.diagnostics)
 }
 
-fn build_shop(builder: &mut Builder<'_>, input: &model::ShopInput) -> Shop {
+/// Resolves the references of typed metafields, now that every entity they can name is built:
+/// one that names nothing is an `unknown_reference`, with the closest name. A product that is
+/// not on the storefront is named without an error, as elsewhere.
+fn resolve_references(builder: &mut Builder<'_>, store: &Store) {
+    for (origin, reference) in std::mem::take(&mut builder.references) {
+        let text = reference.value.as_str().unwrap_or_default();
+        let at = Origin::new(
+            origin.file.clone(),
+            format!("{}{}", origin.pointer, reference.pointer),
+        );
+        let (what, candidates): (&str, Vec<String>) = match reference.kind.as_str() {
+            "product_reference" => {
+                if store.product_index(text).is_some() || builder.unlisted.contains(text) {
+                    continue;
+                }
+                (
+                    "product",
+                    store.products.iter().map(|p| p.handle.clone()).collect(),
+                )
+            }
+            "variant_reference" => {
+                let found = match &reference.value {
+                    Json::Number(number) => number
+                        .as_u64()
+                        .is_some_and(|id| store.variant_location(id).is_some()),
+                    _ => store
+                        .products
+                        .iter()
+                        .flat_map(|product| &product.variants)
+                        .any(|variant| variant.sku == text),
+                };
+                if found {
+                    continue;
+                }
+                (
+                    "variant (by SKU or id)",
+                    store
+                        .products
+                        .iter()
+                        .flat_map(|product| &product.variants)
+                        .filter(|variant| !variant.sku.is_empty())
+                        .map(|variant| variant.sku.clone())
+                        .collect(),
+                )
+            }
+            "collection_reference" => {
+                if store.collection_index(text).is_some() {
+                    continue;
+                }
+                (
+                    "collection",
+                    store.collections.iter().map(|c| c.handle.clone()).collect(),
+                )
+            }
+            "page_reference" => {
+                if store.page_index(text).is_some() {
+                    continue;
+                }
+                (
+                    "page",
+                    store.pages.iter().map(|p| p.handle.clone()).collect(),
+                )
+            }
+            "article_reference" => {
+                let found = match text.split_once('/') {
+                    Some((blog, article)) => store
+                        .blog_index(blog)
+                        .and_then(|blog| store.article_index(blog, article))
+                        .is_some(),
+                    None => {
+                        (0..store.blogs.len())
+                            .filter(|blog| store.article_index(*blog, text).is_some())
+                            .count()
+                            == 1
+                    }
+                };
+                if found {
+                    continue;
+                }
+                (
+                    "article (blog/article)",
+                    store
+                        .blogs
+                        .iter()
+                        .flat_map(|blog| {
+                            blog.articles
+                                .iter()
+                                .map(move |article| format!("{}/{}", blog.handle, article.handle))
+                        })
+                        .collect(),
+                )
+            }
+            "metaobject_reference" | "mixed_reference" => {
+                if text
+                    .split_once('/')
+                    .is_some_and(|(kind, handle)| store.metaobject(kind, handle).is_some())
+                {
+                    continue;
+                }
+                (
+                    "metaobject (type/handle)",
+                    store
+                        .metaobjects
+                        .iter()
+                        .map(|entry| format!("{}/{}", entry.kind, entry.handle))
+                        .collect(),
+                )
+            }
+            // Files are served from files/ when they are there, and drawn as placeholders when
+            // they are not; customers, companies and taxonomy values are not resolved.
+            _ => continue,
+        };
+        let shown = if text.is_empty() {
+            reference.value.to_string()
+        } else {
+            text.to_string()
+        };
+        let diagnostic = builder.error(
+            "unknown_reference",
+            &at,
+            format!("there is no {what} \"{shown}\" for this {}", reference.kind),
+        );
+        match closest_match(&shown, candidates.iter().map(String::as_str)) {
+            Some(close) => diagnostic.hint(format!("did you mean \"{close}\"?")),
+            None if candidates.is_empty() => {
+                diagnostic.hint(format!("the store data has no {what}"))
+            }
+            None => diagnostic.hint(format!(
+                "name one of the store data: {}",
+                candidates
+                    .iter()
+                    .take(5)
+                    .map(|c| format!("\"{c}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        };
+    }
+}
+
+fn build_shop(builder: &mut Builder<'_>, input: &model::ShopInput, origin: &Origin) -> Shop {
     let name = input
         .name
         .clone()
@@ -598,7 +771,7 @@ fn build_shop(builder: &mut Builder<'_>, input: &model::ShopInput) -> Shop {
             .clone()
             .unwrap_or_else(|| DEFAULT_PASSWORD.to_string()),
         brand,
-        metafields: builder.metafields(&input.metafields),
+        metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
         name,
     }
 }
@@ -641,7 +814,7 @@ fn build_locations(
                     physical_storefront: input.physical_storefront.unwrap_or(true),
                     latitude: input.latitude,
                     longitude: input.longitude,
-                    metafields: builder.metafields(&input.metafields),
+                    metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
                 }
             },
         )
@@ -980,7 +1153,8 @@ fn build_products(
                     locations,
                     &variant_origin.child("store_availabilities"),
                 ),
-                metafields: builder.metafields(&variant.metafields),
+                metafields: builder
+                    .metafields(&variant.metafields, &variant_origin.child("metafields")),
             });
         }
 
@@ -1078,7 +1252,7 @@ fn build_products(
             created_at,
             published_at,
             updated_at,
-            metafields: builder.metafields(&input.metafields),
+            metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
             collections: Vec::new(),
             recommendations: Vec::new(),
             selling_plan_groups: Vec::new(),
@@ -1329,7 +1503,7 @@ fn build_collections(
             template_suffix: input.template_suffix.clone(),
             published_at,
             updated_at,
-            metafields: builder.metafields(&input.metafields),
+            metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
             handle,
         });
     }
@@ -1775,7 +1949,7 @@ fn build_pages(builder: &mut Builder<'_>, store: &mut Store, inputs: &[Sourced<m
             template_suffix: input.template_suffix.clone(),
             published_at,
             updated_at,
-            metafields: builder.metafields(&input.metafields),
+            metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
             handle,
         });
     }
@@ -1871,7 +2045,8 @@ fn build_blogs(builder: &mut Builder<'_>, store: &mut Store, inputs: &[Sourced<m
                     created_at,
                     published_at,
                     updated_at,
-                    metafields: builder.metafields(&article.metafields),
+                    metafields: builder
+                        .metafields(&article.metafields, &article_origin.child("metafields")),
                     handle: article_handle,
                 }
             })
@@ -1885,7 +2060,7 @@ fn build_blogs(builder: &mut Builder<'_>, store: &mut Store, inputs: &[Sourced<m
             comments_enabled: input.comments_enabled,
             moderated: input.moderated,
             template_suffix: input.template_suffix.clone(),
-            metafields: builder.metafields(&input.metafields),
+            metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
             handle,
         });
     }
@@ -2378,7 +2553,8 @@ fn build_companies(
                         .as_ref()
                         .map(|a| address(a, &format!("{location_id}/shipping"))),
                     tax_registration_id: location.tax_registration_id.clone(),
-                    metafields: builder.metafields(&location.metafields),
+                    metafields: builder
+                        .metafields(&location.metafields, &location_origin.child("metafields")),
                 }
             })
             .collect();
@@ -2389,7 +2565,7 @@ fn build_companies(
             locations,
             created_at,
             updated_at,
-            metafields: builder.metafields(&input.metafields),
+            metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
         });
     }
 }
@@ -2667,7 +2843,7 @@ fn build_customers(
                 .map(|(position, a)| address(a, &format!("{id}/address/{position}")))
                 .collect(),
             orders,
-            metafields: builder.metafields(&input.metafields),
+            metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
             company,
             company_locations,
             company_contact,
@@ -2879,7 +3055,7 @@ fn build_localization(
         store.markets.push(Market {
             handle: market.handle.clone(),
             countries,
-            metafields: builder.metafields(&market.metafields),
+            metafields: builder.metafields(&market.metafields, &market_origin.child("metafields")),
         });
     }
 

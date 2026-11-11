@@ -6,6 +6,7 @@ mod date;
 pub mod demo;
 pub mod docs;
 pub mod load;
+pub mod metafield_types;
 pub mod model;
 pub mod reference;
 pub mod validate;

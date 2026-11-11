@@ -227,43 +227,9 @@ pub fn video_from_src(site: &SiteRef, src: &str) -> Media {
 }
 
 /// The metafield types whose value is a measurement: a number and its unit.
-const MEASUREMENTS: [&str; 32] = [
-    "antenna_gain",
-    "area",
-    "battery_charge_capacity",
-    "battery_energy_capacity",
-    "capacitance",
-    "concentration",
-    "data_storage_capacity",
-    "data_transfer_rate",
-    "dimension",
-    "display_density",
-    "distance",
-    "duration",
-    "electric_current",
-    "electrical_resistance",
-    "energy",
-    "frequency",
-    "illuminance",
-    "inductance",
-    "luminous_flux",
-    "mass_flow_rate",
-    "power",
-    "pressure",
-    "resolution",
-    "rotational_speed",
-    "sound_level",
-    "speed",
-    "temperature",
-    "thermal_power",
-    "voltage",
-    "volume",
-    "volumetric_flow_rate",
-    "weight",
-];
 
 pub fn is_measurement(kind: &str) -> bool {
-    MEASUREMENTS.contains(&kind)
+    lsf_core::store::metafield_types::is_measurement(kind)
 }
 
 /// An article named `blog/article`, or by its handle alone when only one blog has it: a
