@@ -1145,6 +1145,28 @@ fn build_products(
             let available = forced.unwrap_or(
                 !tracked || quantity > 0 || variant.inventory_policy == InventoryPolicy::Continue,
             );
+            // Shopify never has both: a tracked variant with stock is available.
+            if forced == Some(false)
+                && quantity > 0
+                && variant.inventory_policy == InventoryPolicy::Deny
+            {
+                let place = if variant.available.is_some() {
+                    variant_origin.child("available")
+                } else {
+                    origin.child("available")
+                };
+                builder
+                    .diagnostics
+                    .warning(
+                        "unavailable_in_stock",
+                        &place.file,
+                        &place.pointer,
+                        format!(
+                            "\"available\": false with an \"inventory_quantity\" of {quantity}: on Shopify a variant with stock is available. lsf keeps it unavailable with {quantity} in stock, which themes such as Horizon show as \"Unavailable\", not \"Sold out\""
+                        ),
+                    )
+                    .hint("for a sold-out variant, remove \"inventory_quantity\" or make it 0; for one in stock, remove \"available\"");
+            }
             let media_index = match &variant.image {
                 None => None,
                 Some(src) => {

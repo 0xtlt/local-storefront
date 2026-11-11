@@ -1501,7 +1501,37 @@ mod tests {
                 {"available": false, "inventory_quantity": 3},
             ]},
         ]}));
-        assert!(diagnostics.is_empty(), "{diagnostics}");
+        // Unavailable with stock: Shopify never has both, and the data is warned about it.
+        let found: Vec<(&str, &str, &str)> = diagnostics
+            .items
+            .iter()
+            .map(|item| {
+                (
+                    item.code,
+                    item.path.as_str(),
+                    if item.severity == crate::diagnostics::Severity::Warning {
+                        "warning"
+                    } else {
+                        "error"
+                    },
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [(
+                "unavailable_in_stock",
+                "/products/3/variants/0/available",
+                "warning"
+            )],
+            "{diagnostics}"
+        );
+        assert!(
+            diagnostics.items[0]
+                .message
+                .contains("lsf keeps it unavailable with 3 in stock"),
+            "{diagnostics}"
+        );
         let variant =
             |handle: &str| store.product_by_handle(handle).expect(handle).variants[0].clone();
         let sold_out = variant("sold-out-thing");
