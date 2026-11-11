@@ -94,7 +94,7 @@ pub fn client_secret(explicit: Option<&str>, app_root: Option<&Path>) -> (String
 
 /// The value of `key` in a `.env` file: `KEY=value`, `export KEY=value`, quoted or not. A line
 /// starting with `#` is a comment.
-fn dotenv_value(file: &Path, key: &str) -> Option<String> {
+pub(crate) fn dotenv_value(file: &Path, key: &str) -> Option<String> {
     let content = std::fs::read_to_string(file).ok()?;
     content.lines().find_map(|line| {
         let line = line.trim();

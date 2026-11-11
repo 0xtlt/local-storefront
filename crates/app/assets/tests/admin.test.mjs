@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { FakeEvent } from './fake-dom.mjs';
-import { APP, adminConfig, adminPage, plain, settle, tick } from './admin-harness.mjs';
+import { APP, LAUNCH, adminConfig, adminPage, plain, settle, tick } from './admin-harness.mjs';
 import { adminHref, appPathOf, searchQuery } from '../admin/admin.js';
 
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
@@ -256,6 +256,34 @@ test("follows a URL of Shopify's admin to lsf's page of it, for its shop: the pl
     'http://admin.shopify.com/store/local-supply-co/orders',
   ]);
   assert.deepEqual(plain(page.opened), [{ url: '/admin?shop=local-supply-co.myshopify.com&user=2', target: '_blank' }]);
+});
+
+test("follows a URL of the app for the whole window to the admin's page of it: the exit-iframe page", async () => {
+  const proxy = 'http://127.0.0.1:52011';
+  const page = await adminPage({
+    config: adminConfig({ frame: { url: LAUNCH, origin: proxy, appOrigin: APP, path: '/app', base: APP } }),
+  });
+  page.bridge = (data) => page.send({ lsf: 'app-bridge', v: 1, ...data }, { origin: proxy });
+  page.bridge({ type: 'hello', version: 'lsf-1', apiKey: 'client-1', scriptOrigin: 'http://127.0.0.1:9292' });
+  // On the proxy of the frame, or on the backend's own origin.
+  page.bridge({ type: 'navigate', url: 'http://127.0.0.1:52011/app/plans?embedded=1&shop=local-supply-co.myshopify.com', target: '_top' });
+  page.bridge({ type: 'navigate', url: `${APP}/app/settings`, target: '_top' });
+  // The confirmationUrl of a charge, which Shopify writes on the shop's admin.
+  page.bridge({
+    type: 'navigate',
+    url: 'https://local-supply-co.myshopify.com/admin/charges/123/4/RecurringApplicationCharge/confirm_recurring_application_charge?signature=x',
+    target: '_top',
+  });
+  assert.deepEqual(page.location.assigned, [
+    '/admin/apps/admin-backend/app/plans',
+    '/admin/apps/admin-backend/app/settings',
+    '/admin/charges/123/4/RecurringApplicationCharge/confirm_recurring_application_charge?signature=x&shop=local-supply-co.myshopify.com',
+  ]);
+});
+
+test('shows the warnings of shopify.app.toml', async () => {
+  const page = await adminPage({ config: adminConfig({ warnings: ['shopify.app.toml has no client_id'] }) });
+  assert.match(page.query('[data-banner="config-0"]').textContent, /shopify\.app\.toml has no client_id/);
 });
 
 test('lists what lsf does not simulate that the page called', async () => {

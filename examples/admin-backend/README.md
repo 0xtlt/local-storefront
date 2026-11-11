@@ -23,9 +23,9 @@ result    check                                                                 
 PASS      auth: embedded launch → authenticate.admin (token exchange)                 home page rendered "Local Supply Co.", offline session stored
 PASS      auth: OAuth authorize → callback → access token                             token for local-supply-co.myshopify.com, …
 …
-KNOWN     billing: billing.require from a page (exit-iframe)                          the template's exit-iframe page only redirects to https admin URLs, …
+PASS      billing: billing.require from a page (exit-iframe)                          exit-iframe page opens Shopify's confirmation URL, which lsf's admin serves
 
-53 passed, 0 failed, 1 known gaps
+54 passed, 0 failed, 0 known gaps
 ```
 
 `E2E_VERBOSE=1` prints the logs of lsf and the backend, `E2E_ONLY=proxy` runs the checks whose
@@ -97,10 +97,11 @@ throttling checks use `@shopify/admin-api-client` directly.
 - **Uninstall**: the checkout runs none of the app's Functions and loads none of its extensions,
   and says why; a reinstall clears it.
 - **Embedded page**: lsf prints where the app opens in its admin; `/admin/apps/admin-backend`
-  opens the app in a frame at a new launch; the page lets lsf's admin frame it (CSP
-  `frame-ancestors`) and loads lsf's App Bridge before Shopify's; `fetch()` to `/api/settings`
-  with App Bridge's session token; the resource picker's list has the new product; the
-  library's bounce page loads lsf's App Bridge (`APP_BRIDGE_URL`); `shopify:admin/products`
+  opens the app in a frame at a new launch, through lsf's frame proxy; the backend sends the
+  library's own `frame-ancestors` (Shopify's admin only), which the proxy drops, and the page
+  loads lsf's App Bridge, Shopify's tag included; `fetch()` to `/api/settings` with App Bridge's
+  session token; the resource picker's list has the new product; the library's bounce page,
+  thrown past the page's headers, is framed and loads lsf's App Bridge; `shopify:admin/products`
   lands on lsf's page, which says it has none. What the page does in a browser (the title bar,
   the navigation, toasts, the picker, the save bar, the modal) is tested on lsf's App Bridge
   itself (`crates/app/assets/tests/app-bridge.test.mjs`).
@@ -152,25 +153,19 @@ What it took to point a backend written with these libraries at lsf, also in
 3. **Session tokens last a minute**: the run mints one for each request of the front end.
 4. **The library answers `410 Gone` to bots** (`isbot`): curl's and Node's user agents included.
    The run says it is Chrome.
-5. **Billing from a page** does not work (below): the backend requests it from a route the front
-   end fetches.
-6. **The embedded page in lsf's admin** needs lsf's App Bridge, loaded before Shopify's
-   (`APP_BRIDGE_URL`, which the library's bounce and exit-iframe pages read too), and a
-   `Content-Security-Policy` that lets lsf's admin frame the app: `addDocumentResponseHeaders`
-   allows Shopify's admin only. `server/index.mjs` (`documentHeaders`) and `server/embedded.mjs`
-   do both, as the three lines of [docs/admin.md](../../docs/admin.md#preview-the-embedded-app)
-   do in the template.
+5. **The `confirmationUrl` of a charge** is Shopify's, on the shop's admin
+   (`https://<shop>/admin/charges/…`): the library's exit-iframe page accepts it, and lsf's admin
+   serves its path. The run opens it on lsf's origin.
+6. **The embedded page in lsf's admin** needs nothing of its own: lsf's admin opens it through a
+   proxy that drops the `frame-ancestors` of `addDocumentResponseHeaders` (on every page, the
+   library's thrown ones included) and puts lsf's App Bridge and Polaris in the page.
+   `server/embedded.mjs` still loads lsf's App Bridge from `APP_BRIDGE_URL` first, and Polaris
+   from `POLARIS_URL`, as a page opened outside lsf's frame needs.
 
 ## What does not work yet
 
-Shown as `KNOWN` in the table; a known gap that starts to pass is reported, to be removed from
-the list in `e2e/run.mjs`.
-
-- **`billing.require` / `billing.request` in the loader of a page.** The template sends the
-  browser to its exit-iframe page, which only redirects to the admin over `https`
-  (`admin.shopify.com`, `<shop>.myshopify.com/admin`, `isTrustedExitIframeDestination` of
-  4.0.0); lsf's charge page is `http://127.0.0.1:9292/__lsf/admin/charges/<n>`, refused with
-  "Invalid exit-iframe destination. Refusing to redirect." From a fetched route it works.
+Nothing known. A gap is shown as `KNOWN` in the table, listed in `KNOWN` of `e2e/run.mjs` with
+its reason here; one that starts to pass is reported, to be removed from the list.
 
 ## Library versions
 

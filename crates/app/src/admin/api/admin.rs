@@ -1,6 +1,7 @@
 //! [`AdminApi`]: the shops, the tokens, the webhooks and the throttle of a server, and the one
 //! function that answers their HTTP requests.
 
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use chrono::Utc;
@@ -85,7 +86,9 @@ pub struct AdminOptions {
     pub app_url: Option<String>,
     pub throttle: ThrottleSetting,
     pub delivery: DeliveryOptions,
-    /// Makes the tokens OAuth issues the same every run (tests). The default tokens are always.
+    /// Makes the tokens OAuth issues the same every run whatever the secret (tests). Without it,
+    /// they are the same every run of an app and its secret ([`Tokens::stable`]), and those of
+    /// an earlier run are taken back. The default tokens are always the same.
     pub token_seed: Option<u64>,
 }
 
@@ -168,6 +171,12 @@ pub struct AdminApi {
     /// The plans of managed pricing, every shop's: those of `--pricing-plans`, or those a request
     /// set. Kept when the shops are reset.
     pricing: RwLock<PricingPlans>,
+    /// What the Events of the app (`[[events.subscription]]`) compare a product's change with:
+    /// its last snapshot, by shop and product. Empty for an app without Events.
+    event_snapshots: Mutex<HashMap<String, BTreeMap<String, Value>>>,
+    /// The origin lsf's admin opens the app's frame on, in place of the backend's: the proxy
+    /// the server puts in front of it ([`AdminApi::set_frame_origin`]).
+    frame_origin: RwLock<Option<String>>,
     /// What a test runs once at a point of a request ([`Hook`]).
     #[cfg(test)]
     test_hooks: TestHooks,
@@ -286,7 +295,10 @@ impl AdminApi {
         };
         let throttle = Throttle::new(plan);
         throttle.set_enabled(setting != ThrottleSetting::Off);
-        let mut tokens = token_seed.map_or_else(Tokens::new, Tokens::with_seed);
+        let mut tokens = token_seed.map_or_else(
+            || Tokens::stable(&client_id, &auth.client_secret),
+            Tokens::with_seed,
+        );
         tokens.install(default.domain(), &client_id, &scopes, Utc::now());
         let mut shops = IndexMap::new();
         shops.insert(
@@ -312,6 +324,8 @@ impl AdminApi {
             log: None,
             notices: None,
             pricing: RwLock::new(PricingPlans::default()),
+            event_snapshots: Mutex::new(HashMap::new()),
+            frame_origin: RwLock::new(None),
             #[cfg(test)]
             test_hooks: Mutex::new(Default::default()),
         }
@@ -613,6 +627,24 @@ impl AdminApi {
         self.auth.app_url()
     }
 
+    /// Opens the app's frame in lsf's admin on `origin` rather than on the backend's: a proxy
+    /// in front of the backend, which lets the admin frame the pages Shopify's libraries let
+    /// only Shopify's admin frame. `None` opens the backend itself.
+    pub fn set_frame_origin(&self, origin: Option<String>) {
+        *self
+            .frame_origin
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = origin;
+    }
+
+    /// The origin of the app's frame in lsf's admin, when it is not the backend's.
+    pub fn frame_origin(&self) -> Option<String> {
+        self.frame_origin
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
     /// Whether lsf has the shop `domain`.
     pub fn has_shop(&self, domain: &str) -> bool {
         self.shop(domain).is_some()
@@ -718,6 +750,7 @@ impl AdminApi {
     ) -> Option<T> {
         let shop = self.shop(domain)?;
         let mut live = lock(&shop);
+        self.prepare_events(&live.state);
         let before = (live.state.revision(), live.state.clock());
         let start = live.state.event_count();
         // A panic in the change or in what follows it puts the shop back as it was before
@@ -736,7 +769,7 @@ impl AdminApi {
         let events = live.state.take_events();
         if !events.is_empty() {
             live.changed = true;
-            self.emit(&live.state, &events);
+            self.emit(&mut live.state, &events);
         }
         Some(result)
     }
@@ -835,6 +868,7 @@ impl AdminApi {
     /// Seeds every shop again from new store data (the data changed on disk). The webhook
     /// subscriptions the backend made stay: they are the app's setup of the shop, not data.
     pub fn reseed(&self, store: &Store) -> Reseeded {
+        lock(&self.event_snapshots).clear();
         let mut seed = lock(&self.seed);
         let old_default = seed.default_domain().to_string();
         seed.reseed(store, self.app.as_ref());
@@ -926,6 +960,8 @@ impl AdminApi {
         }
         self.webhooks.registry().clear_all();
         self.throttle.reset();
+        // The products are the seed's again: the Events compare with them from the next change.
+        lock(&self.event_snapshots).clear();
         domains
     }
 
@@ -961,6 +997,7 @@ impl AdminApi {
     /// subscriptions deleted.
     pub fn delete_shop(&self, name: &str) -> Result<(String, usize, usize), (u16, String)> {
         let domain = oauth::normalize_shop(name);
+        lock(&self.event_snapshots).remove(&domain);
         let shop = {
             let mut shops = self
                 .shops
@@ -1022,11 +1059,162 @@ impl AdminApi {
         }
     }
 
-    /// Delivers the webhooks of events of a shop.
-    fn emit(&self, state: &ShopState, events: &[Event]) {
-        let lookup = ShopLookup(state);
+    /// Delivers the webhooks of events of a shop, and the app's Events.
+    fn emit(&self, state: &mut ShopState, events: &[Event]) {
+        {
+            let lookup = ShopLookup(state);
+            for event in events {
+                self.webhooks.emit(event, &lookup);
+            }
+        }
+        self.emit_app_events(state, events);
+    }
+
+    /// The `[[events.subscription]]` of the app lsf delivers.
+    fn event_subscriptions(&self) -> Vec<&crate::config::EventSubscriptionConfig> {
+        self.app
+            .iter()
+            .flat_map(|app| &app.config.event_subscriptions)
+            .filter(|subscription| {
+                crate::config::EVENT_TOPICS.contains(&subscription.topic.as_str())
+            })
+            .collect()
+    }
+
+    /// Takes the snapshots of a shop's products, before its first change: what the app's Events
+    /// compare a change with. Nothing for an app without Events.
+    fn prepare_events(&self, state: &ShopState) {
+        if self.event_subscriptions().is_empty() {
+            return;
+        }
+        let mut snapshots = lock(&self.event_snapshots);
+        if !snapshots.contains_key(state.domain()) {
+            snapshots.insert(
+                state.domain().to_string(),
+                crate::admin::webhooks::events::snapshots(state),
+            );
+        }
+    }
+
+    /// The app's Events of what a change of the shop emitted: for each product created, updated
+    /// or deleted, an Event per entity that changed and subscription that wants it, its `query`
+    /// run on the shop as the change left it ([`crate::admin::webhooks::events`]).
+    fn emit_app_events(&self, state: &mut ShopState, events: &[Event]) {
+        use crate::admin::webhooks::events;
+        let subscriptions = self.event_subscriptions();
+        if subscriptions.is_empty() {
+            return;
+        }
+        let installed = self.webhooks.installed(state.domain());
         for event in events {
-            self.webhooks.emit(event, &lookup);
+            let Some((topic, action)) = events::topic_action(&event.topic) else {
+                continue;
+            };
+            let after = if action == "delete" {
+                None
+            } else {
+                events::snapshot(state, &event.gid)
+            };
+            let before = {
+                let mut snapshots = lock(&self.event_snapshots);
+                let shop = snapshots.entry(state.domain().to_string()).or_default();
+                match &after {
+                    Some(after) => shop.insert(event.gid.clone(), after.clone()),
+                    None => shop.remove(&event.gid),
+                }
+            };
+            if !installed {
+                continue;
+            }
+            for change in events::changes(&event.gid, before.as_ref(), after.as_ref()) {
+                for subscription in &subscriptions {
+                    if subscription.topic != topic || !events::wanted(subscription, action, &change)
+                    {
+                        continue;
+                    }
+                    let version = self
+                        .app
+                        .as_ref()
+                        .and_then(|app| app.config.events_api_version.as_deref())
+                        .and_then(crate::admin::version::ApiVersion::get)
+                        .filter(|version| self.versions.serves(*version))
+                        .unwrap_or_else(|| self.versions.primary());
+                    let data = subscription
+                        .query
+                        .as_deref()
+                        .map(|query| self.event_query(state, version, query, &change.variables));
+                    let filtered_out = match (&subscription.query_filter, &data) {
+                        (Some(filter), Some((data, _))) => {
+                            match crate::admin::search::filter::webhook_filter_matches(
+                                filter,
+                                data,
+                                &crate::admin::search::Options::utc(event.at),
+                            ) {
+                                Ok(true) => None,
+                                Ok(false) => Some(format!(
+                                    "the query_filter `{filter}` does not match what the query answers"
+                                )),
+                                Err(error) => Some(format!(
+                                    "the query_filter `{filter}` cannot be evaluated ({error})"
+                                )),
+                            }
+                        }
+                        _ => None,
+                    };
+                    let body = events::body(subscription, action, &change, data);
+                    self.webhooks.send_event(events::Outgoing {
+                        subscription,
+                        action,
+                        shop: state.domain(),
+                        api_version: version.name(),
+                        resource: &event.gid,
+                        at: event.at,
+                        body,
+                        filtered_out,
+                    });
+                }
+            }
+        }
+    }
+
+    /// What the `query` of an Event answers with `variables`, run with the app's scopes: its
+    /// data and the messages of its errors.
+    fn event_query(
+        &self,
+        state: &mut ShopState,
+        version: crate::admin::version::ApiVersion,
+        query: &str,
+        variables: &serde_json::Map<String, Value>,
+    ) -> (Value, Vec<String>) {
+        let grant = Grant {
+            shop: state.domain().to_string(),
+            client_id: self.auth.client_id.clone(),
+            scopes: self.scopes.clone(),
+            mode: crate::admin::auth::tokens::AccessMode::Offline,
+            user: None,
+            issued_at: Utc::now(),
+            expires_at: None,
+            source: crate::admin::auth::tokens::GrantSource::Install,
+        };
+        let mut resolver = ShopResolver::new(state, self.registry)
+            .with_version(version)
+            .with_grant(&grant);
+        match graphql::prepare(version.schema(), query, None, variables) {
+            Ok(prepared) => {
+                let executed = prepared.execute(&mut resolver);
+                (
+                    executed.data,
+                    executed
+                        .errors
+                        .into_iter()
+                        .map(|error| error.message)
+                        .collect(),
+                )
+            }
+            Err(errors) => (
+                Value::Null,
+                errors.into_iter().map(|error| error.message).collect(),
+            ),
         }
     }
 
@@ -1281,6 +1469,7 @@ impl AdminApi {
             }
         };
         let key = throttle::key(&grant.shop, &grant.client_id);
+        self.prepare_events(&live.state);
         let before = (live.state.revision(), live.state.clock());
         // What the shop's clock passed since the last request (a payment schedule that came due,
         // a data erasure ten days old, a scheduled listing): a change like the request's own.
@@ -1319,7 +1508,7 @@ impl AdminApi {
             live.changed = true;
             // Built now from the shop as the request left it, queued for the worker: nothing
             // waits on the backend while the shop is locked.
-            self.emit(&live.state, &events);
+            self.emit(&mut live.state, &events);
         }
         let app = live.state.all("App").next().map(|app| {
             let text = |field: &str| {
@@ -1438,7 +1627,18 @@ impl AdminApi {
             return Err("no X-Shopify-Access-Token header: send the token the server printed when it started".to_string());
         };
         let mut tokens = lock(&self.tokens);
-        let looked_up = tokens.lookup(token, Utc::now()).cloned();
+        let now = Utc::now();
+        // A token of an earlier run of lsf, which the backend kept.
+        if tokens.lookup(token, now) == Err(TokenError::Unknown)
+            && tokens.recognize(token, now)
+            && let Some(log) = &self.log
+        {
+            log(&format!(
+                "took back an access token of an earlier run of lsf ({}…): tokens are the same every run of the app",
+                &token[..token.len().min(12)]
+            ));
+        }
+        let looked_up = tokens.lookup(token, now).cloned();
         match looked_up {
             Ok(grant) => Ok(grant),
             Err(TokenError::Expired) => Err("the access token expired".to_string()),
@@ -1860,7 +2060,7 @@ impl AdminApi {
                         event.snapshot = previous;
                     }
                     live.changed = true;
-                    self.emit(&live.state, &events);
+                    self.emit(&mut live.state, &events);
                 }
             }
         }

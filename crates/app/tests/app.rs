@@ -119,12 +119,13 @@ fn a_subscription_is_created_pending_and_approved_on_the_confirmation_page() {
     assert_eq!(subscription["currentPeriodEnd"], Value::Null);
     let id = subscription["id"].as_str().unwrap();
     let number = lsf_app::admin::state::parse_gid(id).unwrap().1;
-    assert_eq!(
-        payload["confirmationUrl"],
-        json!(format!(
-            "{ORIGIN}/__lsf/admin/charges/{number}?shop={}",
-            shop.domain()
-        ))
+    let confirmation = payload["confirmationUrl"].as_str().unwrap();
+    assert!(
+        confirmation.starts_with(&format!("https://{}/admin/charges/", shop.domain()))
+            && confirmation.contains(&format!(
+                "/{number}/RecurringApplicationCharge/confirm_recurring_application_charge?signature="
+            )),
+        "{confirmation}"
     );
     let lines = subscription["lineItems"].as_array().unwrap();
     assert_eq!(
@@ -362,7 +363,9 @@ fn capped_amounts_trials_and_cancellations() {
         payload["confirmationUrl"]
             .as_str()
             .unwrap()
-            .contains(&format!("/charges/{number}?"))
+            .contains(&format!(
+                "/{number}/RecurringApplicationCharge/confirm_update_capped_amount?"
+            ))
     );
     // Until the merchant approves, the capped amount is the old one.
     let capped = |shop: &mut ShopState| {
@@ -1720,4 +1723,47 @@ fn uninstalling_the_app_removes_every_object_that_runs_its_functions() {
             functions[handle]
         );
     }
+}
+
+#[test]
+fn billing_cycles_follow_the_shops_clock() {
+    let (_, mut shop) = rich();
+    let started = shop.now();
+    let (id, usage, _) = active_subscription(&mut shop, "Pro");
+    let period_end = |shop: &mut ShopState| {
+        let answer = run(
+            shop,
+            r#"query($id: ID!) { node(id: $id) { ... on AppSubscription { status currentPeriodEnd lineItems { plan { pricingDetails { ... on AppUsagePricing { balanceUsed { amount } } } } } } } }"#,
+            json!({"id": id}),
+        );
+        answer["data"]["node"].clone()
+    };
+    // The trial's end, then a usage charge.
+    let day =
+        |days: i64| lsf_app::admin::state::value::date_time(started + chrono::Duration::days(days));
+    assert_eq!(period_end(&mut shop)["currentPeriodEnd"], json!(day(7)));
+    let charged = run(
+        &mut shop,
+        r#"mutation($id: ID!) { appUsageRecordCreate(subscriptionLineItemId: $id, description: "100 emails", price: {amount: 5, currencyCode: USD}) { userErrors { message } } }"#,
+        json!({"id": usage}),
+    );
+    assert_eq!(
+        data(&charged, "appUsageRecordCreate")["userErrors"],
+        json!([])
+    );
+    // 71 days later: the trial's end, then three periods of 30 days.
+    shop.set_clock(lsf_app::admin::state::Clock::Frozen(
+        started + chrono::Duration::days(71),
+    ));
+    assert_eq!(billing::renew(&mut shop), 3);
+    let node = period_end(&mut shop);
+    assert_eq!(node["status"], json!("ACTIVE"));
+    assert_eq!(node["currentPeriodEnd"], json!(day(97)));
+    assert_eq!(
+        node["lineItems"][1]["plan"]["pricingDetails"]["balanceUsed"]["amount"],
+        json!("0.0")
+    );
+    // A renewal is no status change: no webhook.
+    assert_eq!(topics(&mut shop), Vec::<String>::new());
+    assert_eq!(billing::renew(&mut shop), 0);
 }

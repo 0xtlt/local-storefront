@@ -13,6 +13,7 @@ mod customer_account;
 mod data_files;
 pub use control::{apply_session_input, routes};
 mod forms;
+pub mod frame_proxy;
 mod home;
 mod home_check;
 pub use home_check::{Unmet, run_with_expectations as check_scenarios};

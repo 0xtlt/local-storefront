@@ -15,6 +15,17 @@
 //! Every token is `shpat_` followed by 32 hex digits: shopify.dev says offline and online tokens
 //! both begin with `shpat_` ("whichever grant produced them"); refresh tokens begin with `shprt_`.
 //!
+//! **Tokens survive a restart.** lsf keeps its tokens in memory, but a backend keeps the ones it
+//! was given in its session storage. So each access and refresh token is derived from a key of
+//! the client id and the client secret, the shop, its kind (offline, expiring offline, client
+//! credentials, refresh) and its rank among the tokens of that kind issued for the shop: the n-th
+//! offline token of a run is the n-th of every run. A token lsf does not know is looked for among
+//! those it would issue next ([`Tokens::recognize`]): a backend's token of an earlier run is valid
+//! again, with the scopes the app is installed with now, an expiring one for an hour from then. A
+//! token revoked in this run (an uninstall, a reset, a shop deleted), or issued in this run and
+//! since expired or retired, is never taken back. Online tokens are not looked for: they last a
+//! day, and the libraries exchange a session token for a new one after a `401`.
+//!
 //! The registry holds no lock and reads no clock: the server keeps it behind a mutex and passes
 //! the time, which is the system clock (the backend compares expiries with its own).
 
@@ -139,6 +150,8 @@ pub enum GrantSource {
     /// `delegateAccessTokenCreate`: a subset of its parent's scopes, never more than the
     /// installation grants.
     Delegate,
+    /// Issued by an earlier run of lsf, and presented again: [`Tokens::recognize`].
+    EarlierRun,
 }
 
 /// The staff member an online token acts for: `associated_user` of the token response.
@@ -334,11 +347,27 @@ struct Migration {
     at: DateTime<Utc>,
 }
 
+/// How far past the tokens of a kind issued in this run [`Tokens::recognize`] looks.
+pub const RECOGNIZED_AHEAD: u64 = 1_024;
+
+/// The kinds of tokens [`Tokens::recognize`] looks for, with the prefix of each.
+const RECOGNIZED_KINDS: [(&str, &str); 3] = [
+    ("shpat_", "offline"),
+    ("shpat_", "expiring"),
+    ("shpat_", "client_credentials"),
+];
+
 /// The tokens of every shop, the codes and refresh tokens, and the installations.
 #[derive(Clone, Debug)]
 pub struct Tokens {
+    /// What codes and the `jti` of session tokens are made from: different every run.
     seed: [u8; 32],
+    /// What the access and refresh tokens are derived from: the same every run of an app.
+    key: [u8; 32],
     counter: u64,
+    /// How many tokens of each kind, for each shop and app, were issued in this run (or
+    /// recognized): the rank of the next one.
+    ranks: HashMap<String, u64>,
     access: HashMap<String, Grant>,
     refresh: HashMap<String, RefreshEntry>,
     codes: HashMap<String, Code>,
@@ -371,18 +400,36 @@ impl Tokens {
             entropy.extend_from_slice(&hasher.finish().to_le_bytes());
         }
         entropy.extend_from_slice(&std::process::id().to_le_bytes());
-        Tokens::from_seed(sha256(&entropy))
+        let seed = sha256(&entropy);
+        Tokens::from_seed(seed, seed)
+    }
+
+    /// An empty registry whose access and refresh tokens are the same every run of the app
+    /// `client_id` signed with `client_secret`: a backend's stored tokens work again after a
+    /// restart ([`Tokens::recognize`]). Its codes and session token ids differ every run.
+    pub fn stable(client_id: &str, client_secret: &str) -> Tokens {
+        let key = hmac_sha256(
+            client_secret.as_bytes(),
+            format!("lsf tokens\0{client_id}").as_bytes(),
+        );
+        Tokens {
+            key,
+            ..Tokens::new()
+        }
     }
 
     /// An empty registry whose tokens are the same every run with the same `seed`, for tests.
     pub fn with_seed(seed: u64) -> Tokens {
-        Tokens::from_seed(sha256(&seed.to_le_bytes()))
+        let seed = sha256(&seed.to_le_bytes());
+        Tokens::from_seed(seed, seed)
     }
 
-    fn from_seed(seed: [u8; 32]) -> Tokens {
+    fn from_seed(seed: [u8; 32], key: [u8; 32]) -> Tokens {
         Tokens {
             seed,
+            key,
             counter: 0,
+            ranks: HashMap::new(),
             access: HashMap::new(),
             refresh: HashMap::new(),
             codes: HashMap::new(),
@@ -401,9 +448,127 @@ impl Tokens {
         )
     }
 
-    /// A new secret value: `prefix` and 32 hex digits.
-    fn fresh(&mut self, prefix: &str) -> String {
-        format!("{prefix}{}", &hex(&self.entropy(prefix))[..32])
+    /// The token of rank `rank` of `kind` for `client_id` on `shop`: `prefix` and 32 hex digits.
+    fn derived(&self, prefix: &str, kind: &str, shop: &str, client_id: &str, rank: u64) -> String {
+        let mac = hmac_sha256(
+            &self.key,
+            format!("{prefix}\0{kind}\0{shop}\0{client_id}\0{rank}").as_bytes(),
+        );
+        format!("{prefix}{}", &hex(&mac)[..32])
+    }
+
+    /// The next token of `kind` for `client_id` on `shop`.
+    fn next(&mut self, prefix: &str, kind: &str, shop: &str, client_id: &str) -> String {
+        let label = format!("{prefix}\0{kind}\0{shop}\0{client_id}");
+        let rank = self.ranks.get(&label).copied().unwrap_or(0);
+        self.ranks.insert(label, rank + 1);
+        self.derived(prefix, kind, shop, client_id, rank)
+    }
+
+    /// The rank of `token` among the next [`RECOGNIZED_AHEAD`] tokens of `kind` for `client_id`
+    /// on `shop`, which this run has not issued yet.
+    fn rank_ahead(
+        &self,
+        token: &str,
+        prefix: &str,
+        kind: &str,
+        shop: &str,
+        client_id: &str,
+    ) -> Option<u64> {
+        let label = format!("{prefix}\0{kind}\0{shop}\0{client_id}");
+        let first = self.ranks.get(&label).copied().unwrap_or(0);
+        (first..first + RECOGNIZED_AHEAD)
+            .find(|rank| self.derived(prefix, kind, shop, client_id, *rank) == token)
+    }
+
+    /// Marks the ranks up to `rank` of `kind` as issued.
+    fn issued_up_to(&mut self, prefix: &str, kind: &str, shop: &str, client_id: &str, rank: u64) {
+        let label = format!("{prefix}\0{kind}\0{shop}\0{client_id}");
+        let next = self.ranks.entry(label).or_insert(0);
+        *next = (*next).max(rank + 1);
+    }
+
+    /// Takes back an access token an earlier run of lsf issued, which a backend kept: one of the
+    /// next tokens this run would issue for an app installed on a shop, offline, expiring or of
+    /// client credentials, not revoked in this run. It grants what the installation grants now;
+    /// an expiring one lives an hour from `now`, a client credentials one a day. Whether it was.
+    pub fn recognize(&mut self, token: &str, now: DateTime<Utc>) -> bool {
+        let token = token.trim();
+        if !token.starts_with("shpat_")
+            || self.access.contains_key(token)
+            || self.revoked.contains_key(token)
+        {
+            return false;
+        }
+        let installs: Vec<((String, String), Vec<String>)> = self
+            .installs
+            .iter()
+            .map(|(key, scopes)| (key.clone(), scopes.clone()))
+            .collect();
+        for ((shop, client_id), scopes) in installs {
+            for (prefix, kind) in RECOGNIZED_KINDS {
+                let Some(rank) = self.rank_ahead(token, prefix, kind, &shop, &client_id) else {
+                    continue;
+                };
+                self.issued_up_to(prefix, kind, &shop, &client_id, rank);
+                let expires_at = match kind {
+                    "expiring" => Some(now + Duration::seconds(EXPIRING_OFFLINE_LIFETIME)),
+                    "client_credentials" => {
+                        Some(now + Duration::seconds(CLIENT_CREDENTIALS_LIFETIME))
+                    }
+                    _ => None,
+                };
+                self.access.insert(
+                    token.to_string(),
+                    Grant {
+                        shop,
+                        client_id,
+                        scopes,
+                        mode: AccessMode::Offline,
+                        user: None,
+                        issued_at: now,
+                        expires_at,
+                        source: GrantSource::EarlierRun,
+                    },
+                );
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Takes back a refresh token an earlier run issued, as [`Tokens::recognize`] does an
+    /// access token: usable for 90 days from `now`. Whether it was.
+    fn recognize_refresh(&mut self, refresh_token: &str, now: DateTime<Utc>) -> bool {
+        if !refresh_token.starts_with("shprt_") || self.refresh.contains_key(refresh_token) {
+            return false;
+        }
+        let installs: Vec<((String, String), Vec<String>)> = self
+            .installs
+            .iter()
+            .map(|(key, scopes)| (key.clone(), scopes.clone()))
+            .collect();
+        for ((shop, client_id), scopes) in installs {
+            let Some(rank) = self.rank_ahead(refresh_token, "shprt_", "refresh", &shop, &client_id)
+            else {
+                continue;
+            };
+            self.issued_up_to("shprt_", "refresh", &shop, &client_id, rank);
+            self.refresh.insert(
+                refresh_token.to_string(),
+                RefreshEntry {
+                    shop,
+                    client_id,
+                    scopes,
+                    expires_at: now + Duration::seconds(REFRESH_TOKEN_LIFETIME),
+                    first_used_at: None,
+                    predecessor: None,
+                    retired: None,
+                },
+            );
+            return true;
+        }
+        false
     }
 
     /// Installs the app `client_id` on `shop` with `scopes`, or changes the scopes it is
@@ -693,7 +858,7 @@ impl Tokens {
         predecessor: Option<String>,
         now: DateTime<Utc>,
     ) -> Issued {
-        let refresh_token = self.fresh("shprt_");
+        let refresh_token = self.next("shprt_", "refresh", shop, client_id);
         let refresh_expires_at = now + Duration::seconds(REFRESH_TOKEN_LIFETIME);
         self.refresh.insert(
             refresh_token.clone(),
@@ -772,7 +937,15 @@ impl Tokens {
 
     fn issue(&mut self, grant: Grant, refresh: Option<(String, DateTime<Utc>)>) -> Issued {
         self.purge(grant.issued_at - Duration::seconds(PURGE_AFTER));
-        let access_token = self.fresh("shpat_");
+        let kind = match (grant.mode, grant.source, grant.expires_at) {
+            (AccessMode::Online, _, _) => {
+                format!("online:{}", grant.user.as_ref().map_or(0, |user| user.id))
+            }
+            (_, GrantSource::ClientCredentials, _) => "client_credentials".to_string(),
+            (_, _, Some(_)) => "expiring".to_string(),
+            (_, _, None) => "offline".to_string(),
+        };
+        let access_token = self.next("shpat_", &kind, &grant.shop, &grant.client_id);
         self.access.insert(access_token.clone(), grant.clone());
         let (refresh_token, refresh_token_expires_at) = refresh.unzip();
         Issued {
@@ -790,6 +963,7 @@ impl Tokens {
         client_id: &str,
         now: DateTime<Utc>,
     ) -> Result<Issued, RefreshError> {
+        self.recognize_refresh(refresh_token, now);
         let entry = self
             .refresh
             .get(refresh_token)
@@ -859,6 +1033,7 @@ impl Tokens {
                 refresh_token_expires_at: Some(entry.expires_at),
             });
         }
+        self.recognize(token, now);
         let grant = self.access.get(token).ok_or(MigrationError::Unknown)?;
         if grant.client_id != client_id || grant.shop != shop {
             return Err(MigrationError::Unknown);
@@ -1366,6 +1541,113 @@ mod tests {
         assert_eq!(from_a, from_b);
         assert_ne!(from_a, from_c);
         assert_ne!(issue(&mut a), from_a);
-        assert_ne!(Tokens::new().fresh("x"), Tokens::new().fresh("x"));
+        assert_ne!(Tokens::new().entropy("x"), Tokens::new().entropy("x"));
+    }
+
+    /// A run of lsf with the app installed on [`SHOP`], as the server starts.
+    fn run(secret: &str) -> Tokens {
+        let mut tokens = Tokens::stable("client", secret);
+        tokens.install(SHOP, "client", &scopes(), at(0));
+        tokens
+    }
+
+    #[test]
+    fn a_token_of_an_earlier_run_is_valid_again() {
+        let mut first = run("secret");
+        let offline = first
+            .issue_offline(
+                SHOP,
+                "client",
+                &scopes(),
+                false,
+                GrantSource::TokenExchange,
+                at(0),
+            )
+            .access_token;
+        let expiring = first.issue_offline(
+            SHOP,
+            "client",
+            &scopes(),
+            true,
+            GrantSource::TokenExchange,
+            at(0),
+        );
+        // lsf restarts: the backend still has both.
+        let mut second = run("secret");
+        assert_eq!(second.lookup(&offline, at(10)), Err(TokenError::Unknown));
+        assert!(second.recognize(&offline, at(10)));
+        let grant = second.lookup(&offline, at(10)).unwrap();
+        assert_eq!(grant.source, GrantSource::EarlierRun);
+        assert_eq!(grant.expires_at, None);
+        assert!(second.recognize(&expiring.access_token, at(10)));
+        assert_eq!(
+            second
+                .lookup(&expiring.access_token, at(10))
+                .unwrap()
+                .expires_at,
+            Some(at(10 + EXPIRING_OFFLINE_LIFETIME))
+        );
+        // Its refresh token too, and what it gives is new.
+        let refreshed = second
+            .refresh(expiring.refresh_token.as_deref().unwrap(), "client", at(20))
+            .unwrap();
+        assert_ne!(
+            Some(refreshed.access_token.clone()),
+            Some(expiring.access_token.clone())
+        );
+        // The next token of the run is not one taken back.
+        let next = second
+            .issue_offline(
+                SHOP,
+                "client",
+                &scopes(),
+                false,
+                GrantSource::TokenExchange,
+                at(30),
+            )
+            .access_token;
+        assert_ne!(next, offline);
+    }
+
+    #[test]
+    fn a_token_revoked_or_of_another_secret_is_not_taken_back() {
+        let mut first = run("secret");
+        let offline = first
+            .issue_offline(
+                SHOP,
+                "client",
+                &scopes(),
+                false,
+                GrantSource::TokenExchange,
+                at(0),
+            )
+            .access_token;
+        assert!(!run("another secret").recognize(&offline, at(1)));
+        assert!(
+            !run("secret").recognize(&format!("shpat_{}", "0123456789abcdef".repeat(2)), at(1))
+        );
+        // Uninstalled in this run: revoked, even once installed again.
+        first.uninstall(SHOP, "client");
+        first.install(SHOP, "client", &scopes(), at(2));
+        assert!(!first.recognize(&offline, at(3)));
+        assert_eq!(first.lookup(&offline, at(3)), Err(TokenError::Unknown));
+        // Not installed: nothing to take back.
+        let mut bare = Tokens::stable("client", "secret");
+        assert!(!bare.recognize(&offline, at(1)));
+    }
+
+    #[test]
+    fn a_token_expired_in_this_run_is_not_taken_back() {
+        let mut tokens = run("secret");
+        let issued = tokens.issue_offline(
+            SHOP,
+            "client",
+            &scopes(),
+            true,
+            GrantSource::TokenExchange,
+            at(0),
+        );
+        tokens.purge(at(2 * EXPIRING_OFFLINE_LIFETIME));
+        assert!(!tokens.recognize(&issued.access_token, at(2 * EXPIRING_OFFLINE_LIFETIME)));
     }
 }

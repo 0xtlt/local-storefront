@@ -987,16 +987,21 @@ seeded staff, so that a backend that manages cash works against lsf as against a
 
 **Billing.** The billing helpers of the React Router template (`billing.require`,
 `billing.request`, `billing.check`, `billing.cancel`, `createUsageRecord`,
-`updateUsageCappedAmount` of `@shopify/shopify-api`) work unchanged, from a route the front end
-fetches (from the loader of a page, see ["Billing from a page"](admin.md#javascript-the-react-router-app-and-shopifyshopify-api)):
+`updateUsageCappedAmount` of `@shopify/shopify-api`) work unchanged, in the loader of a page and
+in a route the front end fetches (["Billing"](admin.md#javascript-the-react-router-app-and-shopifyshopify-api)):
 
 - `appSubscriptionCreate` (recurring and usage lines, a discount, `trialDays`, `test`) and
-  `appPurchaseOneTimeCreate` make a `PENDING` charge and answer a `confirmationUrl` on lsf:
-  `http://127.0.0.1:9292/__lsf/admin/charges/<n>?shop=…`. The page shows the charge; **Approve**
-  (or **Decline**) sends the merchant back to `returnUrl` with `charge_id=<n>`, as Shopify does.
-  In a test, `POST /__lsf/admin/charges/<n>/approve?shop=<shop>` (or `/decline`) does it
-  without the page. Charges count from 1 in each shop: keep the `?shop=` of the
-  `confirmationUrl` (see [approve a charge](admin.md#approve-a-charge)).
+  `appPurchaseOneTimeCreate` make a `PENDING` charge and answer a `confirmationUrl` as
+  Shopify's, on the shop's admin:
+  `https://<shop>/admin/charges/<app id>/<n>/RecurringApplicationCharge/confirm_recurring_application_charge?signature=…`
+  (`ApplicationCharge/confirm_application_charge` for a one-time purchase). lsf's admin serves
+  that path on its origin and redirects it to lsf's charge page,
+  `/__lsf/admin/charges/<n>?shop=…`. The page shows the charge; **Approve** (or **Decline**)
+  sends the merchant back to `returnUrl` with `charge_id=<n>`, as Shopify does; a `returnUrl`
+  on Shopify's admin or on the app is the app in lsf's admin. In a test,
+  `POST /__lsf/admin/charges/<n>/approve?shop=<shop>` (or `/decline`) does it without the page.
+  Charges count from 1 in each shop, on the shop of the URL (see
+  [approve a charge](admin.md#approve-a-charge)).
 - Approved, a subscription is `ACTIVE` and the app's other active subscription `CANCELLED`;
   `currentAppInstallation { activeSubscriptions oneTimePurchases allSubscriptions }` list them. A
   charge left pending two days (by the shop's clock) is `EXPIRED`. Uninstalling the app
@@ -1010,10 +1015,12 @@ fetches (from the loader of a page, see ["Billing from a page"](admin.md#javascr
   balance crossed 90%). Under managed pricing with `legacy = false` (Shopify App Pricing), no
   change of a subscription sends one, `appSubscriptionCancel` included
   ([managed pricing](admin.md#managed-pricing)).
-- No money moves: `prorate` credits nothing, and there are no billing cycles. A replacement
-  Shopify defers to the next cycle (`APPLY_ON_NEXT_BILLING_CYCLE`, and some `STANDARD` ones)
-  applies at once, and the usage balance never resets. `currentPeriodEnd` is the end of the trial,
-  else 30 days (365 for an annual plan) after the approval.
+- No money moves: `prorate` credits nothing. `currentPeriodEnd` is the end of the trial, else 30
+  days (365 for an annual plan) after the approval; once [the shop's clock](#the-shops-clock)
+  passes it, the next request starts the next cycle: `currentPeriodEnd` moves on by the
+  interval, the usage balance starts again from nothing, a limited discount has an interval
+  less (`remainingDurationInIntervals`), and no webhook is sent. A replacement Shopify defers to
+  the next cycle (`APPLY_ON_NEXT_BILLING_CYCLE`, and some `STANDARD` ones) applies at once.
 - [Managed pricing](admin.md#managed-pricing): with plans declared (`--pricing-plans`,
   `PUT /__lsf/admin/pricing-plans`), the merchant picks one at
   `/admin/charges/<app handle>/pricing_plans` of lsf's admin; the subscription is the same record,

@@ -215,13 +215,16 @@ export function startAdmin(env) {
 
   // A page loaded in the frame: its App Bridge says hello soon, or the admin says why not.
   function frameLoaded() {
+    const proxied = Boolean(config.frame?.appOrigin) && config.frame.appOrigin !== config.frame.origin;
     clearTimeout(state.waiting);
     state.waiting = setTimeout(() => {
       if (state.connected || state.cdn) return;
       banner(
         'app-bridge',
         'warning',
-        `No App Bridge answered from the app's page. Is the backend running at ${config.frame.origin}, and did the page load (an error page has no App Bridge)? A page that loads Shopify's App Bridge cannot load it offline, and online it talks only to Shopify's admin: load lsf's first in the page's <head>: <script src="${location.origin}${config.endpoints.appBridge}"></script>. And the app must let this admin frame it: Content-Security-Policy frame-ancestors ${location.origin}.`,
+        proxied
+          ? `No App Bridge answered from the app's page. Is the backend running at ${config.frame.appOrigin} (lsf's frame goes through ${config.frame.origin}, which gives the page lsf's App Bridge), and did the page load (an error page has no App Bridge)?`
+          : `No App Bridge answered from the app's page. Is the backend running at ${config.frame.origin}, and did the page load (an error page has no App Bridge)? A page that loads Shopify's App Bridge cannot load it offline, and online it talks only to Shopify's admin: load lsf's first in the page's <head>: <script src="${location.origin}${config.endpoints.appBridge}"></script>. And the app must let this admin frame it: Content-Security-Policy frame-ancestors ${location.origin}.`,
       );
     }, env.waitForAppBridge ?? 4000);
   }
@@ -377,6 +380,21 @@ export function startAdmin(env) {
     return admin.pathname + admin.search + parsed.hash;
   }
 
+  // A URL of the app itself (its frame's origin, or its backend's) for the whole window: the
+  // admin's page of that path, where the app opens again in the frame. The exit-iframe page of
+  // Shopify's libraries sends the merchant there (`redirect('/app', { target: '_top' })`).
+  function appPage(url) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      return null;
+    }
+    const origins = [config.frame?.origin, config.frame?.appOrigin].filter(Boolean);
+    if (!origins.includes(parsed.origin)) return null;
+    return adminHref(config.app.base, appPathOf(parsed.pathname + parsed.search + parsed.hash, config.frame?.base), config.query);
+  }
+
   // A link of the app that leaves it: `shopify:admin/…` (a page of the admin, lsf's page of it),
   // a URL of Shopify's admin (lsf's page of it too), or a URL for the whole window.
   function navigate(url, target) {
@@ -388,7 +406,7 @@ export function startAdmin(env) {
     } else if (!/^https?:/i.test(url)) {
       return;
     } else {
-      href = shopifyAdmin(url) ?? url;
+      href = shopifyAdmin(url) ?? appPage(url) ?? url;
     }
     if (target === '_blank') window.open(href, '_blank', 'noopener');
     else location.assign(href);
@@ -747,6 +765,8 @@ export function startAdmin(env) {
   }
 
   markCurrent();
+  // What shopify.app.toml gets wrong for the embedded app (no client_id, …).
+  (config.warnings ?? []).forEach((message, index) => banner(`config-${index}`, 'warning', message));
   // The frame may have loaded before this module ran: wait for its App Bridge from now on.
   if (frame) frameLoaded();
   return { state, receive, frameLoaded, frameUnloaded, renderTitle, renderNav, openResourcePicker, openPicker };

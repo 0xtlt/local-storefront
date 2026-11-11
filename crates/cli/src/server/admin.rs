@@ -150,12 +150,32 @@ impl Admin {
             "        X-Shopify-Access-Token: {}   (shop: {shop})",
             self.api.token(&shop)
         ));
+        if let Some(app) = self.api.app()
+            && let Some(source) = app.client_id_source.describe()
+        {
+            lines.push(format!(
+                "        client id: {}   ({source})",
+                self.api.client_id()
+            ));
+        }
         lines.push(format!("        client secret: {}", self.secret_line()));
         lines.push(format!(
             "        GraphiQL: {origin}{}   (queries in the browser, the token filled in)",
             lsf_app::admin::graphiql::PATH
         ));
-        lines.push(format!("webhooks: {}", self.api.webhooks().summary()));
+        let mut webhooks = self.api.webhooks().summary();
+        if let Some(app) = self.api.app()
+            && !app.config.event_subscriptions.is_empty()
+        {
+            let handles: Vec<&str> = app
+                .config
+                .event_subscriptions
+                .iter()
+                .map(|event| event.handle.as_str())
+                .collect();
+            webhooks.push_str(&format!("; Events ([events]): {}", handles.join(", ")));
+        }
+        lines.push(format!("webhooks: {webhooks}"));
         lines
     }
 
@@ -168,8 +188,7 @@ impl Admin {
             return None;
         }
         let key = app
-            .handle
-            .clone()
+            .admin_handle()
             .unwrap_or_else(|| self.api.client_id().to_string());
         Some(format!("/admin/apps/{key}"))
     }
@@ -179,9 +198,14 @@ impl Admin {
     pub fn embedded_banner(&self, origin: &str) -> Option<String> {
         let path = self.embedded_path()?;
         Some(match self.api.app_url() {
-            Some(_) => format!(
-                "embedded: {origin}{path}   (the app in lsf's admin; its pages load {origin}/__lsf/admin/app-bridge.js)"
-            ),
+            Some(app_url) => match self.api.frame_origin() {
+                Some(frame) => format!(
+                    "embedded: {origin}{path}   (the app in lsf's admin; its frame is {frame}, a proxy of {app_url} that lets the admin frame every page and gives it lsf's App Bridge and Polaris)"
+                ),
+                None => format!(
+                    "embedded: {origin}{path}   (the app in lsf's admin; its pages load {origin}/__lsf/admin/app-bridge.js)"
+                ),
+            },
             None => format!(
                 "embedded: {origin}{path} opens the app once lsf knows its URL: give --app-url (where the backend listens)"
             ),
@@ -196,7 +220,11 @@ impl Admin {
         let (pricing, source) = self.api.pricing()?;
         let handle = self.api.app().and_then(|app| app.handle.clone());
         let no_handle = self.api.app().is_some() && handle.is_none();
-        let key = handle.unwrap_or_else(|| self.api.client_id().to_string());
+        let key = self
+            .api
+            .app()
+            .and_then(|app| app.admin_handle())
+            .unwrap_or_else(|| self.api.client_id().to_string());
         Some(format!(
             "pricing: {} ({source}): {origin}/admin/charges/{key}/pricing_plans   (managed pricing: the Billing API creates no charge{})",
             crate::output::count(pricing.plans.len(), "plan", "plans"),

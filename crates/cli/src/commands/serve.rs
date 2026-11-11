@@ -203,6 +203,54 @@ pub struct Args {
 /// The port used when `--port` is not given.
 const DEFAULT_PORT: u16 = 9292;
 
+/// Starts the proxy of the app's frame (`server::frame_proxy`) on a free port of `host`, in
+/// front of the backend, for an embedded app with a URL; `LSF_ADMIN_FRAME=direct` opens the
+/// backend in the frame instead.
+async fn start_frame_proxy(admin: &crate::server::admin::Admin, host: &str, lsf: &str) {
+    if std::env::var("LSF_ADMIN_FRAME").is_ok_and(|mode| mode.eq_ignore_ascii_case("direct")) {
+        return;
+    }
+    let Some(app_url) = admin
+        .api
+        .app_url()
+        .filter(|_| admin.embedded_path().is_some())
+    else {
+        return;
+    };
+    let Some(upstream) = url_origin(&app_url) else {
+        return;
+    };
+    let host = match host {
+        "0.0.0.0" | "::" | "[::]" => "127.0.0.1",
+        host => host,
+    };
+    let listener = match tokio::net::TcpListener::bind(format!("{host}:0")).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!(
+                "admin:  the app's frame opens the backend itself: no port for its proxy ({error})"
+            );
+            return;
+        }
+    };
+    let Ok(address) = listener.local_addr() else {
+        return;
+    };
+    let origin = format!("http://{address}");
+    let proxy = std::sync::Arc::new(crate::server::frame_proxy::FrameProxy::new(
+        &upstream, &origin, lsf,
+    ));
+    admin.api.set_frame_origin(Some(origin));
+    tokio::spawn(crate::server::frame_proxy::serve(proxy, listener));
+}
+
+/// The origin of a URL: `http://localhost:3000` of `http://localhost:3000/app`.
+fn url_origin(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    (!rest[..end].is_empty()).then(|| format!("{scheme}://{}", &rest[..end]))
+}
+
 /// How many ports are tried from the default one on, when `--port` is not given.
 const PORT_ATTEMPTS: u16 = 100;
 
@@ -591,6 +639,11 @@ pub fn run(
         };
         let listener = listen(&args.host, ports).await?;
         let local = listener.local_addr().map_err(|error| error.to_string())?;
+        // The app's frame in lsf's admin goes through a proxy of its own port, which lets the
+        // admin frame every page of the backend (`server::frame_proxy`).
+        if let Some(admin) = &state.admin {
+            start_frame_proxy(admin, &args.host, &format!("http://{local}")).await;
+        }
         if parts.theme {
             eprintln!("theme:  {}", theme.display());
         }

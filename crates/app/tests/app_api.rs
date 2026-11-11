@@ -94,6 +94,15 @@ fn graphql(api: &AdminApi, query: &str, variables: Value) -> Value {
     answer
 }
 
+/// lsf's page of a charge (`/__lsf/admin/charges/<n>?shop=`): where its `confirmationUrl`, on
+/// the shop's admin as Shopify writes it, leads once opened on lsf's origin.
+fn charge_page(api: &AdminApi, confirmation: &str) -> String {
+    let path = confirmation.replacen(&format!("https://{}", api.default_shop()), "", 1);
+    let answer = send(api, "GET", &path, &[], b"");
+    assert_eq!(answer.status, 302, "{confirmation}");
+    header(&answer, "location").unwrap().to_string()
+}
+
 /// Subscribes the receiver to a topic.
 fn subscribe(api: &AdminApi, topic: &str, receiver: &Receiver) {
     let answer = graphql(
@@ -297,8 +306,32 @@ fn the_billing_helpers_of_shopify_api_work_against_lsf() {
     let data = &requested["data"]["appSubscriptionCreate"];
     assert_eq!(data["userErrors"], json!([]));
     let confirmation = data["confirmationUrl"].as_str().unwrap().to_string();
+    // Shopify's, on the shop's admin, which lsf's admin serves on its origin.
+    let shop = api.default_shop();
+    let prefix = format!("https://{shop}/admin/charges/");
+    assert!(confirmation.starts_with(&prefix), "{confirmation}");
     assert!(
-        confirmation.starts_with(&format!("http://{HOST}/__lsf/admin/charges/")),
+        confirmation.contains(
+            "/RecurringApplicationCharge/confirm_recurring_application_charge?signature="
+        ),
+        "{confirmation}"
+    );
+    let on_lsf = send(
+        &api,
+        "GET",
+        &confirmation.replacen(&format!("https://{shop}"), "", 1),
+        &[],
+        b"",
+    );
+    assert_eq!(
+        on_lsf.status,
+        302,
+        "{}",
+        String::from_utf8_lossy(&on_lsf.body)
+    );
+    let confirmation = header(&on_lsf, "location").unwrap().to_string();
+    assert!(
+        confirmation.starts_with("/__lsf/admin/charges/"),
         "{confirmation}"
     );
     let id = data["appSubscription"]["id"].as_str().unwrap().to_string();
@@ -318,7 +351,6 @@ fn the_billing_helpers_of_shopify_api_work_against_lsf() {
         .and_then(|rest| rest.split('?').next())
         .unwrap()
         .to_string();
-    let shop = api.default_shop();
     let approved = send(
         &api,
         "POST",
@@ -421,7 +453,7 @@ fn a_one_time_purchase_is_approved_through_the_endpoint_and_its_webhook_delivere
         .as_str()
         .unwrap()
         .to_string();
-    let path = confirmation.replace("?", "/approve?");
+    let path = charge_page(&api, &confirmation).replace("?", "/approve?");
     let approved = send(&api, "POST", &path, &[], b"");
     assert_eq!(approved.status, 200);
     let answer = json_of(&approved);
@@ -442,10 +474,13 @@ fn uninstalling_cancels_the_active_subscription() {
         json!({"name": "Basic", "returnUrl": "http://localhost:3000/", "lineItems": [
             {"plan": {"appRecurringPricingDetails": {"price": {"amount": 5, "currencyCode": "USD"}}}}]}),
     );
-    let confirmation = created["data"]["appSubscriptionCreate"]["confirmationUrl"]
-        .as_str()
-        .unwrap()
-        .replace('?', "/approve?");
+    let confirmation = charge_page(
+        &api,
+        created["data"]["appSubscriptionCreate"]["confirmationUrl"]
+            .as_str()
+            .unwrap(),
+    )
+    .replace('?', "/approve?");
     assert_eq!(send(&api, "POST", &confirmation, &[], b"").status, 200);
     assert_eq!(
         send(&api, "POST", "/__lsf/admin/uninstall", &[], b"").status,

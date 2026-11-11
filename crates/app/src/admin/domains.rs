@@ -60,6 +60,7 @@ pub struct Ticked {
 pub fn tick(state: &mut ShopState) -> Ticked {
     orders::tick(state);
     app::billing::expire_stale(state);
+    app::billing::renew(state);
     markets::publish_due_listings(state);
     Ticked {
         erased: privacy::process_due_erasures(state),

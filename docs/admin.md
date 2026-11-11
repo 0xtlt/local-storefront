@@ -70,6 +70,12 @@ api_version = "2026-10"
 - **The token** printed is an offline token the app is installed with, with the scopes of
   `[access_scopes] scopes`: no scope, no access. It is the same every run for a shop and an app:
   a test can hard-code it.
+- **The client id** is `client_id` of `shopify.app.toml`. The app template ships
+  `client_id = ""`: lsf then takes `SHOPIFY_API_KEY` of the environment or of the app's `.env`
+  (the backend's apiKey, which the session tokens' `aud` must be), and says so in a
+  `client id:` line. With neither, it uses `lsf-local-client-id`, and warns at start, on the
+  home page and in lsf's admin. The admin names the app by `handle`, else by `name` in lower
+  case with dashes (`Gift Notes` is `/admin/apps/gift-notes`), else by the client id.
 - **The client secret** signs webhooks, OAuth answers and session tokens. Give lsf the backend's:
   `--client-secret`, or `SHOPIFY_API_SECRET` in the environment or in the app's `.env` (where
   `shopify app env pull` writes it, and the app templates read it). Without one, lsf signs with
@@ -211,16 +217,36 @@ Bridge working (the session token of `fetch()`, the title bar, the navigation), 
 [lsf's admin](#preview-the-embedded-app). A test calls a route the front end fetches with
 `Authorization: Bearer <session token>`: mint one with `POST /__lsf/admin/session-token`, one
 per request. And `authenticate.admin` answers `410 Gone`
-to a client whose `User-Agent` looks like a bot (the `isbot` package): curl's and Node's
-`fetch`'s do; send a browser's.
+to a client whose `User-Agent` looks like a bot (the `isbot` package): curl's, Node's `fetch`'s
+and Playwright's headless Chromium (`HeadlessChrome`) do; send a browser's. In lsf's frame, the
+frame's proxy says Chrome for headless Chromium.
 
-- **Billing from a page.** `billing.request` (and `billing.require` with it) in the loader of a
-  page sends the browser to the template's exit-iframe page, which only goes on to the admin
-  over `https` (`admin.shopify.com`, `<shop>.myshopify.com/admin`): it refuses lsf's charge page
-  (`http://127.0.0.1:9292/__lsf/admin/charges/<n>`) with "Invalid exit-iframe destination". Call
-  it from a route the front end fetches: the library then answers `401` with the charge page in
-  `X-Shopify-API-Request-Failure-Reauthorize-Url`, which App Bridge (or the test) opens. In a
-  test, approve it without the page ([approve a charge](#approve-a-charge)).
+lsf reads the template when it starts: an `app/shopify.server.ts` without `setAbstractFetchFunc`,
+or an `app/routes/app.tsx` without `boundary.headers`, is a warning on the home page and in lsf's
+admin, which says what to add. Three things of the template to know:
+
+- **Export the route's `headers`.** `export const headers: HeadersFunction = (headersArgs) =>
+  boundary.headers(headersArgs);` on a route (the template has it on `app.tsx`) passes the
+  library's headers on. Without it, a `401` of `billing.request` loses
+  `X-Shopify-API-Request-Failure-Reauthorize-Url`, and App Bridge has nowhere to send the
+  merchant: the Upgrade button does nothing.
+- **Another port.** `vite.config.ts` reads `PORT` before React Router loads `.env`, and its HMR
+  port is `64999`: give both on the command line, `PORT=3001 SHOPIFY_APP_URL=http://localhost:3001
+  npx react-router dev`, and change `64999` (to `Number(process.env.HMR_PORT || 64999)`) to run
+  two apps at once.
+- **Versions.** The template ships `@shopify/shopify-app-react-router` 3.x (`^3.0.2`), whose
+  `AppProvider` loads Polaris 1 (`polaris.js`); 4.0.0 loads `polaris-2.js`. lsf serves both, and
+  nothing else here differs between them.
+
+- **Billing.** `billing.require` and `billing.request` work in the loader of a page (the
+  template's gate in `app.tsx`) and in a route the front end fetches. The `confirmationUrl` lsf
+  answers is Shopify's, on the shop's admin
+  (`https://<shop>/admin/charges/<app id>/<n>/RecurringApplicationCharge/confirm_recurring_application_charge?signature=…`),
+  which the template's exit-iframe page accepts; lsf's admin serves that path and shows lsf's
+  charge page. A fetched route answers `401` with it in
+  `X-Shopify-API-Request-Failure-Reauthorize-Url`, which App Bridge opens. After the approval,
+  a `returnUrl` on Shopify's admin (the library's default) or on the app comes back to the app
+  in lsf's admin. In a test, approve it without the page ([approve a charge](#approve-a-charge)).
 - **OAuth.** The React Router package has no authorization code grant (it installs through
   token exchange). `auth.begin` of `@shopify/shopify-api` redirects the browser to
   `https://<shop>/admin/oauth/authorize?…`, which no fetch function sees: send it to lsf
@@ -397,55 +423,40 @@ treats a page served from a public address as public, and blocks its requests to
 `localhost` (lsf's App Bridge, Polaris from `/__lsf/cdn/`) until the browser grants it local
 network access.
 
-In the React Router template (`@shopify/shopify-app-react-router` 4.0.0), `AppProvider`
-writes Shopify's tag, with no option to change it. Three changes, all behind `APP_BRIDGE_URL`,
-which is unset on Shopify:
+**The frame goes through a proxy.** lsf's admin opens the app's frame on a port of its own
+(`embedded:` names it: `its frame is http://127.0.0.1:52011, a proxy of http://localhost:3000`),
+which forwards to `--app-url`. Shopify's libraries let only Shopify's admin frame the app: every
+page `@shopify/shopify-app-react-router` answers has `Content-Security-Policy: frame-ancestors
+https://<shop> https://admin.shopify.com …`, those it writes itself included (the bounce page
+`/auth/session-token`, the page of `redirect(url, {target: "_top"})`, the exit-iframe page), which
+a Response thrown from a loader carries past `entry.server.tsx`. No local origin is
+`https://<shop>`. The proxy changes, in what the backend answers:
 
-1. **The environment**: `APP_BRIDGE_URL=http://127.0.0.1:9292/__lsf/admin/app-bridge.js`. The
-   pages the library writes itself (the bounce page `/auth/session-token`, the exit-iframe page)
-   load the App Bridge of `APP_BRIDGE_URL`: `@shopify/shopify-app-react-router/adapters/node`
-   reads it when it is imported, as `app/shopify.server.ts` does.
-2. **`app/routes/app.tsx`**: lsf's script right before `AppProvider`, whose tag comes next.
+- `frame-ancestors` leaves `Content-Security-Policy`, and `X-Frame-Options` goes;
+- `https://cdn.shopify.com/shopifycloud/app-bridge.js` is lsf's App Bridge, and
+  `https://cdn.shopify.com/shopifycloud/polaris…` is lsf's `/__lsf/cdn/` (in the pages and in
+  `Link`): Shopify's CDN online, lsf's copy offline;
+- the backend's origin is the proxy's (in the pages, `Location`, the `shopify-reload` of the
+  bounce page, `X-Shopify-API-Request-Failure-Reauthorize-Url`), so that the frame stays on it.
 
-   ```tsx
-   export const loader = async ({ request }: LoaderFunctionArgs) => {
-     await authenticate.admin(request);
-     return { apiKey: process.env.SHOPIFY_API_KEY || "", appBridgeUrl: process.env.APP_BRIDGE_URL };
-   };
+The backend sees each request as if it came to it (`Host`, `Origin` and `Referer` are its own).
+So the React Router template runs in lsf's admin as it ships: no edit of `entry.server.tsx`,
+`app.tsx` or `polarisUrl`, and no `APP_BRIDGE_URL`. Its one edit is
+[the fetch function](#javascript-the-react-router-app-and-shopifyshopify-api), for the Admin API.
+The proxy forwards HTTP, not WebSockets: an HMR socket on the app's own port does not pass (the
+template's has a port of its own). `LSF_ADMIN_FRAME=direct` opens the backend in the frame
+without the proxy.
 
-   export default function App() {
-     const { apiKey, appBridgeUrl } = useLoaderData<typeof loader>();
-     return (
-       <>
-         {appBridgeUrl && <script src={appBridgeUrl} />}
-         <AppProvider apiKey={apiKey}>
-           {/* … */}
-         </AppProvider>
-       </>
-     );
-   }
-   ```
-
-3. **`app/entry.server.tsx`**: `addDocumentResponseHeaders` lets only Shopify's admin frame the
-   app (`Content-Security-Policy: frame-ancestors https://<shop> https://admin.shopify.com …`),
-   and a browser then shows nothing in lsf's frame. After it, let lsf's admin frame it:
-
-   ```ts
-   addDocumentResponseHeaders(request, responseHeaders);
-   if (process.env.APP_BRIDGE_URL) {
-     responseHeaders.set("Content-Security-Policy", `frame-ancestors ${new URL(process.env.APP_BRIDGE_URL).origin};`);
-   }
-   ```
-
-Then run the backend with `APP_BRIDGE_URL` next to the variables of
-[the React Router app](#javascript-the-react-router-app-and-shopifyshopify-api), and open
-`http://127.0.0.1:9292/admin/apps/<handle>`. A page that is not React (Rails, Laravel, plain
-HTML) loads the script the same way, and sends the same `Content-Security-Policy`.
+A page opened outside lsf's frame (`/__lsf/admin/launch`, a test that fetches `--app-url`) gets
+none of this: it loads lsf's App Bridge itself, as above, with
+`APP_BRIDGE_URL=http://127.0.0.1:9292/__lsf/admin/app-bridge.js` read by
+`@shopify/shopify-app-react-router/adapters/node` for the pages the library writes, and a
+`<script src={appBridgeUrl} />` before `AppProvider`.
 [`examples/admin-backend`](https://github.com/0xtlt/local-storefront/tree/main/examples/admin-backend)
-does both by hand (`server/embedded.mjs`, `documentHeaders` in `server/index.mjs`).
+does it by hand (`server/embedded.mjs`), and leaves the library's `frame-ancestors` as they are.
 
-When the app's page runs Shopify's App Bridge instead, lsf's admin sees what it posts and says
-so in a banner, with the line to add; when no App Bridge answers (the backend is down, the page
+When the app's page runs Shopify's App Bridge instead (`LSF_ADMIN_FRAME=direct`), lsf's admin
+sees what it posts and says so in a banner, with the line to add; when no App Bridge answers (the backend is down, the page
 failed, the frame was refused), it says that. Inside lsf's frame, Shopify's script redirects
 nothing (it sends the page to Shopify's admin only when it is not in a frame), but it listens to
 Shopify's admin only: `shopify.idToken()` and every authenticated `fetch()` wait, for a minute
@@ -477,37 +488,16 @@ The copy is what the CDN served on 2026-11-08 (`crates/cli/assets/shopify-cdn`, 
 its hashes): lsf never downloads Polaris, and offline is the copy of the lsf you run. Online, the
 page gets Shopify's current one.
 
-In the React Router template, `polarisUrl` (`@shopify/shopify-app-react-router` 2.1.0 or later)
-goes in two places, behind a variable that is unset on Shopify, next to `APP_BRIDGE_URL`:
-
-1. **`app/routes/app.tsx`**: `AppProvider` writes the `<script>` of `polarisUrl` (undefined: the
-   CDN's).
-
-   ```tsx
-   return { apiKey: process.env.SHOPIFY_API_KEY || "", appBridgeUrl: process.env.APP_BRIDGE_URL, polarisUrl: process.env.POLARIS_URL };
-   // …
-   <AppProvider apiKey={apiKey} polarisUrl={polarisUrl}>
-   ```
-
-2. **`app/shopify.server.ts`**: the `Link` header of the pages (`addDocumentResponseHeaders`)
-   preloads the same file. Without it, the browser preloads the CDN's, which fails offline.
-
-   ```ts
-   const shopify = shopifyApp({
-     // …
-     polarisUrl: process.env.POLARIS_URL,
-   });
-   ```
-
-Then run the backend with
-`POLARIS_URL=http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris-2.js`. Keep the file the app
-loads today: `polaris-2.js` is the default of 4.0.0, `polaris.js` (Polaris 1.x) that of 2.1.0. A
-page with a `Content-Security-Policy` allows lsf's origin where it allows `cdn.shopify.com`:
-`script-src` (Polaris), `style-src` (the stylesheets of its fonts), `font-src` (the fonts) and
-`connect-src` (Polaris fetches its icons). lsf answers with `Access-Control-Allow-Origin: *`, and
-answers the preflight of a `fetch()` with headers (`OPTIONS`: `204`, the headers asked for
-allowed, kept a day), so the app's origin may differ from lsf's: the app on `localhost:3000`,
-lsf on `localhost:9393`, works, Polaris's icons included.
+In lsf's frame, the proxy sends the page's Polaris (`polaris.js` of the template's 3.x,
+`polaris-2.js` of 4.0.0) and its `Link` preload to `/__lsf/cdn/`: nothing to change. Outside it,
+`polarisUrl` (`@shopify/shopify-app-react-router` 2.1.0 or later) goes on `AppProvider` and on
+`shopifyApp` (for the `Link` header), set to `http://127.0.0.1:9292/__lsf/cdn/shopifycloud/polaris.js`
+(the same file the app loads). A page with a `Content-Security-Policy` allows lsf's origin where
+it allows `cdn.shopify.com`: `script-src` (Polaris), `style-src` (the stylesheets of its fonts),
+`font-src` (the fonts) and `connect-src` (Polaris fetches its icons). lsf answers with
+`Access-Control-Allow-Origin: *`, and answers the preflight of a `fetch()` with headers
+(`OPTIONS`: `204`, the headers asked for allowed, kept a day), so the app's origin may differ
+from lsf's.
 
 A page that still loads Polaris from `cdn.shopify.com` runs offline too: when that script fails
 to load and lsf is `offline`, lsf's App Bridge loads lsf's copy of the same path, once, and says
@@ -569,6 +559,18 @@ OAuth without a library (in Python, say): send the browser to
 shop other than the default one), and POST the code of the callback to
 `$LSF_URL/admin/oauth/access_token`, `{"client_id", "client_secret", "code"}`: the code knows its
 shop.
+
+**Tokens survive a restart of lsf.** lsf keeps its tokens in memory, and the backend keeps the
+ones it got in its session storage. So every token lsf issues (offline, expiring offline and its
+refresh token, client credentials) is derived from the client id, the client secret, the shop,
+its kind and its rank: the first offline token of a run is the first of every run. A token lsf
+does not know is looked for among those it would issue next, and taken back: the backend's
+stored session works after lsf restarts, with the scopes the app is installed with now (an
+expiring one for an hour from then), and the terminal says
+`admin:  took back an access token of an earlier run of lsf (shpat_3cbbea…)`. A token revoked
+in the run (an uninstall, a reset, a shop deleted), or one of this run that expired, is never
+taken back; a token of another secret is unknown. Online tokens are not taken back: they last a
+day, and the libraries exchange a new session token after a `401`.
 
 Every access token is `shpat_` and 32 hex digits, as Shopify's. A token belongs to one shop. A
 request without a valid token is answered `401`
@@ -715,6 +717,20 @@ Each place that shows extensions says why they are gone, "the app is not install
   or to --app-url only: <url> is neither; start lsf with --app-url http://localhost:<port> (your
   backend)`. So give `--app-url`: without it, the subscriptions of `shopify.app.toml` point at
   `application_url`, usually a tunnel, and lsf sends nothing there.
+- **Shopify's Events** (`[events]`, `[[events.subscription]]`, which the app template ships for
+  `webhooks.products.update.tsx`): lsf delivers those of topic `Product` (`create`, `update`,
+  `delete`), when a product or a variant changes through the Admin API. An `update` is sent
+  when a field of `triggers` changed (`product.variants.price`, `product.variants.*`,
+  `product.*`; the product's `title`, `handle`, `status`, `tags`, `vendor`, `productType`,
+  `descriptionHtml`, `templateSuffix`, and the variants' `title`, `price`, `compareAtPrice`,
+  `sku`, `barcode`, `inventoryPolicy`, `taxable`, `position`), one delivery per variant changed.
+  The body has `topic`, `action`, `handle`, `fields_changed` and `query_variables`
+  (`productId`, `variantsId`), and `data` (and `errors`), what `query` answers with them, with
+  the app's scopes; a `query_filter` that does not match sends nothing (`not_sent`, with why).
+  The headers are Shopify's for Events: `Shopify-Topic: Product`, `Shopify-Action`,
+  `Shopify-Handle`, `Shopify-Hmac-Sha256`, …, without `X-`; `authenticate.webhook` reads them
+  (`topic` is `PRODUCT`). `GET /__lsf/webhooks?topic=Product` lists them. Another topic is
+  warned about at start, and nothing is sent for it.
 - **Events**: what the Admin API changes (`productCreate` → `products/create`,
   `inventory_items/create`, `inventory_levels/connect`; any other change of a product, such as
   `productUpdate`, `tagsAdd` or `metafieldsSet` on it → `products/update`; `productDelete` →
@@ -996,19 +1012,30 @@ const { deliveries } = await webhooks({ topic: "orders/create", resource: order.
 
 ### Approve a charge
 
-The backend's billing request answers `401` with lsf's charge page in
-`X-Shopify-API-Request-Failure-Reauthorize-Url`: `http://127.0.0.1:9292/__lsf/admin/charges/1?shop=test-1.myshopify.com`.
-Charges count from 1 in each shop, so approve the one of that URL, its `?shop=` kept:
+The backend's billing request answers `401` with the charge's `confirmationUrl` in
+`X-Shopify-API-Request-Failure-Reauthorize-Url`, Shopify's, on the shop's admin:
+`https://test-1.myshopify.com/admin/charges/5662588352328/1/RecurringApplicationCharge/confirm_recurring_application_charge?signature=…`.
+Its fourth segment is the charge. Charges count from 1 in each shop, so approve that one, on
+its shop:
 
 ```js
 const answer = await callBackend(shop, "POST", "/api/billing/request");
-const charge = new URL(answer.headers.get("x-shopify-api-request-failure-reauthorize-url"));
-await fetch(`${charge.origin}${charge.pathname}/approve${charge.search}`, { method: "POST" });
+const confirmation = new URL(answer.headers.get("x-shopify-api-request-failure-reauthorize-url"));
+const charge = confirmation.pathname.split("/")[4];
+await fetch(`${LSF_URL}/__lsf/admin/charges/${charge}/approve?shop=${confirmation.host}`, { method: "POST" });
 ```
 
-The subscription is then `ACTIVE`, and `app_subscriptions/update` is delivered if the app
-subscribes to it. `/decline` declines it. Billing from the loader of a page does not work
-([billing from a page](#javascript-the-react-router-app-and-shopifyshopify-api)).
+In a browser, open the URL on lsf's origin (`confirmation.href.replace(confirmation.origin,
+LSF_URL)`): lsf's admin redirects it to the charge page, `/__lsf/admin/charges/<n>?shop=`. The
+subscription is then `ACTIVE`, and `app_subscriptions/update` is delivered if the app subscribes
+to it. `/decline` declines it.
+
+**Billing cycles follow the shop's clock.** Once `currentPeriodEnd` passes (the trial's end,
+then every 30 days, or 365 for an annual plan), the next request starts the next cycle: the end
+moves on, the usage balance starts again from nothing, and a limited discount has an interval
+less. No webhook is sent for it: Shopify sends `app_subscriptions/update` for a change of status
+or of capped amount. Move the clock ([the shop's clock](admin-reference.md#the-shops-clock)) to
+see a renewal.
 
 ### Managed pricing
 
