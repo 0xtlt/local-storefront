@@ -77,7 +77,7 @@ pub use error::Error;
 
 use execute::Context;
 
-use crate::admin::schema::{Field as FieldDef, Schema, TypeRef};
+use crate::admin::schema::{Field as FieldDef, Kind, Schema, TypeRef};
 use crate::admin::throttle::{self, Throttle};
 
 /// What a [`Resolver`] answers for a field.
@@ -497,7 +497,7 @@ pub fn prepare<'s, 'q>(
         return Err(vec![Error::new("This query is too large to execute.")]);
     }
     let variables = coerce_variables(schema, definition, variables)?;
-    if let Some(error) = oversized_input(&document, definition, &variables) {
+    if let Some(error) = oversized_input(schema, &document, definition, &variables) {
         return Err(vec![error]);
     }
     Ok(Prepared {
@@ -584,50 +584,92 @@ fn coerce_variables(
     }
 }
 
-/// The most items an input list takes: `nodes(ids:)`, `productVariantsBulkCreate(variants:)`,
-/// any list of an argument, written in the query or given by a variable. Shopify refuses a
-/// longer one before it runs anything, with `MAX_INPUT_SIZE_EXCEEDED` (shopify.dev changelog,
-/// "GraphQL input arrays limited to 250 items"; the wording of the message is lsf's
-/// recollection of Shopify's, not checked against a live shop).
+/// The most items an input list takes: `nodes(ids:)`, `fulfillmentCreate`'s line items, any
+/// list of an argument or of an input object's field, written in the query or given by a
+/// variable. Shopify refuses a longer one before it runs anything, with
+/// `MAX_INPUT_SIZE_EXCEEDED` (shopify.dev changelog, "GraphQL input arrays limited to 250 items";
+/// the wording of the message is lsf's recollection of Shopify's, not checked against a live
+/// shop). A JSON scalar (`WebPixelInput.settings`) is a value, not a list: its arrays are not
+/// counted. [`INPUT_LIMITS`] has the lists Shopify documents another limit for.
 pub const MAX_INPUT_ITEMS: usize = 250;
 
-/// The error of the first input list of the operation longer than [`MAX_INPUT_ITEMS`], through
-/// its fragments.
+/// The lists that take another number of items than [`MAX_INPUT_ITEMS`]: an argument as
+/// `Type.field.argument`, a field of an input object as `InputType.field`.
+///
+/// - `metafieldsSet`: "Allows a maximum of 25 metafields to be set at a time".
+/// - The variants of a product, 2048 by default ("stores have a limit of 2048 product variants
+///   for each product"), which `productSet` and the bulk mutations of variants take in one
+///   call, and the values of an option, as many as the variants. Where Shopify publishes no
+///   limit, lsf takes the product's, rather than refuse what Shopify may take.
+pub const INPUT_LIMITS: &[(&str, usize)] = &[
+    ("Mutation.metafieldsSet.metafields", 25),
+    ("ProductSetInput.variants", 2048),
+    ("OptionSetInput.values", 2048),
+    ("OptionCreateInput.values", 2048),
+    ("Mutation.productOptionUpdate.optionValuesToAdd", 2048),
+    ("Mutation.productOptionUpdate.optionValuesToUpdate", 2048),
+    ("Mutation.productOptionUpdate.optionValuesToDelete", 2048),
+    ("Mutation.productVariantsBulkCreate.variants", 2048),
+    ("Mutation.productVariantsBulkUpdate.variants", 2048),
+    ("Mutation.productVariantsBulkDelete.variantsIds", 2048),
+    ("Mutation.productVariantsBulkReorder.positions", 2048),
+    ("Mutation.combinedListingUpdate.productsAdded", 2048),
+    ("Mutation.combinedListingUpdate.productsEdited", 2048),
+    ("Mutation.combinedListingUpdate.productsRemovedIds", 2048),
+];
+
+/// How many items the list of `key` takes ([`INPUT_LIMITS`]).
+fn input_limit(key: &str) -> usize {
+    INPUT_LIMITS
+        .iter()
+        .find(|(list, _)| *list == key)
+        .map_or(MAX_INPUT_ITEMS, |(_, limit)| *limit)
+}
+
+/// The first list in `value`, of type `ty`, longer than it takes: its size and its limit.
+/// `limit` is that of `value` when it is a list; the lists inside take theirs. Stops at scalars
+/// and enums: a JSON value's arrays are not input lists.
+fn oversized_list(
+    schema: &Schema,
+    value: &Value,
+    ty: &TypeRef,
+    limit: usize,
+) -> Option<(usize, usize)> {
+    match (ty, value) {
+        (TypeRef::NonNull(inner), _) => oversized_list(schema, value, inner, limit),
+        (TypeRef::List(item), Value::Array(items)) => {
+            if items.len() > limit {
+                return Some((items.len(), limit));
+            }
+            items
+                .iter()
+                .find_map(|value| oversized_list(schema, value, item, MAX_INPUT_ITEMS))
+        }
+        (TypeRef::List(item), single) => oversized_list(schema, single, item, MAX_INPUT_ITEMS),
+        (TypeRef::Named(name), Value::Object(fields)) => {
+            let def = schema.get(name).filter(|def| def.kind == Kind::InputObject)?;
+            fields.iter().find_map(|(key, value)| {
+                let field = def.input_field(key)?;
+                let limit = input_limit(&format!("{name}.{key}"));
+                oversized_list(schema, value, &field.ty, limit)
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The error of the first input list of the operation longer than it takes ([`MAX_INPUT_ITEMS`],
+/// [`INPUT_LIMITS`]), through its fragments. Called after validation: every field and argument
+/// is the schema's.
 fn oversized_input(
+    schema: &Schema,
     document: &ast::Document<'_>,
     operation: &ast::Operation<'_>,
     variables: &Map<String, Value>,
 ) -> Option<Error> {
-    fn longest_json(value: &Value) -> usize {
-        match value {
-            Value::Array(items) => items
-                .iter()
-                .map(longest_json)
-                .max()
-                .unwrap_or(0)
-                .max(items.len()),
-            Value::Object(fields) => fields.values().map(longest_json).max().unwrap_or(0),
-            _ => 0,
-        }
-    }
-    fn longest(value: &ast::Value<'_>, variables: &Map<String, Value>) -> usize {
-        match &value.kind {
-            ast::ValueKind::Variable(name) => variables.get(*name).map_or(0, longest_json),
-            ast::ValueKind::List(items) => items
-                .iter()
-                .map(|item| longest(item, variables))
-                .max()
-                .unwrap_or(0)
-                .max(items.len()),
-            ast::ValueKind::Object(fields) => fields
-                .iter()
-                .map(|field| longest(&field.value, variables))
-                .max()
-                .unwrap_or(0),
-            _ => 0,
-        }
-    }
     fn walk<'d, 'q>(
+        schema: &Schema,
+        parent: &str,
         set: &'d ast::SelectionSet<'q>,
         document: &'d ast::Document<'q>,
         variables: &Map<String, Value>,
@@ -635,24 +677,48 @@ fn oversized_input(
     ) -> Option<Error> {
         for selection in &set.items {
             let found = match selection {
-                ast::Selection::Field(field) => field
-                    .arguments
-                    .iter()
-                    .find_map(|argument| {
-                        let size = longest(&argument.value, variables);
-                        (size > MAX_INPUT_ITEMS).then(|| {
-                            Error::new(format!(
-                                "The input array size of {size} is greater than the maximum allowed of {MAX_INPUT_ITEMS}."
-                            ))
-                            .with_locations(vec![argument.pos])
-                            .with_path(vec![Value::from(field.name), Value::from(argument.name)])
-                            .with_extension("code", "MAX_INPUT_SIZE_EXCEEDED")
+                ast::Selection::Field(field) => {
+                    let Some(def) = schema.lookup_field(parent, field.name) else {
+                        continue;
+                    };
+                    field
+                        .arguments
+                        .iter()
+                        .find_map(|argument| {
+                            let arg = def.arg(argument.name)?;
+                            let value =
+                                input::coerce_literal(schema, &argument.value, &arg.ty, variables)?;
+                            let limit =
+                                input_limit(&format!("{parent}.{}.{}", field.name, argument.name));
+                            let (size, limit) = oversized_list(schema, &value, &arg.ty, limit)?;
+                            Some(
+                                Error::new(format!(
+                                    "The input array size of {size} is greater than the maximum allowed of {limit}."
+                                ))
+                                .with_locations(vec![argument.pos])
+                                .with_path(vec![Value::from(field.name), Value::from(argument.name)])
+                                .with_extension("code", "MAX_INPUT_SIZE_EXCEEDED"),
+                            )
                         })
-                    })
-                    .or_else(|| walk(&field.selection_set, document, variables, seen)),
-                ast::Selection::InlineFragment(inline) => {
-                    walk(&inline.selection_set, document, variables, seen)
+                        .or_else(|| {
+                            walk(
+                                schema,
+                                def.ty.named(),
+                                &field.selection_set,
+                                document,
+                                variables,
+                                seen,
+                            )
+                        })
                 }
+                ast::Selection::InlineFragment(inline) => walk(
+                    schema,
+                    inline.type_condition.unwrap_or(parent),
+                    &inline.selection_set,
+                    document,
+                    variables,
+                    seen,
+                ),
                 ast::Selection::FragmentSpread(spread) => {
                     if seen.contains(&spread.name) {
                         None
@@ -662,7 +728,14 @@ fn oversized_input(
                             .fragments()
                             .find(|fragment| fragment.name == spread.name)
                             .and_then(|fragment| {
-                                walk(&fragment.selection_set, document, variables, seen)
+                                walk(
+                                    schema,
+                                    fragment.type_condition,
+                                    &fragment.selection_set,
+                                    document,
+                                    variables,
+                                    seen,
+                                )
                             })
                     }
                 }
@@ -673,7 +746,14 @@ fn oversized_input(
         }
         None
     }
+    let root = match operation.kind {
+        ast::OperationKind::Query => Some(schema.query_type()),
+        ast::OperationKind::Mutation => schema.mutation_type(),
+        ast::OperationKind::Subscription => schema.subscription_type(),
+    }?;
     walk(
+        schema,
+        root,
         &operation.selection_set,
         document,
         variables,

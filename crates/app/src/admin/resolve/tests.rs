@@ -1025,3 +1025,101 @@ fn lists_lsf_does_not_compute_are_reported() {
     assert!(fields.contains(&json!("Order.events")), "{answer}");
     assert!(!fields.contains(&json!("Order.returns")), "{answer}");
 }
+
+/// Runs `query` with `variables` as the default app.
+fn run_with(shop: &mut ShopState, query: &str, variables: Value) -> Value {
+    let mut resolver = ShopResolver::new(shop, Registry::standard());
+    graphql::run(
+        crate::admin::schema::admin(),
+        &mut resolver,
+        &Request::new(query).with_variables(variables),
+        None,
+    )
+    .to_json()
+}
+
+/// The 250 items are a limit of the schema's lists, not of every array: `productSet` takes the
+/// 2048 variants a product has, `metafieldsSet` 25 metafields, and a JSON value is not a list.
+#[test]
+fn input_lists_take_the_limit_shopify_documents_for_them() {
+    let mut shop = demo();
+    let product_set = |count: usize| {
+        let values: Vec<Value> = (0..count)
+            .map(|n| json!({"name": format!("V{n}")}))
+            .collect();
+        let variants: Vec<Value> = (0..count)
+            .map(|n| json!({"optionValues": [{"optionName": "Size", "name": format!("V{n}")}]}))
+            .collect();
+        json!({"input": {
+            "title": "Many sizes",
+            "productOptions": [{"name": "Size", "values": values}],
+            "variants": variants,
+        }})
+    };
+    let query = "mutation($input: ProductSetInput!) { productSet(input: $input) { product { variantsCount { count } } userErrors { field message } } }";
+    let answer = run_with(&mut shop, query, product_set(251));
+    assert_eq!(answer["errors"], Value::Null, "{answer}");
+    assert_eq!(
+        answer["data"]["productSet"]["product"]["variantsCount"]["count"],
+        json!(251),
+        "{answer}"
+    );
+    let answer = run_with(&mut shop, query, product_set(2049));
+    assert_eq!(
+        answer["errors"][0]["message"],
+        json!("The input array size of 2049 is greater than the maximum allowed of 2048."),
+        "{answer}"
+    );
+
+    let metafields: Vec<Value> = (0..26)
+        .map(|n| {
+            json!({"ownerId": "gid://shopify/Shop/1", "namespace": "custom", "key": format!("k{n}"),
+                   "type": "single_line_text_field", "value": "x"})
+        })
+        .collect();
+    let answer = run_with(
+        &mut shop,
+        "mutation($m: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $m) { userErrors { message } } }",
+        json!({"m": metafields}),
+    );
+    assert_eq!(
+        answer["errors"][0]["extensions"]["code"],
+        json!("MAX_INPUT_SIZE_EXCEEDED"),
+        "{answer}"
+    );
+    assert_eq!(
+        answer["errors"][0]["message"],
+        json!("The input array size of 26 is greater than the maximum allowed of 25."),
+        "{answer}"
+    );
+
+    let settings = json!({"ids": (0..300).collect::<Vec<_>>()}).to_string();
+    let answer = run_with(
+        &mut shop,
+        "mutation($settings: JSON!) { webPixelCreate(webPixel: {settings: $settings}) { userErrors { message } } }",
+        json!({"settings": settings}),
+    );
+    assert_eq!(answer["errors"], Value::Null, "{answer}");
+}
+
+/// Every list of [`graphql::INPUT_LIMITS`] is a list of the schema: a typo would leave Shopify's
+/// limit unapplied.
+#[test]
+fn the_input_limits_name_lists_of_the_schema() {
+    let schema = crate::admin::schema::admin();
+    for (key, _) in graphql::INPUT_LIMITS {
+        let parts: Vec<&str> = key.split('.').collect();
+        let ty = match parts.as_slice() {
+            [object, field, argument] => schema
+                .field(object, field)
+                .and_then(|field| field.arg(argument))
+                .map(|arg| &arg.ty),
+            [input, field] => schema
+                .get(input)
+                .and_then(|def| def.input_field(field))
+                .map(|field| &field.ty),
+            _ => None,
+        };
+        assert!(ty.is_some_and(|ty| ty.is_list()), "{key}");
+    }
+}

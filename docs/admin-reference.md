@@ -12,9 +12,13 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
   exceed 250. …`, `ACCESS_DENIED`, `THROTTLED`, `MAX_COST_EXCEEDED`. A mutation's validation errors
   are its `userErrors`, and a mutation that fails changes nothing.
 - An input list takes 250 items at most, as on Shopify: `nodes(ids:)` with 251 ids, or any
-  longer list of an argument or a variable, is refused before anything runs, with
-  `MAX_INPUT_SIZE_EXCEEDED` (`The input array size of 251 is greater than the maximum allowed
-  of 250.`; the wording is not checked against a live shop).
+  longer list of an argument or of an input object, written in the query or given by a
+  variable, is refused before anything runs, with `MAX_INPUT_SIZE_EXCEEDED` (`The input array
+  size of 251 is greater than the maximum allowed of 250.`; the wording is not checked against
+  a live shop). The lists Shopify documents another limit for take theirs: 25 metafields for
+  `metafieldsSet`, 2048 variants for `productSet` and the `productVariantsBulk…` mutations,
+  2048 values for an option. A `JSON` value (`WebPixelInput.settings`) is not a list: its
+  arrays are not counted.
 - `extensions.cost`: `requestedQueryCost`, `actualQueryCost` and `throttleStatus`, as Shopify
   computes them, from a leaky bucket per shop and app (`--admin-throttle`). With the header
   `Shopify-GraphQL-Cost-Debug: 1`, also `fields`, the cost of each field as Shopify lists it:

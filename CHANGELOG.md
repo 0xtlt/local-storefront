@@ -426,7 +426,9 @@ What to change when you upgrade from 0.2.0. Each one is told in full below.
   entry. A list lsf does not compute (`Order.agreements`, `Order.events`) is now in
   `extensions.lsf.defaulted`.
 - **More of Shopify's checks:** an input list over 250 items (`nodes(ids:)` with 251 ids) is
-  refused with `MAX_INPUT_SIZE_EXCEEDED`; a `metaobject_reference` definition needs a
+  refused with `MAX_INPUT_SIZE_EXCEEDED`, except where Shopify documents another limit (25
+  metafields for `metafieldsSet`, 2048 variants for `productSet`); the arrays of a `JSON` value
+  are not counted; a `metaobject_reference` definition needs a
   `metaobject_definition_id` the shop has; `bulkOperationRunMutation` refuses a mutation the
   schema refuses, or one with more than one mutation field (`INVALID_MUTATION`).
 - **`description`** keeps words whole: `it<em>s</em>` reads `its`; only block tags and `<br>`
