@@ -1,0 +1,6 @@
+# On Windows, the canonical path of a file starts with `\\?\`, which lsf would show in its
+# messages, and which compares unlike the same path without it.
+disallowed-methods = [
+    { path = "std::fs::canonicalize", reason = "use lsf_core::util::canonicalize: no `\\\\?\\` on Windows" },
+    { path = "std::path::Path::canonicalize", reason = "use lsf_core::util::canonicalize: no `\\\\?\\` on Windows" },
+]

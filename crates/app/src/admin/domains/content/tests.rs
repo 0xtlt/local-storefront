@@ -1169,6 +1169,56 @@ fn what_the_content_mutations_create_syncs_to_the_store() {
     assert_eq!(linen.metafields["custom"]["weight_kg"].value, json!("1.25"));
 }
 
+/// A rating of the store data is read as Shopify keeps it: `value` the JSON text, `jsonValue`
+/// the object, both with strings, whether the data writes the object, its numbers, or the JSON
+/// text itself.
+#[test]
+fn a_rating_of_the_store_data_has_strings() {
+    let overlay = json!({
+        "metaobjects": {
+            "spec": [{
+                "handle": "tent",
+                "fields": {
+                    "stars": { "type": "rating", "value": { "scale_min": "1.0", "scale_max": "5.0", "value": "4.5" } },
+                    "numbers": { "type": "rating", "value": { "scale_min": 1, "scale_max": 5, "value": 4.5 } },
+                    "pasted": { "type": "rating", "value": "{\"scale_min\":\"1.0\",\"scale_max\":\"5.0\",\"value\":\"4.5\"}" }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &lsf_core::store::load::DataSource::Demo,
+        &Default::default(),
+        Some(&overlay),
+    );
+    assert!(!diagnostics.has_errors(), "{diagnostics}");
+    let mut shop = ShopState::seeded(&store, None);
+    let answer = run(
+        &mut shop,
+        "{ metaobjectByHandle(handle: {type: \"spec\", handle: \"tent\"}) {
+            stars: field(key: \"stars\") { value jsonValue }
+            numbers: field(key: \"numbers\") { value jsonValue }
+            pasted: field(key: \"pasted\") { value jsonValue }
+        } }",
+        json!({}),
+    );
+    let entry = &answer["data"]["metaobjectByHandle"];
+    let shopify = json!({
+        "value": r#"{"scale_min":"1.0","scale_max":"5.0","value":"4.5"}"#,
+        "jsonValue": {"scale_min": "1.0", "scale_max": "5.0", "value": "4.5"},
+    });
+    assert_eq!(entry["stars"], shopify, "{answer}");
+    assert_eq!(entry["pasted"], shopify, "{answer}");
+    assert_eq!(
+        entry["numbers"],
+        json!({
+            "value": r#"{"scale_min":"1","scale_max":"5","value":"4.5"}"#,
+            "jsonValue": {"scale_min": "1", "scale_max": "5", "value": "4.5"},
+        }),
+        "{answer}"
+    );
+}
+
 const FILE_CREATE: &str = "mutation($files: [FileCreateInput!]!) { fileCreate(files: $files) {
     files { id alt fileStatus __typename
         ... on MediaImage { mimeType image { url altText } }

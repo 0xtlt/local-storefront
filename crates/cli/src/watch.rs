@@ -386,7 +386,7 @@ impl Options {
 /// The folder where what the Functions of the app in `root` were built from, and what they made,
 /// is recorded: in the user's cache folder, never in the app.
 pub fn record_dir(root: &Path) -> Option<PathBuf> {
-    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let root = lsf_core::util::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let mut hasher = Fnv::default();
     hasher.write(root.as_os_str().as_encoded_bytes());
     Some(
@@ -466,7 +466,7 @@ impl Watcher {
             followed: Mutex::new(None),
         });
         let (sender, receiver) = mpsc::channel();
-        let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let root = lsf_core::util::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
         let events = if options.events {
             match Follow::start(&root, options.each_folder, sender.clone()) {
                 Ok(follow) => Some(follow),
@@ -483,7 +483,7 @@ impl Watcher {
         let data = options
             .data
             .as_ref()
-            .map(|data| data.canonicalize().unwrap_or_else(|_| data.clone()));
+            .map(|data| lsf_core::util::canonicalize(data).unwrap_or_else(|_| data.clone()));
         let mut coordinator = Coordinator {
             idle: if events.is_some() {
                 options.idle
@@ -880,7 +880,7 @@ pub(crate) fn walk(
             let mut target = entry.path();
             if kind.is_symlink() {
                 // What it leads to is what is built.
-                match target.canonicalize() {
+                match lsf_core::util::canonicalize(&target) {
                     Ok(real) => target = real,
                     Err(_) => continue,
                 }
@@ -905,7 +905,7 @@ pub(crate) fn walk(
         }
     }
     let mut links = Links {
-        top: dir.canonicalize().ok(),
+        top: lsf_core::util::canonicalize(dir).ok(),
         followed: BTreeSet::new(),
     };
     inner(dir, Path::new(""), skip, file, folder, &mut links);

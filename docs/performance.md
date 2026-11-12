@@ -263,4 +263,5 @@ Times are in milliseconds.
   that a section writes itself, in a loop over `section.blocks`, are part of the section.
 - `/__lsf/timings` counts pages by template, sections and blocks by id. Sections and blocks
   count wherever they are rendered: in a page, alone, or in a cart response. The id of a
-  block is the one of `#shopify-block-<id>`, and ends with its key.
+  block is the one of `#shopify-block-<id>` the first time it renders, and ends with its key:
+  the renders after it (`<id>-1`, `<id>-2`, as on Shopify) count under it.

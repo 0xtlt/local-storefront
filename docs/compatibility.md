@@ -113,10 +113,12 @@ metaobject type), `product`, `collection`, `page`, `blog`, `article`, `policy`, 
 
 With their related types: variants, options and option values (with swatches), media (images,
 videos, external videos, 3D models), image presentation and focal points, collection filters
-(with swatches) and sort options, links, addresses, orders and line items, comments, metafields
-of every type (a `color` is a color, a measurement has `type`, `value` and `unit`, a `money`
-prints as cents, has the `currency` it is written in, and the money filters and `metafield_text`
-format it in that currency, an `article_reference` is `blog/article` or the handle of an article
+(with swatches) and sort options, links, addresses, orders and line items (a cart line has the
+`index` shopify.dev leaves out: its 0-based position, which Horizon posts plus 1 as the `line` of
+`/cart/change.js`; `/cart.js` has no such field), comments, metafields of every type (a
+`color` is a color, a measurement has `type`, `value` and `unit`, a `money` prints as cents,
+has the `currency` it is written in, and the money filters and `metafield_text` format it in
+that currency, an `article_reference` is `blog/article` or the handle of an article
 that only one blog has, a `file_reference` is an image, a video or a file by its extension),
 metaobjects, countries, languages (with `direction`, from the script of the language),
 currencies, markets, fonts, colors, color schemes, quantity rules and quantity price breaks,
@@ -132,6 +134,19 @@ locations, companies, company locations and company addresses.
   defaults from the schema, `disabled` sections and blocks.
 - Theme blocks (`blocks/*.liquid`), nested blocks, static blocks, `{% content_for 'blocks' %}`
   and `{% content_for 'block' %}`, `closest.<resource>`.
+- The id of a theme block (`block.id`, and its wrapper's `id="shopify-block-<id>"`) is
+  `<prefix>__<key>`, the key being its key in the JSON template or the `id` of a static block.
+  A block rendered again on the same page is numbered as on Shopify: the first render is
+  `<prefix>__<key>`, the second `<prefix>__<key>-1`, the third `<prefix>__<key>-2`. This
+  happens with a static block in a `for` loop (Horizon's product card), the blocks it holds,
+  or a second `{% content_for 'blocks' %}`. `section.blocks` gives the ids without a number.
+  A section rendered alone (`?section_id=`, `?sections=`) starts again from the first, and a
+  section asked for twice in `?sections=` is rendered once. The prefix is not Shopify's: do
+  not rely on its value. Shopify gives each block a prefix of its own, local-storefront one
+  per section, so two blocks that give a static block the same id (two collection links with
+  their `title`) give it the same id, and neither is numbered. A block defined in a section's
+  schema keeps its key as its id, and app blocks and blocks called with `{% block %}` are not
+  numbered.
 - With `--preview liquid-july-26`, blocks called from a template or a layout, as in Shopify's
   Skeleton theme: `{% block 'name', parameter: value %}content{% endblock %}`. The parameters
   are read when the tag opens. The block sees them and its body, as `content` (the Liquid
@@ -237,11 +252,20 @@ local-storefront. The rules are the ones read from Shopify's answers in October 
   color functions get a fallback, and vendor prefixes are added.
 - This applies to the assets, `.liquid` ones included once they are rendered, and to the
   bundles built from the `{% stylesheet %}` and `{% javascript %}` tags.
+- A declaration is merged into another only when the result sets the same properties: four
+  sides into `margin`, for instance. `translate`, `rotate` and `scale` stay apart from
+  `transform`, since they are applied before it and cascade on their own, and `font` and
+  `transition` stay where they are written, before or after `font-variant-numeric` or
+  `transition-behavior`, which they reset.
 - A minified file ends with a link to its source map, which is served at the path of the
-  file followed by `.map`: the tools of a browser show the file as it is written.
+  file followed by `.map`: the tools of a browser show the file as it is written. The link
+  carries the `?v=` the file was asked at (`base.css?v=123` links `base.css.map?v=123`), as
+  Shopify's does, so that the map's URL changes with the file.
 - A file is served as written when its name ends with `.min.js` or `.min.css`, when the
-  minified file would not be lighter, or when it cannot be read as CSS or JavaScript. In a
-  stylesheet, a rule that cannot be read is kept as written and the rest is minified.
+  minified file, link included, would not be lighter, or when it cannot be read as CSS or
+  JavaScript. There is no size limit below which a file is left alone: a file of a few hundred
+  bytes is minified when that saves bytes. In a stylesheet, a rule that cannot be read is kept
+  as written and the rest is minified.
 
 `--no-minify` serves every file as it is written.
 
@@ -450,7 +474,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Caching | Shopify keeps rendered pages in a cache of its own. An answer from that cache has an `ETag` and no `Cache-Control`; local-storefront always answers like a page that was just rendered. Files have no `Last-Modified`, so nothing is answered with `304 Not Modified`. |
 | Image formats | The format of an image is chosen by Shopify's rule, with other encoders: the files weigh about what Shopify's do, not the same, so an image can come as AVIF where Shopify sends WebP, or the reverse. A GIF is never converted. The color profile and the metadata of a file are not kept when it is encoded. |
 | Preloading | Shopify sends the `Link` header ahead of the page, as `103 Early Hints`, and with the pages it answers from its own cache. local-storefront sends it with every page. Shopify's header also asks to connect to its CDN (`cdn.shopify.com`), which serves nothing locally, and has a limit on its number of entries, which local-storefront does not have. |
-| Minification | Shopify minifies with esbuild, local-storefront with other libraries (oxc for scripts, Lightning CSS for stylesheets): a file weighs about what it does on Shopify, without being the same to the byte. In a stylesheet, declarations can come in another order within a rule. `inset` is not replaced with `top`, `right`, `bottom` and `left`. |
+| Minification | Shopify minifies with esbuild, local-storefront with other libraries (oxc for scripts, Lightning CSS for stylesheets): a file weighs about what it does on Shopify, without being the same to the byte. In a stylesheet, declarations can come in another order within a rule. `inset` is not replaced with `top`, `right`, `bottom` and `left`, and the width, style and color of the four sides of a border, all set in one rule, become `border`, which also resets `border-image`. Shopify's link to the source map carries the `?v=` of the request, local-storefront's does not: a file that minifying saves only a few dozen bytes of can be minified locally and served as written on Shopify. |
 | Compiled scripts | Shopify runs the `{% javascript %}` of a section only on the pages that have that section. local-storefront runs them all on every page. |
 
 Found a difference that is not in this table? It is a bug: a Liquid snippet and the HTML

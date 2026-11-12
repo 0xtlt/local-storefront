@@ -813,6 +813,23 @@ inside `files/`.
 `{{ product.metafields.custom.size_guide.value.title }}` then behave as on Shopify, including
 `metafield_tag` and `metafield_text`.
 
+A value that is an object or a list (a `rating`, a `money`, a `weight`, a `list.` type...) may
+also be written as its JSON text, the Admin API's `value`, so that it can be pasted from the API
+as is: `"{\"scale_min\":\"1.0\",\"scale_max\":\"5.0\",\"value\":\"4.5\"}"`. A `json`
+metafield is the exception: a string is a value of it.
+
+A `rating` keeps its `value`, `scale_min` and `scale_max` as strings, as Shopify does:
+
+```json
+"rating": { "type": "rating", "value": { "scale_min": "1.0", "scale_max": "5.0", "value": "4.5" } }
+```
+
+Its Liquid object is Shopify's, with strings too: `{{ m.value | json }}` gives
+`{"rating":"4.5","scale_max":"5.0","scale_min":"1.0"}`, and `{% for i in (1..m.value.scale_max) %}`
+runs 5 times, as Liquid turns the string `"5.0"` into 5 (it raises "invalid integer" on the
+number `5.0`). A number in the data is kept as it is written, as a string: `"scale_max": 5` is
+`"5"`.
+
 A typed value is checked against its type, as Shopify checks it. `{"type": "number_integer",
 "value": "two"}` is an `invalid_metafield` error, and so is a `weight` in `"kgs"` or a
 `rating` outside its scale. A `weight`, `dimension` or `volume` takes the units Shopify lists
@@ -1108,7 +1125,7 @@ A metafield with an explicit type.
 | Field | Type | Description |
 |---|---|---|
 | `type` | string | **Required.** A Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`, `rich_text_field`, `number_integer`, `number_decimal`, `boolean`, `color`, `date`, `date_time`, `url`, `json`, `money`, `rating`, `weight`, `volume`, `dimension` and the other measurements (`distance`, `temperature`, `duration`...), `product_reference`, `collection_reference`, `page_reference`, `article_reference` (`blog/article`, or the article's handle alone), `file_reference`, `metaobject_reference`, or a `list.` variant of those. |
-| `value` | any JSON value | **Required.** The value. References are written as handles (`"blue-shirt"`), files as paths inside `files/`, lists as JSON arrays. |
+| `value` | any JSON value | **Required.** The value. References are written as handles (`"blue-shirt"`), files as paths inside `files/`, lists as JSON arrays. An object or a list may also be written as its JSON text, as the Admin API's `value` gives it. |
 
 ### Product
 

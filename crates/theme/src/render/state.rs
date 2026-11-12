@@ -1,5 +1,6 @@
 //! Per-render state shared by tags and filters through the Liquid context's registers.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -25,6 +26,9 @@ struct Inner {
     sections: Vec<SectionTiming>,
     /// The theme blocks of the sections being rendered, until their section takes them.
     blocks: Vec<BlockTiming>,
+    /// How many times each theme block has been rendered on the page, by its path in its
+    /// section.
+    block_renders: HashMap<String, usize>,
     /// Why app blocks of the page were not rendered, once each.
     notices: Vec<String>,
     /// The `stylesheet` (`true`) and `javascript` files of the app blocks rendered, by URL, in
@@ -147,6 +151,22 @@ impl RenderState {
     /// How long each section took, in the order they were rendered.
     pub fn section_timings(&self) -> Vec<SectionTiming> {
         self.inner().sections.clone()
+    }
+
+    /// The id of a theme block for this render of it: `id` the first time, then `id-1`,
+    /// `id-2`, and so on, as Shopify numbers a block rendered again on the page (in a loop,
+    /// or by a second `content_for 'blocks'`). `path` tells the block apart from another one
+    /// with the same id: two blocks that give a static block the same id each have their
+    /// own count, as each has its own id on Shopify.
+    pub fn block_render_id(&self, id: &str, path: &str) -> String {
+        let mut inner = self.inner();
+        let renders = inner.block_renders.entry(path.to_string()).or_default();
+        let numbered = match *renders {
+            0 => id.to_string(),
+            n => format!("{id}-{n}"),
+        };
+        *renders += 1;
+        numbered
     }
 
     /// Enters a nested block render; fails when blocks nest unreasonably deep. Returns what

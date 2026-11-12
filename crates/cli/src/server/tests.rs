@@ -14,6 +14,7 @@ use crate::app::App;
 
 mod app_blocks;
 mod dev_pages;
+mod edited_assets;
 mod parts;
 mod polaris;
 mod store_base;
@@ -2158,9 +2159,10 @@ fn stylesheets_and_scripts_are_minified_as_on_shopify() {
         code.starts_with(".card{color:red;margin:0}.card:hover{opacity:.5}"),
         "{code}"
     );
+    // The link carries the `?v=` of the file, as on Shopify.
     assert_eq!(
         link,
-        "/*# sourceMappingURL=/cdn/shop/t/1/assets/theme.css.map */\n"
+        "/*# sourceMappingURL=/cdn/shop/t/1/assets/theme.css.map?v=1 */\n"
     );
     assert!(served.len() < stylesheet.len());
     // The map leads back to the file as it is written.
@@ -2207,8 +2209,9 @@ fn stylesheets_and_scripts_are_minified_as_on_shopify() {
         "{compiled}"
     );
     assert!(
-        compiled
-            .ends_with("/*# sourceMappingURL=/cdn/shop/t/1/compiled_assets/styles.css.map */\n"),
+        compiled.ends_with(
+            "/*# sourceMappingURL=/cdn/shop/t/1/compiled_assets/styles.css.map?v=1 */\n"
+        ),
         "{compiled}"
     );
     assert_eq!(file("compiled_assets/styles.css.map").status, 200);
