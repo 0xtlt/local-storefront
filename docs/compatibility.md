@@ -113,10 +113,12 @@ metaobject type), `product`, `collection`, `page`, `blog`, `article`, `policy`, 
 
 With their related types: variants, options and option values (with swatches), media (images,
 videos, external videos, 3D models), image presentation and focal points, collection filters
-(with swatches) and sort options, links, addresses, orders and line items, comments, metafields
-of every type (a `color` is a color, a measurement has `type`, `value` and `unit`, a `money`
-prints as cents, has the `currency` it is written in, and the money filters and `metafield_text`
-format it in that currency, an `article_reference` is `blog/article` or the handle of an article
+(with swatches) and sort options, links, addresses, orders and line items (a cart line has the
+`index` shopify.dev leaves out: its 0-based position, which Horizon posts plus 1 as the `line` of
+`/cart/change.js`; `/cart.js` has no such field), comments, metafields of every type (a
+`color` is a color, a measurement has `type`, `value` and `unit`, a `money` prints as cents,
+has the `currency` it is written in, and the money filters and `metafield_text` format it in
+that currency, an `article_reference` is `blog/article` or the handle of an article
 that only one blog has, a `file_reference` is an image, a video or a file by its extension),
 metaobjects, countries, languages (with `direction`, from the script of the language),
 currencies, markets, fonts, colors, color schemes, quantity rules and quantity price breaks,

@@ -242,6 +242,8 @@ impl Object for LineItemDrop {
         let quantity = i64::from(line.line.quantity);
         Some(match key {
             "id" | "variant_id" => Value::Int(line.variant.id as i64),
+            // 0-based, unlike the 1-based `line` of `/cart/change.js`: themes post `index | plus: 1`.
+            "index" => Value::Int(self.index as i64),
             "key" => Value::from(line.key()),
             "quantity" => Value::Int(quantity),
             "title" => Value::from(line.title()),
