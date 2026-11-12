@@ -809,6 +809,9 @@ pub struct Market {
     /// ISO 3166-1 alpha-2 codes, upper case.
     pub countries: Vec<String>,
     pub metafields: Metafields,
+    /// The suffix of its subfolders (`ca` for `/en-ca/`), lower case: `None` for a market
+    /// served at `/`.
+    pub subfolder_suffix: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1190,10 +1193,116 @@ impl Store {
 
     /// The country of a visitor who selected none, on the storefront and, until they enter an
     /// address, at the checkout: the shop's (`shop.address.country_code`), the country of its
-    /// primary market, when the store sells to it; otherwise the first country.
+    /// primary market, when the store sells to it; otherwise the first country served at `/`
+    /// (in no market with a subfolder), else the first country.
     pub fn default_country(&self) -> &Country {
         self.country(&self.shop.address.country_code)
+            .or_else(|| {
+                self.countries
+                    .iter()
+                    .find(|country| self.served_at_root(&country.iso_code))
+            })
             .unwrap_or(&self.countries[0])
+    }
+
+    /// The market with this handle.
+    pub fn market_named(&self, handle: &str) -> Option<&Market> {
+        self.markets.iter().find(|market| market.handle == handle)
+    }
+
+    /// The market served under the subfolders of this suffix (`ca` for `/en-ca/`).
+    pub fn subfolder_market(&self, suffix: &str) -> Option<&Market> {
+        self.markets.iter().find(|market| {
+            market
+                .subfolder_suffix
+                .as_deref()
+                .is_some_and(|own| own.eq_ignore_ascii_case(suffix))
+        })
+    }
+
+    /// Whether a country is served at `/`: its market has no subfolder of its own.
+    pub fn served_at_root(&self, iso_code: &str) -> bool {
+        self.market_of(iso_code)
+            .is_none_or(|market| market.subfolder_suffix.is_none())
+    }
+
+    /// The country of a visitor on a web presence: under the subfolders of `market`, or at `/`
+    /// (`None`). The one they selected when that presence serves it, else the presence's
+    /// default: the first country of the market, or [`Store::default_country`] at `/`. A
+    /// Shopify storefront does the same: the country a visitor picked elsewhere does not follow
+    /// them to a presence that does not serve it.
+    pub fn country_at(&self, selected: Option<&str>, market: Option<&Market>) -> &Country {
+        let selected = selected.and_then(|code| self.country(code));
+        match market {
+            Some(market) => selected
+                .filter(|country| {
+                    market
+                        .countries
+                        .iter()
+                        .any(|code| code.eq_ignore_ascii_case(&country.iso_code))
+                })
+                .or_else(|| market.countries.iter().find_map(|code| self.country(code)))
+                .unwrap_or_else(|| self.default_country()),
+            None => selected
+                .filter(|country| self.served_at_root(&country.iso_code))
+                .unwrap_or_else(|| self.default_country()),
+        }
+    }
+
+    /// The prefix of every storefront URL in a language on a web presence: `/fr-ca` under the
+    /// subfolders of a market (every language has one there, the primary too), and at `/` empty
+    /// for the primary language, `/fr` for the others.
+    pub fn locale_root(&self, language: &Language, market: Option<&Market>) -> String {
+        match market.and_then(|market| market.subfolder_suffix.as_deref()) {
+            Some(suffix) => format!("/{}-{suffix}", language.iso_code.to_ascii_lowercase()),
+            None => language.root_url.trim_end_matches('/').to_string(),
+        }
+    }
+
+    /// The web presence a URL prefix (`/fr`, `/en-ca`, empty) is: the market of its
+    /// subfolder, or `None` at `/`.
+    pub fn market_of_root(&self, root: &str) -> Option<&Market> {
+        let segment = root.trim_start_matches('/');
+        let (_, suffix) = segment.rsplit_once('-')?;
+        self.subfolder_market(suffix)
+            .filter(|market| self.locale_of_root(segment, market).is_some())
+    }
+
+    /// The language of a subfolder of a market: `en` for `en-ca`.
+    fn locale_of_root(&self, segment: &str, market: &Market) -> Option<&Language> {
+        let suffix = market.subfolder_suffix.as_deref()?;
+        let language = segment
+            .len()
+            .checked_sub(suffix.len() + 1)
+            .and_then(|end| segment.get(..end))
+            .filter(|_| segment[segment.len() - suffix.len()..].eq_ignore_ascii_case(suffix))?;
+        self.language(language)
+    }
+
+    /// Splits the locale prefix off a storefront path: `/fr/cart` → (`fr`, `/fr`, `/cart`),
+    /// `/fr-ca/cart` → (`fr`, `/fr-ca`, `/cart`) for a market served under `ca`, `/cart` →
+    /// (the primary language, empty, `/cart`).
+    pub fn split_locale(&self, path: &str) -> (&Language, String, String) {
+        let trimmed = path.trim_start_matches('/');
+        let (first, rest) = trimmed.split_once('/').unwrap_or((trimmed, ""));
+        if let Some(language) = self
+            .languages
+            .iter()
+            .find(|language| !language.primary && language.iso_code.eq_ignore_ascii_case(first))
+        {
+            return (language, language.root_url.clone(), format!("/{rest}"));
+        }
+        if let Some((_, suffix)) = first.rsplit_once('-')
+            && let Some(market) = self.subfolder_market(suffix)
+            && let Some(language) = self.locale_of_root(first, market)
+        {
+            return (
+                language,
+                self.locale_root(language, Some(market)),
+                format!("/{rest}"),
+            );
+        }
+        (self.primary_language(), String::new(), path.to_string())
     }
 
     pub fn country(&self, iso_code: &str) -> Option<&Country> {

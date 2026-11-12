@@ -145,20 +145,33 @@ pub fn localization(visit: &Visit<'_>) -> Reply {
         visit.update_session(|session| session.country = Some(country.to_uppercase()));
     }
     let return_to = text("return_to").unwrap_or_else(|| "/".to_string());
-    // Changing the language moves the visitor to the same page under the new locale root.
-    let language = text("locale_code").or_else(|| text("language_code"));
-    let target = match language.and_then(|code| visit.store.language(&code).cloned()) {
-        Some(language) => {
-            let (_, _, path) = visit.state.localize(&visit.store, &return_to);
-            if language.primary {
-                path
-            } else if path == "/" {
-                language.root_url.clone()
-            } else {
-                format!("{}{path}", language.root_url)
-            }
-        }
-        None => return_to,
+    let store = &visit.store;
+    let (current, root, path) = store.split_locale(&return_to);
+    // The web presence of the country picked: the subfolders of its market (`/en-be`), else `/`.
+    // Without a country, the one of the page.
+    let presence = match text("country_code").and_then(|code| store.country(&code)) {
+        Some(country) => store
+            .market_of(&country.iso_code)
+            .filter(|market| market.subfolder_suffix.is_some()),
+        None => store.market_of_root(&root),
+    };
+    let language = text("locale_code")
+        .or_else(|| text("language_code"))
+        .and_then(|code| store.language(&code));
+    if language.is_none()
+        && presence.map(|m| &m.handle) == store.market_of_root(&root).map(|m| &m.handle)
+    {
+        return Reply::redirect(&return_to);
+    }
+    // The same page under the root of the language on that presence, as Shopify answers
+    // `country_code=BE` with `/en-be/...`.
+    let root = store.locale_root(language.unwrap_or(current), presence);
+    let target = if root.is_empty() {
+        path
+    } else if path == "/" {
+        root
+    } else {
+        format!("{root}{path}")
     };
     Reply::redirect(&target)
 }

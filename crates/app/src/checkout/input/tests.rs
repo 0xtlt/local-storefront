@@ -2031,6 +2031,7 @@ fn a_declared_market_groups_countries_and_carries_metafields() {
         )]
         .into_iter()
         .collect(),
+        subfolder_suffix: None,
     });
     let out = f.run(ADDRESS_MARKET);
     let market = &out["cart"]["deliveryGroups"][0]["deliveryAddress"]["market"];

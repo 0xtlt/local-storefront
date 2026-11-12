@@ -87,6 +87,25 @@ in.
   Shopify signs it, and a Liquid answer is rendered in the theme's layout. See the
   [Admin API guide](admin.md#app-proxy).
 
+## Countries and markets in the URL
+
+A visitor's country comes from the URL as on a Shopify storefront, besides the localization form
+and `PUT /__lsf/session`:
+
+- **`?country=FR`** on any page picks a country the store sells to, for the rest of the session.
+  When the country's market is served under subfolders of its own, the answer is a `301` to the
+  same page there, the query kept: `/products/tee?country=BE` → `/en-be/products/tee?country=BE`.
+- **A market's subfolders**: a market with a `subfolder_suffix` (`"be"`, see
+  [localization](data-format.md#localization)) is served under `/<language>-<suffix>/`, one per
+  language (`/en-be/`, `/fr-be/`). A page there is in the visitor's country when the market has
+  it, else in the market's first country, in the language of the prefix; every link the theme
+  makes stays under it (`routes`, `request.locale.root_url`, the `root_url` of the languages,
+  `Shopify.routes.root`). A page at `/` is in the visitor's country when `/` serves it, else in
+  the shop's: a country picked under a subfolder does not follow the visitor to `/`.
+- **The localization form** (`{% form 'localization' %}`) sends the visitor to the same page on
+  the web presence of the country they picked: `country_code=BE` → `/en-be/...`, and back to `/`
+  for a country served there.
+
 ## Theme app extensions
 
 With `--app`, the theme renders the app blocks and app embed blocks of the app's theme app

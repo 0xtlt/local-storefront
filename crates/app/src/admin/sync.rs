@@ -2128,6 +2128,14 @@ impl<'s> Sync<'s> {
                             .map(str::to_string)
                             .collect(),
                         metafields: self.metafields(view, key),
+                        // The Admin API keeps a market's subfolder in its web presences, which
+                        // the seed does not make: the data's stays.
+                        subfolder_suffix: self
+                            .store
+                            .markets
+                            .iter()
+                            .find(|market| content::market_gid(&market.handle) == key)
+                            .and_then(|market| market.subfolder_suffix.clone()),
                     })
                 })
                 .collect()

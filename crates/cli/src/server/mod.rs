@@ -807,23 +807,11 @@ impl ServerState {
         })
     }
 
-    /// Splits the locale prefix off a path: `/fr/cart` → (`fr`, `/fr`, `/cart`).
+    /// Splits the locale prefix off a path: `/fr/cart` → (`fr`, `/fr`, `/cart`), and
+    /// `/fr-ca/cart` → (`fr`, `/fr-ca`, `/cart`) under the subfolders of a market.
     pub fn localize(&self, store: &Store, path: &str) -> (String, String, String) {
-        let primary = store.primary_language().iso_code.clone();
-        let trimmed = path.trim_start_matches('/');
-        let (first, rest) = trimmed.split_once('/').unwrap_or((trimmed, ""));
-        let language = store
-            .languages
-            .iter()
-            .find(|language| !language.primary && language.iso_code.eq_ignore_ascii_case(first));
-        match language {
-            Some(language) => (
-                language.iso_code.clone(),
-                language.root_url.clone(),
-                format!("/{rest}"),
-            ),
-            None => (primary, String::new(), path.to_string()),
-        }
+        let (language, root, path) = store.split_locale(path);
+        (language.iso_code.clone(), root, path)
     }
 
     /// The core request for a storefront path.
@@ -835,7 +823,11 @@ impl ServerState {
         query: Vec<(String, String)>,
     ) -> Request {
         let (locale, root, path) = self.localize(store, path);
+        let market = store
+            .market_of_root(&root)
+            .map(|market| market.handle.clone());
         Request {
+            market,
             host: incoming.host.clone(),
             scheme: incoming
                 .header("x-forwarded-proto")

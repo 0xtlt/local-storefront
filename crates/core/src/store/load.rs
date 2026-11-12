@@ -2627,6 +2627,100 @@ mod tests {
     }
 
     #[test]
+    fn markets_can_be_served_under_a_subfolder() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [{"iso_code": "FR"}, {"iso_code": "BE"}, {"iso_code": "DE"}, {"iso_code": "US"}],
+            "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+            "markets": [
+                {"handle": "belgium", "countries": ["BE"], "subfolder_suffix": "BE"},
+                {"handle": "europe", "countries": ["FR", "DE"], "subfolder_suffix": "eu"}
+            ]
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let belgium = store.market_of("BE").expect("a market");
+        assert_eq!(belgium.subfolder_suffix.as_deref(), Some("be"));
+        assert_eq!(
+            store.subfolder_market("Be").map(|m| m.handle.as_str()),
+            Some("belgium")
+        );
+        assert!(store.subfolder_market("us").is_none());
+        // Under a subfolder, the visitor's country when the market has it, else its first.
+        let europe = store.market_named("europe");
+        assert_eq!(store.country_at(Some("DE"), europe).iso_code, "DE");
+        assert_eq!(store.country_at(Some("BE"), europe).iso_code, "FR");
+        assert_eq!(
+            store
+                .country_at(None, store.market_named("belgium"))
+                .iso_code,
+            "BE"
+        );
+        // At the root, a country served under a subfolder is not the visitor's: the shop's
+        // country is not sold here, and the first country the root serves is the United States.
+        assert_eq!(store.country_at(Some("BE"), None).iso_code, "US");
+        assert_eq!(store.country_at(Some("US"), None).iso_code, "US");
+        assert_eq!(store.country_at(None, None).iso_code, "US");
+        // The root of a language under a subfolder, and at the root.
+        let french = store.language("fr").expect("French");
+        assert_eq!(store.locale_root(french, Some(belgium)), "/fr-be");
+        assert_eq!(store.locale_root(french, None), "/fr");
+        assert_eq!(
+            store.locale_root(store.primary_language(), Some(belgium)),
+            "/en-be"
+        );
+        assert_eq!(store.locale_root(store.primary_language(), None), "");
+        // A path splits into its locale, its prefix and the rest.
+        let split = |path: &str| {
+            let (language, root, rest) = store.split_locale(path);
+            (language.iso_code.clone(), root, rest)
+        };
+        let owned = |a: &str, b: &str, c: &str| (a.to_string(), b.to_string(), c.to_string());
+        assert_eq!(
+            split("/fr-BE/products/x"),
+            owned("fr", "/fr-be", "/products/x")
+        );
+        assert_eq!(split("/en-eu"), owned("en", "/en-eu", "/"));
+        assert_eq!(split("/fr/cart"), owned("fr", "/fr", "/cart"));
+        assert_eq!(split("/de-be/cart"), owned("en", "", "/de-be/cart"));
+        assert_eq!(split("/en-us/cart"), owned("en", "", "/en-us/cart"));
+        assert_eq!(split("/cart"), owned("en", "", "/cart"));
+        assert_eq!(
+            store.market_of_root("/fr-be").map(|m| m.handle.as_str()),
+            Some("belgium")
+        );
+        assert!(store.market_of_root("/fr").is_none() && store.market_of_root("").is_none());
+    }
+
+    #[test]
+    fn bad_subfolders_are_reported() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [{"iso_code": "CA"}, {"iso_code": "BE"}, {"iso_code": "DE"}, {"iso_code": "FR"}],
+            "markets": [
+                {"handle": "belgium", "countries": ["BE"], "subfolder_suffix": "b"},
+                {"handle": "germany", "countries": ["DE"], "subfolder_suffix": "Latn"},
+                {"handle": "france", "countries": ["FR"], "subfolder_suffix": "eu"},
+                {"handle": "france-again", "countries": [], "subfolder_suffix": "EU"},
+                {"handle": "canada", "countries": ["CA"], "subfolder_suffix": "ca"}
+            ]
+        }});
+        let (_, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        let report = diagnostics.to_string();
+        for expected in [
+            "error[invalid_value]: a subfolder suffix has two letters at least, and only letters",
+            "error[invalid_value]: a subfolder suffix cannot be a script code",
+            "error[duplicate_handle]: the subfolder suffix \"eu\" is the one of the market \"france\" too",
+            "error[invalid_value]: the market of the shop's country (CA) is served at /, not under a subfolder",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
+    }
+
+    #[test]
     fn bad_markets_are_reported() {
         let overlay = serde_json::json!({"localization": {
             "countries": [{"iso_code": "FR"}, {"iso_code": "DE"}],

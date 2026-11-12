@@ -258,6 +258,16 @@ pub(super) fn root_of(language: &Language) -> &str {
     }
 }
 
+/// Where the storefront of a buyer in `country` lives, in a language: the locale root of the
+/// language on the web presence of the country (`/fr-ca` for a country of a market served under
+/// `ca`), which is `/fr`, or nothing for the primary language, at `/`.
+pub(super) fn storefront_root(store: &Store, language: &Language, country: &str) -> String {
+    let market = store
+        .market_of(country)
+        .filter(|market| market.subfolder_suffix.is_some());
+    store.locale_root(language, market)
+}
+
 /// The locale root of the request, for a session.
 fn request_root(state: &ServerState, session_id: &str, incoming: &Incoming) -> String {
     let (_, store) = state.snapshot(session_id);
@@ -936,8 +946,9 @@ pub(super) fn localization_json(
     let (market_id, market_handle) = lsf_app::checkout::input::market_of(store, &code);
     json!({
         "language": language_json(language),
-        // Where the storefront of this language lives: `/fr`, nothing for the primary one.
-        "rootUrl": root_of(language),
+        // Where the storefront of this language lives: `/fr`, nothing for the primary one,
+        // `/fr-ca` for a country of a market served under its own subfolders.
+        "rootUrl": storefront_root(store, language, &code),
         "country": {
             "isoCode": code,
             "name": store.country(&code).map_or(code.as_str(), |country| country.name.as_str()),
@@ -1121,7 +1132,12 @@ fn in_request_language(
     let (_, store) = state.snapshot(session_id);
     let language = language_of(state, &store, incoming);
     completed["localization"]["language"] = language_json(language);
-    completed["localization"]["rootUrl"] = json!(root_of(language));
+    let country = completed
+        .pointer("/localization/country/isoCode")
+        .and_then(Json::as_str)
+        .unwrap_or_default()
+        .to_string();
+    completed["localization"]["rootUrl"] = json!(storefront_root(&store, language, &country));
     place_extensions(&mut completed, state.app_uninstalled());
     completed
 }

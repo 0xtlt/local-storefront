@@ -3201,10 +3201,61 @@ fn build_localization(
             }
             countries.push(code);
         }
+        let subfolder_suffix = market.subfolder_suffix.as_ref().and_then(|suffix| {
+            let at = market_origin.child("subfolder_suffix");
+            let suffix = suffix.to_ascii_lowercase();
+            if suffix.len() < 2 || !suffix.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+                builder
+                    .error(
+                        "invalid_value",
+                        &at,
+                        "a subfolder suffix has two letters at least, and only letters",
+                    )
+                    .hint("as Shopify's web presences: \"ca\" serves the market at /en-ca/");
+                return None;
+            }
+            if SCRIPT_CODES.contains(&suffix.as_str()) {
+                builder.error(
+                    "invalid_value",
+                    &at,
+                    "a subfolder suffix cannot be a script code (Latn, Hans, ...)",
+                );
+                return None;
+            }
+            if let Some(other) = store.subfolder_market(&suffix) {
+                builder.error(
+                    "duplicate_handle",
+                    &at,
+                    format!(
+                        "the subfolder suffix \"{suffix}\" is the one of the market \"{}\" too",
+                        other.handle
+                    ),
+                );
+                return None;
+            }
+            let shop_country = &store.shop.address.country_code;
+            if countries
+                .iter()
+                .any(|code| code.eq_ignore_ascii_case(shop_country))
+            {
+                builder
+                    .error(
+                        "invalid_value",
+                        &at,
+                        format!(
+                            "the market of the shop's country ({shop_country}) is served at /, not under a subfolder"
+                        ),
+                    )
+                    .hint("it is the primary market: give the subfolder to another market");
+                return None;
+            }
+            Some(suffix)
+        });
         store.markets.push(Market {
             handle: market.handle.clone(),
             countries,
             metafields: builder.metafields(&market.metafields, &market_origin.child("metafields")),
+            subfolder_suffix,
         });
     }
 
@@ -3305,6 +3356,11 @@ fn country_provinces(
         .filter_map(|(province, kept)| kept.then_some(province))
         .collect()
 }
+
+/// ISO 15924 codes a subfolder suffix cannot be, as Shopify's web presences refuse them.
+const SCRIPT_CODES: &[&str] = &[
+    "arab", "cyrl", "hans", "hant", "latn", "deva", "beng", "guru", "taml", "thai",
+];
 
 /// The storefront password when the store data sets none.
 pub const DEFAULT_PASSWORD: &str = "password";

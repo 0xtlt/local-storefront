@@ -80,11 +80,30 @@ fn all_routes(state: &ServerState, mut routes: Vec<String>) -> Vec<String> {
         }
     }
     let primary = routes.clone();
-    for language in store.languages.iter().filter(|language| !language.primary) {
-        let root = language.root_url.trim_end_matches('/');
+    // Every language at `/` (`/fr`), then every language under each market's subfolders
+    // (`/en-ca`, `/fr-ca`).
+    let mut roots: Vec<String> = store
+        .languages
+        .iter()
+        .filter(|language| !language.primary)
+        .map(|language| language.root_url.trim_end_matches('/').to_string())
+        .collect();
+    for market in store
+        .markets
+        .iter()
+        .filter(|market| market.subfolder_suffix.is_some())
+    {
+        roots.extend(
+            store
+                .languages
+                .iter()
+                .map(|language| store.locale_root(language, Some(market))),
+        );
+    }
+    for root in roots {
         routes.extend(primary.iter().map(|route| {
             if route == "/" {
-                root.to_string()
+                root.clone()
             } else {
                 format!("{root}{route}")
             }

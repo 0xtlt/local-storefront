@@ -295,6 +295,68 @@ fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
 }
 
 #[test]
+fn a_page_under_a_market_subfolder_links_under_it() {
+    let overlay = serde_json::json!({"localization": {
+        "countries": [{"iso_code": "CA"}, {"iso_code": "BE"}, {"iso_code": "NL"}],
+        "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+        "markets": [{"handle": "benelux", "countries": ["BE", "NL"], "subfolder_suffix": "bnl"}]
+    }});
+    let options = LoadOptions {
+        theme_locales: vec!["en".to_string(), "fr".to_string()],
+        ..LoadOptions::default()
+    };
+    let (store, diagnostics) =
+        lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let mut under = request("/pages/about");
+    under.locale = "fr".to_string();
+    under.root = "/fr-bnl".to_string();
+    under.market = Some("benelux".to_string());
+    let source = "{{ localization.country.iso_code }}|{{ request.locale.root_url }}|\
+        {{ localization.language.root_url }}|{{ routes.root_url }}|{{ routes.cart_url }}|\
+        {% for language in localization.available_languages %}{{ language.root_url }},{% endfor %}";
+    let render = |request: Request, session: Session| {
+        let site = fixture
+            .renderer
+            .site(fixture.store.clone(), request, session);
+        let page = lsf_theme::render::routes::resolve(&site);
+        let (output, errors) = fixture
+            .renderer
+            .render_liquid(&site, page, source, &[])
+            .expect("the template parses");
+        assert!(errors.is_empty(), "{errors:?}");
+        output
+    };
+    // The market's first country, every language under its subfolders.
+    assert_eq!(
+        render(under.clone(), Session::initial(&fixture.store)),
+        "BE|/fr-bnl|/fr-bnl|/fr-bnl|/fr-bnl/cart|/en-bnl,/fr-bnl,"
+    );
+    // The visitor's country when the market has it.
+    let mut session = Session::initial(&fixture.store);
+    session.country = Some("NL".to_string());
+    assert!(render(under, session.clone()).starts_with("NL|"));
+    // At `/`, a country of the market is not the visitor's: the shop's.
+    assert_eq!(
+        render(request("/pages/about"), session),
+        "CA|/|/|/|/cart|/,/fr,"
+    );
+    // Search engines learn every subfolder, for each country of its market.
+    let head = fixture.page("/pages/about").body;
+    for link in [
+        "<link rel=\"alternate\" hreflang=\"en-BE\" href=\"http://shop.test/en-bnl/pages/about\">",
+        "<link rel=\"alternate\" hreflang=\"fr-NL\" href=\"http://shop.test/fr-bnl/pages/about\">",
+        "<link rel=\"alternate\" hreflang=\"fr\" href=\"http://shop.test/fr/pages/about\">",
+    ] {
+        assert!(head.contains(link), "{link} in {head}");
+    }
+}
+
+#[test]
 fn forms_show_the_outcome_of_a_submission() {
     let fixture = fixture();
     let mut session = Session::initial(&fixture.store);

@@ -1366,6 +1366,11 @@ pub struct MarketInput {
     pub countries: Vec<String>,
     #[serde(default)]
     pub metafields: Metafields,
+    /// Serves the market under subfolders of its own, as a Shopify market's web presence does:
+    /// `"ca"` serves it at `/en-ca/`, `/fr-ca/`, one per language. Two letters at least. Without
+    /// it, the market is served at `/`, with the primary market.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subfolder_suffix: Option<String>,
 }
 
 /// A file in `files/` that needs metadata. Files without an entry work too.

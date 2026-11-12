@@ -2994,6 +2994,13 @@
             }
           },
           "default": {}
+        },
+        "subfolder_suffix": {
+          "description": "Serves the market under subfolders of its own, as a Shopify market's web presence does:\n`\"ca\"` serves it at `/en-ca/`, `/fr-ca/`, one per language. Two letters at least. Without\nit, the market is served at `/`, with the primary market.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,

@@ -758,6 +758,17 @@ market of the buyer (`localization.market`) and of an address (`MailingAddress.m
 A country in no market is a market of its own, named after the country (`france`, `united-states`).
 An address in a country the store does not sell to has no market.
 
+`subfolder_suffix` serves a market under subfolders of its own, as a Shopify market whose web
+presence is a subfolder of the primary domain: `/<language>-<suffix>/` for each language
+(`/en-be/`, `/fr-be/`). A page there is in a country of the market, and `?country=` and the
+localization form move the visitor between `/` and the subfolders as Shopify does (see
+[the storefront guide](storefront.md#countries-and-markets-in-the-url)). The market of the shop's
+country is served at `/`, so it cannot have one.
+
+```json
+{ "handle": "belgium", "countries": ["BE"], "subfolder_suffix": "be" }
+```
+
 ## Images and files
 
 An image is a path inside `files/`, optionally with metadata:
@@ -925,6 +936,7 @@ extensions:
 | `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield, and a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
+| `invalid_value` of a `subfolder_suffix` | A suffix that is not two letters at least, that is a script code (`latn`), or that the market of the shop's country has. Two markets with the same suffix are a `duplicate_handle`. |
 | `unknown_province` | A code of a country's `provinces` that is not one of its provinces, or `provinces` for a country that has none. The hint lists its codes. |
 | `unknown_return_line` | A return of an order names a variant that is not a line of the order. |
 | `expect_checks_nothing` (warning) | An `excludes` of a scenario's `expect` names a payment method, express button or delivery option the checkout does not offer, so it checks nothing. The hint lists what it offers. |

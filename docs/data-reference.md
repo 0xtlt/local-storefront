@@ -755,6 +755,7 @@ A market: the countries the store sells to as one, as checkout Functions see it 
 | `handle` | string | **Required.** What Functions call the market: `"europe"`. |
 | `countries` | array of string | **Required.** The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
+| `subfolder_suffix` | string | Serves the market under subfolders of its own, as a Shopify market's web presence does: `"ca"` serves it at `/en-ca/`, `/fr-ca/`, one per language. Two letters at least. Without it, the market is served at `/`, with the primary market. |
 
 ## Location
 

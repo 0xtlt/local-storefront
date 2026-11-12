@@ -88,6 +88,14 @@ impl Visit<'_> {
             .site(self.store.clone(), request, self.session())
     }
 
+    /// The market whose subfolders the URL is under (`/fr-ca/...`), if it is.
+    pub fn site_market(&self) -> Option<&lsf_core::store::Market> {
+        self.request
+            .market
+            .as_deref()
+            .and_then(|handle| self.store.market_named(handle))
+    }
+
     /// Prefixes a storefront path with the visitor's locale root.
     pub fn localized(&self, path: &str) -> String {
         self.request.localized(path)
@@ -142,7 +150,11 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
         store,
         request,
     };
-    let reply = with_cache_policy(&visit, with_cart_cookie(&visit, route(&visit)));
+    let reply = match follow_the_country_of_the_url(&visit) {
+        Some(moved) => moved,
+        None => route(&visit),
+    };
+    let reply = with_cache_policy(&visit, with_cart_cookie(&visit, reply));
     if is_new {
         reply.header(
             "set-cookie",
@@ -154,6 +166,60 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
     } else {
         reply
     }
+}
+
+/// The country the URL picks, as a Shopify storefront does:
+///
+/// - `?country=FR` picks a country the store sells to. When the web presence of the URL serves
+///   it, the visitor is in it from then on and the page is served; otherwise the answer is a
+///   `301` to the same URL on the presence that serves it (`/en-be/...?country=BE`).
+/// - A page under the subfolders of a market (`/en-be/...`) is in the visitor's country when the
+///   market has it, else in the market's first country; a page at `/`, in the visitor's country
+///   when `/` serves it, else in the shop's. The session follows, so that the cart and the
+///   checkout are in the country of the last page.
+fn follow_the_country_of_the_url(visit: &Visit<'_>) -> Option<Reply> {
+    let store = &visit.store;
+    let market = visit.site_market();
+    let reads = matches!(visit.incoming.method.as_str(), "GET" | "HEAD");
+    if reads
+        && let Some(country) = visit
+            .incoming
+            .query_param("country")
+            .and_then(|code| store.country(code.trim()))
+    {
+        let presence = store
+            .market_of(&country.iso_code)
+            .filter(|market| market.subfolder_suffix.is_some());
+        if presence.map(|market| &market.handle) != market.map(|market| &market.handle) {
+            let language = store
+                .language(&visit.request.locale)
+                .unwrap_or_else(|| store.primary_language());
+            let mut moved = visit.request.clone();
+            moved.root = store.locale_root(language, presence);
+            return Some(Reply::moved(&moved.path_with_query()));
+        }
+        let code = country.iso_code.clone();
+        visit.update_session(|session| session.country = Some(code));
+        return None;
+    }
+    if store
+        .markets
+        .iter()
+        .any(|market| market.subfolder_suffix.is_some())
+    {
+        let selected = visit.session().country;
+        let country = store.country_at(selected.as_deref(), market);
+        let follows = match market {
+            Some(_) => Some(country.iso_code.clone()),
+            // At `/`, the visitor's choice stays, or none when it was a country `/` does not
+            // serve.
+            None => selected.clone().filter(|code| store.served_at_root(code)),
+        };
+        if follows != selected {
+            visit.update_session(|session| session.country = follows);
+        }
+    }
+    None
 }
 
 /// Says how long the response can be kept, as a storefront does: what it renders is checked

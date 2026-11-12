@@ -41,14 +41,14 @@ fn direction(iso_code: &str) -> &'static str {
 }
 
 pub fn language_value(site: &SiteRef, language: &Language) -> Value {
-    let _ = site;
     hash([
         ("iso_code", Value::from(&language.iso_code)),
         ("direction", Value::str(direction(&language.iso_code))),
         ("name", Value::from(&language.name)),
         ("endonym_name", Value::from(&language.endonym_name)),
         ("primary", Value::Bool(language.primary)),
-        ("root_url", Value::from(&language.root_url)),
+        // On the web presence of the page: `/fr-ca` under the subfolders of a market.
+        ("root_url", Value::from(site.root_url_of(language))),
     ])
 }
 
