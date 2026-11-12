@@ -3,6 +3,48 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## 0.3.0-rc.3 - 2026-11-12
+
+Third release candidate of 0.3.0. The local checkout applies the code discounts a backend makes
+through the Admin API, and the session token of checkout and customer account UI extensions is
+the one Shopify gives, signed with the client secret. A backend that read lsf's old token needs
+a change: see Breaking changes.
+
+### Breaking changes
+
+What to change when you upgrade from 0.3.0-rc.2.
+
+- **The session token of a UI extension has Shopify's claims.** `dest` is the shop's bare
+  domain (`local-supply-co.myshopify.com`), no longer lsf's origin; there is no `iss` and no
+  `sid`; it lives five minutes; `sub` is there only when a customer is logged in. It is signed
+  with HS256 and the client secret, so a backend now verifies it as it verifies Shopify's, and
+  one that skipped the verification for lsf can stop doing so.
+
+### Added
+
+#### The checkout of an app
+
+- **`DiscountCodeBasic` and `DiscountCodeFreeShipping` codes apply at the checkout.** A code made
+  with `discountCodeBasicCreate` or `discountCodeFreeShippingCreate` takes an amount or a
+  percentage off the order, off listed products, variants or collections, or off each item, or
+  makes the rates up to `maximumShippingPrice` free in the countries of `destination`. It is taken
+  while the discount is active by its dates, under its `usageLimit`, for a buyer of its `context`
+  (all, listed customers, members of listed segments) who has not used it when it
+  `appliesOncePerCustomer`, and for a cart that meets its `minimumRequirement`. One such code
+  applies per checkout, with the Function discounts. The order and its `orders/create` and
+  `orders/paid` carry it in `discount_codes` and `discount_applications`, and its
+  `asyncUsageCount` goes up. `combinesWith`, buy X get Y codes and a `context` of markets are not
+  read.
+
+### Fixed
+
+#### The checkout of an app
+
+- **`shopify.sessionToken.get()` gives a token a backend can verify.** The page asks lsf for it
+  (`POST /__lsf/extensions/<handle>/session-token`), and lsf signs it with the client secret of
+  the Admin API (`--client-secret`, `SHOPIFY_API_SECRET`, the app's `.env`), which stays on the
+  server. `get()` rejects with the reason when lsf gives no token.
+
 ## 0.3.0-rc.2 - 2026-11-12
 
 Second release candidate of 0.3.0. It fixes what was reported on 0.2.0 and 0.3.0-rc.1, each
