@@ -2843,6 +2843,14 @@
           },
           "default": {}
         },
+        "translations": {
+          "description": "The entry in the store's other languages, by language (an `iso_code` of\n`localization.languages`) then field key: `{\"fr\": {\"question\": \"Combien ?\"}}`. A value\nis written as the field's (a string, a rich text object, a list), and only the fields\nShopify translates take one: text, rich text, JSON, links, URLs, files, and the lists\nof single line texts, links, URLs and files. On `/fr/...` a field shows its French\nvalue, else its own.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
         "template_suffix": {
           "description": "Selects `templates/metaobject/<type>.<suffix>.json` instead of\n`templates/metaobject/<type>.json` for the page of the entry, which is\n`/pages/<type>/<handle>`.",
           "type": [

@@ -252,7 +252,7 @@ Plans come in groups, which is what a subscription app creates.
   plan's name.
 - `checkout_charge` is what is paid at checkout, for a deposit:
   `{ "value_type": "percentage", "value": 50 }`. It defaults to the whole price. The checkout
-  of an [app](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#deferred-payments) charges only that today, and shows the rest as due
+  of an [app](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md#deferred-payments) charges only that today, and shows the rest as due
   later.
 - `recurring_deliveries` defaults to `true`. Ids are generated and stable; set `id` on a plan
   to reproduce a Shopify id.
@@ -471,7 +471,7 @@ with a warning to remove them.
 `npx local-storefront serve --customer <email>` starts every visitor logged in as that customer.
 It also accepts `default` and `none`.
 
-At the [checkout of an app](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#log-in-as-a-customer), the customers are the login
+At the [checkout of an app](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md#log-in-as-a-customer), the customers are the login
 profiles: "Log in" in the Contact section lists them, and picking one logs the checkout (and the
 session) in as them, with their saved addresses (the first one is the default) and, for a B2B
 customer, the locations they buy for. Give the data a customer of each kind you test: a new one
@@ -519,7 +519,7 @@ name it in the customer:
 - In Liquid, `customer.b2b?` is true, and `customer.current_company`,
   `customer.current_location` and `customer.company_available_locations` are filled.
 - `location.url_to_set_as_current` changes the location, as on Shopify.
-- The [local checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md) shows what Shopify's Functions read of a B2B buyer
+- The [local checkout](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md) shows what Shopify's Functions read of a B2B buyer
   (`purchasingCompany`), and you can set it. A company has `created_at` and `updated_at`, a
   location the same plus `locale` (`"fr"`), `orders_count` and `total_spent` (`"1250.00"`). The
   customer is the contact of their company: `company_contact` holds their `title`, `locale`,
@@ -586,7 +586,7 @@ Each gift card has a page rendered by `templates/gift_card.liquid`. Its URL is l
 ## Checkout
 
 The `checkout` section sets up the local checkout of a Shopify app (`npx local-storefront
-app dev --app <dir>`, see [checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md)). Every field has a default, and the section
+app dev --app <dir>`, see [checkout](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md)). Every field has a default, and the section
 changes nothing for a theme.
 
 ```json
@@ -630,7 +630,7 @@ changes nothing for a theme.
   it, `false` is an owner turned off, and without `enabled` the shop has none (as after an
   install, until the app creates one through the Admin API). A scenario that names the Function
   in `extensions` runs it anyway, with these metafields
-  ([what runs](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#owners-and-scenarios)).
+  ([what runs](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md#owners-and-scenarios)).
 - `tax_rate`: a percentage, added to the discounted subtotal.
 
 ### Checkout scenarios
@@ -638,7 +638,7 @@ changes nothing for a theme.
 A scenario is a named setup of the local checkout: one file in `checkouts/`, named after the
 scenario (`checkouts/b2b-seattle.json` is `b2b-seattle`). The home page of the checkout lists
 them and opens a fresh checkout for each; `app function run --scenario <name>` runs the Functions
-for one ([checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#scenarios)). A scenario is a set of overrides on top of the
+for one ([checkout](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md#scenarios)). A scenario is a set of overrides on top of the
 store data: what it does not set stays as the data says.
 
 ```json
@@ -700,7 +700,7 @@ Every field is optional.
   checks: the payment methods, express buttons, delivery options, discounts, lines and errors,
   each with `includes`, `excludes` and `equals`, and exact `totals`
   (`"expect": { "express_methods": { "excludes": ["paypal"] }, "totals": { "total": "96.00" } }`).
-  See [expected results](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#expected-results).
+  See [expected results](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md#expected-results).
 
 A scenario that does not validate is still listed, with its errors, and cannot be opened.
 `validate` reports it with the file `checkouts/<name>.json` and a pointer into it
@@ -850,13 +850,61 @@ page and `system.url` is blank. `"template_suffix": "alt"` on an entry renders i
 title is the entry's `title` or `name` field, or its handle. `shopify://metaobjects/<type>/<handle>`
 in a `url` setting leads to the page.
 
-The Functions of the [local checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md) read the same metaobjects as
+The Functions of the [local checkout](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md) read the same metaobjects as
 `shop.metaobject(handle: {type: "designer", handle: "sam"})`, with their `field(key:)`.
 
 The types an app owns are written `$app:<type>` (`"$app:author"`), as its reserved metafield
 namespaces are (`$app:config`). Shopify writes them in full, `app--<app id>--author`, which a
 theme's Liquid uses: `metaobjects['app--1234--author']` and `metaobjects['$app:author']` both
 find them, whatever the id, since the store data does not know it.
+
+### Translations of metaobjects
+
+An entry's `translations` give its fields in the store's other languages, by language, then
+field key, as Shopify's translatable resources do (`translationsRegister`):
+
+```json
+{
+  "localization": { "languages": [{ "iso_code": "en" }, { "iso_code": "fr" }] },
+  "metaobjects": {
+    "faq": [{
+      "handle": "shipping",
+      "fields": {
+        "question": "How long does shipping take?",
+        "answer": { "type": "rich_text_field", "value": { "type": "root", "children": [{ "type": "paragraph", "children": [{ "type": "text", "value": "Two days." }] }] } },
+        "position": 1
+      },
+      "translations": {
+        "fr": {
+          "question": "Combien de temps prend la livraison ?",
+          "answer": { "type": "root", "children": [{ "type": "paragraph", "children": [{ "type": "text", "value": "Deux jours." }] }] }
+        }
+      }
+    }]
+  }
+}
+```
+
+On a route of that language (`/fr/...`), `{{ metaobjects.faq.shipping.question }}`, the
+entry's page and its title, and the entries a metafield or a setting points to show the French
+values. As on Shopify, field by field, a field without a translation into the route's
+language shows its translation into the base language of a regional one (`fr` for `fr-CA`),
+else its own value.
+
+- A translation is written as the field's value is (a string, a rich text object, a list), and
+  checked against the field's type: a `url` that is not a URL is an `invalid_metafield`.
+- Only the types Shopify translates take one: `single_line_text_field`,
+  `multi_line_text_field`, `rich_text_field`, `json`, `link`, `url`, `file_reference`, and the
+  lists of single line texts, links, URLs and files. Numbers, booleans, dates, measurements,
+  money and the other references are the same in every language: translating one is an
+  `untranslatable_field`.
+- The language is one of `localization.languages` other than the first, the primary one, which
+  the fields are written in (`unknown_language`). A key the entry has no field for is an
+  `unknown_field`, with the closest one. A blank translation is an `invalid_value`: leave the key
+  out instead.
+
+The [Admin API](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/admin.md) reads these translations (`translatableResource`) and changes them
+(`translationsRegister`, `translationsRemove`), and the storefront shows what it changed.
 
 
 ## Time and theme settings
@@ -900,7 +948,7 @@ extensions:
 |---|---|
 | `invalid_json` | The file is not valid JSON. The hint gives the line and column. |
 | `unreadable_file` | The file could not be read. |
-| `unknown_field` | A field that does not exist. The hint suggests the closest one. The field is left out, the rest of the file is read. |
+| `unknown_field` | A field that does not exist, or a metaobject's translation of a field the entry does not have. The hint suggests the closest one. The field is left out, the rest of the file is read. |
 | `classic_customer_accounts` | A warning: `shop.customer_accounts` or a customer's `password`, which classic customer accounts had. The field is ignored. |
 | `missing_field` | A required field is absent. |
 | `wrong_type` | A value of the wrong JSON type. |
@@ -908,7 +956,7 @@ extensions:
 | `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. `invalid_money` is a shipping rate below zero. |
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
-| `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
+| `unknown_language` | A checkout scenario names a language that is not in `localization.languages`, or a metaobject's `translations` do, or name the primary language. |
 | `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield, and a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
@@ -916,7 +964,8 @@ extensions:
 | `expect_checks_nothing` (warning) | An `excludes` of a scenario's `expect` names a payment method, express button or delivery option the checkout does not offer, so it checks nothing. The hint lists what it offers. |
 | `invalid_throttle` | The `throttle` of a session sent to `PUT /__lsf/session` is not one `--throttle` takes. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
-| `invalid_metafield`, `unknown_metafield_type` | A typed metafield (or field of a metaobject) whose value its type refuses, or whose type Shopify does not have. The hint shows how the type is written. |
+| `invalid_metafield`, `unknown_metafield_type` | A typed metafield (or field of a metaobject, or a translation of one) whose value its type refuses, or whose type Shopify does not have. The hint shows how the type is written. |
+| `untranslatable_field` | A metaobject's `translations` translate a field of a type Shopify does not translate (a number, a boolean, a product reference...). The hint lists the types it translates. |
 | `unknown_setting`, `invalid_setting` | A `theme_settings` id that `config/settings_schema.json` does not have, or a value its setting does not take. The hint suggests the closest id or option. |
 | `unchecked_theme_settings` (warning) | The data has `theme_settings` and there is no theme to check them against. |
 | `invalid_color`, `empty_swatch` | A swatch whose color is not a CSS color, or that has neither a color nor an image. |
@@ -1643,6 +1692,7 @@ A metaobject entry (`metaobjects.<type>.<handle>`).
 |---|---|---|
 | `handle` | string | **Required.** |
 | `fields` | map of [Metafield](#metafield) | Field values, with the same shorthand as metafields. |
+| `translations` | map of map of any JSON value | The entry in the store's other languages, by language (an `iso_code` of `localization.languages`) then field key: `{"fr": {"question": "Combien ?"}}`. A value is written as the field's (a string, a rich text object, a list), and only the fields Shopify translates take one: text, rich text, JSON, links, URLs, files, and the lists of single line texts, links, URLs and files. On `/fr/...` a field shows its French value, else its own. |
 | `template_suffix` | string | Selects `templates/metaobject/<type>.<suffix>.json` instead of `templates/metaobject/<type>.json` for the page of the entry, which is `/pages/<type>/<handle>`. |
 
 ### Localization

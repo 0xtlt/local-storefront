@@ -166,6 +166,28 @@ pub fn is_known(kind: &str) -> bool {
     }
 }
 
+/// The types whose values Shopify translates: the "Translatable" column of
+/// https://shopify.dev/docs/apps/build/metafields/list-of-data-types. Numbers, booleans,
+/// measurements, money and the references other than to files are the same in every language.
+pub const TRANSLATABLE: [&str; 11] = [
+    "single_line_text_field",
+    "multi_line_text_field",
+    "rich_text_field",
+    "json",
+    "link",
+    "url",
+    "file_reference",
+    "list.single_line_text_field",
+    "list.link",
+    "list.url",
+    "list.file_reference",
+];
+
+/// Whether a value of the type can be translated ([`TRANSLATABLE`]).
+pub fn is_translatable(kind: &str) -> bool {
+    TRANSLATABLE.contains(&kind)
+}
+
 /// A reference a metafield value makes to another entity of the data, resolved once the store
 /// is built.
 #[derive(Clone, Debug, PartialEq)]

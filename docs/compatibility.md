@@ -163,7 +163,10 @@ locations, companies, company locations and company addresses.
   `gid://shopify/Metaobject/<id>`. Dynamic sources are evaluated (`{{ product.title }}`,
   `{{ closest.product.metafields.custom.x }}`).
 - Locales: storefront translations and schema translations, pluralization rules by language,
-  the fallback to the default locale, Shopify's built-in translations.
+  the fallback to the default locale, Shopify's built-in translations. The translated content
+  of metaobjects, from the store data, on the routes of their language
+  ([data format](data-format.md#translations-of-metaobjects)); not yet that of products,
+  collections, pages or articles.
 - Assets: `asset_url` and friends, `.liquid` assets, the `{% stylesheet %}` and
   `{% javascript %}` bundles, `{% style %}`, preload headers.
 - With `--app`, theme app extensions: app blocks (`{% render block %}`, `{% content_for 'blocks'

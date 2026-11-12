@@ -346,19 +346,11 @@ fn compare_digest_field(
     }
 }
 
-/// Whether a type is translatable ("List of data types": the text types, `json`, `link`, `url`
-/// and `file_reference`).
+/// Whether a type is translatable ("List of data types": the text types, `json`, `link`, `url`,
+/// `file_reference`, and the lists of single line texts, links, URLs and files), as the store
+/// data's translations are.
 pub fn is_translatable(kind: &str) -> bool {
-    matches!(
-        kind,
-        "single_line_text_field"
-            | "multi_line_text_field"
-            | "rich_text_field"
-            | "json"
-            | "link"
-            | "url"
-            | "file_reference"
-    )
+    lsf_core::store::metafield_types::is_translatable(kind)
 }
 
 fn translatable_field(

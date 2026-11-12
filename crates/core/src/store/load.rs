@@ -1600,6 +1600,124 @@ mod tests {
     }
 
     #[test]
+    fn a_metaobject_is_translated_field_by_field() {
+        let rich_text = |text: &str| {
+            serde_json::json!({"type": "root", "children": [
+                {"type": "paragraph", "children": [{"type": "text", "value": text}]},
+            ]})
+        };
+        let (store, diagnostics) = inline(serde_json::json!({"metaobjects": {"faq": [{
+            "handle": "shipping",
+            "fields": {
+                "question": "How long does shipping take?",
+                "answer": {"type": "rich_text_field", "value": rich_text("Two days.")},
+                "tags": {"type": "list.single_line_text_field", "value": ["delivery"]},
+                "order": 2,
+            },
+            "translations": {"FR": {
+                "question": "Combien de temps prend la livraison ?",
+                "answer": rich_text("Deux jours."),
+                "tags": ["livraison"],
+            }},
+        }]}}));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let entry = store.metaobject("faq", "shipping").expect("the entry");
+        let question = |locale: &str| {
+            entry
+                .field_in("question", locale)
+                .map(|field| field.value.clone())
+        };
+        assert_eq!(
+            question("fr"),
+            Some(serde_json::json!("Combien de temps prend la livraison ?"))
+        );
+        // The primary language, and a language without a translation, show the field itself.
+        assert_eq!(
+            question("en"),
+            Some(serde_json::json!("How long does shipping take?"))
+        );
+        let answer = entry.field_in("answer", "fr").expect("the answer");
+        assert_eq!(answer.kind, "rich_text_field");
+        assert_eq!(answer.value, rich_text("Deux jours."));
+        assert_eq!(
+            entry
+                .field_in("order", "fr")
+                .map(|field| field.value.clone()),
+            Some(serde_json::json!(2))
+        );
+        assert!(entry.field_in("nope", "fr").is_none());
+        // The language is written as `localization.languages` has it.
+        assert!(entry.translations.contains_key("fr"));
+    }
+
+    #[test]
+    fn the_translations_of_a_metaobject_are_checked() {
+        let (store, diagnostics) = inline(serde_json::json!({"metaobjects": {"faq": [{
+            "handle": "shipping",
+            "fields": {
+                "question": "How long does shipping take?",
+                "answer": {"type": "rich_text_field", "value": {"type": "root", "children": []}},
+                "order": 2,
+                "related": {"type": "product_reference", "value": "ceramic-mug"},
+                "link": {"type": "url", "value": "https://example.com/shipping"},
+            },
+            "translations": {
+                "fr": {
+                    "questoin": "Combien de temps ?",
+                    "order": 3,
+                    "related": "canvas-tote-bag",
+                    "link": "exemple.fr/livraison",
+                    "answer": "",
+                },
+                "de": {"question": "Wie lange dauert der Versand?"},
+                "en": {"question": "How long?"},
+            },
+        }]}}));
+        let found: Vec<String> = diagnostics
+            .items
+            .iter()
+            .map(|item| {
+                format!(
+                    "{} {} {}",
+                    item.code,
+                    item.path,
+                    item.hint.as_deref().unwrap_or_default()
+                )
+            })
+            .collect();
+        let at = |path: &str| {
+            found
+                .iter()
+                .find(|line| line.contains(&format!(" {path} ")))
+                .unwrap_or_else(|| panic!("nothing at {path}: {found:#?}"))
+                .clone()
+        };
+        let base = "/metaobjects/faq/0/translations";
+        assert_eq!(
+            at(&format!("{base}/fr/questoin")),
+            format!("unknown_field {base}/fr/questoin did you mean \"question\"?")
+        );
+        assert!(at(&format!("{base}/fr/order")).starts_with("untranslatable_field"));
+        assert!(at(&format!("{base}/fr/related")).starts_with("untranslatable_field"));
+        // A translation is a value of the field's type.
+        assert!(at(&format!("{base}/fr/link")).starts_with("invalid_metafield"));
+        assert!(at(&format!("{base}/fr/answer")).starts_with("invalid_value"));
+        assert!(at(&format!("{base}/de")).starts_with("unknown_language"));
+        // The primary language is the fields themselves.
+        assert!(at(&format!("{base}/en")).starts_with("unknown_language"));
+        assert_eq!(found.len(), 7, "{found:#?}");
+        // What is wrong is left out: the fields show their own values.
+        let entry = store.metaobject("faq", "shipping").expect("the entry");
+        assert_eq!(
+            entry
+                .field_in("link", "fr")
+                .map(|field| field.value.clone()),
+            Some(serde_json::json!("https://example.com/shipping"))
+        );
+        assert!(!entry.translations.contains_key("de"));
+    }
+
+    #[test]
     fn what_reads_of_a_file_with_errors_is_checked_in_the_same_run() {
         let files = vec![
             DataFile {

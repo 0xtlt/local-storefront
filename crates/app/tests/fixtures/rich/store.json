@@ -191,7 +191,7 @@
       { "handle": "marc", "fields": { "name": "Marc", "years": 12 } }
     ],
     "faq": [
-      { "handle": "returns", "fields": { "question": "Can I return?", "answer": { "type": "rich_text_field", "value": { "type": "root", "children": [] } }, "designers": { "type": "list.metaobject_reference", "value": ["designer/ines", "designer/marc"] } } }
+      { "handle": "returns", "fields": { "question": "Can I return?", "answer": { "type": "rich_text_field", "value": { "type": "root", "children": [] } }, "designers": { "type": "list.metaobject_reference", "value": ["designer/ines", "designer/marc"] } }, "translations": { "en": { "question": "Can I send it back?" } } }
     ]
   },
   "pages": [

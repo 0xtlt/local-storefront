@@ -858,6 +858,54 @@ namespaces are (`$app:config`). Shopify writes them in full, `app--<app id>--aut
 theme's Liquid uses: `metaobjects['app--1234--author']` and `metaobjects['$app:author']` both
 find them, whatever the id, since the store data does not know it.
 
+### Translations of metaobjects
+
+An entry's `translations` give its fields in the store's other languages, by language, then
+field key, as Shopify's translatable resources do (`translationsRegister`):
+
+```json
+{
+  "localization": { "languages": [{ "iso_code": "en" }, { "iso_code": "fr" }] },
+  "metaobjects": {
+    "faq": [{
+      "handle": "shipping",
+      "fields": {
+        "question": "How long does shipping take?",
+        "answer": { "type": "rich_text_field", "value": { "type": "root", "children": [{ "type": "paragraph", "children": [{ "type": "text", "value": "Two days." }] }] } },
+        "position": 1
+      },
+      "translations": {
+        "fr": {
+          "question": "Combien de temps prend la livraison ?",
+          "answer": { "type": "root", "children": [{ "type": "paragraph", "children": [{ "type": "text", "value": "Deux jours." }] }] }
+        }
+      }
+    }]
+  }
+}
+```
+
+On a route of that language (`/fr/...`), `{{ metaobjects.faq.shipping.question }}`, the
+entry's page and its title, and the entries a metafield or a setting points to show the French
+values. As on Shopify, field by field, a field without a translation into the route's
+language shows its translation into the base language of a regional one (`fr` for `fr-CA`),
+else its own value.
+
+- A translation is written as the field's value is (a string, a rich text object, a list), and
+  checked against the field's type: a `url` that is not a URL is an `invalid_metafield`.
+- Only the types Shopify translates take one: `single_line_text_field`,
+  `multi_line_text_field`, `rich_text_field`, `json`, `link`, `url`, `file_reference`, and the
+  lists of single line texts, links, URLs and files. Numbers, booleans, dates, measurements,
+  money and the other references are the same in every language: translating one is an
+  `untranslatable_field`.
+- The language is one of `localization.languages` other than the first, the primary one, which
+  the fields are written in (`unknown_language`). A key the entry has no field for is an
+  `unknown_field`, with the closest one. A blank translation is an `invalid_value`: leave the key
+  out instead.
+
+The [Admin API](admin.md) reads these translations (`translatableResource`) and changes them
+(`translationsRegister`, `translationsRemove`), and the storefront shows what it changed.
+
 
 ## Time and theme settings
 
@@ -900,7 +948,7 @@ extensions:
 |---|---|
 | `invalid_json` | The file is not valid JSON. The hint gives the line and column. |
 | `unreadable_file` | The file could not be read. |
-| `unknown_field` | A field that does not exist. The hint suggests the closest one. The field is left out, the rest of the file is read. |
+| `unknown_field` | A field that does not exist, or a metaobject's translation of a field the entry does not have. The hint suggests the closest one. The field is left out, the rest of the file is read. |
 | `classic_customer_accounts` | A warning: `shop.customer_accounts` or a customer's `password`, which classic customer accounts had. The field is ignored. |
 | `missing_field` | A required field is absent. |
 | `wrong_type` | A value of the wrong JSON type. |
@@ -908,7 +956,7 @@ extensions:
 | `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. `invalid_money` is a shipping rate below zero. |
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
-| `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
+| `unknown_language` | A checkout scenario names a language that is not in `localization.languages`, or a metaobject's `translations` do, or name the primary language. |
 | `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield, and a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
@@ -916,7 +964,8 @@ extensions:
 | `expect_checks_nothing` (warning) | An `excludes` of a scenario's `expect` names a payment method, express button or delivery option the checkout does not offer, so it checks nothing. The hint lists what it offers. |
 | `invalid_throttle` | The `throttle` of a session sent to `PUT /__lsf/session` is not one `--throttle` takes. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
-| `invalid_metafield`, `unknown_metafield_type` | A typed metafield (or field of a metaobject) whose value its type refuses, or whose type Shopify does not have. The hint shows how the type is written. |
+| `invalid_metafield`, `unknown_metafield_type` | A typed metafield (or field of a metaobject, or a translation of one) whose value its type refuses, or whose type Shopify does not have. The hint shows how the type is written. |
+| `untranslatable_field` | A metaobject's `translations` translate a field of a type Shopify does not translate (a number, a boolean, a product reference...). The hint lists the types it translates. |
 | `unknown_setting`, `invalid_setting` | A `theme_settings` id that `config/settings_schema.json` does not have, or a value its setting does not take. The hint suggests the closest id or option. |
 | `unchecked_theme_settings` (warning) | The data has `theme_settings` and there is no theme to check them against. |
 | `invalid_color`, `empty_swatch` | A swatch whose color is not a CSS color, or that has neither a color nor an image. |

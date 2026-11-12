@@ -243,6 +243,29 @@ impl Builder<'_> {
         }
     }
 
+    /// Checks a translation against the type of the field it translates, `origin` being where
+    /// it is written, and keeps its references for [`resolve_references`]. Whether it is valid.
+    fn check_translation(&mut self, kind: &str, value: &Json, origin: &Origin) -> bool {
+        // The pointers of [`metafield_types::check`] are below a metafield (`/value/2`); a
+        // translation is the value itself.
+        let below = |pointer: &str| {
+            let pointer = pointer.strip_prefix("/value").unwrap_or(pointer);
+            Origin::new(origin.file.clone(), format!("{}{pointer}", origin.pointer))
+        };
+        let (problems, references) = metafield_types::check(kind, value);
+        let valid = problems.is_empty();
+        for problem in problems {
+            self.error(problem.code, &below(&problem.pointer), problem.message)
+                .hint(problem.hint);
+        }
+        for mut reference in references {
+            let at = below(&reference.pointer);
+            reference.pointer.clear();
+            self.references.push((at, reference));
+        }
+        valid
+    }
+
     /// A swatch, or nothing when it has neither a valid color nor an image.
     fn swatch(&mut self, input: &model::SwatchInput, origin: &Origin) -> Option<Swatch> {
         let (color, color_origin, image) = match input {
@@ -523,18 +546,27 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
     build_gift_cards(&mut builder, &mut store, &input.gift_cards);
     build_localization(&mut builder, &mut store, input.localization.as_ref());
     for (kind, entry) in &input.metaobjects {
+        let fields: IndexMap<String, Metafield> = entry
+            .value
+            .fields
+            .iter()
+            .map(|(key, field)| {
+                builder.check_metafield(field, &entry.origin.child("fields").child(key));
+                (key.clone(), metafield(field))
+            })
+            .collect();
+        let translations = build_metaobject_translations(
+            &mut builder,
+            &store.languages,
+            &fields,
+            &entry.value.translations,
+            &entry.origin.child("translations"),
+        );
         store.metaobjects.push(Metaobject {
             kind: kind.clone(),
             handle: entry.value.handle.clone(),
-            fields: entry
-                .value
-                .fields
-                .iter()
-                .map(|(key, field)| {
-                    builder.check_metafield(field, &entry.origin.child("fields").child(key));
-                    (key.clone(), metafield(field))
-                })
-                .collect(),
+            fields,
+            translations,
             template_suffix: entry.value.template_suffix.clone(),
         });
     }
@@ -3228,6 +3260,121 @@ fn build_localization(
             iso_code,
         });
     }
+}
+
+/// The translations of a metaobject entry, by language then field key, as Shopify takes them
+/// (`translationsRegister`): into a language of the store other than its primary one, of a field
+/// the entry has, of a type Shopify translates, not blank, and a value of the field's type. What
+/// is wrong is an error and is left out: the field then shows its own value.
+fn build_metaobject_translations(
+    builder: &mut Builder<'_>,
+    languages: &[Language],
+    fields: &IndexMap<String, Metafield>,
+    input: &IndexMap<String, IndexMap<String, Json>>,
+    origin: &Origin,
+) -> IndexMap<String, IndexMap<String, Json>> {
+    let others: Vec<&str> = languages
+        .iter()
+        .filter(|language| !language.primary)
+        .map(|language| language.iso_code.as_str())
+        .collect();
+    let mut translations = IndexMap::new();
+    for (locale, values) in input {
+        let locale_origin = origin.child(locale);
+        let language = languages
+            .iter()
+            .find(|language| language.iso_code.eq_ignore_ascii_case(locale));
+        let hint = if others.is_empty() {
+            "the store has one language: add the others to \"localization.languages\"".to_string()
+        } else {
+            format!(
+                "the store's other languages: {}. Add it to \"localization.languages\"",
+                others.join(", ")
+            )
+        };
+        let language = match language {
+            Some(language) if language.primary => {
+                builder
+                    .error(
+                        "unknown_language",
+                        &locale_origin,
+                        format!(
+                            "\"{locale}\" is the store's primary language, which the fields are written in"
+                        ),
+                    )
+                    .hint(hint);
+                continue;
+            }
+            Some(language) => language,
+            None => {
+                builder
+                    .error(
+                        "unknown_language",
+                        &locale_origin,
+                        format!("\"{locale}\" is not one of the languages of the store"),
+                    )
+                    .hint(hint);
+                continue;
+            }
+        };
+        let mut kept = IndexMap::new();
+        for (key, value) in values {
+            let value_origin = locale_origin.child(key);
+            let Some(field) = fields.get(key) else {
+                let diagnostic = builder.error(
+                    "unknown_field",
+                    &value_origin,
+                    format!("the entry has no field \"{key}\" to translate"),
+                );
+                match closest_match(key, fields.keys().map(String::as_str)) {
+                    Some(close) => diagnostic.hint(format!("did you mean \"{close}\"?")),
+                    None => diagnostic.hint(format!(
+                        "its fields: {}",
+                        fields.keys().cloned().collect::<Vec<_>>().join(", ")
+                    )),
+                };
+                continue;
+            };
+            if !metafield_types::is_translatable(&field.kind) {
+                builder
+                    .error(
+                        "untranslatable_field",
+                        &value_origin,
+                        format!(
+                            "\"{key}\" is a {}, which Shopify does not translate",
+                            field.kind
+                        ),
+                    )
+                    .hint(format!(
+                        "translatable types: {}",
+                        metafield_types::TRANSLATABLE.join(", ")
+                    ));
+                continue;
+            }
+            let blank = match value {
+                Json::Null => true,
+                Json::String(text) => text.trim().is_empty(),
+                _ => false,
+            };
+            if blank {
+                builder
+                    .error(
+                        "invalid_value",
+                        &value_origin,
+                        "a translation can't be blank",
+                    )
+                    .hint("leave the key out: the field then shows its own value");
+                continue;
+            }
+            if builder.check_translation(&field.kind, value, &value_origin) {
+                kept.insert(key.clone(), value.clone());
+            }
+        }
+        if !kept.is_empty() {
+            translations.insert(language.iso_code.clone(), kept);
+        }
+    }
+    translations
 }
 
 /// The storefront password when the store data sets none.
