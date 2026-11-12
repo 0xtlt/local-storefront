@@ -447,7 +447,10 @@ pub fn render_block(
         .ok_or_else(|| Error::standard(format!("Could not find asset {path}")))?;
     report_schema(ctx, &path, &file);
     let schema = &file.schema;
-    let id = theme_block_id(&container.section_id, key);
+    // `block.id` and the wrapper's id are numbered when the block is rendered again; the
+    // timings count it under the id of its first render.
+    let first_id = theme_block_id(&container.section_id, key);
+    let id = state.block_render_id(&first_id);
     let closest_value = Value::object(ClosestDrop(closest.clone()));
     let block = Value::object(BlockDrop {
         id: id.clone(),
@@ -466,7 +469,7 @@ pub fn render_block(
         app: None,
     });
 
-    let entered = state.enter_block(&id, key, &instance.kind)?;
+    let entered = state.enter_block(&first_id, key, &instance.kind)?;
     let rendered = (|| -> Result<String> {
         let mut inner = ctx.isolated()?;
         inner.set_inherited("section", container.section.clone());

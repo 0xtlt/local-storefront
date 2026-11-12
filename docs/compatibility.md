@@ -132,6 +132,16 @@ locations, companies, company locations and company addresses.
   defaults from the schema, `disabled` sections and blocks.
 - Theme blocks (`blocks/*.liquid`), nested blocks, static blocks, `{% content_for 'blocks' %}`
   and `{% content_for 'block' %}`, `closest.<resource>`.
+- The id of a theme block (`block.id`, and its wrapper's `id="shopify-block-<id>"`) is
+  `<prefix>__<key>`, the key being its key in the JSON template or the `id` of a static block.
+  A block rendered again on the same page is numbered as on Shopify: the first render is
+  `<prefix>__<key>`, the second `<prefix>__<key>-1`, the third `<prefix>__<key>-2`. This
+  happens with a static block in a `for` loop (Horizon's product card), the blocks it holds,
+  or a second `{% content_for 'blocks' %}`. `section.blocks` gives the ids without a number.
+  A section rendered alone (`?section_id=`, `?sections=`) starts again from the first. The
+  prefix is not Shopify's: do not rely on its value. A block defined in a section's schema
+  keeps its key as its id, and app blocks and blocks called with `{% block %}` are not
+  numbered.
 - With `--preview liquid-july-26`, blocks called from a template or a layout, as in Shopify's
   Skeleton theme: `{% block 'name', parameter: value %}content{% endblock %}`. The parameters
   are read when the tag opens. The block sees them and its body, as `content` (the Liquid
