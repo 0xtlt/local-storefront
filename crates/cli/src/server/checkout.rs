@@ -697,7 +697,17 @@ fn price_with(
             .map(|customer| customer.phone.clone())
             .filter(|phone| !phone.is_empty());
     }
-    let config = checkout_config(state, store, checkout.scenario.as_deref());
+    let mut config = checkout_config(state, store, checkout.scenario.as_deref());
+    // The codes of Shopify's own discount types the Admin API has, as they stand for this
+    // buyer (its dates, usage limit, buyers, one use per customer).
+    config.code_discounts = super::admin::code_discounts(
+        state,
+        store,
+        &lsf_app::admin::domains::app::code_discounts::Buyer {
+            customer_id: session.customer_id,
+            email: checkout.email.as_deref(),
+        },
+    );
     pipeline::compute_with_options(
         app,
         selection,

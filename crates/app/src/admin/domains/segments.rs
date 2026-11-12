@@ -98,6 +98,22 @@ pub fn members(state: &ShopState, query: &Query, context: &Context) -> Vec<Strin
         .collect()
 }
 
+/// Whether a customer is a member of a segment, by the shop's clock: what
+/// `customerSegmentMembership` answers. `false` for a segment or a customer that is not there.
+pub fn is_member(state: &ShopState, customer: &str, segment: &str) -> bool {
+    let Some(record) = state.get_of(customer, "Customer") else {
+        return false;
+    };
+    let Some(query) = segment_of(state, segment)
+        .and_then(|segment| segment.get("query").and_then(Value::as_str))
+        .and_then(|text| language::parse(text).ok())
+    else {
+        return false;
+    };
+    let facts = evaluate::facts(state, record, &evaluate::created_by_app(state));
+    evaluate::matches(&query, &facts, &Context::of(state))
+}
+
 /// A query as a user error on `field`, or the query.
 fn parsed(text: &str, field: &[&str]) -> Result<Query, UserError> {
     language::parse(text).map_err(|error| UserError::new(field, error.to_string()))

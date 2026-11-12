@@ -655,7 +655,7 @@ and delivery customizations, validations, cart transforms, fulfillment constrain
 app discounts (`DiscountAutomaticApp`, `DiscountCodeApp`), whether the app created them or the
 store data declared them (`checkout.functions.<handle>.enabled`, `checkout.discounts`). The
 answer counts them (`removedFunctionOwners`). The discounts of Shopify's own types (a
-`DiscountCodeBasic` the app made) stay. While the app is uninstalled, the shop's checkout runs
+`DiscountCodeBasic` the app made) stay, and their codes still apply at the checkout. While the app is uninstalled, the shop's checkout runs
 none of its Functions, whatever a scenario declares or names in its `extensions`: the
 checkout's Functions dialog lists each with "the app is not installed on the shop". A reinstall
 gets none of those objects back, as on Shopify, where a reinstalled app "had to register them
@@ -1624,6 +1624,24 @@ What the backend changes through the Admin API is what the storefront and the
   extensions on the order status page (`appMetafields`, `owner_type = "ORDER"`);
 - an app discount it creates (`discountAutomaticAppCreate`, `discountCodeAppCreate`) runs its
   Function at the checkout, with the metafields it was given, while it is active;
+- a code discount of Shopify's own types it creates (`discountCodeBasicCreate`,
+  `discountCodeFreeShippingCreate`) applies at the checkout once the buyer enters one of its
+  codes, without a Function: an amount or a percentage off the order, off the products,
+  variants and collections it lists (`appliesOnEachItem` included), or free shipping. The
+  checkout takes the code while the discount is `ACTIVE` by its dates, its `usageLimit` is not
+  reached, the buyer is one of its `context` (all buyers, the customers it lists, the members of
+  the segments it lists: a guest is the customer whose email they gave), has not used it when it
+  `appliesOncePerCustomer`, and the cart meets its `minimumRequirement` (the subtotal or the
+  quantity of the items it applies to, before discounts); free shipping makes free the rates up
+  to its `maximumShippingPrice`, to the countries of its `destination`. Otherwise the page says
+  "Enter a valid discount code", and the state's `discountCodes` says why (`reason`). The order
+  carries the code (`discountCodes`, a `DiscountCodeApplication`, the allocations), so do the
+  `discount_codes` and `discount_applications` of `orders/create` and `orders/paid`, and the
+  discount's `asyncUsageCount` (and its code's) goes up by one at once. One code of these types
+  applies per checkout (lsf does not read `combinesWith`), and it stacks with the discounts of
+  the Functions; of the shipping discounts, the best one applies. Not read: a `context` of
+  markets (every buyer), `appliesOnOneTimePurchase` and `appliesOnSubscription`. Buy X get Y
+  codes and Shopify's automatic discounts stay records;
 - the shipping rates of the general delivery profile it changes are the checkout's delivery
   options (see [delivery](admin-reference.md#inventory-transfers-fulfillment-and-delivery));
 - a theme file it writes to the main theme (`themeFilesUpsert`, `themeFilesCopy`,
@@ -1637,7 +1655,7 @@ What the backend changes through the Admin API is what the storefront and the
 | Syncs | Does not sync |
 |---|---|
 | Products: title, handle, description, vendor, type, tags, status and publication, options, variants (price, SKU, barcode, inventory policy, weight), stock per location, media from `files/`, collections and selling plan groups they are in | Orders and what belongs to them (`orderCreate`, draft orders, fulfillments, refunds, returns): the account pages show the orders of the data and of the checkout |
-| Collections: title, handle, description, image, products in order | Discounts that are not app discounts (`DiscountCodeBasic`, …): the local checkout runs Functions only; of an app discount, `combinesWith`, usage limits and every code but the first |
+| Collections: title, handle, description, image, products in order | Discounts of Shopify's own types: the local checkout reads the code ones (`DiscountCodeBasic`, `DiscountCodeFreeShipping`) from the Admin API itself (above), and leaves the others (`…Bxgy`, the automatic ones) out; of an app discount, `combinesWith`, usage limits and every code but the first |
 | Customers: email, names, phone, tags, marketing consent, account state, addresses, their company | Gift cards the Admin API creates (changes to the data's cards sync) |
 | Companies and their locations, pages, blogs and articles, menus, locations, metaobjects and their translations, selling plan groups | SEO, product categories, bundle components and combined listings (a bundle is a product of its own there), collection rules and sources (a changed automated collection becomes a manual one), product feeds, point of sale |
 | Metafields of all of these, of the shop and of markets; markets, their countries and their currency; the published languages | Metafield and metaobject definitions, files, translations of other resources or for a market, publications other than the Online Store; catalogs, price lists, quantity rules, web presences, channels |

@@ -139,6 +139,11 @@ pub struct CheckoutConfig {
     pub payment_methods: Vec<PaymentMethodConfig>,
     /// Discounts backed by a discount Function of the app.
     pub discounts: Vec<DiscountConfig>,
+    /// The code discounts of Shopify's own types (`DiscountCodeBasic`,
+    /// `DiscountCodeFreeShipping`), which the checkout applies itself, without a Function, once
+    /// the buyer enters one of their codes. The Admin API gives them, as they stand for the buyer
+    /// ([`crate::admin::domains::app::code_discounts::for_checkout`]); none without it.
+    pub code_discounts: Vec<CodeDiscountConfig>,
     /// The metafields of the object that owns each non-discount Function (cart transform,
     /// delivery/payment customization, validation): Function handle → metafields.
     pub function_metafields: IndexMap<String, Vec<Metafield>>,
@@ -223,6 +228,75 @@ pub struct DiscountConfig {
     pub classes: Vec<DiscountClass>,
     /// The metafields of the discount node, read by the Function's input query.
     pub metafields: Vec<Metafield>,
+}
+
+/// A code discount of Shopify's own types, as the checkout applies it: what it takes off, what
+/// the cart must hold, and whether the buyer may use it at all. Amounts are in the currency the
+/// checkout is priced in.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodeDiscountConfig {
+    /// The number of its `DiscountCodeNode` GID.
+    pub id: u64,
+    pub title: String,
+    /// Its codes, which the buyer enters ignoring case.
+    pub codes: Vec<String>,
+    pub effect: CodeDiscountEffect,
+    /// What the cart must reach for the discount to apply (`minimumRequirement`): on the items it
+    /// applies to, before discounts.
+    pub minimum: Option<MinimumRequirement>,
+    /// Why the buyer cannot use it whatever the cart (it is not active, its usage limit is
+    /// reached, they used it already, it is for other customers), in lsf's words. `None`: they
+    /// can.
+    pub refused: Option<String>,
+}
+
+/// What a code discount of Shopify's types does.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CodeDiscountEffect {
+    /// `DiscountCodeBasic`: an amount or a percentage off items (`customerGets`).
+    AmountOff {
+        value: CodeDiscountValue,
+        items: CodeDiscountItems,
+    },
+    /// `DiscountCodeFreeShipping`: the delivery options at 0.
+    FreeShipping {
+        /// `maximumShippingPrice`: the options that cost more stay at their price.
+        maximum_price: Option<Cents>,
+        /// `destinationSelection`: the countries of the shipping address it applies to (ISO
+        /// 3166-1 alpha-2, in capitals). `None`: all.
+        countries: Option<Vec<String>>,
+    },
+}
+
+/// `DiscountCustomerGetsValue` of an amount off discount.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CodeDiscountValue {
+    /// `DiscountPercentage`, in percent: `10.0` is 10 % (the Admin API's fraction times 100).
+    Percentage(f64),
+    /// `DiscountAmount`: taken once across the items, or off each item (`appliesOnEachItem`).
+    Amount { cents: Cents, each: bool },
+}
+
+/// `DiscountItems`: what an amount off discount applies to.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CodeDiscountItems {
+    /// `AllDiscountItems`: the order.
+    All,
+    /// `DiscountProducts` and `DiscountCollections`: the lines of these products (those of the
+    /// collections included) and of these variants.
+    Listed {
+        products: Vec<u64>,
+        variants: Vec<u64>,
+    },
+}
+
+/// `DiscountMinimumRequirement`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MinimumRequirement {
+    /// `DiscountMinimumSubtotal`.
+    Subtotal(Cents),
+    /// `DiscountMinimumQuantity`.
+    Quantity(u32),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -490,6 +564,10 @@ pub struct DiscountCodeStatus {
     pub code: String,
     /// Whether a discount accepted it and applied something.
     pub applicable: bool,
+    /// Why a code of a discount of Shopify's own types was refused, in lsf's words (the page
+    /// says "Enter a valid discount code" for every code it refuses).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

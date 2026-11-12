@@ -1117,6 +1117,22 @@ discounts on the subtotal they left, then shipping. Within a class:
   off −€0.00" while its settings are not set. A candidate of more than 0 that finds nothing left
   to take off (a line another discount made free) is not applied.
 
+**Codes of Shopify's own discount types.** With the [Admin API](admin.md), a code of a
+`DiscountCodeBasic` or a `DiscountCodeFreeShipping` the backend created applies without a
+Function ([what the checkout sees](admin.md#what-the-storefront-and-the-checkout-see)): an
+amount off the order is an order discount, one off listed products, variants or collections (or
+off each item) a product discount, free shipping a shipping discount, and each takes its place
+among the discounts of the Functions by the rules above. The code is checked when the
+checkout is computed: the discount's dates and usage limit, its buyers, one use per customer,
+its minimum (on the items it applies to, before discounts), and for free shipping the country
+of the address (a code is taken before there is one). A refused code shows "Enter a valid
+discount code", and its entry of `discountCodes` in the state has a `reason`
+(`"its minimum purchase is 50.00 USD, and the items it applies to come to 32.00 USD"`). One code
+of these types applies per checkout, the first one entered that qualifies: a second is refused,
+as on Shopify when a discount combines with no other (lsf does not read `combinesWith`). Its
+`DiscountApplication` is `ACROSS` (`EACH` off each item), `ALL` for the order and `ENTITLED`
+for listed items; free shipping is 100% off the shipping line, `EACH`.
+
 An amount is shared between the lines in proportion to what they cost, to the cent, and the
 allocations of the lines (`discountAllocations`, in the page and for the Functions that run
 later) add up to the discount.
@@ -1538,7 +1554,7 @@ customization runs on them.
 | `shippingAddress` | `address`: `firstName`, `lastName`, `company`, `address1`, `address2`, `city`, `countryCode`, `provinceCode`, `zip`, `phone` | Sets the address. A country of the store becomes the country of the session. A `countryCode` that is not a country (ISO 3166-1 alpha-2, or `XK`, `AC`, `TA` as Shopify takes them; not `ZZ`) is refused and changes nothing. The store data has no shipping zones: any real country is taken. |
 | `deliveryOption` | `group` (`group-1`), `handle` | Chooses a shipping rate. |
 | `paymentMethod` | `handle` | Chooses a payment method. No handle clears it. |
-| `discountCode` | `action` (`add` or `remove`), `code` | Enters or takes back a code. |
+| `discountCode` | `action` (`add` or `remove`), `code` | Enters or takes back a code. Each entered code is in the `discountCodes` of the state, `applicable` or not; a code of a discount of Shopify's own types that was refused has a `reason` ([how discounts stack](#how-discounts-stack)). |
 | `cartLines` | `change`: `addCartLine`, `removeCartLine` or `updateCartLine` of the UI extension API | Changes the cart of the session, the one the theme shows. |
 | `attribute` | `change`: `updateAttribute` or `removeAttribute`, with `key` and `value` | Changes the attributes of the cart. |
 | `note` | `change`: `updateNote` (`note`) or `removeNote` | Changes the note of the cart. |
@@ -1597,7 +1613,10 @@ The browser tests of a theme in CI: [testing](testing.md#in-ci).
 - Discounts have no `conditions` and no combinations: all of them stack, as described in
   [how discounts stack](#how-discounts-stack). Shopify lets the merchant choose which discounts
   combine, and applies the best of those that cannot; here all the product and order discounts
-  combine, and of the shipping discounts the best one applies.
+  combine, and of the shipping discounts the best one applies. Of Shopify's own discount types,
+  only the codes of `DiscountCodeBasic` and `DiscountCodeFreeShipping` apply, one per checkout,
+  and only with the Admin API (which makes them): not buy X get Y, not the automatic ones, not a
+  `context` of markets nor `appliesOnSubscription`.
 - Tax is one rate on the discounted subtotal, with no tax lines.
 - No Storefront API: `query` in an extension rejects. No Customer Account API either: a customer
   account extension reads the account through its `shopify` global only.
@@ -1625,6 +1644,9 @@ store before a release:
 
 - **Discount combinations and conditions**: lsf combines every product and order discount
   ([how discounts stack](#how-discounts-stack)).
+- **Codes of Shopify's own discount types**: one applies per checkout whatever its
+  `combinesWith`, its minimum is checked on the items it applies to before any discount, and a
+  refused code says lsf's reason, where Shopify's checkout has messages of its own.
 - **Currencies and price lists**: a buyer pays in the currency of the country of the shipping
   address (else of the one selected on the storefront), at its market's `rate` or fixed `prices`
   ([localization](data-format.md#localization)); the Functions read that rate as

@@ -6,6 +6,9 @@
 //! Function with network access runs its `.fetch` target first, and its `.run` target reads
 //! the response ([`crate::checkout::fetch`]).
 //!
+//! A code of Shopify's own discount types ([`CheckoutConfig::code_discounts`]) applies without a
+//! Function, with the product and order discounts or the shipping ones.
+//!
 //! What is not supported: fulfillment constraints, order routing and the pickup generators
 //! (listed by [`crate::config`], not run), discount
 //! `conditions` on candidates (every candidate applies), combinations between discounts (every
@@ -30,10 +33,11 @@ use crate::checkout::input::{FetchInput, InputContext, Owner, OwnerKind};
 use crate::checkout::runner;
 use crate::checkout::{
     AllocationMethod, AppliedDiscount, Cents, CheckoutConfig, CheckoutError, CheckoutResult,
-    CheckoutState, Cost, DeliveryGroup, DeliveryOption, DiscountAllocation, DiscountClass,
-    DiscountCodeStatus, DiscountConfig, DiscountDetails, DiscountTarget, DiscountValue,
-    FunctionRun, IdleFunction, KeyValue, LineSellingPlan, Metafield, PaymentMethod,
-    PaymentPlacement, ResultLine, SelectedOption, SkippedDiscount, SourceLine, TargetSelection,
+    CheckoutState, CodeDiscountConfig, CodeDiscountEffect, CodeDiscountItems, CodeDiscountValue,
+    Cost, DeliveryGroup, DeliveryOption, DiscountAllocation, DiscountClass, DiscountCodeStatus,
+    DiscountConfig, DiscountDetails, DiscountTarget, DiscountValue, FunctionRun, IdleFunction,
+    KeyValue, LineSellingPlan, Metafield, MinimumRequirement, PaymentMethod, PaymentPlacement,
+    ResultLine, SelectedOption, SkippedDiscount, SourceLine, TargetSelection,
 };
 use crate::config::version::ApiVersion;
 use crate::config::{
@@ -189,6 +193,8 @@ pub fn compute_with_options(
         skipped_discounts: Vec::new(),
         accepted_codes: Vec::new(),
         rejected_codes: Vec::new(),
+        code_discount: None,
+        refused_codes: Vec::new(),
         groups: Vec::new(),
         payment_methods: config
             .payment_methods
@@ -270,6 +276,10 @@ struct Pipeline<'a> {
     accepted_codes: Vec<String>,
     /// Entered codes a Function turned down (lowercase).
     rejected_codes: Vec<String>,
+    /// The code discount of Shopify's own types that applies, with the code it applies with.
+    code_discount: Option<(&'a CodeDiscountConfig, &'a str)>,
+    /// Entered codes of discounts of Shopify's own types that were refused (lowercase), with why.
+    refused_codes: Vec<(String, String)>,
     groups: Vec<DeliveryGroup>,
     payment_methods: Vec<PaymentMethod>,
     errors: Vec<CheckoutError>,
@@ -318,6 +328,7 @@ impl<'a> Pipeline<'a> {
     fn run(mut self) -> CheckoutResult {
         self.cart_transforms();
         let before_discounts = self.lines.clone();
+        self.choose_code_discount();
         self.line_discounts(&before_discounts);
         self.build_delivery_groups();
         self.delivery_customizations();
@@ -976,6 +987,100 @@ impl<'a> Pipeline<'a> {
 
     // ---- discounts ----
 
+    /// The code discount of Shopify's own types (`DiscountCodeBasic`, `DiscountCodeFreeShipping`)
+    /// that applies: that of the first code entered which the buyer may use and the cart
+    /// qualifies for. One applies per checkout, as on Shopify when a discount combines with no
+    /// other (`combinesWith`, which lsf does not read): the codes of the others are refused. It
+    /// stacks with the discounts of the Functions, which all do (see [`stacking_key`]); of the
+    /// shipping discounts, the best one applies. A refused code says why
+    /// ([`DiscountCodeStatus::reason`]).
+    fn choose_code_discount(&mut self) {
+        let config = self.config;
+        let state = self.state;
+        for entered in &state.discount_codes {
+            let Some((discount, code)) = config.code_discounts.iter().find_map(|discount| {
+                discount
+                    .codes
+                    .iter()
+                    .find(|code| code.eq_ignore_ascii_case(entered))
+                    .map(|code| (discount, code.as_str()))
+            }) else {
+                continue;
+            };
+            let refusal = match self.code_discount {
+                Some((chosen, _)) if chosen.id == discount.id => continue,
+                Some((_, chosen)) => Some(format!(
+                    "only one code of a discount of Shopify's own types applies to a checkout, and `{chosen}` does"
+                )),
+                None => discount
+                    .refused
+                    .clone()
+                    .or_else(|| self.cart_refusal(discount)),
+            };
+            match refusal {
+                Some(reason) => self.refused_codes.push((entered.to_lowercase(), reason)),
+                None => {
+                    self.code_discount = Some((discount, code));
+                    self.accepted_codes.push(entered.to_lowercase());
+                }
+            }
+        }
+    }
+
+    /// Why the cart does not qualify for a code discount of Shopify's own types: none of the
+    /// items it applies to, less than its minimum (on those items, before discounts), a shipping
+    /// address in a country it does not ship free to. A free shipping code is taken before the
+    /// buyer gives an address, as on Shopify.
+    fn cart_refusal(&self, discount: &CodeDiscountConfig) -> Option<String> {
+        let entitled: Vec<&ResultLine> = self
+            .lines
+            .iter()
+            .filter(|line| match &discount.effect {
+                CodeDiscountEffect::AmountOff { items, .. } => entitles(items, line),
+                CodeDiscountEffect::FreeShipping { .. } => true,
+            })
+            .collect();
+        if entitled.is_empty() {
+            return Some("the cart has none of the items it applies to".to_string());
+        }
+        match discount.minimum {
+            Some(MinimumRequirement::Subtotal(minimum)) => {
+                let subtotal: Cents = entitled.iter().map(|line| line.subtotal).sum();
+                if subtotal < minimum {
+                    return Some(format!(
+                        "its minimum purchase is {}, and the items it applies to come to {}",
+                        money_text(minimum, &self.currency),
+                        money_text(subtotal, &self.currency)
+                    ));
+                }
+            }
+            Some(MinimumRequirement::Quantity(minimum)) => {
+                let quantity: u64 = entitled.iter().map(|line| u64::from(line.quantity)).sum();
+                if quantity < u64::from(minimum) {
+                    return Some(format!(
+                        "its minimum quantity is {minimum} items, and the cart has {quantity} of those it applies to"
+                    ));
+                }
+            }
+            None => {}
+        }
+        if let CodeDiscountEffect::FreeShipping {
+            countries: Some(countries),
+            ..
+        } = &discount.effect
+            && let Some(country) = self.state.shipping_country()
+            && !countries
+                .iter()
+                .any(|listed| listed.eq_ignore_ascii_case(country))
+        {
+            return Some(format!(
+                "it does not apply to the country of the shipping address ({})",
+                country.to_ascii_uppercase()
+            ));
+        }
+        None
+    }
+
     /// The discounts that run: those of an enabled Function, automatic or with a code the buyer
     /// entered, with the number of their GID.
     fn active_discounts(&self) -> Vec<(u64, &'a DiscountConfig, Option<String>)> {
@@ -1109,6 +1214,55 @@ impl<'a> Pipeline<'a> {
         for run in &collected {
             self.read_line_discounts(run, &mut products, &mut orders);
         }
+        // The code discount of Shopify's own types takes its place among the discounts of its
+        // class, as a discount Function's would.
+        if let Some((discount, code)) = self.code_discount
+            && let CodeDiscountEffect::AmountOff { value, items } = &discount.effect
+        {
+            let context = DiscountContext {
+                function: "",
+                title: &discount.title,
+                code: Some(code),
+                metafields: &[],
+                native: Some(discount),
+            };
+            let (amount, each) = match *value {
+                CodeDiscountValue::Percentage(percentage) => {
+                    (Amount::Percentage(percentage), false)
+                }
+                CodeDiscountValue::Amount { cents, each } => (Amount::Fixed { cents, each }, each),
+            };
+            let candidate = |targets| Candidate {
+                targets,
+                message: None,
+                code: None,
+                value: amount,
+            };
+            match items {
+                // An amount off the order: shared between its lines. Taken off each item, it
+                // is an amount off every line.
+                CodeDiscountItems::All if !each => orders.push((
+                    context,
+                    None,
+                    vec![candidate(vec![Target::Order {
+                        excluded_lines: Vec::new(),
+                        excluded_variants: Vec::new(),
+                    }])],
+                )),
+                _ => {
+                    let targets = self
+                        .lines
+                        .iter()
+                        .filter(|line| entitles(items, line))
+                        .map(|line| Target::Line {
+                            id: line.id.clone(),
+                            quantity: None,
+                        })
+                        .collect();
+                    products.push((context, None, vec![candidate(targets)]));
+                }
+            }
+        }
         self.apply_product_discounts(products);
         self.apply_order_discounts(orders);
     }
@@ -1134,6 +1288,7 @@ impl<'a> Pipeline<'a> {
             title: &discount.title,
             code: run.code.as_deref(),
             metafields: &discount.metafields,
+            native: None,
         };
         let product = classes.contains(&DiscountClass::Product);
         let order = classes.contains(&DiscountClass::Order);
@@ -1301,7 +1456,10 @@ impl<'a> Pipeline<'a> {
                 class,
                 amount: total,
                 function: context.function.to_string(),
-                details: details_of(candidate, class, context.metafields),
+                details: match context.native {
+                    Some(discount) => code_details(discount),
+                    None => details_of(candidate, class, context.metafields),
+                },
             });
         }
     }
@@ -1505,6 +1663,37 @@ impl<'a> Pipeline<'a> {
         for run in &collected {
             self.read_shipping_run(run, &mut contenders);
         }
+        // A free shipping code contends with the shipping discounts of the Functions: one
+        // applies per order. It makes free the options that cost no more than its maximum.
+        if let Some((discount, code)) = self.code_discount
+            && let CodeDiscountEffect::FreeShipping { maximum_price, .. } = &discount.effect
+        {
+            let targets: Vec<Target> = self
+                .groups
+                .iter()
+                .flat_map(|group| &group.options)
+                .filter(|option| {
+                    maximum_price.is_none_or(|maximum| option.original_cost <= maximum)
+                })
+                .map(|option| Target::DeliveryOption(option.handle.clone()))
+                .collect();
+            if !targets.is_empty() {
+                let context = DiscountContext {
+                    function: "",
+                    title: &discount.title,
+                    code: Some(code),
+                    metafields: &[],
+                    native: Some(discount),
+                };
+                let candidate = Candidate {
+                    targets,
+                    message: None,
+                    code: None,
+                    value: Amount::Percentage(100.0),
+                };
+                self.contend(context, Some("ALL"), vec![candidate], &mut contenders);
+            }
+        }
         self.apply_best_shipping(contenders);
     }
 
@@ -1522,6 +1711,7 @@ impl<'a> Pipeline<'a> {
             title: &discount.title,
             code: run.code.as_deref(),
             metafields: &discount.metafields,
+            native: None,
         };
         if run.kind == TargetKind::ShippingDiscount {
             let strategy = str_field(output, "discountApplicationStrategy");
@@ -1681,7 +1871,10 @@ impl<'a> Pipeline<'a> {
                     class: DiscountClass::Shipping,
                     amount: reduced,
                     function: context.function.to_string(),
-                    details: details_of(&candidate, DiscountClass::Shipping, context.metafields),
+                    details: match context.native {
+                        Some(discount) => code_details(discount),
+                        None => details_of(&candidate, DiscountClass::Shipping, context.metafields),
+                    },
                 });
             }
         }
@@ -1834,9 +2027,15 @@ impl<'a> Pipeline<'a> {
                 });
                 let accepted =
                     self.accepted_codes.contains(&lower) && !self.rejected_codes.contains(&lower);
+                let applicable = applied || accepted;
                 DiscountCodeStatus {
                     code: code.clone(),
-                    applicable: applied || accepted,
+                    applicable,
+                    reason: self
+                        .refused_codes
+                        .iter()
+                        .find(|(refused, _)| !applicable && *refused == lower)
+                        .map(|(_, reason)| reason.clone()),
                 }
             })
             .collect();
@@ -1890,6 +2089,9 @@ struct DiscountContext<'a> {
     code: Option<&'a str>,
     /// The metafields of the discount.
     metafields: &'a [Metafield],
+    /// The code discount of Shopify's own types it is, which runs no Function (`function` is
+    /// empty).
+    native: Option<&'a CodeDiscountConfig>,
 }
 
 /// What a Function input shows of a discount it can see (`DiscountApplication`), from the
@@ -1952,6 +2154,59 @@ fn details_of(
         },
         value,
         metafields: metafields.to_vec(),
+    }
+}
+
+/// Whether an amount off discount of Shopify's own types applies to a line.
+fn entitles(items: &CodeDiscountItems, line: &ResultLine) -> bool {
+    match items {
+        CodeDiscountItems::All => true,
+        CodeDiscountItems::Listed { products, variants } => {
+            products.contains(&line.product_id) || variants.contains(&line.variant_id)
+        }
+    }
+}
+
+/// The `DiscountApplication` of a code discount of Shopify's own types. The REST example of
+/// shopify.dev (Order, `discount_applications`) shows a code off the order as `across` and
+/// `all`; lsf makes an amount off each item `each`, one off listed items `entitled`, and free
+/// shipping 100 % off the shipping line, `each`.
+fn code_details(discount: &CodeDiscountConfig) -> DiscountDetails {
+    let (allocation_method, target_selection, target_type, value) = match &discount.effect {
+        CodeDiscountEffect::AmountOff { value, items } => {
+            let (value, each) = match *value {
+                CodeDiscountValue::Percentage(percentage) => {
+                    (DiscountValue::Percentage(percentage), false)
+                }
+                CodeDiscountValue::Amount { cents, each } => (DiscountValue::Fixed(cents), each),
+            };
+            (
+                if each {
+                    AllocationMethod::Each
+                } else {
+                    AllocationMethod::Across
+                },
+                match items {
+                    CodeDiscountItems::All => TargetSelection::All,
+                    CodeDiscountItems::Listed { .. } => TargetSelection::Entitled,
+                },
+                DiscountTarget::LineItem,
+                value,
+            )
+        }
+        CodeDiscountEffect::FreeShipping { .. } => (
+            AllocationMethod::Each,
+            TargetSelection::All,
+            DiscountTarget::ShippingLine,
+            DiscountValue::Percentage(100.0),
+        ),
+    };
+    DiscountDetails {
+        allocation_method,
+        target_selection,
+        target_type,
+        value,
+        metafields: Vec::new(),
     }
 }
 
@@ -3339,6 +3594,7 @@ mod tests {
             title,
             code: None,
             metafields: &[],
+            native: None,
         };
         let key = |title, raw: serde_json::Value| {
             let candidate = product_candidate(raw);
