@@ -237,11 +237,18 @@ local-storefront. The rules are the ones read from Shopify's answers in October 
   color functions get a fallback, and vendor prefixes are added.
 - This applies to the assets, `.liquid` ones included once they are rendered, and to the
   bundles built from the `{% stylesheet %}` and `{% javascript %}` tags.
+- A declaration is merged into another only when the result sets the same properties: four
+  sides into `margin`, for instance. `translate`, `rotate` and `scale` stay apart from
+  `transform`, since they are applied before it and cascade on their own, and `font` and
+  `transition` stay where they are written, before or after `font-variant-numeric` or
+  `transition-behavior`, which they reset.
 - A minified file ends with a link to its source map, which is served at the path of the
   file followed by `.map`: the tools of a browser show the file as it is written.
 - A file is served as written when its name ends with `.min.js` or `.min.css`, when the
-  minified file would not be lighter, or when it cannot be read as CSS or JavaScript. In a
-  stylesheet, a rule that cannot be read is kept as written and the rest is minified.
+  minified file, link included, would not be lighter, or when it cannot be read as CSS or
+  JavaScript. There is no size limit below which a file is left alone: a file of a few hundred
+  bytes is minified when that saves bytes. In a stylesheet, a rule that cannot be read is kept
+  as written and the rest is minified.
 
 `--no-minify` serves every file as it is written.
 
@@ -450,7 +457,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Caching | Shopify keeps rendered pages in a cache of its own. An answer from that cache has an `ETag` and no `Cache-Control`; local-storefront always answers like a page that was just rendered. Files have no `Last-Modified`, so nothing is answered with `304 Not Modified`. |
 | Image formats | The format of an image is chosen by Shopify's rule, with other encoders: the files weigh about what Shopify's do, not the same, so an image can come as AVIF where Shopify sends WebP, or the reverse. A GIF is never converted. The color profile and the metadata of a file are not kept when it is encoded. |
 | Preloading | Shopify sends the `Link` header ahead of the page, as `103 Early Hints`, and with the pages it answers from its own cache. local-storefront sends it with every page. Shopify's header also asks to connect to its CDN (`cdn.shopify.com`), which serves nothing locally, and has a limit on its number of entries, which local-storefront does not have. |
-| Minification | Shopify minifies with esbuild, local-storefront with other libraries (oxc for scripts, Lightning CSS for stylesheets): a file weighs about what it does on Shopify, without being the same to the byte. In a stylesheet, declarations can come in another order within a rule. `inset` is not replaced with `top`, `right`, `bottom` and `left`. |
+| Minification | Shopify minifies with esbuild, local-storefront with other libraries (oxc for scripts, Lightning CSS for stylesheets): a file weighs about what it does on Shopify, without being the same to the byte. In a stylesheet, declarations can come in another order within a rule. `inset` is not replaced with `top`, `right`, `bottom` and `left`, and the width, style and color of the four sides of a border, all set in one rule, become `border`, which also resets `border-image`. Shopify's link to the source map carries the `?v=` of the request, local-storefront's does not: a file that minifying saves only a few dozen bytes of can be minified locally and served as written on Shopify. |
 | Compiled scripts | Shopify runs the `{% javascript %}` of a section only on the pages that have that section. local-storefront runs them all on every page. |
 
 Found a difference that is not in this table? It is a bug: a Liquid snippet and the HTML
