@@ -1,4 +1,4 @@
-//! `lsf`: serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API.
+//! `lsf`: run Shopify themes and apps locally, without Shopify, from JSON store data.
 
 mod app;
 mod checkout;
@@ -26,8 +26,10 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[command(
     name = "lsf",
     version,
-    about = "Serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API",
-    long_about = "Serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API.\n\n\
+    about = "Run Shopify themes and apps locally, without Shopify: the storefront, a local checkout and a local Admin API, from JSON store data",
+    long_about = "Run Shopify themes and apps locally, without Shopify: the storefront, a local checkout for \
+                  Functions and checkout UI extensions, and a local GraphQL Admin API with webhooks, from JSON \
+                  store data.\n\n\
                   Run it in a theme directory (the one with layout/, sections/, templates/, ...). The store \
                   data is read from ./shopify-local when it exists, otherwise a built-in demo store is used; \
                   the `init` command writes that demo store to disk as a starting point."

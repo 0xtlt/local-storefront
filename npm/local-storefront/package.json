@@ -1,8 +1,8 @@
 {
   "name": "local-storefront",
   "version": "0.0.0",
-  "description": "A local storefront for Shopify themes: lsf renders a theme from JSON fixtures, without the Shopify API, for fast end-to-end tests.",
-  "keywords": ["shopify", "theme", "liquid", "storefront", "e2e", "testing", "playwright"],
+  "description": "Run Shopify themes and apps locally, without Shopify: the storefront, a local checkout for Functions and checkout UI extensions, and a local GraphQL Admin API with webhooks, from JSON store data. Made for tests in CI.",
+  "keywords": ["shopify", "theme", "liquid", "storefront", "shopify-app", "shopify-functions", "checkout", "admin-api", "graphql", "webhooks", "e2e", "testing", "playwright"],
   "license": "MIT",
   "homepage": "https://github.com/0xtlt/local-storefront#readme",
   "bugs": "https://github.com/0xtlt/local-storefront/issues",
