@@ -105,7 +105,7 @@ fn watch_stops_its_builds_and_removes_its_modules_on_sigterm() {
     let base =
         std::env::temp_dir().join(format!("lsf-watch-sigterm-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&base).unwrap();
-    let base = base.canonicalize().unwrap();
+    let base = lsf_core::util::canonicalize(&base).unwrap();
     let mut run = Run {
         base: base.clone(),
         server: None,
@@ -402,7 +402,7 @@ fn a_build_left_running_by_a_killed_server_keeps_its_lock() {
     let base =
         std::env::temp_dir().join(format!("lsf-watch-orphan-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&base).unwrap();
-    let base = base.canonicalize().unwrap();
+    let base = lsf_core::util::canonicalize(&base).unwrap();
     let mut run = Run {
         base: base.clone(),
         server: None,
