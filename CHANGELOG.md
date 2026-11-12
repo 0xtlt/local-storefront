@@ -3,6 +3,91 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## 0.3.0-rc.2 - 2026-11-12
+
+Second release candidate of 0.3.0. It fixes what was reported on 0.2.0 and 0.3.0-rc.1, each
+change checked against what Shopify does, and the store data gains provinces, currencies,
+market languages, URLs per market and translated metaobjects. Some theme tests and store data
+need a change: see Breaking changes.
+
+### Breaking changes
+
+What to change when you upgrade from 0.3.0-rc.1.
+
+- **A theme block rendered more than once on a page gets Shopify's numbered ids.** The first
+  render keeps `<prefix>__<key>`, the next ones get `-1`, `-2`, … in `block.id` and in
+  `id="shopify-block-…"`. A block rendered once is unchanged. Theme tests that snapshot HTML with
+  a repeated block need their snapshots updated.
+- **A `rating` metafield's `value`, `scale_min` and `scale_max` are strings, as on Shopify.**
+  `{{ m.value.scale_max | json }}` gives `"5.0"`, no longer `5.0`. A number written in the store
+  data is kept as written (`5` gives `"5"`).
+- **A reference metafield lsf can't resolve is a `validate` error.** A GID now names the entity
+  with that id; a GID or any other value that names nothing, which used to pass and render `nil`,
+  fails `validate` with the form to write (`use "faq/size"`).
+- **A country's `currency` is what its buyers pay in.** It was only displayed. With no `rate`,
+  prices are converted at a rate of 1: give the market a `rate` or fixed `prices`.
+
+### Added
+
+#### Store data and the storefront
+
+- **Provinces.** `data-provinces` of `country_option_tags` and `all_country_option_tags` lists
+  the provinces Shopify lists for a country (37 countries), as Shopify prints them.
+  `localization.countries[].provinces` limits a country to those the store ships to. Addresses
+  get their province's name from its code and the reverse, the checkout has a province
+  selector, and `shopify_common.js` has `Shopify.CountryProvinceSelector`.
+- **Currencies per market.** `localization.markets[].currency`, `rate` and fixed `prices` price
+  the storefront, the cart, `/cart.js`, the money filters, `Shopify.currency` and the checkout
+  in the currency of the visitor's country. Functions read the rate as
+  `presentmentCurrencyRate`.
+- **The URL picks the country.** `?country=XX` sets it (a `301` to the country's subfolder when
+  its market has one). `localization.markets[].subfolder_suffix` serves a market under
+  `/<language>-<suffix>/` (`/en-ca/`), with its links, `request.locale.root_url` and
+  `Shopify.routes.root` under it. The localization form moves the visitor to that subfolder.
+- **Languages per market.** `localization.markets[].languages` (default first) drives
+  `country.available_languages` and `localization.available_languages`, and the subfolders a
+  market has. Switching country keeps the current language when the new market offers it, and
+  uses the market's default otherwise. Without `languages`, every country gets every language.
+- **Translated metaobjects.** A metaobject entry takes `translations`, by language then field
+  key: localized routes show them, field by field, with `fr-CA` falling back to `fr`. `validate`
+  checks them, and the Admin API's `translationsRegister` and `translationsRemove` read and write
+  them. Translations into a locale the Admin API unpublishes leave the storefront until it is
+  published again.
+
+#### The command line
+
+- **`validate` warns when the theme names a menu the store data lacks.** `default_menu` for
+  `main-menu` and `footer`, which lsf makes up, and `missing_menu` for the others. `render` warns
+  and the `--live-reload` panel shows a note when a page renders one of lsf's default menus.
+
+### Fixed
+
+#### Themes and the storefront
+
+- **Cart lines have `index`, their 0-based position**, so Horizon's remove button removes the
+  line clicked, not the first one.
+- **`/cart/change.js` keeps to the stock, as `/cart/add.js` does.** More than a tracked variant's
+  stock caps the line and answers `422`, with Shopify's 2025 descriptions ("Only N items were
+  added to your cart due to availability.", "The maximum quantity of this item is already in
+  your cart.").
+- **Minified stylesheets mean what their source means.** `translate`, `rotate` and `scale` stay
+  apart from `transform`, `font` and `transition` stay before what they reset, and
+  `border-image: none` is kept.
+- **A minified asset links its source map at its own `?v=`**, as Shopify's CDN does, so the map
+  of an edited file is fetched again.
+- **A reference metafield given as a GID renders the entity it names.** It rendered `nil`.
+- **An object or list metafield can be written as its Admin API JSON text** (the `value` the
+  Admin API gives), so a value can be pasted from the API as is.
+
+#### The command line
+
+- **Paths in messages no longer start with `\\?\` on Windows.**
+- **On Windows, path options read a Git Bash path (`/c/Users/me`) as `C:\Users\me`.** A missing
+  data directory given that way no longer suggests `init` with it. `render` and `profile` refuse
+  a route Git Bash rewrote into `C:/Program Files/Git/…`, and name `MSYS_NO_PATHCONV=1`.
+- **`lsf app check` with no scenario names the extensions that are not built** in its summary,
+  with `lsf app build`, instead of a `fails` line for each. It still exits with `1`.
+
 ## 0.3.0-rc.1 - 2026-11-12
 
 lsf now serves a local GraphQL Admin API (version 2026-10) and delivers an app's webhooks to its
