@@ -2120,6 +2120,7 @@ fn with_metaobject(f: &mut Fixture) -> String {
         ]
         .into_iter()
         .collect(),
+        translations: Default::default(),
         template_suffix: None,
     });
     format!(

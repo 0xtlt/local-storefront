@@ -55,7 +55,7 @@ fn app_discount(record: &Record) -> Option<&Map<String, Value>> {
 }
 
 /// What diagnostics name the overlay of the Admin API's changes.
-pub const OVERLAY_NAME: &str = "(admin api)";
+pub const OVERLAY_NAME: &str = lsf_core::store::load::ADMIN_OVERLAY_FILE;
 
 /// The changes the Admin API made to a shop since the seed, as an overlay of the store data the
 /// shop was seeded from (`store`: the store loaded from the files, without any overlay). `None`
@@ -114,9 +114,11 @@ const FUNCTION_OWNERS: [&str; 4] = [
     "Validation",
 ];
 
-/// The fields that point from a record to the record it belongs to.
-const PARENT_FIELDS: [(&str, &str); 10] = [
+/// The fields that point from a record to the record it belongs to. The translations of a
+/// resource belong to it: those of a metaobject are a part of its entry.
+const PARENT_FIELDS: [(&str, &str); 11] = [
     ("ProductVariant", "product"),
+    ("TranslatableResource", "resourceId"),
     ("InventoryItem", "variant"),
     ("InventoryLevel", "item"),
     ("Metafield", "owner"),
@@ -1962,7 +1964,7 @@ impl<'s> Sync<'s> {
         if status == Some("DRAFT") {
             return None;
         }
-        let fields = record
+        let fields: IndexMap<String, model::MetafieldInput> = record
             .get("fields")
             .and_then(Value::as_array)
             .into_iter()
@@ -1980,12 +1982,14 @@ impl<'s> Sync<'s> {
                 ))
             })
             .collect();
+        let translations = self.metaobject_translations(view, key, &fields);
         Some((
             // The app's own type, `app--<id>--author`, is `$app:author` in the store data.
             self.namespace(text(record, "type")?),
             model::MetaobjectInput {
                 handle: text(record, "handle")?.to_string(),
                 fields,
+                translations,
                 template_suffix: capabilities
                     .and_then(|capabilities| {
                         capabilities
@@ -1997,6 +2001,49 @@ impl<'s> Sync<'s> {
                     .map(str::to_string),
             },
         ))
+    }
+
+    /// The translations of a metaobject, by language then field key, as the store data writes
+    /// them: those for every market (the data has no market's), of the fields of a type Shopify
+    /// translates that the entry has, their values written as the fields' are.
+    fn metaobject_translations(
+        &self,
+        view: &View<'s>,
+        key: &str,
+        fields: &IndexMap<String, model::MetafieldInput>,
+    ) -> IndexMap<String, IndexMap<String, Value>> {
+        let mut translations: IndexMap<String, IndexMap<String, Value>> = IndexMap::new();
+        let kept = view
+            .get(&content::translations::key_of(key))
+            .and_then(|record| record.get("translations"))
+            .and_then(Value::as_array);
+        for translation in kept.into_iter().flatten() {
+            let field = |name: &str| translation.get(name).and_then(Value::as_str);
+            if translation
+                .get("market")
+                .is_some_and(|market| !market.is_null())
+            {
+                continue;
+            }
+            let (Some(locale), Some(name), Some(value)) =
+                (field("locale"), field("key"), translation.get("value"))
+            else {
+                continue;
+            };
+            let Some(model::MetafieldInput::Typed(typed)) = fields.get(name) else {
+                continue;
+            };
+            if !content::metafields::is_translatable(&typed.kind) {
+                continue;
+            }
+            if let Some(value) = self.value(view, &typed.kind, value) {
+                translations
+                    .entry(locale.to_string())
+                    .or_default()
+                    .insert(name.to_string(), value);
+            }
+        }
+        translations
     }
 
     /// What changed of the shop itself: its name, email and description, its policies, and its
@@ -2699,7 +2746,15 @@ mod tests {
             format!("{:#?}", store.collections),
             format!("{:#?}", store.pages),
             format!("{:#?}", store.blogs),
-            format!("{:#?}", store.menus),
+            // Whether lsf made a menu up is not what the data says: projected, it is the data's.
+            format!(
+                "{:#?}",
+                store
+                    .menus
+                    .iter()
+                    .map(|menu| (&menu.handle, &menu.title, &menu.links))
+                    .collect::<Vec<_>>()
+            ),
             format!("{:#?}", store.customers),
             format!("{:#?}", store.companies),
             format!("{:#?}", store.gift_cards),

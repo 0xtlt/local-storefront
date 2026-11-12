@@ -14,6 +14,7 @@ use crate::app::App;
 
 mod app_blocks;
 mod dev_pages;
+mod edited_assets;
 mod parts;
 mod polaris;
 mod store_base;
@@ -267,8 +268,83 @@ fn the_cart_api_reports_errors_like_shopify() {
     assert_eq!(too_many.status, 422);
     assert_eq!(
         body_json(&too_many)["description"],
-        "All 1 Linen Overshirt - L are in your cart."
+        "The maximum quantity of this item is already in your cart."
     );
+}
+
+#[test]
+fn cart_change_keeps_to_the_stock_as_add_does() {
+    let state = server();
+    let session = "limits";
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"products": [
+            {"title": "Pottery Bowl", "price": 3000,
+             "variants": [{"sku": "BOWL", "inventory_quantity": 3}]}
+        ]}}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let bowl = body_json(&get(&state, "/products/pottery-bowl.js", session))["variants"][0]["id"]
+        .as_u64()
+        .unwrap();
+    let quantities = || -> Vec<u64> {
+        body_json(&get(&state, "/cart.js", session))["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["quantity"].as_u64().unwrap())
+            .collect()
+    };
+    let change = |body: Json| post(&state, "/cart/change.js", body, session);
+    let refused = |reply: &Reply, description: &str| {
+        assert_eq!(reply.status, 422, "{}", text(reply));
+        assert_eq!(
+            body_json(reply),
+            json!({"status": 422, "message": "Cart Error", "description": description})
+        );
+    };
+
+    // Three bowls are in stock: a line of 1 asked to hold 5 holds 3, and the answer says so.
+    let add = |body: Json| post(&state, "/cart/add.js", body, session);
+    let added = add(json!({"id": bowl}));
+    assert_eq!(added.status, 200, "{}", text(&added));
+    refused(
+        &change(json!({"line": 1, "quantity": 5})),
+        "Only 2 items were added to your cart due to availability.",
+    );
+    assert_eq!(quantities(), [3]);
+    // With all of them in the cart, the line stays as it is.
+    refused(
+        &change(json!({"line": 1, "quantity": 4})),
+        "The maximum quantity of this item is already in your cart.",
+    );
+    assert_eq!(quantities(), [3]);
+    // Fewer is always fine.
+    let fewer = change(json!({"line": 1, "quantity": 2}));
+    assert_eq!(fewer.status, 200, "{}", text(&fewer));
+    assert_eq!(quantities(), [2]);
+    // `add.js` counts the same way.
+    refused(
+        &add(json!({"id": bowl, "quantity": 5})),
+        "Only 1 item was added to your cart due to availability.",
+    );
+    assert_eq!(quantities(), [3]);
+    let fewer = change(json!({"line": 1, "quantity": 1}));
+    assert_eq!(fewer.status, 200, "{}", text(&fewer));
+
+    // A form posted to `/cart/change` goes back to the cart either way.
+    let mut form = request(
+        "POST",
+        "/cart/change",
+        json!({"line": "1", "quantity": "9"}),
+        session,
+    );
+    form.headers.remove("accept");
+    let back = state.dispatch(&form);
+    assert_eq!(back.status, 302, "{}", text(&back));
+    assert_eq!(quantities(), [3]);
 }
 
 #[test]
@@ -2160,9 +2236,10 @@ fn stylesheets_and_scripts_are_minified_as_on_shopify() {
         code.starts_with(".card{color:red;margin:0}.card:hover{opacity:.5}"),
         "{code}"
     );
+    // The link carries the `?v=` of the file, as on Shopify.
     assert_eq!(
         link,
-        "/*# sourceMappingURL=/cdn/shop/t/1/assets/theme.css.map */\n"
+        "/*# sourceMappingURL=/cdn/shop/t/1/assets/theme.css.map?v=1 */\n"
     );
     assert!(served.len() < stylesheet.len());
     // The map leads back to the file as it is written.
@@ -2209,8 +2286,9 @@ fn stylesheets_and_scripts_are_minified_as_on_shopify() {
         "{compiled}"
     );
     assert!(
-        compiled
-            .ends_with("/*# sourceMappingURL=/cdn/shop/t/1/compiled_assets/styles.css.map */\n"),
+        compiled.ends_with(
+            "/*# sourceMappingURL=/cdn/shop/t/1/compiled_assets/styles.css.map?v=1 */\n"
+        ),
         "{compiled}"
     );
     assert_eq!(file("compiled_assets/styles.css.map").status, 200);

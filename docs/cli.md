@@ -14,6 +14,14 @@ Installed with mise, from a release or from source, the command is `lsf`: `lsf s
 | `--data <dir>` | `LSF_DATA` | `<theme>/shopify-local` | The store data folder. Without one, the built-in demo store. |
 | `--preview <name>` | `LSF_PREVIEW` | none | Turns on a Shopify feature preview. Repeat it, or separate names with commas. See [storefront](storefront.md#feature-previews). |
 
+On Windows, a path written as Git Bash writes it, `/c/Users/me/project`, is the folder it names,
+`C:\Users\me\project`: for every option that takes a path (`--theme`, `--data`, `--app`, the files
+of `fmt`, `--session`, `--input`, ...), and in its environment variable. Git Bash converts such a
+path itself, except when `MSYS_NO_PATHCONV` is set (see [render](#render)) or when lsf is started
+by another program, such as an npm script run by cmd.exe. On another system it is a path like any
+other; when that folder does not exist, the error names the Windows form instead of offering
+`init` with it.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -48,7 +56,7 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--static` | | Reads the theme and the data once. The fastest mode, for tests. |
 | `--strict` | | Refuses to start when the store data has errors. |
 | `--quiet`, `-q` | | Does not log requests. |
-| `--live-reload` | | Reloads open pages when the theme or the data change. It adds a script to the pages: leave it off for tests. |
+| `--live-reload` | | Reloads open pages when the theme (its `assets/` included) or the data change. It adds a script to the pages: leave it off for tests. Without it, an edit shows at the next load: see [reload as you edit](storefront.md#reload-as-you-edit). |
 | `--customer <email>` | `LSF_CUSTOMER` | Visitors arrive logged in as this customer. Also `default` (the first customer) or `none`. |
 | `--throttle <rules>` | `LSF_THROTTLE` | Answers late, to see loading states: `simulated`, `slow`, `300ms`, `cart-add=1s`. See [testing](testing.md#simulating-a-slow-network). |
 | `--timings` | | Names every section and theme block in the `Server-Timing` header. See [performance](performance.md#render-times). |
@@ -304,6 +312,15 @@ invalid  badges: extensions/badges/blocks/stars.liquid: a block needs a {% schem
 checked 11 of 11 scenarios in 0.1 s: 0 failures, 0 invalid scenarios, 1 extension not offered, 1 stale module, 1 error in theme app extensions
 ```
 
+With no scenario, nothing runs, so an extension that is only not built fails nothing: rather
+than a `fails` line, the last line names it with the command that builds it, as it names
+`app init`. It still exits with `1`. What is wrong with the app itself, such as an `api_version`
+lsf does not run, is still printed, and counted after it:
+
+```text
+checked 0 of 0 scenarios in 0.0 s: no scenario to check: `lsf app init` writes a set for the app in `shopify-local/checkouts/`; 2 extensions are not built (payment-rules, order-notice): `lsf app build` builds them (or `--build`)
+```
+
 A trap ends with the last message the Function logged, such as the one of a `throw`:
 
 ```text
@@ -361,7 +378,7 @@ checked 8 of 8 scenarios in 0.1 s: every Function ran, the `expect` of 2 scenari
 | `--extension <handle>` | | Only these extensions. Repeat it for several. |
 | `--build` | | Builds the extensions first, as `app build` does. |
 | `--format text` | | Default. One line per problem, then a summary. |
-| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unchecked: [scenario], unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle], notOffered: [{handle, reason}], stale: [{handle, file}], themeExtensions: [{handle, severity, message}]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. A Function target that fails in several ways has a failure for each error, with the scenarios of that error; `logs` is what the Function logged in the first of them. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `unchecked` names the scenarios whose `expect` was not checked, as `--extension` leaves out a Function they run; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says (the entry, the list, the amount), `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran. `notOffered` has the extensions the checkout does not offer, `stale` the Functions whose `file` changed after their module was built, `themeExtensions` what Shopify rejects (`error`) or advises against (`warning`) in the theme app extensions. |
+| `--format json` | | `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unchecked: [scenario], unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle], notOffered: [{handle, reason}], stale: [{handle, file}], themeExtensions: [{handle, severity, message}]}`, and `error` when there is no scenario, which names the extensions not built too, as the last line of the text does (`notOffered` still lists them). `state` is `done`, or `partial` when the time ran out. A Function target that fails in several ways has a failure for each error, with the scenarios of that error; `logs` is what the Function logged in the first of them. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `unchecked` names the scenarios whose `expect` was not checked, as `--extension` leaves out a Function they run; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says (the entry, the list, the amount), `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran. `notOffered` has the extensions the checkout does not offer, `stale` the Functions whose `file` changed after their module was built, `themeExtensions` what Shopify rejects (`error`) or advises against (`warning`) in the theme app extensions. |
 | `--budget <seconds>` | | How long the Functions may run in all. Default 300. |
 
 ### app function run
@@ -544,11 +561,26 @@ sections, as the Section Rendering API does. `/account` (lsf's page of the custo
 `/recommendations/products` and `/search/suggest` are answered by the server, as `serve`
 answers them.
 
+In Git Bash, a path that starts with `/` and has no query string reaches lsf as a Windows path,
+under the folder Git Bash is installed in (`C:/Program Files/Git/`). `render` and `profile` refuse such a path with an error
+(`2`) rather than render the 404 page. Keep the path as typed with
+`MSYS_NO_PATHCONV=1 npx local-storefront render /products/shirt`, or start it with `//`
+(`render //products/shirt`): leading slashes count as one.
+
 The HTML goes to stdout. On stderr: each Liquid error and each warning, then a summary.
 
 ```text
 Liquid error (layout/theme line 34): divided by 0
 status 200 · template product · 1 Liquid error · 0 warnings
+```
+
+A page that renders one of [lsf's default menus](data-format.md#lsfs-default-menus) gets a
+warning for it. With `--format github` it is a `::warning` annotation. It never fails
+`--strict`: a Shopify store cannot delete that menu, so the page is not wrong, only its links
+are lsf's.
+
+```text
+warning: menu "main-menu" is lsf's default (Home, Catalog), not the store's: the store data has none with this handle. Add it to "menus" to render the store's links
 ```
 
 With `--strict`, a path with nothing at it adds `error: nothing at /x: the page is the theme's
@@ -563,7 +595,7 @@ Prints what the render of one page spends its time on: sections, blocks, snippet
 
 | Option | What it does |
 |---|---|
-| `<path>` | The path, with its query string. Default `/`. |
+| `<path>` | The path, with its query string. Default `/`. In Git Bash, see [render](#render) for a path Git Bash turned into a Windows one. |
 | `--points` | Counts in points, what the page would cost Shopify, instead of time. |
 | `--cost <kind>=<points>,...` | Changes what a kind of thing costs in points. |
 | `--lines` | Adds every tag and every output, by file and line. |
@@ -583,6 +615,18 @@ app's (`<app>/shopify-local`), or the built-in demo store. In a folder that is n
 app, such as [the checkout playground](https://github.com/0xtlt/local-storefront/tree/main/examples/checkout-playground)), it checks the data
 alone, with the store's own languages; an app without any is checked with the demo store, as its
 checkout runs. A folder that is neither a theme nor an app, and has no store data, is an error.
+
+With a theme, it also checks the menus the theme names, in its `link_list` settings (of
+`config/settings_data.json`, of the sections of its JSON templates and section groups, of their
+blocks) and in Liquid (`linklists['main-menu']`). A `main-menu` or `footer` that the data does
+not have is a `default_menu` warning, since [lsf renders its own](data-format.md#lsfs-default-menus).
+Another menu the data does not have is a `missing_menu` warning: lsf renders no menu there.
+
+```text
+warning[default_menu]: the store data has no "main-menu" menu, which the theme names (sections/header-group.json at /sections/header/settings/menu): lsf renders its default in its place (Home, Catalog), not the store's links
+  --> (data) at /menus/main-menu
+  hint: add the store's "main-menu" to "menus" (or a menus/main-menu.json file); with "links": [] it renders no links
+```
 
 In a Shopify app (or with `--app`), it checks the app too: what its Functions and UI extensions
 get wrong (no build, an API version lsf does not run, an unknown target, an `owner_type`), and

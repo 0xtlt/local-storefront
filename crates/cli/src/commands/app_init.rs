@@ -963,7 +963,10 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
 
 /// Whether two paths are the same directory.
 fn same_directory(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
+    match (
+        lsf_core::util::canonicalize(a),
+        lsf_core::util::canonicalize(b),
+    ) {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
     }

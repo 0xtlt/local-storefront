@@ -156,3 +156,68 @@ fn github_annotations_name_the_file_and_the_line() {
         text(&output)
     );
 }
+
+#[test]
+fn the_menus_a_theme_names_that_the_data_lacks_are_warned_of() {
+    let folder = Folder::new("menus");
+    folder.write(
+        "layout/theme.liquid",
+        "{{ content_for_layout }}\n{% for link in linklists.footer.links %}{% endfor %}",
+    );
+    folder.write(
+        "sections/header.liquid",
+        r#"{% schema %}{"name": "Header", "settings": [{"type": "link_list", "id": "menu", "label": "Menu", "default": "main-menu"}]}{% endschema %}"#,
+    );
+    folder.write(
+        "sections/header-group.json",
+        r#"{"type": "header", "name": "Header", "sections": {"header": {"type": "header", "settings": {"menu": "main-menu"}}}, "order": ["header"]}"#,
+    );
+    folder.write(
+        "snippets/care.liquid",
+        "{{ linklists['customer-care'].title }}",
+    );
+    folder.write("shopify-local/store.json", SHOP);
+    let output = validate(&folder.0, &[]);
+    // Warnings: lsf renders a page without these menus, with no Liquid error.
+    assert!(output.status.success(), "{}", text(&output));
+    let said = text(&output);
+    for expected in [
+        "warning[default_menu]: the store data has no \"main-menu\" menu, which the theme names \
+         (sections/header-group.json at /sections/header/settings/menu): lsf renders its \
+         default in its place (Home, Catalog), not the store's links\n  --> (data) at \
+         /menus/main-menu\n  hint: add the store's \"main-menu\" to \"menus\" (or a \
+         menus/main-menu.json file); with \"links\": [] it renders no links",
+        "warning[default_menu]: the store data has no \"footer\" menu, which the theme names \
+         (layout/theme.liquid line 2)",
+        "warning[missing_menu]: the theme names the menu \"customer-care\" \
+         (snippets/care.liquid line 1), which the store data does not have: lsf renders no \
+         menu there\n  --> (data) at /menus/customer-care",
+        "0 errors, 3 warnings in the store data",
+    ] {
+        assert!(said.contains(expected), "{expected}\n---\n{said}");
+    }
+    // The JSON report has them too.
+    let output = validate(&folder.0, &["--format", "json"]);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let codes: Vec<&str> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["default_menu", "default_menu", "missing_menu"]);
+
+    // Menus of the data, even without links, are the store's: nothing to say. A handle close
+    // to one of the data's is a typo.
+    folder.write(
+        "shopify-local/menus.json",
+        r#"{"menus": {"main-menu": {"links": []}, "footer": {"links": []}, "customer-cares": {"links": []}}}"#,
+    );
+    let output = validate(&folder.0, &[]);
+    let said = text(&output);
+    assert!(!said.contains("default_menu"), "{said}");
+    assert!(
+        said.contains("hint: did you mean \"customer-cares\"?"),
+        "{said}"
+    );
+}

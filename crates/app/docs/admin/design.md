@@ -1745,7 +1745,7 @@ rules and the sources):
 | `metaobjects` | `metaobjectDefinitionCreate`, `Update`, `Delete`; `metaobjectCreate`, `Update`, `Upsert`, `Delete`, `BulkDelete`; `metaobjects(type:)`, `metaobjectByHandle`, `metaobjectDefinitionByType`, `Metaobject.field`, `Metaobject.values`. An entry created gets `metaobject_gid(type, handle)` (lsf-core's id), else a new one when a renamed entry holds it. |
 | `online_store` | `page*`, `blog*`, `article*` (create, update, delete), `commentApprove`, `commentSpam`, `commentNotSpam`, `commentDelete`. |
 | `navigation` | `menuCreate`, `Update`, `Delete` (a menu created gets `menu_gid(handle)`), `urlRedirectCreate`, `Update`, `Delete` (and `add_redirect`, for `redirectNewHandle`). |
-| `translations` | `translationsRegister`, `translationsRemove`; `translatableResource(s)`, `translatableResourcesByIds`, the resources' `translations(locale:)`. A resource's translations are a `TranslatableResource` record (`resourceId`, `translations`) kept under `translations/<resource GID>`: not store data. |
+| `translations` | `translationsRegister`, `translationsRemove`; `translatableResource(s)`, `translatableResourcesByIds`, the resources' `translations(locale:)`. A resource's translations are a `TranslatableResource` record (`resourceId`, `translations`) kept under `translations/<resource GID>`. Those of a metaobject for no market are store data (its entry's `translations`): seeded from it, synced back; the others are not. |
 | `files` | `fileCreate`, `fileUpdate`, `fileDelete`; `files`' sort keys and search text. The staged uploads are the app family's: its upload endpoint keeps the bytes in the shop (a `Blob` under the target's key), and `files::staged_upload(state, resource_url)` reads them back for `fileCreate` and `fileUpdate`: the name is the key's last segment (the target's `filename`), the MIME type the upload's, the size the bytes'. Kept in the shop, an upload goes with a reset and is another shop's only there. |
 
 Error codes the checks of metafield inputs share (`TOO_SHORT`, `APP_NOT_AUTHORIZED`, …) are fitted
@@ -2485,7 +2485,7 @@ the changes. `None` when nothing the store data expresses changed.
 | `menus` | `Menu` (title, items): an item names its resource by its key when the resource is on the storefront, its URL otherwise |
 | `locations` | `Location` (name, address, coordinates, pickup and its time), its metafields. A deactivated location is removed. |
 | `gift_cards` | the cards of the data: balance, initial value, currency, expiry, enabled, customer, recipient, message |
-| `metaobjects` | `Metaobject` (type, handle, fields, template suffix). A draft entry is removed. An app's own type is `$app:<type>`, as its namespaces are; lsf-core finds it by that name and by `app--<any id>--<type>`, the one a theme uses. |
+| `metaobjects` | `Metaobject` (type, handle, fields, translations, template suffix): its translations are those of its `translations/<GID>` record for no market, of its translatable fields. A draft entry is removed. An app's own type is `$app:<type>`, as its namespaces are; lsf-core finds it by that name and by `app--<any id>--<type>`, the one a theme uses. |
 | `selling_plan_groups` | `SellingPlanGroup` (name, app id, options, products) with its `SellingPlan`s (name, description, options, pricing policies, recurring or not, checkout charge) |
 | metafields | of every owner above, of variants and company locations, of the shop and of the declared markets: the namespace of the app (`app--<id>--config`) as `$app:config`, references as the keys the data names them by (handle, `blog/article`, `type/handle`, path of `files/`, variant id, email, company name), JSON types as JSON |
 | `shop` | name, email, description, the five policies of the data, metafields (merged field by field; a metafield removed is in `removed.shop_metafields`) |
@@ -2552,8 +2552,8 @@ Kept here so that nobody invents a field for it; each would need the store data 
   call them), delivery promises, shipping packages; delivery profiles beyond the general
   profile's flat rates to the rest of the world: other zones and profiles, conditional rates,
   carrier services' rates (the store data has one list of rates, offered to every address).
-- Metafield and metaobject definitions, files (`files/` is on disk), translations, webhooks,
-  publications other than the Online Store.
+- Metafield and metaobject definitions, files (`files/` is on disk), translations other than a
+  metaobject's for no market, webhooks, publications other than the Online Store.
 - Themes, theme files and script tags are not store data: the storefront gets them through the
   theme it serves (see "Themes"), not the overlay of the store data.
 - The `session` of the data and the scenarios of `checkouts/` are not written: a product,

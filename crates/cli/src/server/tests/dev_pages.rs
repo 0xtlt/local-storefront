@@ -119,6 +119,55 @@ fn live_reload_shows_the_errors_of_the_data_and_of_the_page_in_it() {
 }
 
 #[test]
+fn live_reload_notes_the_default_menus_of_lsf_that_a_page_renders() {
+    let root = theme_dir(
+        "default-menus",
+        &[
+            (
+                "layout/theme.liquid",
+                "<!doctype html><html><head>{{ content_for_header }}</head><body>\
+                 {{ content_for_layout }}<nav>{% for link in linklists.main-menu.links %}\
+                 [{{ link.title }}]{% endfor %}</nav></body></html>",
+            ),
+            ("templates/index.liquid", "<h1>Home</h1>"),
+            (
+                "shopify-local/store.json",
+                r#"{"shop": {"name": "Demo Store"}}"#,
+            ),
+        ],
+    );
+    let state = serve(&root, true);
+    let html = text(&get(&state, "/", "default-menus"));
+    assert!(html.contains("[Home][Catalog]"), "{html}");
+    // A note, not a problem: Shopify renders the store's own menu there.
+    assert!(html.contains("<aside data-lsf-notes"), "{html}");
+    assert!(!html.contains("data-lsf-errors"), "{html}");
+    assert!(html.contains("lsf: 1 note</b>"), "{html}");
+    assert!(
+        html.contains(
+            "menu &quot;main-menu&quot; is lsf&#39;s default (Home, Catalog), not the store&#39;s"
+        ),
+        "{html}"
+    );
+    // Without live reload, the page is as Shopify renders it.
+    let quiet = serve(&root, false);
+    let html = text(&get(&quiet, "/", "default-menus"));
+    assert!(!html.contains("data-lsf-notes"), "{html}");
+
+    // A menu of the data: nothing to note.
+    std::fs::write(
+        root.join("shopify-local/menus.json"),
+        r#"{"menus": {"main-menu": {"links": [{"title": "Shop", "url": "/collections/all"}]}}}"#,
+    )
+    .unwrap();
+    let state = serve(&root, true);
+    let html = text(&get(&state, "/", "default-menus"));
+    assert!(html.contains("[Shop]"), "{html}");
+    assert!(!html.contains("data-lsf-notes"), "{html}");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn a_theme_setting_of_a_session_that_the_theme_does_not_have_is_refused() {
     let root = theme_dir(
         "settings",
