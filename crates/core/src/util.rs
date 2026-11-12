@@ -167,11 +167,11 @@ pub fn user_cache_dir() -> Option<std::path::PathBuf> {
 }
 
 /// [`std::fs::canonicalize`], without the `\\?\` it puts before every path on Windows:
-/// `\\?\C:\app` is `C:\app`, `\\?\UNC\server\share\app` is `\\server\share\app`. lsf shows the
-/// paths it canonicalizes, and nothing else on Windows writes them so. Every path lsf
-/// canonicalizes goes through it (`clippy.toml` forbids the others), so that two of them compare
-/// alike. A path Windows would read as another file without the prefix keeps it
-/// ([`without_verbatim_prefix`]).
+/// `\\?\C:\app` is `C:\app`, `\\?\UNC\server\share\app` is `\\server\share\app`, as Node's
+/// `fs.realpath` (libuv), which Shopify's CLI uses, writes them. lsf shows the paths it
+/// canonicalizes. Every path lsf canonicalizes goes through it (`clippy.toml` forbids the
+/// others), so that two of them compare alike. A path Windows would read as another file without
+/// the prefix keeps it ([`without_verbatim_prefix`]).
 pub fn canonicalize(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     #[allow(clippy::disallowed_methods)]
     let path = std::fs::canonicalize(path)?;
@@ -186,7 +186,8 @@ pub fn canonicalize(path: &std::path::Path) -> std::io::Result<std::path::PathBu
 /// Windows reads otherwise without the prefix, as a device (`CON`, `nul.txt`), a name that ends
 /// in a dot or a space (dropped), `.` and `..` (followed), or a character a name cannot have.
 /// `None` for any other path, a path of macOS or Linux among them. A path longer than Windows'
-/// 260 characters loses the prefix too: Rust's file functions put it back.
+/// 260 characters loses the prefix too: Rust's file functions put it back from 248 characters
+/// (`maybe_verbatim` in the standard library).
 pub fn without_verbatim_prefix(path: &str) -> Option<String> {
     let rest = path.strip_prefix(r"\\?\")?;
     let (simple, names) = if let Some(unc) = rest.strip_prefix(r"UNC\") {
