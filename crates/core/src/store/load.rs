@@ -779,6 +779,9 @@ pub fn load(source: &DataSource, options: &LoadOptions) -> (Store, Diagnostics) 
 /// The name diagnostics use for data that did not come from a file.
 pub const OVERLAY_FILE: &str = "(request body)";
 
+/// The name of the overlay of what the Admin API changed (`lsf_app::admin::sync`).
+pub const ADMIN_OVERLAY_FILE: &str = "(admin api)";
+
 /// Data applied on top of the files: the entities it removes, then the entities it adds or
 /// replaces. The data of a session (`PUT /__lsf/session`) is one, and so are the changes the
 /// Admin API made to the store (`lsf_app::admin::sync`), which the session's data then goes on top of.
@@ -1599,6 +1602,289 @@ mod tests {
         assert_eq!(found.len(), 7, "{found:#?}");
     }
 
+    /// Issue #43: `faq.size`, `size`, `faq:size` and `{"type": "faq", "handle": "size"}` passed
+    /// `validate` and rendered `nil`. Every reference Liquid cannot resolve is an error that
+    /// names the form lsf takes, and a GID names the entity of that id.
+    #[test]
+    fn a_reference_lsf_does_not_resolve_is_an_error_with_the_form_it_takes() {
+        use crate::store::metafield_references::Referenced;
+        let (demo, _) = inline(serde_json::json!({}));
+        let mug = demo.product_by_handle("ceramic-mug").expect("mug");
+        let variant = &mug.variants[0];
+        let page = &demo.pages[0];
+        let faq_size = crate::util::stable_id("metaobject", "faq/size");
+        let (store, diagnostics) = inline(serde_json::json!({
+            "metaobjects": {"faq": [
+                {"handle": "size", "fields": {"question": "Which size?"}},
+                {"handle": "returns", "fields": {"question": "Returns?"}},
+            ]},
+            "products": [{"title": "Thing", "price": "1.00", "metafields": {"custom": {
+                "faqs": {"type": "list.metaobject_reference", "value": [
+                    "faq/size",
+                    "faq.size",
+                    "size",
+                    "faq:size",
+                    {"type": "faq", "handle": "size"},
+                    format!("gid://shopify/Metaobject/{faq_size}"),
+                    "gid://shopify/Metaobject/123",
+                ]},
+                "mug": {"type": "product_reference", "value": format!("gid://shopify/Product/{}", mug.id)},
+                "mug_path": {"type": "product_reference", "value": "/products/ceramic-mug"},
+                "gone": {"type": "product_reference", "value": "gid://shopify/Product/1"},
+                "not_a_page": {"type": "page_reference", "value": format!("gid://shopify/Product/{}", mug.id)},
+                "page": {"type": "page_reference", "value": format!("gid://shopify/Page/{}", page.id)},
+                "variant": {"type": "variant_reference", "value": format!("gid://shopify/ProductVariant/{}", variant.id)},
+                "variant_id": {"type": "variant_reference", "value": variant.id.to_string()},
+                "file": {"type": "file_reference", "value": "gid://shopify/MediaImage/1"},
+            }}}],
+        }));
+        let found: Vec<String> = diagnostics
+            .items
+            .iter()
+            .map(|item| {
+                format!(
+                    "{} {} | {} | {}",
+                    item.code,
+                    item.path,
+                    item.message,
+                    item.hint.as_deref().unwrap_or_default()
+                )
+            })
+            .collect();
+        let at = |path: &str| {
+            found
+                .iter()
+                .find(|line| line.contains(&format!(" {path} |")))
+                .unwrap_or_else(|| panic!("nothing at {path}: {found:#?}"))
+                .clone()
+        };
+        let base = "/products/0/metafields/custom";
+        for index in 1..=3 {
+            assert!(
+                at(&format!("{base}/faqs/value/{index}")).ends_with("| use \"faq/size\""),
+                "{found:#?}"
+            );
+        }
+        assert!(
+            at(&format!("{base}/faqs/value/4")).ends_with("| use \"faq/size\""),
+            "{found:#?}"
+        );
+        let unknown_gid = at(&format!("{base}/faqs/value/6"));
+        assert!(
+            unknown_gid.starts_with("unknown_reference"),
+            "{unknown_gid}"
+        );
+        assert!(unknown_gid.contains("\"faq/size\""), "{unknown_gid}");
+        assert!(
+            at(&format!("{base}/mug_path/value")).ends_with("| use \"ceramic-mug\""),
+            "{found:#?}"
+        );
+        assert!(at(&format!("{base}/gone/value")).starts_with("unknown_reference"));
+        assert!(at(&format!("{base}/not_a_page/value")).starts_with("unknown_reference"));
+        assert!(
+            at(&format!("{base}/variant_id/value")).ends_with(&format!("| use {}", variant.id)),
+            "{found:#?}"
+        );
+        assert!(at(&format!("{base}/file/value")).starts_with("unknown_reference"));
+        assert_eq!(found.len(), 10, "{found:#?}");
+        assert!(
+            diagnostics
+                .items
+                .iter()
+                .all(|item| item.severity == crate::diagnostics::Severity::Error)
+        );
+
+        // What resolves is what Liquid reads.
+        let product = store.product_by_handle("thing").expect("thing");
+        let value = |key: &str| &product.metafields["custom"][key].value;
+        let faqs = value("faqs").as_array().expect("a list");
+        for (index, expected) in [(0, Some("size")), (1, None), (5, Some("size")), (6, None)] {
+            let found = store
+                .metafield_reference("metaobject_reference", &faqs[index])
+                .map(|target| match target {
+                    Referenced::Metaobject(entry) => store.metaobjects[entry].handle.as_str(),
+                    other => panic!("{other:?}"),
+                });
+            assert_eq!(found, expected, "faqs[{index}]");
+        }
+        assert_eq!(
+            store.metafield_reference("product_reference", value("mug")),
+            store.product_index("ceramic-mug").map(Referenced::Product)
+        );
+        assert!(
+            store
+                .metafield_reference("page_reference", value("page"))
+                .is_some()
+        );
+        assert!(
+            store
+                .metafield_reference("variant_reference", value("variant"))
+                .is_some()
+        );
+    }
+
+    /// A GID the Admin API keeps names an entity deleted since: it reads nothing, as on
+    /// Shopify, and is no mistake of the data.
+    #[test]
+    fn a_gid_of_the_admin_api_that_names_nothing_is_no_error() {
+        let overlay = Overlay::new(
+            ADMIN_OVERLAY_FILE,
+            serde_json::json!({"products": [{"title": "Thing", "price": "1.00", "metafields": {
+                "custom": {"designer": {"type": "metaobject_reference", "value": "gid://shopify/Metaobject/123"}}
+            }}]}),
+        );
+        let (_, diagnostics) =
+            load_with_overlays(&DataSource::Demo, &LoadOptions::default(), &[overlay]);
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+    }
+
+    #[test]
+    fn a_metaobject_is_translated_field_by_field() {
+        let rich_text = |text: &str| {
+            serde_json::json!({"type": "root", "children": [
+                {"type": "paragraph", "children": [{"type": "text", "value": text}]},
+            ]})
+        };
+        let (store, diagnostics) = inline(serde_json::json!({"metaobjects": {"faq": [{
+            "handle": "shipping",
+            "fields": {
+                "question": "How long does shipping take?",
+                "answer": {"type": "rich_text_field", "value": rich_text("Two days.")},
+                "tags": {"type": "list.single_line_text_field", "value": ["delivery"]},
+                "order": 2,
+            },
+            "translations": {"FR": {
+                "question": "Combien de temps prend la livraison ?",
+                "answer": rich_text("Deux jours."),
+                "tags": ["livraison"],
+            }},
+        }]}}));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let entry = store.metaobject("faq", "shipping").expect("the entry");
+        let question = |locale: &str| {
+            entry
+                .field_in("question", locale)
+                .map(|field| field.value.clone())
+        };
+        assert_eq!(
+            question("fr"),
+            Some(serde_json::json!("Combien de temps prend la livraison ?"))
+        );
+        // The primary language, and a language without a translation, show the field itself.
+        assert_eq!(
+            question("en"),
+            Some(serde_json::json!("How long does shipping take?"))
+        );
+        let answer = entry.field_in("answer", "fr").expect("the answer");
+        assert_eq!(answer.kind, "rich_text_field");
+        assert_eq!(answer.value, rich_text("Deux jours."));
+        assert_eq!(
+            entry
+                .field_in("order", "fr")
+                .map(|field| field.value.clone()),
+            Some(serde_json::json!(2))
+        );
+        assert!(entry.field_in("nope", "fr").is_none());
+        // The language is written as `localization.languages` has it.
+        assert!(entry.translations.contains_key("fr"));
+    }
+
+    #[test]
+    fn a_translation_written_as_json_text_is_kept_as_the_field_value_is() {
+        // The Admin API's `value` of a rich text is its JSON text: the field takes it, and so
+        // does its translation.
+        let rich_text = |text: &str| {
+            serde_json::json!({"type": "root", "children": [
+                {"type": "paragraph", "children": [{"type": "text", "value": text}]},
+            ]})
+        };
+        let (store, diagnostics) = inline(serde_json::json!({"metaobjects": {"faq": [{
+            "handle": "shipping",
+            "fields": {
+                "answer": {"type": "rich_text_field", "value": rich_text("Two days.").to_string()},
+            },
+            "translations": {"fr": {"answer": rich_text("Deux jours.").to_string()}},
+        }]}}));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let entry = store.metaobject("faq", "shipping").expect("the entry");
+        let answer = |locale: &str| {
+            entry
+                .field_in("answer", locale)
+                .expect("the answer")
+                .value
+                .clone()
+        };
+        assert_eq!(answer("en"), rich_text("Two days."));
+        assert_eq!(answer("fr"), rich_text("Deux jours."));
+    }
+
+    #[test]
+    fn the_translations_of_a_metaobject_are_checked() {
+        let (store, diagnostics) = inline(serde_json::json!({"metaobjects": {"faq": [{
+            "handle": "shipping",
+            "fields": {
+                "question": "How long does shipping take?",
+                "answer": {"type": "rich_text_field", "value": {"type": "root", "children": []}},
+                "order": 2,
+                "related": {"type": "product_reference", "value": "ceramic-mug"},
+                "link": {"type": "url", "value": "https://example.com/shipping"},
+            },
+            "translations": {
+                "fr": {
+                    "questoin": "Combien de temps ?",
+                    "order": 3,
+                    "related": "canvas-tote-bag",
+                    "link": "exemple.fr/livraison",
+                    "answer": "",
+                },
+                "de": {"question": "Wie lange dauert der Versand?"},
+                "en": {"question": "How long?"},
+            },
+        }]}}));
+        let found: Vec<String> = diagnostics
+            .items
+            .iter()
+            .map(|item| {
+                format!(
+                    "{} {} {}",
+                    item.code,
+                    item.path,
+                    item.hint.as_deref().unwrap_or_default()
+                )
+            })
+            .collect();
+        let at = |path: &str| {
+            found
+                .iter()
+                .find(|line| line.contains(&format!(" {path} ")))
+                .unwrap_or_else(|| panic!("nothing at {path}: {found:#?}"))
+                .clone()
+        };
+        let base = "/metaobjects/faq/0/translations";
+        assert_eq!(
+            at(&format!("{base}/fr/questoin")),
+            format!("unknown_field {base}/fr/questoin did you mean \"question\"?")
+        );
+        assert!(at(&format!("{base}/fr/order")).starts_with("untranslatable_field"));
+        assert!(at(&format!("{base}/fr/related")).starts_with("untranslatable_field"));
+        // A translation is a value of the field's type.
+        assert!(at(&format!("{base}/fr/link")).starts_with("invalid_metafield"));
+        assert!(at(&format!("{base}/fr/answer")).starts_with("invalid_value"));
+        assert!(at(&format!("{base}/de")).starts_with("unknown_language"));
+        // The primary language is the fields themselves.
+        assert!(at(&format!("{base}/en")).starts_with("unknown_language"));
+        assert_eq!(found.len(), 7, "{found:#?}");
+        // What is wrong is left out: the fields show their own values.
+        let entry = store.metaobject("faq", "shipping").expect("the entry");
+        assert_eq!(
+            entry
+                .field_in("link", "fr")
+                .map(|field| field.value.clone()),
+            Some(serde_json::json!("https://example.com/shipping"))
+        );
+        assert!(!entry.translations.contains_key("de"));
+    }
+
     #[test]
     fn what_reads_of_a_file_with_errors_is_checked_in_the_same_run() {
         let files = vec![
@@ -1696,6 +1982,43 @@ mod tests {
             Ok(Some("alex.morgan@example.com"))
         );
         assert!(email("nobody@example.com").is_err());
+    }
+
+    #[test]
+    fn the_menus_a_store_lacks_of_shopifys_two_are_lsfs_and_said_so() {
+        let directory = std::env::temp_dir().join(format!("lsf-no-menus-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("directory");
+        std::fs::write(
+            directory.join("store.json"),
+            r#"{"products": [{"title": "Thing", "price": 100}]}"#,
+        )
+        .expect("store");
+        let source = DataSource::Directory(directory.clone());
+        let (store, diagnostics) = load(&source, &LoadOptions::default());
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        // Shopify's default menus, which a store cannot delete: lsf makes them up, and says so.
+        let main = store.menu("main-menu").expect("main menu");
+        assert!(main.supplied_by_lsf);
+        assert_eq!(main.link_titles(), "Home, Catalog");
+        assert!(store.menu("footer").expect("footer").supplied_by_lsf);
+
+        // A menu of the data is the store's, even without links; the other one is still lsf's.
+        std::fs::write(
+            directory.join("store.json"),
+            r#"{"menus": {"main-menu": {"links": []}, "legal": {"links": [{"title": "Terms", "url": "/policies/terms-of-service"}]}}}"#,
+        )
+        .expect("store");
+        let (store, diagnostics) = load(&source, &LoadOptions::default());
+        std::fs::remove_dir_all(&directory).ok();
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let main = store.menu("main-menu").expect("main menu");
+        assert!(!main.supplied_by_lsf);
+        assert!(main.links.is_empty());
+        assert!(!store.menu("legal").expect("legal").supplied_by_lsf);
+        assert!(store.menu("footer").expect("footer").supplied_by_lsf);
+        // The demo store has both.
+        let (demo, _) = load(&DataSource::Demo, &LoadOptions::default());
+        assert!(demo.menus.iter().all(|menu| !menu.supplied_by_lsf));
     }
 
     #[test]
@@ -2540,6 +2863,74 @@ mod tests {
         // Without markets, no country is in one.
         let (store, _) = load(&DataSource::Demo, &LoadOptions::default());
         assert!(store.markets.is_empty() && store.market_of("US").is_none());
+    }
+
+    fn iso_codes(languages: Vec<&crate::store::Language>) -> Vec<&str> {
+        languages
+            .into_iter()
+            .map(|language| language.iso_code.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn a_market_offers_its_languages_to_its_countries() {
+        // https://shopify.dev/docs/api/liquid/objects/country: `available_languages` are "the
+        // languages that have been added to the market that this country belongs to".
+        let overlay = serde_json::json!({"localization": {
+            "countries": [{"iso_code": "US"}, {"iso_code": "CA"}, {"iso_code": "DE"},
+                {"iso_code": "FR"}],
+            "languages": [{"iso_code": "en"}, {"iso_code": "fr"}, {"iso_code": "de"}],
+            "markets": [
+                {"handle": "canada", "countries": ["CA"], "languages": ["FR", "en", "fr"]},
+                {"handle": "germany", "countries": ["DE"], "languages": ["de"]},
+                {"handle": "france", "countries": ["FR"]}
+            ]
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        // The store's spelling, each once, the market's default first.
+        assert_eq!(store.market_of("CA").unwrap().languages, ["fr", "en"]);
+        // In the market's order, not the store's: a Shopify market lists its default language
+        // first (on a real store, Switzerland gives `fr, en, de` and Germany `de, en`).
+        assert_eq!(iso_codes(store.languages_of("ca")), ["fr", "en"]);
+        assert_eq!(store.default_language_of("CA").iso_code, "fr");
+        assert_eq!(iso_codes(store.languages_of("DE")), ["de"]);
+        assert_eq!(store.default_language_of("DE").iso_code, "de");
+        // A market that lists no language, and a country in no market, offer every language
+        // and default to the primary one.
+        for country in ["FR", "US", "JP"] {
+            assert_eq!(iso_codes(store.languages_of(country)), ["en", "fr", "de"]);
+            assert_eq!(store.default_language_of(country).iso_code, "en");
+        }
+    }
+
+    #[test]
+    fn a_market_language_the_store_does_not_publish_is_reported() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [{"iso_code": "CA"}],
+            "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+            "markets": [{"handle": "canada", "countries": ["CA"], "languages": ["fr", "de"]}]
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        let report = diagnostics.to_string();
+        assert!(
+            report.contains(
+                "error[unknown_language]: \"de\" is not one of the languages of the store"
+            ),
+            "{report}"
+        );
+        assert!(
+            report.contains("the store has: en, fr. Add it to \"localization.languages\""),
+            "{report}"
+        );
+        assert!(
+            report.contains("/localization/markets/0/languages/1"),
+            "{report}"
+        );
+        // The rest of the market stands.
+        assert_eq!(iso_codes(store.languages_of("CA")), ["fr"]);
     }
 
     #[test]

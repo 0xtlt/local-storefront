@@ -248,10 +248,18 @@ fn minified(state: &ServerState, path: &str, content: &[u8]) -> Option<Arc<Minif
     result
 }
 
-/// A file of the theme, minified when Shopify would minify it.
+/// A file of the theme, minified when Shopify would minify it. The link to its source map
+/// carries the `?v=` the file is asked at, as on Shopify: the map's URL changes with the file.
 fn theme_file(state: &ServerState, incoming: &Incoming, kind: &str, content: Vec<u8>) -> Reply {
     match minified(state, &incoming.path, &content) {
-        Some(minified) => Reply::new(200, kind, minified.code.clone()),
+        Some(minified) => {
+            let version = incoming
+                .query
+                .iter()
+                .find(|(key, _)| key == "v")
+                .map(|(_, version)| version.as_str());
+            Reply::new(200, kind, minified.code_for(version))
+        }
         None => Reply::new(200, kind, content),
     }
 }

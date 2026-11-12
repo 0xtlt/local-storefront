@@ -2077,13 +2077,13 @@ fn extension_file(state: &ServerState, handle: &str, file: &[&str]) -> Reply {
         return Reply::not_found();
     };
     // Only what the build wrote: a link in `dist/` must not lead out of it.
-    let Ok(directory) = directory.canonicalize() else {
+    let Ok(directory) = lsf_core::util::canonicalize(directory) else {
         return Reply::not_found();
     };
     let path = file
         .iter()
         .fold(directory.clone(), |path, part| path.join(part));
-    let Ok(path) = path.canonicalize() else {
+    let Ok(path) = lsf_core::util::canonicalize(&path) else {
         return Reply::not_found();
     };
     if !path.starts_with(&directory) || !path.is_file() {

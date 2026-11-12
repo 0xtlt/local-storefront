@@ -55,7 +55,7 @@ fn app_discount(record: &Record) -> Option<&Map<String, Value>> {
 }
 
 /// What diagnostics name the overlay of the Admin API's changes.
-pub const OVERLAY_NAME: &str = "(admin api)";
+pub const OVERLAY_NAME: &str = lsf_core::store::load::ADMIN_OVERLAY_FILE;
 
 /// The changes the Admin API made to a shop since the seed, as an overlay of the store data the
 /// shop was seeded from (`store`: the store loaded from the files, without any overlay). `None`
@@ -114,9 +114,11 @@ const FUNCTION_OWNERS: [&str; 4] = [
     "Validation",
 ];
 
-/// The fields that point from a record to the record it belongs to.
-const PARENT_FIELDS: [(&str, &str); 10] = [
+/// The fields that point from a record to the record it belongs to. The translations of a
+/// resource belong to it: those of a metaobject are a part of its entry.
+const PARENT_FIELDS: [(&str, &str); 11] = [
     ("ProductVariant", "product"),
+    ("TranslatableResource", "resourceId"),
     ("InventoryItem", "variant"),
     ("InventoryLevel", "item"),
     ("Metafield", "owner"),
@@ -162,6 +164,9 @@ struct View<'s> {
     groups_of: HashMap<&'s str, Vec<&'s str>>,
     /// The company contacts of each customer.
     contacts_of: HashMap<&'s str, Vec<&'s str>>,
+    /// The locales the shop publishes: the languages of the store data, which the storefront
+    /// serves.
+    published_locales: Vec<&'s str>,
 }
 
 impl<'s> View<'s> {
@@ -173,6 +178,7 @@ impl<'s> View<'s> {
             collections_of: HashMap::new(),
             groups_of: HashMap::new(),
             contacts_of: HashMap::new(),
+            published_locales: Vec::new(),
         };
         let mut metafields: HashMap<&'s str, Vec<&'s str>> = HashMap::new();
         for key in view.keys("Metafield", removed) {
@@ -212,7 +218,22 @@ impl<'s> View<'s> {
         view.collections_of = collections_of;
         view.groups_of = groups_of;
         view.contacts_of = contacts_of;
+        view.published_locales = view
+            .keys("ShopLocale", removed)
+            .into_iter()
+            .filter_map(|key| view.get(key))
+            .filter(|record| flag(record, "published") != Some(false))
+            .filter_map(|record| text(record, "locale"))
+            .collect();
         view
+    }
+
+    /// Whether the shop publishes a locale: `shopLocaleUpdate(published: false)` keeps it and
+    /// its translations in the Admin API, but the storefront no longer serves it.
+    fn publishes(&self, locale: &str) -> bool {
+        self.published_locales
+            .iter()
+            .any(|published| published.eq_ignore_ascii_case(locale))
     }
 
     fn get(&self, key: &str) -> Option<&'s Record> {
@@ -513,6 +534,8 @@ impl<'s> Sync<'s> {
         let mut discounts = false;
         let mut functions: IndexSet<String> = IndexSet::new();
         let mut markets = false;
+        // Whether a locale was published, unpublished or disabled.
+        let mut locales = false;
 
         // Entities, then the entities that name one whose key changed or that is gone, until
         // there are no more. Those are written even when what they project is the same: the data
@@ -541,7 +564,11 @@ impl<'s> Sync<'s> {
                 }
                 match type_name {
                     "Shop" => self.shop(&mut shop_patch, &mut removals),
-                    "Market" | "ShopLocale" => markets = true,
+                    "Market" => markets = true,
+                    "ShopLocale" => {
+                        markets = true;
+                        locales = true;
+                    }
                     "DiscountAutomaticNode" | "DiscountCodeNode" => discounts = true,
                     owner if FUNCTION_OWNERS.contains(&owner) => {
                         for era in [Era::Now, Era::Seed] {
@@ -582,6 +609,15 @@ impl<'s> Sync<'s> {
                         if let Some(now) = now {
                             now.add(&mut input);
                         }
+                    }
+                }
+            }
+            // A locale published or unpublished shows or hides the translations into it: the
+            // metaobjects that have some are projected again.
+            if std::mem::take(&mut locales) {
+                for key in self.translated_metaobjects() {
+                    if !done.contains(key) {
+                        queue.push(("Metaobject", key));
                     }
                 }
             }
@@ -1962,7 +1998,7 @@ impl<'s> Sync<'s> {
         if status == Some("DRAFT") {
             return None;
         }
-        let fields = record
+        let fields: IndexMap<String, model::MetafieldInput> = record
             .get("fields")
             .and_then(Value::as_array)
             .into_iter()
@@ -1980,12 +2016,14 @@ impl<'s> Sync<'s> {
                 ))
             })
             .collect();
+        let translations = self.metaobject_translations(view, key, &fields);
         Some((
             // The app's own type, `app--<id>--author`, is `$app:author` in the store data.
             self.namespace(text(record, "type")?),
             model::MetaobjectInput {
                 handle: text(record, "handle")?.to_string(),
                 fields,
+                translations,
                 template_suffix: capabilities
                     .and_then(|capabilities| {
                         capabilities
@@ -1997,6 +2035,65 @@ impl<'s> Sync<'s> {
                     .map(str::to_string),
             },
         ))
+    }
+
+    /// The metaobjects that have translations, now or in the seed.
+    fn translated_metaobjects(&self) -> Vec<&'s str> {
+        self.state
+            .keys("Metaobject")
+            .filter(|key| {
+                let translations = content::translations::key_of(key);
+                self.now.get(&translations).is_some() || self.seed.get(&translations).is_some()
+            })
+            .collect()
+    }
+
+    /// The translations of a metaobject, by language then field key, as the store data writes
+    /// them: those for every market (the data has no market's), into a locale the shop
+    /// publishes (the data's languages; the Admin API keeps the others until the locale is
+    /// published again or disabled), of the fields of a type Shopify translates that the entry
+    /// has, their values written as the fields' are.
+    fn metaobject_translations(
+        &self,
+        view: &View<'s>,
+        key: &str,
+        fields: &IndexMap<String, model::MetafieldInput>,
+    ) -> IndexMap<String, IndexMap<String, Value>> {
+        let mut translations: IndexMap<String, IndexMap<String, Value>> = IndexMap::new();
+        let kept = view
+            .get(&content::translations::key_of(key))
+            .and_then(|record| record.get("translations"))
+            .and_then(Value::as_array);
+        for translation in kept.into_iter().flatten() {
+            let field = |name: &str| translation.get(name).and_then(Value::as_str);
+            if translation
+                .get("market")
+                .is_some_and(|market| !market.is_null())
+            {
+                continue;
+            }
+            let (Some(locale), Some(name), Some(value)) =
+                (field("locale"), field("key"), translation.get("value"))
+            else {
+                continue;
+            };
+            if !view.publishes(locale) {
+                continue;
+            }
+            let Some(model::MetafieldInput::Typed(typed)) = fields.get(name) else {
+                continue;
+            };
+            if !content::metafields::is_translatable(&typed.kind) {
+                continue;
+            }
+            if let Some(value) = self.value(view, &typed.kind, value) {
+                translations
+                    .entry(locale.to_string())
+                    .or_default()
+                    .insert(name.to_string(), value);
+            }
+        }
+        translations
     }
 
     /// What changed of the shop itself: its name, email and description, its policies, and its
@@ -2135,6 +2232,15 @@ impl<'s> Sync<'s> {
                             .filter_map(|region| region.get("code")?.as_str())
                             .map(str::to_string)
                             .collect(),
+                        // The Admin API keeps a market's languages in its web presences, which
+                        // the seed does not split by market: those of the data stay.
+                        languages: self
+                            .store
+                            .markets
+                            .iter()
+                            .find(|market| content::market_gid(&market.handle) == key)
+                            .map(|market| market.languages.clone())
+                            .unwrap_or_default(),
                         metafields: self.metafields(view, key),
                         subfolder_suffix: declared
                             .and_then(|market| market.subfolder_suffix.clone()),
@@ -2301,11 +2407,20 @@ impl<'s> Sync<'s> {
                     iso_code: known.map_or(locale, |language| language.iso_code.clone()),
                 }
             })
-            .collect();
+            .collect::<Vec<model::LanguageInput>>();
+        // A market offers only languages the shop still publishes.
+        let mut markets = now;
+        for market in &mut markets {
+            market.languages.retain(|code| {
+                languages
+                    .iter()
+                    .any(|language| language.iso_code.eq_ignore_ascii_case(code))
+            });
+        }
         Some(model::LocalizationInput {
             countries,
             languages,
-            markets: now,
+            markets,
         })
     }
 
@@ -2725,7 +2840,15 @@ mod tests {
             format!("{:#?}", store.collections),
             format!("{:#?}", store.pages),
             format!("{:#?}", store.blogs),
-            format!("{:#?}", store.menus),
+            // Whether lsf made a menu up is not what the data says: projected, it is the data's.
+            format!(
+                "{:#?}",
+                store
+                    .menus
+                    .iter()
+                    .map(|menu| (&menu.handle, &menu.title, &menu.links))
+                    .collect::<Vec<_>>()
+            ),
             format!("{:#?}", store.customers),
             format!("{:#?}", store.companies),
             format!("{:#?}", store.gift_cards),

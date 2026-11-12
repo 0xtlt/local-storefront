@@ -367,11 +367,17 @@ fn log_problems(state: &ServerState, rendered: &Rendered) {
             seen.push(message);
         }
     }
-    // Why app blocks did not render: said once, until the files change.
+    // Why app blocks did not render, and the menus of lsf the page renders: said once, until
+    // the files change.
     let mut said = super::lock(&state.notices);
     for notice in &rendered.notices {
         if said.insert(notice.clone()) {
             eprintln!("    {notice}");
+        }
+    }
+    for note in &rendered.default_menus {
+        if said.insert(note.clone()) {
+            eprintln!("    note: {note}");
         }
     }
 }
@@ -416,9 +422,12 @@ pub(super) fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target)
             .map(|item| format!("{}: {}", item.file, item.message))
             .collect();
         let liquid_errors: Vec<String> = rendered.errors.iter().map(|e| e.to_string()).collect();
-        if let Some(overlay) =
-            live_reload::overlay(&data_errors, &liquid_errors, rendered.not_found.as_deref())
-        {
+        if let Some(overlay) = live_reload::overlay(
+            &data_errors,
+            &liquid_errors,
+            rendered.not_found.as_deref(),
+            &rendered.default_menus,
+        ) {
             live_reload::inject_markup(&mut body, &overlay);
         }
     }

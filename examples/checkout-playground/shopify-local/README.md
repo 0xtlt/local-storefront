@@ -120,7 +120,8 @@ all, and a running server serves them at `/__lsf/schema/<kind>`.
   renders are reproducible.
 - **References** between entities use handles (products, collections, pages, blogs), emails
   (customers) and SKUs or ids (variants). A reference to something that does not exist is an
-  error, with a suggestion when a close match exists.
+  error, with a suggestion when a close match exists. A metafield also takes Shopify's GIDs
+  ([reference values](#reference-values)).
 - **HTML** fields (`description`, `content`, `body`) are inserted as written.
 
 ## Products
@@ -163,7 +164,8 @@ product with options lists its variants; each gives one value per option:
   `"inventory_policy": "continue"`. A variant without `inventory_quantity` is not tracked and
   always available. `available` forces the answer either way. `"available": false` alone also
   makes the variant tracked with a quantity of 0, as a sold-out variant is on Shopify, so themes
-  show "Sold out". Adding more than the stock to the cart fails as it does on Shopify.
+  show "Sold out". Asking the cart for more than the stock (`/cart/add.js`, `/cart/change.js`)
+  puts what is in stock in it and answers `422`, as on Shopify.
   `"available": false` with an `inventory_quantity` above 0 is a warning
   (`unavailable_in_stock`): Shopify never has both. lsf keeps the variant unavailable with its
   stock, which Horizon shows as "Unavailable".
@@ -395,6 +397,42 @@ resource with one of `url`, `collection`, `product`, `page`, `blog`, `article`
   }
 }
 ```
+
+### lsf's default menus
+
+Shopify's default menus, `main-menu` and `footer`, cannot be deleted from a store, and a theme's
+`link_list` setting can only default to one of them. When the data does not have one of them,
+lsf makes it up with links of its own:
+
+| Handle | Title | Links |
+|---|---|---|
+| `main-menu` | Main menu | Home (`/`), Catalog (`/collections/all`) |
+| `footer` | Footer menu | Search (`/search`) |
+
+A header that shows these links does not prove that the data's menus work: they are lsf's, not
+the store's. lsf says so everywhere it can:
+
+- `lsf validate` warns (`default_menu`) for each of the two that the theme names, in a
+  `link_list` setting or in Liquid (`linklists['main-menu']`), and says where.
+- `lsf render` prints a warning for each one the page renders. It is not an error, even with
+  `--strict`.
+- With `serve --live-reload`, a page that renders one shows a note in its panel, and the
+  terminal says it once.
+
+There is no option to turn them off, since a Shopify store always has them. Give the data the
+store's menu instead. To render it without links, as a store whose menu is empty, write it with
+none:
+
+```json
+{ "menus": { "footer": { "links": [] } } }
+```
+
+Any other handle the data does not have is not made up. In lsf, `linklists['customer-care']` is
+then `nil`, and so is a `link_list` setting that names it: both equal `blank`, and a loop over
+their `links` renders nothing. Shopify documents that a `link_list` setting whose menu does not
+exist is `blank`. Its reference does not say what `linklists` gives for a handle the store does
+not have. `lsf validate` warns about each menu the theme names that the data does not have
+(`missing_menu`).
 
 ## The shop
 
@@ -748,8 +786,14 @@ market of the buyer (`localization.market`) and of an address (`MailingAddress.m
 {
   "localization": {
     "countries": [{ "iso_code": "FR" }, { "iso_code": "DE" }, { "iso_code": "US" }],
+    "languages": [{ "iso_code": "en" }, { "iso_code": "fr" }, { "iso_code": "de" }],
     "markets": [
-      { "handle": "europe", "countries": ["FR", "DE"], "metafields": { "custom": { "tier": "gold" } } }
+      {
+        "handle": "europe",
+        "countries": ["FR", "DE"],
+        "languages": ["fr", "de"],
+        "metafields": { "custom": { "tier": "gold" } }
+      }
     ]
   }
 }
@@ -757,6 +801,18 @@ market of the buyer (`localization.market`) and of an address (`MailingAddress.m
 
 A country in no market is a market of its own, named after the country (`france`, `united-states`).
 An address in a country the store does not sell to has no market.
+
+A market's `languages` are the languages its countries are offered, as on Shopify:
+`country.available_languages` lists them in that order, and so does
+`localization.available_languages` for the visitor's country. The first is the market's default:
+when the localization form switches to a country whose market does not offer the current
+language, the visitor moves to that default; a language it offers stays. Here France and Germany
+get French then German (a visitor on an English page who switches to Germany lands on `/fr/...`),
+and the United States every language. A market without `languages`, and a country in no market,
+offer every language of the store, the primary first. A language that is not in
+`localization.languages` is an `unknown_language` error. Every language is served under
+`/<iso_code>/` at `/`, whatever the visitor's country; a market with a `subfolder_suffix` (below)
+has URLs of its own.
 
 A market can sell in its own currency, as a Shopify market with a base currency: `currency`, the
 `rate` that converts the store's prices to it (what one unit of the store currency is worth, as a
@@ -786,8 +842,8 @@ variants are.
 presence is a subfolder of the primary domain: `/<language>-<suffix>/` for each language
 (`/en-be/`, `/fr-be/`). A page there is in a country of the market, and `?country=` and the
 localization form move the visitor between `/` and the subfolders as Shopify does (see
-[the storefront guide](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/storefront.md#countries-and-markets-in-the-url)). The market of the shop's
-country is served at `/`, so it cannot have one.
+[the storefront guide](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/storefront.md#countries-and-markets-in-the-url)).
+The market of the shop's country is served at `/`, so it cannot have one.
 
 ```json
 { "handle": "belgium", "countries": ["BE"], "subfolder_suffix": "be" }
@@ -837,8 +893,8 @@ is served so that browsers fall back to the theme's fallback stack without netwo
 ## Metafields and metaobjects
 
 Metafields are grouped by namespace, then key. A plain value gets its type inferred; spell out
-`{ "type", "value" }` for anything else. References are written as handles, files as paths
-inside `files/`.
+`{ "type", "value" }` for anything else. References are written as handles or GIDs
+([reference values](#reference-values)), files as paths inside `files/`.
 
 ```json
 {
@@ -860,16 +916,30 @@ inside `files/`.
 `{{ product.metafields.custom.size_guide.value.title }}` then behave as on Shopify, including
 `metafield_tag` and `metafield_text`.
 
+A value that is an object or a list (a `rating`, a `money`, a `weight`, a `list.` type...) may
+also be written as its JSON text, the Admin API's `value`, so that it can be pasted from the API
+as is: `"{\"scale_min\":\"1.0\",\"scale_max\":\"5.0\",\"value\":\"4.5\"}"`. A `json`
+metafield is the exception: a string is a value of it.
+
+A `rating` keeps its `value`, `scale_min` and `scale_max` as strings, as Shopify does:
+
+```json
+"rating": { "type": "rating", "value": { "scale_min": "1.0", "scale_max": "5.0", "value": "4.5" } }
+```
+
+Its Liquid object is Shopify's, with strings too: `{{ m.value | json }}` gives
+`{"rating":"4.5","scale_max":"5.0","scale_min":"1.0"}`, and `{% for i in (1..m.value.scale_max) %}`
+runs 5 times, as Liquid turns the string `"5.0"` into 5 (it raises "invalid integer" on the
+number `5.0`). A number in the data is kept as it is written, as a string: `"scale_max": 5` is
+`"5"`.
+
 A typed value is checked against its type, as Shopify checks it. `{"type": "number_integer",
 "value": "two"}` is an `invalid_metafield` error, and so is a `weight` in `"kgs"` or a
 `rating` outside its scale. A `weight`, `dimension` or `volume` takes the units Shopify lists
 (`kilograms`, `centimeters`, `milliliters`...) and their short forms (`kg`, `cm`, `ml`). A
 `language` is a locale code (`fr`, `pt-BR`). A type Shopify does not have is an
-`unknown_metafield_type`. A
-reference that names nothing of the data is an `unknown_reference`, with the closest name:
-products, variants (by SKU or id), collections, pages, articles (`blog/article`) and
-metaobjects (`type/handle`). A `file_reference` to a file that is not in `files/` is no error:
-it shows as a placeholder.
+`unknown_metafield_type`. A reference that names nothing of the data is an
+`unknown_reference` ([reference values](#reference-values)).
 
 A `file_reference` is an image when its extension is one (`.jpg`, `.png`, `.webp`...) and a
 video for `.mp4`, `.mov`, `.webm` and `.m4v`: `sources`, `preview_image`, `video_tag` and
@@ -905,6 +975,98 @@ The types an app owns are written `$app:<type>` (`"$app:author"`), as its reserv
 namespaces are (`$app:config`). Shopify writes them in full, `app--<app id>--author`, which a
 theme's Liquid uses: `metaobjects['app--1234--author']` and `metaobjects['$app:author']` both
 find them, whatever the id, since the store data does not know it.
+
+### Translations of metaobjects
+
+An entry's `translations` give its fields in the store's other languages, by language, then
+field key, as Shopify's translatable resources do (`translationsRegister`):
+
+```json
+{
+  "localization": { "languages": [{ "iso_code": "en" }, { "iso_code": "fr" }] },
+  "metaobjects": {
+    "faq": [{
+      "handle": "shipping",
+      "fields": {
+        "question": "How long does shipping take?",
+        "answer": { "type": "rich_text_field", "value": { "type": "root", "children": [{ "type": "paragraph", "children": [{ "type": "text", "value": "Two days." }] }] } },
+        "position": 1
+      },
+      "translations": {
+        "fr": {
+          "question": "Combien de temps prend la livraison ?",
+          "answer": { "type": "root", "children": [{ "type": "paragraph", "children": [{ "type": "text", "value": "Deux jours." }] }] }
+        }
+      }
+    }]
+  }
+}
+```
+
+On a route of that language (`/fr/...`), `{{ metaobjects.faq.shipping.question }}`, the
+entry's page and its title, and the entries a metafield or a setting points to show the French
+values. As on Shopify, field by field, a field without a translation into the route's
+language shows its translation into the base language of a regional one (`fr` for `fr-CA`),
+else its own value.
+
+- A translation is written as the field's value is (a string, a rich text object, a list), and
+  checked against the field's type: a `url` that is not a URL is an `invalid_metafield`.
+- Only the types Shopify translates take one: `single_line_text_field`,
+  `multi_line_text_field`, `rich_text_field`, `json`, `link`, `url`, `file_reference`, and the
+  lists of single line texts, links, URLs and files. Numbers, booleans, dates, measurements,
+  money and the other references are the same in every language: translating one is an
+  `untranslatable_field`.
+- The language is one of `localization.languages` other than the first, the primary one, which
+  the fields are written in (`unknown_language`). A key the entry has no field for is an
+  `unknown_field`, with the closest one. A blank translation is an `invalid_value`: leave the key
+  out instead.
+
+The [Admin API](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/admin.md) reads these translations (`translatableResource`) and changes them
+(`translationsRegister`, `translationsRemove`), and the storefront shows what it changed.
+
+### Reference values
+
+Shopify writes a reference as a GID, and a list of references as a JSON array of GIDs
+(`["gid://shopify/Metaobject/123", "gid://shopify/Metaobject/456"]`, [list of data
+types](https://shopify.dev/docs/apps/build/custom-data/metafields/list-of-data-types)). The
+store data takes that form, and a shorter one: the key the data gives the entity. The shorter
+form is an lsf convention for fixtures; Shopify does not take it.
+
+| Type | lsf's form | Shopify's form |
+|---|---|---|
+| `product_reference` | the handle: `"ceramic-mug"` | `"gid://shopify/Product/<id>"` |
+| `variant_reference` | the SKU (`"MUG-1"`), or the id as a number | `"gid://shopify/ProductVariant/<id>"` |
+| `collection_reference` | the handle | `"gid://shopify/Collection/<id>"` |
+| `page_reference` | the handle | `"gid://shopify/Page/<id>"` |
+| `article_reference` | `"blog/article"`, or the article's handle alone when one blog only has it | `"gid://shopify/Article/<id>"` |
+| `metaobject_reference`, `mixed_reference` | `"type/handle"`: `"faq/size"` | `"gid://shopify/Metaobject/<id>"` |
+| `file_reference` | the path inside `files/`: `"lookbook.jpg"` | not read: lsf gives files no GID |
+
+A GID names the entity of that id in the store: the `id` the data gives it, or the one lsf gives
+it otherwise, which Liquid shows (`product.id`, `metaobject.system.id`) and the [Admin
+API](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/admin.md) answers. A metaobject entry has no `id` in the data: lsf makes one from its type
+and handle, so the GID of an entry copied from a Shopify store names nothing here. Write
+`"type/handle"` instead.
+
+Any other form reads `nil` in Liquid and is an error. `"faq.size"`, `"faq:size"`, `"size"` and
+`{"type": "faq", "handle": "size"}` are neither Shopify's form nor lsf's, and `validate` says
+what to write:
+
+```text
+error[unknown_reference]: "faq.size" names nothing: a metaobject_reference names a metaobject entry as "type/handle"
+  --> store.json at /products/0/metafields/custom/faqs/value/1
+  hint: use "faq/size"
+```
+
+A reference to something the data does not have is an `unknown_reference` too, with the closest
+name. These read `nil` without an error, as on Shopify:
+
+- a product that is not on the storefront (a draft, an unpublished one);
+- a GID in the [Admin API's changes](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/admin.md#what-the-storefront-and-the-checkout-see) that
+  names what the Admin API deleted.
+
+A `file_reference` to a file that is not in `files/` is no error either: it shows as a
+placeholder.
 
 
 ## Time and theme settings
@@ -948,7 +1110,7 @@ extensions:
 |---|---|
 | `invalid_json` | The file is not valid JSON. The hint gives the line and column. |
 | `unreadable_file` | The file could not be read. |
-| `unknown_field` | A field that does not exist. The hint suggests the closest one. The field is left out, the rest of the file is read. |
+| `unknown_field` | A field that does not exist, or a metaobject's translation of a field the entry does not have. The hint suggests the closest one. The field is left out, the rest of the file is read. |
 | `classic_customer_accounts` | A warning: `shop.customer_accounts` or a customer's `password`, which classic customer accounts had. The field is ignored. |
 | `missing_field` | A required field is absent. |
 | `wrong_type` | A value of the wrong JSON type. |
@@ -956,8 +1118,8 @@ extensions:
 | `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. `invalid_money` is a shipping rate below zero. |
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
-| `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
-| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield, and a shipping rate or a payment method a scenario's `entered` names. |
+| `unknown_language` | A checkout scenario or a market names a language that is not in `localization.languages`, or a metaobject's `translations` do, or name the primary language. |
+| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield (in a form lsf does not read, its hint is the form to write: `use "faq/size"`), and a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
 | `invalid_value`, `invalid_format` of a market's `currency` or `rate` | A currency that is not three letters, a rate that is not a decimal above 0. A key of its `prices` that names no variant is an `unknown_variant`. |
@@ -967,7 +1129,8 @@ extensions:
 | `expect_checks_nothing` (warning) | An `excludes` of a scenario's `expect` names a payment method, express button or delivery option the checkout does not offer, so it checks nothing. The hint lists what it offers. |
 | `invalid_throttle` | The `throttle` of a session sent to `PUT /__lsf/session` is not one `--throttle` takes. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
-| `invalid_metafield`, `unknown_metafield_type` | A typed metafield (or field of a metaobject) whose value its type refuses, or whose type Shopify does not have. The hint shows how the type is written. |
+| `invalid_metafield`, `unknown_metafield_type` | A typed metafield (or field of a metaobject, or a translation of one) whose value its type refuses, or whose type Shopify does not have. The hint shows how the type is written. |
+| `untranslatable_field` | A metaobject's `translations` translate a field of a type Shopify does not translate (a number, a boolean, a product reference...). The hint lists the types it translates. |
 | `unknown_setting`, `invalid_setting` | A `theme_settings` id that `config/settings_schema.json` does not have, or a value its setting does not take. The hint suggests the closest id or option. |
 | `unchecked_theme_settings` (warning) | The data has `theme_settings` and there is no theme to check them against. |
 | `invalid_color`, `empty_swatch` | A swatch whose color is not a CSS color, or that has neither a color nor an image. |
@@ -975,6 +1138,8 @@ extensions:
 | `missing_variants`, `missing_options`, `option_mismatch`, `too_many_options` | The options of a product and the option values of its variants do not line up. |
 | `media_conflict`, `missing_sources`, `missing_external_video` | Incomplete or contradictory product media. |
 | `ambiguous_link` | A menu link that points at more than one thing. |
+| `default_menu` (warning) | The theme names `main-menu` or `footer`, and the data does not have it: lsf renders [its default](#lsfs-default-menus) there. `file` is `(data)` and `path` is `/menus/<handle>`. |
+| `missing_menu` (warning) | The theme names another menu that the data does not have: lsf renders no menu there. The message says where the theme names it, and the hint suggests the closest handle. |
 | `missing_locale_file` (warning) | A language the theme has no `locales/<code>.json` for. |
 | `gift_card_balance` (warning) | A gift card whose balance is above its initial value. |
 | `unavailable_in_stock` (warning) | A variant with `"available": false` and an `inventory_quantity` above 0, which Shopify never has. It stays unavailable, with its stock. The hint says which field to remove. |
@@ -1158,7 +1323,7 @@ A metafield with an explicit type.
 | Field | Type | Description |
 |---|---|---|
 | `type` | string | **Required.** A Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`, `rich_text_field`, `number_integer`, `number_decimal`, `boolean`, `color`, `date`, `date_time`, `url`, `json`, `money`, `rating`, `weight`, `volume`, `dimension` and the other measurements (`distance`, `temperature`, `duration`...), `product_reference`, `collection_reference`, `page_reference`, `article_reference` (`blog/article`, or the article's handle alone), `file_reference`, `metaobject_reference`, or a `list.` variant of those. |
-| `value` | any JSON value | **Required.** The value. References are written as handles (`"blue-shirt"`), files as paths inside `files/`, lists as JSON arrays. |
+| `value` | any JSON value | **Required.** The value. Lists are JSON arrays. A reference is written as Shopify writes it, a GID (`"gid://shopify/Product/<id>"`, the id the entity has in the store), or by the key the store data gives the entity, an lsf convention: a handle (`"blue-shirt"`), `blog/article`, `type/handle` of a metaobject entry (`"faq/size"`), a SKU or an id of a variant. Files are paths inside `files/`. An object or a list may also be written as its JSON text, as the Admin API's `value` gives it. |
 
 ### Product
 
@@ -1694,6 +1859,7 @@ A metaobject entry (`metaobjects.<type>.<handle>`).
 |---|---|---|
 | `handle` | string | **Required.** |
 | `fields` | map of [Metafield](#metafield) | Field values, with the same shorthand as metafields. |
+| `translations` | map of map of any JSON value | The entry in the store's other languages, by language (an `iso_code` of `localization.languages`) then field key: `{"fr": {"question": "Combien ?"}}`. A value is written as the field's (a string, a rich text object, a list), and only the fields Shopify translates take one: text, rich text, JSON, links, URLs, files, and the lists of single line texts, links, URLs and files. On `/fr/...` a field shows its French value, else its own. |
 | `template_suffix` | string | Selects `templates/metaobject/<type>.<suffix>.json` instead of `templates/metaobject/<type>.json` for the page of the entry, which is `/pages/<type>/<handle>`. |
 
 ### Localization
@@ -1742,6 +1908,7 @@ A market: the countries the store sells to as one, as checkout Functions see it 
 |---|---|---|
 | `handle` | string | **Required.** What Functions call the market: `"europe"`. |
 | `countries` | array of string | **Required.** The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`. |
+| `languages` | array of string | The languages its countries are offered (`country.available_languages`, in this order), by ISO code, which are in `localization.languages`. The first is the market's default language: a visitor who switches to one of its countries in a language it does not offer gets it. Defaults to every language of the store. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 | `subfolder_suffix` | string | Serves the market under subfolders of its own, as a Shopify market's web presence does: `"ca"` serves it at `/en-ca/`, `/fr-ca/`, one per language. Two letters at least. Without it, the market is served at `/`, with the primary market. |
 | `currency` | string | The currency its countries pay in, by ISO 4217 code (`"EUR"`), as a Shopify market's base currency: prices, the cart and the checkout are in it. A country's own `currency` wins. Defaults to the store currency. |

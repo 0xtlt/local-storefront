@@ -62,16 +62,23 @@ pub fn country_value(site: &SiteRef, country: &Country) -> Value {
         ("continent", Value::Nil),
         (
             "available_languages",
-            Value::array(
-                site.store
-                    .languages
-                    .iter()
-                    .map(|language| language_value(site, language))
-                    .collect(),
-            ),
+            available_languages(site, &country.iso_code),
         ),
         ("market", market_value()),
     ])
+}
+
+/// The languages of a country's market (all those of the store when its market lists none),
+/// which `country.available_languages` and, for the visitor's country,
+/// `localization.available_languages` are.
+fn available_languages(site: &SiteRef, iso_code: &str) -> Value {
+    Value::array(
+        site.store
+            .languages_of(iso_code)
+            .into_iter()
+            .map(|language| language_value(site, language))
+            .collect(),
+    )
 }
 
 fn market_value() -> Value {
@@ -101,13 +108,9 @@ impl Object for LocalizationDrop {
                     .map(|country| country_value(site, country))
                     .collect(),
             ),
-            "available_languages" => Value::array(
-                site.store
-                    .languages
-                    .iter()
-                    .map(|language| language_value(site, language))
-                    .collect(),
-            ),
+            // The languages of the visitor's market, as the Storefront API's
+            // `Localization.availableLanguages` ("available for the active country").
+            "available_languages" => available_languages(site, &site.country().iso_code),
             "country" => country_value(site, site.country()),
             "language" => language_value(site, site.language()),
             "market" => market_value(),

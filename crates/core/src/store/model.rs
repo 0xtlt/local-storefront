@@ -225,8 +225,12 @@ pub struct TypedMetafield {
     /// of those.
     #[serde(rename = "type")]
     pub kind: String,
-    /// The value. References are written as handles (`"blue-shirt"`), files as paths inside
-    /// `files/`, lists as JSON arrays.
+    /// The value. Lists are JSON arrays. A reference is written as Shopify writes it, a GID
+    /// (`"gid://shopify/Product/<id>"`, the id the entity has in the store), or by the key the
+    /// store data gives the entity, an lsf convention: a handle (`"blue-shirt"`), `blog/article`,
+    /// `type/handle` of a metaobject entry (`"faq/size"`), a SKU or an id of a variant. Files
+    /// are paths inside `files/`. An object or a list may also be written as its JSON text, as
+    /// the Admin API's `value` gives it.
     pub value: Json,
 }
 
@@ -1365,6 +1369,12 @@ pub struct MarketInput {
     pub handle: String,
     /// The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`.
     pub countries: Vec<String>,
+    /// The languages its countries are offered (`country.available_languages`, in this order),
+    /// by ISO code, which are in `localization.languages`. The first is the market's default
+    /// language: a visitor who switches to one of its countries in a language it does not offer
+    /// gets it. Defaults to every language of the store.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
     #[serde(default)]
     pub metafields: Metafields,
     /// Serves the market under subfolders of its own, as a Shopify market's web presence does:
@@ -1430,6 +1440,14 @@ pub struct MetaobjectInput {
     /// Field values, with the same shorthand as metafields.
     #[serde(default)]
     pub fields: IndexMap<String, MetafieldInput>,
+    /// The entry in the store's other languages, by language (an `iso_code` of
+    /// `localization.languages`) then field key: `{"fr": {"question": "Combien ?"}}`. A value
+    /// is written as the field's (a string, a rich text object, a list), and only the fields
+    /// Shopify translates take one: text, rich text, JSON, links, URLs, files, and the lists
+    /// of single line texts, links, URLs and files. On `/fr/...` a field shows its French
+    /// value, else its own.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub translations: IndexMap<String, IndexMap<String, Json>>,
     /// Selects `templates/metaobject/<type>.<suffix>.json` instead of
     /// `templates/metaobject/<type>.json` for the page of the entry, which is
     /// `/pages/<type>/<handle>`.

@@ -6,6 +6,7 @@ mod date;
 pub mod demo;
 pub mod docs;
 pub mod load;
+pub mod metafield_references;
 pub mod metafield_types;
 pub mod model;
 mod provinces;
@@ -13,6 +14,7 @@ pub mod reference;
 pub mod theme_settings;
 pub mod validate;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -553,9 +555,26 @@ pub struct Menu {
     pub handle: String,
     pub title: String,
     pub links: Vec<Link>,
+    /// Made up by lsf: the data has no menu with this handle, which is one of Shopify's default
+    /// menus ([`DEFAULT_MENUS`]). Its links are lsf's, not the store's.
+    pub supplied_by_lsf: bool,
 }
 
+/// Shopify's default menus: a store cannot delete them, and a `link_list` setting can only
+/// default to one of them. lsf makes up the ones the data does not have.
+pub const DEFAULT_MENUS: [&str; 2] = ["main-menu", "footer"];
+
 impl Menu {
+    /// The titles of its links, for a message: `Home, Catalog`.
+    pub fn link_titles(&self) -> String {
+        let titles: Vec<&str> = self.links.iter().map(|link| link.title.as_str()).collect();
+        if titles.is_empty() {
+            "no links".to_string()
+        } else {
+            titles.join(", ")
+        }
+    }
+
     pub fn levels(&self) -> usize {
         self.links
             .iter()
@@ -808,6 +827,9 @@ pub struct Market {
     pub handle: String,
     /// ISO 3166-1 alpha-2 codes, upper case.
     pub countries: Vec<String>,
+    /// The ISO codes of the languages it offers, as `localization.languages` spells them, its
+    /// default first. Empty when it offers every language of the store.
+    pub languages: Vec<String>,
     pub metafields: Metafields,
     /// The suffix of its subfolders (`ca` for `/en-ca/`), lower case: `None` for a market
     /// served at `/`.
@@ -948,6 +970,9 @@ pub struct Metaobject {
     pub kind: String,
     pub handle: String,
     pub fields: IndexMap<String, Metafield>,
+    /// The values of its fields in the store's other languages, by language (its `iso_code` in
+    /// `localization.languages`) then field key. Only fields of a translatable type have one.
+    pub translations: IndexMap<String, IndexMap<String, Json>>,
     pub template_suffix: Option<String>,
 }
 
@@ -955,6 +980,29 @@ impl Metaobject {
     /// Whether the entry is of the type `kind` names: [`same_metaobject_type`].
     pub fn is_of(&self, kind: &str) -> bool {
         same_metaobject_type(&self.kind, kind)
+    }
+
+    /// A field as a language shows it: its translation into `locale` when the entry has one,
+    /// else into the base language of a regional one (`fr` for `fr-CA`), else its own value
+    /// (that of the primary language). Shopify falls back so, field by field
+    /// (https://shopify.dev/docs/apps/build/markets).
+    pub fn field_in(&self, key: &str, locale: &str) -> Option<Cow<'_, Metafield>> {
+        let field = self.fields.get(key)?;
+        let translation = |code: &str| {
+            self.translations
+                .iter()
+                .find(|(language, _)| language.eq_ignore_ascii_case(code))
+                .and_then(|(_, values)| values.get(key))
+        };
+        let base = locale.split_once('-').map(|(base, _)| base);
+        let translated = translation(locale).or_else(|| base.and_then(translation));
+        Some(match translated {
+            Some(value) => Cow::Owned(Metafield {
+                kind: field.kind.clone(),
+                value: value.clone(),
+            }),
+            None => Cow::Borrowed(field),
+        })
     }
 }
 
@@ -1512,6 +1560,22 @@ impl Store {
         self.language(language)
     }
 
+    /// The language a visitor in a country reads: `wanted` when the country's market offers
+    /// it, else the market's default, as Shopify moves a visitor to a country whose market does
+    /// not offer their language ("If the currently selected language is not supported by the
+    /// selected country, it will be updated to the default language for that country").
+    pub fn language_for<'s>(&'s self, wanted: &'s Language, country: &str) -> &'s Language {
+        if self
+            .languages_of(country)
+            .iter()
+            .any(|offered| offered.iso_code == wanted.iso_code)
+        {
+            wanted
+        } else {
+            self.default_language_of(country)
+        }
+    }
+
     /// Splits the locale prefix off a storefront path: `/fr/cart` → (`fr`, `/fr`, `/cart`),
     /// `/fr-ca/cart` → (`fr`, `/fr-ca`, `/cart`) for a market served under `ca`, `/cart` →
     /// (the primary language, empty, `/cart`).
@@ -1554,6 +1618,32 @@ impl Store {
         })
     }
 
+    /// The languages a country is offered (`country.available_languages`): those of its market,
+    /// in the market's order (its default first), when the market lists some; otherwise every
+    /// language of the store, the primary first.
+    pub fn languages_of(&self, iso_code: &str) -> Vec<&Language> {
+        match self
+            .market_of(iso_code)
+            .filter(|market| !market.languages.is_empty())
+        {
+            Some(market) => market
+                .languages
+                .iter()
+                .filter_map(|code| self.language(code))
+                .collect(),
+            None => self.languages.iter().collect(),
+        }
+    }
+
+    /// The language a country defaults to: the first its market lists, else the store's
+    /// primary language.
+    pub fn default_language_of(&self, iso_code: &str) -> &Language {
+        self.market_of(iso_code)
+            .and_then(|market| market.languages.first())
+            .and_then(|code| self.language(code))
+            .unwrap_or_else(|| self.primary_language())
+    }
+
     /// The entry of a type (an app's in either spelling: [`same_metaobject_type`]) and a handle.
     pub fn metaobject(&self, kind: &str, handle: &str) -> Option<&Metaobject> {
         self.metaobjects
@@ -1571,10 +1661,7 @@ impl Store {
         let reference = reference.trim();
         if let Some(id) = reference.strip_prefix("gid://shopify/Metaobject/") {
             let id = id.parse::<u64>().ok()?;
-            return self.metaobjects.iter().find(|entry| {
-                crate::util::stable_id("metaobject", &format!("{}/{}", entry.kind, entry.handle))
-                    == id
-            });
+            return self.metaobjects.iter().find(|entry| entry.id() == id);
         }
         if let Some(entry) = kind.and_then(|kind| self.metaobject(kind, reference)) {
             return Some(entry);
@@ -1680,6 +1767,62 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_regional_language_falls_back_to_its_base_language_then_the_field() {
+        // https://shopify.dev/docs/apps/build/markets: content in "Dutch (Belgium)" falls back
+        // to base Dutch, then to the shop's primary language.
+        let text = |value: &str| Metafield {
+            kind: "single_line_text_field".to_string(),
+            value: Json::from(value),
+        };
+        let entry = Metaobject {
+            kind: "faq".to_string(),
+            handle: "shipping".to_string(),
+            fields: [
+                ("question".to_string(), text("How long?")),
+                ("answer".to_string(), text("Two days.")),
+            ]
+            .into_iter()
+            .collect(),
+            translations: [
+                (
+                    "fr".to_string(),
+                    [
+                        ("question".to_string(), Json::from("Combien de temps ?")),
+                        ("answer".to_string(), Json::from("Deux jours.")),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                (
+                    "fr-CA".to_string(),
+                    [("answer".to_string(), Json::from("Deux jours ouvrables."))]
+                        .into_iter()
+                        .collect(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            template_suffix: None,
+        };
+        let value = |key: &str, locale: &str| {
+            entry
+                .field_in(key, locale)
+                .and_then(|field| field.value.as_str().map(str::to_string))
+        };
+        assert_eq!(
+            value("answer", "fr-CA").as_deref(),
+            Some("Deux jours ouvrables.")
+        );
+        assert_eq!(
+            value("question", "fr-ca").as_deref(),
+            Some("Combien de temps ?")
+        );
+        assert_eq!(value("answer", "fr").as_deref(), Some("Deux jours."));
+        assert_eq!(value("question", "de-CH").as_deref(), Some("How long?"));
+        assert_eq!(value("question", "en").as_deref(), Some("How long?"));
+    }
 
     #[test]
     fn an_app_metaobject_type_is_named_either_way() {

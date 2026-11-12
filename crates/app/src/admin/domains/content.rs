@@ -507,6 +507,8 @@ fn seed_metaobjects(seed: &mut Seed) {
         for entry in &entries {
             ids.push(seed_metaobject(seed, entry, display, &created));
         }
+        // A type the data translates has the translatable capability.
+        let translatable = entries.iter().any(|entry| !entry.translations.is_empty());
         // An app's own type, `$app:author` in the store data, is `app--<id>--author` in the
         // Admin API; its ids are made of the store data's spelling, as lsf-core makes them.
         let name = kind.strip_prefix("$app:").unwrap_or(kind);
@@ -523,7 +525,7 @@ fn seed_metaobjects(seed: &mut Seed) {
             "metaobjectsCount": entries.len(),
             "capabilities": {
                 "publishable": {"enabled": true},
-                "translatable": {"enabled": false},
+                "translatable": {"enabled": translatable},
                 "onlineStore": {"enabled": true},
             },
             "createdAt": created,
@@ -587,7 +589,17 @@ fn seed_metaobject(
         .and_then(|field| field.value.as_str())
         .filter(|name| !name.is_empty())
         .map_or_else(|| value::humanize(&entry.handle), str::to_string);
-    seed.insert(json!({
+    // Its translations, their values written as the Admin API writes those of its fields.
+    let mut translations = Vec::new();
+    for (locale, values) in &entry.translations {
+        for (key, value) in values {
+            if let Some(field) = entry.fields.get(key) {
+                let converted = convert(seed, &field.kind, value);
+                translations.push((locale.clone(), key.clone(), converted.value));
+            }
+        }
+    }
+    let key = seed.insert(json!({
         "__typename": "Metaobject",
         "id": id,
         "type": admin_namespace(seed.app_id, &entry.kind),
@@ -601,7 +613,9 @@ fn seed_metaobject(
         },
         "createdAt": created,
         "updatedAt": created,
-    }))
+    }));
+    translations::seed_metaobject(&mut seed.state, &key, translations, created);
+    key
 }
 
 /// The markets: those the data declares, then a market of its own for each country in none of

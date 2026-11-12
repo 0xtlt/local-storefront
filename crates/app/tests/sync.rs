@@ -653,6 +653,37 @@ fn metafields_reach_liquid_and_the_function_inputs() {
     assert_eq!(input["shop"]["metafield"]["value"], json!("Spring sale"));
 }
 
+#[test]
+fn a_market_keeps_its_languages_through_the_admin_api() {
+    // The rich fixture's localization, with the languages of its market.
+    let languages = Overlay::new(
+        "market-languages",
+        json!({"localization": {
+            "countries": [{"iso_code": "FR"}, {"iso_code": "DE"},
+                {"iso_code": "GB", "currency": "GBP"}, {"iso_code": "US", "currency": "USD"}],
+            "languages": [{"iso_code": "fr"}, {"iso_code": "en"}],
+            "markets": [{"handle": "europe", "countries": ["FR", "DE"], "languages": ["en", "fr"]}]
+        }}),
+    );
+    let (base, _) = load(std::slice::from_ref(&languages));
+    let app = support::fixture_app();
+    let mut state = ShopState::seeded(&base, Some(&app));
+    let europe = content::market_gid("europe");
+    // A change of the market (`marketUpdate`) syncs the localization again.
+    set(&mut state, &europe, "handle", json!("eu"));
+    let overlay = sync::overlay(&state, &base).expect("something to sync");
+    let (store, _) = load(&[languages.clone(), overlay]);
+    let market = store.market_of("DE").expect("a market");
+    assert_eq!(market.handle, "eu");
+    assert_eq!(market.languages, ["en", "fr"]);
+    // English unpublished (`shopLocaleUpdate`): the market offers French only.
+    set(&mut state, "en", "published", json!(false));
+    let overlay = sync::overlay(&state, &base).expect("something to sync");
+    let (store, _) = load(&[languages, overlay]);
+    assert_eq!(store.market_of("DE").expect("a market").languages, ["fr"]);
+    assert!(store.language("en").is_none());
+}
+
 /// The input a validation Function with `query` reads for a cart of one unit of a product.
 fn function_input(store: &Store, handle: &str, query: &str) -> Value {
     use lsf_app::checkout::input::{FetchInput, InputContext, Owner, OwnerKind};
@@ -876,6 +907,8 @@ fn content_syncs() {
     assert_eq!(store.blogs[0].articles[0].comments.len(), 1);
     let main = store.menu("main-menu").unwrap();
     assert_eq!(main.links[0].title, "Start");
+    // The footer menu the data does not have is still lsf's: the Admin API did not change it.
+    assert!(store.menu("footer").unwrap().supplied_by_lsf);
     assert_eq!(
         main.links.len(),
         base.menu("main-menu").unwrap().links.len()
@@ -1023,6 +1056,148 @@ fn mutate(state: &mut ShopState, query: &str, variables: Value) -> Value {
         }
     }
     answer
+}
+
+#[test]
+fn the_translations_of_a_metaobject_are_those_of_the_store_data() {
+    // The FAQ of the rich fixture has its question in English, the store's other language.
+    let (base, mut state) = rich();
+    let faq = content::metaobject_gid("faq", "returns");
+    let read = mutate(
+        &mut state,
+        r#"query($id: ID!) {
+            translatableResource(resourceId: $id) { translatableContent { key digest } translations(locale: "en") { key value outdated } }
+            metaobjectDefinitionByType(type: "faq") { capabilities { translatable { enabled } } }
+        }"#,
+        json!({"id": faq}),
+    );
+    let resource = &read["data"]["translatableResource"];
+    assert_eq!(
+        resource["translations"],
+        json!([{"key": "question", "value": "Can I send it back?", "outdated": false}]),
+        "{read}"
+    );
+    // The references are not translatable: the question and the answer are.
+    let content = resource["translatableContent"].as_array().unwrap();
+    let keys: Vec<&str> = content
+        .iter()
+        .map(|entry| entry["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys, ["question", "answer"]);
+    assert_eq!(
+        read["data"]["metaobjectDefinitionByType"]["capabilities"]["translatable"]["enabled"],
+        json!(true)
+    );
+
+    // The backend translates the answer and removes the question's translation.
+    let answer = json!({"type": "root", "children": [
+        {"type": "paragraph", "children": [{"type": "text", "value": "Yes, within 30 days."}]},
+    ]});
+    mutate(
+        &mut state,
+        r#"mutation($id: ID!, $translations: [TranslationInput!]!) {
+            translationsRegister(resourceId: $id, translations: $translations) { userErrors { message } } }"#,
+        json!({"id": faq, "translations": [{
+            "locale": "en", "key": "answer", "value": answer.to_string(),
+            "translatableContentDigest": content[1]["digest"],
+        }]}),
+    );
+    mutate(
+        &mut state,
+        r#"mutation($id: ID!) { translationsRemove(resourceId: $id, translationKeys: ["question"], locales: ["en"]) { userErrors { message } } }"#,
+        json!({"id": faq}),
+    );
+    let (store, overlay) = synced(&state, &base);
+    assert_eq!(
+        overlay.data["metaobjects"]["faq"][0]["translations"],
+        json!({"en": {"answer": answer}}),
+        "{overlay:#?}"
+    );
+    let entry = store.metaobject("faq", "returns").unwrap();
+    assert_eq!(entry.field_in("answer", "en").unwrap().value, answer);
+    assert_eq!(
+        entry.field_in("question", "en").unwrap().value,
+        json!("Can I return?")
+    );
+    // Nothing else of the store changed.
+    assert_eq!(
+        store.metaobject("faq", "returns").unwrap().fields["designers"].value,
+        base.metaobject("faq", "returns").unwrap().fields["designers"].value
+    );
+}
+
+#[test]
+fn the_translations_into_a_locale_follow_its_publication() {
+    // The FAQ of the rich fixture has its question in English, the store's other language.
+    let (base, mut state) = rich();
+    let faq = content::metaobject_gid("faq", "returns");
+    let publish = r#"mutation($published: Boolean!) {
+        shopLocaleUpdate(locale: "en", shopLocale: {published: $published}) { shopLocale { locale } userErrors { message } } }"#;
+    let admin_translations = |state: &mut ShopState| {
+        mutate(
+            state,
+            r#"query($id: ID!) { translatableResource(resourceId: $id) { translations(locale: "en") { key value } } }"#,
+            json!({"id": faq}),
+        )["data"]["translatableResource"]["translations"]
+            .clone()
+    };
+    // The store as the files and the Admin API's changes make it, without an error.
+    let current = |state: &ShopState| {
+        let overlays: Vec<Overlay> = sync::overlay(state, &base).into_iter().collect();
+        load(&overlays).0
+    };
+    let question = |store: &Store| {
+        store
+            .metaobject("faq", "returns")
+            .unwrap()
+            .field_in("question", "en")
+            .unwrap()
+            .value
+            .clone()
+    };
+    let translated = json!([{"key": "question", "value": "Can I send it back?"}]);
+
+    // Unpublished: the Admin API keeps the translation, the store data leaves it out (the
+    // storefront no longer serves the locale), and `validate` has nothing to say.
+    mutate(&mut state, publish, json!({"published": false}));
+    let (store, overlay) = synced(&state, &base);
+    assert!(store.language("en").is_none());
+    let entry = store.metaobject("faq", "returns").unwrap();
+    assert!(entry.translations.is_empty(), "{overlay:#?}");
+    assert_eq!(question(&store), json!("Can I return?"));
+    assert_eq!(admin_translations(&mut state), translated);
+
+    // Published again: the translation is back.
+    mutate(&mut state, publish, json!({"published": true}));
+    let store = current(&state);
+    assert!(store.language("en").is_some());
+    assert_eq!(question(&store), json!("Can I send it back?"));
+
+    // Disabled, the locale goes with its translations: enabled and published again, it has none.
+    mutate(
+        &mut state,
+        r#"mutation { shopLocaleDisable(locale: "en") { locale userErrors { message } } }"#,
+        json!({}),
+    );
+    let store = current(&state);
+    assert!(store.language("en").is_none());
+    assert!(
+        store
+            .metaobject("faq", "returns")
+            .unwrap()
+            .translations
+            .is_empty()
+    );
+    mutate(
+        &mut state,
+        r#"mutation { shopLocaleEnable(locale: "en") { shopLocale { locale } userErrors { message } } }"#,
+        json!({}),
+    );
+    mutate(&mut state, publish, json!({"published": true}));
+    let store = current(&state);
+    assert!(store.language("en").is_some());
+    assert_eq!(question(&store), json!("Can I return?"));
+    assert_eq!(admin_translations(&mut state), json!([]));
 }
 
 #[test]

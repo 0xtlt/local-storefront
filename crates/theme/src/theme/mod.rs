@@ -3,6 +3,7 @@
 
 pub mod liquid_settings;
 pub mod locales;
+pub mod menus;
 pub mod schema;
 pub mod schema_check;
 pub mod template_json;
@@ -19,6 +20,7 @@ use serde_json::Value as Json;
 
 use crate::app_extensions::AppExtensions;
 pub use locales::Translations;
+pub use menus::MenuReference;
 pub use schema::{Schema, SettingDef, Wrapper};
 pub use template_json::{BlockInstance, Layout, SectionInstance, TemplateJson};
 

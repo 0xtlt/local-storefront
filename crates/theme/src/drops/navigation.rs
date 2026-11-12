@@ -50,6 +50,10 @@ pub struct LinkListDrop {
 impl LinkListDrop {
     pub fn value(site: &SiteRef, menu: &Menu) -> Value {
         cost::loaded(cost::MENU, &menu.handle);
+        // Its links are lsf's: the page says so.
+        if menu.supplied_by_lsf {
+            site.note_default_menu(&menu.handle);
+        }
         Value::object(LinkListDrop {
             site: site.clone(),
             menu: menu.clone(),

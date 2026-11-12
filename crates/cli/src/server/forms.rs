@@ -147,25 +147,33 @@ pub fn localization(visit: &Visit<'_>) -> Reply {
     let return_to = text("return_to").unwrap_or_else(|| "/".to_string());
     let store = &visit.store;
     let (current, root, path) = store.split_locale(&return_to);
+    let page_presence = store.market_of_root(&root);
     // The web presence of the country picked: the subfolders of its market (`/en-be`), else `/`.
     // Without a country, the one of the page.
     let presence = match text("country_code").and_then(|code| store.country(&code)) {
         Some(country) => store
             .market_of(&country.iso_code)
             .filter(|market| market.subfolder_suffix.is_some()),
-        None => store.market_of_root(&root),
+        None => page_presence,
     };
-    let language = text("locale_code")
+    let asked = text("locale_code")
         .or_else(|| text("language_code"))
         .and_then(|code| store.language(&code));
-    if language.is_none()
-        && presence.map(|m| &m.handle) == store.market_of_root(&root).map(|m| &m.handle)
-    {
+    // The language must be one the market of the visitor's country offers: "If the currently
+    // selected language is not supported by the selected country, it will be updated to the
+    // default language for that country."
+    // (https://shopify.dev/docs/storefronts/themes/markets/multiple-currencies-languages)
+    let session = visit.session();
+    let country = store.country_at(session.country.as_deref(), presence);
+    let language = store.language_for(asked.unwrap_or(current), &country.iso_code);
+    let same_presence =
+        presence.map(|market| &market.handle) == page_presence.map(|market| &market.handle);
+    if asked.is_none() && language.iso_code == current.iso_code && same_presence {
         return Reply::redirect(&return_to);
     }
     // The same page under the root of the language on that presence, as Shopify answers
     // `country_code=BE` with `/en-be/...`.
-    let root = store.locale_root(language.unwrap_or(current), presence);
+    let root = store.locale_root(language, presence);
     let target = if root.is_empty() {
         path
     } else if path == "/" {

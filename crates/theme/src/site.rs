@@ -1,7 +1,7 @@
 //! Everything a render needs to know that does not change while it runs: the theme, the store,
 //! the request and the visitor's session.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::{DateTime, Utc};
 use lsf_core::session::Session;
@@ -107,6 +107,8 @@ pub struct Site {
     // render, because asking the theme takes locks that every other render takes too.
     translations: OnceLock<[(String, Arc<Translations>); 2]>,
     schema_translations: OnceLock<Arc<Translations>>,
+    /// The handles of the menus lsf made up that the render used, in the order it first did.
+    default_menus: Mutex<Vec<String>>,
 }
 
 impl Site {
@@ -136,7 +138,21 @@ impl Site {
             now,
             translations: OnceLock::new(),
             schema_translations: OnceLock::new(),
+            default_menus: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Notes that the render uses a menu lsf made up ([`lsf_core::store::Menu::supplied_by_lsf`]).
+    pub(crate) fn note_default_menu(&self, handle: &str) {
+        let mut handles = self.default_menus.lock().expect("menus poisoned");
+        if !handles.iter().any(|known| known == handle) {
+            handles.push(handle.to_string());
+        }
+    }
+
+    /// The handles of the menus lsf made up that the render used, in the order it first did.
+    pub fn default_menus(&self) -> Vec<String> {
+        self.default_menus.lock().expect("menus poisoned").clone()
     }
 
     /// The storefront translations a key is looked up in, in order: those of the request's

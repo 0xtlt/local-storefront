@@ -170,7 +170,7 @@ A metafield with an explicit type.
 | Field | Type | Description |
 |---|---|---|
 | `type` | string | **Required.** A Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`, `rich_text_field`, `number_integer`, `number_decimal`, `boolean`, `color`, `date`, `date_time`, `url`, `json`, `money`, `rating`, `weight`, `volume`, `dimension` and the other measurements (`distance`, `temperature`, `duration`...), `product_reference`, `collection_reference`, `page_reference`, `article_reference` (`blog/article`, or the article's handle alone), `file_reference`, `metaobject_reference`, or a `list.` variant of those. |
-| `value` | any JSON value | **Required.** The value. References are written as handles (`"blue-shirt"`), files as paths inside `files/`, lists as JSON arrays. |
+| `value` | any JSON value | **Required.** The value. Lists are JSON arrays. A reference is written as Shopify writes it, a GID (`"gid://shopify/Product/<id>"`, the id the entity has in the store), or by the key the store data gives the entity, an lsf convention: a handle (`"blue-shirt"`), `blog/article`, `type/handle` of a metaobject entry (`"faq/size"`), a SKU or an id of a variant. Files are paths inside `files/`. An object or a list may also be written as its JSON text, as the Admin API's `value` gives it. |
 
 ## Product
 
@@ -706,6 +706,7 @@ A metaobject entry (`metaobjects.<type>.<handle>`).
 |---|---|---|
 | `handle` | string | **Required.** |
 | `fields` | map of [Metafield](#metafield) | Field values, with the same shorthand as metafields. |
+| `translations` | map of map of any JSON value | The entry in the store's other languages, by language (an `iso_code` of `localization.languages`) then field key: `{"fr": {"question": "Combien ?"}}`. A value is written as the field's (a string, a rich text object, a list), and only the fields Shopify translates take one: text, rich text, JSON, links, URLs, files, and the lists of single line texts, links, URLs and files. On `/fr/...` a field shows its French value, else its own. |
 | `template_suffix` | string | Selects `templates/metaobject/<type>.<suffix>.json` instead of `templates/metaobject/<type>.json` for the page of the entry, which is `/pages/<type>/<handle>`. |
 
 ## Localization
@@ -754,6 +755,7 @@ A market: the countries the store sells to as one, as checkout Functions see it 
 |---|---|---|
 | `handle` | string | **Required.** What Functions call the market: `"europe"`. |
 | `countries` | array of string | **Required.** The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`. |
+| `languages` | array of string | The languages its countries are offered (`country.available_languages`, in this order), by ISO code, which are in `localization.languages`. The first is the market's default language: a visitor who switches to one of its countries in a language it does not offer gets it. Defaults to every language of the store. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 | `subfolder_suffix` | string | Serves the market under subfolders of its own, as a Shopify market's web presence does: `"ca"` serves it at `/en-ca/`, `/fr-ca/`, one per language. Two letters at least. Without it, the market is served at `/`, with the primary market. |
 | `currency` | string | The currency its countries pay in, by ISO 4217 code (`"EUR"`), as a Shopify market's base currency: prices, the cart and the checkout are in it. A country's own `currency` wins. Defaults to the store currency. |
