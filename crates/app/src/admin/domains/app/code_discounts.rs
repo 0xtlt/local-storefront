@@ -12,6 +12,10 @@
 //!   members of the listed segments), and has not placed an order with it when it
 //!   `appliesOncePerCustomer`. The checkout checks the rest against the cart
 //!   (`crate::checkout::pipeline`).
+//! - [`redemptions`] checks again, as the order is recorded, that the buyer may still use the
+//!   discounts the checkout applied: another order may have taken the last use since the
+//!   checkout was priced. The order keeps which discount each of its codes came from
+//!   ([`REDEMPTIONS`]), so that its uses stay the discount's when a code is renamed or deleted.
 //! - [`count_uses`] counts an order placed with a code: the discount's `asyncUsageCount` and its
 //!   code's go up by one, as Shopify's do ("The number of times that the discount has been
 //!   used", shopify.dev's `DiscountCodeBasic.asyncUsageCount`), at once rather than
@@ -28,9 +32,15 @@ use super::discounts::{inner, status_at};
 use crate::admin::state::value::{self, str_field as text};
 use crate::admin::state::{ShopState, gid, gid_number, parse_gid};
 use crate::checkout::{
-    CodeDiscountConfig, CodeDiscountEffect, CodeDiscountItems, CodeDiscountValue,
+    CheckoutResult, CodeDiscountConfig, CodeDiscountEffect, CodeDiscountItems, CodeDiscountValue,
     MinimumRequirement,
 };
+
+/// The key of the code discounts of Shopify's own types an order of the checkout was placed
+/// with: `[{"discount": <DiscountCodeNode GID>, "code": <its code>}]`. Shopify's
+/// `DiscountCodeApplication` names the code only; lsf keeps the discount it came from, which the
+/// uses of the discount are counted by ([`count_uses`], `appliesOncePerCustomer`).
+pub const REDEMPTIONS: &str = "lsfCodeDiscounts";
 
 /// Who is at the checkout: the logged-in customer (by their lsf-core id), else the email they
 /// entered, which names the customer that has it, as the order placed will
@@ -41,11 +51,9 @@ pub struct Buyer<'a> {
     pub email: Option<&'a str>,
 }
 
-/// The code discounts of Shopify's own types (`DiscountCodeBasic`, `DiscountCodeFreeShipping`) of
-/// the shop, in creation order, as the checkout of `buyer` applies them. Amounts are in the
-/// shop's currency.
-pub fn for_checkout(state: &ShopState, buyer: &Buyer) -> Vec<CodeDiscountConfig> {
-    let customer = buyer
+/// The `Customer` GID of the buyer, when they are one.
+fn customer_of(state: &ShopState, buyer: &Buyer) -> Option<String> {
+    buyer
         .customer_id
         .map(|id| gid("Customer", id))
         .filter(|customer| state.contains(customer))
@@ -53,7 +61,14 @@ pub fn for_checkout(state: &ShopState, buyer: &Buyer) -> Vec<CodeDiscountConfig>
             buyer
                 .email
                 .and_then(|email| super::super::checkouts::customer_by_email(state, email))
-        });
+        })
+}
+
+/// The code discounts of Shopify's own types (`DiscountCodeBasic`, `DiscountCodeFreeShipping`) of
+/// the shop, in creation order, as the checkout of `buyer` applies them. Amounts are in the
+/// shop's currency.
+pub fn for_checkout(state: &ShopState, buyer: &Buyer) -> Vec<CodeDiscountConfig> {
+    let customer = customer_of(state, buyer);
     let now = state.timestamp();
     let mut keys: Vec<&str> = state.keys("DiscountCodeNode").collect();
     keys.sort_by_key(|key| gid_number(key));
@@ -65,19 +80,11 @@ pub fn for_checkout(state: &ShopState, buyer: &Buyer) -> Vec<CodeDiscountConfig>
                 "DiscountCodeFreeShipping" => free_shipping(discount),
                 _ => return None,
             };
-            let codes = codes_of(discount);
-            let refused = refusal(
-                state,
-                discount,
-                &codes,
-                &now,
-                customer.as_deref(),
-                buyer.email,
-            );
+            let refused = refusal(state, key, discount, &now, customer.as_deref(), buyer.email);
             Some(CodeDiscountConfig {
                 id: parse_gid(key)?.1,
                 title: text(discount, "title").unwrap_or_default().to_string(),
-                codes,
+                codes: codes_of(discount),
                 effect,
                 minimum: minimum(discount.get("minimumRequirement")),
                 refused,
@@ -237,12 +244,12 @@ fn minimum(requirement: Option<&Value>) -> Option<MinimumRequirement> {
 }
 
 /// Why the buyer cannot use a code discount whatever the cart, in lsf's words: its status by the
-/// dates, its usage limit, its buyers, its one use per customer. `customer` is the buyer's
-/// `Customer` GID, when they are one.
+/// dates, its usage limit, its buyers, its one use per customer. `node` is its `DiscountCodeNode`
+/// GID, `customer` the buyer's `Customer` GID, when they are one.
 fn refusal(
     state: &ShopState,
+    node: &str,
     discount: &crate::admin::state::Record,
-    codes: &[String],
     now: &str,
     customer: Option<&str>,
     email: Option<&str>,
@@ -315,20 +322,16 @@ fn refusal(
         .get("appliesOncePerCustomer")
         .and_then(Value::as_bool)
         == Some(true)
-        && used_by(state, codes, customer, email)
+        && used_by(state, node, customer, email)
     {
         return Some("it applies once per customer, and the buyer has used it".to_string());
     }
     None
 }
 
-/// Whether the customer, or the email, has an order placed with one of `codes`.
-fn used_by(
-    state: &ShopState,
-    codes: &[String],
-    customer: Option<&str>,
-    email: Option<&str>,
-) -> bool {
+/// Whether the customer, or the email, has an order placed with the code discount `node`,
+/// whichever of its codes, those it has now or had then ([`REDEMPTIONS`]).
+fn used_by(state: &ShopState, node: &str, customer: Option<&str>, email: Option<&str>) -> bool {
     let email = email.map(str::trim).filter(|email| !email.is_empty());
     if customer.is_none() && email.is_none() {
         return false;
@@ -338,54 +341,117 @@ fn used_by(
             || email.is_some_and(|email| {
                 text(order, "email").is_some_and(|known| known.eq_ignore_ascii_case(email))
             });
-        theirs
-            && order
-                .get("discountCodes")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .any(|used| codes.iter().any(|code| code.eq_ignore_ascii_case(used)))
+        theirs && redeemed(order).any(|(discount, _)| discount == node)
     })
 }
 
-/// Counts the uses of the codes an order was placed with: the `asyncUsageCount` of each code
-/// discount that has one of them, and of that code, go up by one. A discount counts one use per
-/// order, whatever the number of its codes the order has.
-pub fn count_uses(state: &mut ShopState, order: &str) {
-    let used: Vec<String> = state
-        .get(order)
-        .and_then(|record| record.get("discountCodes"))
+/// The code discounts an order was placed with, and the code of each ([`REDEMPTIONS`]).
+fn redeemed(order: &crate::admin::state::Record) -> impl Iterator<Item = (&str, &str)> {
+    order
+        .get(REDEMPTIONS)
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
-    if used.is_empty() {
-        return;
+        .filter_map(|redemption| {
+            Some((
+                redemption.get("discount")?.as_str()?,
+                redemption.get("code")?.as_str()?,
+            ))
+        })
+}
+
+/// A code the checkout applied that the buyer can no longer use when the order is recorded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refused {
+    /// The code, as the discount has it.
+    pub code: String,
+    /// Why, in lsf's words.
+    pub reason: String,
+}
+
+/// What an order placed with `result` redeems: for each code discount of Shopify's own types the
+/// checkout applied, `{"discount": <DiscountCodeNode GID>, "code": <the code>}`, to keep under
+/// [`REDEMPTIONS`]. The checkout read the discounts when it was priced; they are read again
+/// here, in the change of the shop that records the order, so that two orders priced before
+/// either was placed do not both take the last use of a `usageLimit`, or the one use of a buyer
+/// (`appliesOncePerCustomer`). `Err` for the first one the buyer can no longer use: the order is
+/// not placed (`crate::admin::domains::orders::record_placed_order`).
+pub fn redemptions(
+    state: &ShopState,
+    result: &CheckoutResult,
+    buyer: &Buyer,
+) -> Result<Vec<Value>, Refused> {
+    let customer = customer_of(state, buyer);
+    let now = state.timestamp();
+    let mut redeemed: Vec<Value> = Vec::new();
+    for applied in &result.discounts {
+        let (Some(id), Some(code)) = (applied.code_discount, applied.code.as_deref()) else {
+            continue;
+        };
+        let node = gid("DiscountCodeNode", id);
+        if redeemed
+            .iter()
+            .any(|known| known["discount"] == node.as_str())
+        {
+            continue;
+        }
+        let refused = |reason: String| Refused {
+            code: code.to_string(),
+            reason,
+        };
+        let Some(discount) = state.get(&node).and_then(inner) else {
+            return Err(refused("the discount was deleted".to_string()));
+        };
+        if !codes_of(discount)
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(code))
+        {
+            return Err(refused(format!(
+                "the discount no longer has the code {code}"
+            )));
+        }
+        if let Some(reason) = refusal(
+            state,
+            &node,
+            discount,
+            &now,
+            customer.as_deref(),
+            buyer.email,
+        ) {
+            return Err(refused(reason));
+        }
+        redeemed.push(serde_json::json!({"discount": node, "code": code}));
     }
-    let nodes: Vec<String> = state.keys("DiscountCodeNode").map(str::to_string).collect();
-    for node in nodes {
+    Ok(redeemed)
+}
+
+/// Counts the uses of the code discounts an order was placed with ([`REDEMPTIONS`]): the
+/// `asyncUsageCount` of each, and of the code it was redeemed with, go up by one. A discount
+/// counts one use per order.
+pub fn count_uses(state: &mut ShopState, order: &str) {
+    let used: Vec<(String, String)> = state
+        .get(order)
+        .map(|record| {
+            redeemed(record)
+                .map(|(node, code)| (node.to_string(), code.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    for (node, used) in used {
         let Some(discount) = state.get_mut(&node).and_then(super::discounts::inner_mut) else {
             continue;
         };
-        let mut counted = false;
-        if let Some(Value::Array(codes)) = discount.get_mut("codes") {
-            for code in codes.iter_mut() {
-                let matches = code
-                    .get("code")
+        if let Some(Value::Array(codes)) = discount.get_mut("codes")
+            && let Some(code) = codes.iter_mut().find(|code| {
+                code.get("code")
                     .and_then(Value::as_str)
-                    .is_some_and(|known| used.iter().any(|used| used.eq_ignore_ascii_case(known)));
-                if matches && let Some(code) = code.as_object_mut() {
-                    increment(code);
-                    counted = true;
-                }
-            }
+                    .is_some_and(|known| known.eq_ignore_ascii_case(&used))
+            })
+            && let Some(code) = code.as_object_mut()
+        {
+            increment(code);
         }
-        if counted {
-            increment(discount);
-        }
+        increment(discount);
     }
 }
 

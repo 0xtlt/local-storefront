@@ -555,6 +555,103 @@ fn a_basic_code_the_backend_creates_applies_at_the_checkout_and_counts_its_uses(
     assert_eq!(again["discounts"], json!([]));
 }
 
+/// Two buyers price their orders with the last use of a code; the one whose order is recorded
+/// second does not get it: the completion is refused, and the checkout shows the code refused
+/// and the price without it.
+#[test]
+fn the_last_use_of_a_code_goes_to_one_of_two_completions_at_once() {
+    let state = checkout_admin_server();
+    mutate(
+        &state,
+        r#"mutation($discount: DiscountCodeBasicInput!) { discountCodeBasicCreate(basicCodeDiscount: $discount) { codeDiscountNode { id } userErrors { field message } } }"#,
+        json!({"discount": {
+            "title": "Last voucher", "code": "LAST-ONE", "usageLimit": 1,
+            "customerGets": {"value": {"discountAmount": {"amount": "5.00"}}, "items": {"all": true}},
+        }}),
+    );
+    let ready = |session: &str| {
+        let path = cart_checkout(
+            &state,
+            session,
+            json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        );
+        let reply = operations(
+            &state,
+            &path,
+            session,
+            json!([{"type": "discountCode", "action": "add", "code": "LAST-ONE"}]),
+        );
+        assert_eq!(body_json(&reply)["discountCodes"][0]["applicable"], true);
+        assert_eq!(
+            operations(&state, &path, session, buyer_details()).status,
+            200
+        );
+        path
+    };
+    let first = ready("co-last-first");
+    let second = ready("co-last-second");
+    let token = first.rsplit('/').next().unwrap();
+
+    // The second buyer completes after the first completion priced its order, before it is
+    // recorded.
+    let reply = super::super::checkout::place_order(
+        &state,
+        &request(
+            "POST",
+            &format!("{first}/complete"),
+            json!({}),
+            "co-last-first",
+        ),
+        "co-last-first",
+        token,
+        || {},
+        || {
+            let reply = post(
+                &state,
+                &format!("{second}/complete"),
+                json!({}),
+                "co-last-second",
+            );
+            assert_eq!(reply.status, 200, "{}", text(&reply));
+        },
+    );
+    assert_eq!(reply.status, 422, "{}", text(&reply));
+    let checkout = body_json(&reply);
+    assert_eq!(checkout["status"], "open");
+    assert_eq!(
+        checkout["discountCodes"],
+        json!([{"code": "LAST-ONE", "applicable": false,
+                "reason": "it reached its usage limit: used 1 times of 1"}]),
+        "{checkout}"
+    );
+    assert_eq!(checkout["cost"]["discounts"]["amount"], 0.0);
+    assert_eq!(
+        checkout["errors"],
+        json!([{"message": "LAST-ONE discount code isn't available to you right now",
+                "target": "$.cart.discountCodes", "function": null}]),
+        "{checkout}"
+    );
+    assert_eq!(state.placed_orders(), 1);
+    let answer = admin_query(
+        &state,
+        r#"{ codeDiscountNodeByCode(code: "LAST-ONE") { codeDiscount { ... on DiscountCodeBasic { asyncUsageCount } } } }"#,
+    );
+    assert_eq!(
+        answer["data"]["codeDiscountNodeByCode"]["codeDiscount"]["asyncUsageCount"], 1,
+        "{answer}"
+    );
+
+    // The buyer completes what they now see, without the code's 5.00.
+    let reply = post(
+        &state,
+        &format!("{first}/complete"),
+        json!({}),
+        "co-last-first",
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(state.placed_orders(), 2);
+}
+
 #[test]
 fn a_session_with_its_own_data_sees_what_the_backend_changes() {
     let state = admin_server();

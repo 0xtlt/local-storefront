@@ -144,7 +144,7 @@ fn place_order_with(api: &AdminApi, number: u64, metafields: &[Metafield]) -> Op
         payment: Some("Credit card"),
         metafields,
     })
-    .map(|recorded| recorded.id)
+    .map(|recorded| recorded.expect("the order is recorded").id)
 }
 
 #[test]
@@ -581,6 +581,7 @@ fn a_checkout_order_keeps_its_discounts_and_its_gateway() {
                     value: DiscountValue::Percentage(20.0),
                     metafields: Vec::new(),
                 },
+                code_discount: None,
             },
             AppliedDiscount {
                 title: "Free shipping".into(),
@@ -595,12 +596,14 @@ fn a_checkout_order_keeps_its_discounts_and_its_gateway() {
                     value: DiscountValue::Fixed(500),
                     metafields: Vec::new(),
                 },
+                code_discount: None,
             },
         ],
         discount_codes: vec![lsf_app::checkout::DiscountCodeStatus {
             code: "FREESHIP".into(),
             applicable: true,
             reason: None,
+            took_nothing: false,
         }],
         delivery_groups: vec![DeliveryGroup {
             handle: "group-1".into(),
@@ -652,6 +655,7 @@ fn a_checkout_order_keeps_its_discounts_and_its_gateway() {
             metafields: &[],
         })
         .expect("the order is recorded")
+        .expect("no code is refused")
         .id;
 
     let answer = graphql(

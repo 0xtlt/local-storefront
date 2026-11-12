@@ -1467,7 +1467,9 @@ records, so both are the same shape.
   orders share a name; an id given and taken gets a new one too), a GID of the
   shop's counter, as `orderCreate`'s (not made of the number), answers its GID and number
   (`RecordedOrder`; the checkout links its thank-you page to that GID and shows the session's
-  number, which a test reads the same every run), links a guest whose email
+  number, which a test reads the same every run), or records nothing and answers the code when
+  the buyer can no longer use a code discount of Shopify's own types the checkout applied
+  (`code_discounts::Refused`: the server answers the completion 422), links a guest whose email
   is a customer's (ignoring case) to that customer, as Shopify does (Help Center behaviour, not
   on shopify.dev), refreshes the customer, and emits `orders/create`,
   `order_transactions/create` for the payment and, when paid in full, `orders/paid`. It commits
@@ -2507,8 +2509,9 @@ Kept here so that nobody invents a field for it; each would need the store data 
   automatic ones) are not store data. The checkout reads the basic and free shipping codes from
   the default shop on each computation instead (`domains::app::code_discounts`: what they take
   off and whether the buyer may use them, which depends on the orders and the buyer, not only on
-  the discount), and `record_placed_order` counts their uses; buy X get Y and the automatic ones
-  do not apply. Of app discounts: `combinesWith`,
+  the discount), and `record_placed_order` checks them again and counts their uses, by the
+  discount each order keeps under `lsfCodeDiscounts` (`code_discounts::redemptions`); buy X get
+  Y and the automatic ones do not apply. Of app discounts: `combinesWith`,
   usage limits, `appliesOncePerCustomer`, the buyers they apply to (`context`), every code but
   the first.
 - **Owners of one Function**: two customizations of one Function share one set of settings

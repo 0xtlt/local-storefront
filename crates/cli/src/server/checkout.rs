@@ -1927,6 +1927,7 @@ pub(super) fn place_order(
     let placed_at = processed_at.to_rfc3339();
     // The cart is taken only if it is still the one that was priced; the check and the take are
     // one step of the session.
+    let mut refused = None;
     let taken = state.with_session(id, |entry| {
         if !computed.basis.matches(entry, &state.loaded().store) {
             return false;
@@ -1960,7 +1961,12 @@ pub(super) fn place_order(
             number,
             processed_at,
         ) {
-            Some(recorded) => (recorded.id, recorded.number),
+            Some(Ok(recorded)) => (recorded.id, recorded.number),
+            // A code the buyer can no longer use: nothing is bought.
+            Some(Err(code)) => {
+                refused = Some(code);
+                return false;
+            }
             None => (format!("gid://shopify/Order/{number}"), number),
         };
         // As its `orders/create` names it: `admin_graphql_api_id`, `order_number`, `name`.
@@ -1998,6 +2004,9 @@ pub(super) fn place_order(
         super::admin::complete_checkout(state, token, computed.basis.placed);
         return redirect_to_thanks(state, incoming, id, token);
     }
+    if let Some(refused) = refused {
+        return code_refused(state, incoming, id, &refused);
+    }
     // Another request placed the order meanwhile.
     if placed_since(state, id, before) {
         return redirect_to_thanks(state, incoming, id, token);
@@ -2005,6 +2014,34 @@ pub(super) fn place_order(
     // The cart changed while the order was being priced: nothing was bought, and the buyer
     // sees the cart as it is now.
     conflict(state, incoming, id)
+}
+
+/// The order was not placed: a code of Shopify's own discount types that the checkout applied
+/// can no longer be used when the order is recorded (another order took its last use, or the
+/// buyer's one, since the checkout was priced). Shopify does not complete a checkout with a code
+/// that is no longer valid; the error is the one merchants report from its checkout ("<code>
+/// discount code isn't available to you right now", which shopify.dev does not document). The
+/// buyer sees the checkout as it now is (the code refused, the price without it,
+/// `discountCodes[].reason` saying why) and pays again for that. The code stays entered: the
+/// page shows it "Not applied".
+fn code_refused(
+    state: &ServerState,
+    incoming: &Incoming,
+    id: &str,
+    refused: &lsf_app::admin::domains::app::code_discounts::Refused,
+) -> Reply {
+    let mut computed = match compute(state, id, incoming, BuyerJourneyStep::Completion) {
+        Ok(computed) => computed,
+        Err(problem) => return error(500, problem),
+    };
+    if let Some(errors) = computed.json["errors"].as_array_mut() {
+        errors.push(json!({
+            "message": format!("{} discount code isn't available to you right now", refused.code),
+            "target": "$.cart.discountCodes",
+            "function": null,
+        }));
+    }
+    Reply::json(422, &computed.json).cached(cache::PRIVATE)
 }
 
 /// What the session held of an order when it was placed.
@@ -2018,7 +2055,8 @@ struct Placed {
 /// Records a placed order in the default shop of the Admin API, under the session's `number`
 /// unless an order of the shop has it (then under the shop's next one), and delivers its
 /// `orders/create` webhook (and `orders/paid`, when it is paid in full) to the backend of the
-/// app. `None` without the Admin API.
+/// app. `None` without the Admin API; `Err`, and nothing recorded, when the buyer can no longer
+/// use a code the checkout applied.
 fn record_in_admin(
     state: &ServerState,
     result: &lsf_app::checkout::CheckoutResult,
@@ -2026,7 +2064,12 @@ fn record_in_admin(
     placed: &Placed,
     number: u64,
     processed_at: chrono::DateTime<chrono::Utc>,
-) -> Option<lsf_app::admin::domains::orders::RecordedOrder> {
+) -> Option<
+    Result<
+        lsf_app::admin::domains::orders::RecordedOrder,
+        lsf_app::admin::domains::app::code_discounts::Refused,
+    >,
+> {
     let admin = state.admin.as_ref()?;
     admin
         .api

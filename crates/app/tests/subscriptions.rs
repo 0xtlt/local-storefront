@@ -238,7 +238,8 @@ fn a_subscription_is_bought_billed_skipped_paused_changed_and_cancelled() {
             payment: Some("Credit card"),
             metafields: &[],
         })
-        .unwrap();
+        .unwrap()
+        .expect("the order is recorded");
     let delivered = receiver.expect(&[
         "orders/create",
         "orders/paid",

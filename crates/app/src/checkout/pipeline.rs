@@ -330,6 +330,7 @@ impl<'a> Pipeline<'a> {
         let before_discounts = self.lines.clone();
         self.choose_code_discount();
         self.line_discounts(&before_discounts);
+        self.free_shipping_minimum();
         self.build_delivery_groups();
         self.delivery_customizations();
         self.shipping_discounts(&before_discounts);
@@ -994,6 +995,10 @@ impl<'a> Pipeline<'a> {
     /// stacks with the discounts of the Functions, which all do (see [`stacking_key`]); of the
     /// shipping discounts, the best one applies. A refused code says why
     /// ([`DiscountCodeStatus::reason`]).
+    ///
+    /// A minimum subtotal is checked later, on the prices the discounts before it leave
+    /// ([`Self::amount_off_minimum`], [`Self::free_shipping_minimum`]). A code refused there
+    /// leaves the checkout without a code of these types: the others entered were refused for it.
     fn choose_code_discount(&mut self) {
         let config = self.config;
         let state = self.state;
@@ -1028,9 +1033,10 @@ impl<'a> Pipeline<'a> {
     }
 
     /// Why the cart does not qualify for a code discount of Shopify's own types: none of the
-    /// items it applies to, less than its minimum (on those items, before discounts), a shipping
-    /// address in a country it does not ship free to. A free shipping code is taken before the
-    /// buyer gives an address, as on Shopify.
+    /// items it applies to, fewer of them than its minimum quantity, a shipping address in a
+    /// country it does not ship free to. A free shipping code is taken before the buyer gives an
+    /// address, as on Shopify. Its minimum subtotal is checked once the discounts before it are
+    /// known ([`Self::amount_off_minimum`], [`Self::free_shipping_minimum`]).
     fn cart_refusal(&self, discount: &CodeDiscountConfig) -> Option<String> {
         let entitled: Vec<&ResultLine> = self
             .lines
@@ -1043,26 +1049,13 @@ impl<'a> Pipeline<'a> {
         if entitled.is_empty() {
             return Some("the cart has none of the items it applies to".to_string());
         }
-        match discount.minimum {
-            Some(MinimumRequirement::Subtotal(minimum)) => {
-                let subtotal: Cents = entitled.iter().map(|line| line.subtotal).sum();
-                if subtotal < minimum {
-                    return Some(format!(
-                        "its minimum purchase is {}, and the items it applies to come to {}",
-                        money_text(minimum, &self.currency),
-                        money_text(subtotal, &self.currency)
-                    ));
-                }
+        if let Some(MinimumRequirement::Quantity(minimum)) = discount.minimum {
+            let quantity: u64 = entitled.iter().map(|line| u64::from(line.quantity)).sum();
+            if quantity < u64::from(minimum) {
+                return Some(format!(
+                    "its minimum quantity is {minimum} items, and the cart has {quantity} of those it applies to"
+                ));
             }
-            Some(MinimumRequirement::Quantity(minimum)) => {
-                let quantity: u64 = entitled.iter().map(|line| u64::from(line.quantity)).sum();
-                if quantity < u64::from(minimum) {
-                    return Some(format!(
-                        "its minimum quantity is {minimum} items, and the cart has {quantity} of those it applies to"
-                    ));
-                }
-            }
-            None => {}
         }
         if let CodeDiscountEffect::FreeShipping {
             countries: Some(countries),
@@ -1079,6 +1072,77 @@ impl<'a> Pipeline<'a> {
             ));
         }
         None
+    }
+
+    /// The amount off code of Shopify's own types that was chosen, refused when the items it
+    /// applies to do not reach its minimum subtotal at the prices the product discounts of the
+    /// Functions (`products`) leave. Shopify's help center ("Understanding minimum purchase
+    /// requirements", help.shopify.com/en/manual/discounts/discount-types/percentage-fixed-amount):
+    /// for an amount off products, only the items it applies to count, at "their prices after any
+    /// earlier product discounts", and order discounts do not change it; for an amount off the
+    /// order, the total before the product discounts and the subtotal after them must both
+    /// reach it, other order discounts left out. The second is never more than the first: it
+    /// decides.
+    fn amount_off_minimum(&mut self, products: &[Pending]) {
+        let Some((discount, _)) = self.code_discount else {
+            return;
+        };
+        let (
+            CodeDiscountEffect::AmountOff { items, .. },
+            Some(MinimumRequirement::Subtotal(minimum)),
+        ) = (&discount.effect, discount.minimum)
+        else {
+            return;
+        };
+        let totals = product_totals(&self.lines, products);
+        let subtotal: Cents = self
+            .lines
+            .iter()
+            .zip(totals)
+            .filter(|(line, _)| entitles(items, line))
+            .map(|(_, total)| total)
+            .sum();
+        if subtotal < minimum {
+            self.refuse_chosen_code(format!(
+                "its minimum purchase is {}, and the items it applies to come to {} after the product discounts",
+                money_text(minimum, &self.currency),
+                money_text(subtotal, &self.currency)
+            ));
+        }
+    }
+
+    /// The free shipping code of Shopify's own types that was chosen, refused when the cart
+    /// does not reach its minimum subtotal at the prices the product and order discounts left.
+    /// Shopify's help center ("Understanding minimum purchase requirements",
+    /// help.shopify.com/en/manual/discounts/discount-types/free-shipping): every product of the
+    /// cart counts, "at their discounted price"; taxes and shipping do not.
+    fn free_shipping_minimum(&mut self) {
+        let Some((discount, _)) = self.code_discount else {
+            return;
+        };
+        let (CodeDiscountEffect::FreeShipping { .. }, Some(MinimumRequirement::Subtotal(minimum))) =
+            (&discount.effect, discount.minimum)
+        else {
+            return;
+        };
+        let subtotal: Cents = self.lines.iter().map(|line| line.total).sum();
+        if subtotal < minimum {
+            self.refuse_chosen_code(format!(
+                "its minimum purchase is {}, and the cart comes to {} after its discounts",
+                money_text(minimum, &self.currency),
+                money_text(subtotal, &self.currency)
+            ));
+        }
+    }
+
+    /// The code discount of Shopify's own types that was chosen does not apply after all, for
+    /// `reason`.
+    fn refuse_chosen_code(&mut self, reason: String) {
+        if let Some((_, code)) = self.code_discount.take() {
+            let lower = code.to_lowercase();
+            self.accepted_codes.retain(|accepted| *accepted != lower);
+            self.refused_codes.push((lower, reason));
+        }
     }
 
     /// The discounts that run: those of an enabled Function, automatic or with a code the buyer
@@ -1214,6 +1278,7 @@ impl<'a> Pipeline<'a> {
         for run in &collected {
             self.read_line_discounts(run, &mut products, &mut orders);
         }
+        self.amount_off_minimum(&products);
         // The code discount of Shopify's own types takes its place among the discounts of its
         // class, as a discount Function's would.
         if let Some((discount, code)) = self.code_discount
@@ -1365,21 +1430,7 @@ impl<'a> Pipeline<'a> {
     /// the best deal. A percentage is on the price of the line before any discount. Within
     /// those, see [`stacking_key`] for the order.
     fn apply_product_discounts(&mut self, runs: Vec<Pending>) {
-        let mut chosen = Vec::new();
-        for (context, strategy, candidates) in runs {
-            let candidates = select(strategy, candidates, |candidate| {
-                plan_product(&self.lines, candidate)
-                    .iter()
-                    .map(|(_, cents)| cents)
-                    .sum()
-            });
-            chosen.extend(candidates.into_iter().map(|candidate| (context, candidate)));
-        }
-        chosen.sort_by_cached_key(|(context, candidate)| {
-            let covered = plan_product(&self.lines, candidate);
-            stacking_key(context, candidate, covered)
-        });
-        for (context, candidate) in chosen {
+        for (context, candidate) in product_order(&self.lines, runs) {
             let plan = plan_product(&self.lines, &candidate);
             self.allocate(&context, &candidate, DiscountClass::Product, plan);
         }
@@ -1460,6 +1511,7 @@ impl<'a> Pipeline<'a> {
                     Some(discount) => code_details(discount),
                     None => details_of(candidate, class, context.metafields),
                 },
+                code_discount: context.native.map(|discount| discount.id),
             });
         }
     }
@@ -1875,6 +1927,7 @@ impl<'a> Pipeline<'a> {
                         Some(discount) => code_details(discount),
                         None => details_of(&candidate, DiscountClass::Shipping, context.metafields),
                     },
+                    code_discount: context.native.map(|discount| discount.id),
                 });
             }
         }
@@ -2028,6 +2081,15 @@ impl<'a> Pipeline<'a> {
                 let accepted =
                     self.accepted_codes.contains(&lower) && !self.rejected_codes.contains(&lower);
                 let applicable = applied || accepted;
+                // The code of Shopify's own types that was chosen, when it applied nothing.
+                let took_nothing = applicable
+                    && self
+                        .code_discount
+                        .is_some_and(|(_, chosen)| chosen.eq_ignore_ascii_case(code))
+                    && self
+                        .discounts
+                        .iter()
+                        .all(|discount| discount.code_discount.is_none());
                 DiscountCodeStatus {
                     code: code.clone(),
                     applicable,
@@ -2036,6 +2098,7 @@ impl<'a> Pipeline<'a> {
                         .iter()
                         .find(|(refused, _)| !applicable && *refused == lower)
                         .map(|(_, reason)| reason.clone()),
+                    took_nothing,
                 }
             })
             .collect();
@@ -2597,6 +2660,42 @@ fn candidate(raw: &Value) -> Result<Candidate, String> {
             .map(str::to_string),
         value,
     })
+}
+
+/// The product discounts of `runs` that their selection strategies pick, in the order they are
+/// taken off `lines` (see [`Pipeline::apply_product_discounts`]).
+fn product_order<'r>(
+    lines: &[ResultLine],
+    runs: Vec<Pending<'r>>,
+) -> Vec<(DiscountContext<'r>, Candidate)> {
+    let mut chosen = Vec::new();
+    for (context, strategy, candidates) in runs {
+        let candidates = select(strategy, candidates, |candidate| {
+            plan_product(lines, candidate)
+                .iter()
+                .map(|(_, cents)| cents)
+                .sum()
+        });
+        chosen.extend(candidates.into_iter().map(|candidate| (context, candidate)));
+    }
+    chosen.sort_by_cached_key(|(context, candidate)| {
+        let covered = plan_product(lines, candidate);
+        stacking_key(context, candidate, covered)
+    });
+    chosen
+}
+
+/// What each line of `lines` comes to once the product discounts of `runs` are taken off, as
+/// [`Pipeline::apply_product_discounts`] takes them, without applying them.
+fn product_totals(lines: &[ResultLine], runs: &[Pending]) -> Vec<Cents> {
+    let mut lines = lines.to_vec();
+    for (_, candidate) in product_order(&lines, runs.to_vec()) {
+        for (index, cents) in plan_product(&lines, &candidate) {
+            let line = &mut lines[index];
+            line.total -= cents.min(line.total).max(0);
+        }
+    }
+    lines.iter().map(|line| line.total).collect()
 }
 
 /// Which candidates a selection strategy applies: all of them, the first one, or the one that

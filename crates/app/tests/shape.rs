@@ -111,6 +111,7 @@ fn the_records_of_a_created_shop_and_of_a_placed_order_are_in_shape() {
             payment: None,
             metafields: &[],
         },
-    );
+    )
+    .expect("the order is recorded");
     check(shop);
 }

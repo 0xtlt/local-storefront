@@ -2268,7 +2268,8 @@ fn a_checkout_order_names_the_inventory_item_of_its_variant() {
             payment: None,
             metafields: &[],
         },
-    );
+    )
+    .expect("the order is recorded");
     let answer = run(
         &mut shop,
         "query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 1) { nodes { lineItems(first: 1) { nodes { inventoryItemId } } } } } }",

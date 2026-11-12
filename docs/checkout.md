@@ -1124,14 +1124,29 @@ amount off the order is an order discount, one off listed products, variants or 
 off each item) a product discount, free shipping a shipping discount, and each takes its place
 among the discounts of the Functions by the rules above. The code is checked when the
 checkout is computed: the discount's dates and usage limit, its buyers, one use per customer,
-its minimum (on the items it applies to, before discounts), and for free shipping the country
-of the address (a code is taken before there is one). A refused code shows "Enter a valid
-discount code", and its entry of `discountCodes` in the state has a `reason`
-(`"its minimum purchase is 50.00 USD, and the items it applies to come to 32.00 USD"`). One code
-of these types applies per checkout, the first one entered that qualifies: a second is refused,
-as on Shopify when a discount combines with no other (lsf does not read `combinesWith`). Its
+its minimum, and for free shipping the country of the address (a code is taken before there is
+one). A minimum subtotal counts the prices the discounts before it left, as Shopify's do
+([amount off](https://help.shopify.com/en/manual/discounts/discount-types/percentage-fixed-amount),
+[free shipping](https://help.shopify.com/en/manual/discounts/discount-types/free-shipping),
+"Understanding minimum purchase requirements"): for an amount off, the items it applies to
+after the product discounts of the Functions; for free shipping, the whole cart after the
+product and order discounts. A refused code shows "Enter a valid discount code", and its entry
+of `discountCodes` in the state has a `reason` (`"its minimum purchase is 50.00 USD, and the
+items it applies to come to 32.00 USD after the product discounts"`). One code of these types
+applies per checkout, the first one entered that qualifies: a second is refused, as on Shopify
+when a discount combines with no other (lsf does not read `combinesWith`). Its
 `DiscountApplication` is `ACROSS` (`EACH` off each item), `ALL` for the order and `ENTITLED`
 for listed items; free shipping is 100% off the shipping line, `EACH`.
+
+A free shipping code that takes nothing off (the selected rate costs more than its
+`maximumShippingPrice`, nothing in the cart ships, or a shipping discount of a Function beat it)
+stays applicable on the page, as entered, but it is not the order's: the order does not carry it
+and it is not counted as a use. The codes are checked again as the order is recorded: when
+another order took the last use of the discount (`usageLimit`) or the buyer's one
+(`appliesOncePerCustomer`) after the checkout was priced, the order is not placed. The
+completion answers 422 with the checkout as it now is (the code refused, with its `reason`, the
+price without it) and the error "`<code>` discount code isn't available to you right now" on
+`$.cart.discountCodes`; the buyer pays again for what they now see.
 
 An amount is shared between the lines in proportion to what they cost, to the cent, and the
 allocations of the lines (`discountAllocations`, in the page and for the Functions that run
@@ -1645,8 +1660,9 @@ store before a release:
 - **Discount combinations and conditions**: lsf combines every product and order discount
   ([how discounts stack](#how-discounts-stack)).
 - **Codes of Shopify's own discount types**: one applies per checkout whatever its
-  `combinesWith`, its minimum is checked on the items it applies to before any discount, and a
-  refused code says lsf's reason, where Shopify's checkout has messages of its own.
+  `combinesWith`, a minimum subtotal counts the prices after every discount before it (Shopify
+  counts only those that combine with it), and a refused code says lsf's reason, where
+  Shopify's checkout has messages of its own.
 - **Currencies and price lists**: a buyer pays in the currency of the country of the shipping
   address (else of the one selected on the storefront), at its market's `rate` or fixed `prices`
   ([localization](data-format.md#localization)); the Functions read that rate as
