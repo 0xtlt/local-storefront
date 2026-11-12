@@ -1358,6 +1358,12 @@ pub struct MarketInput {
     pub handle: String,
     /// The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`.
     pub countries: Vec<String>,
+    /// The languages its countries are offered (`country.available_languages`, in this order),
+    /// by ISO code, which are in `localization.languages`. The first is the market's default
+    /// language: a visitor who switches to one of its countries in a language it does not offer
+    /// gets it. Defaults to every language of the store.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
     #[serde(default)]
     pub metafields: Metafields,
 }

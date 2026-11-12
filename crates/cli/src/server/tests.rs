@@ -510,6 +510,83 @@ fn locale_prefixes_select_the_language() {
     );
 }
 
+#[test]
+fn switching_country_moves_to_a_language_its_market_offers() {
+    // "If the currently selected language is not supported by the selected country, it will be
+    // updated to the default language for that country."
+    // https://shopify.dev/docs/storefronts/themes/markets/multiple-currencies-languages
+    let state = server();
+    let switch = |session: &str, form: Json| {
+        let reply = post(&state, "/localization", form, session);
+        header(&reply, "location").map(str::to_string)
+    };
+    // Without markets, every country is offered every language: the page stays as it is.
+    assert_eq!(
+        switch(
+            "no-markets",
+            json!({"country_code": "FR", "return_to": "/pages/about"})
+        )
+        .as_deref(),
+        Some("/pages/about")
+    );
+
+    let session = "market-languages";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"localization": {
+            "countries": [{"iso_code": "US"}, {"iso_code": "CA"}, {"iso_code": "FR"}],
+            "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+            "markets": [
+                {"handle": "france", "countries": ["FR"], "languages": ["fr"]},
+                {"handle": "united-states", "countries": ["US"], "languages": ["en"]}
+            ]
+        }}}),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    // France offers French only: the English page becomes the French one.
+    assert_eq!(
+        switch(
+            session,
+            json!({"country_code": "FR", "return_to": "/pages/about"})
+        )
+        .as_deref(),
+        Some("/fr/pages/about")
+    );
+    // A language its market does not offer gives the market's default.
+    assert_eq!(
+        switch(
+            session,
+            json!({"language_code": "en", "return_to": "/fr/pages/about"})
+        )
+        .as_deref(),
+        Some("/fr/pages/about")
+    );
+    // The United States offer English only, the primary language, served at `/`.
+    assert_eq!(
+        switch(
+            session,
+            json!({"country_code": "US", "return_to": "/fr/pages/about"})
+        )
+        .as_deref(),
+        Some("/pages/about")
+    );
+    // Canada is in no market: it is offered every language, and French stays.
+    assert_eq!(
+        switch(
+            session,
+            json!({"country_code": "CA", "return_to": "/fr/pages/about"})
+        )
+        .as_deref(),
+        Some("/fr/pages/about")
+    );
+    assert_eq!(
+        body_json(&get(&state, "/__lsf/session", session))["country"],
+        "CA"
+    );
+}
+
 /// The path of the file `{{ name | shopify_asset_url }}` points at, as a theme renders it.
 fn shopify_asset_path(state: &ServerState, name: &str) -> String {
     let loaded = state.loaded();

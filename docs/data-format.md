@@ -735,8 +735,14 @@ market of the buyer (`localization.market`) and of an address (`MailingAddress.m
 {
   "localization": {
     "countries": [{ "iso_code": "FR" }, { "iso_code": "DE" }, { "iso_code": "US" }],
+    "languages": [{ "iso_code": "en" }, { "iso_code": "fr" }, { "iso_code": "de" }],
     "markets": [
-      { "handle": "europe", "countries": ["FR", "DE"], "metafields": { "custom": { "tier": "gold" } } }
+      {
+        "handle": "europe",
+        "countries": ["FR", "DE"],
+        "languages": ["fr", "de"],
+        "metafields": { "custom": { "tier": "gold" } }
+      }
     ]
   }
 }
@@ -744,6 +750,18 @@ market of the buyer (`localization.market`) and of an address (`MailingAddress.m
 
 A country in no market is a market of its own, named after the country (`france`, `united-states`).
 An address in a country the store does not sell to has no market.
+
+A market's `languages` are the languages its countries are offered, as on Shopify:
+`country.available_languages` lists them in that order, and so does
+`localization.available_languages` for the visitor's country. The first is the market's default:
+when the localization form switches to a country whose market does not offer the current
+language, the visitor moves to that default; a language it offers stays. Here France and Germany
+get French then German (a visitor on an English page who switches to Germany lands on `/fr/...`),
+and the United States every language. A market without `languages`, and a country in no market,
+offer every language of the store, the primary first. A language that is not in
+`localization.languages` is an `unknown_language` error. Every language is still served under `/<iso_code>/`, whatever the
+visitor's country: on Shopify, a market with languages of its own has URLs of its own (`/en-ca`),
+which lsf does not make.
 
 ## Images and files
 
@@ -908,7 +926,7 @@ extensions:
 | `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. `invalid_money` is a shipping rate below zero. |
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
-| `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
+| `unknown_language` | A checkout scenario or a market names a language that is not in `localization.languages`. |
 | `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield, and a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |

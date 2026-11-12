@@ -2016,6 +2016,7 @@ fn a_declared_market_groups_countries_and_carries_metafields() {
     f.store.markets.push(lsf_core::store::Market {
         handle: "europe".to_string(),
         countries: vec!["FR".to_string(), "DE".to_string()],
+        languages: Vec::new(),
         metafields: [(
             "custom".to_string(),
             [(

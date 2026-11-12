@@ -753,6 +753,7 @@ A market: the countries the store sells to as one, as checkout Functions see it 
 |---|---|---|
 | `handle` | string | **Required.** What Functions call the market: `"europe"`. |
 | `countries` | array of string | **Required.** The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`. |
+| `languages` | array of string | The languages its countries are offered (`country.available_languages`, in this order), by ISO code, which are in `localization.languages`. The first is the market's default language: a visitor who switches to one of its countries in a language it does not offer gets it. Defaults to every language of the store. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## Location

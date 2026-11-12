@@ -145,20 +145,40 @@ pub fn localization(visit: &Visit<'_>) -> Reply {
         visit.update_session(|session| session.country = Some(country.to_uppercase()));
     }
     let return_to = text("return_to").unwrap_or_else(|| "/".to_string());
+    let store = &visit.store;
+    let (current, _, path) = visit.state.localize(store, &return_to);
+    let asked = text("locale_code")
+        .or_else(|| text("language_code"))
+        .and_then(|code| store.language(&code));
+    // The language must be one the market of the visitor's country offers: "If the currently
+    // selected language is not supported by the selected country, it will be updated to the
+    // default language for that country."
+    // (https://shopify.dev/docs/storefronts/themes/markets/multiple-currencies-languages)
+    let session = visit.session();
+    let country = session
+        .country
+        .as_deref()
+        .and_then(|code| store.country(code))
+        .unwrap_or_else(|| store.default_country());
+    let language = asked
+        .or_else(|| store.language(&current))
+        .filter(|wanted| {
+            store
+                .languages_of(&country.iso_code)
+                .iter()
+                .any(|offered| offered.iso_code == wanted.iso_code)
+        })
+        .unwrap_or_else(|| store.default_language_of(&country.iso_code));
+    if asked.is_none() && language.iso_code == current {
+        return Reply::redirect(&return_to);
+    }
     // Changing the language moves the visitor to the same page under the new locale root.
-    let language = text("locale_code").or_else(|| text("language_code"));
-    let target = match language.and_then(|code| visit.store.language(&code).cloned()) {
-        Some(language) => {
-            let (_, _, path) = visit.state.localize(&visit.store, &return_to);
-            if language.primary {
-                path
-            } else if path == "/" {
-                language.root_url.clone()
-            } else {
-                format!("{}{path}", language.root_url)
-            }
-        }
-        None => return_to,
+    let target = if language.primary {
+        path
+    } else if path == "/" {
+        language.root_url.clone()
+    } else {
+        format!("{}{path}", language.root_url)
     };
     Reply::redirect(&target)
 }

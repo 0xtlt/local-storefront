@@ -2127,6 +2127,15 @@ impl<'s> Sync<'s> {
                             .filter_map(|region| region.get("code")?.as_str())
                             .map(str::to_string)
                             .collect(),
+                        // The Admin API keeps a market's languages in its web presences, which
+                        // the seed does not split by market: those of the data stay.
+                        languages: self
+                            .store
+                            .markets
+                            .iter()
+                            .find(|market| content::market_gid(&market.handle) == key)
+                            .map(|market| market.languages.clone())
+                            .unwrap_or_default(),
                         metafields: self.metafields(view, key),
                     })
                 })
@@ -2257,11 +2266,20 @@ impl<'s> Sync<'s> {
                     iso_code: known.map_or(locale, |language| language.iso_code.clone()),
                 }
             })
-            .collect();
+            .collect::<Vec<model::LanguageInput>>();
+        // A market offers only languages the shop still publishes.
+        let mut markets = now;
+        for market in &mut markets {
+            market.languages.retain(|code| {
+                languages
+                    .iter()
+                    .any(|language| language.iso_code.eq_ignore_ascii_case(code))
+            });
+        }
         Some(model::LocalizationInput {
             countries,
             languages,
-            markets: now,
+            markets,
         })
     }
 
