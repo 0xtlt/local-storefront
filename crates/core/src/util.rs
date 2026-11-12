@@ -166,9 +166,174 @@ pub fn user_cache_dir() -> Option<std::path::PathBuf> {
     }
 }
 
+/// [`std::fs::canonicalize`], without the `\\?\` it puts before every path on Windows:
+/// `\\?\C:\app` is `C:\app`, `\\?\UNC\server\share\app` is `\\server\share\app`. lsf shows the
+/// paths it canonicalizes, and nothing else on Windows writes them so. Every path lsf
+/// canonicalizes goes through it (`clippy.toml` forbids the others), so that two of them compare
+/// alike. A path Windows would read as another file without the prefix keeps it
+/// ([`without_verbatim_prefix`]).
+pub fn canonicalize(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    #[allow(clippy::disallowed_methods)]
+    let path = std::fs::canonicalize(path)?;
+    Ok(match path.to_str().and_then(without_verbatim_prefix) {
+        Some(simple) => std::path::PathBuf::from(simple),
+        None => path,
+    })
+}
+
+/// A verbatim path of Windows (`\\?\C:\app`, `\\?\UNC\server\share\app`) without its prefix
+/// (`C:\app`, `\\server\share\app`), when both name the same file: when no part of it is one
+/// Windows reads otherwise without the prefix, as a device (`CON`, `nul.txt`), a name that ends
+/// in a dot or a space (dropped), `.` and `..` (followed), or a character a name cannot have.
+/// `None` for any other path, a path of macOS or Linux among them. A path longer than Windows'
+/// 260 characters loses the prefix too: Rust's file functions put it back.
+pub fn without_verbatim_prefix(path: &str) -> Option<String> {
+    let rest = path.strip_prefix(r"\\?\")?;
+    let (simple, names) = if let Some(unc) = rest.strip_prefix(r"UNC\") {
+        // `\\server\share`: the two names before the path are names too.
+        let mut root = unc.split('\\');
+        if root.next().is_none_or(str::is_empty) || root.next().is_none_or(str::is_empty) {
+            return None;
+        }
+        (format!(r"\\{unc}"), unc)
+    } else {
+        let bytes = rest.as_bytes();
+        if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || &bytes[1..3] != br":\" {
+            // `\\?\Volume{…}\`, `\\?\GLOBALROOT\…`, a drive without its root: no shorter form.
+            return None;
+        }
+        (rest.to_string(), &rest[3..])
+    };
+    let mut parts = names.split('\\').peekable();
+    while let Some(name) = parts.next() {
+        // `C:\` ends with an empty name; one anywhere else is `\\` in the path.
+        if name.is_empty() && parts.peek().is_none() {
+            continue;
+        }
+        if !is_plain_name(name) {
+            return None;
+        }
+    }
+    Some(simple)
+}
+
+/// Whether Windows reads `name`, a part of a path, as it is written, without the `\\?\` prefix.
+fn is_plain_name(name: &str) -> bool {
+    const DEVICES: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
+    if name.is_empty()
+        || name.len() > 255
+        || name.ends_with(['.', ' '])
+        || name
+            .chars()
+            .any(|c| c < ' ' || matches!(c, '<' | '>' | ':' | '"' | '/' | '|' | '?' | '*'))
+    {
+        return false;
+    }
+    // `CON`, `con.txt`, `COM1 .log`, `LPT³`: a device, whatever follows the first dot.
+    let stem = name.split('.').next().unwrap_or(name).trim_end();
+    let numbered = |prefix: &str| {
+        stem.get(..3)
+            .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
+            && matches!(
+                &stem[3..],
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+    };
+    !(DEVICES
+        .iter()
+        .any(|device| stem.eq_ignore_ascii_case(device))
+        || numbered("COM")
+        || numbered("LPT"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_verbatim_path_of_windows_is_shown_without_its_prefix() {
+        let simple = |path: &str| without_verbatim_prefix(path);
+        assert_eq!(
+            simple(r"\\?\C:\work\demo-app\extensions\payment-rules\dist\function.wasm").as_deref(),
+            Some(r"C:\work\demo-app\extensions\payment-rules\dist\function.wasm")
+        );
+        assert_eq!(simple(r"\\?\C:\").as_deref(), Some(r"C:\"));
+        assert_eq!(simple(r"\\?\d:\demo-app").as_deref(), Some(r"d:\demo-app"));
+        assert_eq!(
+            simple(r"\\?\UNC\server\share\demo-app").as_deref(),
+            Some(r"\\server\share\demo-app")
+        );
+        // A long path too: Rust's file functions put the prefix back.
+        let long = format!(r"\\?\C:\{}", ["folder"; 60].join(r"\"));
+        assert_eq!(simple(&long).as_deref(), Some(&long[4..]));
+        // Names Windows reads as written: a dot inside, spaces inside, accents, `COM10`.
+        assert_eq!(
+            simple(r"\\?\C:\My Apps\démo.app\COM10\console\nul-rules").as_deref(),
+            Some(r"C:\My Apps\démo.app\COM10\console\nul-rules")
+        );
+    }
+
+    #[test]
+    fn a_verbatim_path_keeps_its_prefix_where_windows_would_read_another_file() {
+        for path in [
+            // Devices, whatever their case or extension.
+            r"\\?\C:\demo-app\CON",
+            r"\\?\C:\demo-app\nul.txt",
+            r"\\?\C:\demo-app\Com1",
+            r"\\?\C:\demo-app\lpt9.log",
+            r"\\?\C:\demo-app\AUX .json",
+            r"\\?\C:\demo-app\COM²",
+            // Names Windows trims, follows or rejects.
+            r"\\?\C:\demo-app\dist.",
+            r"\\?\C:\demo-app\dist ",
+            r"\\?\C:\demo-app\..\x",
+            r"\\?\C:\demo-app\.\x",
+            r"\\?\C:\demo-app\\x",
+            r"\\?\C:\demo-app\a:b",
+            r"\\?\C:\demo-app\a/b",
+            r"\\?\C:\demo-app\a?b",
+            r"\\?\UNC\\share",
+            r"\\?\UNC\server",
+            r"\\?\UNC\server\",
+            r"\\?\UNC\server\nul",
+            // No shorter form.
+            r"\\?\Volume{0b1c2d3e-0000-0000-0000-100000000000}\demo-app",
+            r"\\?\GLOBALROOT\Device\demo-app",
+            r"\\?\C:",
+            r"\\?\C:demo-app",
+            r"\\?\1:\demo-app",
+        ] {
+            assert_eq!(without_verbatim_prefix(path), None, "{path}");
+        }
+        let long = format!(r"\\?\C:\{}", "x".repeat(256));
+        assert_eq!(without_verbatim_prefix(&long), None);
+    }
+
+    #[test]
+    fn other_paths_are_left_as_they_are() {
+        for path in [
+            "/home/dev/demo-app",
+            "/private/var/demo-app",
+            r"C:\demo-app",
+            r"\\server\share\demo-app",
+            r"\\.\COM1",
+            "",
+        ] {
+            assert_eq!(without_verbatim_prefix(path), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn a_canonical_path_is_absolute_and_has_no_verbatim_prefix() {
+        let here = canonicalize(std::path::Path::new(".")).unwrap();
+        assert!(here.is_absolute(), "{}", here.display());
+        assert!(
+            !here.to_string_lossy().starts_with(r"\\?\"),
+            "{}",
+            here.display()
+        );
+        assert!(canonicalize(std::path::Path::new("no such folder, surely")).is_err());
+    }
 
     #[test]
     fn the_command_is_lsf_unless_the_launcher_names_another() {

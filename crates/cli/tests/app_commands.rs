@@ -1228,6 +1228,84 @@ fn function_typegen_writes_the_types_of_a_javascript_function() {
     );
 }
 
+/// With no scenario, nothing ran: an extension that is not built did not fail, it is the next
+/// thing to do, as writing scenarios is. The check fails all the same, with one line that says
+/// both, and no `fails` line. Once a scenario runs, each extension not built fails it again.
+#[test]
+fn app_check_without_a_scenario_names_the_extensions_to_build_rather_than_failing_them() {
+    let app = App::new("no-scenario-unbuilt");
+    std::fs::remove_file(app.0.join("extensions/payment-rules/dist/function.wasm")).unwrap();
+    std::fs::remove_file(app.0.join("extensions/order-notice/dist/order-notice.js")).unwrap();
+    // No `shopify-local/`: no scenario.
+    let summary = "no scenario to check: `lsf app init` writes a set for the app in \
+                   `shopify-local/checkouts/`; 2 extensions are not built (payment-rules, \
+                   order-notice): `lsf app build` builds them (or `--build`)";
+    let output = lsf(&app.0, &["app", "check"]);
+    let said = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{said}");
+    assert!(!said.contains("fails"), "{said}");
+    assert!(!said.contains("not offered"), "{said}");
+    assert!(said.contains("checked 0 of 0 scenarios in "), "{said}");
+    assert!(said.contains(&format!(": {summary}\n")), "{said}");
+    // JSON says the same, and still lists the extensions the checkout does not offer, with why.
+    let output = lsf(&app.0, &["app", "check", "--format", "json"]);
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("JSON: {}", text(&output)));
+    assert_eq!(output.status.code(), Some(1), "{json}");
+    assert_eq!(json["ok"], false, "{json}");
+    assert_eq!(json["error"], summary, "{json}");
+    let handles: Vec<&str> = json["notOffered"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["handle"].as_str().unwrap())
+        .collect();
+    assert_eq!(handles, ["payment-rules", "order-notice"], "{json}");
+    // One, in the singular.
+    let output = lsf(&app.0, &["app", "check", "--extension", "payment-rules"]);
+    let said = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{said}");
+    assert!(
+        said.contains(
+            "; 1 extension is not built (payment-rules): `lsf app build` builds it (or `--build`)\n"
+        ),
+        "{said}"
+    );
+    // What is wrong with the app itself is still a failure, and the summary counts it.
+    old_ui_extension(&app);
+    let output = lsf(&app.0, &["app", "check"]);
+    let said = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{said}");
+    assert!(
+        said.contains("fails    old-ui: api_version \"2026-07\" is not supported"),
+        "{said}"
+    );
+    assert!(!said.contains("fails    payment-rules"), "{said}");
+    assert!(
+        said.contains(
+            "`shopify-local/checkouts/`; 2 extensions are not built (payment-rules, order-notice): \
+             `lsf app build` builds them (or `--build`); 1 extension not offered\n"
+        ),
+        "{said}"
+    );
+    std::fs::remove_dir_all(app.0.join("extensions/old-ui")).unwrap();
+    // With a scenario, the extensions not built fail the check, each with why.
+    assert!(lsf(&app.0, &["init"]).status.success());
+    app.write(
+        "shopify-local/checkouts/tees.json",
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}, "extensions": ["quantity-limit"]}"#,
+    );
+    let output = lsf(&app.0, &["app", "check"]);
+    let said = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{said}");
+    assert!(
+        said.contains("fails    payment-rules: no Wasm module at "),
+        "{said}"
+    );
+    assert!(said.contains("fails    order-notice: not built"), "{said}");
+    assert!(said.contains(", 2 extensions not offered"), "{said}");
+}
+
 /// A scenario that does not validate is printed once, with its problems indented as a block.
 #[test]
 fn app_check_prints_an_invalid_scenario_once() {
