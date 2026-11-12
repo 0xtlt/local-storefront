@@ -138,9 +138,12 @@ locations, companies, company locations and company addresses.
   `<prefix>__<key>`, the second `<prefix>__<key>-1`, the third `<prefix>__<key>-2`. This
   happens with a static block in a `for` loop (Horizon's product card), the blocks it holds,
   or a second `{% content_for 'blocks' %}`. `section.blocks` gives the ids without a number.
-  A section rendered alone (`?section_id=`, `?sections=`) starts again from the first. The
-  prefix is not Shopify's: do not rely on its value. A block defined in a section's schema
-  keeps its key as its id, and app blocks and blocks called with `{% block %}` are not
+  A section rendered alone (`?section_id=`, `?sections=`) starts again from the first, and a
+  section asked for twice in `?sections=` is rendered once. The prefix is not Shopify's: do
+  not rely on its value. Shopify gives each block a prefix of its own, local-storefront one
+  per section, so two blocks that give a static block the same id (two collection links with
+  their `title`) give it the same id, and neither is numbered. A block defined in a section's
+  schema keeps its key as its id, and app blocks and blocks called with `{% block %}` are not
   numbered.
 - With `--preview liquid-july-26`, blocks called from a template or a layout, as in Shopify's
   Skeleton theme: `{% block 'name', parameter: value %}content{% endblock %}`. The parameters

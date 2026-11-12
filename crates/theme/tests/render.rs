@@ -2127,9 +2127,14 @@ fn a_block_rendered_again_gets_a_numbered_id() {
                         "intro": { "type": "text" }
                       },
                       "block_order": ["intro"]
+                    },
+                    "pair": {
+                      "type": "boxes",
+                      "blocks": { "left": { "type": "box" }, "right": { "type": "box" } },
+                      "block_order": ["left", "right"]
                     }
                   },
-                  "order": ["main"]
+                  "order": ["main", "pair"]
                 }"#,
             ),
             (
@@ -2138,6 +2143,16 @@ fn a_block_rendered_again_gets_a_numbered_id() {
                  {% content_for 'blocks' %}{% content_for 'blocks' %}\
                  {% for block in section.blocks %}<li>{{ block.id }}</li>{% endfor %}\
                  {% schema %}{\"name\": \"Cards\", \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            (
+                "sections/boxes.liquid",
+                "{% content_for 'blocks' %}\
+                 {% schema %}{\"name\": \"Boxes\", \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            (
+                "blocks/box.liquid",
+                "{% content_for 'block', type: 'text', id: 'title' %}\
+                 {% schema %}{\"name\": \"Box\", \"tag\": null, \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
             ),
             (
                 "blocks/card.liquid",
@@ -2171,6 +2186,22 @@ fn a_block_rendered_again_gets_a_numbered_id() {
     assert_clean(&page);
     assert!(page.body.contains(&expected), "{}", page.body);
 
+    // Two blocks that give a static block the same id each render it once: neither is
+    // numbered. Shopify gives every block a prefix of its own; lsf's comes from the section,
+    // so the two have the same id.
+    let pair = lsf_theme::render::template_section_id("index", "pair");
+    let title = format!(
+        "<span>A{}__title</span>",
+        &lsf_core::util::short_hash(&pair)[..15]
+    );
+    assert!(
+        page.body.contains(&format!(
+            "<div id=\"shopify-section-{pair}\" class=\"shopify-section\">{title}{title}</div>"
+        )),
+        "{}",
+        page.body
+    );
+
     // The Section Rendering API renders the section alone: its numbers start again.
     let alone = fixture.render_with(
         request("/"),
@@ -2178,6 +2209,16 @@ fn a_block_rendered_again_gets_a_numbered_id() {
         &Target::Section(section.clone()),
     );
     assert_eq!(alone.body, expected);
+    // A section asked for twice in `?sections=` is rendered once: Shopify answers
+    // `?sections=<id>,<id>` with one key, its blocks numbered from the first render.
+    let twice = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &Target::Sections(vec![section.clone(), section.clone()]),
+    );
+    let json: serde_json::Value = serde_json::from_str(&twice.body).unwrap();
+    assert_eq!(json.as_object().map(serde_json::Map::len), Some(1));
+    assert_eq!(json[&section], expected);
 
     // The timings count a block once, under the id of its first render, with each render.
     let timed: Vec<(&str, usize)> = page.timings.sections[0]

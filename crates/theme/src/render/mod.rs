@@ -403,19 +403,22 @@ impl Renderer {
                 }
             },
             Target::Sections(ids) => {
-                let sections: serde_json::Map<String, serde_json::Value> = ids
-                    .iter()
-                    .map(|id| {
-                        let html = self.render_section_by_id(&ctx, &page, id);
-                        if html.is_none() {
-                            missing_sections.push(id.clone());
-                        }
-                        (
-                            id.clone(),
-                            html.map_or(serde_json::Value::Null, serde_json::Value::String),
-                        )
-                    })
-                    .collect();
+                // A section asked for twice is rendered once, as on Shopify: one key, its
+                // blocks numbered from their first render.
+                let mut sections = serde_json::Map::new();
+                for id in ids {
+                    if sections.contains_key(id) {
+                        continue;
+                    }
+                    let html = self.render_section_by_id(&ctx, &page, id);
+                    if html.is_none() {
+                        missing_sections.push(id.clone());
+                    }
+                    sections.insert(
+                        id.clone(),
+                        html.map_or(serde_json::Value::Null, serde_json::Value::String),
+                    );
+                }
                 (
                     200,
                     "application/json; charset=utf-8",
