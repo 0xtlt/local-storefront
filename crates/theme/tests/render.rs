@@ -462,15 +462,68 @@ fn unknown_urls_render_the_404_template() {
         assert!(rendered.body.contains("<h1>Not here</h1>"), "{path}");
         assert!(rendered.body.contains("data-page-type=\"404\""), "{path}");
     }
-    // The countries of the store, as the options of a selector.
+    // The countries of the store, as the options of a selector, each with its provinces as
+    // pairs of their name and the name to show.
     let body = fixture.page("/nope").body;
     assert!(
         body.contains(
-            "<select><option value=\"United States\" data-provinces=\"[]\">United States</option>\n\
-             <option value=\"Canada\" data-provinces=\"[]\">Canada</option>\n\
+            "<select><option value=\"United States\" data-provinces=\"[[&quot;Alabama&quot;,&quot;Alabama&quot;],[&quot;Alaska&quot;,&quot;Alaska&quot;],"
+        ),
+        "{body}"
+    );
+    assert!(
+        body.contains(
+            "[&quot;Yukon&quot;,&quot;Yukon&quot;]]\">Canada</option>\n\
              <option value=\"France\" data-provinces=\"[]\">France</option></select>"
         ),
         "{body}"
+    );
+}
+
+#[test]
+fn country_selectors_list_the_provinces_the_store_ships_to() {
+    let overlay = serde_json::json!({"localization": {"countries": [
+        {"iso_code": "US", "provinces": ["WA", "OR", "DC"]},
+        {"iso_code": "JP", "provinces": ["JP-13"]},
+        {"iso_code": "FR"}
+    ]}});
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let session = Session::initial(&fixture.store);
+    assert_eq!(
+        fixture.liquid("/", session.clone(), "{{ country_option_tags }}"),
+        "<option value=\"United States\" data-provinces=\"[[&quot;District of Columbia&quot;,&quot;Washington DC&quot;],[&quot;Oregon&quot;,&quot;Oregon&quot;],[&quot;Washington&quot;,&quot;Washington&quot;]]\">United States</option>\n\
+         <option value=\"Japan\" data-provinces=\"[[&quot;Tōkyō&quot;,&quot;Tokyo&quot;]]\">Japan</option>\n\
+         <option value=\"France\" data-provinces=\"[]\">France</option>"
+    );
+    // Sorted by name, each with the name a form sends and the name to show, as Shopify does.
+    // Every country, with every province.
+    let all = fixture.liquid("/", session, "{{ all_country_option_tags }}");
+    assert!(
+        all.contains(
+            "<option value=\"Canada\" data-provinces=\"[[&quot;Alberta&quot;,&quot;Alberta&quot;],[&quot;British Columbia&quot;,&quot;British Columbia&quot;],"
+        ),
+        "{all}"
+    );
+    assert!(
+        all.contains("[&quot;Wyoming&quot;,&quot;Wyoming&quot;]]\">United States</option>"),
+        "{all}"
+    );
+    assert!(
+        all.contains("<option value=\"Germany\" data-provinces=\"[]\">Germany</option>"),
+        "{all}"
+    );
+    assert!(
+        all.contains("<option value=\"United Kingdom\" data-provinces=\"[[&quot;British Forces&quot;,&quot;British Forces&quot;],[&quot;England&quot;,&quot;England&quot;],"),
+        "{all}"
     );
 }
 

@@ -8,6 +8,7 @@ pub mod docs;
 pub mod load;
 pub mod metafield_types;
 pub mod model;
+mod provinces;
 pub mod reference;
 pub mod theme_settings;
 pub mod validate;
@@ -772,6 +773,33 @@ pub struct Country {
     pub currency: String,
     pub unit_system: String,
     pub popular: bool,
+    /// The provinces the store ships to, sorted by name: empty for a country without.
+    pub provinces: Vec<Province>,
+}
+
+/// A province of a country: a state, a region, a prefecture.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Province {
+    /// Shopify's code: `ON`, `JP-13`.
+    pub code: String,
+    /// The name an address holds and a form sends: `Tōkyō`.
+    pub name: String,
+    /// The name a selector shows: `Tokyo`.
+    pub label: String,
+}
+
+impl Province {
+    /// Every province Shopify lists for a country, sorted by name.
+    pub fn all_of(country: &str) -> Vec<Province> {
+        reference::provinces(country)
+            .iter()
+            .map(|(code, name, label)| Province {
+                code: (*code).to_string(),
+                name: (*name).to_string(),
+                label: (*label).to_string(),
+            })
+            .collect()
+    }
 }
 
 /// A group of countries sold as one market.

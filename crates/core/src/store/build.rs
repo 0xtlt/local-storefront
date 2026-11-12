@@ -364,6 +364,13 @@ fn address(input: &model::AddressInput, scope: &str) -> Address {
         .clone()
         .or_else(|| reference::country_name(&country_code).map(str::to_string))
         .unwrap_or_default();
+    // An address has the name and the code of its province, as Shopify fills in the one from
+    // the other.
+    let known = input
+        .province_code
+        .as_deref()
+        .or(input.province.as_deref())
+        .and_then(|province| reference::province(&country_code, province));
     Address {
         id: input.id.unwrap_or_else(|| stable_id("address", scope)),
         first_name: input.first_name.clone().unwrap_or_default(),
@@ -372,8 +379,20 @@ fn address(input: &model::AddressInput, scope: &str) -> Address {
         address1: input.address1.clone().unwrap_or_default(),
         address2: input.address2.clone().unwrap_or_default(),
         city: input.city.clone().unwrap_or_default(),
-        province: input.province.clone().unwrap_or_default(),
-        province_code: input.province_code.clone().unwrap_or_default(),
+        province: input
+            .province
+            .clone()
+            .or_else(|| known.map(|(_, name)| name.to_string()))
+            .unwrap_or_default(),
+        province_code: input
+            .province_code
+            .clone()
+            .map(|code| match known {
+                Some((known, _)) if known.eq_ignore_ascii_case(&code) => known.to_string(),
+                _ => code,
+            })
+            .or_else(|| known.map(|(code, _)| code.to_string()))
+            .unwrap_or_default(),
         country,
         country_code,
         zip: input.zip.clone().unwrap_or_default(),
@@ -3093,14 +3112,22 @@ fn build_localization(
     store.countries = input
         .countries
         .iter()
-        .map(|country| {
+        .enumerate()
+        .map(|(position, country)| {
             let iso_code = country.iso_code.to_uppercase();
+            let name = country
+                .name
+                .clone()
+                .or_else(|| reference::country_name(&iso_code).map(str::to_string))
+                .unwrap_or_else(|| iso_code.clone());
+            let provinces = match &country.provinces {
+                Some(codes) => {
+                    let country_origin = origin.child("countries").child(position);
+                    country_provinces(builder, &iso_code, &name, codes, &country_origin)
+                }
+                None => Province::all_of(&iso_code),
+            };
             Country {
-                name: country
-                    .name
-                    .clone()
-                    .or_else(|| reference::country_name(&iso_code).map(str::to_string))
-                    .unwrap_or_else(|| iso_code.clone()),
                 currency: country
                     .currency
                     .clone()
@@ -3111,6 +3138,8 @@ fn build_localization(
                     .clone()
                     .unwrap_or_else(|| reference::unit_system(&iso_code).to_string()),
                 popular: country.popular,
+                provinces,
+                name,
                 iso_code,
             }
         })
@@ -3128,6 +3157,7 @@ fn build_localization(
             currency: store.shop.currency.clone(),
             unit_system: reference::unit_system(&iso_code).to_string(),
             popular: false,
+            provinces: Province::all_of(&iso_code),
             iso_code,
         });
     }
@@ -3228,6 +3258,52 @@ fn build_localization(
             iso_code,
         });
     }
+}
+
+/// The provinces of `localization.countries[].provinces`: Shopify's, by code, sorted by name as
+/// Shopify lists them. A code the country does not have is an `unknown_province`.
+fn country_provinces(
+    builder: &mut Builder<'_>,
+    iso_code: &str,
+    name: &str,
+    codes: &[String],
+    origin: &Origin,
+) -> Vec<Province> {
+    let known = Province::all_of(iso_code);
+    let mut kept = vec![false; known.len()];
+    for (index, code) in codes.iter().enumerate() {
+        let at = origin.child("provinces").child(index);
+        if known.is_empty() {
+            builder
+                .error("unknown_province", &at, format!("{name} has no provinces"))
+                .hint("Shopify lists no province for an address there: remove \"provinces\"");
+            continue;
+        }
+        match known
+            .iter()
+            .position(|province| province.code.eq_ignore_ascii_case(code.trim()))
+        {
+            Some(position) => kept[position] = true,
+            None => {
+                let codes: Vec<&str> = known
+                    .iter()
+                    .map(|province| province.code.as_str())
+                    .collect();
+                builder
+                    .error(
+                        "unknown_province",
+                        &at,
+                        format!("\"{code}\" is not a province of {name}"),
+                    )
+                    .hint(format!("provinces: {}", codes.join(", ")));
+            }
+        }
+    }
+    known
+        .into_iter()
+        .zip(kept)
+        .filter_map(|(province, kept)| kept.then_some(province))
+        .collect()
 }
 
 /// The storefront password when the store data sets none.

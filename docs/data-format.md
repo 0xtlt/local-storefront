@@ -728,6 +728,19 @@ selected no country is in the shop's (`shop.address.country_code`), the one of i
 market, on the storefront as at the checkout; in the first country when the store does not sell
 to the shop's.
 
+A country has the provinces Shopify lists for it (the states of the United States, the provinces
+of Canada, the prefectures of Japan, the regions of the United Kingdom: 37 countries, from
+Shopify's address data). The country selectors of a theme list them as Shopify does: in
+`data-provinces` of `country_option_tags` and `all_country_option_tags`, sorted by name, each a
+pair of the name a form sends and the name to show (`["Tōkyō","Tokyo"]`,
+`["District of Columbia","Washington DC"]`). The province selector of the checkout lists them
+too, and an address gets the name of its province from its code, or the code from the name.
+`provinces` restricts a country to those the store ships to, by code:
+
+```json
+{ "iso_code": "US", "provinces": ["CA", "OR", "WA"] }
+```
+
 `markets` groups countries the way Shopify's markets do. The checkout Functions read the
 market of the buyer (`localization.market`) and of an address (`MailingAddress.market`):
 
@@ -912,6 +925,7 @@ extensions:
 | `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield, and a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
+| `unknown_province` | A code of a country's `provinces` that is not one of its provinces, or `provinces` for a country that has none. The hint lists its codes. |
 | `unknown_return_line` | A return of an order names a variant that is not a line of the order. |
 | `expect_checks_nothing` (warning) | An `excludes` of a scenario's `expect` names a payment method, express button or delivery option the checkout does not offer, so it checks nothing. The hint lists what it offers. |
 | `invalid_throttle` | The `throttle` of a session sent to `PUT /__lsf/session` is not one `--throttle` takes. |

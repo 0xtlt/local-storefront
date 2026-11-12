@@ -744,9 +744,20 @@ fn compute(
             "storefrontUrl": origin_of(incoming),
             // `permanent_domain` of the store data, or one made of the name of the shop.
             "myshopifyDomain": store.shop.permanent_domain,
-            // The countries the store sells in, for the country selector.
+            // The countries the store sells in, for the country selector, each with the
+            // provinces it ships to, for the province selector.
             "countries": store.countries.iter()
-                .map(|country| json!({"code": country.iso_code, "name": country.name}))
+                .map(|country| json!({
+                    "code": country.iso_code,
+                    "name": country.name,
+                    "provinces": country.provinces.iter()
+                        .map(|province| json!({
+                            "code": province.code,
+                            "name": province.name,
+                            "label": province.label,
+                        }))
+                        .collect::<Vec<_>>(),
+                }))
                 .collect::<Vec<_>>(),
         }),
     );

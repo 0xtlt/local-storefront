@@ -133,18 +133,26 @@ impl Globals {
             ),
             "content_for_header" => Value::from(super::platform::content_for_header(site, page)),
             "content_for_additional_checkout_buttons" => Value::empty_string(),
-            // The `<option>`s of a country selector. Provinces are not known locally, so the
-            // province selector the theme's script fills from `data-provinces` stays empty.
+            // The `<option>`s of a country selector: the countries of the store, each with the
+            // provinces it ships to, which the theme's script fills a province selector with.
             "country_option_tags" => {
-                let names: Vec<&str> = store
-                    .countries
-                    .iter()
-                    .map(|country| country.name.as_str())
-                    .collect();
-                Value::from(country_options(&names))
+                Value::from(country_options(store.countries.iter().map(|country| {
+                    let provinces = country
+                        .provinces
+                        .iter()
+                        .map(|province| [province.name.as_str(), province.label.as_str()]);
+                    (country.name.as_str(), provinces.collect())
+                })))
             }
+            // Every country, with every province.
             "all_country_option_tags" => {
-                Value::from(country_options(&lsf_core::store::reference::country_names()))
+                let reference = &lsf_core::store::reference::country_names();
+                Value::from(country_options(reference.iter().map(|name| {
+                    let code = lsf_core::store::reference::country_code_from_name(name);
+                    let provinces = lsf_core::store::reference::provinces(code.unwrap_or_default());
+                    let pairs = provinces.iter().map(|(_, name, label)| [*name, *label]);
+                    (*name, pairs.collect())
+                })))
             }
             "additional_checkout_buttons" => Value::Bool(false),
             "scripts" => Value::Nil,
@@ -220,12 +228,17 @@ impl Globals {
     }
 }
 
-fn country_options(names: &[&str]) -> String {
-    names
-        .iter()
-        .map(|name| {
+/// The `<option>` of each country, by name, with its provinces in `data-provinces`: a JSON
+/// list of pairs, the name a form sends (`address[province]`) and the name to show.
+fn country_options<'a>(countries: impl Iterator<Item = (&'a str, Vec<[&'a str; 2]>)>) -> String {
+    countries
+        .map(|(name, pairs)| {
+            let provinces = serde_json::to_string(&pairs).unwrap_or_else(|_| "[]".to_string());
             let name = escape_html(name);
-            format!("<option value=\"{name}\" data-provinces=\"[]\">{name}</option>")
+            format!(
+                "<option value=\"{name}\" data-provinces=\"{}\">{name}</option>",
+                escape_html(&provinces)
+            )
         })
         .collect::<Vec<_>>()
         .join("\n")

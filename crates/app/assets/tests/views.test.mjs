@@ -75,6 +75,38 @@ test('the country selector lists the countries of the store', () => {
   }
 });
 
+test('the province is picked from those of the country, when it has some', () => {
+  const state = checkoutState();
+  state.shop = {
+    ...state.shop,
+    countries: [
+      {
+        code: 'US',
+        name: 'United States',
+        provinces: [
+          { code: 'DC', name: 'District of Columbia', label: 'Washington DC' },
+          { code: 'WA', name: 'Washington', label: 'Washington' },
+        ],
+      },
+      { code: 'FR', name: 'France', provinces: [] },
+    ],
+  };
+  const provinceSelect = (tree) =>
+    findAll(tree, (node) => node.tag === 'select' && node.props.name === 'provinceCode')[0];
+  state.shippingAddress = { ...ADDRESS, countryCode: 'US', provinceCode: 'WA' };
+  const select = provinceSelect(page(state));
+  assert.deepEqual(
+    select.children.filter((node) => node.tag === 'option' && node.props.value).map((node) => [node.props.value, text(node)]),
+    [['DC', 'Washington DC'], ['WA', 'Washington']],
+  );
+  assert.equal(select.props.value, 'WA');
+  // A country without provinces keeps a text field.
+  state.shippingAddress = { ...ADDRESS, countryCode: 'FR' };
+  const tree = page(state);
+  assert.equal(provinceSelect(tree), undefined);
+  assert.equal(findAll(tree, (node) => node.tag === 'input' && node.props.name === 'provinceCode').length, 1);
+});
+
 test('shipping methods wait for the address', () => {
   const before = page(checkoutState());
   assert.match(text(byClass(before, 'lsf-placeholder')[0]), /Enter your shipping address/);

@@ -3237,15 +3237,21 @@ fn the_state_lists_the_countries_of_the_store() {
         json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
         json!({"localization": {"countries": [
             {"iso_code": "fr"},
-            {"iso_code": "BE", "name": "Belgique"}
+            {"iso_code": "BE", "name": "Belgique"},
+            {"iso_code": "CA", "provinces": ["QC", "ON"]}
         ]}}),
     );
     let json = body_json(&get(&state, &format!("{path}.json"), "co-countries"));
+    // Each with the provinces the store ships to, for the province selector, sorted by name.
     assert_eq!(
         json["shop"]["countries"],
         json!([
-            {"code": "FR", "name": "France"},
-            {"code": "BE", "name": "Belgique"}
+            {"code": "FR", "name": "France", "provinces": []},
+            {"code": "BE", "name": "Belgique", "provinces": []},
+            {"code": "CA", "name": "Canada", "provinces": [
+                {"code": "ON", "name": "Ontario", "label": "Ontario"},
+                {"code": "QC", "name": "Quebec", "label": "Quebec"}
+            ]}
         ])
     );
     // The page carries them too.

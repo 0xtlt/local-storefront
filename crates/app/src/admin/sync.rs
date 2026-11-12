@@ -2223,6 +2223,13 @@ impl<'s> Sync<'s> {
                 ),
                 unit_system: Some(country.unit_system.clone()),
                 popular: country.popular,
+                provinces: Some(
+                    country
+                        .provinces
+                        .iter()
+                        .map(|province| province.code.clone())
+                        .collect(),
+                ),
             })
             .collect();
         // A market can only group countries the store sells to: those it adds are sold to.
@@ -2237,6 +2244,7 @@ impl<'s> Sync<'s> {
                     currency: currency_of(code),
                     unit_system: None,
                     popular: false,
+                    provinces: None,
                 });
             }
         }

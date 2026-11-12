@@ -733,6 +733,7 @@ A country the store sells to.
 | `currency` | string | ISO 4217 currency code. Defaults to the store currency. |
 | `unit_system` | string | `metric` or `imperial`. Defaults to `metric`. |
 | `popular` | boolean | Whether to list the country among the popular ones. |
+| `provinces` | array of string | The provinces the store ships to, by code (`["CA", "OR", "WA"]`): those a country selector offers (`data-provinces` of `country_option_tags`), sorted by name as Shopify lists them. Defaults to every province Shopify lists for the country (states, regions, prefectures); a country Shopify lists none for has none. |
 
 ## Language
 

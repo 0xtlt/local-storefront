@@ -2543,6 +2543,90 @@ mod tests {
     }
 
     #[test]
+    fn countries_have_their_provinces() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [
+                {"iso_code": "US", "provinces": ["WA", "or"]},
+                {"iso_code": "CA"},
+                {"iso_code": "FR"}
+            ]
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let codes = |country: &str| -> Vec<(String, String)> {
+            store
+                .country(country)
+                .expect("a country")
+                .provinces
+                .iter()
+                .map(|province| (province.code.clone(), province.name.clone()))
+                .collect()
+        };
+        // Those the store ships to, sorted by name as Shopify lists them.
+        assert_eq!(
+            codes("US"),
+            [
+                ("OR".to_string(), "Oregon".to_string()),
+                ("WA".to_string(), "Washington".to_string())
+            ]
+        );
+        // Every province of the country by default; none for a country without.
+        assert_eq!(codes("CA").len(), 13);
+        assert_eq!(codes("CA")[8], ("ON".to_string(), "Ontario".to_string()));
+        assert!(codes("FR").is_empty());
+    }
+
+    #[test]
+    fn bad_provinces_are_reported() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [
+                {"iso_code": "US", "provinces": ["OR", "ZZ"]},
+                {"iso_code": "FR", "provinces": ["IDF"]}
+            ]
+        }});
+        let (_, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        let report = diagnostics.to_string();
+        for expected in [
+            "error[unknown_province]: \"ZZ\" is not a province of United States",
+            "error[unknown_province]: France has no provinces",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_address_has_the_name_and_the_code_of_its_province() {
+        // The overlay merges into the demo shop's address (Ottawa, Ontario): `null` removes.
+        let overlay = serde_json::json!({"shop": {"address": {
+            "country_code": "US", "province_code": "or", "province": null
+        }}});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        assert_eq!(store.shop.address.province, "Oregon");
+        assert_eq!(store.shop.address.province_code, "OR");
+        let overlay = serde_json::json!({"shop": {"address": {
+            "country": "Canada", "country_code": null, "province": "Quebec", "province_code": null
+        }}});
+        let (store, _) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert_eq!(store.shop.address.province_code, "QC");
+        // What the data says is kept, known or not.
+        let overlay = serde_json::json!({"shop": {"address": {
+            "country_code": "FR", "province": "Bretagne", "province_code": "BRE"
+        }}});
+        let (store, _) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert_eq!(store.shop.address.province, "Bretagne");
+        assert_eq!(store.shop.address.province_code, "BRE");
+    }
+
+    #[test]
     fn bad_markets_are_reported() {
         let overlay = serde_json::json!({"localization": {
             "countries": [{"iso_code": "FR"}, {"iso_code": "DE"}],

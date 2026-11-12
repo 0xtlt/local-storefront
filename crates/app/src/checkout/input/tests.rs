@@ -1973,6 +1973,7 @@ fn sells_to(f: &mut Fixture, codes: &[&str]) {
             currency: "EUR".to_string(),
             unit_system: "metric".to_string(),
             popular: false,
+            provinces: lsf_core::store::Province::all_of(code),
         })
         .collect();
 }

@@ -2922,6 +2922,17 @@
           "description": "Whether to list the country among the popular ones.",
           "type": "boolean",
           "default": false
+        },
+        "provinces": {
+          "description": "The provinces the store ships to, by code (`[\"CA\", \"OR\", \"WA\"]`): those a country\nselector offers (`data-provinces` of `country_option_tags`), sorted by name as Shopify\nlists them. Defaults to every province Shopify lists for the country (states, regions,\nprefectures); a country Shopify lists none for has none.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": null
         }
       },
       "additionalProperties": false,

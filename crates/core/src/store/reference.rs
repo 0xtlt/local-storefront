@@ -470,6 +470,33 @@ pub fn country_code_from_name(name: &str) -> Option<&'static str> {
         .map(|(iso, _, _)| *iso)
 }
 
+/// The provinces of a country, as `(code, name, label)` sorted by name, as Shopify lists them:
+/// empty for a country Shopify lists none for. The name is what an address holds and a form
+/// sends (`Hokkaidō`), the label what a selector shows (`Hokkaido`).
+pub fn provinces(country: &str) -> &'static [super::provinces::Province] {
+    super::provinces::PROVINCES
+        .iter()
+        .find(|(code, _)| code.eq_ignore_ascii_case(country))
+        .map_or(&[], |(_, provinces)| provinces)
+}
+
+/// The province of a country with this code, name or label (any case): `(code, name)`.
+pub fn province(country: &str, code_or_name: &str) -> Option<(&'static str, &'static str)> {
+    let wanted = code_or_name.trim();
+    let all = provinces(country);
+    all.iter()
+        .find(|(code, _, _)| code.eq_ignore_ascii_case(wanted))
+        .or_else(|| {
+            all.iter()
+                .find(|(_, name, _)| name.eq_ignore_ascii_case(wanted))
+        })
+        .or_else(|| {
+            all.iter()
+                .find(|(_, _, label)| label.eq_ignore_ascii_case(wanted))
+        })
+        .map(|(code, name, _)| (*code, *name))
+}
+
 /// Countries that use imperial units.
 pub fn unit_system(country: &str) -> &'static str {
     if ["US", "LR", "MM"]
@@ -582,6 +609,37 @@ mod tests {
         // Every country this file names is one.
         for (code, _, _) in COUNTRIES {
             assert!(is_country_code(code), "{code}");
+        }
+    }
+
+    #[test]
+    fn countries_have_the_provinces_shopify_lists() {
+        assert_eq!(provinces("CA").len(), 13);
+        assert_eq!(provinces("CA")[0], ("AB", "Alberta", "Alberta"));
+        assert_eq!(provinces("us").len(), 62);
+        // Sorted by name, which a selector shows by its label.
+        assert_eq!(provinces("JP")[0], ("JP-23", "Aichi", "Aichi"));
+        assert!(provinces("JP").contains(&("JP-13", "Tōkyō", "Tokyo")));
+        assert!(provinces("US").contains(&("DC", "District of Columbia", "Washington DC")));
+        assert!(provinces("US").contains(&("VI", "Virgin Islands", "U.S. Virgin Islands")));
+        // The regions of the United Kingdom; France and Türkiye have none.
+        assert_eq!(provinces("GB")[1], ("ENG", "England", "England"));
+        assert!(provinces("FR").is_empty());
+        assert!(provinces("TR").is_empty());
+        assert!(provinces("").is_empty());
+        assert_eq!(province("US", "or"), Some(("OR", "Oregon")));
+        assert_eq!(province("US", "oregon"), Some(("OR", "Oregon")));
+        assert_eq!(province("JP", "Tokyo"), Some(("JP-13", "Tōkyō")));
+        assert_eq!(province("US", "Atlantis"), None);
+        for (country, provinces) in super::super::provinces::PROVINCES {
+            assert!(is_country_code(country), "{country}");
+            assert!(!provinces.is_empty(), "{country}");
+            let names: Vec<&str> = provinces.iter().map(|(_, name, _)| *name).collect();
+            assert!(names.is_sorted(), "{country} is not sorted by name");
+            let mut codes: Vec<&str> = provinces.iter().map(|(code, _, _)| *code).collect();
+            codes.sort_unstable();
+            codes.dedup();
+            assert_eq!(codes.len(), provinces.len(), "{country} has a code twice");
         }
     }
 }
