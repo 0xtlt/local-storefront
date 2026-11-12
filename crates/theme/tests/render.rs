@@ -371,6 +371,118 @@ fn a_country_is_offered_the_languages_of_its_market() {
 }
 
 #[test]
+fn a_page_under_a_market_subfolder_links_under_it() {
+    let overlay = serde_json::json!({"localization": {
+        "countries": [{"iso_code": "CA"}, {"iso_code": "BE"}, {"iso_code": "NL"}],
+        "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+        "markets": [{"handle": "benelux", "countries": ["BE", "NL"], "subfolder_suffix": "bnl"}]
+    }});
+    let options = LoadOptions {
+        theme_locales: vec!["en".to_string(), "fr".to_string()],
+        ..LoadOptions::default()
+    };
+    let (store, diagnostics) =
+        lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let mut under = request("/pages/about");
+    under.locale = "fr".to_string();
+    under.root = "/fr-bnl".to_string();
+    under.market = Some("benelux".to_string());
+    let source = "{{ localization.country.iso_code }}|{{ request.locale.root_url }}|\
+        {{ localization.language.root_url }}|{{ routes.root_url }}|{{ routes.cart_url }}|\
+        {% for language in localization.available_languages %}{{ language.root_url }},{% endfor %}";
+    let render = |request: Request, session: Session| {
+        let site = fixture
+            .renderer
+            .site(fixture.store.clone(), request, session);
+        let page = lsf_theme::render::routes::resolve(&site);
+        let (output, errors) = fixture
+            .renderer
+            .render_liquid(&site, page, source, &[])
+            .expect("the template parses");
+        assert!(errors.is_empty(), "{errors:?}");
+        output
+    };
+    // The market's first country, every language under its subfolders.
+    assert_eq!(
+        render(under.clone(), Session::initial(&fixture.store)),
+        "BE|/fr-bnl|/fr-bnl|/fr-bnl|/fr-bnl/cart|/en-bnl,/fr-bnl,"
+    );
+    // The visitor's country when the market has it.
+    let mut session = Session::initial(&fixture.store);
+    session.country = Some("NL".to_string());
+    assert!(render(under, session.clone()).starts_with("NL|"));
+    // At `/`, a country of the market is not the visitor's: the shop's.
+    assert_eq!(
+        render(request("/pages/about"), session),
+        "CA|/|/|/|/cart|/,/fr,"
+    );
+    // Search engines learn every subfolder, for each country of its market.
+    let head = fixture.page("/pages/about").body;
+    for link in [
+        "<link rel=\"alternate\" hreflang=\"en-BE\" href=\"http://shop.test/en-bnl/pages/about\">",
+        "<link rel=\"alternate\" hreflang=\"fr-NL\" href=\"http://shop.test/fr-bnl/pages/about\">",
+        "<link rel=\"alternate\" hreflang=\"fr\" href=\"http://shop.test/fr/pages/about\">",
+    ] {
+        assert!(head.contains(link), "{link} in {head}");
+    }
+}
+
+#[test]
+fn prices_are_in_the_currency_of_the_visitors_market() {
+    let overlay = serde_json::json!({"localization": {
+        "countries": [{"iso_code": "CA"}, {"iso_code": "US"}, {"iso_code": "FR"}],
+        "markets": [{"handle": "europe", "countries": ["FR"], "currency": "EUR", "rate": "0.9",
+            "prices": {"canvas-tote-bag": "20.00"}}]
+    }});
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let tote = fixture.store.product_by_handle("canvas-tote-bag").unwrap();
+    let mut session = Session::initial(&fixture.store);
+    session.cart_lines = vec![CartLine {
+        variant_id: tote.variants[0].id,
+        quantity: 2,
+        properties: Default::default(),
+        selling_plan: None,
+    }];
+    let source = "{{ product.price | money }}|{{ product.price | money_with_currency }}|\
+        {{ cart.total_price | money }}|{{ cart.currency.iso_code }}|\
+        {{ localization.country.currency.iso_code }}|{{ shop.currency }}|\
+        {{ shop.enabled_currencies | map: 'iso_code' | join: ',' }}";
+    // In the shop's currency, as before.
+    assert_eq!(
+        fixture.liquid("/products/organic-cotton-t-shirt", session.clone(), source),
+        "$32.00|$32.00 USD|$48.00|USD|USD|USD|USD,EUR"
+    );
+    // In France, in euros: at the market's rate, or at its fixed price (the tote bag).
+    session.country = Some("FR".to_string());
+    assert_eq!(
+        fixture.liquid("/products/organic-cotton-t-shirt", session.clone(), source),
+        "€28,80|€28,80 EUR|€40,00|EUR|EUR|USD|USD,EUR"
+    );
+    // Shopify's scripts say it, with the rate.
+    let page = fixture
+        .render_with(request("/"), session, &Target::Page)
+        .body;
+    assert!(
+        page.contains("Shopify.currency = {\"active\":\"EUR\",\"rate\":\"0.9\"};"),
+        "{page}"
+    );
+}
+
+#[test]
 fn forms_show_the_outcome_of_a_submission() {
     let fixture = fixture();
     let mut session = Session::initial(&fixture.store);
@@ -568,15 +680,68 @@ fn unknown_urls_render_the_404_template() {
         assert!(rendered.body.contains("<h1>Not here</h1>"), "{path}");
         assert!(rendered.body.contains("data-page-type=\"404\""), "{path}");
     }
-    // The countries of the store, as the options of a selector.
+    // The countries of the store, as the options of a selector, each with its provinces as
+    // pairs of their name and the name to show.
     let body = fixture.page("/nope").body;
     assert!(
         body.contains(
-            "<select><option value=\"United States\" data-provinces=\"[]\">United States</option>\n\
-             <option value=\"Canada\" data-provinces=\"[]\">Canada</option>\n\
+            "<select><option value=\"United States\" data-provinces=\"[[&quot;Alabama&quot;,&quot;Alabama&quot;],[&quot;Alaska&quot;,&quot;Alaska&quot;],"
+        ),
+        "{body}"
+    );
+    assert!(
+        body.contains(
+            "[&quot;Yukon&quot;,&quot;Yukon&quot;]]\">Canada</option>\n\
              <option value=\"France\" data-provinces=\"[]\">France</option></select>"
         ),
         "{body}"
+    );
+}
+
+#[test]
+fn country_selectors_list_the_provinces_the_store_ships_to() {
+    let overlay = serde_json::json!({"localization": {"countries": [
+        {"iso_code": "US", "provinces": ["WA", "OR", "DC"]},
+        {"iso_code": "JP", "provinces": ["JP-13"]},
+        {"iso_code": "FR"}
+    ]}});
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let session = Session::initial(&fixture.store);
+    assert_eq!(
+        fixture.liquid("/", session.clone(), "{{ country_option_tags }}"),
+        "<option value=\"United States\" data-provinces=\"[[&quot;District of Columbia&quot;,&quot;Washington DC&quot;],[&quot;Oregon&quot;,&quot;Oregon&quot;],[&quot;Washington&quot;,&quot;Washington&quot;]]\">United States</option>\n\
+         <option value=\"Japan\" data-provinces=\"[[&quot;Tōkyō&quot;,&quot;Tokyo&quot;]]\">Japan</option>\n\
+         <option value=\"France\" data-provinces=\"[]\">France</option>"
+    );
+    // Sorted by name, each with the name a form sends and the name to show, as Shopify does.
+    // Every country, with every province.
+    let all = fixture.liquid("/", session, "{{ all_country_option_tags }}");
+    assert!(
+        all.contains(
+            "<option value=\"Canada\" data-provinces=\"[[&quot;Alberta&quot;,&quot;Alberta&quot;],[&quot;British Columbia&quot;,&quot;British Columbia&quot;],"
+        ),
+        "{all}"
+    );
+    assert!(
+        all.contains("[&quot;Wyoming&quot;,&quot;Wyoming&quot;]]\">United States</option>"),
+        "{all}"
+    );
+    assert!(
+        all.contains("<option value=\"Germany\" data-provinces=\"[]\">Germany</option>"),
+        "{all}"
+    );
+    assert!(
+        all.contains("<option value=\"United Kingdom\" data-provinces=\"[[&quot;British Forces&quot;,&quot;British Forces&quot;],[&quot;England&quot;,&quot;England&quot;],"),
+        "{all}"
     );
 }
 

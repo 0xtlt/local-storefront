@@ -234,7 +234,9 @@ fn unit_price_with_measurement(input: &Value, args: &FilterArgs, ctx: &Context) 
         Value::Str(text) => text.to_string(),
         other => {
             let cents = lsf_liquid::number::to_number(other).to_f64().round() as i64;
-            format_money(cents, &site(ctx)?.store.shop.money_format)
+            let site = site(ctx)?;
+            let (format, _) = super::money::money_formats(&site.store.shop, Some(site.currency()));
+            format_money(cents, &format)
         }
     };
     let measurement = args.at(0);

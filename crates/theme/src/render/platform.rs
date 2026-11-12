@@ -372,8 +372,15 @@ pub fn content_for_header(site: &Site, page: &Page) -> String {
         shop.id
     ));
 
-    // One alternate per published language, when there is more than one.
-    if store.languages.len() > 1 {
+    // One alternate per published language, when there is more than one, and one per language
+    // and country of each market with subfolders of its own (`en-BE` for `/en-be`), as Shopify
+    // lists them.
+    let subfolders: Vec<_> = store
+        .markets
+        .iter()
+        .filter(|market| market.subfolder_suffix.is_some())
+        .collect();
+    if store.languages.len() > 1 || !subfolders.is_empty() {
         let href = |root: &str| {
             // The primary language is served at `/`, the others under `/<code>`.
             let path = match (root.trim_end_matches('/'), page.canonical_path.as_str()) {
@@ -394,6 +401,17 @@ pub fn content_for_header(site: &Site, page: &Page) -> String {
                 language.iso_code,
                 href(&language.root_url)
             ));
+        }
+        for market in subfolders {
+            for country in &market.countries {
+                for language in store.presence_languages(Some(market)) {
+                    out.push(format!(
+                        "<link rel=\"alternate\" hreflang=\"{}-{country}\" href=\"{}\">",
+                        language.iso_code,
+                        href(&store.locale_root(language, Some(market)))
+                    ));
+                }
+            }
         }
     }
 
@@ -435,7 +453,15 @@ pub fn content_for_header(site: &Site, page: &Page) -> String {
              Shopify.routes.root = {};",
             misc_json(&json!(shop.permanent_domain)),
             misc_json(&json!(request.locale)),
-            misc_json(&json!({"active": site.currency(), "rate": "1.0"})),
+            // The rate from the shop's currency, as Shopify gives it (`"1.4258069"`).
+            misc_json(&json!({
+                "active": site.currency(),
+                "rate": site
+                    .store
+                    .presentment
+                    .as_ref()
+                    .map_or_else(|| "1.0".to_string(), |presentment| presentment.rate.to_string()),
+            })),
             misc_json(&json!(site.country().iso_code)),
             misc_json(&theme),
             misc_json(&json!(format!("{}/cdn", request.host))),

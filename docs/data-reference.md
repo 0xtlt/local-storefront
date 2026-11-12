@@ -731,9 +731,10 @@ A country the store sells to.
 |---|---|---|
 | `iso_code` | string | **Required.** ISO 3166-1 alpha-2 code, e.g. `"FR"`. |
 | `name` | string | Defaults to the English name of the country. |
-| `currency` | string | ISO 4217 currency code. Defaults to the store currency. |
+| `currency` | string | ISO 4217 code of the currency its buyers pay in: prices, the cart and the checkout are in it. Defaults to the `currency` of its market, else the store currency. |
 | `unit_system` | string | `metric` or `imperial`. Defaults to `metric`. |
 | `popular` | boolean | Whether to list the country among the popular ones. |
+| `provinces` | array of string | The provinces the store ships to, by code (`["CA", "OR", "WA"]`): those a country selector offers (`data-provinces` of `country_option_tags`), sorted by name as Shopify lists them. Defaults to every province Shopify lists for the country (states, regions, prefectures); a country Shopify lists none for has none. |
 
 ## Language
 
@@ -756,6 +757,28 @@ A market: the countries the store sells to as one, as checkout Functions see it 
 | `countries` | array of string | **Required.** The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`. |
 | `languages` | array of string | The languages its countries are offered (`country.available_languages`, in this order), by ISO code, which are in `localization.languages`. The first is the market's default language: a visitor who switches to one of its countries in a language it does not offer gets it. Defaults to every language of the store. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
+| `subfolder_suffix` | string | Serves the market under subfolders of its own, as a Shopify market's web presence does: `"ca"` serves it at `/en-ca/`, `/fr-ca/`, one per language. Two letters at least. Without it, the market is served at `/`, with the primary market. |
+| `currency` | string | The currency its countries pay in, by ISO 4217 code (`"EUR"`), as a Shopify market's base currency: prices, the cart and the checkout are in it. A country's own `currency` wins. Defaults to the store currency. |
+| `rate` | string | What one unit of the store currency is worth in the market's currency, as a decimal string (`"0.92"`): prices are converted with it, as with a manual exchange rate on Shopify. Defaults to 1, since lsf has no exchange rates. |
+| `prices` | map of [FixedPrice](#fixedprice) | Fixed prices in the market's currency, as a Shopify price list has them, which are not converted: by variant (a SKU, an id, or a product handle for each of its variants), a price (`"25.00"`) or `{"price": "25.00", "compare_at_price": "30.00"}`. |
+
+## FixedPrice
+
+A fixed price of a market: a price, or a price and a compare-at price.
+
+One of:
+
+- [Money](#money)
+- [FixedPriceObject](#fixedpriceobject)
+
+## FixedPriceObject
+
+A fixed price with its compare-at price.
+
+| Field | Type | Description |
+|---|---|---|
+| `price` | [Money](#money) | **Required.** |
+| `compare_at_price` | [Money](#money) | None when omitted: a fixed price has the compare-at price it is given. |
 
 ## Location
 

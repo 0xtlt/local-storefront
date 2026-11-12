@@ -67,6 +67,13 @@ impl Reply {
         reply
     }
 
+    /// A `301`: what Shopify answers a URL that belongs to another web presence.
+    pub fn moved(location: &str) -> Reply {
+        let mut reply = Reply::redirect(location);
+        reply.status = 301;
+        reply
+    }
+
     pub fn not_found() -> Reply {
         Reply::text(404, "Not found")
     }

@@ -759,12 +759,25 @@ store has none: `npx local-storefront app init` writes a set.
 
 The first language is the primary one, served at `/`. The others are served under
 `/<iso_code>/` (`/fr/products/blue-shirt`) and use the theme's `locales/<iso_code>.json`.
-Names and currencies of countries default to built-in values. Without `countries`, the store
+Names of countries default to built-in values. Without `countries`, the store
 sells in one country: the shop's (`shop.address.country_code`), or `US`. The localization form
 (`{% form 'localization' %}`) switches the session's country and language. A visitor who
 selected no country is in the shop's (`shop.address.country_code`), the one of its primary
 market, on the storefront as at the checkout; in the first country when the store does not sell
 to the shop's.
+
+A country has the provinces Shopify lists for it (the states of the United States, the provinces
+of Canada, the prefectures of Japan, the regions of the United Kingdom: 37 countries, from
+Shopify's address data). The country selectors of a theme list them as Shopify does: in
+`data-provinces` of `country_option_tags` and `all_country_option_tags`, sorted by name, each a
+pair of the name a form sends and the name to show (`["Tōkyō","Tokyo"]`,
+`["District of Columbia","Washington DC"]`). The province selector of the checkout lists them
+too, and an address gets the name of its province from its code, or the code from the name.
+`provinces` restricts a country to those the store ships to, by code:
+
+```json
+{ "iso_code": "US", "provinces": ["CA", "OR", "WA"] }
+```
 
 `markets` groups countries the way Shopify's markets do. The checkout Functions read the
 market of the buyer (`localization.market`) and of an address (`MailingAddress.market`):
@@ -797,9 +810,46 @@ language, the visitor moves to that default; a language it offers stays. Here Fr
 get French then German (a visitor on an English page who switches to Germany lands on `/fr/...`),
 and the United States every language. A market without `languages`, and a country in no market,
 offer every language of the store, the primary first. A language that is not in
-`localization.languages` is an `unknown_language` error. Every language is still served under `/<iso_code>/`, whatever the
-visitor's country: on Shopify, a market with languages of its own has URLs of its own (`/en-ca`),
-which lsf does not make.
+`localization.languages` is an `unknown_language` error. Every language is served under
+`/<iso_code>/` at `/`, whatever the visitor's country; a market with a `subfolder_suffix` (below)
+has URLs of its own, in its languages only.
+
+A market can sell in its own currency, as a Shopify market with a base currency: `currency`, the
+`rate` that converts the store's prices to it (what one unit of the store currency is worth, as a
+manual exchange rate; 1 when there is none, since lsf has no exchange rates), and `prices`, fixed
+prices of a price list, which are not converted. A key of `prices` is a SKU, a variant id, or a
+product handle for each of its variants; a value a price, or `{"price", "compare_at_price"}`.
+
+```json
+{
+  "handle": "europe",
+  "countries": ["FR", "DE"],
+  "currency": "EUR",
+  "rate": "0.92",
+  "prices": { "TEE-WHT-S": "25.00", "canvas-tote-bag": { "price": "30.00", "compare_at_price": "40.00" } }
+}
+```
+
+A country pays in its own `currency`, else in its market's, else in the store's. A visitor in it
+sees every price in that currency, rounded to its minor unit (to whole yen for JPY): products,
+variants, compare-at and unit prices, selling plans, the cart, `/cart.js`, the checkout and its
+shipping rates. `cart.currency`, `localization.country.currency` and the money filters follow;
+`shop.currency` stays the store's, and `shop.enabled_currencies` lists every currency of the
+countries. Gift cards keep their own currency, and orders of the data are priced as their
+variants are.
+
+`subfolder_suffix` serves a market under subfolders of its own, as a Shopify market whose web
+presence is a subfolder of the primary domain: `/<language>-<suffix>/` for each of its
+`languages` (`/en-be/`, `/fr-be/`), or each language of the store when it lists none. A subfolder
+in a language the market does not offer is not found, as on Shopify (`/es-be/` when Belgium
+offers English and French). A page there is in a country of the market, and `?country=` and the
+localization form move the visitor between `/` and the subfolders as Shopify does, in a language
+the market offers (see [the storefront guide](storefront.md#countries-and-markets-in-the-url)).
+The market of the shop's country is served at `/`, so it cannot have one.
+
+```json
+{ "handle": "belgium", "countries": ["BE"], "subfolder_suffix": "be" }
+```
 
 ## Images and files
 
@@ -1074,6 +1124,9 @@ extensions:
 | `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield (in a form lsf does not read, its hint is the form to write: `use "faq/size"`), and a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
+| `invalid_value`, `invalid_format` of a market's `currency` or `rate` | A currency that is not three letters, a rate that is not a decimal above 0. A key of its `prices` that names no variant is an `unknown_variant`. |
+| `invalid_value` of a `subfolder_suffix` | A suffix that is not two letters at least, that is a script code (`latn`), or that the market of the shop's country has. Two markets with the same suffix are a `duplicate_handle`. |
+| `unknown_province` | A code of a country's `provinces` that is not one of its provinces, or `provinces` for a country that has none. The hint lists its codes. |
 | `unknown_return_line` | A return of an order names a variant that is not a line of the order. |
 | `expect_checks_nothing` (warning) | An `excludes` of a scenario's `expect` names a payment method, express button or delivery option the checkout does not offer, so it checks nothing. The hint lists what it offers. |
 | `invalid_throttle` | The `throttle` of a session sent to `PUT /__lsf/session` is not one `--throttle` takes. |

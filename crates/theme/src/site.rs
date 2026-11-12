@@ -22,8 +22,12 @@ pub struct Request {
     pub query: Vec<(String, String)>,
     /// The language being served, e.g. `en`.
     pub locale: String,
-    /// The prefix of every storefront URL in this language: empty, or `/fr`.
+    /// The prefix of every storefront URL in this language: empty, `/fr`, or `/fr-ca` under the
+    /// subfolders of a market.
     pub root: String,
+    /// The handle of the market whose subfolders the URL is under (`/fr-ca/...`): `None` at
+    /// `/`, where the primary market and the markets without a subfolder are served.
+    pub market: Option<String>,
 }
 
 impl Request {
@@ -35,6 +39,7 @@ impl Request {
             query: Vec::new(),
             locale: "en".to_string(),
             root: String::new(),
+            market: None,
         }
     }
 
@@ -114,6 +119,17 @@ impl Site {
         session: Session,
         now: DateTime<Utc>,
     ) -> Site {
+        // Prices are in the currency of the visitor's country, at its market's rate or fixed
+        // prices, as Shopify presents a storefront to a market.
+        let market = request
+            .market
+            .as_deref()
+            .and_then(|handle| store.market_named(handle));
+        let country = store
+            .country_at(session.country.as_deref(), market)
+            .iso_code
+            .clone();
+        let store = store.presented_for(&country);
         Site {
             theme,
             store,
@@ -156,19 +172,36 @@ impl Site {
             .get_or_init(|| self.theme.schema_translations(&self.request.locale))
     }
 
-    /// The country the visitor shops in: the one they selected, else the store's default
-    /// ([`lsf_core::Store::default_country`]), the one the checkout opens in.
+    /// The country the visitor shops in: the one they selected, when the web presence of the
+    /// URL serves it, else the presence's default ([`lsf_core::Store::country_at`]): the
+    /// store's default country at `/`, the one the checkout opens in.
     pub fn country(&self) -> &lsf_core::store::Country {
-        self.session
-            .country
-            .as_deref()
-            .and_then(|code| self.store.country(code))
-            .unwrap_or_else(|| self.store.default_country())
+        self.store
+            .country_at(self.session.country.as_deref(), self.market())
     }
 
-    /// The currency prices are displayed in.
+    /// The market whose subfolders the page is under (`/fr-ca/...`), if it is.
+    pub fn market(&self) -> Option<&lsf_core::store::Market> {
+        self.request
+            .market
+            .as_deref()
+            .and_then(|handle| self.store.market_named(handle))
+    }
+
+    /// The prefix of a language's URLs on the web presence of the page: `/fr`, or `/fr-ca`
+    /// under the subfolders of a market. `/` for the primary language at the root.
+    pub fn root_url_of(&self, language: &lsf_core::store::Language) -> String {
+        let root = self.store.locale_root(language, self.market());
+        if root.is_empty() {
+            "/".to_string()
+        } else {
+            root
+        }
+    }
+
+    /// The currency prices are displayed in: the one of the visitor's country.
     pub fn currency(&self) -> &str {
-        &self.store.shop.currency
+        self.store.currency()
     }
 
     pub fn language(&self) -> &lsf_core::store::Language {

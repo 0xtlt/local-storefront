@@ -146,7 +146,16 @@ pub fn localization(visit: &Visit<'_>) -> Reply {
     }
     let return_to = text("return_to").unwrap_or_else(|| "/".to_string());
     let store = &visit.store;
-    let (current, _, path) = visit.state.localize(store, &return_to);
+    let (current, root, path) = store.split_locale(&return_to);
+    let page_presence = store.market_of_root(&root);
+    // The web presence of the country picked: the subfolders of its market (`/en-be`), else `/`.
+    // Without a country, the one of the page.
+    let presence = match text("country_code").and_then(|code| store.country(&code)) {
+        Some(country) => store
+            .market_of(&country.iso_code)
+            .filter(|market| market.subfolder_suffix.is_some()),
+        None => page_presence,
+    };
     let asked = text("locale_code")
         .or_else(|| text("language_code"))
         .and_then(|code| store.language(&code));
@@ -155,30 +164,22 @@ pub fn localization(visit: &Visit<'_>) -> Reply {
     // default language for that country."
     // (https://shopify.dev/docs/storefronts/themes/markets/multiple-currencies-languages)
     let session = visit.session();
-    let country = session
-        .country
-        .as_deref()
-        .and_then(|code| store.country(code))
-        .unwrap_or_else(|| store.default_country());
-    let language = asked
-        .or_else(|| store.language(&current))
-        .filter(|wanted| {
-            store
-                .languages_of(&country.iso_code)
-                .iter()
-                .any(|offered| offered.iso_code == wanted.iso_code)
-        })
-        .unwrap_or_else(|| store.default_language_of(&country.iso_code));
-    if asked.is_none() && language.iso_code == current {
+    let country = store.country_at(session.country.as_deref(), presence);
+    let language = store.language_for(asked.unwrap_or(current), &country.iso_code);
+    let same_presence =
+        presence.map(|market| &market.handle) == page_presence.map(|market| &market.handle);
+    if asked.is_none() && language.iso_code == current.iso_code && same_presence {
         return Reply::redirect(&return_to);
     }
-    // Changing the language moves the visitor to the same page under the new locale root.
-    let target = if language.primary {
+    // The same page under the root of the language on that presence, as Shopify answers
+    // `country_code=BE` with `/en-be/...`.
+    let root = store.locale_root(language, presence);
+    let target = if root.is_empty() {
         path
     } else if path == "/" {
-        language.root_url.clone()
+        root
     } else {
-        format!("{}{path}", language.root_url)
+        format!("{root}{path}")
     };
     Reply::redirect(&target)
 }

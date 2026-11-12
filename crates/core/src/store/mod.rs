@@ -9,6 +9,7 @@ pub mod load;
 pub mod metafield_references;
 pub mod metafield_types;
 pub mod model;
+mod provinces;
 pub mod reference;
 pub mod theme_settings;
 pub mod validate;
@@ -791,6 +792,33 @@ pub struct Country {
     pub currency: String,
     pub unit_system: String,
     pub popular: bool,
+    /// The provinces the store ships to, sorted by name: empty for a country without.
+    pub provinces: Vec<Province>,
+}
+
+/// A province of a country: a state, a region, a prefecture.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Province {
+    /// Shopify's code: `ON`, `JP-13`.
+    pub code: String,
+    /// The name an address holds and a form sends: `Tōkyō`.
+    pub name: String,
+    /// The name a selector shows: `Tokyo`.
+    pub label: String,
+}
+
+impl Province {
+    /// Every province Shopify lists for a country, sorted by name.
+    pub fn all_of(country: &str) -> Vec<Province> {
+        reference::provinces(country)
+            .iter()
+            .map(|(code, name, label)| Province {
+                code: (*code).to_string(),
+                name: (*name).to_string(),
+                label: (*label).to_string(),
+            })
+            .collect()
+    }
 }
 
 /// A group of countries sold as one market.
@@ -803,6 +831,120 @@ pub struct Market {
     /// default first. Empty when it offers every language of the store.
     pub languages: Vec<String>,
     pub metafields: Metafields,
+    /// The suffix of its subfolders (`ca` for `/en-ca/`), lower case: `None` for a market
+    /// served at `/`.
+    pub subfolder_suffix: Option<String>,
+    /// The currency it declares (ISO 4217, upper case), which its countries pay in unless they
+    /// have their own.
+    pub currency: Option<String>,
+    /// From the store currency to the currency of its countries.
+    pub rate: Option<Rate>,
+    /// Its fixed prices, in the currency of its countries, by variant id.
+    pub prices: HashMap<u64, FixedPrice>,
+}
+
+/// A fixed price of a market's price list, in cents of its currency.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FixedPrice {
+    pub price: i64,
+    pub compare_at_price: Option<i64>,
+}
+
+/// An exchange rate: what one unit of the store currency is worth in another, kept exact as the
+/// decimal it was written as.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rate {
+    /// The digits, without the decimal point: `92` for `0.92`.
+    digits: i128,
+    /// The number of decimals: `2` for `0.92`.
+    scale: u32,
+}
+
+impl Rate {
+    /// One for one.
+    pub const ONE: Rate = Rate {
+        digits: 1,
+        scale: 0,
+    };
+
+    /// A positive decimal (`"0.92"`, `"150"`), up to 12 decimals.
+    pub fn parse(text: &str) -> Option<Rate> {
+        let text = text.trim();
+        let (units, fraction) = text.split_once('.').unwrap_or((text, ""));
+        if units.is_empty()
+            || fraction.len() > 12
+            || !units
+                .bytes()
+                .chain(fraction.bytes())
+                .all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let digits: i128 = format!("{units}{fraction}").parse().ok()?;
+        let mut rate = Rate {
+            digits,
+            scale: fraction.len() as u32,
+        };
+        while rate.scale > 0 && rate.digits % 10 == 0 {
+            rate.digits /= 10;
+            rate.scale -= 1;
+        }
+        Some(rate)
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.digits == 0
+    }
+
+    pub fn is_one(&self) -> bool {
+        *self == Rate::ONE
+    }
+
+    /// An amount in cents of the store currency, in cents of the other, rounded half away from
+    /// zero; to whole units for a currency without decimals.
+    pub fn convert(&self, cents: i64, currency: &str) -> i64 {
+        let unit: i128 = if reference::has_no_decimals(currency) {
+            100
+        } else {
+            1
+        };
+        let denominator = 10_i128.pow(self.scale) * unit;
+        let numerator = i128::from(cents) * self.digits;
+        let rounded = (numerator + numerator.signum() * denominator / 2) / denominator * unit;
+        i64::try_from(rounded).unwrap_or(if rounded < 0 { i64::MIN } else { i64::MAX })
+    }
+}
+
+impl std::fmt::Display for Rate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let digits = format!("{:0>width$}", self.digits, width = self.scale as usize + 1);
+        let (units, fraction) = digits.split_at(digits.len() - self.scale as usize);
+        if fraction.is_empty() {
+            write!(f, "{units}.0")
+        } else {
+            write!(f, "{units}.{fraction}")
+        }
+    }
+}
+
+/// What a store presented to the buyers of a country is in: their currency, the rate from the
+/// store currency, and the market whose fixed prices it has.
+#[derive(Clone, Debug)]
+pub struct Presentment {
+    pub currency: String,
+    pub rate: Rate,
+    pub market: Option<String>,
+}
+
+/// The stores presented in other currencies, made once each from the store they convert.
+#[derive(Default)]
+pub struct PresentedStores(std::sync::Mutex<HashMap<String, std::sync::Arc<Store>>>);
+
+impl Clone for PresentedStores {
+    /// A copy of a store converts again what it needs.
+    fn clone(&self) -> Self {
+        PresentedStores::default()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1022,8 +1164,13 @@ pub struct CheckoutScenario {
     pub problems: Vec<String>,
 }
 
+#[derive(Clone)]
 pub struct Store {
     pub shop: Shop,
+    /// For a store presented to the buyers of a country in another currency than the shop's
+    /// ([`Store::presented_for`]): that currency and how its prices were made. `None` for the
+    /// store itself, in the shop's currency.
+    pub presentment: Option<Presentment>,
     /// The products on the storefront: active and published.
     pub products: Vec<Product>,
     /// The products of the data that are not on the storefront: drafts, archived products and
@@ -1066,6 +1213,7 @@ pub struct Store {
     menu_handles: HashMap<String, usize>,
     /// The declared pixel size of every image the data mentions, by path inside `files/`.
     image_sizes: HashMap<String, (u32, u32)>,
+    presented: PresentedStores,
 }
 
 impl Store {
@@ -1210,10 +1358,271 @@ impl Store {
 
     /// The country of a visitor who selected none, on the storefront and, until they enter an
     /// address, at the checkout: the shop's (`shop.address.country_code`), the country of its
-    /// primary market, when the store sells to it; otherwise the first country.
+    /// primary market, when the store sells to it; otherwise the first country served at `/`
+    /// (in no market with a subfolder), else the first country.
     pub fn default_country(&self) -> &Country {
         self.country(&self.shop.address.country_code)
+            .or_else(|| {
+                self.countries
+                    .iter()
+                    .find(|country| self.served_at_root(&country.iso_code))
+            })
             .unwrap_or(&self.countries[0])
+    }
+
+    /// The currency prices are in: the buyer's, for a store presented to a country in another
+    /// currency ([`Store::presented_for`]), else the shop's.
+    pub fn currency(&self) -> &str {
+        self.presentment
+            .as_ref()
+            .map_or(&self.shop.currency, |presentment| &presentment.currency)
+    }
+
+    /// What the buyers of a country pay in, when it is not the store as it is: their currency,
+    /// the rate of their market and its fixed prices.
+    fn presentment_of(&self, country: &str) -> Option<Presentment> {
+        let currency = self.country(country)?.currency.to_ascii_uppercase();
+        let market = self.market_of(country);
+        let rate = market
+            .and_then(|market| market.rate.clone())
+            .unwrap_or(Rate::ONE);
+        let fixed = market.is_some_and(|market| !market.prices.is_empty());
+        (currency != self.shop.currency.to_ascii_uppercase() || !rate.is_one() || fixed).then(
+            || Presentment {
+                currency,
+                rate,
+                market: market
+                    .filter(|market| !market.prices.is_empty() || market.rate.is_some())
+                    .map(|market| market.handle.clone()),
+            },
+        )
+    }
+
+    /// The store as the buyers of a country see it: priced in their currency, at their
+    /// market's rate or at its fixed prices, as Shopify converts a storefront for a market
+    /// ("About catalogs in Markets"). The store itself when they pay in the shop's currency
+    /// at its prices. Each conversion is made once, and shared by the countries that have it.
+    pub fn presented_for(self: &std::sync::Arc<Self>, country: &str) -> std::sync::Arc<Store> {
+        let Some(presentment) = self
+            .presentment
+            .is_none()
+            .then(|| self.presentment_of(country))
+            .flatten()
+        else {
+            return self.clone();
+        };
+        let key = format!(
+            "{}|{}|{}",
+            presentment.currency,
+            presentment.rate,
+            presentment.market.as_deref().unwrap_or_default()
+        );
+        let mut presented = self.presented.0.lock().unwrap_or_else(|e| e.into_inner());
+        presented
+            .entry(key)
+            .or_insert_with(|| std::sync::Arc::new(self.converted(presentment)))
+            .clone()
+    }
+
+    /// A copy of the store with its prices in another currency.
+    fn converted(&self, presentment: Presentment) -> Store {
+        let mut store = self.clone();
+        let rate = &presentment.rate;
+        let currency = presentment.currency.as_str();
+        let convert = |cents: i64| rate.convert(cents, currency);
+        let fixed = presentment
+            .market
+            .as_deref()
+            .and_then(|handle| self.market_named(handle))
+            .map(|market| market.prices.clone())
+            .unwrap_or_default();
+        for product in store
+            .products
+            .iter_mut()
+            .chain(store.unlisted_products.iter_mut())
+        {
+            for variant in &mut product.variants {
+                let original = variant.price;
+                match fixed.get(&variant.id) {
+                    Some(price) => {
+                        variant.price = price.price;
+                        variant.compare_at_price = price.compare_at_price;
+                    }
+                    None => {
+                        variant.price = convert(variant.price);
+                        variant.compare_at_price = variant.compare_at_price.map(convert);
+                    }
+                }
+                // A unit price follows the price it divides.
+                variant.unit_price = variant.unit_price.map(|unit| match original {
+                    0 => convert(unit),
+                    _ => {
+                        (i128::from(unit) * i128::from(variant.price) / i128::from(original)) as i64
+                    }
+                });
+                for (_, price) in &mut variant.quantity_price_breaks {
+                    *price = convert(*price);
+                }
+            }
+        }
+        for group in &mut store.selling_plan_groups {
+            for plan in &mut group.plans {
+                for adjustment in &mut plan.price_adjustments {
+                    adjustment.adjustment = match adjustment.adjustment {
+                        Adjustment::FixedAmount(amount) => Adjustment::FixedAmount(convert(amount)),
+                        Adjustment::Price(amount) => Adjustment::Price(convert(amount)),
+                        percentage => percentage,
+                    };
+                }
+                if let CheckoutCharge::Price(amount) = plan.checkout_charge {
+                    plan.checkout_charge = CheckoutCharge::Price(convert(amount));
+                }
+            }
+        }
+        for rate in &mut store.checkout.shipping_rates {
+            rate.price = convert(rate.price);
+        }
+        store.presentment = Some(presentment);
+        store
+    }
+
+    /// The market with this handle.
+    pub fn market_named(&self, handle: &str) -> Option<&Market> {
+        self.markets.iter().find(|market| market.handle == handle)
+    }
+
+    /// The market served under the subfolders of this suffix (`ca` for `/en-ca/`).
+    pub fn subfolder_market(&self, suffix: &str) -> Option<&Market> {
+        self.markets.iter().find(|market| {
+            market
+                .subfolder_suffix
+                .as_deref()
+                .is_some_and(|own| own.eq_ignore_ascii_case(suffix))
+        })
+    }
+
+    /// Whether a country is served at `/`: its market has no subfolder of its own.
+    pub fn served_at_root(&self, iso_code: &str) -> bool {
+        self.market_of(iso_code)
+            .is_none_or(|market| market.subfolder_suffix.is_none())
+    }
+
+    /// The country of a visitor on a web presence: under the subfolders of `market`, or at `/`
+    /// (`None`). The one they selected when that presence serves it, else the presence's
+    /// default: the first country of the market, or [`Store::default_country`] at `/`. A
+    /// Shopify storefront does the same: the country a visitor picked elsewhere does not follow
+    /// them to a presence that does not serve it.
+    pub fn country_at(&self, selected: Option<&str>, market: Option<&Market>) -> &Country {
+        let selected = selected.and_then(|code| self.country(code));
+        match market {
+            Some(market) => selected
+                .filter(|country| {
+                    market
+                        .countries
+                        .iter()
+                        .any(|code| code.eq_ignore_ascii_case(&country.iso_code))
+                })
+                .or_else(|| market.countries.iter().find_map(|code| self.country(code)))
+                .unwrap_or_else(|| self.default_country()),
+            None => selected
+                .filter(|country| self.served_at_root(&country.iso_code))
+                .unwrap_or_else(|| self.default_country()),
+        }
+    }
+
+    /// The prefix of every storefront URL in a language on a web presence: `/fr-ca` under the
+    /// subfolders of a market (every language has one there, the primary too), and at `/` empty
+    /// for the primary language, `/fr` for the others.
+    /// A language the market's subfolders do not serve has its root at `/`.
+    pub fn locale_root(&self, language: &Language, market: Option<&Market>) -> String {
+        let market = market.filter(|market| self.serves_language(market, language));
+        match market.and_then(|market| market.subfolder_suffix.as_deref()) {
+            Some(suffix) => format!("/{}-{suffix}", language.iso_code.to_ascii_lowercase()),
+            None => language.root_url.trim_end_matches('/').to_string(),
+        }
+    }
+
+    /// The web presence a URL prefix (`/fr`, `/en-ca`, empty) is: the market of its
+    /// subfolder, or `None` at `/`.
+    pub fn market_of_root(&self, root: &str) -> Option<&Market> {
+        let segment = root.trim_start_matches('/');
+        let (_, suffix) = segment.rsplit_once('-')?;
+        self.subfolder_market(suffix)
+            .filter(|market| self.locale_of_root(segment, market).is_some())
+    }
+
+    /// The language of a subfolder of a market: `en` for `en-ca`.
+    fn locale_of_root(&self, segment: &str, market: &Market) -> Option<&Language> {
+        let suffix = market.subfolder_suffix.as_deref()?;
+        let language = segment
+            .len()
+            .checked_sub(suffix.len() + 1)
+            .and_then(|end| segment.get(..end))
+            .filter(|_| segment[segment.len() - suffix.len()..].eq_ignore_ascii_case(suffix))?;
+        self.language(language)
+            .filter(|language| self.serves_language(market, language))
+    }
+
+    /// Whether a market's subfolders have a language: one of its `languages`, or any language
+    /// of the store when it lists none. On Shopify, a subfolder in a language the market does
+    /// not offer (`/es-be` for Belgium in English and French) is not found.
+    pub fn serves_language(&self, market: &Market, language: &Language) -> bool {
+        market.languages.is_empty()
+            || market
+                .languages
+                .iter()
+                .any(|code| code.eq_ignore_ascii_case(&language.iso_code))
+    }
+
+    /// The languages a web presence serves: those of the market whose subfolders it is (every
+    /// language of the store when it lists none), or every language at `/`.
+    pub fn presence_languages(&self, market: Option<&Market>) -> Vec<&Language> {
+        self.languages
+            .iter()
+            .filter(|language| market.is_none_or(|market| self.serves_language(market, language)))
+            .collect()
+    }
+
+    /// The language a visitor in a country reads: `wanted` when the country's market offers
+    /// it, else the market's default, as Shopify moves a visitor to a country whose market does
+    /// not offer their language ("If the currently selected language is not supported by the
+    /// selected country, it will be updated to the default language for that country").
+    pub fn language_for<'s>(&'s self, wanted: &'s Language, country: &str) -> &'s Language {
+        if self
+            .languages_of(country)
+            .iter()
+            .any(|offered| offered.iso_code == wanted.iso_code)
+        {
+            wanted
+        } else {
+            self.default_language_of(country)
+        }
+    }
+
+    /// Splits the locale prefix off a storefront path: `/fr/cart` → (`fr`, `/fr`, `/cart`),
+    /// `/fr-ca/cart` → (`fr`, `/fr-ca`, `/cart`) for a market served under `ca`, `/cart` →
+    /// (the primary language, empty, `/cart`).
+    pub fn split_locale(&self, path: &str) -> (&Language, String, String) {
+        let trimmed = path.trim_start_matches('/');
+        let (first, rest) = trimmed.split_once('/').unwrap_or((trimmed, ""));
+        if let Some(language) = self
+            .languages
+            .iter()
+            .find(|language| !language.primary && language.iso_code.eq_ignore_ascii_case(first))
+        {
+            return (language, language.root_url.clone(), format!("/{rest}"));
+        }
+        if let Some((_, suffix)) = first.rsplit_once('-')
+            && let Some(market) = self.subfolder_market(suffix)
+            && let Some(language) = self.locale_of_root(first, market)
+        {
+            return (
+                language,
+                self.locale_root(language, Some(market)),
+                format!("/{rest}"),
+            );
+        }
+        (self.primary_language(), String::new(), path.to_string())
     }
 
     pub fn country(&self, iso_code: &str) -> Option<&Country> {

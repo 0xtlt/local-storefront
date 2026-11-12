@@ -258,6 +258,26 @@ pub(super) fn root_of(language: &Language) -> &str {
     }
 }
 
+/// Where the storefront of a buyer in `country` lives, in a language: the locale root of the
+/// language on the web presence of the country (`/fr-ca` for a country of a market served under
+/// `ca`), which is `/fr`, or nothing for the primary language, at `/`.
+pub(super) fn storefront_root(store: &Store, language: &Language, country: &str) -> String {
+    let market = store
+        .market_of(country)
+        .filter(|market| market.subfolder_suffix.is_some());
+    store.locale_root(language, market)
+}
+
+/// How the checkout formats money: the shop's format in its currency, Shopify's usual format
+/// of the buyer's currency otherwise.
+fn money_format_of(store: &Store) -> String {
+    if store.currency() == store.shop.currency {
+        store.shop.money_format.clone()
+    } else {
+        lsf_core::store::reference::default_money_format(store.currency())
+    }
+}
+
 /// The locale root of the request, for a session.
 fn request_root(state: &ServerState, session_id: &str, incoming: &Incoming) -> String {
     let (_, store) = state.snapshot(session_id);
@@ -711,6 +731,14 @@ fn compute(
     let variant = variant_of(state, session_id, incoming);
     // One read, so that the basis is what the result is computed from.
     let (session, store, mut checkout, basis) = read(state, session_id);
+    // Priced in the currency of the buyer's country (the one of the shipping address, else the
+    // one of the session), as Shopify's checkout follows the market of the address.
+    let country = checkout
+        .shipping_country()
+        .filter(|code| store.country(code).is_some())
+        .map(str::to_string)
+        .unwrap_or_else(|| lsf_app::checkout::input::buyer_country(&store, &session));
+    let store = store.presented_for(&country);
     let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
     let language = language_of(state, &store, incoming);
     let (app, selection, result) = price(state, &session, &store, &mut checkout, language, step)?;
@@ -737,16 +765,27 @@ fn compute(
         json!({
             "id": format!("gid://shopify/Shop/{}", store.shop.id),
             "name": store.shop.name,
-            "currencyCode": store.shop.currency,
-            "moneyFormat": store.shop.money_format,
+            "currencyCode": store.currency(),
+            "moneyFormat": money_format_of(&store),
             // The primary language of the store. The buyer's is `localization.language`.
             "locale": store.primary_language().iso_code,
             "storefrontUrl": origin_of(incoming),
             // `permanent_domain` of the store data, or one made of the name of the shop.
             "myshopifyDomain": store.shop.permanent_domain,
-            // The countries the store sells in, for the country selector.
+            // The countries the store sells in, for the country selector, each with the
+            // provinces it ships to, for the province selector.
             "countries": store.countries.iter()
-                .map(|country| json!({"code": country.iso_code, "name": country.name}))
+                .map(|country| json!({
+                    "code": country.iso_code,
+                    "name": country.name,
+                    "provinces": country.provinces.iter()
+                        .map(|province| json!({
+                            "code": province.code,
+                            "name": province.name,
+                            "label": province.label,
+                        }))
+                        .collect::<Vec<_>>(),
+                }))
                 .collect::<Vec<_>>(),
         }),
     );
@@ -925,13 +964,14 @@ pub(super) fn localization_json(
     let (market_id, market_handle) = lsf_app::checkout::input::market_of(store, &code);
     json!({
         "language": language_json(language),
-        // Where the storefront of this language lives: `/fr`, nothing for the primary one.
-        "rootUrl": root_of(language),
+        // Where the storefront of this language lives: `/fr`, nothing for the primary one,
+        // `/fr-ca` for a country of a market served under its own subfolders.
+        "rootUrl": storefront_root(store, language, &code),
         "country": {
             "isoCode": code,
             "name": store.country(&code).map_or(code.as_str(), |country| country.name.as_str()),
         },
-        "currency": {"isoCode": store.shop.currency},
+        "currency": {"isoCode": store.currency()},
         "market": {"id": market_id, "handle": market_handle},
     })
 }
@@ -1110,7 +1150,12 @@ fn in_request_language(
     let (_, store) = state.snapshot(session_id);
     let language = language_of(state, &store, incoming);
     completed["localization"]["language"] = language_json(language);
-    completed["localization"]["rootUrl"] = json!(root_of(language));
+    let country = completed
+        .pointer("/localization/country/isoCode")
+        .and_then(Json::as_str)
+        .unwrap_or_default()
+        .to_string();
+    completed["localization"]["rootUrl"] = json!(storefront_root(&store, language, &country));
     place_extensions(&mut completed, state.app_uninstalled());
     completed
 }

@@ -387,6 +387,13 @@ fn address(input: &model::AddressInput, scope: &str) -> Address {
         .clone()
         .or_else(|| reference::country_name(&country_code).map(str::to_string))
         .unwrap_or_default();
+    // An address has the name and the code of its province, as Shopify fills in the one from
+    // the other.
+    let known = input
+        .province_code
+        .as_deref()
+        .or(input.province.as_deref())
+        .and_then(|province| reference::province(&country_code, province));
     Address {
         id: input.id.unwrap_or_else(|| stable_id("address", scope)),
         first_name: input.first_name.clone().unwrap_or_default(),
@@ -395,8 +402,20 @@ fn address(input: &model::AddressInput, scope: &str) -> Address {
         address1: input.address1.clone().unwrap_or_default(),
         address2: input.address2.clone().unwrap_or_default(),
         city: input.city.clone().unwrap_or_default(),
-        province: input.province.clone().unwrap_or_default(),
-        province_code: input.province_code.clone().unwrap_or_default(),
+        province: input
+            .province
+            .clone()
+            .or_else(|| known.map(|(_, name)| name.to_string()))
+            .unwrap_or_default(),
+        province_code: input
+            .province_code
+            .clone()
+            .map(|code| match known {
+                Some((known, _)) if known.eq_ignore_ascii_case(&code) => known.to_string(),
+                _ => code,
+            })
+            .or_else(|| known.map(|(code, _)| code.to_string()))
+            .unwrap_or_default(),
         country,
         country_code,
         zip: input.zip.clone().unwrap_or_default(),
@@ -490,6 +509,8 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         &mut builder.diagnostics,
     );
     let mut store = Store {
+        presentment: None,
+        presented: PresentedStores::default(),
         shop,
         products,
         unlisted_products,
@@ -3129,14 +3150,22 @@ fn build_localization(
     store.countries = input
         .countries
         .iter()
-        .map(|country| {
+        .enumerate()
+        .map(|(position, country)| {
             let iso_code = country.iso_code.to_uppercase();
+            let name = country
+                .name
+                .clone()
+                .or_else(|| reference::country_name(&iso_code).map(str::to_string))
+                .unwrap_or_else(|| iso_code.clone());
+            let provinces = match &country.provinces {
+                Some(codes) => {
+                    let country_origin = origin.child("countries").child(position);
+                    country_provinces(builder, &iso_code, &name, codes, &country_origin)
+                }
+                None => Province::all_of(&iso_code),
+            };
             Country {
-                name: country
-                    .name
-                    .clone()
-                    .or_else(|| reference::country_name(&iso_code).map(str::to_string))
-                    .unwrap_or_else(|| iso_code.clone()),
                 currency: country
                     .currency
                     .clone()
@@ -3147,6 +3176,8 @@ fn build_localization(
                     .clone()
                     .unwrap_or_else(|| reference::unit_system(&iso_code).to_string()),
                 popular: country.popular,
+                provinces,
+                name,
                 iso_code,
             }
         })
@@ -3164,6 +3195,7 @@ fn build_localization(
             currency: store.shop.currency.clone(),
             unit_system: reference::unit_system(&iso_code).to_string(),
             popular: false,
+            provinces: Province::all_of(&iso_code),
             iso_code,
         });
     }
@@ -3207,13 +3239,120 @@ fn build_localization(
             }
             countries.push(code);
         }
+        let subfolder_suffix = market.subfolder_suffix.as_ref().and_then(|suffix| {
+            let at = market_origin.child("subfolder_suffix");
+            let suffix = suffix.to_ascii_lowercase();
+            if suffix.len() < 2 || !suffix.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+                builder
+                    .error(
+                        "invalid_value",
+                        &at,
+                        "a subfolder suffix has two letters at least, and only letters",
+                    )
+                    .hint("as Shopify's web presences: \"ca\" serves the market at /en-ca/");
+                return None;
+            }
+            if SCRIPT_CODES.contains(&suffix.as_str()) {
+                builder.error(
+                    "invalid_value",
+                    &at,
+                    "a subfolder suffix cannot be a script code (Latn, Hans, ...)",
+                );
+                return None;
+            }
+            if let Some(other) = store.subfolder_market(&suffix) {
+                builder.error(
+                    "duplicate_handle",
+                    &at,
+                    format!(
+                        "the subfolder suffix \"{suffix}\" is the one of the market \"{}\" too",
+                        other.handle
+                    ),
+                );
+                return None;
+            }
+            let shop_country = &store.shop.address.country_code;
+            if countries
+                .iter()
+                .any(|code| code.eq_ignore_ascii_case(shop_country))
+            {
+                builder
+                    .error(
+                        "invalid_value",
+                        &at,
+                        format!(
+                            "the market of the shop's country ({shop_country}) is served at /, not under a subfolder"
+                        ),
+                    )
+                    .hint("it is the primary market: give the subfolder to another market");
+                return None;
+            }
+            Some(suffix)
+        });
+        let currency = market.currency.as_ref().and_then(|code| {
+            let code = code.trim().to_ascii_uppercase();
+            if code.len() == 3 && code.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+                Some(code)
+            } else {
+                builder
+                    .error(
+                        "invalid_value",
+                        &market_origin.child("currency"),
+                        format!("\"{code}\" is not an ISO 4217 currency code"),
+                    )
+                    .hint("three letters: \"EUR\", \"CAD\", \"JPY\"");
+                None
+            }
+        });
+        let rate = market.rate.as_ref().and_then(|text| {
+            let at = market_origin.child("rate");
+            match Rate::parse(text) {
+                Some(rate) if rate.is_zero() => {
+                    builder.error("invalid_value", &at, "a rate is above 0");
+                    None
+                }
+                Some(rate) => Some(rate),
+                None => {
+                    builder
+                        .error("invalid_format", &at, format!("\"{text}\" is not a rate"))
+                        .hint("a decimal string: what one unit of the store currency is worth in the market's, \"0.92\"");
+                    None
+                }
+            }
+        });
+        let prices = market_prices(
+            builder,
+            store,
+            &market.prices,
+            &market_origin.child("prices"),
+        );
         store.markets.push(Market {
             handle: market.handle.clone(),
             countries,
             // Resolved below, once the languages are known.
             languages: Vec::new(),
             metafields: builder.metafields(&market.metafields, &market_origin.child("metafields")),
+            subfolder_suffix,
+            currency,
+            rate,
+            prices,
         });
+    }
+    // A country pays in its market's currency, unless it has its own.
+    for (position, country) in store.countries.iter_mut().enumerate() {
+        let own = input
+            .countries
+            .get(position)
+            .is_some_and(|input| input.currency.is_some());
+        let market = store.markets.iter().find(|market| {
+            market
+                .countries
+                .iter()
+                .any(|code| code.eq_ignore_ascii_case(&country.iso_code))
+        });
+        if !own && let Some(currency) = market.and_then(|market| market.currency.clone()) {
+            country.currency = currency;
+        }
     }
 
     let theme_locales = &builder.options.theme_locales;
@@ -3418,6 +3557,113 @@ fn build_metaobject_translations(
     }
     translations
 }
+
+/// The provinces of `localization.countries[].provinces`: Shopify's, by code, sorted by name as
+/// Shopify lists them. A code the country does not have is an `unknown_province`.
+fn country_provinces(
+    builder: &mut Builder<'_>,
+    iso_code: &str,
+    name: &str,
+    codes: &[String],
+    origin: &Origin,
+) -> Vec<Province> {
+    let known = Province::all_of(iso_code);
+    let mut kept = vec![false; known.len()];
+    for (index, code) in codes.iter().enumerate() {
+        let at = origin.child("provinces").child(index);
+        if known.is_empty() {
+            builder
+                .error("unknown_province", &at, format!("{name} has no provinces"))
+                .hint("Shopify lists no province for an address there: remove \"provinces\"");
+            continue;
+        }
+        match known
+            .iter()
+            .position(|province| province.code.eq_ignore_ascii_case(code.trim()))
+        {
+            Some(position) => kept[position] = true,
+            None => {
+                let codes: Vec<&str> = known
+                    .iter()
+                    .map(|province| province.code.as_str())
+                    .collect();
+                builder
+                    .error(
+                        "unknown_province",
+                        &at,
+                        format!("\"{code}\" is not a province of {name}"),
+                    )
+                    .hint(format!("provinces: {}", codes.join(", ")));
+            }
+        }
+    }
+    known
+        .into_iter()
+        .zip(kept)
+        .filter_map(|(province, kept)| kept.then_some(province))
+        .collect()
+}
+
+/// The fixed prices of a market, by variant id: a SKU or an id names a variant, a product
+/// handle each of its variants, as Shopify's `priceListFixedPricesByProductUpdate` does.
+fn market_prices(
+    builder: &mut Builder<'_>,
+    store: &Store,
+    inputs: &IndexMap<String, model::FixedPriceInput>,
+    origin: &Origin,
+) -> HashMap<u64, FixedPrice> {
+    let mut prices = HashMap::new();
+    for (reference, input) in inputs {
+        let at = origin.child(reference.as_str());
+        let (price, compare_at) = match input {
+            model::FixedPriceInput::Price(price) => (price, None),
+            model::FixedPriceInput::WithCompareAt(object) => {
+                (&object.price, object.compare_at_price.as_ref())
+            }
+        };
+        let fixed = FixedPrice {
+            price: builder.money(price, &at),
+            compare_at_price: compare_at.map(|money| builder.money(money, &at)),
+        };
+        let by_sku: Vec<u64> = store
+            .products
+            .iter()
+            .flat_map(|product| &product.variants)
+            .filter(|variant| !variant.sku.is_empty() && variant.sku == *reference)
+            .map(|variant| variant.id)
+            .collect();
+        let ids: Vec<u64> = if !by_sku.is_empty() {
+            by_sku
+        } else if let Some(product) = store.product_by_handle(reference) {
+            product.variants.iter().map(|variant| variant.id).collect()
+        } else {
+            reference
+                .parse::<u64>()
+                .ok()
+                .filter(|id| store.variant_location(*id).is_some())
+                .into_iter()
+                .collect()
+        };
+        if ids.is_empty() {
+            builder
+                .error(
+                    "unknown_variant",
+                    &at,
+                    format!("\"{reference}\" is not a variant of the store"),
+                )
+                .hint("a SKU, a variant id, or a product handle for each of its variants");
+        }
+        for id in ids {
+            prices.insert(id, fixed);
+        }
+    }
+    prices
+}
+
+/// ISO 15924 codes a subfolder suffix cannot be, as Shopify's web presences refuse them.
+const SCRIPT_CODES: &[&str] = &[
+    "arab", "cyrl", "hans", "hant", "latn", "deva", "beng", "guru", "taml", "thai",
+];
 
 /// The storefront password when the store data sets none.
 pub const DEFAULT_PASSWORD: &str = "password";

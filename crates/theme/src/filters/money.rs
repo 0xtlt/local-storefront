@@ -44,12 +44,14 @@ pub fn money_formats(shop: &Shop, currency: Option<&str>) -> (String, String) {
     }
 }
 
-/// The formats of [`money_formats`] for a value: a money metafield brings its currency.
+/// The formats of [`money_formats`] for a value: a money metafield brings its currency, the
+/// others are in the visitor's.
 fn formats_of(input: &Value, ctx: &Context) -> Result<(String, String)> {
+    let site = site(ctx)?;
     let currency = input
         .downcast::<MoneyDrop>()
-        .map(|money| money.currency.as_str());
-    Ok(money_formats(&site(ctx)?.store.shop, currency))
+        .map_or_else(|| site.currency(), |money| money.currency.as_str());
+    Ok(money_formats(&site.store.shop, Some(currency)))
 }
 
 fn with_format(

@@ -1070,6 +1070,18 @@ fn presentment_currency_rate_and_buyer_journey() {
         .unwrap(),
         json!({"presentmentCurrencyRate": "1.0", "buyerJourney": {"step": "CHECKOUT_COMPLETION"}})
     );
+    // A checkout in the currency of a market: the market's rate.
+    let mut f = Fixture::new();
+    f.store.presentment = Some(lsf_core::store::Presentment {
+        currency: "EUR".to_string(),
+        rate: lsf_core::store::Rate::parse("0.9250").unwrap(),
+        market: None,
+    });
+    assert_eq!(
+        f.run_as(OwnerKind::Validation, "{ presentmentCurrencyRate }", None)
+            .unwrap(),
+        json!({"presentmentCurrencyRate": "0.925"})
+    );
 }
 
 #[test]
@@ -1973,6 +1985,7 @@ fn sells_to(f: &mut Fixture, codes: &[&str]) {
             currency: "EUR".to_string(),
             unit_system: "metric".to_string(),
             popular: false,
+            provinces: lsf_core::store::Province::all_of(code),
         })
         .collect();
 }
@@ -2031,6 +2044,10 @@ fn a_declared_market_groups_countries_and_carries_metafields() {
         )]
         .into_iter()
         .collect(),
+        subfolder_suffix: None,
+        currency: None,
+        rate: None,
+        prices: Default::default(),
     });
     let out = f.run(ADDRESS_MARKET);
     let market = &out["cart"]["deliveryGroups"][0]["deliveryAddress"]["market"];

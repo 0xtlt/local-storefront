@@ -180,7 +180,8 @@ pub fn compute_with_options(
         fetcher,
         deadline,
         interrupted: false,
-        currency: store.shop.currency.clone(),
+        // The buyer's: the store is presented in it ([`lsf_core::Store::presented_for`]).
+        currency: store.currency().to_string(),
         now,
         lines: initial_lines(store, session),
         next_line_id: session.cart_lines.len() as u64 + 1,

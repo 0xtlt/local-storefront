@@ -128,7 +128,7 @@ curl -H 'x-lsf-session: my-test' http://127.0.0.1:9292/cart.js
 | `customer` | An email, `"default"` (the first customer of the data) or `"none"`. |
 | `company_location` | For a B2B customer, the location they buy for. |
 | `cart` | `items`, `note`, `attributes`. Each item has a `variant` (a SKU, an id, or a product handle for its first variant), and optionally a `quantity`, `properties` and a `selling_plan`. See [Cart](data-reference.md#cart). |
-| `country` | The country the visitor shops from, by ISO code. |
+| `country` | The country the visitor shops from, by ISO code. A country whose market is served under subfolders of its own (`subfolder_suffix`) is the visitor's on the pages under them, not at `/`, as on Shopify: see [countries and markets in the URL](storefront.md#countries-and-markets-in-the-url). |
 | `data` | Store data for this session only, applied over the files and over what the [Admin API](admin.md#what-the-storefront-and-the-checkout-see) changed. See [testing](testing.md#data-for-one-test-only). |
 | `throttle` | Delays for this session only. See [testing](testing.md#simulating-a-slow-network). |
 

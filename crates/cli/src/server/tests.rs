@@ -663,6 +663,205 @@ fn switching_country_moves_to_a_language_its_market_offers() {
     );
 }
 
+/// A session whose data has a market served under subfolders of its own, `/en-be` and
+/// `/fr-be`, as a Shopify market with a web presence on the primary domain. The shop is in
+/// Canada, the primary market, served at `/`.
+fn with_belgian_subfolder(state: &ServerState, session: &str) {
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"localization": {
+            "countries": [{"iso_code": "CA"}, {"iso_code": "US"}, {"iso_code": "BE"}, {"iso_code": "FR"}],
+            "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+            "markets": [{"handle": "belgium", "countries": ["BE"], "subfolder_suffix": "be"}]
+        }}}),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+}
+
+fn session_country(state: &ServerState, session: &str) -> Json {
+    body_json(&get(state, "/__lsf/session", session))["country"].clone()
+}
+
+#[test]
+fn a_market_subfolder_is_the_country_of_the_page() {
+    let state = server();
+    with_belgian_subfolder(&state, "subfolder");
+    // As `/fr-be` on a Shopify storefront: the market's country, the language of the prefix,
+    // and every link under the prefix.
+    let page = get(&state, "/fr-be/pages/about", "subfolder");
+    assert_eq!(page.status, 200, "{}", text(&page));
+    let html = text(&page);
+    assert!(html.contains("Shopify.country = \"BE\";"), "{html}");
+    assert!(html.contains("Shopify.locale = \"fr\";"), "{html}");
+    assert!(
+        html.contains("Shopify.routes.root = \"\\/fr-be\\/\";"),
+        "{html}"
+    );
+    assert!(html.contains("Bonjour"), "{html}");
+    // The cart and the checkout follow.
+    assert_eq!(session_country(&state, "subfolder"), "BE");
+    // `/` does not serve Belgium: the shop's country again, as Shopify answers `/` with the
+    // root's country whatever the visitor picked under a subfolder.
+    let html = text(&get(&state, "/", "subfolder"));
+    assert!(html.contains("Shopify.country = \"CA\";"), "{html}");
+    assert!(html.contains("Shopify.routes.root = \"\\/\";"), "{html}");
+    assert_eq!(session_country(&state, "subfolder"), Json::Null);
+    // A prefix of no market and no language is a path like any other.
+    assert_eq!(get(&state, "/en-us/pages/about", "subfolder").status, 404);
+}
+
+#[test]
+fn country_in_the_query_picks_the_country_or_moves_to_its_subfolder() {
+    let state = server();
+    with_belgian_subfolder(&state, "query");
+    // A country served here: picked, on the same page, and kept.
+    let page = get(&state, "/pages/about?country=fr", "query");
+    assert_eq!(page.status, 200, "{}", text(&page));
+    assert!(text(&page).contains("Shopify.country = \"FR\";"));
+    assert_eq!(session_country(&state, "query"), "FR");
+    assert!(text(&get(&state, "/", "query")).contains("Shopify.country = \"FR\";"));
+    // A country served under a subfolder: the same page there, the query kept, as Shopify
+    // answers `/?country=BE` with a 301 to `/en-be?country=BE`.
+    let moved = get(&state, "/pages/about?country=BE&view=x", "query");
+    assert_eq!(moved.status, 301);
+    assert_eq!(
+        header(&moved, "location"),
+        Some("/en-be/pages/about?country=BE&view=x")
+    );
+    assert_eq!(
+        header(&get(&state, "/?country=BE", "query"), "location"),
+        Some("/en-be?country=BE")
+    );
+    // And back to `/`, in the language of the page.
+    assert_eq!(
+        header(
+            &get(&state, "/fr-be/pages/about?country=US", "query"),
+            "location"
+        ),
+        Some("/fr/pages/about?country=US")
+    );
+    // A country the store does not sell to changes nothing.
+    let page = get(&state, "/pages/about?country=JP", "query");
+    assert_eq!(page.status, 200);
+    assert_eq!(session_country(&state, "query"), "FR");
+}
+
+#[test]
+fn the_localization_form_moves_to_the_web_presence_of_the_country() {
+    let state = server();
+    with_belgian_subfolder(&state, "form");
+    let form = |path: &str, body: Json| {
+        let reply = post(&state, path, body, "form");
+        header(&reply, "location").map(str::to_string)
+    };
+    // As Shopify's: the same page, under the subfolder of the country picked.
+    assert_eq!(
+        form(
+            "/localization",
+            json!({"country_code": "BE", "return_to": "/pages/about"})
+        ),
+        Some("/en-be/pages/about".to_string())
+    );
+    assert_eq!(session_country(&state, "form"), "BE");
+    assert_eq!(
+        form(
+            "/en-be/localization",
+            json!({"country_code": "US", "return_to": "/en-be/pages/about"})
+        ),
+        Some("/pages/about".to_string())
+    );
+    assert_eq!(session_country(&state, "form"), "US");
+    assert_eq!(
+        form(
+            "/localization",
+            json!({"country_code": "BE", "language_code": "fr", "return_to": "/"})
+        ),
+        Some("/fr-be".to_string())
+    );
+    // Changing the language only keeps the web presence.
+    assert_eq!(
+        form(
+            "/fr-be/localization",
+            json!({"language_code": "en", "return_to": "/fr-be/cart"})
+        ),
+        Some("/en-be/cart".to_string())
+    );
+}
+
+#[test]
+fn a_market_subfolder_serves_the_languages_of_its_market() {
+    let state = server();
+    let session = "subfolder-languages";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"localization": {
+            "countries": [{"iso_code": "CA"}, {"iso_code": "BE"}, {"iso_code": "DE"}],
+            "languages": [{"iso_code": "en"}, {"iso_code": "fr"}, {"iso_code": "de"}],
+            "markets": [
+                {"handle": "belgium", "countries": ["BE"], "subfolder_suffix": "be", "languages": ["fr", "de"]},
+                {"handle": "germany", "countries": ["DE"], "subfolder_suffix": "de", "languages": ["de", "en"]}
+            ]
+        }}}),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    // A subfolder in a language the market does not offer is not found, as `/es-be` on a
+    // Shopify store whose Belgian market has no Spanish.
+    assert_eq!(get(&state, "/en-be/pages/about", session).status, 404);
+    assert_eq!(get(&state, "/fr-be/pages/about", session).status, 200);
+    // `?country=` lands in the page's language when the country's market offers it, else in the
+    // market's default: `/es-es?country=BE` is `/en-be?country=BE` on Shopify.
+    let moved = |path: &str| {
+        let reply = get(&state, path, session);
+        assert_eq!(reply.status, 301, "{path}");
+        header(&reply, "location").map(str::to_string)
+    };
+    assert_eq!(
+        moved("/pages/about?country=BE").as_deref(),
+        Some("/fr-be/pages/about?country=BE")
+    );
+    assert_eq!(
+        moved("/fr-be/pages/about?country=DE").as_deref(),
+        Some("/de-de/pages/about?country=DE")
+    );
+    assert_eq!(
+        moved("/de-be/pages/about?country=DE").as_deref(),
+        Some("/de-de/pages/about?country=DE")
+    );
+    // The localization form too.
+    let form = |path: &str, body: Json| {
+        let reply = post(&state, path, body, session);
+        header(&reply, "location").map(str::to_string)
+    };
+    assert_eq!(
+        form(
+            "/localization",
+            json!({"country_code": "BE", "return_to": "/pages/about"})
+        )
+        .as_deref(),
+        Some("/fr-be/pages/about")
+    );
+    assert_eq!(
+        form(
+            "/fr-be/localization",
+            json!({"country_code": "DE", "return_to": "/fr-be/cart"})
+        )
+        .as_deref(),
+        Some("/de-de/cart")
+    );
+    assert_eq!(
+        form(
+            "/de-de/localization",
+            json!({"language_code": "fr", "return_to": "/de-de/cart"})
+        )
+        .as_deref(),
+        Some("/de-de/cart")
+    );
+}
+
 /// The path of the file `{{ name | shopify_asset_url }}` points at, as a theme renders it.
 fn shopify_asset_path(state: &ServerState, name: &str) -> String {
     let loaded = state.loaded();
@@ -3392,15 +3591,21 @@ fn the_state_lists_the_countries_of_the_store() {
         json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
         json!({"localization": {"countries": [
             {"iso_code": "fr"},
-            {"iso_code": "BE", "name": "Belgique"}
+            {"iso_code": "BE", "name": "Belgique"},
+            {"iso_code": "CA", "provinces": ["QC", "ON"]}
         ]}}),
     );
     let json = body_json(&get(&state, &format!("{path}.json"), "co-countries"));
+    // Each with the provinces the store ships to, for the province selector, sorted by name.
     assert_eq!(
         json["shop"]["countries"],
         json!([
-            {"code": "FR", "name": "France"},
-            {"code": "BE", "name": "Belgique"}
+            {"code": "FR", "name": "France", "provinces": []},
+            {"code": "BE", "name": "Belgique", "provinces": []},
+            {"code": "CA", "name": "Canada", "provinces": [
+                {"code": "ON", "name": "Ontario", "label": "Ontario"},
+                {"code": "QC", "name": "Quebec", "label": "Quebec"}
+            ]}
         ])
     );
     // The page carries them too.
@@ -3472,6 +3677,52 @@ fn the_checkout_prices_the_lines_as_the_cart_does() {
         (checkout["cost"]["subtotal"]["amount"].as_f64().unwrap() * 100.0).round() as i64,
         cart["items_subtotal_price"].as_i64().unwrap()
     );
+}
+
+#[test]
+fn the_cart_and_the_checkout_are_in_the_currency_of_the_country() {
+    let state = checkout_server(&[], false);
+    let session = "co-currency";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]},
+            "data": {"localization": {
+                "countries": [{"iso_code": "CA"}, {"iso_code": "US"}, {"iso_code": "FR"}],
+                "markets": [{"handle": "europe", "countries": ["FR"], "currency": "EUR", "rate": "0.9"}]
+            }}
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    // In the shop's currency until the visitor is in France.
+    let cart = body_json(&get(&state, "/cart.js", session));
+    assert_eq!(cart["currency"], "USD");
+    let usd = cart["total_price"].as_i64().unwrap();
+    // `?country=FR`, as on a Shopify storefront: `/cart.js` says EUR, and so do its prices.
+    assert_eq!(get(&state, "/?country=FR", session).status, 200);
+    let cart = body_json(&get(&state, "/cart.js", session));
+    assert_eq!(cart["currency"], "EUR");
+    assert_eq!(cart["total_price"].as_i64().unwrap(), usd * 9 / 10);
+    // The checkout too, and what its Functions read.
+    let reply = get(&state, "/checkout", session);
+    let path = header(&reply, "location").expect("a location").to_string();
+    let checkout = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(checkout["shop"]["currencyCode"], "EUR");
+    assert_eq!(checkout["localization"]["currency"]["isoCode"], "EUR");
+    assert_eq!(
+        (checkout["cost"]["subtotal"]["amount"].as_f64().unwrap() * 100.0).round() as i64,
+        cart["items_subtotal_price"].as_i64().unwrap()
+    );
+    // An address in another market prices the checkout in that market's currency.
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "shippingAddress", "address": {"countryCode": "US"}}]),
+    );
+    assert_eq!(body_json(&reply)["shop"]["currencyCode"], "USD");
 }
 
 #[test]

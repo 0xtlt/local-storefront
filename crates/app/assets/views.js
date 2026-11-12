@@ -92,6 +92,23 @@ function countryOptions(state, current) {
     : countries;
 }
 
+/** The province of the address: picked from those of its country when the store lists some
+ * (`shop.countries[].provinces`), typed otherwise. */
+function provinceField(ctx, countryCode, errors) {
+  const { state, actions } = ctx;
+  const country = (state.shop?.countries ?? []).find((entry) => entry?.code === countryCode);
+  const provinces = Array.isArray(country?.provinces) ? country.provinces : [];
+  const value = addressValue(ctx, 'provinceCode');
+  const error = firstError(errors, 'provinceCode');
+  if (provinces.length === 0) {
+    return field({ id: 'lsf-provinceCode', label: 'State / Province (optional)', autocomplete: 'address-level1', value, error, actions });
+  }
+  const options = provinces.map((province) => [province.code, province.label ?? province.name]);
+  // A province the store no longer lists stays selectable, as a country does.
+  if (value && !options.some(([code]) => code === value)) options.push([value, value]);
+  return selectField({ id: 'lsf-provinceCode', label: 'State / Province', value, options, error, actions });
+}
+
 /** What the buyer sees in a field: what they typed, else what the checkout holds. */
 function addressValue({ state, ui }, name) {
   return addressField(state, ui.draft, name);
@@ -290,7 +307,7 @@ function addressSection(ctx) {
     suggestions(ctx),
     text('address2', 'Apartment, suite, etc. (optional)', 'address-line2'),
     h('div', { class: 'lsf-row' }, text('zip', 'Postal code', 'postal-code'), text('city', 'City', 'address-level2')),
-    text('provinceCode', 'State / Province (optional)', 'address-level1'),
+    provinceField(ctx, value('countryCode'), errors),
     text('phone', 'Phone (optional)', 'tel'),
     slot('purchase.checkout.delivery-address.render-after', { key: 'address-after' }),
   );
