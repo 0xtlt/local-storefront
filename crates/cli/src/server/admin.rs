@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use lsf_app::admin::api::{AdminApi, AdminOptions, HttpRequest, ThrottleSetting};
 use lsf_app::admin::auth::SecretSource;
+use lsf_app::admin::domains::app::code_discounts;
 use lsf_app::admin::domains::checkouts;
 use lsf_app::admin::state::ShopState;
 use lsf_app::admin::version::Served;
@@ -338,6 +339,46 @@ pub fn record_checkout(state: &ServerState, checkout: &checkouts::Checkout) {
     change_default_shop(state, |shop| {
         checkouts::record_checkout(shop, checkout);
     });
+}
+
+/// The code discounts of Shopify's own types of the default shop (`DiscountCodeBasic`,
+/// `DiscountCodeFreeShipping`), as the checkout of `buyer` applies them, their amounts in the
+/// currency `store` is presented in (converted at its rate, as the prices are). None without the
+/// Admin API.
+pub fn code_discounts(
+    state: &ServerState,
+    store: &Store,
+    buyer: &code_discounts::Buyer,
+) -> Vec<lsf_app::checkout::CodeDiscountConfig> {
+    use lsf_app::checkout::{CodeDiscountEffect, CodeDiscountValue, MinimumRequirement};
+    let Some(admin) = &state.admin else {
+        return Vec::new();
+    };
+    let mut discounts = admin
+        .api
+        .with_default_shop(|shop| code_discounts::for_checkout(shop, buyer))
+        .unwrap_or_default();
+    if let Some(presentment) = &store.presentment {
+        let convert =
+            |cents: &mut i64| *cents = presentment.rate.convert(*cents, &presentment.currency);
+        for discount in &mut discounts {
+            if let Some(MinimumRequirement::Subtotal(cents)) = &mut discount.minimum {
+                convert(cents);
+            }
+            match &mut discount.effect {
+                CodeDiscountEffect::AmountOff {
+                    value: CodeDiscountValue::Amount { cents, .. },
+                    ..
+                } => convert(cents),
+                CodeDiscountEffect::FreeShipping {
+                    maximum_price: Some(cents),
+                    ..
+                } => convert(cents),
+                _ => {}
+            }
+        }
+    }
+    discounts
 }
 
 /// The order of a checkout was placed: the checkout is completed (`checkouts/update`).

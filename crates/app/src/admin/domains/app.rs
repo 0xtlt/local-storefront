@@ -10,6 +10,7 @@
 
 pub mod billing;
 pub mod bulk;
+pub mod code_discounts;
 mod discount_tags;
 pub mod discounts;
 pub mod functions;

@@ -1158,6 +1158,8 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
     };
     let order = insert_order(state, &draft);
     record_discounts(state, &order, result);
+    // The codes it was placed with are used once more.
+    super::app::code_discounts::count_uses(state, &order);
     copy_cart_metafields(state, &order, placed.metafields);
     let location = placed
         .company_location_id

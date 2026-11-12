@@ -1079,8 +1079,11 @@ Function by `functionHandle` (or the deprecated `functionId`), which must be a d
 of the app; their `metafields` are the Function's configuration, checked as `metafieldsSet`
 checks them (a definition of the `DISCOUNT` owner type applies). The store sync writes an active
 app discount back to the store data's `checkout.discounts` (its Function, title, first code,
-classes and metafields), so the local checkout runs it. Shopify's own types (basic, buy X get Y,
-free shipping, automatic and code) are kept as records: the local checkout runs Functions only.
+classes and metafields), so the local checkout runs it. Of Shopify's own types, the local
+checkout applies the codes of `DiscountCodeBasic` and `DiscountCodeFreeShipping` itself, and
+counts the orders placed with them in `asyncUsageCount`
+([what the checkout sees](admin.md#what-the-storefront-and-the-checkout-see)); buy X get Y and
+the automatic ones are kept as records.
 Their `summary` is the admin's: what the discount takes off, then its minimum, in the shop's
 money format (`$5.00 off entire order • Minimum purchase of $50.00`, `10% off 2 products`, `Buy
 2 items, get 1 item free`, `Free shipping on all products`), and `shortSummary` its first part.

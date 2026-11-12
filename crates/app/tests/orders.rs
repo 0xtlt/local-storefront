@@ -600,6 +600,7 @@ fn a_checkout_order_keeps_its_discounts_and_its_gateway() {
         discount_codes: vec![lsf_app::checkout::DiscountCodeStatus {
             code: "FREESHIP".into(),
             applicable: true,
+            reason: None,
         }],
         delivery_groups: vec![DeliveryGroup {
             handle: "group-1".into(),

@@ -2504,7 +2504,11 @@ Kept here so that nobody invents a field for it; each would need the store data 
 - **Gift cards the Admin API creates**: the data keys a card by its code, which Shopify returns
   only once and the record does not keep. Changes to the cards of the data sync.
 - **Discounts that are not app discounts** (`DiscountCodeBasic`, `…Bxgy`, `…FreeShipping`, the
-  automatic ones): the local checkout runs Functions only. Of app discounts: `combinesWith`,
+  automatic ones) are not store data. The checkout reads the basic and free shipping codes from
+  the default shop on each computation instead (`domains::app::code_discounts`: what they take
+  off and whether the buyer may use them, which depends on the orders and the buyer, not only on
+  the discount), and `record_placed_order` counts their uses; buy X get Y and the automatic ones
+  do not apply. Of app discounts: `combinesWith`,
   usage limits, `appliesOncePerCustomer`, the buyers they apply to (`context`), every code but
   the first.
 - **Owners of one Function**: two customizations of one Function share one set of settings

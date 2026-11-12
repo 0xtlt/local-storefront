@@ -647,6 +647,8 @@ pub fn config_from_settings(settings: &CheckoutSettings) -> CheckoutConfig {
                 metafields: metafields(&discount.metafields),
             })
             .collect(),
+        // The server adds those of the Admin API (`price_with` of its checkout).
+        code_discounts: Vec::new(),
         function_metafields: settings
             .functions
             .iter()

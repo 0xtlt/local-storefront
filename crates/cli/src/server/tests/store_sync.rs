@@ -469,6 +469,92 @@ fn an_app_discount_the_backend_creates_runs_its_function_at_the_checkout() {
     assert_eq!(input["discount"]["metafield"]["value"], settings, "{input}");
 }
 
+/// A code of Shopify's own discount types that the backend creates (`discountCodeBasicCreate`)
+/// is taken at the checkout without a Function: the order placed carries it, its usage count
+/// moves, and once its usage limit is reached, the next checkout refuses it.
+#[test]
+fn a_basic_code_the_backend_creates_applies_at_the_checkout_and_counts_its_uses() {
+    let state = checkout_admin_server();
+    mutate(
+        &state,
+        r#"mutation($discount: DiscountCodeBasicInput!) { discountCodeBasicCreate(basicCodeDiscount: $discount) { codeDiscountNode { id } userErrors { field message } } }"#,
+        json!({"discount": {
+            "title": "Loyalty voucher", "code": "LOYAL-5", "usageLimit": 1,
+            "customerGets": {"value": {"discountAmount": {"amount": "5.00"}}, "items": {"all": true}},
+        }}),
+    );
+    let enter = |session: &str| {
+        let path = cart_checkout(
+            &state,
+            session,
+            json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        );
+        let reply = operations(
+            &state,
+            &path,
+            session,
+            json!([{"type": "discountCode", "action": "add", "code": "loyal-5"}]),
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        (path, body_json(&reply))
+    };
+    let (path, checkout) = enter("co-loyal");
+    assert_eq!(
+        checkout["discountCodes"],
+        json!([{"code": "loyal-5", "applicable": true}]),
+        "{checkout}"
+    );
+    assert_eq!(checkout["discounts"][0]["code"], "LOYAL-5");
+    assert_eq!(checkout["discounts"][0]["class"], "ORDER");
+    assert_eq!(checkout["cost"]["discounts"]["amount"], 5.0);
+
+    assert_eq!(
+        operations(&state, &path, "co-loyal", buyer_details()).status,
+        200
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-loyal");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let order = body_json(&reply)["order"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // The backend reads the order with `read_orders`.
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "write_discounts,read_orders"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let answer = admin_query(
+        &state,
+        &format!(
+            r#"{{ order(id: "{order}") {{ discountCodes discountApplications(first: 1) {{ nodes {{ ... on DiscountCodeApplication {{ code }} }} }} }}
+               codeDiscountNodeByCode(code: "LOYAL-5") {{ codeDiscount {{ ... on DiscountCodeBasic {{ asyncUsageCount }} }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        answer["data"]["order"]["discountApplications"]["nodes"],
+        json!([{"code": "LOYAL-5"}]),
+        "{answer}"
+    );
+    assert_eq!(answer["data"]["order"]["discountCodes"], json!(["loyal-5"]));
+    assert_eq!(
+        answer["data"]["codeDiscountNodeByCode"]["codeDiscount"]["asyncUsageCount"],
+        1
+    );
+
+    // Used up: refused, with why.
+    let (_, again) = enter("co-loyal-again");
+    assert_eq!(again["discountCodes"][0]["applicable"], false, "{again}");
+    assert_eq!(
+        again["discountCodes"][0]["reason"],
+        "it reached its usage limit: used 1 times of 1"
+    );
+    assert_eq!(again["discounts"], json!([]));
+}
+
 #[test]
 fn a_session_with_its_own_data_sees_what_the_backend_changes() {
     let state = admin_server();
