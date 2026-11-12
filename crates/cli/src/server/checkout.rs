@@ -171,6 +171,9 @@ pub fn control(state: &ServerState, incoming: &Incoming, segments: &[&str]) -> O
         ("GET", ["checkouts"]) => Some(home(state, incoming)),
         ("GET", ["checkouts", "check"]) => Some(home_check(state, incoming)),
         ("GET", ["checkout", "assets", file]) => Some(asset(file)),
+        ("POST", ["extensions", handle, "session-token"]) => {
+            Some(extension_session_token(state, incoming, handle))
+        }
         ("GET", ["extensions", handle, file @ ..]) if !file.is_empty() => {
             Some(extension_file(state, handle, file))
         }
@@ -2050,6 +2053,62 @@ fn asset(file: &str) -> Reply {
         Some(content) => Reply::new(200, content_type(file), content).cached(cache::RENDERED),
         None => Reply::not_found(),
     }
+}
+
+/// `POST /__lsf/extensions/<handle>/session-token`: what `shopify.sessionToken.get()` of a
+/// checkout or customer account UI extension gives, for the page to hand it to the extension.
+/// The token Shopify signs for the extensions of the app ([`ExtensionClaims`]): for the shop
+/// (`dest`, the `permanent_domain` of the store data, the Admin API's default shop), the app
+/// (`aud`, its client id) and the customer logged in in the caller's session (`sub`), signed with
+/// HS256 and the client secret, so that the backend verifies it as it verifies Shopify's.
+///
+/// The secret is the Admin API's (`--client-secret`, `SHOPIFY_API_SECRET`, the app's `.env`,
+/// else lsf's own); without the admin part, the same without `--client-secret`. It never
+/// reaches the page: the page asks here. No CORS, as for the bundles: the page is on lsf's
+/// origin, and a page of another origin cannot read the token.
+///
+/// [`ExtensionClaims`]: lsf_app::admin::auth::session_token::ExtensionClaims
+fn extension_session_token(state: &ServerState, incoming: &Incoming, handle: &str) -> Reply {
+    use lsf_app::admin::auth::session_token::{self, Claims, ExtensionClaims};
+    let options = options(state);
+    let app = match state.load_app(&options.app_dir) {
+        Ok(app) => app,
+        Err(problem) => return error(500, problem),
+    };
+    let selected = Selection::resolve(&app, &options.extensions)
+        .is_ok_and(|selection| selection.contains(handle));
+    if app.ui_extension(handle).is_none() || !selected {
+        return error(404, format!("The app serves no UI extension {handle}."));
+    }
+    let (secret, client_id) = match &state.admin {
+        Some(admin) => (admin.secret.clone(), admin.api.client_id().to_string()),
+        None => (
+            lsf_app::admin::auth::client_secret(None, Some(&options.app_dir)).0,
+            lsf_app::admin::domains::app::client_id(Some(&app)),
+        ),
+    };
+    let (session_id, _) = state.session_id(incoming);
+    let (session, store) = state.snapshot(&session_id);
+    let customer = Identity::of(&store, &session).customer;
+    let jti = Claims::uuid(state.new_session_id().as_bytes());
+    let claims = ExtensionClaims::new(
+        &store.shop.permanent_domain,
+        &client_id,
+        customer,
+        chrono::Utc::now().timestamp(),
+        jti,
+    );
+    let token = session_token::mint(&claims, &secret);
+    Reply::json(
+        200,
+        &json!({
+            "token": token,
+            "authorization": format!("Bearer {token}"),
+            "shop": claims.dest,
+            "claims": claims,
+        }),
+    )
+    .cached(cache::PRIVATE)
 }
 
 /// A file of the build of a checkout UI extension: `<extension>/dist/<file>`.

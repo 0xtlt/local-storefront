@@ -1298,6 +1298,39 @@ of checkout UI extensions has no such type): an `ORDER` declaration reads nothin
 a warning. Shopify lists `CART` as an owner type of checkout UI extensions only and `ORDER` of
 customer account UI extensions only; lsf takes both on either, as one extension can target both.
 
+### Session tokens
+
+`shopify.sessionToken.get()`, in a checkout or a customer account extension, gives the token
+Shopify gives, which the backend verifies as it verifies Shopify's (`authenticate.public.checkout`
+and `authenticate.public.customerAccount` of Shopify's libraries, `decodeSessionToken`): an
+HS256 JWT signed with the client secret of the [Admin API](admin.md#start)
+(`--client-secret`, `SHOPIFY_API_SECRET` of the environment or of the app's `.env`, else
+`lsf-local-client-secret`; the same without the admin part, without `--client-secret`). Its
+claims are those of shopify.dev's Session Token API, for
+[checkout](https://shopify.dev/docs/api/checkout-ui-extensions/latest/target-apis/platform-apis/session-token-api)
+and [customer account](https://shopify.dev/docs/api/customer-account-ui-extensions/latest/target-apis/platform-apis/session-token-api)
+extensions:
+
+```json
+{
+  "dest": "local-supply-co.myshopify.com",
+  "aud": "<client id>",
+  "exp": 1794511949,
+  "nbf": 1794511649,
+  "iat": 1794511649,
+  "jti": "7f63880b-b45d-49d4-beb1-af926c85653c",
+  "sub": "gid://shopify/Customer/6523834743460"
+}
+```
+
+`dest` is the shop's domain, bare, as in shopify.dev's example (the session token of the admin
+has `https://`): the `permanent_domain` of the store data, the default shop of the Admin API.
+`aud` is the client id, the token lives five minutes, `jti` is a new UUID each time, and `sub`
+is there only when a customer is logged in (whether the app may read customer data is not
+checked). There is no `iss` and no `sid`. The page asks lsf for the token
+(`POST /__lsf/extensions/<handle>/session-token`, [control API](control-api.md#apps-checkout-and-admin-api))
+and hands it to the extension: the secret never reaches the browser.
+
 ## Run a Function without a server
 
 ```bash

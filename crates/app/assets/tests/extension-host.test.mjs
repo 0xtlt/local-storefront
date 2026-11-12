@@ -19,9 +19,16 @@ function setup({ extensions, storage, state, server = false, onRequest } = {}) {
       this.opened.push(args);
     },
     fetched: [],
-    // The bundles, from the server of the page.
-    async fetch(url) {
+    // The bundles, from the server of the page, and the session tokens it signs.
+    async fetch(url, init) {
       this.fetched.push(url);
+      if (url.endsWith('/session-token')) {
+        this.asked = init;
+        const handle = decodeURIComponent(url.split('/').at(-2));
+        return handle === 'unknown'
+          ? { ok: false, status: 404, json: async () => ({ error: 'The app serves no UI extension unknown.' }) }
+          : { ok: true, status: 200, json: async () => ({ token: `signed.for.${handle}` }) };
+      }
       return { ok: !url.endsWith('/missing.js'), text: async () => `/* ${url} */` };
     },
   };
@@ -378,23 +385,33 @@ test('starts the storage again after an order', () => {
   assert.equal(call(frame, { id: 7, op: 'read', key: 'dismissed' }), 'second');
 });
 
-test('hands out a session token that looks like the real one', () => {
-  const { state } = setup();
-  const token = sessionToken({ ...state(), buyer: { customer: { id: 'gid://shopify/Customer/1' } } }, { handle: 'gift-message' }, 1_700_000_000_000);
-  const [header, payload, signature] = token.split('.');
-  assert.deepEqual(JSON.parse(atob(header.replace(/-/g, '+').replace(/_/g, '/'))), { alg: 'HS256', typ: 'JWT' });
-  const claims = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
-  assert.equal(claims.dest, 'http://127.0.0.1:9293');
-  assert.equal(claims.iss, 'http://127.0.0.1:9293/admin');
-  assert.equal(claims.sub, 'gid://shopify/Customer/1');
-  assert.equal(claims.sid, 'preview');
-  assert.equal(claims.exp - claims.iat, 60);
-  assert.ok(signature);
-  const { host, slot, connect, from } = setup();
+test('asks lsf for the session token, which it signs, and hands it to the frame', async () => {
+  const { host, slot, connect, from, window } = setup();
   host.attach(slot, BLOCK);
   connect();
-  from(host.instances()[0], { type: 'sessionToken', id: 5 });
-  assert.equal(host.instances()[0].iframe.contentWindow.posted.at(-1).result.split('.').length, 3);
+  const frame = host.instances()[0];
+  from(frame, { type: 'sessionToken', id: 5 });
+  await settle();
+  assert.equal(window.fetched.at(-1), '/__lsf/extensions/gift-message/session-token');
+  assert.equal(window.asked.method, 'POST');
+  assert.equal(window.asked.headers['content-type'], 'application/json');
+  assert.deepEqual(frame.iframe.contentWindow.posted.at(-1), { lsf: true, type: 'result', id: 5, result: 'signed.for.gift-message' });
+});
+
+test('says why there is no session token when lsf gives none', async () => {
+  const fake = { fetch: async () => ({ ok: false, status: 404, json: async () => ({ error: 'The app serves no UI extension x.' }) }) };
+  await assert.rejects(() => sessionToken(fake, { handle: 'x' }), /no UI extension x/);
+  const down = { fetch: async () => ({ ok: false, status: 502, json: async () => { throw new Error('not JSON'); } }) };
+  await assert.rejects(() => sessionToken(down, { handle: 'x' }), /did not give a session token \(502\)/);
+
+  const ext = { handle: 'unknown', apiVersion: '2026-10', script: '/u.js', targets: [BLOCK] };
+  const { host, slot, connect, from } = setup({ extensions: [ext] });
+  host.attach(slot, BLOCK);
+  connect();
+  const [frame] = host.instances();
+  from(frame, { type: 'sessionToken', id: 6 });
+  await settle();
+  assert.deepEqual(frame.iframe.contentWindow.posted.at(-1), { lsf: true, type: 'result', id: 6, error: 'The app serves no UI extension unknown.' });
 });
 
 test('asks the interceptors before the buyer pays, and tells them how it went', async () => {
