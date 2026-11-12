@@ -219,7 +219,8 @@ fn read_json(what: &str, value: &str) -> Result<Json, String> {
     let text = if value.trim_start().starts_with(['{', '[']) {
         value.to_string()
     } else {
-        std::fs::read_to_string(value).map_err(|error| format!("--{what}: {value}: {error}"))?
+        std::fs::read_to_string(&*crate::paths::given(value))
+            .map_err(|error| format!("--{what}: {value}: {error}"))?
     };
     serde_json::from_str(&text).map_err(|error| format!("--{what}: not valid JSON: {error}"))
 }
@@ -237,7 +238,7 @@ pub fn run(
         Subcommand::Typegen(args) => return typegen(&args),
     };
     if let Some(input) = &args.input {
-        return run_on_input(&args, input);
+        return run_on_input(&args, &crate::paths::given(input));
     }
     let Ran {
         app: shopify_app,

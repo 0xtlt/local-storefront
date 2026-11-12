@@ -842,7 +842,7 @@ pub fn load(dir: &Path) -> Result<App, String> {
     if !dir.is_dir() {
         return Err(format!("{} is not a directory", dir.display()));
     }
-    let root = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let root = lsf_core::util::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
     let mut app = App {
         root: root.clone(),
         ..App::default()

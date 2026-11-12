@@ -127,7 +127,7 @@ impl TempApp {
             std::env::temp_dir().join(format!("lsf-watch-{label}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(base.join("app/extensions")).unwrap();
         std::fs::create_dir_all(base.join("ctl")).unwrap();
-        let app = TempApp(base.canonicalize().unwrap());
+        let app = TempApp(lsf_core::util::canonicalize(&base).unwrap());
         app.write("shopify.app.toml", "name = \"Watch\"\nhandle = \"watch\"\n");
         app.ctl_write("build.sh", BUILD);
         app.ctl_write("order.sh", ORDER);

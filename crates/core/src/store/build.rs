@@ -353,7 +353,7 @@ fn metafield(input: &MetafieldInput) -> Metafield {
     match input {
         MetafieldInput::Typed(typed) => Metafield {
             kind: typed.kind.clone(),
-            value: typed.value.clone(),
+            value: super::metafield_types::normalize(&typed.kind, &typed.value),
         },
         MetafieldInput::Value(value) => Metafield {
             kind: match value {
@@ -637,135 +637,60 @@ fn explain_left_out(diagnostics: &mut Diagnostics, left_out: &[LeftOut]) {
     }
 }
 
-/// Resolves the references of typed metafields, now that every entity they can name is built:
-/// one that names nothing is an `unknown_reference`, with the closest name. A product that is
-/// not on the storefront is named without an error, as elsewhere.
+/// Resolves the references of typed metafields, now that every entity they can name is built,
+/// as Liquid does ([`Store::metafield_reference`]): one that names nothing reads `nil`, and is
+/// an `unknown_reference`. Its hint is the value written as the data names what it seems to
+/// mean (`use "faq/size"` for `"faq.size"`), or the closest name. A product that is not on the
+/// storefront is named without an error, as elsewhere.
 fn resolve_references(builder: &mut Builder<'_>, store: &Store) {
+    use super::metafield_references::{accepted_form, entity, gid_type, is_resolved, parse_gid};
     for (origin, reference) in std::mem::take(&mut builder.references) {
-        let text = reference.value.as_str().unwrap_or_default();
-        // A global id is what the Admin API writes: one that names an entity deleted since
-        // reads nothing, as on Shopify, and is no mistake of the data.
-        if text.starts_with("gid://") {
+        let kind = reference.kind.as_str();
+        let value = &reference.value;
+        let text = value.as_str().unwrap_or_default();
+        let gid = text.starts_with("gid://");
+        // A file is served from files/ when it is there, and drawn as a placeholder when it is
+        // not; customers, companies and taxonomy values are not resolved. A GID names none of
+        // them.
+        if !is_resolved(kind) && !(gid && kind == "file_reference") {
+            continue;
+        }
+        if store.metafield_reference(kind, value).is_some()
+            || (kind == "product_reference" && store.names_unlisted_product(value))
+        {
+            continue;
+        }
+        // A GID the Admin API keeps names an entity deleted since: it reads nothing, as on
+        // Shopify, and is no mistake of the data.
+        if gid && origin.file == super::load::ADMIN_OVERLAY_FILE {
             continue;
         }
         let at = Origin::new(
             origin.file.clone(),
             format!("{}{}", origin.pointer, reference.pointer),
         );
-        let (what, candidates): (&str, Vec<String>) = match reference.kind.as_str() {
-            "product_reference" => {
-                if store.product_index(text).is_some() || builder.unlisted.contains(text) {
-                    continue;
-                }
-                (
-                    "product",
-                    store.products.iter().map(|p| p.handle.clone()).collect(),
-                )
-            }
-            "variant_reference" => {
-                let found = match &reference.value {
-                    Json::Number(number) => number
-                        .as_u64()
-                        .is_some_and(|id| store.variant_location(id).is_some()),
-                    _ => store
-                        .products
-                        .iter()
-                        .flat_map(|product| &product.variants)
-                        .any(|variant| variant.sku == text),
-                };
-                if found {
-                    continue;
-                }
-                (
-                    "variant (by SKU or id)",
-                    store
-                        .products
-                        .iter()
-                        .flat_map(|product| &product.variants)
-                        .filter(|variant| !variant.sku.is_empty())
-                        .map(|variant| variant.sku.clone())
-                        .collect(),
-                )
-            }
-            "collection_reference" => {
-                if store.collection_index(text).is_some() {
-                    continue;
-                }
-                (
-                    "collection",
-                    store.collections.iter().map(|c| c.handle.clone()).collect(),
-                )
-            }
-            "page_reference" => {
-                if store.page_index(text).is_some() {
-                    continue;
-                }
-                (
-                    "page",
-                    store.pages.iter().map(|p| p.handle.clone()).collect(),
-                )
-            }
-            "article_reference" => {
-                let found = match text.split_once('/') {
-                    Some((blog, article)) => store
-                        .blog_index(blog)
-                        .and_then(|blog| store.article_index(blog, article))
-                        .is_some(),
-                    None => {
-                        (0..store.blogs.len())
-                            .filter(|blog| store.article_index(*blog, text).is_some())
-                            .count()
-                            == 1
-                    }
-                };
-                if found {
-                    continue;
-                }
-                (
-                    "article (blog/article)",
-                    store
-                        .blogs
-                        .iter()
-                        .flat_map(|blog| {
-                            blog.articles
-                                .iter()
-                                .map(move |article| format!("{}/{}", blog.handle, article.handle))
-                        })
-                        .collect(),
-                )
-            }
-            "metaobject_reference" | "mixed_reference" => {
-                if text
-                    .split_once('/')
-                    .is_some_and(|(kind, handle)| store.metaobject(kind, handle).is_some())
-                {
-                    continue;
-                }
-                (
-                    "metaobject (type/handle)",
-                    store
-                        .metaobjects
-                        .iter()
-                        .map(|entry| format!("{}/{}", entry.kind, entry.handle))
-                        .collect(),
-                )
-            }
-            // Files are served from files/ when they are there, and drawn as placeholders when
-            // they are not; customers, companies and taxonomy values are not resolved.
-            _ => continue,
-        };
         let shown = if text.is_empty() {
-            reference.value.to_string()
+            value.to_string()
         } else {
             text.to_string()
         };
-        let ambiguous = reference.kind == "article_reference"
+        if let Some(written) = store.reference_written_as_the_data_does(kind, value) {
+            builder
+                .error(
+                    "unknown_reference",
+                    &at,
+                    format!(
+                        "\"{shown}\" names nothing: a {kind} names {}",
+                        accepted_form(kind)
+                    ),
+                )
+                .hint(format!("use {written}"));
+            continue;
+        }
+        if kind == "article_reference"
             && !text.contains('/')
-            && (0..store.blogs.len())
-                .filter(|blog| store.article_index(*blog, text).is_some())
-                .count()
-                > 1;
-        if ambiguous {
+            && store.article_handle_is_ambiguous(text)
+        {
             builder
                 .error(
                     "unknown_reference",
@@ -775,25 +700,95 @@ fn resolve_references(builder: &mut Builder<'_>, store: &Store) {
                 .hint("name the article with its blog: \"<blog>/<article>\"");
             continue;
         }
+        let (what, candidates): (&str, Vec<String>) = match kind {
+            "product_reference" => (
+                "product",
+                store.products.iter().map(|p| p.handle.clone()).collect(),
+            ),
+            "variant_reference" => (
+                "variant (by SKU or id)",
+                store
+                    .products
+                    .iter()
+                    .flat_map(|product| &product.variants)
+                    .filter(|variant| !variant.sku.is_empty())
+                    .map(|variant| variant.sku.clone())
+                    .collect(),
+            ),
+            "collection_reference" => (
+                "collection",
+                store.collections.iter().map(|c| c.handle.clone()).collect(),
+            ),
+            "page_reference" => (
+                "page",
+                store.pages.iter().map(|p| p.handle.clone()).collect(),
+            ),
+            "article_reference" => (
+                "article (blog/article)",
+                store
+                    .blogs
+                    .iter()
+                    .flat_map(|blog| {
+                        blog.articles
+                            .iter()
+                            .map(move |article| format!("{}/{}", blog.handle, article.handle))
+                    })
+                    .collect(),
+            ),
+            "metaobject_reference" | "mixed_reference" => (
+                "metaobject (type/handle)",
+                store
+                    .metaobjects
+                    .iter()
+                    .map(|entry| format!("{}/{}", entry.kind, entry.handle))
+                    .collect(),
+            ),
+            _ => ("file", Vec::new()),
+        };
+        let listed = || {
+            candidates
+                .iter()
+                .take(5)
+                .map(|c| format!("\"{c}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        if gid {
+            // Shopify's id of an entity: the store data's names another one, or nothing.
+            let message = match parse_gid(text) {
+                // Shopify names files by GID, the store data by their path: lsf would read
+                // the GID as a path.
+                _ if kind == "file_reference" => {
+                    format!("lsf gives files no GID: \"{shown}\" names no file of files/")
+                }
+                Some((named, _)) if Some(named) != gid_type(kind) => {
+                    format!("a {kind} names no {named}: \"{shown}\" reads nothing")
+                }
+                Some((_, id)) => format!(
+                    "\"{shown}\" names nothing: no {} of the store data has the id {id}",
+                    entity(kind)
+                ),
+                None => format!("\"{shown}\" is not a GID"),
+            };
+            let hint = if candidates.is_empty() {
+                format!("a {kind} names {}", accepted_form(kind))
+            } else {
+                format!("a {kind} names {}: {}", accepted_form(kind), listed())
+            };
+            builder.error("unknown_reference", &at, message).hint(hint);
+            continue;
+        }
         let diagnostic = builder.error(
             "unknown_reference",
             &at,
-            format!("there is no {what} \"{shown}\" for this {}", reference.kind),
+            format!("there is no {what} \"{shown}\" for this {kind}"),
         );
         match closest_match(&shown, candidates.iter().map(String::as_str)) {
             Some(close) => diagnostic.hint(format!("did you mean \"{close}\"?")),
             None if candidates.is_empty() => {
                 diagnostic.hint(format!("the store data has no {what}"))
             }
-            None => diagnostic.hint(format!(
-                "name one of the store data: {}",
-                candidates
-                    .iter()
-                    .take(5)
-                    .map(|c| format!("\"{c}\""))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )),
+            None => diagnostic.hint(format!("name one of the store data: {}", listed())),
         };
     }
 }
@@ -3367,7 +3362,9 @@ fn build_metaobject_translations(
                 continue;
             }
             if builder.check_translation(&field.kind, value, &value_origin) {
-                kept.insert(key.clone(), value.clone());
+                // As the field's own value: the JSON text of a rich text or a list (the Admin
+                // API's `value`) is kept as that object or list.
+                kept.insert(key.clone(), metafield_types::normalize(&field.kind, value));
             }
         }
         if !kept.is_empty() {

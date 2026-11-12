@@ -170,7 +170,7 @@ A metafield with an explicit type.
 | Field | Type | Description |
 |---|---|---|
 | `type` | string | **Required.** A Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`, `rich_text_field`, `number_integer`, `number_decimal`, `boolean`, `color`, `date`, `date_time`, `url`, `json`, `money`, `rating`, `weight`, `volume`, `dimension` and the other measurements (`distance`, `temperature`, `duration`...), `product_reference`, `collection_reference`, `page_reference`, `article_reference` (`blog/article`, or the article's handle alone), `file_reference`, `metaobject_reference`, or a `list.` variant of those. |
-| `value` | any JSON value | **Required.** The value. References are written as handles (`"blue-shirt"`), files as paths inside `files/`, lists as JSON arrays. |
+| `value` | any JSON value | **Required.** The value. Lists are JSON arrays. A reference is written as Shopify writes it, a GID (`"gid://shopify/Product/<id>"`, the id the entity has in the store), or by the key the store data gives the entity, an lsf convention: a handle (`"blue-shirt"`), `blog/article`, `type/handle` of a metaobject entry (`"faq/size"`), a SKU or an id of a variant. Files are paths inside `files/`. An object or a list may also be written as its JSON text, as the Admin API's `value` gives it. |
 
 ## Product
 

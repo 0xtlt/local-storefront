@@ -8,8 +8,12 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+use lightningcss::properties::custom::UnparsedProperty;
+use lightningcss::properties::{Property, PropertyId};
 use lightningcss::stylesheet::{MinifyOptions, ParserOptions, PrinterOptions, StyleSheet};
 use lightningcss::targets::{Browsers, Features, Targets};
+use lightningcss::visit_types;
+use lightningcss::visitor::{Visit, VisitTypes, Visitor};
 use oxc::allocator::Allocator;
 use oxc::codegen::{Codegen, CodegenOptions, CommentOptions};
 use oxc::minifier::{CompressOptions, CompressOptionsKeepNames, Minifier, MinifierOptions};
@@ -22,6 +26,27 @@ pub struct Minified {
     /// Ends with the link to the source map, as on Shopify.
     pub code: String,
     pub map: String,
+}
+
+impl Minified {
+    /// The file as it is served at a URL whose `?v=` is `version`. Shopify's CDN puts that
+    /// `?v=` in the link to the source map (`base.css.map?v=123`), so that the map's URL
+    /// changes with the file as the file's does; without one, the link has none either.
+    pub fn code_for(&self, version: Option<&str>) -> String {
+        let Some(version) = version.filter(|version| !version.is_empty()) else {
+            return self.code.clone();
+        };
+        // The link is the last line, and its URL ends with `.map`.
+        let Some(at) = self.code.rfind(".map").map(|at| at + ".map".len()) else {
+            return self.code.clone();
+        };
+        format!(
+            "{}?v={}{}",
+            &self.code[..at],
+            lsf_core::urls::encode_component(version),
+            &self.code[at..]
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +112,76 @@ fn targets() -> Targets {
     }
 }
 
+/// Whether the library's minifier gets the declarations of this property wrong, so that they
+/// are kept out of its reach. esbuild, which Shopify runs, leaves each of them as it is.
+fn kept_apart(property: &PropertyId) -> bool {
+    use PropertyId::*;
+    matches!(
+        property,
+        // Not parts of `transform`: applied before it, in a fixed order, and cascading on their
+        // own. The library writes them into a `transform` beside them, and drops them when
+        // `transform` comes after.
+        Translate | Rotate | Scale
+        // `font` resets what the library does not count as its parts, such as
+        // `font-variant-numeric` and `font-feature-settings`: the library moves `font`, or
+        // the one it makes of these longhands, after them, which undoes them.
+        | Font | FontFamily | FontSize | FontStyle | FontWeight | FontStretch | FontVariantCaps
+        | LineHeight
+        // The same with `transition`, which resets `transition-behavior`.
+        | Transition(_) | TransitionProperty(_) | TransitionDuration(_)
+        | TransitionTimingFunction(_) | TransitionDelay(_)
+        // `border-image: none` is printed without its value, which a browser ignores.
+        | BorderImage(_)
+    )
+}
+
+/// Turns the declarations the library gets wrong into declarations of tokens: the library keeps
+/// these in their place, as they are, without merging them into others or others into them.
+/// Their values are minified on their own, then read again as tokens, which `texts` keeps for
+/// as long as the stylesheet.
+struct KeepApart<'t> {
+    texts: &'t Allocator,
+}
+
+impl<'i> Visitor<'i> for KeepApart<'i> {
+    type Error = std::convert::Infallible;
+
+    fn visit_types(&self) -> VisitTypes {
+        visit_types!(PROPERTIES)
+    }
+
+    fn visit_property(&mut self, property: &mut Property<'i>) -> Result<(), Self::Error> {
+        let property_id = property.property_id();
+        if matches!(property, Property::Unparsed(_) | Property::Custom(_))
+            || !kept_apart(&property_id)
+        {
+            return Ok(());
+        }
+        let printed = property.value_to_css_string(PrinterOptions {
+            minify: true,
+            ..PrinterOptions::default()
+        });
+        let Ok(mut value) = printed else {
+            return Ok(());
+        };
+        if value.is_empty() && matches!(property_id, PropertyId::BorderImage(_)) {
+            // Each of its parts at its initial value: what `none` says.
+            value = "none".to_string();
+        }
+        let value = self.texts.alloc_str(&value);
+        // A custom property is read as tokens, as a declaration the library cannot read is.
+        let read =
+            Property::parse_string(PropertyId::from("--kept"), value, ParserOptions::default());
+        if let Ok(Property::Custom(tokens)) = read {
+            *property = Property::Unparsed(UnparsedProperty {
+                property_id,
+                value: tokens.value,
+            });
+        }
+        Ok(())
+    }
+}
+
 fn stylesheet(path: &str, source: &str) -> Option<(String, String)> {
     let (code, mut map) = match rules(path, source) {
         Ok(printed) => printed,
@@ -108,6 +203,8 @@ fn rules(path: &str, source: &str) -> Result<(String, parcel_sourcemap::SourceMa
         filename: path.to_string(),
         ..ParserOptions::default()
     };
+    // The values of the declarations kept apart, which live as long as the stylesheet.
+    let texts = Allocator::default();
     let mut sheet = StyleSheet::parse(source, options()).map_err(|_| {
         // Read again, past what cannot be read, to find every such place.
         let warnings = Arc::new(RwLock::new(Vec::new()));
@@ -133,6 +230,7 @@ fn rules(path: &str, source: &str) -> Result<(String, parcel_sourcemap::SourceMa
             })
             .collect::<Vec<usize>>()
     })?;
+    let Ok(()) = sheet.visit(&mut KeepApart { texts: &texts });
     sheet
         .minify(MinifyOptions {
             targets,
@@ -403,6 +501,34 @@ mod tests {
     }
 
     #[test]
+    fn the_link_to_the_map_carries_the_version_the_file_is_asked_at() {
+        // As Shopify's CDN links them: `base.css?v=123` ends with a link to `base.css.map?v=123`,
+        // `base.css` with a link to `base.css.map`.
+        let css = minify(
+            "/cdn/shop/t/1/assets/card.css",
+            &".card {\n  margin: 0px;\n}\n".repeat(4),
+        )
+        .unwrap();
+        assert!(
+            css.code_for(Some("123"))
+                .ends_with("}\n/*# sourceMappingURL=/cdn/shop/t/1/assets/card.css.map?v=123 */\n"),
+            "{}",
+            css.code_for(Some("123"))
+        );
+        assert_eq!(css.code_for(None), css.code);
+        assert_eq!(css.code_for(Some("")), css.code);
+        let js = minify("/cdn/shop/t/1/assets/pubsub.js", SCRIPT).unwrap();
+        assert!(
+            js.code_for(Some("1"))
+                .ends_with("})}\n//# sourceMappingURL=/cdn/shop/t/1/assets/pubsub.js.map?v=1\n"),
+            "{}",
+            js.code_for(Some("1"))
+        );
+        // Only the link changes.
+        assert_eq!(js.code_for(Some("1")).len(), js.code.len() + "?v=1".len());
+    }
+
+    #[test]
     fn keeps_as_written_the_rules_it_cannot_read() {
         // The name of a container glued to its condition is not one, which browsers ignore
         // and Shopify's minifier lets through.
@@ -440,6 +566,153 @@ mod tests {
                 .next_back()
                 .unwrap_or_default()
                 .is_empty()
+        );
+    }
+
+    /// The rules of `source`, minified.
+    fn minified_rules(source: &str) -> String {
+        stylesheet("/cdn/shop/t/1/assets/a.css", source).unwrap().0
+    }
+
+    #[test]
+    fn keeps_translate_rotate_and_scale_apart_from_transform() {
+        // What issue #47 found: `translate` and `scale` are applied before `transform`, and
+        // cascade on their own. Written into `transform`, the first rule turns the other way
+        // round and the second no longer resets the `translate` of another stylesheet.
+        let source = ".p {\n  transform: rotate(1deg);\n  translate: 10px 0;\n  scale: 1.1;\n}\n\n\
+            .b {\n  transform: none;\n  translate: 0 0;\n  scale: 1;\n}\n";
+        assert_eq!(
+            minified_rules(source),
+            ".p{transform:rotate(1deg);translate:10px;scale:1.1}\
+             .b{transform:none;translate:0;scale:1}"
+        );
+        // Written before `transform`, they were dropped.
+        assert_eq!(
+            minified_rules(".c { translate: 10px 0; transform: rotate(1deg) }"),
+            ".c{translate:10px;transform:rotate(1deg)}"
+        );
+        assert_eq!(
+            minified_rules(".m { scale: 1.1; transform: none }"),
+            ".m{scale:1.1;transform:none}"
+        );
+        assert_eq!(
+            minified_rules(".n { transform: rotate(1deg); rotate: none }"),
+            ".n{transform:rotate(1deg);rotate:none}"
+        );
+        // In a keyframe and when important too.
+        assert_eq!(
+            minified_rules(
+                "@keyframes rise { from { transform: none; translate: 0 0 } \
+                 to { transform: rotate(1deg); translate: 0 50% } }\n\
+                 .h { transform: none !important; translate: 0 0 !important }"
+            ),
+            "@keyframes rise{0%{transform:none;translate:0}\
+             to{transform:rotate(1deg);translate:0 50%}}\
+             .h{transform:none!important;translate:0!important}"
+        );
+
+        // The file of the issue, served through `asset_url`.
+        let file = format!(
+            "{source}{}",
+            ".pad {\n  margin: 0px 0px 0px 0px;\n}\n".repeat(4)
+        );
+        let served = minify("/cdn/shop/t/1/assets/x.css", &file).unwrap().code;
+        assert!(
+            served.starts_with(
+                ".p{transform:rotate(1deg);translate:10px;scale:1.1}\
+                 .b{transform:none;translate:0;scale:1}"
+            ),
+            "{served}"
+        );
+    }
+
+    #[test]
+    fn keeps_in_place_what_font_and_transition_reset() {
+        // `font` resets `font-variant-numeric`, `font-feature-settings` and `font-kerning`:
+        // moved after them, or made of longhands written before them, it undoes them.
+        assert_eq!(
+            minified_rules(
+                ".a { font: 12px/1.2 serif; font-feature-settings: \"tnum\"; \
+                 font-kerning: none }"
+            ),
+            ".a{font:12px/1.2 serif;font-feature-settings:\"tnum\";font-kerning:none}"
+        );
+        let longhands = minified_rules(
+            ".b { font-style: normal; font-variant-caps: normal; font-weight: 700; \
+             font-stretch: normal; font-size: 12px; line-height: 1; font-family: serif; \
+             font-variant-numeric: tabular-nums }",
+        );
+        assert!(!longhands.contains("font:"), "{longhands}");
+        assert!(
+            longhands.ends_with("font-family:serif;font-variant-numeric:tabular-nums}"),
+            "{longhands}"
+        );
+        // `transition` resets `transition-behavior`.
+        assert_eq!(
+            minified_rules(".c { transition: opacity 0.3s; transition-behavior: allow-discrete }"),
+            ".c{transition:opacity .3s;transition-behavior:allow-discrete}"
+        );
+        let longhands = minified_rules(
+            ".d { transition-property: display, opacity; transition-duration: 0.3s; \
+             transition-timing-function: ease; transition-delay: 0s; \
+             transition-behavior: allow-discrete }",
+        );
+        assert!(!longhands.contains("transition:"), "{longhands}");
+        assert!(
+            longhands.ends_with(";transition-behavior:allow-discrete}"),
+            "{longhands}"
+        );
+    }
+
+    #[test]
+    fn keeps_the_value_of_border_image() {
+        // The library printed `border-image:`, which a browser ignores.
+        assert_eq!(
+            minified_rules(".a { border-width: 1px; border-image: none }"),
+            ".a{border-width:1px;border-image:none}"
+        );
+        assert_eq!(
+            minified_rules(".b { border: 1px solid #ff0000; border-image: url(a.png) 30 }"),
+            ".b{border:1px solid red;border-image:url(a.png) 30}"
+        );
+    }
+
+    #[test]
+    fn still_merges_what_says_the_same() {
+        // Four sides make the shorthand, which sets them and nothing else.
+        assert_eq!(
+            minified_rules(
+                ".a {\n  margin-top: 1px;\n  margin-right: 2px;\n  margin-bottom: 3px;\n  \
+                 margin-left: 4px;\n}\n"
+            ),
+            ".a{margin:1px 2px 3px 4px}"
+        );
+        // Rules side by side, of the same selector or of the same declarations.
+        assert_eq!(
+            minified_rules(".l { padding-top: 0 }\n.l { padding-bottom: 0 }"),
+            ".l{padding-top:0;padding-bottom:0}"
+        );
+        assert_eq!(
+            minified_rules(".v { color: red }\n.w { color: red }"),
+            ".v,.w{color:red}"
+        );
+        // Not across a rule that could come between.
+        assert_eq!(
+            minified_rules(".a { color: red }\n.b { color: blue }\n.a { margin: 0 }"),
+            ".a{color:red}.b{color:#00f}.a{margin:0}"
+        );
+        // `transform` is still minified, on its own.
+        assert_eq!(
+            minified_rules(".t { transform: translate(10px, 0px) rotate(0.5turn) }"),
+            ".t{transform:translate(10px)rotate(.5turn)}"
+        );
+        // So are the values the library keeps apart.
+        assert_eq!(
+            minified_rules(
+                ".f { font-family: \"Helvetica Neue\", sans-serif; font-weight: bold; \
+                 transition: opacity 0.30s ease 0s }"
+            ),
+            ".f{font-family:Helvetica Neue,sans-serif;font-weight:700;transition:opacity .3s}"
         );
     }
 

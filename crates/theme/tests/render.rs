@@ -377,6 +377,36 @@ fn cart_reflects_the_session() {
     );
 }
 
+/// `line_item.index` is the line's 0-based position: themes post `index | plus: 1` as the
+/// `line` of `/cart/change.js`. The cart JSON has no such field.
+#[test]
+fn cart_lines_know_their_index() {
+    let fixture = fixture();
+    let tote = fixture.store.product_by_handle("canvas-tote-bag").unwrap();
+    let mug = fixture.store.product_by_handle("ceramic-mug").unwrap();
+    let mut session = Session::initial(&fixture.store);
+    session.cart_lines = [tote, mug]
+        .iter()
+        .map(|product| CartLine {
+            variant_id: product.variants[0].id,
+            quantity: 1,
+            properties: Default::default(),
+            selling_plan: None,
+        })
+        .collect();
+    assert_eq!(
+        fixture.liquid(
+            "/cart",
+            session.clone(),
+            "{% for item in cart.items %}{{ item.index }}:{{ item.index | plus: 1 }} {% endfor %}"
+        ),
+        "0:1 1:2 "
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&fixture.liquid("/cart", session, "{{ cart | json }}")).expect("JSON");
+    assert!(json["items"][1].get("index").is_none(), "{json}");
+}
+
 #[test]
 fn section_rendering_api() {
     let fixture = fixture();
@@ -1215,6 +1245,47 @@ fn an_apps_own_metaobject_type_is_found_by_either_name() {
 }
 
 #[test]
+fn a_reference_by_gid_reads_what_validate_resolves() {
+    // Shopify writes every reference as a GID: one that names an entity of the store data
+    // (by its id, `metaobject.system.id` for an entry) reads it, as `type/handle` does.
+    let faq = lsf_core::util::stable_id("metaobject", "faq/size");
+    let (demo, _) = lsf_core::store::load::load(&DataSource::Demo, &LoadOptions::default());
+    let mug = demo.product_by_handle("ceramic-mug").expect("mug").id;
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "faq": [{ "handle": "size", "fields": { "question": "Which size?" } }],
+            "guide": [{
+                "handle": "fit",
+                "fields": {
+                    "faqs": { "type": "list.metaobject_reference", "value": [format!("gid://shopify/Metaobject/{faq}"), "faq/size"] },
+                    "product": { "type": "product_reference", "value": format!("gid://shopify/Product/{mug}") }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{% for faq in metaobjects.guide.fit.faqs.value %}{{ faq.question }}/{{ faq.system.id }};{% endfor %}\
+         {{ metaobjects.guide.fit.product.value.handle }}",
+    );
+    assert_eq!(
+        output,
+        format!("Which size?/{faq};Which size?/{faq};ceramic-mug")
+    );
+}
+
+#[test]
 fn metafield_values_are_the_objects_shopify_gives() {
     let overlay = serde_json::json!({
         "metaobjects": {
@@ -1290,6 +1361,82 @@ fn metafield_values_are_the_objects_shopify_gives() {
             "{tent}{{{{ tent.width | metafield_text }}}}|{{{{ tent.width | metafield_tag }}}}"
         )),
         "2.56 cm|<span class=\"metafield-dimension\"><span class=\"metafield-dimension_value\">2.56 </span><span class=\"metafield-dimension_unit\">cm</span></span>"
+    );
+}
+
+#[test]
+fn a_rating_has_strings_as_on_shopify() {
+    // The rating of the Admin API's `jsonValue`, the same with numbers, and the Admin API's
+    // `value` (the JSON text) pasted as is.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "spec": [{
+                "handle": "tent",
+                "fields": {
+                    "stars": { "type": "rating", "value": { "scale_min": "1.0", "scale_max": "5.0", "value": "4.5" } },
+                    "numbers": { "type": "rating", "value": { "scale_min": 1, "scale_max": 5, "value": 4.5 } },
+                    "pasted": { "type": "rating", "value": "{\"scale_min\":\"1.0\",\"scale_max\":\"5.0\",\"value\":\"4.5\"}" },
+                    "several": { "type": "list.rating", "value": [{ "scale_min": "1.0", "scale_max": "10.0", "value": "7.5" }] }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render = |source: &str| fixture.liquid("/", Session::initial(&fixture.store), source);
+    // The issue's template: `scale_max` is the string "5.0", and the range takes it, as on
+    // Shopify. A float 5.0 would raise "invalid integer" there.
+    let stars = |field: &str| {
+        render(&format!(
+            "{{%- assign m = metaobjects.spec.tent.{field} -%}}\
+             [{{{{ m.value.scale_max }}}}] [{{{{ m.value.scale_max | json }}}}] \
+             [{{% for i in (1..m.value.scale_max) %}}*{{% endfor %}}]"
+        ))
+    };
+    assert_eq!(stars("stars"), "[5.0] [\"5.0\"] [*****]");
+    assert_eq!(stars("pasted"), "[5.0] [\"5.0\"] [*****]");
+    // Numbers are kept as they are written, as strings.
+    assert_eq!(stars("numbers"), "[5] [\"5\"] [*****]");
+    // The rating object of Shopify's Liquid reference: `rating`, `scale_max`, `scale_min`.
+    assert_eq!(
+        render("{{ metaobjects.spec.tent.stars.value | json }}"),
+        r#"{"rating":"4.5","scale_max":"5.0","scale_min":"1.0"}"#
+    );
+    assert_eq!(
+        render("{{ metaobjects.spec.tent.numbers.value | json }}"),
+        r#"{"rating":"4.5","scale_max":"5","scale_min":"1"}"#
+    );
+    // The metafield itself gives its value as the store data keeps it: strings.
+    assert_eq!(
+        render("{{ metaobjects.spec.tent.pasted | json }}"),
+        r#"{"scale_min":"1.0","scale_max":"5.0","value":"4.5"}"#
+    );
+    assert_eq!(
+        render("{{ metaobjects.spec.tent.numbers | json }}"),
+        r#"{"scale_min":"1","scale_max":"5","value":"4.5"}"#
+    );
+    // Each rating of a list too.
+    assert_eq!(
+        render(
+            "{% for r in metaobjects.spec.tent.several.value %}{{ r.rating | json }}/{{ r.scale_max | json }}{% endfor %}"
+        ),
+        r#""7.5"/"10.0""#
+    );
+    // What reads them as numbers still does.
+    assert_eq!(
+        render(
+            "{% assign m = metaobjects.spec.tent.stars %}{{ m | metafield_text }}|\
+             {{ m.value.rating | floor }}|{{ m.value.rating | modulo: 1 }}|{{ m.value.scale_max | minus: m.value.rating }}"
+        ),
+        "4.5 / 5.0|4|0.5|0.5"
     );
 }
 
@@ -2197,5 +2344,146 @@ fn a_theme_folder_that_does_not_exist_says_so() {
     assert!(
         error.contains("does not look like a Shopify theme"),
         "{error}"
+    );
+}
+
+#[test]
+fn a_block_rendered_again_gets_a_numbered_id() {
+    // On Shopify, the second render of a block on a page has the id of the first with `-1`,
+    // the third with `-2`, and so on: Horizon's product card, a static block rendered once
+    // per product, is `<prefix>__static-product-card`, then `...-1`, `...-2`, and so are the
+    // blocks it holds. A block rendered once keeps its id, and `section.blocks` gives the ids
+    // without a number (Horizon looks a block up there with `find_index: 'id', block.id`).
+    let fixture = theme_of(
+        "block-id-suffix",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.json",
+                r#"{
+                  "sections": {
+                    "main": {
+                      "type": "cards",
+                      "blocks": {
+                        "card": {
+                          "type": "card",
+                          "static": true,
+                          "blocks": { "price": { "type": "text" } },
+                          "block_order": ["price"]
+                        },
+                        "intro": { "type": "text" }
+                      },
+                      "block_order": ["intro"]
+                    },
+                    "pair": {
+                      "type": "boxes",
+                      "blocks": { "left": { "type": "box" }, "right": { "type": "box" } },
+                      "block_order": ["left", "right"]
+                    }
+                  },
+                  "order": ["main", "pair"]
+                }"#,
+            ),
+            (
+                "sections/cards.liquid",
+                "{% for i in (1..3) %}{% content_for 'block', type: 'card', id: 'card' %}{% endfor %}\
+                 {% content_for 'blocks' %}{% content_for 'blocks' %}\
+                 {% for block in section.blocks %}<li>{{ block.id }}</li>{% endfor %}\
+                 {% schema %}{\"name\": \"Cards\", \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            (
+                "sections/boxes.liquid",
+                "{% content_for 'blocks' %}\
+                 {% schema %}{\"name\": \"Boxes\", \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            (
+                "blocks/box.liquid",
+                "{% content_for 'block', type: 'text', id: 'title' %}\
+                 {% schema %}{\"name\": \"Box\", \"tag\": null, \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            (
+                "blocks/card.liquid",
+                "<p>{{ block.id }}</p>{% content_for 'blocks' %}\
+                 {% schema %}{\"name\": \"Card\", \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            (
+                "blocks/text.liquid",
+                "<span>{{ block.id }}</span>{% schema %}{\"name\": \"Text\", \"tag\": null}{% endschema %}",
+            ),
+        ],
+    );
+    let section = lsf_theme::render::template_section_id("index", "main");
+    let prefix = format!("A{}", &lsf_core::util::short_hash(&section)[..15]);
+    let card = |suffix: &str| {
+        format!(
+            "<div id=\"shopify-block-{prefix}__card{suffix}\" class=\"shopify-block\">\
+             <p>{prefix}__card{suffix}</p><span>{prefix}__price{suffix}</span></div>"
+        )
+    };
+    let expected = format!(
+        "<div id=\"shopify-section-{section}\" class=\"shopify-section\">{}{}{}\
+         <span>{prefix}__intro</span><span>{prefix}__intro-1</span>\
+         <li>{prefix}__intro</li></div>",
+        card(""),
+        card("-1"),
+        card("-2"),
+    );
+
+    let page = fixture.page("/");
+    assert_clean(&page);
+    assert!(page.body.contains(&expected), "{}", page.body);
+
+    // Two blocks that give a static block the same id each render it once: neither is
+    // numbered. Shopify gives every block a prefix of its own; lsf's comes from the section,
+    // so the two have the same id.
+    let pair = lsf_theme::render::template_section_id("index", "pair");
+    let title = format!(
+        "<span>A{}__title</span>",
+        &lsf_core::util::short_hash(&pair)[..15]
+    );
+    assert!(
+        page.body.contains(&format!(
+            "<div id=\"shopify-section-{pair}\" class=\"shopify-section\">{title}{title}</div>"
+        )),
+        "{}",
+        page.body
+    );
+
+    // The Section Rendering API renders the section alone: its numbers start again.
+    let alone = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &Target::Section(section.clone()),
+    );
+    assert_eq!(alone.body, expected);
+    // A section asked for twice in `?sections=` is rendered once: Shopify answers
+    // `?sections=<id>,<id>` with one key, its blocks numbered from the first render.
+    let twice = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &Target::Sections(vec![section.clone(), section.clone()]),
+    );
+    let json: serde_json::Value = serde_json::from_str(&twice.body).unwrap();
+    assert_eq!(json.as_object().map(serde_json::Map::len), Some(1));
+    assert_eq!(json[&section], expected);
+
+    // The timings count a block once, under the id of its first render, with each render.
+    let timed: Vec<(&str, usize)> = page.timings.sections[0]
+        .blocks
+        .iter()
+        .map(|block| (block.id.as_str(), block.durations.len()))
+        .collect();
+    let (card, price, intro) = (
+        format!("{prefix}__card"),
+        format!("{prefix}__price"),
+        format!("{prefix}__intro"),
+    );
+    assert_eq!(
+        timed,
+        [(card.as_str(), 3), (price.as_str(), 3), (intro.as_str(), 2)]
     );
 }
