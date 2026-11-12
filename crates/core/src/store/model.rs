@@ -1389,6 +1389,14 @@ pub struct MetaobjectInput {
     /// Field values, with the same shorthand as metafields.
     #[serde(default)]
     pub fields: IndexMap<String, MetafieldInput>,
+    /// The entry in the store's other languages, by language (an `iso_code` of
+    /// `localization.languages`) then field key: `{"fr": {"question": "Combien ?"}}`. A value
+    /// is written as the field's (a string, a rich text object, a list), and only the fields
+    /// Shopify translates take one: text, rich text, JSON, links, URLs, files, and the lists
+    /// of single line texts, links, URLs and files. On `/fr/...` a field shows its French
+    /// value, else its own.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub translations: IndexMap<String, IndexMap<String, Json>>,
     /// Selects `templates/metaobject/<type>.<suffix>.json` instead of
     /// `templates/metaobject/<type>.json` for the page of the entry, which is
     /// `/pages/<type>/<handle>`.

@@ -13,6 +13,7 @@ pub mod reference;
 pub mod theme_settings;
 pub mod validate;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -807,6 +808,9 @@ pub struct Metaobject {
     pub kind: String,
     pub handle: String,
     pub fields: IndexMap<String, Metafield>,
+    /// The values of its fields in the store's other languages, by language (its `iso_code` in
+    /// `localization.languages`) then field key. Only fields of a translatable type have one.
+    pub translations: IndexMap<String, IndexMap<String, Json>>,
     pub template_suffix: Option<String>,
 }
 
@@ -814,6 +818,29 @@ impl Metaobject {
     /// Whether the entry is of the type `kind` names: [`same_metaobject_type`].
     pub fn is_of(&self, kind: &str) -> bool {
         same_metaobject_type(&self.kind, kind)
+    }
+
+    /// A field as a language shows it: its translation into `locale` when the entry has one,
+    /// else into the base language of a regional one (`fr` for `fr-CA`), else its own value
+    /// (that of the primary language). Shopify falls back so, field by field
+    /// (https://shopify.dev/docs/apps/build/markets).
+    pub fn field_in(&self, key: &str, locale: &str) -> Option<Cow<'_, Metafield>> {
+        let field = self.fields.get(key)?;
+        let translation = |code: &str| {
+            self.translations
+                .iter()
+                .find(|(language, _)| language.eq_ignore_ascii_case(code))
+                .and_then(|(_, values)| values.get(key))
+        };
+        let base = locale.split_once('-').map(|(base, _)| base);
+        let translated = translation(locale).or_else(|| base.and_then(translation));
+        Some(match translated {
+            Some(value) => Cow::Owned(Metafield {
+                kind: field.kind.clone(),
+                value: value.clone(),
+            }),
+            None => Cow::Borrowed(field),
+        })
     }
 }
 
@@ -1308,6 +1335,62 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_regional_language_falls_back_to_its_base_language_then_the_field() {
+        // https://shopify.dev/docs/apps/build/markets: content in "Dutch (Belgium)" falls back
+        // to base Dutch, then to the shop's primary language.
+        let text = |value: &str| Metafield {
+            kind: "single_line_text_field".to_string(),
+            value: Json::from(value),
+        };
+        let entry = Metaobject {
+            kind: "faq".to_string(),
+            handle: "shipping".to_string(),
+            fields: [
+                ("question".to_string(), text("How long?")),
+                ("answer".to_string(), text("Two days.")),
+            ]
+            .into_iter()
+            .collect(),
+            translations: [
+                (
+                    "fr".to_string(),
+                    [
+                        ("question".to_string(), Json::from("Combien de temps ?")),
+                        ("answer".to_string(), Json::from("Deux jours.")),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                (
+                    "fr-CA".to_string(),
+                    [("answer".to_string(), Json::from("Deux jours ouvrables."))]
+                        .into_iter()
+                        .collect(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            template_suffix: None,
+        };
+        let value = |key: &str, locale: &str| {
+            entry
+                .field_in(key, locale)
+                .and_then(|field| field.value.as_str().map(str::to_string))
+        };
+        assert_eq!(
+            value("answer", "fr-CA").as_deref(),
+            Some("Deux jours ouvrables.")
+        );
+        assert_eq!(
+            value("question", "fr-ca").as_deref(),
+            Some("Combien de temps ?")
+        );
+        assert_eq!(value("answer", "fr").as_deref(), Some("Deux jours."));
+        assert_eq!(value("question", "de-CH").as_deref(), Some("How long?"));
+        assert_eq!(value("question", "en").as_deref(), Some("How long?"));
+    }
 
     #[test]
     fn an_app_metaobject_type_is_named_either_way() {

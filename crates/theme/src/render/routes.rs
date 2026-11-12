@@ -248,13 +248,16 @@ pub fn resolve(site: &Site) -> Page {
                 metaobject_template(kind),
                 view.or(data.template_suffix.as_deref()),
             );
-            // The entry's own name or title, as the tab of a browser shows.
+            // The entry's own name or title, in the language of the route, as the tab of a
+            // browser shows.
             page.title = ["title", "name"]
                 .iter()
-                .find_map(|field| data.fields.get(*field)?.value.as_str())
+                .find_map(|field| {
+                    let field = data.field_in(field, &site.request.locale)?;
+                    field.value.as_str().map(str::to_string)
+                })
                 .filter(|title| !title.is_empty())
-                .unwrap_or(&data.handle)
-                .to_string();
+                .unwrap_or_else(|| data.handle.clone());
             page.canonical_path = format!("/pages/{kind}/{}", data.handle);
             page.handle = Some(data.handle.clone());
             page

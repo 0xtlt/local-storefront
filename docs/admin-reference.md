@@ -877,8 +877,12 @@ simulate: give a test the bytes through `stagedUploadsCreate`.
 of the resources. lsf translates products, collections, pages, blogs, articles, metafields and
 metaobject fields of translatable types, policies, product options and their values, and menus.
 The digest is the SHA-256 of the content, as Shopify's; the locale must be one of the shop's
-other than its primary one. A translation is `outdated` once its resource changed. Translations
-are not shown on the storefront.
+other than its primary one. A translation is `outdated` once its resource changed. The
+translations of a metaobject are those of the store data ([metaobject
+translations](data-format.md#translations-of-metaobjects)): `translatableResource` reads them,
+`translationsRegister` and `translationsRemove` change them, and the storefront shows them on the
+routes of their language (`/fr/...`). Those of a market, and of the other resources, are not
+shown on the storefront.
 
 **Webhooks.** `metafield_definitions/create`, `/update` (also pin and unpin), `/delete`;
 `metaobjects/create`, `/update`, `/delete`; `products/update` when a product's or a variant's

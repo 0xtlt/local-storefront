@@ -706,6 +706,7 @@ A metaobject entry (`metaobjects.<type>.<handle>`).
 |---|---|---|
 | `handle` | string | **Required.** |
 | `fields` | map of [Metafield](#metafield) | Field values, with the same shorthand as metafields. |
+| `translations` | map of map of any JSON value | The entry in the store's other languages, by language (an `iso_code` of `localization.languages`) then field key: `{"fr": {"question": "Combien ?"}}`. A value is written as the field's (a string, a rich text object, a list), and only the fields Shopify translates take one: text, rich text, JSON, links, URLs, files, and the lists of single line texts, links, URLs and files. On `/fr/...` a field shows its French value, else its own. |
 | `template_suffix` | string | Selects `templates/metaobject/<type>.<suffix>.json` instead of `templates/metaobject/<type>.json` for the page of the entry, which is `/pages/<type>/<handle>`. |
 
 ## Localization

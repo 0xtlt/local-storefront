@@ -467,10 +467,10 @@ impl Object for MetaobjectDrop {
                 ),
             ]));
         }
+        // On a localized route (`/fr/...`), a field shows its translation when it has one.
         self.entry
-            .fields
-            .get(key)
-            .map(|field| MetafieldDrop::value(&self.site, field))
+            .field_in(key, &self.site.request.locale)
+            .map(|field| MetafieldDrop::value(&self.site, &field))
     }
 
     fn identity(&self) -> Option<String> {

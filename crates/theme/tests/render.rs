@@ -67,9 +67,12 @@ impl Fixture {
 
     /// Renders a piece of Liquid as if it were part of the page at `path`.
     fn liquid(&self, path: &str, session: Session, source: &str) -> String {
-        let site = self
-            .renderer
-            .site(self.store.clone(), request(path), session);
+        self.liquid_for(request(path), session, source)
+    }
+
+    /// Renders a piece of Liquid as if it were part of the page of a request.
+    fn liquid_for(&self, request: Request, session: Session, source: &str) -> String {
+        let site = self.renderer.site(self.store.clone(), request, session);
         let page = lsf_theme::render::routes::resolve(&site);
         let (output, errors) = self
             .renderer
@@ -2069,6 +2072,107 @@ fn the_entries_of_a_metaobject_type_have_pages() {
         rendered.body.contains("<u>/fr/pages/event/summer</u>"),
         "{}",
         rendered.body
+    );
+}
+
+#[test]
+fn a_metaobject_shows_its_translation_on_a_localized_route() {
+    // https://shopify.dev/docs/apps/build/metaobjects/use-metaobject-capabilities: the fields of
+    // a translatable type are translated per locale; a field without a translation shows its
+    // value in the primary language.
+    let rich_text = |text: &str| {
+        serde_json::json!({"type": "root", "children": [
+            {"type": "paragraph", "children": [{"type": "text", "value": text}]},
+        ]})
+    };
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "faq": [
+                {
+                    "handle": "shipping",
+                    "fields": {
+                        "title": "Shipping",
+                        "answer": { "type": "rich_text_field", "value": rich_text("Two days.") },
+                        "position": 1
+                    },
+                    "translations": {
+                        "fr": { "title": "Livraison", "answer": rich_text("Deux jours.") }
+                    }
+                },
+                { "handle": "returns", "fields": { "title": "Returns" } }
+            ]
+        }
+    });
+    let section = "<h1>{{ metaobject.title.value }}</h1>{{ metaobject.answer | metafield_tag }}\
+                   <i>{{ metaobject.position.value }}</i><title>{{ page_title }}</title>";
+    let template =
+        serde_json::json!({"sections": {"main": {"type": "faq"}}, "order": ["main"]}).to_string();
+    let fixture = theme_with_data(
+        "metaobject-translations",
+        &overlay,
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            ("sections/faq.liquid", section),
+            ("templates/metaobject/faq.json", &template),
+        ],
+    );
+    let french = |path: &str| {
+        let mut request = request(path);
+        request.locale = "fr".to_string();
+        request.root = "/fr".to_string();
+        request
+    };
+
+    let english = fixture.page("/pages/faq/shipping");
+    assert_clean(&english);
+    assert!(
+        english.body.contains("<h1>Shipping</h1>"),
+        "{}",
+        english.body
+    );
+    assert!(english.body.contains("Two days."), "{}", english.body);
+    assert!(
+        english.body.contains("<title>Shipping</title>"),
+        "{}",
+        english.body
+    );
+
+    let rendered = fixture.render_with(
+        french("/pages/faq/shipping"),
+        Session::initial(&fixture.store),
+        &Target::Page,
+    );
+    assert_clean(&rendered);
+    assert_eq!(rendered.status, 200);
+    assert!(
+        rendered.body.contains("<h1>Livraison</h1>"),
+        "{}",
+        rendered.body
+    );
+    assert!(rendered.body.contains("Deux jours."), "{}", rendered.body);
+    assert!(!rendered.body.contains("Two days."), "{}", rendered.body);
+    // A field without a translation, and one that cannot have any, show their own value.
+    assert!(rendered.body.contains("<i>1</i>"), "{}", rendered.body);
+    assert!(
+        rendered.body.contains("<title>Livraison</title>"),
+        "{}",
+        rendered.body
+    );
+
+    // Wherever Liquid reads the entry: `metaobjects`, a reference.
+    let titles = "{% for faq in metaobjects.faq.values %}{{ faq.title }};{% endfor %}\
+                  {{ metaobjects.faq.shipping.title.value }}";
+    let session = || Session::initial(&fixture.store);
+    assert_eq!(
+        fixture.liquid_for(french("/"), session(), titles),
+        "Livraison;Returns;Livraison"
+    );
+    assert_eq!(
+        fixture.liquid("/", session(), titles),
+        "Shipping;Returns;Shipping"
     );
 }
 
