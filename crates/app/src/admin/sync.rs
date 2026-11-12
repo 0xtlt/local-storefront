@@ -55,7 +55,7 @@ fn app_discount(record: &Record) -> Option<&Map<String, Value>> {
 }
 
 /// What diagnostics name the overlay of the Admin API's changes.
-pub const OVERLAY_NAME: &str = "(admin api)";
+pub const OVERLAY_NAME: &str = lsf_core::store::load::ADMIN_OVERLAY_FILE;
 
 /// The changes the Admin API made to a shop since the seed, as an overlay of the store data the
 /// shop was seeded from (`store`: the store loaded from the files, without any overlay). `None`

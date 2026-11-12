@@ -779,6 +779,9 @@ pub fn load(source: &DataSource, options: &LoadOptions) -> (Store, Diagnostics) 
 /// The name diagnostics use for data that did not come from a file.
 pub const OVERLAY_FILE: &str = "(request body)";
 
+/// The name of the overlay of what the Admin API changed (`lsf_app::admin::sync`).
+pub const ADMIN_OVERLAY_FILE: &str = "(admin api)";
+
 /// Data applied on top of the files: the entities it removes, then the entities it adds or
 /// replaces. The data of a session (`PUT /__lsf/session`) is one, and so are the changes the
 /// Admin API made to the store (`lsf_app::admin::sync`), which the session's data then goes on top of.
@@ -1597,6 +1600,142 @@ mod tests {
                 .ends_with("did you mean \"designer/sam\"?")
         );
         assert_eq!(found.len(), 7, "{found:#?}");
+    }
+
+    /// Issue #43: `faq.size`, `size`, `faq:size` and `{"type": "faq", "handle": "size"}` passed
+    /// `validate` and rendered `nil`. Every reference Liquid cannot resolve is an error that
+    /// names the form lsf takes, and a GID names the entity of that id.
+    #[test]
+    fn a_reference_lsf_does_not_resolve_is_an_error_with_the_form_it_takes() {
+        use crate::store::metafield_references::Referenced;
+        let (demo, _) = inline(serde_json::json!({}));
+        let mug = demo.product_by_handle("ceramic-mug").expect("mug");
+        let variant = &mug.variants[0];
+        let page = &demo.pages[0];
+        let faq_size = crate::util::stable_id("metaobject", "faq/size");
+        let (store, diagnostics) = inline(serde_json::json!({
+            "metaobjects": {"faq": [
+                {"handle": "size", "fields": {"question": "Which size?"}},
+                {"handle": "returns", "fields": {"question": "Returns?"}},
+            ]},
+            "products": [{"title": "Thing", "price": "1.00", "metafields": {"custom": {
+                "faqs": {"type": "list.metaobject_reference", "value": [
+                    "faq/size",
+                    "faq.size",
+                    "size",
+                    "faq:size",
+                    {"type": "faq", "handle": "size"},
+                    format!("gid://shopify/Metaobject/{faq_size}"),
+                    "gid://shopify/Metaobject/123",
+                ]},
+                "mug": {"type": "product_reference", "value": format!("gid://shopify/Product/{}", mug.id)},
+                "mug_path": {"type": "product_reference", "value": "/products/ceramic-mug"},
+                "gone": {"type": "product_reference", "value": "gid://shopify/Product/1"},
+                "not_a_page": {"type": "page_reference", "value": format!("gid://shopify/Product/{}", mug.id)},
+                "page": {"type": "page_reference", "value": format!("gid://shopify/Page/{}", page.id)},
+                "variant": {"type": "variant_reference", "value": format!("gid://shopify/ProductVariant/{}", variant.id)},
+                "variant_id": {"type": "variant_reference", "value": variant.id.to_string()},
+                "file": {"type": "file_reference", "value": "gid://shopify/MediaImage/1"},
+            }}}],
+        }));
+        let found: Vec<String> = diagnostics
+            .items
+            .iter()
+            .map(|item| {
+                format!(
+                    "{} {} | {} | {}",
+                    item.code,
+                    item.path,
+                    item.message,
+                    item.hint.as_deref().unwrap_or_default()
+                )
+            })
+            .collect();
+        let at = |path: &str| {
+            found
+                .iter()
+                .find(|line| line.contains(&format!(" {path} |")))
+                .unwrap_or_else(|| panic!("nothing at {path}: {found:#?}"))
+                .clone()
+        };
+        let base = "/products/0/metafields/custom";
+        for index in 1..=3 {
+            assert!(
+                at(&format!("{base}/faqs/value/{index}")).ends_with("| use \"faq/size\""),
+                "{found:#?}"
+            );
+        }
+        assert!(
+            at(&format!("{base}/faqs/value/4")).ends_with("| use \"faq/size\""),
+            "{found:#?}"
+        );
+        let unknown_gid = at(&format!("{base}/faqs/value/6"));
+        assert!(
+            unknown_gid.starts_with("unknown_reference"),
+            "{unknown_gid}"
+        );
+        assert!(unknown_gid.contains("\"faq/size\""), "{unknown_gid}");
+        assert!(
+            at(&format!("{base}/mug_path/value")).ends_with("| use \"ceramic-mug\""),
+            "{found:#?}"
+        );
+        assert!(at(&format!("{base}/gone/value")).starts_with("unknown_reference"));
+        assert!(at(&format!("{base}/not_a_page/value")).starts_with("unknown_reference"));
+        assert!(
+            at(&format!("{base}/variant_id/value")).ends_with(&format!("| use {}", variant.id)),
+            "{found:#?}"
+        );
+        assert!(at(&format!("{base}/file/value")).starts_with("unknown_reference"));
+        assert_eq!(found.len(), 10, "{found:#?}");
+        assert!(
+            diagnostics
+                .items
+                .iter()
+                .all(|item| item.severity == crate::diagnostics::Severity::Error)
+        );
+
+        // What resolves is what Liquid reads.
+        let product = store.product_by_handle("thing").expect("thing");
+        let value = |key: &str| &product.metafields["custom"][key].value;
+        let faqs = value("faqs").as_array().expect("a list");
+        for (index, expected) in [(0, Some("size")), (1, None), (5, Some("size")), (6, None)] {
+            let found = store
+                .metafield_reference("metaobject_reference", &faqs[index])
+                .map(|target| match target {
+                    Referenced::Metaobject(entry) => store.metaobjects[entry].handle.as_str(),
+                    other => panic!("{other:?}"),
+                });
+            assert_eq!(found, expected, "faqs[{index}]");
+        }
+        assert_eq!(
+            store.metafield_reference("product_reference", value("mug")),
+            store.product_index("ceramic-mug").map(Referenced::Product)
+        );
+        assert!(
+            store
+                .metafield_reference("page_reference", value("page"))
+                .is_some()
+        );
+        assert!(
+            store
+                .metafield_reference("variant_reference", value("variant"))
+                .is_some()
+        );
+    }
+
+    /// A GID the Admin API keeps names an entity deleted since: it reads nothing, as on
+    /// Shopify, and is no mistake of the data.
+    #[test]
+    fn a_gid_of_the_admin_api_that_names_nothing_is_no_error() {
+        let overlay = Overlay::new(
+            ADMIN_OVERLAY_FILE,
+            serde_json::json!({"products": [{"title": "Thing", "price": "1.00", "metafields": {
+                "custom": {"designer": {"type": "metaobject_reference", "value": "gid://shopify/Metaobject/123"}}
+            }}]}),
+        );
+        let (_, diagnostics) =
+            load_with_overlays(&DataSource::Demo, &LoadOptions::default(), &[overlay]);
+        assert!(diagnostics.is_empty(), "{diagnostics}");
     }
 
     #[test]

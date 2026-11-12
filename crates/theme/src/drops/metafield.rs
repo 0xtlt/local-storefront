@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 use lsf_core::color::Color;
+use lsf_core::store::metafield_references::Referenced;
 use lsf_core::store::{Image, Media, MediaKind, MediaSource, Metafield, Metafields, Metaobject};
 use lsf_core::util::stable_id;
 use lsf_liquid::time::Time;
@@ -233,24 +234,29 @@ pub fn is_measurement(kind: &str) -> bool {
 
 /// An article named `blog/article`, or by its handle alone when only one blog has it: a
 /// handle that several blogs have names none of them.
-fn article_value(site: &SiteRef, reference: &str) -> Value {
-    let store = &site.store;
-    let found = match reference.split_once('/') {
-        Some((blog, article)) => store
-            .blog_index(blog)
-            .and_then(|blog| Some((blog, store.article_index(blog, article)?))),
-        None => {
-            let mut matches = (0..store.blogs.len())
-                .filter_map(|blog| Some((blog, store.article_index(blog, reference)?)));
-            match (matches.next(), matches.next()) {
-                (Some(found), None) => Some(found),
-                _ => None,
-            }
-        }
+/// What a reference names, as `validate` resolves it ([`Store::metafield_reference`]): a
+/// handle, `blog/article`, `type/handle`, a SKU or a variant id, or a GID. `nil` when it names
+/// nothing.
+///
+/// [`Store::metafield_reference`]: lsf_core::store::Store::metafield_reference
+fn reference_value(site: &SiteRef, kind: &str, value: &Json) -> Value {
+    let Some(found) = site.store.metafield_reference(kind, value) else {
+        return Value::Nil;
     };
-    found.map_or(Value::Nil, |(blog, article)| {
-        super::content::ArticleDrop::value(site, blog, article)
-    })
+    match found {
+        Referenced::Product(index) => super::product::ProductDrop::value(site, index),
+        Referenced::Variant(product, variant) => {
+            super::product::VariantDrop::value(site, product, variant)
+        }
+        Referenced::Collection(index) => super::collection::CollectionDrop::value(site, index),
+        Referenced::Page(index) => super::content::PageDrop::value(site, index),
+        Referenced::Article(blog, article) => {
+            super::content::ArticleDrop::value(site, blog, article)
+        }
+        Referenced::Metaobject(index) => {
+            MetaobjectDrop::value(site, &site.store.metaobjects[index])
+        }
+    }
 }
 
 /// A `money` metafield: prints and computes as cents, as on Shopify, and has a currency.
@@ -353,47 +359,14 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
                 Value::from(value.get("unit").and_then(Json::as_str).unwrap_or_default()),
             ),
         ]),
-        "product_reference" => site
-            .store
-            .product_index(text())
-            .map_or(Value::Nil, |index| {
-                super::product::ProductDrop::value(site, index)
-            }),
-        "collection_reference" => site
-            .store
-            .collection_index(text())
-            .map_or(Value::Nil, |index| {
-                super::collection::CollectionDrop::value(site, index)
-            }),
-        "page_reference" => site.store.page_index(text()).map_or(Value::Nil, |index| {
-            super::content::PageDrop::value(site, index)
-        }),
-        "article_reference" => article_value(site, text()),
-        "variant_reference" => {
-            let location =
-                match value {
-                    Json::Number(number) => number
-                        .as_u64()
-                        .and_then(|id| site.store.variant_location(id)),
-                    _ => site.store.products.iter().enumerate().find_map(
-                        |(product_index, product)| {
-                            product
-                                .variants
-                                .iter()
-                                .position(|variant| variant.sku == text())
-                                .map(|variant_index| (product_index, variant_index))
-                        },
-                    ),
-                };
-            location.map_or(Value::Nil, |(product, variant)| {
-                super::product::VariantDrop::value(site, product, variant)
-            })
-        }
+        "product_reference"
+        | "collection_reference"
+        | "page_reference"
+        | "article_reference"
+        | "variant_reference"
+        | "metaobject_reference"
+        | "mixed_reference" => reference_value(site, kind, value),
         "file_reference" => file_value(site, text()),
-        "metaobject_reference" | "mixed_reference" => text()
-            .split_once('/')
-            .and_then(|(kind, handle)| site.store.metaobject(kind, handle))
-            .map_or(Value::Nil, |entry| MetaobjectDrop::value(site, entry)),
         _ => Value::from(value),
     }
 }

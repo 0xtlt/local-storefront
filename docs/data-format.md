@@ -120,7 +120,8 @@ all, and a running server serves them at `/__lsf/schema/<kind>`.
   renders are reproducible.
 - **References** between entities use handles (products, collections, pages, blogs), emails
   (customers) and SKUs or ids (variants). A reference to something that does not exist is an
-  error, with a suggestion when a close match exists.
+  error, with a suggestion when a close match exists. A metafield also takes Shopify's GIDs
+  ([reference values](#reference-values)).
 - **HTML** fields (`description`, `content`, `body`) are inserted as written.
 
 ## Products
@@ -790,8 +791,8 @@ is served so that browsers fall back to the theme's fallback stack without netwo
 ## Metafields and metaobjects
 
 Metafields are grouped by namespace, then key. A plain value gets its type inferred; spell out
-`{ "type", "value" }` for anything else. References are written as handles, files as paths
-inside `files/`.
+`{ "type", "value" }` for anything else. References are written as handles or GIDs
+([reference values](#reference-values)), files as paths inside `files/`.
 
 ```json
 {
@@ -835,11 +836,8 @@ A typed value is checked against its type, as Shopify checks it. `{"type": "numb
 `rating` outside its scale. A `weight`, `dimension` or `volume` takes the units Shopify lists
 (`kilograms`, `centimeters`, `milliliters`...) and their short forms (`kg`, `cm`, `ml`). A
 `language` is a locale code (`fr`, `pt-BR`). A type Shopify does not have is an
-`unknown_metafield_type`. A
-reference that names nothing of the data is an `unknown_reference`, with the closest name:
-products, variants (by SKU or id), collections, pages, articles (`blog/article`) and
-metaobjects (`type/handle`). A `file_reference` to a file that is not in `files/` is no error:
-it shows as a placeholder.
+`unknown_metafield_type`. A reference that names nothing of the data is an
+`unknown_reference` ([reference values](#reference-values)).
 
 A `file_reference` is an image when its extension is one (`.jpg`, `.png`, `.webp`...) and a
 video for `.mp4`, `.mov`, `.webm` and `.m4v`: `sources`, `preview_image`, `video_tag` and
@@ -875,6 +873,50 @@ The types an app owns are written `$app:<type>` (`"$app:author"`), as its reserv
 namespaces are (`$app:config`). Shopify writes them in full, `app--<app id>--author`, which a
 theme's Liquid uses: `metaobjects['app--1234--author']` and `metaobjects['$app:author']` both
 find them, whatever the id, since the store data does not know it.
+
+### Reference values
+
+Shopify writes a reference as a GID, and a list of references as a JSON array of GIDs
+(`["gid://shopify/Metaobject/123", "gid://shopify/Metaobject/456"]`, [list of data
+types](https://shopify.dev/docs/apps/build/custom-data/metafields/list-of-data-types)). The
+store data takes that form, and a shorter one: the key the data gives the entity. The shorter
+form is an lsf convention for fixtures; Shopify does not take it.
+
+| Type | lsf's form | Shopify's form |
+|---|---|---|
+| `product_reference` | the handle: `"ceramic-mug"` | `"gid://shopify/Product/<id>"` |
+| `variant_reference` | the SKU (`"MUG-1"`), or the id as a number | `"gid://shopify/ProductVariant/<id>"` |
+| `collection_reference` | the handle | `"gid://shopify/Collection/<id>"` |
+| `page_reference` | the handle | `"gid://shopify/Page/<id>"` |
+| `article_reference` | `"blog/article"`, or the article's handle alone when one blog only has it | `"gid://shopify/Article/<id>"` |
+| `metaobject_reference`, `mixed_reference` | `"type/handle"`: `"faq/size"` | `"gid://shopify/Metaobject/<id>"` |
+| `file_reference` | the path inside `files/`: `"lookbook.jpg"` | not read: lsf gives files no GID |
+
+A GID names the entity of that id in the store: the `id` the data gives it, or the one lsf gives
+it otherwise, which Liquid shows (`product.id`, `metaobject.system.id`) and the [Admin
+API](admin.md) answers. A metaobject entry has no `id` in the data: lsf makes one from its type
+and handle, so the GID of an entry copied from a Shopify store names nothing here. Write
+`"type/handle"` instead.
+
+Any other form reads `nil` in Liquid and is an error. `"faq.size"`, `"faq:size"`, `"size"` and
+`{"type": "faq", "handle": "size"}` are neither Shopify's form nor lsf's, and `validate` says
+what to write:
+
+```text
+error[unknown_reference]: "faq.size" names nothing: a metaobject_reference names a metaobject entry as "type/handle"
+  --> store.json at /products/0/metafields/custom/faqs/value/1
+  hint: use "faq/size"
+```
+
+A reference to something the data does not have is an `unknown_reference` too, with the closest
+name. These read `nil` without an error, as on Shopify:
+
+- a product that is not on the storefront (a draft, an unpublished one);
+- a GID in the [Admin API's changes](admin.md#what-the-storefront-and-the-checkout-see) that
+  names what the Admin API deleted.
+
+A `file_reference` to a file that is not in `files/` is no error either: it shows as a
+placeholder.
 
 
 ## Time and theme settings
@@ -927,7 +969,7 @@ extensions:
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
 | `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
-| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield, and a shipping rate or a payment method a scenario's `entered` names. |
+| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield (in a form lsf does not read, its hint is the form to write: `use "faq/size"`), and a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
 | `unknown_return_line` | A return of an order names a variant that is not a line of the order. |

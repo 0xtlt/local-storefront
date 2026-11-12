@@ -541,10 +541,27 @@ fn check_one(
                 value: value.clone(),
                 pointer: pointer.to_string(),
             }),
-            None => wrong(format!(
-                "a {kind} is written as a string, not {}",
-                describe(value)
-            )),
+            None => {
+                let message = format!("a {kind} is written as a string, not {}", describe(value));
+                // `{"type": "faq", "handle": "size"}`: what the data writes `"faq/size"`.
+                let entry = value
+                    .get("type")
+                    .and_then(Json::as_str)
+                    .zip(value.get("handle").and_then(Json::as_str));
+                match entry {
+                    Some((entry_kind, handle))
+                        if matches!(kind, "metaobject_reference" | "mixed_reference") =>
+                    {
+                        problems.push(Problem {
+                            pointer: pointer.to_string(),
+                            code: "invalid_metafield",
+                            message,
+                            hint: format!("use \"{entry_kind}/{handle}\""),
+                        })
+                    }
+                    _ => wrong(message),
+                }
+            }
         },
     }
 }

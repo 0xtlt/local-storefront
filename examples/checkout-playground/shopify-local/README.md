@@ -120,7 +120,8 @@ all, and a running server serves them at `/__lsf/schema/<kind>`.
   renders are reproducible.
 - **References** between entities use handles (products, collections, pages, blogs), emails
   (customers) and SKUs or ids (variants). A reference to something that does not exist is an
-  error, with a suggestion when a close match exists.
+  error, with a suggestion when a close match exists. A metafield also takes Shopify's GIDs
+  ([reference values](#reference-values)).
 - **HTML** fields (`description`, `content`, `body`) are inserted as written.
 
 ## Products
@@ -253,7 +254,7 @@ Plans come in groups, which is what a subscription app creates.
   plan's name.
 - `checkout_charge` is what is paid at checkout, for a deposit:
   `{ "value_type": "percentage", "value": 50 }`. It defaults to the whole price. The checkout
-  of an [app](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#deferred-payments) charges only that today, and shows the rest as due
+  of an [app](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md#deferred-payments) charges only that today, and shows the rest as due
   later.
 - `recurring_deliveries` defaults to `true`. Ids are generated and stable; set `id` on a plan
   to reproduce a Shopify id.
@@ -472,7 +473,7 @@ with a warning to remove them.
 `npx local-storefront serve --customer <email>` starts every visitor logged in as that customer.
 It also accepts `default` and `none`.
 
-At the [checkout of an app](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#log-in-as-a-customer), the customers are the login
+At the [checkout of an app](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md#log-in-as-a-customer), the customers are the login
 profiles: "Log in" in the Contact section lists them, and picking one logs the checkout (and the
 session) in as them, with their saved addresses (the first one is the default) and, for a B2B
 customer, the locations they buy for. Give the data a customer of each kind you test: a new one
@@ -520,7 +521,7 @@ name it in the customer:
 - In Liquid, `customer.b2b?` is true, and `customer.current_company`,
   `customer.current_location` and `customer.company_available_locations` are filled.
 - `location.url_to_set_as_current` changes the location, as on Shopify.
-- The [local checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md) shows what Shopify's Functions read of a B2B buyer
+- The [local checkout](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md) shows what Shopify's Functions read of a B2B buyer
   (`purchasingCompany`), and you can set it. A company has `created_at` and `updated_at`, a
   location the same plus `locale` (`"fr"`), `orders_count` and `total_spent` (`"1250.00"`). The
   customer is the contact of their company: `company_contact` holds their `title`, `locale`,
@@ -587,7 +588,7 @@ Each gift card has a page rendered by `templates/gift_card.liquid`. Its URL is l
 ## Checkout
 
 The `checkout` section sets up the local checkout of a Shopify app (`npx local-storefront
-app dev --app <dir>`, see [checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md)). Every field has a default, and the section
+app dev --app <dir>`, see [checkout](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md)). Every field has a default, and the section
 changes nothing for a theme.
 
 ```json
@@ -631,7 +632,7 @@ changes nothing for a theme.
   it, `false` is an owner turned off, and without `enabled` the shop has none (as after an
   install, until the app creates one through the Admin API). A scenario that names the Function
   in `extensions` runs it anyway, with these metafields
-  ([what runs](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#owners-and-scenarios)).
+  ([what runs](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md#owners-and-scenarios)).
 - `tax_rate`: a percentage, added to the discounted subtotal.
 
 ### Checkout scenarios
@@ -639,7 +640,7 @@ changes nothing for a theme.
 A scenario is a named setup of the local checkout: one file in `checkouts/`, named after the
 scenario (`checkouts/b2b-seattle.json` is `b2b-seattle`). The home page of the checkout lists
 them and opens a fresh checkout for each; `app function run --scenario <name>` runs the Functions
-for one ([checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#scenarios)). A scenario is a set of overrides on top of the
+for one ([checkout](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md#scenarios)). A scenario is a set of overrides on top of the
 store data: what it does not set stays as the data says.
 
 ```json
@@ -701,7 +702,7 @@ Every field is optional.
   checks: the payment methods, express buttons, delivery options, discounts, lines and errors,
   each with `includes`, `excludes` and `equals`, and exact `totals`
   (`"expect": { "express_methods": { "excludes": ["paypal"] }, "totals": { "total": "96.00" } }`).
-  See [expected results](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md#expected-results).
+  See [expected results](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md#expected-results).
 
 A scenario that does not validate is still listed, with its errors, and cannot be opened.
 `validate` reports it with the file `checkouts/<name>.json` and a pointer into it
@@ -790,8 +791,8 @@ is served so that browsers fall back to the theme's fallback stack without netwo
 ## Metafields and metaobjects
 
 Metafields are grouped by namespace, then key. A plain value gets its type inferred; spell out
-`{ "type", "value" }` for anything else. References are written as handles, files as paths
-inside `files/`.
+`{ "type", "value" }` for anything else. References are written as handles or GIDs
+([reference values](#reference-values)), files as paths inside `files/`.
 
 ```json
 {
@@ -835,11 +836,8 @@ A typed value is checked against its type, as Shopify checks it. `{"type": "numb
 `rating` outside its scale. A `weight`, `dimension` or `volume` takes the units Shopify lists
 (`kilograms`, `centimeters`, `milliliters`...) and their short forms (`kg`, `cm`, `ml`). A
 `language` is a locale code (`fr`, `pt-BR`). A type Shopify does not have is an
-`unknown_metafield_type`. A
-reference that names nothing of the data is an `unknown_reference`, with the closest name:
-products, variants (by SKU or id), collections, pages, articles (`blog/article`) and
-metaobjects (`type/handle`). A `file_reference` to a file that is not in `files/` is no error:
-it shows as a placeholder.
+`unknown_metafield_type`. A reference that names nothing of the data is an
+`unknown_reference` ([reference values](#reference-values)).
 
 A `file_reference` is an image when its extension is one (`.jpg`, `.png`, `.webp`...) and a
 video for `.mp4`, `.mov`, `.webm` and `.m4v`: `sources`, `preview_image`, `video_tag` and
@@ -868,13 +866,57 @@ page and `system.url` is blank. `"template_suffix": "alt"` on an entry renders i
 title is the entry's `title` or `name` field, or its handle. `shopify://metaobjects/<type>/<handle>`
 in a `url` setting leads to the page.
 
-The Functions of the [local checkout](https://github.com/0xtlt/local-storefront/blob/v0.2.0/docs/checkout.md) read the same metaobjects as
+The Functions of the [local checkout](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/checkout.md) read the same metaobjects as
 `shop.metaobject(handle: {type: "designer", handle: "sam"})`, with their `field(key:)`.
 
 The types an app owns are written `$app:<type>` (`"$app:author"`), as its reserved metafield
 namespaces are (`$app:config`). Shopify writes them in full, `app--<app id>--author`, which a
 theme's Liquid uses: `metaobjects['app--1234--author']` and `metaobjects['$app:author']` both
 find them, whatever the id, since the store data does not know it.
+
+### Reference values
+
+Shopify writes a reference as a GID, and a list of references as a JSON array of GIDs
+(`["gid://shopify/Metaobject/123", "gid://shopify/Metaobject/456"]`, [list of data
+types](https://shopify.dev/docs/apps/build/custom-data/metafields/list-of-data-types)). The
+store data takes that form, and a shorter one: the key the data gives the entity. The shorter
+form is an lsf convention for fixtures; Shopify does not take it.
+
+| Type | lsf's form | Shopify's form |
+|---|---|---|
+| `product_reference` | the handle: `"ceramic-mug"` | `"gid://shopify/Product/<id>"` |
+| `variant_reference` | the SKU (`"MUG-1"`), or the id as a number | `"gid://shopify/ProductVariant/<id>"` |
+| `collection_reference` | the handle | `"gid://shopify/Collection/<id>"` |
+| `page_reference` | the handle | `"gid://shopify/Page/<id>"` |
+| `article_reference` | `"blog/article"`, or the article's handle alone when one blog only has it | `"gid://shopify/Article/<id>"` |
+| `metaobject_reference`, `mixed_reference` | `"type/handle"`: `"faq/size"` | `"gid://shopify/Metaobject/<id>"` |
+| `file_reference` | the path inside `files/`: `"lookbook.jpg"` | not read: lsf gives files no GID |
+
+A GID names the entity of that id in the store: the `id` the data gives it, or the one lsf gives
+it otherwise, which Liquid shows (`product.id`, `metaobject.system.id`) and the [Admin
+API](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/admin.md) answers. A metaobject entry has no `id` in the data: lsf makes one from its type
+and handle, so the GID of an entry copied from a Shopify store names nothing here. Write
+`"type/handle"` instead.
+
+Any other form reads `nil` in Liquid and is an error. `"faq.size"`, `"faq:size"`, `"size"` and
+`{"type": "faq", "handle": "size"}` are neither Shopify's form nor lsf's, and `validate` says
+what to write:
+
+```text
+error[unknown_reference]: "faq.size" names nothing: a metaobject_reference names a metaobject entry as "type/handle"
+  --> store.json at /products/0/metafields/custom/faqs/value/1
+  hint: use "faq/size"
+```
+
+A reference to something the data does not have is an `unknown_reference` too, with the closest
+name. These read `nil` without an error, as on Shopify:
+
+- a product that is not on the storefront (a draft, an unpublished one);
+- a GID in the [Admin API's changes](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.1/docs/admin.md#what-the-storefront-and-the-checkout-see) that
+  names what the Admin API deleted.
+
+A `file_reference` to a file that is not in `files/` is no error either: it shows as a
+placeholder.
 
 
 ## Time and theme settings
@@ -927,7 +969,7 @@ extensions:
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
 | `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
-| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield, and a shipping rate or a payment method a scenario's `entered` names. |
+| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield (in a form lsf does not read, its hint is the form to write: `use "faq/size"`), and a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
 | `unknown_return_line` | A return of an order names a variant that is not a line of the order. |
@@ -1125,7 +1167,7 @@ A metafield with an explicit type.
 | Field | Type | Description |
 |---|---|---|
 | `type` | string | **Required.** A Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`, `rich_text_field`, `number_integer`, `number_decimal`, `boolean`, `color`, `date`, `date_time`, `url`, `json`, `money`, `rating`, `weight`, `volume`, `dimension` and the other measurements (`distance`, `temperature`, `duration`...), `product_reference`, `collection_reference`, `page_reference`, `article_reference` (`blog/article`, or the article's handle alone), `file_reference`, `metaobject_reference`, or a `list.` variant of those. |
-| `value` | any JSON value | **Required.** The value. References are written as handles (`"blue-shirt"`), files as paths inside `files/`, lists as JSON arrays. An object or a list may also be written as its JSON text, as the Admin API's `value` gives it. |
+| `value` | any JSON value | **Required.** The value. Lists are JSON arrays. A reference is written as Shopify writes it, a GID (`"gid://shopify/Product/<id>"`, the id the entity has in the store), or by the key the store data gives the entity, an lsf convention: a handle (`"blue-shirt"`), `blog/article`, `type/handle` of a metaobject entry (`"faq/size"`), a SKU or an id of a variant. Files are paths inside `files/`. An object or a list may also be written as its JSON text, as the Admin API's `value` gives it. |
 
 ### Product
 
