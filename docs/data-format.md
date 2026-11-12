@@ -398,6 +398,42 @@ resource with one of `url`, `collection`, `product`, `page`, `blog`, `article`
 }
 ```
 
+### lsf's default menus
+
+Shopify's default menus, `main-menu` and `footer`, cannot be deleted from a store, and a theme's
+`link_list` setting can only default to one of them. When the data does not have one of them,
+lsf makes it up with links of its own:
+
+| Handle | Title | Links |
+|---|---|---|
+| `main-menu` | Main menu | Home (`/`), Catalog (`/collections/all`) |
+| `footer` | Footer menu | Search (`/search`) |
+
+A header that shows these links does not prove that the data's menus work: they are lsf's, not
+the store's. lsf says so everywhere it can:
+
+- `lsf validate` warns (`default_menu`) for each of the two that the theme names, in a
+  `link_list` setting or in Liquid (`linklists['main-menu']`), and says where.
+- `lsf render` prints a warning for each one the page renders. It is not an error, even with
+  `--strict`.
+- With `serve --live-reload`, a page that renders one shows a note in its panel, and the
+  terminal says it once.
+
+There is no option to turn them off, since a Shopify store always has them. Give the data the
+store's menu instead. To render it without links, as a store whose menu is empty, write it with
+none:
+
+```json
+{ "menus": { "footer": { "links": [] } } }
+```
+
+Any other handle the data does not have is not made up. In lsf, `linklists['customer-care']` is
+then `nil`, and so is a `link_list` setting that names it: both equal `blank`, and a loop over
+their `links` renders nothing. Shopify documents that a `link_list` setting whose menu does not
+exist is `blank`. Its reference does not say what `linklists` gives for a handle the store does
+not have. `lsf validate` warns about each menu the theme names that the data does not have
+(`missing_menu`).
+
 ## The shop
 
 Every field of `shop` is optional.
@@ -1033,6 +1069,8 @@ extensions:
 | `missing_variants`, `missing_options`, `option_mismatch`, `too_many_options` | The options of a product and the option values of its variants do not line up. |
 | `media_conflict`, `missing_sources`, `missing_external_video` | Incomplete or contradictory product media. |
 | `ambiguous_link` | A menu link that points at more than one thing. |
+| `default_menu` (warning) | The theme names `main-menu` or `footer`, and the data does not have it: lsf renders [its default](#lsfs-default-menus) there. `file` is `(data)` and `path` is `/menus/<handle>`. |
+| `missing_menu` (warning) | The theme names another menu that the data does not have: lsf renders no menu there. The message says where the theme names it, and the hint suggests the closest handle. |
 | `missing_locale_file` (warning) | A language the theme has no `locales/<code>.json` for. |
 | `gift_card_balance` (warning) | A gift card whose balance is above its initial value. |
 | `unavailable_in_stock` (warning) | A variant with `"available": false` and an `inventory_quantity` above 0, which Shopify never has. It stays unavailable, with its stock. The hint says which field to remove. |

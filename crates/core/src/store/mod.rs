@@ -554,9 +554,26 @@ pub struct Menu {
     pub handle: String,
     pub title: String,
     pub links: Vec<Link>,
+    /// Made up by lsf: the data has no menu with this handle, which is one of Shopify's default
+    /// menus ([`DEFAULT_MENUS`]). Its links are lsf's, not the store's.
+    pub supplied_by_lsf: bool,
 }
 
+/// Shopify's default menus: a store cannot delete them, and a `link_list` setting can only
+/// default to one of them. lsf makes up the ones the data does not have.
+pub const DEFAULT_MENUS: [&str; 2] = ["main-menu", "footer"];
+
 impl Menu {
+    /// The titles of its links, for a message: `Home, Catalog`.
+    pub fn link_titles(&self) -> String {
+        let titles: Vec<&str> = self.links.iter().map(|link| link.title.as_str()).collect();
+        if titles.is_empty() {
+            "no links".to_string()
+        } else {
+            titles.join(", ")
+        }
+    }
+
     pub fn levels(&self) -> usize {
         self.links
             .iter()

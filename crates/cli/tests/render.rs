@@ -133,3 +133,63 @@ fn github_annotations_name_the_file_and_the_line_of_an_error() {
     );
     let _ = std::fs::remove_dir_all(&theme);
 }
+
+#[test]
+fn a_page_that_renders_lsfs_default_menu_warns_without_failing() {
+    let theme = std::env::temp_dir().join(format!("lsf-render-menus-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&theme);
+    for (path, content) in [
+        (
+            "layout/theme.liquid",
+            "{{ content_for_layout }}{% for link in linklists.main-menu.links %}[{{ link.title }}]{% endfor %}",
+        ),
+        ("templates/index.liquid", "<p>Home</p>"),
+        (
+            "shopify-local/store.json",
+            r#"{"shop": {"name": "Demo Store"}, "menus": {"footer": {"links": []}}}"#,
+        ),
+    ] {
+        let path = theme.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+    let run = |format: &str| {
+        Command::new(env!("CARGO_BIN_EXE_lsf"))
+            .arg("render")
+            .args(["/", "--strict", "--format", format])
+            .current_dir(&theme)
+            .env_remove("LSF_THEME")
+            .env_remove("LSF_DATA")
+            .env_remove("LSF_CUSTOMER")
+            .output()
+            .unwrap()
+    };
+    let note = "menu \"main-menu\" is lsf's default (Home, Catalog), not the store's: the store \
+                data has none with this handle. Add it to \"menus\" to render the store's links";
+    // A Shopify store cannot delete this menu: not an error, even with --strict.
+    let output = run("text");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("[Home][Catalog]"),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stderr(&output).contains(&format!("warning: {note}\n")),
+        "{}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).contains(" · 1 warning"),
+        "{}",
+        stderr(&output)
+    );
+    let output = run("github");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains(&format!("::warning title=lsf render /::{note}\n")),
+        "{}",
+        stderr(&output)
+    );
+    let _ = std::fs::remove_dir_all(&theme);
+}

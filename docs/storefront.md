@@ -29,6 +29,11 @@ With `--live-reload`, a page with problems also shows a small panel: the errors 
 data, the Liquid errors of the page, and why a page is the 404 page. Its button closes it. The
 terminal has the same problems.
 
+The panel also has notes, which are not problems. A page that renders one of
+[lsf's default menus](data-format.md#lsfs-default-menus) gets a note: its links are lsf's,
+since the data has no menu with that handle. Without problems, the panel has a grey border
+instead of a red one.
+
 ## Log in as a customer
 
 Open <http://127.0.0.1:9292/account>. The page lists the customers of your data: click one to

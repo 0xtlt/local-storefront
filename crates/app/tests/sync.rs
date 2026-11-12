@@ -876,6 +876,8 @@ fn content_syncs() {
     assert_eq!(store.blogs[0].articles[0].comments.len(), 1);
     let main = store.menu("main-menu").unwrap();
     assert_eq!(main.links[0].title, "Start");
+    // The footer menu the data does not have is still lsf's: the Admin API did not change it.
+    assert!(store.menu("footer").unwrap().supplied_by_lsf);
     assert_eq!(
         main.links.len(),
         base.menu("main-menu").unwrap().links.len()
