@@ -95,8 +95,8 @@ fn all_routes(state: &ServerState, mut routes: Vec<String>) -> Vec<String> {
     {
         roots.extend(
             store
-                .languages
-                .iter()
+                .presence_languages(Some(market))
+                .into_iter()
                 .map(|language| store.locale_root(language, Some(market))),
         );
     }

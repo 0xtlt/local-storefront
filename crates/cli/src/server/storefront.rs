@@ -191,9 +191,12 @@ fn follow_the_country_of_the_url(visit: &Visit<'_>) -> Option<Reply> {
             .market_of(&country.iso_code)
             .filter(|market| market.subfolder_suffix.is_some());
         if presence.map(|market| &market.handle) != market.map(|market| &market.handle) {
-            let language = store
+            // In the page's language when the country's market offers it, else in the market's
+            // default: `/es-es?country=BE` is `/en-be?country=BE` on Shopify.
+            let current = store
                 .language(&visit.request.locale)
                 .unwrap_or_else(|| store.primary_language());
+            let language = store.language_for(current, &country.iso_code);
             let mut moved = visit.request.clone();
             moved.root = store.locale_root(language, presence);
             return Some(Reply::moved(&moved.path_with_query()));

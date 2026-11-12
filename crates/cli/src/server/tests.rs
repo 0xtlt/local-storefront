@@ -790,6 +790,78 @@ fn the_localization_form_moves_to_the_web_presence_of_the_country() {
     );
 }
 
+#[test]
+fn a_market_subfolder_serves_the_languages_of_its_market() {
+    let state = server();
+    let session = "subfolder-languages";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"localization": {
+            "countries": [{"iso_code": "CA"}, {"iso_code": "BE"}, {"iso_code": "DE"}],
+            "languages": [{"iso_code": "en"}, {"iso_code": "fr"}, {"iso_code": "de"}],
+            "markets": [
+                {"handle": "belgium", "countries": ["BE"], "subfolder_suffix": "be", "languages": ["fr", "de"]},
+                {"handle": "germany", "countries": ["DE"], "subfolder_suffix": "de", "languages": ["de", "en"]}
+            ]
+        }}}),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    // A subfolder in a language the market does not offer is not found, as `/es-be` on a
+    // Shopify store whose Belgian market has no Spanish.
+    assert_eq!(get(&state, "/en-be/pages/about", session).status, 404);
+    assert_eq!(get(&state, "/fr-be/pages/about", session).status, 200);
+    // `?country=` lands in the page's language when the country's market offers it, else in the
+    // market's default: `/es-es?country=BE` is `/en-be?country=BE` on Shopify.
+    let moved = |path: &str| {
+        let reply = get(&state, path, session);
+        assert_eq!(reply.status, 301, "{path}");
+        header(&reply, "location").map(str::to_string)
+    };
+    assert_eq!(
+        moved("/pages/about?country=BE").as_deref(),
+        Some("/fr-be/pages/about?country=BE")
+    );
+    assert_eq!(
+        moved("/fr-be/pages/about?country=DE").as_deref(),
+        Some("/de-de/pages/about?country=DE")
+    );
+    assert_eq!(
+        moved("/de-be/pages/about?country=DE").as_deref(),
+        Some("/de-de/pages/about?country=DE")
+    );
+    // The localization form too.
+    let form = |path: &str, body: Json| {
+        let reply = post(&state, path, body, session);
+        header(&reply, "location").map(str::to_string)
+    };
+    assert_eq!(
+        form(
+            "/localization",
+            json!({"country_code": "BE", "return_to": "/pages/about"})
+        )
+        .as_deref(),
+        Some("/fr-be/pages/about")
+    );
+    assert_eq!(
+        form(
+            "/fr-be/localization",
+            json!({"country_code": "DE", "return_to": "/fr-be/cart"})
+        )
+        .as_deref(),
+        Some("/de-de/cart")
+    );
+    assert_eq!(
+        form(
+            "/de-de/localization",
+            json!({"language_code": "fr", "return_to": "/de-de/cart"})
+        )
+        .as_deref(),
+        Some("/de-de/cart")
+    );
+}
+
 /// The path of the file `{{ name | shopify_asset_url }}` points at, as a theme renders it.
 fn shopify_asset_path(state: &ServerState, name: &str) -> String {
     let loaded = state.loaded();

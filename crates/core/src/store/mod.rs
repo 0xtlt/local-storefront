@@ -1533,7 +1533,9 @@ impl Store {
     /// The prefix of every storefront URL in a language on a web presence: `/fr-ca` under the
     /// subfolders of a market (every language has one there, the primary too), and at `/` empty
     /// for the primary language, `/fr` for the others.
+    /// A language the market's subfolders do not serve has its root at `/`.
     pub fn locale_root(&self, language: &Language, market: Option<&Market>) -> String {
+        let market = market.filter(|market| self.serves_language(market, language));
         match market.and_then(|market| market.subfolder_suffix.as_deref()) {
             Some(suffix) => format!("/{}-{suffix}", language.iso_code.to_ascii_lowercase()),
             None => language.root_url.trim_end_matches('/').to_string(),
@@ -1558,6 +1560,27 @@ impl Store {
             .and_then(|end| segment.get(..end))
             .filter(|_| segment[segment.len() - suffix.len()..].eq_ignore_ascii_case(suffix))?;
         self.language(language)
+            .filter(|language| self.serves_language(market, language))
+    }
+
+    /// Whether a market's subfolders have a language: one of its `languages`, or any language
+    /// of the store when it lists none. On Shopify, a subfolder in a language the market does
+    /// not offer (`/es-be` for Belgium in English and French) is not found.
+    pub fn serves_language(&self, market: &Market, language: &Language) -> bool {
+        market.languages.is_empty()
+            || market
+                .languages
+                .iter()
+                .any(|code| code.eq_ignore_ascii_case(&language.iso_code))
+    }
+
+    /// The languages a web presence serves: those of the market whose subfolders it is (every
+    /// language of the store when it lists none), or every language at `/`.
+    pub fn presence_languages(&self, market: Option<&Market>) -> Vec<&Language> {
+        self.languages
+            .iter()
+            .filter(|language| market.is_none_or(|market| self.serves_language(market, language)))
+            .collect()
     }
 
     /// The language a visitor in a country reads: `wanted` when the country's market offers

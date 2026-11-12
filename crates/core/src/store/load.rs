@@ -3084,6 +3084,48 @@ mod tests {
     }
 
     #[test]
+    fn a_subfolder_serves_the_languages_of_its_market() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [{"iso_code": "US"}, {"iso_code": "BE"}, {"iso_code": "DE"}],
+            "languages": [{"iso_code": "en"}, {"iso_code": "fr"}, {"iso_code": "de"}],
+            "markets": [
+                {"handle": "belgium", "countries": ["BE"], "subfolder_suffix": "be",
+                 "languages": ["fr", "de"]},
+                {"handle": "germany", "countries": ["DE"], "subfolder_suffix": "de"}
+            ]
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let belgium = store.market_named("belgium");
+        let codes = |languages: Vec<&crate::store::Language>| -> Vec<String> {
+            languages
+                .iter()
+                .map(|language| language.iso_code.clone())
+                .collect()
+        };
+        assert_eq!(codes(store.presence_languages(belgium)), ["fr", "de"]);
+        assert_eq!(
+            codes(store.presence_languages(store.market_named("germany"))),
+            ["en", "fr", "de"]
+        );
+        assert_eq!(codes(store.presence_languages(None)), ["en", "fr", "de"]);
+        // `/en-be` is no prefix: Belgium has no English.
+        assert_eq!(store.split_locale("/en-be/cart").1, "");
+        assert_eq!(store.split_locale("/de-be/cart").1, "/de-be");
+        assert!(store.market_of_root("/en-be").is_none());
+        // A language the market does not serve has its root at `/`.
+        let english = store.language("en").unwrap();
+        assert_eq!(store.locale_root(english, belgium), "");
+        // The language of a visitor moving to a country: theirs when its market offers it, else
+        // the market's default.
+        let german = store.language("de").unwrap();
+        assert_eq!(store.language_for(english, "BE").iso_code, "fr");
+        assert_eq!(store.language_for(german, "BE").iso_code, "de");
+        assert_eq!(store.language_for(english, "DE").iso_code, "en");
+    }
+
+    #[test]
     fn bad_subfolders_are_reported() {
         let overlay = serde_json::json!({"localization": {
             "countries": [{"iso_code": "CA"}, {"iso_code": "BE"}, {"iso_code": "DE"}, {"iso_code": "FR"}],

@@ -404,7 +404,7 @@ pub fn content_for_header(site: &Site, page: &Page) -> String {
         }
         for market in subfolders {
             for country in &market.countries {
-                for language in &store.languages {
+                for language in store.presence_languages(Some(market)) {
                     out.push(format!(
                         "<link rel=\"alternate\" hreflang=\"{}-{country}\" href=\"{}\">",
                         language.iso_code,

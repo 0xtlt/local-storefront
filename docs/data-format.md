@@ -812,7 +812,7 @@ and the United States every language. A market without `languages`, and a countr
 offer every language of the store, the primary first. A language that is not in
 `localization.languages` is an `unknown_language` error. Every language is served under
 `/<iso_code>/` at `/`, whatever the visitor's country; a market with a `subfolder_suffix` (below)
-has URLs of its own.
+has URLs of its own, in its languages only.
 
 A market can sell in its own currency, as a Shopify market with a base currency: `currency`, the
 `rate` that converts the store's prices to it (what one unit of the store currency is worth, as a
@@ -839,10 +839,12 @@ countries. Gift cards keep their own currency, and orders of the data are priced
 variants are.
 
 `subfolder_suffix` serves a market under subfolders of its own, as a Shopify market whose web
-presence is a subfolder of the primary domain: `/<language>-<suffix>/` for each language
-(`/en-be/`, `/fr-be/`). A page there is in a country of the market, and `?country=` and the
-localization form move the visitor between `/` and the subfolders as Shopify does (see
-[the storefront guide](storefront.md#countries-and-markets-in-the-url)).
+presence is a subfolder of the primary domain: `/<language>-<suffix>/` for each of its
+`languages` (`/en-be/`, `/fr-be/`), or each language of the store when it lists none. A subfolder
+in a language the market does not offer is not found, as on Shopify (`/es-be/` when Belgium
+offers English and French). A page there is in a country of the market, and `?country=` and the
+localization form move the visitor between `/` and the subfolders as Shopify does, in a language
+the market offers (see [the storefront guide](storefront.md#countries-and-markets-in-the-url)).
 The market of the shop's country is served at `/`, so it cannot have one.
 
 ```json
