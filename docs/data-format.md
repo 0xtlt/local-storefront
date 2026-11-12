@@ -163,7 +163,8 @@ product with options lists its variants; each gives one value per option:
   `"inventory_policy": "continue"`. A variant without `inventory_quantity` is not tracked and
   always available. `available` forces the answer either way. `"available": false` alone also
   makes the variant tracked with a quantity of 0, as a sold-out variant is on Shopify, so themes
-  show "Sold out". Adding more than the stock to the cart fails as it does on Shopify.
+  show "Sold out". Asking the cart for more than the stock (`/cart/add.js`, `/cart/change.js`)
+  puts what is in stock in it and answers `422`, as on Shopify.
   `"available": false` with an `inventory_quantity` above 0 is a warning
   (`unavailable_in_stock`): Shopify never has both. lsf keeps the variant unavailable with its
   stock, which Horizon shows as "Unavailable".

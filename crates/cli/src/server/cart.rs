@@ -2,8 +2,9 @@
 
 use indexmap::IndexMap;
 use lsf_core::cart::line_key;
-use lsf_core::store::{CartLine, InventoryPolicy};
+use lsf_core::store::{CartLine, InventoryPolicy, Variant};
 use lsf_theme::drops::cart::{cart_json, line_json, resolve_lines};
+use lsf_theme::theme::locales::system_translation;
 use serde_json::{Value as Json, json};
 
 use super::params::{integer, text};
@@ -161,38 +162,17 @@ fn add_item(visit: &Visit<'_>, item: &Json) -> Result<String, Reply> {
         .filter(|existing| existing.variant_id == variant_id)
         .map(|existing| existing.quantity)
         .sum();
-    let limit = variant
+    let most = variant
         .quantity_rule
         .max
         .into_iter()
-        .chain(
-            (variant.inventory_tracked && variant.inventory_policy == InventoryPolicy::Deny)
-                .then(|| variant.inventory_quantity.max(0) as u32),
-        )
+        .chain(stock_of(variant))
         .min();
-    let mut to_add = quantity;
-    let mut problem = None;
-    if let Some(limit) = limit {
-        if in_cart >= limit {
-            return Err(error(
-                422,
-                format!(
-                    "All {limit} {} are in your cart.",
-                    line_title(product, variant)
-                ),
-            ));
-        }
-        if in_cart + quantity > limit {
-            to_add = limit - in_cart;
-            problem = Some(error(
-                422,
-                format!(
-                    "You can only add {to_add} {} to the cart.",
-                    line_title(product, variant)
-                ),
-            ));
-        }
-    }
+    let (to_add, problem) = match fit(most, in_cart, in_cart.saturating_add(quantity)) {
+        Fit::All => (quantity, None),
+        Fit::Capped(total, problem) => (total - in_cart, Some(problem)),
+        Fit::Refused(problem) => return Err(problem),
+    };
     visit.update_session(|session| {
         match session
             .cart_lines
@@ -216,7 +196,53 @@ fn add_item(visit: &Visit<'_>, item: &Json) -> Result<String, Reply> {
     }
 }
 
-fn line_title(product: &lsf_core::store::Product, variant: &lsf_core::store::Variant) -> String {
+/// What the cart can hold of what a request asks for.
+enum Fit {
+    /// All of it.
+    All,
+    /// Less: the variant's new total in the cart, and the error that says so.
+    Capped(u32, Reply),
+    /// None of it, the cart unchanged: the error that says why.
+    Refused(Reply),
+}
+
+/// One of the cart notices of every Shopify store (`shopify.notices.cart.*`), its `%{name}`
+/// placeholders filled.
+fn notice(key: &str, values: &[(&str, u32)]) -> String {
+    let text = system_translation(&format!("shopify.notices.cart.{key}")).unwrap_or(key);
+    values.iter().fold(text.to_string(), |text, (name, value)| {
+        text.replace(&format!("%{{{name}}}"), &value.to_string())
+    })
+}
+
+/// The stock of a variant that is tracked and not sold past it: the most of it a cart can hold.
+fn stock_of(variant: &Variant) -> Option<u32> {
+    (variant.inventory_tracked && variant.inventory_policy == InventoryPolicy::Deny)
+        .then(|| variant.inventory_quantity.max(0) as u32)
+}
+
+/// Checks the total of a variant a request asks the cart to hold, `total`, against the most it
+/// can hold, `most`. `held` is what the cart holds now: a request that does not raise it always
+/// fits. Above the most, the cart takes what fits and answers `422`, as Shopify's `add.js` and
+/// `change.js` do.
+fn fit(most: Option<u32>, held: u32, total: u32) -> Fit {
+    let Some(most) = most.filter(|most| total > *most && total > held) else {
+        return Fit::All;
+    };
+    if most <= held {
+        return Fit::Refused(error(
+            422,
+            notice("maximum_available_quantity_reached", &[]),
+        ));
+    }
+    let added = match most - held {
+        1 => notice("only_one_added_to_cart", &[]),
+        added => notice("only_n_added_to_cart", &[("quantity", added)]),
+    };
+    Fit::Capped(most, error(422, added))
+}
+
+fn line_title(product: &lsf_core::store::Product, variant: &Variant) -> String {
     if product.has_only_default_variant() {
         product.title.clone()
     } else {
@@ -289,15 +315,12 @@ pub fn change(visit: &Visit<'_>) -> Reply {
             Reply::redirect(&visit.localized("/cart"))
         };
     };
-    let quantity = integer(&params, "quantity");
     let new_properties = params
         .get("properties")
         .map(|value| properties(Some(value)));
+    let found = visit.store.variant(lines[index].variant_id);
     // `selling_plan` moves the line to another plan, or to none when it is empty.
-    let product = visit
-        .store
-        .variant(lines[index].variant_id)
-        .map(|(product, _)| product);
+    let product = found.map(|(product, _)| product);
     let new_plan = match (selling_plan(&params), product) {
         (PlanParam::Absent, _) | (_, None) => Ok(None),
         (PlanParam::Cleared, Some(product)) if product.requires_selling_plan => {
@@ -323,6 +346,40 @@ pub fn change(visit: &Visit<'_>) -> Reply {
             };
         }
     };
+    // A new quantity keeps to the variant's stock, counting the other lines of the variant, as
+    // `add.js` does.
+    let mut capped = None;
+    let quantity = match (integer(&params, "quantity"), found) {
+        (Some(quantity), Some((_, variant))) if quantity > 0 => {
+            let line = &lines[index];
+            let others: u32 = lines
+                .iter()
+                .enumerate()
+                .filter(|(at, other)| *at != index && other.variant_id == line.variant_id)
+                .map(|(_, other)| other.quantity)
+                .sum();
+            let asked = u32::try_from(quantity).unwrap_or(u32::MAX);
+            match fit(
+                stock_of(variant),
+                others + line.quantity,
+                others.saturating_add(asked),
+            ) {
+                Fit::All => Some(quantity),
+                Fit::Capped(total, problem) => {
+                    capped = Some(problem);
+                    Some(i64::from(total - others))
+                }
+                Fit::Refused(problem) => {
+                    return if wants_json(visit) {
+                        problem
+                    } else {
+                        Reply::redirect(&visit.localized("/cart"))
+                    };
+                }
+            }
+        }
+        (quantity, _) => quantity,
+    };
     visit.update_session(|session| {
         if let Some(properties) = new_properties {
             session.cart_lines[index].properties = properties;
@@ -338,7 +395,10 @@ pub fn change(visit: &Visit<'_>) -> Reply {
             None => {}
         }
     });
-    cart_reply(visit, &params)
+    match capped {
+        Some(problem) if wants_json(visit) => problem,
+        _ => cart_reply(visit, &params),
+    }
 }
 
 /// Applies `updates` (by variant id or key, or positionally), `note` and `attributes`.
