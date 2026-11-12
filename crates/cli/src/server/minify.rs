@@ -24,6 +24,27 @@ pub struct Minified {
     pub map: String,
 }
 
+impl Minified {
+    /// The file as it is served at a URL whose `?v=` is `version`. Shopify's CDN puts that
+    /// `?v=` in the link to the source map (`base.css.map?v=123`), so that the map's URL
+    /// changes with the file as the file's does; without one, the link has none either.
+    pub fn code_for(&self, version: Option<&str>) -> String {
+        let Some(version) = version.filter(|version| !version.is_empty()) else {
+            return self.code.clone();
+        };
+        // The link is the last line, and its URL ends with `.map`.
+        let Some(at) = self.code.rfind(".map").map(|at| at + ".map".len()) else {
+            return self.code.clone();
+        };
+        format!(
+            "{}?v={}{}",
+            &self.code[..at],
+            lsf_core::urls::encode_component(version),
+            &self.code[at..]
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Stylesheet,
@@ -400,6 +421,34 @@ mod tests {
             "{}",
             minified.code
         );
+    }
+
+    #[test]
+    fn the_link_to_the_map_carries_the_version_the_file_is_asked_at() {
+        // As Shopify's CDN links them: `base.css?v=123` ends with a link to `base.css.map?v=123`,
+        // `base.css` with a link to `base.css.map`.
+        let css = minify(
+            "/cdn/shop/t/1/assets/card.css",
+            &".card {\n  margin: 0px;\n}\n".repeat(4),
+        )
+        .unwrap();
+        assert!(
+            css.code_for(Some("123"))
+                .ends_with("}\n/*# sourceMappingURL=/cdn/shop/t/1/assets/card.css.map?v=123 */\n"),
+            "{}",
+            css.code_for(Some("123"))
+        );
+        assert_eq!(css.code_for(None), css.code);
+        assert_eq!(css.code_for(Some("")), css.code);
+        let js = minify("/cdn/shop/t/1/assets/pubsub.js", SCRIPT).unwrap();
+        assert!(
+            js.code_for(Some("1"))
+                .ends_with("})}\n//# sourceMappingURL=/cdn/shop/t/1/assets/pubsub.js.map?v=1\n"),
+            "{}",
+            js.code_for(Some("1"))
+        );
+        // Only the link changes.
+        assert_eq!(js.code_for(Some("1")).len(), js.code.len() + "?v=1".len());
     }
 
     #[test]

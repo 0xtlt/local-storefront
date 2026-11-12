@@ -16,6 +16,15 @@ on a WebSocket, and asks the server every 700 ms where a socket cannot be opened
 script to the pages: leave it off for tests. Only HTML pages get it: a `{% layout none %}`
 template that writes JSON is left as it is.
 
+An edit of `assets/` needs no restart either, with or without `--live-reload`: a stylesheet, a
+script, an image, a `.css.liquid` or `.js.liquid` file, the bundle of the `{% stylesheet %}` and
+`{% javascript %}` tags, and the assets of a [theme app extension](#theme-app-extensions). The
+page links each file at a new `?v=` once it changes, as Shopify does, and the browser fetches
+it there. A file the theme loads without its `?v=` (a `url()` in a stylesheet, an `import` in a
+script) is kept a year by the browser, as from Shopify's CDN: link it with `asset_url`, or
+reload without the cache. `--live-reload` reloads the whole page when an asset changes; it does
+not swap a stylesheet in place.
+
 With `--live-reload`, a page with problems also shows a small panel: the errors of the store
 data, the Liquid errors of the page, and why a page is the 404 page. Its button closes it. The
 terminal has the same problems.
