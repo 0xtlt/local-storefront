@@ -374,6 +374,36 @@ fn cart_reflects_the_session() {
     );
 }
 
+/// `line_item.index` is the line's 0-based position: themes post `index | plus: 1` as the
+/// `line` of `/cart/change.js`. The cart JSON has no such field.
+#[test]
+fn cart_lines_know_their_index() {
+    let fixture = fixture();
+    let tote = fixture.store.product_by_handle("canvas-tote-bag").unwrap();
+    let mug = fixture.store.product_by_handle("ceramic-mug").unwrap();
+    let mut session = Session::initial(&fixture.store);
+    session.cart_lines = [tote, mug]
+        .iter()
+        .map(|product| CartLine {
+            variant_id: product.variants[0].id,
+            quantity: 1,
+            properties: Default::default(),
+            selling_plan: None,
+        })
+        .collect();
+    assert_eq!(
+        fixture.liquid(
+            "/cart",
+            session.clone(),
+            "{% for item in cart.items %}{{ item.index }}:{{ item.index | plus: 1 }} {% endfor %}"
+        ),
+        "0:1 1:2 "
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&fixture.liquid("/cart", session, "{{ cart | json }}")).expect("JSON");
+    assert!(json["items"][1].get("index").is_none(), "{json}");
+}
+
 #[test]
 fn section_rendering_api() {
     let fixture = fixture();
