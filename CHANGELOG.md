@@ -3,7 +3,7 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
-## Unreleased
+## 0.3.0-rc.1 - 2026-11-12
 
 lsf now serves a local GraphQL Admin API (version 2026-10) and delivers an app's webhooks to its
 backend: the backend of a Shopify app runs and is tested offline, against the store data, with

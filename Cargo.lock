@@ -2317,7 +2317,7 @@ dependencies = [
 
 [[package]]
 name = "lsf-app"
-version = "0.2.0"
+version = "0.3.0-rc.1"
 dependencies = [
  "base64 0.23.1",
  "brotli",
@@ -2349,7 +2349,7 @@ dependencies = [
 
 [[package]]
 name = "lsf-cli"
-version = "0.2.0"
+version = "0.3.0-rc.1"
 dependencies = [
  "axum",
  "blake3",
@@ -2387,7 +2387,7 @@ dependencies = [
 
 [[package]]
 name = "lsf-core"
-version = "0.2.0"
+version = "0.3.0-rc.1"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -2401,7 +2401,7 @@ dependencies = [
 
 [[package]]
 name = "lsf-fmt"
-version = "0.2.0"
+version = "0.3.0-rc.1"
 dependencies = [
  "oxc",
  "oxc_formatter",
@@ -2411,7 +2411,7 @@ dependencies = [
 
 [[package]]
 name = "lsf-liquid"
-version = "0.2.0"
+version = "0.3.0-rc.1"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -2424,7 +2424,7 @@ dependencies = [
 
 [[package]]
 name = "lsf-theme"
-version = "0.2.0"
+version = "0.3.0-rc.1"
 dependencies = [
  "blake3",
  "chrono",
