@@ -3,6 +3,29 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## 0.3.0-rc.4 - 2026-11-12
+
+Fourth release candidate of 0.3.0. It fixes the code discounts of 0.3.0-rc.3: their uses, their
+minimums and their one use per customer now follow what Shopify does.
+
+### Fixed
+
+#### The checkout of an app
+
+- **A code discount's `usageLimit` and `appliesOncePerCustomer` hold when checkouts complete at
+  once.** The code is checked again when the order is recorded; when the buyer can no longer use
+  it, the completion answers `422` with the checkout without it and "`<code>` discount code isn't
+  available to you right now".
+- **A free shipping code that takes nothing off is not on the order.** Over its
+  `maximumShippingPrice` for the selected rate, on a cart with nothing to ship, or beaten by a
+  Function's shipping discount, it is no longer in `discount_codes` of the order and its
+  webhooks, and it is not counted as a use.
+- **Minimums count the discounts before them**, as Shopify's help center describes: a free
+  shipping minimum the cart after the product and order discounts, an amount off minimum the
+  items it applies to after the product discounts.
+- **Renaming or deleting a redeemed code no longer resets `appliesOncePerCustomer`.** Uses are
+  matched by discount, not by its codes of the moment.
+
 ## 0.3.0-rc.3 - 2026-11-12
 
 Third release candidate of 0.3.0. The local checkout applies the code discounts a backend makes
