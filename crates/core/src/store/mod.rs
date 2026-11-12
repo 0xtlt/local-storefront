@@ -6,6 +6,7 @@ mod date;
 pub mod demo;
 pub mod docs;
 pub mod load;
+pub mod metafield_references;
 pub mod metafield_types;
 pub mod model;
 pub mod reference;
@@ -1201,10 +1202,7 @@ impl Store {
         let reference = reference.trim();
         if let Some(id) = reference.strip_prefix("gid://shopify/Metaobject/") {
             let id = id.parse::<u64>().ok()?;
-            return self.metaobjects.iter().find(|entry| {
-                crate::util::stable_id("metaobject", &format!("{}/{}", entry.kind, entry.handle))
-                    == id
-            });
+            return self.metaobjects.iter().find(|entry| entry.id() == id);
         }
         if let Some(entry) = kind.and_then(|kind| self.metaobject(kind, reference)) {
             return Some(entry);

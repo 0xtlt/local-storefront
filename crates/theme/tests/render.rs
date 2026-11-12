@@ -1212,6 +1212,47 @@ fn an_apps_own_metaobject_type_is_found_by_either_name() {
 }
 
 #[test]
+fn a_reference_by_gid_reads_what_validate_resolves() {
+    // Shopify writes every reference as a GID: one that names an entity of the store data
+    // (by its id, `metaobject.system.id` for an entry) reads it, as `type/handle` does.
+    let faq = lsf_core::util::stable_id("metaobject", "faq/size");
+    let (demo, _) = lsf_core::store::load::load(&DataSource::Demo, &LoadOptions::default());
+    let mug = demo.product_by_handle("ceramic-mug").expect("mug").id;
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "faq": [{ "handle": "size", "fields": { "question": "Which size?" } }],
+            "guide": [{
+                "handle": "fit",
+                "fields": {
+                    "faqs": { "type": "list.metaobject_reference", "value": [format!("gid://shopify/Metaobject/{faq}"), "faq/size"] },
+                    "product": { "type": "product_reference", "value": format!("gid://shopify/Product/{mug}") }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{% for faq in metaobjects.guide.fit.faqs.value %}{{ faq.question }}/{{ faq.system.id }};{% endfor %}\
+         {{ metaobjects.guide.fit.product.value.handle }}",
+    );
+    assert_eq!(
+        output,
+        format!("Which size?/{faq};Which size?/{faq};ceramic-mug")
+    );
+}
+
+#[test]
 fn metafield_values_are_the_objects_shopify_gives() {
     let overlay = serde_json::json!({
         "metaobjects": {
