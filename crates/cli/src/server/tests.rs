@@ -5874,6 +5874,132 @@ fn a_discount_code_triggers_its_discount() {
     assert_eq!(json["discounts"][0]["code"], "WELCOME");
 }
 
+/// The session token `POST /__lsf/extensions/<handle>/session-token` gives the session, and its
+/// claims, checked as the backend checks them: with `secret` and the fixture app's client id.
+fn extension_token(
+    state: &ServerState,
+    session: &str,
+    secret: &str,
+) -> (Reply, lsf_app::admin::auth::session_token::ExtensionClaims) {
+    let reply = post(
+        state,
+        "/__lsf/extensions/gift-message/session-token",
+        json!({}),
+        session,
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let token = body_json(&reply)["token"].as_str().unwrap().to_string();
+    let claims = lsf_app::admin::auth::session_token::verify_extension(
+        &token,
+        secret,
+        "00000000000000000000000000000000",
+        chrono::Utc::now().timestamp(),
+    )
+    .unwrap_or_else(|invalid| panic!("{invalid}: {token}"));
+    (reply, claims)
+}
+
+#[test]
+fn an_extension_gets_a_session_token_of_the_shop_signed_with_the_client_secret() {
+    let admin = super::admin::AdminSettings {
+        client_secret: Some("the-backend-secret".to_string()),
+        ..Default::default()
+    };
+    let state = checkout_server_with(fixture_app(), &[], false, None, Some(admin));
+    let store = state.loaded().store.clone();
+    let shop = store.shop.permanent_domain.clone();
+    assert!(shop.ends_with(".myshopify.com"), "{shop}");
+
+    // Logged out: the shop and the app, no customer.
+    let (reply, claims) = extension_token(&state, "st-anonymous", "the-backend-secret");
+    // shopify.dev's example: `dest` is the bare domain, the token lives five minutes, and has
+    // no `iss` nor `sid`.
+    assert_eq!(claims.dest, shop);
+    assert_eq!(claims.sub, None);
+    assert_eq!(claims.exp - claims.iat, 300);
+    assert_eq!(claims.nbf, claims.iat);
+    let json = body_json(&reply);
+    let keys: Vec<&str> = json["claims"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, ["dest", "aud", "exp", "nbf", "iat", "jti"]);
+    assert_eq!(json["shop"], shop.as_str());
+    assert_eq!(
+        json["authorization"],
+        format!("Bearer {}", json["token"].as_str().unwrap())
+    );
+    // A UUID, a new one each time.
+    assert_eq!(claims.jti.len(), 36);
+    let (_, again) = extension_token(&state, "st-anonymous", "the-backend-secret");
+    assert_ne!(again.jti, claims.jti);
+    // For the page of lsf's origin only: no CORS, as the bundles, so no other site reads it,
+    // and a preflight of another site is not granted.
+    assert_eq!(header(&reply, "access-control-allow-origin"), None);
+    assert_eq!(header(&reply, "cache-control"), Some("private, no-store"));
+    let preflight = state.dispatch(&request(
+        "OPTIONS",
+        "/__lsf/extensions/gift-message/session-token",
+        json!({}),
+        "st-anonymous",
+    ));
+    assert_eq!(header(&preflight, "access-control-allow-origin"), None);
+
+    // Logged in: `sub` is the customer's GID.
+    let customer = &store.customers[0];
+    let login = get(
+        &state,
+        &format!("/__lsf/login?customer={}", customer.email),
+        "st-customer",
+    );
+    assert_eq!(login.status, 302, "{}", text(&login));
+    let (_, claims) = extension_token(&state, "st-customer", "the-backend-secret");
+    assert_eq!(
+        claims.sub.as_deref(),
+        Some(format!("gid://shopify/Customer/{}", customer.id).as_str())
+    );
+    assert_eq!(claims.dest, shop);
+
+    // Only the extensions of the app, and only `POST`.
+    let unknown = post(
+        &state,
+        "/__lsf/extensions/nope/session-token",
+        json!({}),
+        "st-anonymous",
+    );
+    assert_eq!(unknown.status, 404);
+    assert!(text(&unknown).contains("nope"), "{}", text(&unknown));
+    assert_eq!(
+        get(
+            &state,
+            "/__lsf/extensions/gift-message/session-token",
+            "st-anonymous"
+        )
+        .status,
+        404
+    );
+}
+
+#[test]
+fn an_extension_session_token_is_signed_with_the_secret_lsf_has_without_one_given() {
+    // The secret the Admin API signs with when none is given (lsf's own, unless the environment
+    // has one), and the same without the admin part.
+    let (expected, _) = lsf_app::admin::auth::client_secret(None, Some(&fixture_app()));
+    let with_admin =
+        checkout_server_with(fixture_app(), &[], false, None, Some(Default::default()));
+    assert_eq!(with_admin.admin.as_ref().unwrap().secret, expected);
+    extension_token(&with_admin, "st-default", &expected);
+    let checkout_only = checkout_server(&[], false);
+    assert!(checkout_only.admin.is_none());
+    let (_, claims) = extension_token(&checkout_only, "st-default", &expected);
+    assert_eq!(
+        claims.dest,
+        checkout_only.loaded().store.shop.permanent_domain
+    );
+}
+
 #[test]
 fn the_files_of_the_page_and_of_the_extensions_are_served() {
     let state = checkout_server(&[], false);

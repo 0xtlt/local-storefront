@@ -434,8 +434,8 @@
     const pending = new Map();
     function call(type, payload) {
       const id = ++counter;
-      return new Promise((resolve) => {
-        pending.set(id, resolve);
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
         post({ ...payload, type, id });
       });
     }
@@ -763,9 +763,11 @@
           refresh(message.state, message.ctx);
           break;
         case 'result': {
-          const resolve = pending.get(message.id);
+          const call = pending.get(message.id);
           pending.delete(message.id);
-          if (resolve) resolve(message.result);
+          // An answer the page could not give (the session token) rejects, as on Shopify.
+          if (call && typeof message.error === 'string') call.reject(new Error(message.error));
+          else if (call) call.resolve(message.result);
           break;
         }
         case 'intercept':

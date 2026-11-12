@@ -9,9 +9,13 @@
 //! `sid` (a session id, one per user and app). A token lives one minute. `@shopify/shopify-api`
 //! (`decodeSessionToken`) and the `shopify_api` gem (`JwtPayload`) verify it with a 10-second
 //! leeway on `exp` and `nbf`, then check `aud`; so does [`verify`].
+//!
+//! Checkout and customer account UI extensions get a token of their own from
+//! `shopify.sessionToken.get()`, with other claims: [`ExtensionClaims`].
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::signing::{constant_time_eq, hex, hmac_sha256, sha256};
@@ -94,6 +98,87 @@ impl Claims {
     }
 }
 
+/// How long the session token of a checkout or customer account UI extension lives, in seconds:
+/// five minutes, as shopify.dev's Session Token API says ("The token has a TTL of five minutes").
+pub const EXTENSION_LIFETIME: i64 = 300;
+
+/// The claims of the session token a checkout or customer account UI extension gets from
+/// `shopify.sessionToken.get()`, which its backend verifies with the client secret
+/// (`authenticate.public.checkout` and `.customerAccount` of `@shopify/shopify-app-remix` call
+/// `decodeSessionToken`: HS256 with the API secret).
+///
+/// These are the claims of the example payload of the Session Token API of both,
+/// <https://shopify.dev/docs/api/checkout-ui-extensions/latest/target-apis/platform-apis/session-token-api>
+/// and
+/// <https://shopify.dev/docs/api/customer-account-ui-extensions/latest/target-apis/platform-apis/session-token-api>,
+/// in its order: `dest` the shop's domain, bare (`store-name.myshopify.com`, where the token of
+/// the admin has `https://`), `aud`, `exp` five minutes after `iat`, `nbf`, `iat`, `jti` a UUID,
+/// and `sub` the customer's GID, present only when a customer is logged in. There is no `iss`
+/// and no `sid`, as in the example.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionClaims {
+    /// The shop: `my-shop.myshopify.com`.
+    pub dest: String,
+    /// The client id of the app.
+    pub aud: String,
+    /// When the token expires.
+    pub exp: i64,
+    /// When the token starts being valid.
+    pub nbf: i64,
+    /// When the token was issued.
+    pub iat: i64,
+    /// A random UUID.
+    pub jti: String,
+    /// The customer logged in: `gid://shopify/Customer/42`. Absent for an anonymous buyer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub: Option<String>,
+}
+
+impl ExtensionClaims {
+    /// The claims of the token an extension of the app `client_id` gets on `shop`
+    /// (`my-shop.myshopify.com`) for `customer` (`None` logged out), issued at `now` (UNIX
+    /// seconds). [`Claims::uuid`] makes `jti`.
+    pub fn new(
+        shop: &str,
+        client_id: &str,
+        customer: Option<u64>,
+        now: i64,
+        jti: String,
+    ) -> ExtensionClaims {
+        ExtensionClaims {
+            dest: host_of(shop).to_string(),
+            aud: client_id.to_string(),
+            exp: now + EXTENSION_LIFETIME,
+            nbf: now,
+            iat: now,
+            jti,
+            sub: customer.map(|id| format!("gid://shopify/Customer/{id}")),
+        }
+    }
+}
+
+/// The claims of `token` when it is the session token of an extension of the app `client_id`,
+/// signed with `secret` and valid at `now` (UNIX seconds), with a [`LEEWAY`] on `exp` and `nbf`,
+/// as Shopify's libraries check it.
+pub fn verify_extension(
+    token: &str,
+    secret: &str,
+    client_id: &str,
+    now: i64,
+) -> Result<ExtensionClaims, Invalid> {
+    let claims: ExtensionClaims = decode(token, secret)?;
+    if claims.exp + LEEWAY < now {
+        return Err(Invalid::Expired);
+    }
+    if claims.nbf - LEEWAY > now {
+        return Err(Invalid::NotYetValid);
+    }
+    if claims.aud != client_id {
+        return Err(Invalid::Audience(claims.aud));
+    }
+    Ok(claims)
+}
+
 /// The session id of a user of a shop in an app: the same for each of their tokens, 64 hex
 /// digits like Shopify's.
 pub fn session_id(shop: &str, client_id: &str, user: u64) -> String {
@@ -102,8 +187,8 @@ pub fn session_id(shop: &str, client_id: &str, user: u64) -> String {
     ))
 }
 
-/// The JWT of `claims`, signed with HS256 and `secret`.
-pub fn mint(claims: &Claims, secret: &str) -> String {
+/// The JWT of `claims` ([`Claims`] or [`ExtensionClaims`]), signed with HS256 and `secret`.
+pub fn mint(claims: &impl Serialize, secret: &str) -> String {
     let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"HS256","typ":"JWT"}"#);
     let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims).unwrap_or_default());
     let signing_input = format!("{header}.{payload}");
@@ -183,6 +268,11 @@ pub fn verify(token: &str, secret: &str, client_id: &str, now: i64) -> Result<Cl
 /// The claims of `token` when it is an HS256 JWT signed with `secret`, whatever its dates and
 /// audience.
 pub fn verify_signature(token: &str, secret: &str) -> Result<Claims, Invalid> {
+    decode(token, secret)
+}
+
+/// The payload of `token` when it is an HS256 JWT signed with `secret`.
+fn decode<T: DeserializeOwned>(token: &str, secret: &str) -> Result<T, Invalid> {
     let mut parts = token.trim().split('.');
     let (Some(header), Some(payload), Some(signature), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
@@ -337,6 +427,84 @@ mod tests {
         assert_eq!(
             verify(&mint(&split, "secret"), "secret", "client-id", 1_000),
             Err(Invalid::Issuer)
+        );
+    }
+
+    #[test]
+    fn writes_the_claims_of_an_extension_as_shopify_documents() {
+        let claims = ExtensionClaims::new(
+            SHOP,
+            "client-id",
+            Some(7),
+            1_679_953_753,
+            Claims::uuid(b"seed"),
+        );
+        let json = serde_json::to_value(&claims).unwrap();
+        let keys: Vec<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        // The order of shopify.dev's example payload; no `iss`, no `sid`.
+        assert_eq!(keys, ["dest", "aud", "exp", "nbf", "iat", "jti", "sub"]);
+        assert_eq!(json["dest"], "my-shop.myshopify.com");
+        assert_eq!(json["aud"], "client-id");
+        assert_eq!(json["exp"], 1_679_954_053);
+        assert_eq!(json["nbf"], 1_679_953_753);
+        assert_eq!(json["iat"], 1_679_953_753);
+        assert_eq!(json["sub"], "gid://shopify/Customer/7");
+        // A shop given as a URL is its host.
+        let of_url =
+            ExtensionClaims::new("https://my-shop.myshopify.com", "c", None, 0, "j".into());
+        assert_eq!(of_url.dest, SHOP);
+
+        // Logged out: no `sub` at all.
+        let anonymous = ExtensionClaims::new(SHOP, "client-id", None, 1_000, "j".into());
+        let json = serde_json::to_value(&anonymous).unwrap();
+        assert!(json.get("sub").is_none());
+    }
+
+    #[test]
+    fn verifies_the_token_of_an_extension() {
+        let claims = ExtensionClaims::new(SHOP, "client-id", Some(7), 1_000, "j".into());
+        let token = mint(&claims, "secret");
+        assert_eq!(
+            verify_extension(&token, "secret", "client-id", 1_000),
+            Ok(claims.clone())
+        );
+        assert!(
+            verify_extension(
+                &token,
+                "secret",
+                "client-id",
+                1_000 + EXTENSION_LIFETIME + LEEWAY
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            verify_extension(
+                &token,
+                "secret",
+                "client-id",
+                1_000 + EXTENSION_LIFETIME + LEEWAY + 1
+            ),
+            Err(Invalid::Expired)
+        );
+        assert_eq!(
+            verify_extension(&token, "other", "client-id", 1_000),
+            Err(Invalid::Signature)
+        );
+        assert_eq!(
+            verify_extension(&token, "secret", "other-client", 1_000),
+            Err(Invalid::Audience("client-id".to_string()))
+        );
+        let anonymous = ExtensionClaims::new(SHOP, "client-id", None, 1_000, "j".into());
+        assert_eq!(
+            verify_extension(&mint(&anonymous, "secret"), "secret", "client-id", 1_000)
+                .unwrap()
+                .sub,
+            None
         );
     }
 

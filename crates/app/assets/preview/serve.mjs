@@ -38,6 +38,23 @@ export function embed(state) {
 
 const publicState = ({ selection, ...state }) => state;
 
+const base64url = (value) => Buffer.from(value).toString('base64url');
+
+/** A session token with the claims lsf's has, and a signature nobody can verify. */
+function previewToken(state, now = Date.now()) {
+  const issued = Math.floor(now / 1000);
+  const claims = {
+    dest: state.shop?.myshopifyDomain ?? 'preview.myshopify.com',
+    aud: state.app?.clientId ?? 'preview',
+    exp: issued + 300,
+    nbf: issued,
+    iat: issued,
+    jti: crypto.randomUUID(),
+    sub: state.buyer?.customer?.id ?? undefined,
+  };
+  return [base64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' })), base64url(JSON.stringify(claims)), base64url('lsf-preview')].join('.');
+}
+
 function notFound(response) {
   response.writeHead(404, { 'content-type': 'text/plain' });
   response.end('Not found');
@@ -88,6 +105,10 @@ export async function startPreview({
       if (path.startsWith('/__lsf/checkout/assets/')) {
         return await sendFile(response, assets, path.slice('/__lsf/checkout/assets/'.length));
       }
+      // lsf signs the token with the app's client secret; the preview has none, and says so in
+      // the signature.
+      const token = path.match(/^\/__lsf\/extensions\/([\w-]+)\/session-token$/);
+      if (token && request.method === 'POST') return json(response, 200, { token: previewToken(current ?? sample) });
       const bundle = path.match(/^\/__lsf\/extensions\/([\w-]+)\/([\w.-]+)$/);
       if (bundle) return await sendFile(response, join(extensions, bundle[1], 'dist'), bundle[2]);
 

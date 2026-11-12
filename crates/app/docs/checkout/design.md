@@ -299,6 +299,12 @@ Cart lines, note and attributes live in the session cart (the same one the theme
   the number of orders the session placed before it, as the token is the one of the cart; the
   thank-you page of an order has a scope of its own), then to the extension, shared by its
   targets and not with the other extensions.
+- `sessionToken.get()` posts `sessionToken` to the page, which asks the server
+  (`POST /__lsf/extensions/<handle>/session-token`, same origin, no CORS) and answers the
+  token, or an `error` the sandbox rejects with. The server signs it (HS256, the client secret,
+  which never reaches the page) with the claims of shopify.dev's Session Token API
+  (`session_token::ExtensionClaims`): `dest` the shop's bare domain, `aud`, `exp` five minutes
+  on, `nbf`, `iat`, `jti`, and `sub` for the customer of the session.
 - `?targets=all`: `checkout.js` passes `preview: {all, rendered}` to `renderPage`, which shows
   the steps of a cart that ships whatever the cart, the thank-you page under the checkout and a
   panel (`targetsPanel`) of every target of every loaded extension: `shown` (a slot exists),

@@ -5,7 +5,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { addressLabel, badges, initials, sameAddress, savedAddressId } from '../account.js';
-import { sessionToken } from '../extension-host.js';
 import { update } from '../preview/mock-engine.mjs';
 import { FakeEvent } from './fake-dom.mjs';
 import { checkoutPage, engineCheckout, init, pageState, plain, sandboxWindow, settle } from './harness.mjs';
@@ -435,15 +434,6 @@ test('the Buyer Identity API tells its subscribers when the checkout logs in, sw
   assert.deepEqual(customers, [null, AVA, SAM, null]);
   assert.deepEqual(emails, [null, AVA, SAM, null]);
   assert.deepEqual(companies, [null, 'Harbor Cafés Nantes', 'Harbor Cafés Bordeaux', null]);
-});
-
-test('the session token names the customer logged in', () => {
-  const ext = { handle: 'x' };
-  const claims = (state) => JSON.parse(Buffer.from(sessionToken(state, ext).split('.')[1], 'base64url').toString());
-  const engine = engineCheckout();
-  assert.equal(claims(pageState(engine)).sub, undefined);
-  const ava = update(engine, [{ type: 'customer', customer: AVA }]).state;
-  assert.equal(claims(pageState(ava)).sub, 'gid://shopify/Customer/1');
 });
 
 // --- The helpers -------------------------------------------------------------------------

@@ -241,6 +241,10 @@ test('storage, session token and the Storefront API', async () => {
   assert.equal(posted.at(-1).type, 'sessionToken');
   receive({ type: 'result', id: 3, result: 'a.b.c' });
   assert.equal(await token, 'a.b.c');
+  // The page could not get one from lsf: `get()` rejects with why.
+  const refused = shopify.sessionToken.get();
+  receive({ type: 'result', id: 4, error: 'lsf did not give a session token (500)' });
+  await assert.rejects(() => refused, /did not give a session token/);
   await assert.rejects(() => shopify.query('{ shop { name } }'), /Storefront API is not available/);
   assert.equal(await shopify.analytics.publish('event', { a: 1 }), true);
   assert.deepEqual(posted.at(-1), { type: 'analytics', name: 'event', data: { a: 1 } });

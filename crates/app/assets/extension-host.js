@@ -32,29 +32,26 @@ export function stateForExtensions(state) {
   return visible;
 }
 
-const base64url = (text) =>
-  btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+/** Where the page asks lsf for the session token of an extension. */
+const sessionTokenUrl = (ext) => `/__lsf/extensions/${encodeURIComponent(ext.handle)}/session-token`;
 
-/** A session token like the one Shopify signs, with a signature nobody can verify. */
-export function sessionToken(state, ext, now = Date.now()) {
-  const shop = (state.shop?.storefrontUrl ?? 'http://localhost').replace(/\/$/, '');
-  const issued = Math.floor(now / 1000);
-  const claims = {
-    iss: `${shop}/admin`,
-    dest: shop,
-    aud: state.app?.clientId ?? ext.handle,
-    sub: state.buyer?.customer?.id ?? state.customer?.id,
-    exp: issued + 60,
-    nbf: issued - 5,
-    iat: issued,
-    jti: `${ext.handle}-${issued}`,
-    sid: state.token,
-  };
-  return [
-    base64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' })),
-    base64url(JSON.stringify(claims)),
-    base64url('lsf-local-checkout'),
-  ].join('.');
+/**
+ * The session token `shopify.sessionToken.get()` gives `ext`: lsf signs it with the client
+ * secret, which stays on the server, as Shopify signs it for the shop, the app and the customer
+ * logged in. The page asks for it (same origin) and hands it to the frame, which has an opaque
+ * origin and could not.
+ */
+export async function sessionToken(window, ext) {
+  const response = await window.fetch(sessionTokenUrl(ext), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: '{}',
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || typeof body.token !== 'string') {
+    throw new Error(body.error ?? `lsf did not give a session token (${response.status})`);
+  }
+  return body.token;
 }
 
 const INTERCEPT_TIMEOUT_MS = 5000;
@@ -376,7 +373,10 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
         onStorage(instance, data);
         break;
       case 'sessionToken':
-        post(instance, { type: 'result', id: data.id, result: sessionToken(getState(), instance.ext) });
+        sessionToken(window, instance.ext).then(
+          (token) => post(instance, { type: 'result', id: data.id, result: token }),
+          (error) => post(instance, { type: 'result', id: data.id, error: String(error?.message ?? error) }),
+        );
         break;
       case 'analytics':
         log.debug?.(`[${instance.ext.handle}] analytics`, data.name, data.data);

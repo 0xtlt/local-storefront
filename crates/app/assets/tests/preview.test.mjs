@@ -121,6 +121,11 @@ test('serves the assets and the bundles of the extensions, and nothing else', as
   assert.equal(js.status, 200);
   assert.match(js.headers.get('content-type'), /javascript/);
   assert.equal((await fetch(`${base}/__lsf/extensions/gift-message/missing.js`)).status, 404);
+  // The session token, which the preview cannot sign, with the claims of lsf's.
+  const { token } = await fetch(`${base}/__lsf/extensions/gift-message/session-token`, { method: 'POST', body: '{}' }).then((response) => response.json());
+  const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
+  assert.deepEqual(Object.keys(claims), ['dest', 'aud', 'exp', 'nbf', 'iat', 'jti']);
+  assert.equal(claims.exp - claims.iat, 300);
   assert.equal((await fetch(`${base}/__lsf/checkout/assets/..%2F..%2FCargo.toml`)).status, 404);
   assert.equal((await fetch(`${base}/__lsf/checkout/assets/%2e%2e/Cargo.toml`)).status, 404);
 });
