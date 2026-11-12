@@ -1,6 +1,6 @@
 [package]
 name = "lsf-cli"
-description = "Serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API"
+description = "Run Shopify themes and apps locally, without Shopify: the storefront, a local checkout for Functions and checkout UI extensions, and a local GraphQL Admin API with webhooks, from JSON store data"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
