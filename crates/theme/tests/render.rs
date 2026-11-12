@@ -2125,3 +2125,144 @@ fn a_theme_folder_that_does_not_exist_says_so() {
         "{error}"
     );
 }
+
+#[test]
+fn a_block_rendered_again_gets_a_numbered_id() {
+    // On Shopify, the second render of a block on a page has the id of the first with `-1`,
+    // the third with `-2`, and so on: Horizon's product card, a static block rendered once
+    // per product, is `<prefix>__static-product-card`, then `...-1`, `...-2`, and so are the
+    // blocks it holds. A block rendered once keeps its id, and `section.blocks` gives the ids
+    // without a number (Horizon looks a block up there with `find_index: 'id', block.id`).
+    let fixture = theme_of(
+        "block-id-suffix",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.json",
+                r#"{
+                  "sections": {
+                    "main": {
+                      "type": "cards",
+                      "blocks": {
+                        "card": {
+                          "type": "card",
+                          "static": true,
+                          "blocks": { "price": { "type": "text" } },
+                          "block_order": ["price"]
+                        },
+                        "intro": { "type": "text" }
+                      },
+                      "block_order": ["intro"]
+                    },
+                    "pair": {
+                      "type": "boxes",
+                      "blocks": { "left": { "type": "box" }, "right": { "type": "box" } },
+                      "block_order": ["left", "right"]
+                    }
+                  },
+                  "order": ["main", "pair"]
+                }"#,
+            ),
+            (
+                "sections/cards.liquid",
+                "{% for i in (1..3) %}{% content_for 'block', type: 'card', id: 'card' %}{% endfor %}\
+                 {% content_for 'blocks' %}{% content_for 'blocks' %}\
+                 {% for block in section.blocks %}<li>{{ block.id }}</li>{% endfor %}\
+                 {% schema %}{\"name\": \"Cards\", \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            (
+                "sections/boxes.liquid",
+                "{% content_for 'blocks' %}\
+                 {% schema %}{\"name\": \"Boxes\", \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            (
+                "blocks/box.liquid",
+                "{% content_for 'block', type: 'text', id: 'title' %}\
+                 {% schema %}{\"name\": \"Box\", \"tag\": null, \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            (
+                "blocks/card.liquid",
+                "<p>{{ block.id }}</p>{% content_for 'blocks' %}\
+                 {% schema %}{\"name\": \"Card\", \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            (
+                "blocks/text.liquid",
+                "<span>{{ block.id }}</span>{% schema %}{\"name\": \"Text\", \"tag\": null}{% endschema %}",
+            ),
+        ],
+    );
+    let section = lsf_theme::render::template_section_id("index", "main");
+    let prefix = format!("A{}", &lsf_core::util::short_hash(&section)[..15]);
+    let card = |suffix: &str| {
+        format!(
+            "<div id=\"shopify-block-{prefix}__card{suffix}\" class=\"shopify-block\">\
+             <p>{prefix}__card{suffix}</p><span>{prefix}__price{suffix}</span></div>"
+        )
+    };
+    let expected = format!(
+        "<div id=\"shopify-section-{section}\" class=\"shopify-section\">{}{}{}\
+         <span>{prefix}__intro</span><span>{prefix}__intro-1</span>\
+         <li>{prefix}__intro</li></div>",
+        card(""),
+        card("-1"),
+        card("-2"),
+    );
+
+    let page = fixture.page("/");
+    assert_clean(&page);
+    assert!(page.body.contains(&expected), "{}", page.body);
+
+    // Two blocks that give a static block the same id each render it once: neither is
+    // numbered. Shopify gives every block a prefix of its own; lsf's comes from the section,
+    // so the two have the same id.
+    let pair = lsf_theme::render::template_section_id("index", "pair");
+    let title = format!(
+        "<span>A{}__title</span>",
+        &lsf_core::util::short_hash(&pair)[..15]
+    );
+    assert!(
+        page.body.contains(&format!(
+            "<div id=\"shopify-section-{pair}\" class=\"shopify-section\">{title}{title}</div>"
+        )),
+        "{}",
+        page.body
+    );
+
+    // The Section Rendering API renders the section alone: its numbers start again.
+    let alone = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &Target::Section(section.clone()),
+    );
+    assert_eq!(alone.body, expected);
+    // A section asked for twice in `?sections=` is rendered once: Shopify answers
+    // `?sections=<id>,<id>` with one key, its blocks numbered from the first render.
+    let twice = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &Target::Sections(vec![section.clone(), section.clone()]),
+    );
+    let json: serde_json::Value = serde_json::from_str(&twice.body).unwrap();
+    assert_eq!(json.as_object().map(serde_json::Map::len), Some(1));
+    assert_eq!(json[&section], expected);
+
+    // The timings count a block once, under the id of its first render, with each render.
+    let timed: Vec<(&str, usize)> = page.timings.sections[0]
+        .blocks
+        .iter()
+        .map(|block| (block.id.as_str(), block.durations.len()))
+        .collect();
+    let (card, price, intro) = (
+        format!("{prefix}__card"),
+        format!("{prefix}__price"),
+        format!("{prefix}__intro"),
+    );
+    assert_eq!(
+        timed,
+        [(card.as_str(), 3), (price.as_str(), 3), (intro.as_str(), 2)]
+    );
+}
