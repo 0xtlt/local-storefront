@@ -166,6 +166,56 @@ pub fn is_known(kind: &str) -> bool {
     }
 }
 
+/// Whether a value of the type is a JSON object: what the Admin API's `value` gives as JSON text.
+fn is_object_kind(kind: &str) -> bool {
+    matches!(kind, "link" | "money" | "rating" | "rich_text_field") || is_measurement(kind)
+}
+
+/// The value as the store keeps it, from what the data writes.
+///
+/// - The JSON text of an object or a list, which is what the Admin API's `value` is
+///   (`"{\"scale_min\":\"1.0\",...}"`), is that object or list, so that a value can be pasted
+///   from the API as is. A `json` metafield is left alone: a string is a value of it.
+/// - The parts of a rating are strings, as Shopify keeps them and as its Liquid gives them
+///   (`"5.0"`): a number is written as it is in the data (`5` is `"5"`, `4.5` is `"4.5"`).
+///
+/// A value that is none of these is kept as it is, for [`check`] to say what is wrong with it.
+pub fn normalize(kind: &str, value: &Json) -> Json {
+    let item = kind.strip_prefix("list.");
+    let parsed = match value {
+        Json::String(text) if item.is_some() || is_object_kind(kind) => {
+            serde_json::from_str::<Json>(text.trim())
+                .ok()
+                .filter(|parsed| match item {
+                    Some(_) => parsed.is_array(),
+                    None => parsed.is_object(),
+                })
+        }
+        _ => None,
+    };
+    let mut value = parsed.unwrap_or_else(|| value.clone());
+    match (item, &mut value) {
+        (Some("rating"), Json::Array(items)) => items.iter_mut().for_each(rating_strings),
+        (None, _) if kind == "rating" => rating_strings(&mut value),
+        _ => {}
+    }
+    value
+}
+
+/// Writes the numbers of a rating as strings, keeping the order of its fields.
+fn rating_strings(rating: &mut Json) {
+    let Json::Object(fields) = rating else {
+        return;
+    };
+    for name in ["value", "scale_min", "scale_max"] {
+        if let Some(field) = fields.get_mut(name)
+            && let Json::Number(number) = field
+        {
+            *field = Json::String(number.to_string());
+        }
+    }
+}
+
 /// A reference a metafield value makes to another entity of the data, resolved once the store
 /// is built.
 #[derive(Clone, Debug, PartialEq)]
@@ -187,7 +237,8 @@ pub struct Problem {
     pub hint: String,
 }
 
-/// Checks a value against its type. Answers what is wrong with it, and the references it makes.
+/// Checks a value against its type, once [`normalize`]d. Answers what is wrong with it, and the
+/// references it makes.
 pub fn check(kind: &str, value: &Json) -> (Vec<Problem>, Vec<Reference>) {
     let mut problems = Vec::new();
     let mut references = Vec::new();
@@ -205,6 +256,11 @@ pub fn check(kind: &str, value: &Json) -> (Vec<Problem>, Vec<Reference>) {
             message: format!("\"{kind}\" is not a metafield type"),
             hint,
         });
+        return (problems, references);
+    }
+    let value = &normalize(kind, value);
+    if let Some(problem) = unparsed(kind, value) {
+        problems.push(problem);
         return (problems, references);
     }
     match kind.strip_prefix("list.") {
@@ -230,6 +286,26 @@ pub fn check(kind: &str, value: &Json) -> (Vec<Problem>, Vec<Reference>) {
         None => check_one(kind, value, "/value", &mut problems, &mut references),
     }
     (problems, references)
+}
+
+/// What is wrong with the JSON text of an object or a list that does not parse.
+fn unparsed(kind: &str, value: &Json) -> Option<Problem> {
+    let text = value.as_str()?.trim();
+    let item = kind.strip_prefix("list.");
+    if !(item.is_some() || is_object_kind(kind)) || !text.starts_with(['{', '[']) {
+        return None;
+    }
+    let error = serde_json::from_str::<Json>(text).err()?;
+    let example = match item {
+        Some(item) => format!("[{}]", example(item)),
+        None => example(kind).to_string(),
+    };
+    Some(Problem {
+        pointer: "/value".to_string(),
+        code: "invalid_metafield",
+        message: format!("the JSON text of this {kind} does not parse: {error}"),
+        hint: format!("a {kind} is written {example}, or as the JSON text of that"),
+    })
 }
 
 fn describe(value: &Json) -> String {
@@ -258,7 +334,7 @@ fn example(kind: &str) -> &'static str {
         "date" => "\"2025-05-01\"",
         "date_time" => "\"2025-05-01T10:00:00Z\"",
         "color" => "\"#f4f1ea\"",
-        "rating" => "{\"value\": \"4.5\", \"scale_min\": \"1\", \"scale_max\": \"5\"}",
+        "rating" => "{\"value\": \"4.5\", \"scale_min\": \"1.0\", \"scale_max\": \"5.0\"}",
         "money" => "{\"amount\": \"5.99\", \"currency_code\": \"USD\"}",
         "url" => "\"https://example.com\"",
         "link" => "{\"text\": \"Size guide\", \"url\": \"https://example.com\"}",
@@ -617,6 +693,113 @@ mod tests {
             ["/value/1 a number_integer is a whole number, not a string (\"2\")"]
         );
         assert!(!problems("list.product_reference", json!("a")).is_empty());
+    }
+
+    #[test]
+    fn a_rating_is_kept_with_strings_and_its_json_text_is_the_object() {
+        let shopify = json!({"scale_min": "1.0", "scale_max": "5.0", "value": "4.5"});
+        assert_eq!(normalize("rating", &shopify), shopify);
+        // The Admin API's `value`, pasted as is.
+        let text = json!("{\"scale_min\":\"1.0\",\"scale_max\":\"5.0\",\"value\":\"4.5\"}");
+        assert_eq!(normalize("rating", &text), shopify);
+        assert!(problems("rating", text).is_empty());
+        // Numbers as they are written, in the order they are written.
+        assert_eq!(
+            normalize(
+                "rating",
+                &json!({"value": 4.5, "scale_min": 1, "scale_max": 5})
+            )
+            .to_string(),
+            r#"{"value":"4.5","scale_min":"1","scale_max":"5"}"#
+        );
+        assert_eq!(
+            normalize(
+                "list.rating",
+                &json!([{"value": 3, "scale_min": 0, "scale_max": 10}])
+            ),
+            json!([{"value": "3", "scale_min": "0", "scale_max": "10"}])
+        );
+        assert_eq!(
+            normalize(
+                "list.rating",
+                &json!("[{\"value\": 3, \"scale_min\": 0, \"scale_max\": 10}]")
+            ),
+            json!([{"value": "3", "scale_min": "0", "scale_max": "10"}])
+        );
+    }
+
+    #[test]
+    fn the_json_text_of_an_object_or_a_list_is_that_object_or_list() {
+        for (kind, text, value) in [
+            (
+                "money",
+                "{\"amount\":\"5.99\",\"currency_code\":\"CAD\"}",
+                json!({"amount": "5.99", "currency_code": "CAD"}),
+            ),
+            (
+                "weight",
+                "{\"value\":2.5,\"unit\":\"kilograms\"}",
+                json!({"value": 2.5, "unit": "kilograms"}),
+            ),
+            (
+                "link",
+                "{\"text\":\"Size guide\",\"url\":\"https://example.com\"}",
+                json!({"text": "Size guide", "url": "https://example.com"}),
+            ),
+            ("list.number_integer", "[1,2]", json!([1, 2])),
+            (
+                "list.product_reference",
+                "[\"linen-shirt\"]",
+                json!(["linen-shirt"]),
+            ),
+        ] {
+            assert_eq!(normalize(kind, &json!(text)), value, "{kind}");
+            assert!(problems(kind, json!(text)).is_empty(), "{kind}");
+        }
+        // A string is a value of a `json` metafield, and the text of a text field is text.
+        assert_eq!(normalize("json", &json!("[1]")), json!("[1]"));
+        assert_eq!(
+            normalize("single_line_text_field", &json!("{\"a\":1}")),
+            json!("{\"a\":1}")
+        );
+        // The references of a list written as text are collected.
+        let (_, references) = check("list.product_reference", &json!("[\"a\", \"b\"]"));
+        assert_eq!(references.len(), 2);
+    }
+
+    #[test]
+    fn json_text_that_does_not_parse_is_an_error_that_says_so() {
+        let (found, _) = check("rating", &json!("{\"scale_min\":\"1.0\",\"value\":}"));
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].code, "invalid_metafield");
+        assert_eq!(
+            found[0].message,
+            "the JSON text of this rating does not parse: expected value at line 1 column 28"
+        );
+        assert_eq!(
+            found[0].hint,
+            "a rating is written {\"value\": \"4.5\", \"scale_min\": \"1.0\", \"scale_max\": \
+             \"5.0\"}, or as the JSON text of that"
+        );
+        // Text that is not JSON, or the JSON of something else, is said to be what it is.
+        assert_eq!(
+            problems("rating", json!("4.5")),
+            [
+                "/value a rating has a \"value\", a \"scale_min\" and a \"scale_max\", not a string (\"4.5\")"
+            ]
+        );
+        assert_eq!(
+            problems("rating", json!("[1]")),
+            [
+                "/value a rating has a \"value\", a \"scale_min\" and a \"scale_max\", not a string (\"[1]\")"
+            ]
+        );
+        assert_eq!(
+            problems("list.rating", json!("[1,")),
+            [
+                "/value the JSON text of this list.rating does not parse: EOF while parsing a value at line 1 column 3"
+            ]
+        );
     }
 
     #[test]

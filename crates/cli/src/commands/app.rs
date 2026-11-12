@@ -48,7 +48,7 @@ enum Subcommand {
 enum Format {
     /// One line per problem.
     Text,
-    /// `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unchecked: [scenario], unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle], notOffered: [{handle, reason}], stale: [{handle, file}], themeExtensions: [{handle, severity, message}]}`, and `error` when there is no scenario. `state` is `done`, or `partial` when the time ran out. A Function target that fails in several ways has a failure for each error, with the scenarios of that error; `logs` is what the Function logged in the first of them. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `unchecked` names the scenarios whose `expect` was not checked, as `--extension` leaves out a Function they run; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says, `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran. `notOffered` has the extensions the checkout does not offer (an `api_version` lsf does not run, no module, no target it has), `stale` the Functions whose `file` changed after their module was built, `themeExtensions` what Shopify rejects (`error`) or advises against in the theme app extensions.
+    /// `{ok, state, checked, total, elapsedMs, failures: [{handle, target, error, logs, scenarios}], invalid: [{scenario, file, problems}], expectations: {checked, unchecked: [scenario], unmet: [{scenario, file, step, assertion, expected, actual}]}, ranInNoScenario: [handle], notOffered: [{handle, reason}], stale: [{handle, file}], themeExtensions: [{handle, severity, message}]}`, and `error` when there is no scenario, which names the extensions not built too, as the last line of the text does (`notOffered` still lists them). `state` is `done`, or `partial` when the time ran out. A Function target that fails in several ways has a failure for each error, with the scenarios of that error; `logs` is what the Function logged in the first of them. `expectations.checked` counts the expectations of the scenarios' `expect`, met or not; `unchecked` names the scenarios whose `expect` was not checked, as `--extension` leaves out a Function they run; `assertion` is the list and the rule (`express_methods.excludes`) or the amount (`totals.total`), `expected` what the scenario says, `actual` what the checkout has. `ranInNoScenario` is filled only when every scenario ran. `notOffered` has the extensions the checkout does not offer (an `api_version` lsf does not run, no module, no target it has), `stale` the Functions whose `file` changed after their module was built, `themeExtensions` what Shopify rejects (`error`) or advises against in the theme app extensions.
     Json,
 }
 
@@ -151,12 +151,28 @@ fn named_extensions(store: &lsf_core::Store, extensions: &[String]) -> Vec<Strin
     named
 }
 
+/// Why the checkout does not offer an extension that `app check` covers.
+struct NotOffered {
+    reason: String,
+    /// Its module or bundle alone is missing, and `lsf app build` makes it.
+    unbuilt: bool,
+}
+
+impl NotOffered {
+    fn because(reason: String) -> NotOffered {
+        NotOffered {
+            reason,
+            unbuilt: false,
+        }
+    }
+}
+
 /// Why the checkout does not offer the extension `handle`, which `app check` covers: an error
 /// of the app (an `api_version` lsf does not run, an input query it cannot read), no module or
 /// bundle, or, for one the store data or `--extension` names, targets the checkout does not
 /// have. A UI extension with no checkout or customer account target (an admin one) is none of
 /// the checkout's business, unless named.
-fn not_offered(app: &lsf_app::config::App, handle: &str, named: bool) -> Option<String> {
+fn not_offered(app: &lsf_app::config::App, handle: &str, named: bool) -> Option<NotOffered> {
     use lsf_app::config::{Severity, TargetKind};
     let diagnostics = || {
         app.diagnostics
@@ -165,10 +181,13 @@ fn not_offered(app: &lsf_app::config::App, handle: &str, named: bool) -> Option<
     };
     if let Some(function) = app.function(handle) {
         if let Some(error) = diagnostics().find(|d| d.severity == Severity::Error) {
-            return Some(error.message.clone());
+            return Some(NotOffered::because(error.message.clone()));
         }
         if !function.built() {
-            return Some(function.missing_build());
+            return Some(NotOffered {
+                reason: function.missing_build(),
+                unbuilt: function.build().is_some(),
+            });
         }
         if named
             && function
@@ -176,11 +195,11 @@ fn not_offered(app: &lsf_app::config::App, handle: &str, named: bool) -> Option<
                 .iter()
                 .all(|target| target.kind == TargetKind::Unsupported)
         {
-            return Some(if function.targets.is_empty() {
+            return Some(NotOffered::because(if function.targets.is_empty() {
                 "the Function has no target".to_string()
             } else {
                 "its targets are not run by the local checkout".to_string()
-            });
+            }));
         }
         return None;
     }
@@ -193,33 +212,51 @@ fn not_offered(app: &lsf_app::config::App, handle: &str, named: bool) -> Option<
         return None;
     }
     if let Some(error) = diagnostics().find(|d| d.severity == Severity::Error) {
-        return Some(error.message.clone());
+        return Some(NotOffered::because(error.message.clone()));
     }
     if !extension.built()
         && let Some(warning) = diagnostics().find(|d| d.message.starts_with("not built"))
     {
-        return Some(warning.message.clone());
+        return Some(NotOffered {
+            reason: warning.message.clone(),
+            unbuilt: extension.buildable(),
+        });
     }
     if !placed {
-        return Some(
+        return Some(NotOffered::because(
             diagnostics()
                 .find(|d| d.message.contains("not a target") || d.message.contains("no target"))
                 .map_or_else(
                     || "it has no target of the checkout or the customer account".to_string(),
                     |warning| warning.message.clone(),
                 ),
-        );
+        ));
     }
     None
 }
 
-/// What `app check` says of store data without a scenario.
-static NO_SCENARIO: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-    format!(
-        "no scenario to check: `{} app init` writes a set for the app in `shopify-local/checkouts/`",
-        lsf_core::util::command()
-    )
-});
+/// What `app check` says of store data without a scenario, with the extensions it would not
+/// offer only because they are not built (`unbuilt`): with no scenario, nothing ran, so those
+/// did not fail; building them is the next thing to do, as writing scenarios is.
+fn no_scenario(unbuilt: &[&str]) -> String {
+    let lsf = lsf_core::util::command();
+    let mut said = format!(
+        "no scenario to check: `{lsf} app init` writes a set for the app in `shopify-local/checkouts/`"
+    );
+    if !unbuilt.is_empty() {
+        let (are, them) = if unbuilt.len() == 1 {
+            ("is", "it")
+        } else {
+            ("are", "them")
+        };
+        said.push_str(&format!(
+            "; {} {are} not built ({}): `{lsf} app build` builds {them} (or `--build`)",
+            count(unbuilt.len(), "extension", "extensions"),
+            unbuilt.join(", "),
+        ));
+    }
+    said
+}
 
 /// `lsf app check`: the check of the home page, from the command line.
 fn check(
@@ -333,7 +370,7 @@ fn check(
     // The extensions the check covers that the checkout does not offer, and why: nothing
     // checks them, so the check fails rather than passing without them.
     let named = named_extensions(&store, &extensions);
-    let not_offered: Vec<(String, String)> = shopify_app
+    let not_offered: Vec<(String, NotOffered)> = shopify_app
         .handles()
         .into_iter()
         .filter(|handle| selection.contains(handle))
@@ -345,6 +382,23 @@ fn check(
             )
             .map(|reason| (handle.to_string(), reason))
         })
+        .collect();
+    // With no scenario, an extension whose build alone is missing did not fail: the summary
+    // names it, with the command that builds it, rather than a `fails` line. The check fails
+    // all the same, for want of a scenario.
+    let unbuilt: Vec<&str> = if empty {
+        not_offered
+            .iter()
+            .filter(|(_, why)| why.unbuilt)
+            .map(|(handle, _)| handle.as_str())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let failing: Vec<(&str, &str)> = not_offered
+        .iter()
+        .filter(|(handle, _)| !unbuilt.contains(&handle.as_str()))
+        .map(|(handle, why)| (handle.as_str(), why.reason.as_str()))
         .collect();
     // The Functions whose module is older than their files: what runs is not what they say.
     let stale: Vec<(String, String)> = crate::checkout::stale_functions(&shopify_app, &selection)
@@ -379,7 +433,7 @@ fn check(
             let mut json = report.to_json();
             json["ok"] = serde_json::json!(ok);
             if empty {
-                json["error"] = serde_json::json!(*NO_SCENARIO);
+                json["error"] = serde_json::json!(no_scenario(&unbuilt));
             }
             json["invalid"] = serde_json::json!(invalid
                 .iter()
@@ -400,7 +454,7 @@ fn check(
             json["notOffered"] =
                 serde_json::json!(not_offered
                 .iter()
-                .map(|(handle, reason)| serde_json::json!({"handle": handle, "reason": reason}))
+                .map(|(handle, why)| serde_json::json!({"handle": handle, "reason": why.reason}))
                 .collect::<Vec<_>>());
             json["stale"] = serde_json::json!(
                 stale
@@ -436,7 +490,7 @@ fn check(
                     }
                 }
             }
-            for (handle, reason) in &not_offered {
+            for (handle, reason) in &failing {
                 println!("fails    {handle}: {reason}");
             }
             for (handle, file) in &stale {
@@ -487,8 +541,29 @@ fn check(
                 print_unmet(unmet);
             }
             let expectations = count(report.expectations, "expectation", "expectations");
+            // What fails the check whatever the scenarios: counted as the lines above say it.
+            let mut problems = Vec::new();
+            if !failing.is_empty() {
+                problems.push(format!(
+                    "{} not offered",
+                    count(failing.len(), "extension", "extensions")
+                ));
+            }
+            if !stale.is_empty() {
+                problems.push(count(stale.len(), "stale module", "stale modules"));
+            }
+            if theme_errors > 0 {
+                problems.push(format!(
+                    "{} in theme app extensions",
+                    count(theme_errors, "error", "errors")
+                ));
+            }
             let mut said = if empty {
-                NO_SCENARIO.to_string()
+                let mut said = no_scenario(&unbuilt);
+                if !problems.is_empty() {
+                    said.push_str(&format!("; {}", problems.join(", ")));
+                }
+                said
             } else if !complete {
                 "out of time for the others (raise --budget)".to_string()
             } else if !ok {
@@ -500,23 +575,8 @@ fn check(
                 if report.expectations > 0 {
                     said.push_str(&format!(", {} of {expectations} unmet", report.unmet.len()));
                 }
-                if !not_offered.is_empty() {
-                    said.push_str(&format!(
-                        ", {} not offered",
-                        count(not_offered.len(), "extension", "extensions")
-                    ));
-                }
-                if !stale.is_empty() {
-                    said.push_str(&format!(
-                        ", {}",
-                        count(stale.len(), "stale module", "stale modules")
-                    ));
-                }
-                if theme_errors > 0 {
-                    said.push_str(&format!(
-                        ", {} in theme app extensions",
-                        count(theme_errors, "error", "errors")
-                    ));
+                for problem in &problems {
+                    said.push_str(&format!(", {problem}"));
                 }
                 said
             } else if ran_nowhere.is_empty() {

@@ -98,13 +98,11 @@ pub fn function_of<'a>(
             }
         });
     }
-    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let dir = lsf_core::util::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
     app.functions
         .iter()
         .find(|function| {
-            let own = function
-                .dir
-                .canonicalize()
+            let own = lsf_core::util::canonicalize(&function.dir)
                 .unwrap_or_else(|_| function.dir.clone());
             dir.starts_with(own)
         })

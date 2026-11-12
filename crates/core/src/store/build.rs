@@ -330,7 +330,7 @@ fn metafield(input: &MetafieldInput) -> Metafield {
     match input {
         MetafieldInput::Typed(typed) => Metafield {
             kind: typed.kind.clone(),
-            value: typed.value.clone(),
+            value: super::metafield_types::normalize(&typed.kind, &typed.value),
         },
         MetafieldInput::Value(value) => Metafield {
             kind: match value {

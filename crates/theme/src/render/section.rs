@@ -22,6 +22,9 @@ pub const CONTAINER_VARIABLE: &str = "\u{0}container";
 /// Where `content_for` finds the blocks to render: the section or block being rendered.
 pub struct Container {
     pub section_id: String,
+    /// Where the container is: the section's id, then the key of each block down to it. A
+    /// block's renders are counted under its container's path and its key.
+    pub path: String,
     pub section: Value,
     pub blocks: IndexMap<String, BlockInstance>,
     pub block_order: Vec<String>,
@@ -316,6 +319,7 @@ pub fn render_section(
         CONTAINER_VARIABLE,
         Value::object(Container {
             section_id: placement.id.clone(),
+            path: placement.id.clone(),
             section,
             blocks: instance.blocks.clone(),
             block_order: instance.block_order.clone(),
@@ -447,7 +451,11 @@ pub fn render_block(
         .ok_or_else(|| Error::standard(format!("Could not find asset {path}")))?;
     report_schema(ctx, &path, &file);
     let schema = &file.schema;
-    let id = theme_block_id(&container.section_id, key);
+    // `block.id` and the wrapper's id are numbered when the block is rendered again; the
+    // timings count it under the id of its first render.
+    let first_id = theme_block_id(&container.section_id, key);
+    let place = format!("{}/{key}", container.path);
+    let id = state.block_render_id(&first_id, &place);
     let closest_value = Value::object(ClosestDrop(closest.clone()));
     let block = Value::object(BlockDrop {
         id: id.clone(),
@@ -466,7 +474,7 @@ pub fn render_block(
         app: None,
     });
 
-    let entered = state.enter_block(&id, key, &instance.kind)?;
+    let entered = state.enter_block(&first_id, key, &instance.kind)?;
     let rendered = (|| -> Result<String> {
         let mut inner = ctx.isolated()?;
         inner.set_inherited("section", container.section.clone());
@@ -479,6 +487,7 @@ pub fn render_block(
             CONTAINER_VARIABLE,
             Value::object(Container {
                 section_id: container.section_id.clone(),
+                path: place,
                 section: container.section.clone(),
                 blocks: instance.blocks.clone(),
                 block_order: instance.block_order.clone(),
@@ -588,6 +597,7 @@ pub fn render_called_block(
             CONTAINER_VARIABLE,
             Value::object(Container {
                 section_id: id.clone(),
+                path: id.clone(),
                 section,
                 blocks: IndexMap::new(),
                 block_order: Vec::new(),

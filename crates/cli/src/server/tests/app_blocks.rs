@@ -326,6 +326,39 @@ fn the_cdn_serves_the_assets_of_the_extension() {
 }
 
 #[test]
+fn an_edited_asset_of_the_extension_is_linked_at_a_new_url_that_serves_it() {
+    let app = AppCopy::new("assets");
+    let state = server_of(&app.0, Revalidate::Every(std::time::Duration::ZERO));
+    let stylesheet = |state: &ServerState| {
+        let html = text(&get(state, "/products/blue-shirt", "visitor"));
+        let link = between(
+            &html,
+            &format!("//shop.test/cdn/extensions/{UID}/assets/reviews.css?v="),
+            "\"",
+        );
+        link.trim_start_matches("//shop.test")
+            .trim_end_matches('"')
+            .to_string()
+    };
+    let before = stylesheet(&state);
+    let year = Some("public, max-age=31557600");
+    assert_eq!(header(&get(&state, &before, "v"), "cache-control"), year);
+    let token = state.observe_changes();
+
+    app.write(
+        "extensions/reviews/assets/reviews.css",
+        ".reviews-edited { color: red; }\n",
+    );
+    // Live reload sees the edit, and the page links the file at a new URL that serves it.
+    assert_ne!(state.observe_changes(), token);
+    let after = stylesheet(&state);
+    assert_ne!(after, before);
+    let reply = get(&state, &after, "v");
+    assert!(text(&reply).contains(".reviews-edited"), "{}", text(&reply));
+    assert_eq!(header(&reply, "cache-control"), year);
+}
+
+#[test]
 fn the_section_rendering_api_renders_app_blocks() {
     let state = server();
     let reply = get(

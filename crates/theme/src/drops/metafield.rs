@@ -343,10 +343,13 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
             other => Value::from(other),
         },
         "color" => Color::parse(text()).map_or_else(|| Value::from(value), ColorDrop::value),
+        // Strings, as Shopify gives them: `{"rating": "4.5", "scale_max": "5.0", "scale_min":
+        // "0.0"}` in its Liquid reference. `(1..rating.scale_max)` takes the string "5.0"; it
+        // raises "invalid integer" on the number 5.0, here as on Shopify.
         "rating" => hash([
-            ("rating", decimal(value.get("value"))),
-            ("scale_min", decimal(value.get("scale_min"))),
-            ("scale_max", decimal(value.get("scale_max"))),
+            ("rating", text_of_number(value.get("value"))),
+            ("scale_max", text_of_number(value.get("scale_max"))),
+            ("scale_min", text_of_number(value.get("scale_min"))),
         ]),
         kind if is_measurement(kind) => hash([
             ("type", Value::str(kind)),
@@ -365,6 +368,15 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
         | "mixed_reference" => reference_value(site, kind, value),
         "file_reference" => file_value(site, text()),
         _ => Value::from(value),
+    }
+}
+
+/// A number of the store data as text: a string as it is, a number as it is written.
+fn text_of_number(value: Option<&Json>) -> Value {
+    match value {
+        Some(Json::Number(number)) => Value::from(number.to_string()),
+        Some(other) => Value::from(other),
+        None => Value::Nil,
     }
 }
 

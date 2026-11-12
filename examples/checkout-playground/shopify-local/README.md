@@ -164,7 +164,8 @@ product with options lists its variants; each gives one value per option:
   `"inventory_policy": "continue"`. A variant without `inventory_quantity` is not tracked and
   always available. `available` forces the answer either way. `"available": false` alone also
   makes the variant tracked with a quantity of 0, as a sold-out variant is on Shopify, so themes
-  show "Sold out". Adding more than the stock to the cart fails as it does on Shopify.
+  show "Sold out". Asking the cart for more than the stock (`/cart/add.js`, `/cart/change.js`)
+  puts what is in stock in it and answers `422`, as on Shopify.
   `"available": false` with an `inventory_quantity` above 0 is a warning
   (`unavailable_in_stock`): Shopify never has both. lsf keeps the variant unavailable with its
   stock, which Horizon shows as "Unavailable".
@@ -813,6 +814,23 @@ Metafields are grouped by namespace, then key. A plain value gets its type infer
 `{{ product.metafields.custom.size_guide.value.title }}` then behave as on Shopify, including
 `metafield_tag` and `metafield_text`.
 
+A value that is an object or a list (a `rating`, a `money`, a `weight`, a `list.` type...) may
+also be written as its JSON text, the Admin API's `value`, so that it can be pasted from the API
+as is: `"{\"scale_min\":\"1.0\",\"scale_max\":\"5.0\",\"value\":\"4.5\"}"`. A `json`
+metafield is the exception: a string is a value of it.
+
+A `rating` keeps its `value`, `scale_min` and `scale_max` as strings, as Shopify does:
+
+```json
+"rating": { "type": "rating", "value": { "scale_min": "1.0", "scale_max": "5.0", "value": "4.5" } }
+```
+
+Its Liquid object is Shopify's, with strings too: `{{ m.value | json }}` gives
+`{"rating":"4.5","scale_max":"5.0","scale_min":"1.0"}`, and `{% for i in (1..m.value.scale_max) %}`
+runs 5 times, as Liquid turns the string `"5.0"` into 5 (it raises "invalid integer" on the
+number `5.0`). A number in the data is kept as it is written, as a string: `"scale_max": 5` is
+`"5"`.
+
 A typed value is checked against its type, as Shopify checks it. `{"type": "number_integer",
 "value": "two"}` is an `invalid_metafield` error, and so is a `weight` in `"kgs"` or a
 `rating` outside its scale. A `weight`, `dimension` or `volume` takes the units Shopify lists
@@ -1149,7 +1167,7 @@ A metafield with an explicit type.
 | Field | Type | Description |
 |---|---|---|
 | `type` | string | **Required.** A Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`, `rich_text_field`, `number_integer`, `number_decimal`, `boolean`, `color`, `date`, `date_time`, `url`, `json`, `money`, `rating`, `weight`, `volume`, `dimension` and the other measurements (`distance`, `temperature`, `duration`...), `product_reference`, `collection_reference`, `page_reference`, `article_reference` (`blog/article`, or the article's handle alone), `file_reference`, `metaobject_reference`, or a `list.` variant of those. |
-| `value` | any JSON value | **Required.** The value. Lists are JSON arrays. A reference is written as Shopify writes it, a GID (`"gid://shopify/Product/<id>"`, the id the entity has in the store), or by the key the store data gives the entity, an lsf convention: a handle (`"blue-shirt"`), `blog/article`, `type/handle` of a metaobject entry (`"faq/size"`), a SKU or an id of a variant. Files are paths inside `files/`. |
+| `value` | any JSON value | **Required.** The value. Lists are JSON arrays. A reference is written as Shopify writes it, a GID (`"gid://shopify/Product/<id>"`, the id the entity has in the store), or by the key the store data gives the entity, an lsf convention: a handle (`"blue-shirt"`), `blog/article`, `type/handle` of a metaobject entry (`"faq/size"`), a SKU or an id of a variant. Files are paths inside `files/`. An object or a list may also be written as its JSON text, as the Admin API's `value` gives it. |
 
 ### Product
 

@@ -229,7 +229,8 @@ pub struct TypedMetafield {
     /// (`"gid://shopify/Product/<id>"`, the id the entity has in the store), or by the key the
     /// store data gives the entity, an lsf convention: a handle (`"blue-shirt"`), `blog/article`,
     /// `type/handle` of a metaobject entry (`"faq/size"`), a SKU or an id of a variant. Files
-    /// are paths inside `files/`.
+    /// are paths inside `files/`. An object or a list may also be written as its JSON text, as
+    /// the Admin API's `value` gives it.
     pub value: Json,
 }
 

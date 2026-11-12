@@ -5,6 +5,7 @@ mod checkout;
 mod commands;
 mod freshness;
 mod output;
+mod paths;
 mod profile;
 mod server;
 mod theme_extensions;
@@ -141,7 +142,8 @@ fn end_quietly_on_a_closed_pipe(command: &Command) {
 }
 
 fn main() -> ExitCode {
-    let matches = Cli::command().get_matches();
+    // On Windows, a path option given as Git Bash writes it (`/c/Users/me`) names its folder.
+    let matches = paths::read_git_bash_paths(Cli::command(), cfg!(windows)).get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     end_quietly_on_a_closed_pipe(&cli.command);
     let given = given(&matches);
@@ -267,5 +269,111 @@ mod tests {
         // The old names are gone.
         assert!(parse(&["checkout", "--app", "../my-app"]).is_err());
         assert!(parse(&["function", "run"]).is_err());
+    }
+
+    /// The command line of lsf, parsed as on Windows (`windows`) or elsewhere.
+    fn parse_on(windows: bool, words: &[&str]) -> Cli {
+        let matches = paths::read_git_bash_paths(Cli::command(), windows)
+            .try_get_matches_from(std::iter::once("lsf").chain(words.iter().copied()))
+            .unwrap();
+        Cli::from_arg_matches(&matches).unwrap()
+    }
+
+    #[test]
+    fn a_git_bash_data_directory_is_its_windows_folder_on_windows() {
+        let words = ["validate", "--data", "/c/Users/me/project/lsf-data"];
+        assert_eq!(
+            parse_on(true, &words).data,
+            Some(PathBuf::from(r"C:\Users\me\project\lsf-data"))
+        );
+        assert_eq!(
+            parse_on(true, &["--theme=/d/themes/dawn", "check"]).theme,
+            PathBuf::from(r"D:\themes\dawn")
+        );
+        // Elsewhere, `/c/...` is a path as any other.
+        assert_eq!(
+            parse_on(false, &words).data,
+            Some(PathBuf::from("/c/Users/me/project/lsf-data"))
+        );
+        assert_eq!(
+            parse_on(true, &["validate", "--data", "lsf-data"]).data,
+            Some(PathBuf::from("lsf-data"))
+        );
+    }
+
+    #[test]
+    fn every_path_option_reads_a_git_bash_path_on_windows() {
+        /// Gives each path option of `command` (found by the type of its values, as
+        /// `read_git_bash_paths` finds them) a Git Bash path, and checks what `root` reads.
+        fn check(
+            root: &clap::Command,
+            command: &clap::Command,
+            words: &mut Vec<String>,
+            checked: &mut Vec<String>,
+        ) {
+            for arg in command.get_arguments() {
+                if arg.get_value_parser().type_id() != std::any::TypeId::of::<PathBuf>() {
+                    continue;
+                }
+                let id = arg.get_id().as_str();
+                let mut argv = vec!["lsf".to_string()];
+                argv.extend(words.iter().cloned());
+                if let Some(long) = arg.get_long() {
+                    argv.push(format!("--{long}"));
+                }
+                argv.push("/c/Users/me/x".to_string());
+                let matches = root
+                    .clone()
+                    .ignore_errors(true)
+                    .try_get_matches_from(&argv)
+                    .unwrap_or_else(|error| panic!("{argv:?}: {error}"));
+                let mut matches = &matches;
+                for word in words.iter() {
+                    matches = matches.subcommand_matches(word).expect(word);
+                }
+                let values: Vec<&PathBuf> = matches
+                    .get_many::<PathBuf>(id)
+                    .unwrap_or_else(|| panic!("{argv:?}"))
+                    .collect();
+                assert_eq!(values, [&PathBuf::from(r"C:\Users\me\x")], "{argv:?}");
+                checked.push(id.to_string());
+            }
+            for subcommand in command.get_subcommands() {
+                words.push(subcommand.get_name().to_string());
+                check(root, subcommand, words, checked);
+                words.pop();
+            }
+        }
+        let root = paths::read_git_bash_paths(Cli::command(), true);
+        let mut checked = Vec::new();
+        check(&root, &Cli::command(), &mut Vec::new(), &mut checked);
+        for option in [
+            "theme",
+            "data",
+            "app",
+            "save_input",
+            "pricing_plans",
+            "out",
+            "paths",
+            "stdin_filepath",
+            "path",
+        ] {
+            assert!(
+                checked.iter().any(|id| id == option),
+                "{option}: {checked:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_route_git_bash_made_a_windows_path_of_is_refused() {
+        for command in ["render", "profile"] {
+            let error = Cli::try_parse_from(["lsf", command, "C:/Program Files/Git/"])
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(error.contains("MSYS_NO_PATHCONV=1"), "{command}: {error}");
+            assert!(Cli::try_parse_from(["lsf", command, "/products/shirt"]).is_ok());
+        }
     }
 }

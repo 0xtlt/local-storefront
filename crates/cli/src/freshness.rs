@@ -178,7 +178,7 @@ pub fn sources_in(root: &Path, dir: &Path, outputs: &[PathBuf]) -> Sources {
 
 /// Where what the module of `handle`, of the app in `root`, was built from is recorded.
 fn record_file(root: &Path, handle: &str) -> Option<PathBuf> {
-    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let root = lsf_core::util::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let key = blake3::hash(root.as_os_str().as_encoded_bytes()).to_hex();
     Some(
         lsf_core::util::user_cache_dir()?
@@ -303,7 +303,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dir.join("dist/function.wasm"), b"\0asm").unwrap();
-        let root = root.canonicalize().unwrap();
+        let root = lsf_core::util::canonicalize(&root).unwrap();
         let dir = root.join("extensions/discount");
         let function = FunctionExtension {
             handle: format!("discount-{label}"),

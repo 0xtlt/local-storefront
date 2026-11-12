@@ -679,7 +679,7 @@
           "type": "string"
         },
         "value": {
-          "description": "The value. Lists are JSON arrays. A reference is written as Shopify writes it, a GID\n(`\"gid://shopify/Product/<id>\"`, the id the entity has in the store), or by the key the\nstore data gives the entity, an lsf convention: a handle (`\"blue-shirt\"`), `blog/article`,\n`type/handle` of a metaobject entry (`\"faq/size\"`), a SKU or an id of a variant. Files\nare paths inside `files/`."
+          "description": "The value. Lists are JSON arrays. A reference is written as Shopify writes it, a GID\n(`\"gid://shopify/Product/<id>\"`, the id the entity has in the store), or by the key the\nstore data gives the entity, an lsf convention: a handle (`\"blue-shirt\"`), `blog/article`,\n`type/handle` of a metaobject entry (`\"faq/size\"`), a SKU or an id of a variant. Files\nare paths inside `files/`. An object or a list may also be written as its JSON text, as\nthe Admin API's `value` gives it."
         }
       },
       "additionalProperties": false,

@@ -99,7 +99,7 @@ fn liquid_files(
 /// file it points to is the one replaced.
 fn write_atomically(path: &Path, content: &str) -> std::io::Result<()> {
     let target = if fs::symlink_metadata(path)?.file_type().is_symlink() {
-        fs::canonicalize(path)?
+        lsf_core::util::canonicalize(path)?
     } else {
         path.to_path_buf()
     };
