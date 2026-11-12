@@ -45,11 +45,20 @@ fn data_source(theme_dir: &Path, data_dir: Option<&Path>) -> Result<DataSource, 
     match data_dir {
         Some(directory) => {
             if !directory.is_dir() {
-                return Err(format!(
-                    "the data directory {} does not exist. The `init` command creates it: `init --data {}`.",
-                    directory.display(),
-                    directory.display()
-                ));
+                // Not `init` with a Git Bash path lsf did not read as such: it would write a
+                // demo store into a folder of its own.
+                return Err(match crate::paths::git_bash_hint(directory) {
+                    Some(hint) => format!(
+                        "the data directory {} does not exist. {hint}: check the path before \
+                         creating a data directory with `init --data`.",
+                        directory.display()
+                    ),
+                    None => format!(
+                        "the data directory {} does not exist. The `init` command creates it: `init --data {}`.",
+                        directory.display(),
+                        directory.display()
+                    ),
+                });
             }
             Ok(DataSource::Directory(directory.to_path_buf()))
         }
@@ -92,8 +101,13 @@ impl App {
         previews: &[Preview],
     ) -> Result<App, String> {
         let env = Arc::new(lsf_theme::environment_with(previews));
-        let theme =
-            Arc::new(Theme::open(theme_dir, env, revalidate).map_err(|error| error.to_string())?);
+        let theme = Theme::open(theme_dir, env, revalidate).map_err(|error| {
+            match crate::paths::git_bash_hint(theme_dir).filter(|_| !theme_dir.exists()) {
+                Some(hint) => format!("{error}. {hint}."),
+                None => error.to_string(),
+            }
+        })?;
+        let theme = Arc::new(theme);
         let source = data_source(theme_dir, data_dir)?;
         Ok(App {
             renderer: Renderer::new(theme.clone()),
@@ -270,5 +284,34 @@ mod tests {
         std::fs::create_dir_all(theme.join(DEFAULT_DATA_DIRECTORY)).unwrap();
         assert_eq!(app.data_dir(), Some(theme.join(DEFAULT_DATA_DIRECTORY)));
         let _ = std::fs::remove_dir_all(&theme);
+    }
+
+    #[test]
+    fn a_missing_data_directory_gets_the_init_command() {
+        let missing = std::env::temp_dir().join(format!("lsf-no-data-{}", std::process::id()));
+        let error = data_source(Path::new("."), Some(&missing)).err().unwrap();
+        assert!(
+            error.contains(&format!("`init --data {}`", missing.display())),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_missing_git_bash_data_directory_names_its_windows_form_rather_than_init() {
+        // A Git Bash path lsf did not read as its Windows form: `init` with it would write a
+        // demo store into a folder of its own.
+        let error = data_source(Path::new("."), Some(Path::new("/c/Users/me/lsf-data")))
+            .err()
+            .unwrap();
+        assert!(error.contains(r"C:\Users\me\lsf-data"), "{error}");
+        assert!(!error.contains("init --data /c/"), "{error}");
+    }
+
+    #[test]
+    fn a_missing_git_bash_theme_folder_names_its_windows_form() {
+        let error = App::open(Path::new("/c/Users/me/dawn"), None, Revalidate::Never, &[])
+            .err()
+            .unwrap();
+        assert!(error.contains(r"C:\Users\me\dawn"), "{error}");
     }
 }
