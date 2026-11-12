@@ -2095,3 +2095,67 @@ fn a_theme_folder_that_does_not_exist_says_so() {
         "{error}"
     );
 }
+
+#[test]
+fn a_page_says_which_of_lsfs_default_menus_it_renders() {
+    // The data has a footer menu and no main menu: lsf makes up the main menu.
+    let removed = lsf_core::store::load::Removals {
+        menus: vec!["main-menu".to_string()],
+        ..Default::default()
+    };
+    let overlay = lsf_core::store::load::Overlay {
+        name: "(test)".to_string(),
+        removed,
+        data: serde_json::json!({}),
+    };
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlays(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        &[overlay],
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..theme_of(
+            "default-menus",
+            &[],
+            &[
+                (
+                    "layout/theme.liquid",
+                    "<html><body>{{ content_for_layout }}\
+                     <footer>{{ linklists.footer.links.size }}</footer></body></html>",
+                ),
+                // A `link_list` setting and a lookup by handle are the same menu, said once.
+                (
+                    "templates/index.json",
+                    r#"{"sections": {"header": {"type": "header", "settings": {"menu": "main-menu"}}}, "order": ["header"]}"#,
+                ),
+                (
+                    "sections/header.liquid",
+                    "{% for link in section.settings.menu.links %}[{{ link.title }}]{% endfor %}\
+                     {{ linklists['main-menu'].title }}\
+                     {% schema %}{\"name\": \"Header\", \"settings\": [{\"type\": \"link_list\", \"id\": \"menu\", \"label\": \"Menu\", \"default\": \"main-menu\"}]}{% endschema %}",
+                ),
+                ("templates/page.liquid", "{{ page.title }}"),
+            ],
+        )
+    };
+    let home = fixture.page("/");
+    assert_clean(&home);
+    assert!(
+        home.body.contains("[Home][Catalog]Main menu"),
+        "{}",
+        home.body
+    );
+    assert_eq!(
+        home.default_menus,
+        [
+            "menu \"main-menu\" is lsf's default (Home, Catalog), not the store's: the store data \
+             has none with this handle. Add it to \"menus\" to render the store's links"
+        ]
+    );
+    // The footer is the data's, and a page without the main menu has nothing to say.
+    let page = fixture.page("/pages/contact");
+    assert_clean(&page);
+    assert!(page.default_menus.is_empty(), "{:?}", page.default_menus);
+}

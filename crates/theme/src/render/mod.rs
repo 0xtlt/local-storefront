@@ -111,12 +111,36 @@ pub struct Rendered {
     pub warnings: Vec<String>,
     /// What the page left out and why: the app blocks it names that did not render.
     pub notices: Vec<String>,
+    /// What the page renders of the menus lsf made up, which the store data does not have: a
+    /// note per menu ([`default_menu_note`]), in the order the page first used them. Not an
+    /// error: a Shopify store cannot delete these menus, only their links are lsf's.
+    pub default_menus: Vec<String>,
     /// The template that rendered the page, e.g. `product.alternate`.
     pub template: String,
     /// Why a page is the 404 page: what its URL asks for and the store does not have.
     pub not_found: Option<String>,
     /// How long it took.
     pub timings: Timings,
+}
+
+/// What a page says of a menu lsf made up that it renders: whose links they are, and how to
+/// render the store's.
+pub fn default_menu_note(menu: &lsf_core::store::Menu) -> String {
+    format!(
+        "menu \"{}\" is lsf's default ({}), not the store's: the store data has none with this \
+         handle. Add it to \"menus\" to render the store's links",
+        menu.handle,
+        menu.link_titles()
+    )
+}
+
+/// The notes of the menus lsf made up that a render used.
+fn default_menu_notes(site: &Site) -> Vec<String> {
+    site.default_menus()
+        .iter()
+        .filter_map(|handle| site.store.menu(handle))
+        .map(default_menu_note)
+        .collect()
 }
 
 /// How long a render took, and the parts of it.
@@ -448,6 +472,7 @@ impl Renderer {
             errors: ctx.errors(),
             warnings: ctx.warnings(),
             notices: state.notices(),
+            default_menus: default_menu_notes(site),
             template: page.template.full(),
             not_found: match (&page.resource, target) {
                 (Resource::NotFound(reason), Target::Page) => Some(reason.clone()),
@@ -796,6 +821,7 @@ impl Renderer {
             errors: ctx.errors(),
             warnings: ctx.warnings(),
             notices: Vec::new(),
+            default_menus: default_menu_notes(site),
             template: page.template.full(),
             not_found: None,
             timings: Timings {

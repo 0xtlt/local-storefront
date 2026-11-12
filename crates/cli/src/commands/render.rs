@@ -322,12 +322,23 @@ pub fn run(
     for warning in &rendered.warnings {
         eprintln!("warning: {warning}");
     }
+    // A menu lsf made up: a warning, never a failure, since a Shopify store cannot delete it.
+    for note in &rendered.default_menus {
+        match args.format {
+            Format::Text => eprintln!("warning: {note}"),
+            Format::Github => annotate("warning", None, None, &args.path, note.clone()),
+        }
+    }
     eprintln!(
         "status {} · template {} · {} · {}",
         rendered.status,
         rendered.template,
         count(rendered.errors.len(), "Liquid error", "Liquid errors"),
-        count(rendered.warnings.len(), "warning", "warnings")
+        count(
+            rendered.warnings.len() + rendered.default_menus.len(),
+            "warning",
+            "warnings"
+        )
     );
     // Strict, a path that leads to nothing fails as Liquid errors do: a snapshot of a product
     // the data no longer has must not pass.

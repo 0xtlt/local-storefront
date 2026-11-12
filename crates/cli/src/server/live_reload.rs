@@ -40,13 +40,15 @@ pub fn inject_markup(html: &mut String, markup: &str) -> bool {
 }
 
 /// The panel `--live-reload` shows in a page whose render or store data has problems: the
-/// store data errors, the Liquid errors of the page, why it is the 404 page. Dismissed with
-/// its button; the next render shows it again while the problems remain. `None` when there is
-/// nothing to say.
+/// store data errors, the Liquid errors of the page, why it is the 404 page. It also notes what
+/// is not a problem but differs from Shopify: the default menus of lsf the page renders. Without
+/// problems, the panel is a note's, not an alert. Dismissed with its button; the next render
+/// shows it again while they remain. `None` when there is nothing to say.
 pub fn overlay(
     data_errors: &[String],
     liquid_errors: &[String],
     not_found: Option<&str>,
+    notes: &[String],
 ) -> Option<String> {
     use lsf_liquid::filters::escape_html;
     let mut items = Vec::new();
@@ -66,21 +68,37 @@ pub fn overlay(
             ));
         }
     }
+    let problems = items.len();
+    for note in notes {
+        items.push(format!("<li><b>note</b> {}</li>", escape_html(note)));
+    }
     if items.is_empty() {
         return None;
     }
-    let count = items.len();
+    let plural =
+        |count: usize, what: &str| format!("{count} {what}{}", if count == 1 { "" } else { "s" });
+    let notes = items.len() - problems;
+    let summary: Vec<String> = [(problems, "problem"), (notes, "note")]
+        .into_iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, what)| plural(count, what))
+        .collect();
+    let (attribute, role, color) = if problems > 0 {
+        ("data-lsf-errors", "alert", "#c00")
+    } else {
+        ("data-lsf-notes", "status", "#555")
+    };
     Some(format!(
-        "<aside data-lsf-errors role=\"alert\" style=\"all:initial;position:fixed;z-index:2147483647;right:12px;bottom:12px;\
+        "<aside {attribute} role=\"{role}\" style=\"all:initial;position:fixed;z-index:2147483647;right:12px;bottom:12px;\
          box-sizing:border-box;max-width:min(640px,calc(100vw - 24px));max-height:50vh;overflow:auto;padding:10px 14px;\
-         background:#fff;color:#1a1a1a;border:2px solid #c00;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.3);\
+         background:#fff;color:#1a1a1a;border:2px solid {color};border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.3);\
          font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace\">\
          <button type=\"button\" aria-label=\"Dismiss\" onclick=\"this.parentNode.remove()\" style=\"float:right;\
          margin:-4px -6px 0 8px;border:0;background:none;color:inherit;font:inherit;font-size:18px;cursor:pointer\">&times;</button>\
-         <b style=\"color:#c00\">lsf: {count} problem{plural}</b> \
+         <b style=\"color:{color}\">lsf: {summary}</b> \
          <span style=\"color:#666\">(shown by --live-reload; the terminal has them too)</span>\
          <ul style=\"margin:6px 0 0;padding-left:18px\">{items}</ul></aside>",
-        plural = if count == 1 { "" } else { "s" },
+        summary = summary.join(", "),
         items = items.join(""),
     ))
 }

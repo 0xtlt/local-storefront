@@ -1699,6 +1699,43 @@ mod tests {
     }
 
     #[test]
+    fn the_menus_a_store_lacks_of_shopifys_two_are_lsfs_and_said_so() {
+        let directory = std::env::temp_dir().join(format!("lsf-no-menus-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("directory");
+        std::fs::write(
+            directory.join("store.json"),
+            r#"{"products": [{"title": "Thing", "price": 100}]}"#,
+        )
+        .expect("store");
+        let source = DataSource::Directory(directory.clone());
+        let (store, diagnostics) = load(&source, &LoadOptions::default());
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        // Shopify's default menus, which a store cannot delete: lsf makes them up, and says so.
+        let main = store.menu("main-menu").expect("main menu");
+        assert!(main.supplied_by_lsf);
+        assert_eq!(main.link_titles(), "Home, Catalog");
+        assert!(store.menu("footer").expect("footer").supplied_by_lsf);
+
+        // A menu of the data is the store's, even without links; the other one is still lsf's.
+        std::fs::write(
+            directory.join("store.json"),
+            r#"{"menus": {"main-menu": {"links": []}, "legal": {"links": [{"title": "Terms", "url": "/policies/terms-of-service"}]}}}"#,
+        )
+        .expect("store");
+        let (store, diagnostics) = load(&source, &LoadOptions::default());
+        std::fs::remove_dir_all(&directory).ok();
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let main = store.menu("main-menu").expect("main menu");
+        assert!(!main.supplied_by_lsf);
+        assert!(main.links.is_empty());
+        assert!(!store.menu("legal").expect("legal").supplied_by_lsf);
+        assert!(store.menu("footer").expect("footer").supplied_by_lsf);
+        // The demo store has both.
+        let (demo, _) = load(&DataSource::Demo, &LoadOptions::default());
+        assert!(demo.menus.iter().all(|menu| !menu.supplied_by_lsf));
+    }
+
+    #[test]
     fn a_store_without_customers_has_a_default_one() {
         let directory =
             std::env::temp_dir().join(format!("lsf-no-customers-{}", std::process::id()));

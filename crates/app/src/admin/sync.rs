@@ -2681,7 +2681,15 @@ mod tests {
             format!("{:#?}", store.collections),
             format!("{:#?}", store.pages),
             format!("{:#?}", store.blogs),
-            format!("{:#?}", store.menus),
+            // Whether lsf made a menu up is not what the data says: projected, it is the data's.
+            format!(
+                "{:#?}",
+                store
+                    .menus
+                    .iter()
+                    .map(|menu| (&menu.handle, &menu.title, &menu.links))
+                    .collect::<Vec<_>>()
+            ),
             format!("{:#?}", store.customers),
             format!("{:#?}", store.companies),
             format!("{:#?}", store.gift_cards),

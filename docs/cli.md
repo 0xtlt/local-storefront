@@ -551,6 +551,15 @@ Liquid error (layout/theme line 34): divided by 0
 status 200 · template product · 1 Liquid error · 0 warnings
 ```
 
+A page that renders one of [lsf's default menus](data-format.md#lsfs-default-menus) gets a
+warning for it. With `--format github` it is a `::warning` annotation. It never fails
+`--strict`: a Shopify store cannot delete that menu, so the page is not wrong, only its links
+are lsf's.
+
+```text
+warning: menu "main-menu" is lsf's default (Home, Catalog), not the store's: the store data has none with this handle. Add it to "menus" to render the store's links
+```
+
 With `--strict`, a path with nothing at it adds `error: nothing at /x: the page is the theme's
 404`.
 
@@ -583,6 +592,18 @@ app's (`<app>/shopify-local`), or the built-in demo store. In a folder that is n
 app, such as [the checkout playground](https://github.com/0xtlt/local-storefront/tree/main/examples/checkout-playground)), it checks the data
 alone, with the store's own languages; an app without any is checked with the demo store, as its
 checkout runs. A folder that is neither a theme nor an app, and has no store data, is an error.
+
+With a theme, it also checks the menus the theme names, in its `link_list` settings (of
+`config/settings_data.json`, of the sections of its JSON templates and section groups, of their
+blocks) and in Liquid (`linklists['main-menu']`). A `main-menu` or `footer` that the data does
+not have is a `default_menu` warning, since [lsf renders its own](data-format.md#lsfs-default-menus).
+Another menu the data does not have is a `missing_menu` warning: lsf renders no menu there.
+
+```text
+warning[default_menu]: the store data has no "main-menu" menu, which the theme names (sections/header-group.json at /sections/header/settings/menu): lsf renders its default in its place (Home, Catalog), not the store's links
+  --> (data) at /menus/main-menu
+  hint: add the store's "main-menu" to "menus" (or a menus/main-menu.json file); with "links": [] it renders no links
+```
 
 In a Shopify app (or with `--app`), it checks the app too: what its Functions and UI extensions
 get wrong (no build, an API version lsf does not run, an unknown target, an `owner_type`), and

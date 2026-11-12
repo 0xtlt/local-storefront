@@ -2409,9 +2409,11 @@ fn build_menus(
             handle: handle.clone(),
             title: input.title.clone().unwrap_or_else(|| humanize(handle)),
             links,
+            supplied_by_lsf: false,
         });
     }
-    // The two menus every Shopify store starts with.
+    // Shopify's two default menus, which a store cannot delete: made up when the data does not
+    // have them, and marked so, since their links are lsf's.
     let simple = |title: &str, url: &str, target: LinkTarget| Link {
         title: title.to_string(),
         handle: handleize(title),
@@ -2419,21 +2421,28 @@ fn build_menus(
         target,
         links: Vec::new(),
     };
-    if !inputs.contains_key("main-menu") {
+    for handle in super::DEFAULT_MENUS {
+        if inputs.contains_key(handle) {
+            continue;
+        }
+        let (title, links) = match handle {
+            "main-menu" => (
+                "Main menu",
+                vec![
+                    simple("Home", "/", LinkTarget::Frontpage),
+                    simple("Catalog", "/collections/all", LinkTarget::Catalog),
+                ],
+            ),
+            _ => (
+                "Footer menu",
+                vec![simple("Search", "/search", LinkTarget::Search)],
+            ),
+        };
         store.menus.push(Menu {
-            handle: "main-menu".to_string(),
-            title: "Main menu".to_string(),
-            links: vec![
-                simple("Home", "/", LinkTarget::Frontpage),
-                simple("Catalog", "/collections/all", LinkTarget::Catalog),
-            ],
-        });
-    }
-    if !inputs.contains_key("footer") {
-        store.menus.push(Menu {
-            handle: "footer".to_string(),
-            title: "Footer menu".to_string(),
-            links: vec![simple("Search", "/search", LinkTarget::Search)],
+            handle: handle.to_string(),
+            title: title.to_string(),
+            links,
+            supplied_by_lsf: true,
         });
     }
 }

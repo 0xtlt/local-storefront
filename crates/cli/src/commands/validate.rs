@@ -78,6 +78,81 @@ pub struct Args {
     app: Option<std::path::PathBuf>,
 }
 
+/// What the store data lacks of the menus the theme names. A main menu or a footer menu is
+/// made up by lsf, with links of its own (`default_menu`); another menu is `nil`, and lsf
+/// renders no menu there (`missing_menu`). Warnings: lsf renders both without an error.
+fn menu_diagnostics(
+    references: &[lsf_theme::theme::MenuReference],
+    store: &lsf_core::Store,
+    diagnostics: &mut lsf_core::diagnostics::Diagnostics,
+) {
+    let mut handles: Vec<&str> = Vec::new();
+    for reference in references {
+        if !handles.contains(&reference.handle.as_str()) {
+            handles.push(&reference.handle);
+        }
+    }
+    for handle in handles {
+        let places: Vec<&str> = references
+            .iter()
+            .filter(|reference| reference.handle == handle)
+            .map(|reference| reference.place.as_str())
+            .collect();
+        let named = match places.len() {
+            1 => places[0].to_string(),
+            more => format!(
+                "{} and {}",
+                places[0],
+                count(more - 1, "other place", "other places")
+            ),
+        };
+        let path = format!("/menus/{handle}");
+        match store.menu(handle) {
+            Some(menu) if menu.supplied_by_lsf => {
+                diagnostics
+                    .warning(
+                        "default_menu",
+                        "(data)",
+                        &path,
+                        format!(
+                            "the store data has no \"{handle}\" menu, which the theme names \
+                             ({named}): lsf renders its default in its place ({}), not the \
+                             store's links",
+                            menu.link_titles()
+                        ),
+                    )
+                    .hint(format!(
+                        "add the store's \"{handle}\" to \"menus\" (or a menus/{handle}.json \
+                         file); with \"links\": [] it renders no links"
+                    ));
+            }
+            Some(_) => {}
+            None => {
+                let diagnostic = diagnostics.warning(
+                    "missing_menu",
+                    "(data)",
+                    &path,
+                    format!(
+                        "the theme names the menu \"{handle}\" ({named}), which the store data \
+                         does not have: lsf renders no menu there"
+                    ),
+                );
+                let known = store
+                    .menus
+                    .iter()
+                    .filter(|menu| !menu.supplied_by_lsf)
+                    .map(|menu| menu.handle.as_str());
+                match lsf_core::util::closest_match(handle, known) {
+                    Some(close) => diagnostic.hint(format!("did you mean \"{close}\"?")),
+                    None => diagnostic.hint(format!(
+                        "add it to \"menus\" (or a menus/{handle}.json file)"
+                    )),
+                };
+            }
+        }
+    }
+}
+
 /// Whether `directory` is a theme, as `Theme::open` sees one.
 fn looks_like_a_theme(directory: &Path) -> bool {
     directory.join("layout").is_dir() || directory.join("templates").is_dir()
@@ -116,6 +191,10 @@ pub fn run(
         app
     };
     let (store, mut diagnostics) = app.load_store();
+    // The menus the theme names: the store data's, or lsf's (two of them) or none.
+    if app.has_theme() && app.data_dir().is_some() {
+        menu_diagnostics(&app.theme.menu_references(), &store, &mut diagnostics);
+    }
     let shopify_app = match &app_dir {
         Some(dir) => Some(lsf_app::config::load(dir)?),
         None => None,
