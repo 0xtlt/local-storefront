@@ -13,7 +13,7 @@ use crate::output::{count, print_diagnostics};
 #[derive(clap::Args)]
 pub struct Args {
     /// The path to render, with its query string: `/products/shirt?variant=123`.
-    #[arg(default_value = "/")]
+    #[arg(default_value = "/", value_parser = crate::paths::route)]
     path: String,
 
     /// Render only this section (Section Rendering API).
@@ -104,7 +104,7 @@ fn session_input(args: &Args) -> Result<Option<lsf_core::store::model::SessionIn
             let source = if text.trim_start().starts_with('{') {
                 text.clone()
             } else {
-                std::fs::read_to_string(text)
+                std::fs::read_to_string(&*crate::paths::given(text))
                     .map_err(|error| format!("cannot read the session {text}: {error}"))?
             };
             let json = lsf_core::json::parse_lenient("--session", &source)

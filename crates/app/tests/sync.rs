@@ -1028,6 +1028,74 @@ fn mutate(state: &mut ShopState, query: &str, variables: Value) -> Value {
 }
 
 #[test]
+fn the_translations_of_a_metaobject_are_those_of_the_store_data() {
+    // The FAQ of the rich fixture has its question in English, the store's other language.
+    let (base, mut state) = rich();
+    let faq = content::metaobject_gid("faq", "returns");
+    let read = mutate(
+        &mut state,
+        r#"query($id: ID!) {
+            translatableResource(resourceId: $id) { translatableContent { key digest } translations(locale: "en") { key value outdated } }
+            metaobjectDefinitionByType(type: "faq") { capabilities { translatable { enabled } } }
+        }"#,
+        json!({"id": faq}),
+    );
+    let resource = &read["data"]["translatableResource"];
+    assert_eq!(
+        resource["translations"],
+        json!([{"key": "question", "value": "Can I send it back?", "outdated": false}]),
+        "{read}"
+    );
+    // The references are not translatable: the question and the answer are.
+    let content = resource["translatableContent"].as_array().unwrap();
+    let keys: Vec<&str> = content
+        .iter()
+        .map(|entry| entry["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys, ["question", "answer"]);
+    assert_eq!(
+        read["data"]["metaobjectDefinitionByType"]["capabilities"]["translatable"]["enabled"],
+        json!(true)
+    );
+
+    // The backend translates the answer and removes the question's translation.
+    let answer = json!({"type": "root", "children": [
+        {"type": "paragraph", "children": [{"type": "text", "value": "Yes, within 30 days."}]},
+    ]});
+    mutate(
+        &mut state,
+        r#"mutation($id: ID!, $translations: [TranslationInput!]!) {
+            translationsRegister(resourceId: $id, translations: $translations) { userErrors { message } } }"#,
+        json!({"id": faq, "translations": [{
+            "locale": "en", "key": "answer", "value": answer.to_string(),
+            "translatableContentDigest": content[1]["digest"],
+        }]}),
+    );
+    mutate(
+        &mut state,
+        r#"mutation($id: ID!) { translationsRemove(resourceId: $id, translationKeys: ["question"], locales: ["en"]) { userErrors { message } } }"#,
+        json!({"id": faq}),
+    );
+    let (store, overlay) = synced(&state, &base);
+    assert_eq!(
+        overlay.data["metaobjects"]["faq"][0]["translations"],
+        json!({"en": {"answer": answer}}),
+        "{overlay:#?}"
+    );
+    let entry = store.metaobject("faq", "returns").unwrap();
+    assert_eq!(entry.field_in("answer", "en").unwrap().value, answer);
+    assert_eq!(
+        entry.field_in("question", "en").unwrap().value,
+        json!("Can I return?")
+    );
+    // Nothing else of the store changed.
+    assert_eq!(
+        store.metaobject("faq", "returns").unwrap().fields["designers"].value,
+        base.metaobject("faq", "returns").unwrap().fields["designers"].value
+    );
+}
+
+#[test]
 fn the_metaobjects_of_an_app_type_reach_the_storefront_and_the_functions() {
     let (base, mut state) = rich();
     let app_id = state.app_id();

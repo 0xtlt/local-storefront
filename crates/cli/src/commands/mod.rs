@@ -37,7 +37,8 @@ pub fn admin_source(text: &str) -> Result<(String, std::path::PathBuf), String> 
         ));
     };
     let url = lsf_app::admin::sources::stub_key(url)?;
-    let path = std::path::Path::new(file.trim());
+    let file = crate::paths::given(file.trim());
+    let path = std::path::Path::new(&*file);
     match std::fs::metadata(path) {
         Ok(meta) if meta.is_file() => {}
         Ok(_) => return Err(format!("{} is not a file", path.display())),

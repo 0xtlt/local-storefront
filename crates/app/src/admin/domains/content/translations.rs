@@ -23,9 +23,12 @@
 //!   so when the content of its key changed; lsf has the date of the resource, not of each key.
 //!
 //! Translations are kept in a record of their own per resource: a `TranslatableResource` (its
-//! `resourceId`, its `translations`), under the key `translations/<resource GID>`. They are not
-//! store data: the storefront does not show them. Shopify has no webhook topic for them: their
-//! change is the event `translations/update` on the resource, which no subscription can name.
+//! `resourceId`, its `translations`), under the key `translations/<resource GID>`. Those of a
+//! metaobject are store data (the `translations` of its entry): the seed makes them from it
+//! ([`seed_metaobject`]), the store sync writes them back, and the storefront shows them on the
+//! routes of their language. Those of the other resources, and those of a market, are not
+//! shown. Shopify has no webhook topic for them: their change is the event
+//! `translations/update` on the resource, which no subscription can name.
 
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
@@ -126,6 +129,10 @@ fn content_type_of_metafield(kind: &str) -> &'static str {
         "url" => "URL",
         "link" => "LINK",
         "file_reference" => "FILE_REFERENCE",
+        "list.single_line_text_field" => "LIST_SINGLE_LINE_TEXT_FIELD",
+        "list.link" => "LIST_LINK",
+        "list.url" => "LIST_URL",
+        "list.file_reference" => "LIST_FILE_REFERENCE",
         _ => "STRING",
     }
 }
@@ -209,14 +216,14 @@ fn primary_locale(state: &ShopState) -> String {
 }
 
 /// The key of the record that keeps a resource's translations.
-fn translations_key(resource: &str) -> String {
+pub(crate) fn key_of(resource: &str) -> String {
     format!("translations/{resource}")
 }
 
 /// The translations of a resource, as kept.
 fn translations_of(state: &ShopState, resource: &str) -> Vec<Value> {
     state
-        .get(&translations_key(resource))
+        .get(&key_of(resource))
         .and_then(|record| record.get("translations"))
         .and_then(Value::as_array)
         .cloned()
@@ -537,9 +544,36 @@ fn register_translations(
     Ok(payload(json!({"translations": registered}), &[]))
 }
 
+/// Seeds the translations of a metaobject entry of the store data (by language, then field key,
+/// as the Admin API writes the values): registered when the shop was, for no market.
+pub(crate) fn seed_metaobject(
+    state: &mut ShopState,
+    resource: &str,
+    translations: Vec<(String, String, String)>,
+    registered: &str,
+) {
+    if translations.is_empty() {
+        return;
+    }
+    let translations = translations
+        .into_iter()
+        .map(|(locale, key, value)| {
+            json!({
+                "key": key,
+                "value": value,
+                "locale": locale,
+                "market": null,
+                "outdated": false,
+                "updatedAt": registered,
+            })
+        })
+        .collect();
+    store(state, resource, translations);
+}
+
 /// Keeps the translations of a resource (none: its record goes).
 fn store(state: &mut ShopState, resource: &str, translations: Vec<Value>) {
-    let key = translations_key(resource);
+    let key = key_of(resource);
     if translations.is_empty() {
         state.remove(&key);
         return;

@@ -14,7 +14,7 @@ use crate::profile::{DEFAULT_RUNS, MAX_RUNS, Unit, measure, speedscope, text};
 #[derive(clap::Args)]
 pub struct Args {
     /// The path to profile, with its query string: `/collections/all?sort_by=price-ascending`.
-    #[arg(default_value = "/")]
+    #[arg(default_value = "/", value_parser = crate::paths::route)]
     path: String,
 
     /// Profile only this section (Section Rendering API).
