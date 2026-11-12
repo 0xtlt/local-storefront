@@ -622,6 +622,7 @@ fn seed_markets(seed: &mut Seed) {
                 .map(|code| code.to_ascii_uppercase())
                 .collect(),
             metafields: Some(&market.metafields),
+            rate: market.rate.as_ref().map(ToString::to_string),
         })
         .collect();
     for country in &store.countries {
@@ -633,6 +634,7 @@ fn seed_markets(seed: &mut Seed) {
                 name: country.name.clone(),
                 countries: vec![code],
                 metafields: None,
+                rate: None,
             });
         }
     }
@@ -643,6 +645,7 @@ fn seed_markets(seed: &mut Seed) {
         name,
         countries,
         metafields,
+        rate,
     } in markets
     {
         let id = market_gid(&key);
@@ -674,6 +677,13 @@ fn seed_markets(seed: &mut Seed) {
             Some(metafields) => seed.metafields(&id, "MARKET", &created, metafields),
             None => json!([]),
         };
+        // The rate of the data is the manual rate of the market's currency, which every
+        // conversion of the Admin API uses (`contextualPricing`, price lists).
+        let mut base_currency =
+            currency_setting(local_currency.as_deref().unwrap_or(&seed.currency));
+        if let Some(rate) = rate {
+            base_currency["manualRate"] = json!(rate);
+        }
         seed.insert(json!({
             "__typename": "Market",
             "id": id,
@@ -689,7 +699,7 @@ fn seed_markets(seed: &mut Seed) {
             },
             "regions": regions,
             "currencySettings": {
-                "baseCurrency": currency_setting(local_currency.as_deref().unwrap_or(&seed.currency)),
+                "baseCurrency": base_currency,
                 "localCurrencies": local_currency.is_some(),
             },
             "metafields": metafields,
@@ -705,6 +715,8 @@ struct MarketSeed<'a> {
     name: String,
     countries: Vec<String>,
     metafields: Option<&'a Metafields>,
+    /// The rate of the data, the manual rate of its base currency.
+    rate: Option<String>,
 }
 
 fn currency_setting(code: &str) -> Value {

@@ -323,6 +323,16 @@ pub fn currency(code: &str) -> Option<&'static Currency> {
         .find(|currency| currency.code.eq_ignore_ascii_case(code))
 }
 
+/// Whether a currency has no minor unit (ISO 4217 exponent 0): its amounts are whole units.
+pub fn has_no_decimals(code: &str) -> bool {
+    [
+        "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "UYI", "VND",
+        "VUV", "XAF", "XOF", "XPF",
+    ]
+    .iter()
+    .any(|known| known.eq_ignore_ascii_case(code))
+}
+
 pub fn currency_symbol(code: &str) -> String {
     currency(code).map_or_else(|| code.to_string(), |currency| currency.symbol.to_string())
 }

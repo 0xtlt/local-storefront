@@ -2903,7 +2903,7 @@
           "default": null
         },
         "currency": {
-          "description": "ISO 4217 currency code. Defaults to the store currency.",
+          "description": "ISO 4217 code of the currency its buyers pay in: prices, the cart and the checkout are\nin it. Defaults to the `currency` of its market, else the store currency.",
           "type": [
             "string",
             "null"
@@ -3001,12 +3001,69 @@
             "string",
             "null"
           ]
+        },
+        "currency": {
+          "description": "The currency its countries pay in, by ISO 4217 code (`\"EUR\"`), as a Shopify market's\nbase currency: prices, the cart and the checkout are in it. A country's own `currency`\nwins. Defaults to the store currency.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rate": {
+          "description": "What one unit of the store currency is worth in the market's currency, as a decimal\nstring (`\"0.92\"`): prices are converted with it, as with a manual exchange rate on\nShopify. Defaults to 1, since lsf has no exchange rates.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prices": {
+          "description": "Fixed prices in the market's currency, as a Shopify price list has them, which are not\nconverted: by variant (a SKU, an id, or a product handle for each of its variants), a\nprice (`\"25.00\"`) or `{\"price\": \"25.00\", \"compare_at_price\": \"30.00\"}`.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/FixedPriceInput"
+          }
         }
       },
       "additionalProperties": false,
       "required": [
         "handle",
         "countries"
+      ]
+    },
+    "FixedPriceInput": {
+      "description": "A fixed price of a market: a price, or a price and a compare-at price.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Money"
+        },
+        {
+          "$ref": "#/$defs/FixedPriceObject"
+        }
+      ]
+    },
+    "FixedPriceObject": {
+      "description": "A fixed price with its compare-at price.",
+      "type": "object",
+      "properties": {
+        "price": {
+          "$ref": "#/$defs/Money"
+        },
+        "compare_at_price": {
+          "description": "None when omitted: a fixed price has the compare-at price it is given.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "price"
       ]
     },
     "LocationInput": {

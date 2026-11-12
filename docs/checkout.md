@@ -1592,8 +1592,11 @@ store before a release:
 
 - **Discount combinations and conditions**: lsf combines every product and order discount
   ([how discounts stack](#how-discounts-stack)).
-- **Currencies and price lists**: one price list, in the shop's currency; a buyer abroad pays it
-  too ([what it does not do](#what-it-does-not-do), [markets](compatibility.md#known-differences)).
+- **Currencies and price lists**: a buyer pays in the currency of the country of the shipping
+  address (else of the one selected on the storefront), at its market's `rate` or fixed `prices`
+  ([localization](data-format.md#localization)); the Functions read that rate as
+  `presentmentCurrencyRate`. Shopify's rounding rules of converted prices and B2B catalogs are
+  not applied ([markets](compatibility.md#known-differences)).
 - **B2B catalogs, pickup points, local pickup, fulfillment constraints and order routing**: not
   run.
 - **Network access**: the request JWT and Shopify's cache of responses

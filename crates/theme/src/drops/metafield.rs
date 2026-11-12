@@ -331,7 +331,7 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
                     .get("currency_code")
                     .and_then(Json::as_str)
                     .filter(|code| !code.is_empty())
-                    .map_or_else(|| site.currency().to_string(), str::to_uppercase);
+                    .map_or_else(|| site.store.shop.currency.clone(), str::to_uppercase);
                 Value::object(MoneyDrop { cents, currency })
             }
             other => Value::from(other),

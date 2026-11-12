@@ -268,6 +268,16 @@ pub(super) fn storefront_root(store: &Store, language: &Language, country: &str)
     store.locale_root(language, market)
 }
 
+/// How the checkout formats money: the shop's format in its currency, Shopify's usual format
+/// of the buyer's currency otherwise.
+fn money_format_of(store: &Store) -> String {
+    if store.currency() == store.shop.currency {
+        store.shop.money_format.clone()
+    } else {
+        lsf_core::store::reference::default_money_format(store.currency())
+    }
+}
+
 /// The locale root of the request, for a session.
 fn request_root(state: &ServerState, session_id: &str, incoming: &Incoming) -> String {
     let (_, store) = state.snapshot(session_id);
@@ -721,6 +731,14 @@ fn compute(
     let variant = variant_of(state, session_id, incoming);
     // One read, so that the basis is what the result is computed from.
     let (session, store, mut checkout, basis) = read(state, session_id);
+    // Priced in the currency of the buyer's country (the one of the shipping address, else the
+    // one of the session), as Shopify's checkout follows the market of the address.
+    let country = checkout
+        .shipping_country()
+        .filter(|code| store.country(code).is_some())
+        .map(str::to_string)
+        .unwrap_or_else(|| lsf_app::checkout::input::buyer_country(&store, &session));
+    let store = store.presented_for(&country);
     let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
     let language = language_of(state, &store, incoming);
     let (app, selection, result) = price(state, &session, &store, &mut checkout, language, step)?;
@@ -747,8 +765,8 @@ fn compute(
         json!({
             "id": format!("gid://shopify/Shop/{}", store.shop.id),
             "name": store.shop.name,
-            "currencyCode": store.shop.currency,
-            "moneyFormat": store.shop.money_format,
+            "currencyCode": store.currency(),
+            "moneyFormat": money_format_of(&store),
             // The primary language of the store. The buyer's is `localization.language`.
             "locale": store.primary_language().iso_code,
             "storefrontUrl": origin_of(incoming),
@@ -953,7 +971,7 @@ pub(super) fn localization_json(
             "isoCode": code,
             "name": store.country(&code).map_or(code.as_str(), |country| country.name.as_str()),
         },
-        "currency": {"isoCode": store.shop.currency},
+        "currency": {"isoCode": store.currency()},
         "market": {"id": market_id, "handle": market_handle},
     })
 }

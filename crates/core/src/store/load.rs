@@ -2721,6 +2721,91 @@ mod tests {
     }
 
     #[test]
+    fn a_market_sells_in_its_currency_at_its_rate_or_its_fixed_prices() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [
+                {"iso_code": "CA"}, {"iso_code": "US"}, {"iso_code": "FR"}, {"iso_code": "DE"},
+                {"iso_code": "JP"}, {"iso_code": "GB", "currency": "GBP"}
+            ],
+            "markets": [
+                {"handle": "europe", "countries": ["FR", "DE"], "currency": "eur", "rate": "0.9",
+                 "prices": {
+                    "TEE-WHT-S": "25.00",
+                    "canvas-tote-bag": {"price": "30.00", "compare_at_price": 4000}
+                 }},
+                {"handle": "japan", "countries": ["JP"], "currency": "JPY", "rate": "151.23"}
+            ]
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        // A country pays in its market's currency, else in its own, else in the shop's.
+        assert_eq!(store.country("FR").unwrap().currency, "EUR");
+        assert_eq!(store.country("US").unwrap().currency, "USD");
+        assert_eq!(store.country("GB").unwrap().currency, "GBP");
+        let base = std::sync::Arc::new(store);
+        // In the shop's currency, the store itself.
+        assert!(std::sync::Arc::ptr_eq(&base, &base.presented_for("US")));
+        assert_eq!(base.currency(), "USD");
+        // In a market's currency, a copy priced in it, shared by the countries of the market.
+        let europe = base.presented_for("fr");
+        assert!(std::sync::Arc::ptr_eq(&europe, &base.presented_for("DE")));
+        assert_eq!(europe.currency(), "EUR");
+        assert_eq!(europe.presentment.as_ref().unwrap().rate.to_string(), "0.9");
+        assert_eq!(europe.shop.currency, "USD");
+        let price = |store: &Store, sku: &str| {
+            let variant = store
+                .products
+                .iter()
+                .flat_map(|product| &product.variants)
+                .find(|variant| variant.sku == sku)
+                .expect("a variant");
+            (variant.price, variant.compare_at_price)
+        };
+        // A fixed price as it is, without a compare-at price unless it has one.
+        assert_eq!(price(&europe, "TEE-WHT-S"), (2500, None));
+        assert_eq!(price(&europe, "TOTE-NAT"), (3000, Some(4000)));
+        // The others at the rate.
+        assert_eq!(price(&europe, "TEE-WHT-M"), (2880, None));
+        assert_eq!(price(&europe, "OVS-S"), (6120, Some(8010)));
+        assert_eq!(price(&base, "OVS-S"), (6800, Some(8900)));
+        // A currency without decimals rounds to whole units: 16.00 × 151.23 = 2419.68.
+        let japan = base.presented_for("JP");
+        assert_eq!(japan.currency(), "JPY");
+        assert_eq!(price(&japan, "SOCK-S"), (242_000, None));
+        // A country's own currency, without a rate, at 1.
+        let britain = base.presented_for("GB");
+        assert_eq!(britain.currency(), "GBP");
+        assert_eq!(price(&britain, "SOCK-S"), (1600, None));
+    }
+
+    #[test]
+    fn bad_market_currencies_are_reported() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [{"iso_code": "FR"}, {"iso_code": "DE"}, {"iso_code": "IT"}],
+            "markets": [
+                {"handle": "a", "countries": ["FR"], "currency": "EURO", "rate": "abc"},
+                {"handle": "b", "countries": ["DE"], "currency": "EUR", "rate": "0",
+                 "prices": {"NOPE-1": "10.00"}}
+            ]
+        }});
+        let (_, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        let report = diagnostics.to_string();
+        for expected in [
+            "error[invalid_value]: \"EURO\" is not an ISO 4217 currency code",
+            "error[invalid_format]: \"abc\" is not a rate",
+            "error[invalid_value]: a rate is above 0",
+            "error[unknown_variant]: \"NOPE-1\" is not a variant of the store",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
+    }
+
+    #[test]
     fn bad_markets_are_reported() {
         let overlay = serde_json::json!({"localization": {
             "countries": [{"iso_code": "FR"}, {"iso_code": "DE"}],

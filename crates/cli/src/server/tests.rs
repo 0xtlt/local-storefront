@@ -3453,6 +3453,52 @@ fn the_checkout_prices_the_lines_as_the_cart_does() {
 }
 
 #[test]
+fn the_cart_and_the_checkout_are_in_the_currency_of_the_country() {
+    let state = checkout_server(&[], false);
+    let session = "co-currency";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]},
+            "data": {"localization": {
+                "countries": [{"iso_code": "CA"}, {"iso_code": "US"}, {"iso_code": "FR"}],
+                "markets": [{"handle": "europe", "countries": ["FR"], "currency": "EUR", "rate": "0.9"}]
+            }}
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    // In the shop's currency until the visitor is in France.
+    let cart = body_json(&get(&state, "/cart.js", session));
+    assert_eq!(cart["currency"], "USD");
+    let usd = cart["total_price"].as_i64().unwrap();
+    // `?country=FR`, as on a Shopify storefront: `/cart.js` says EUR, and so do its prices.
+    assert_eq!(get(&state, "/?country=FR", session).status, 200);
+    let cart = body_json(&get(&state, "/cart.js", session));
+    assert_eq!(cart["currency"], "EUR");
+    assert_eq!(cart["total_price"].as_i64().unwrap(), usd * 9 / 10);
+    // The checkout too, and what its Functions read.
+    let reply = get(&state, "/checkout", session);
+    let path = header(&reply, "location").expect("a location").to_string();
+    let checkout = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(checkout["shop"]["currencyCode"], "EUR");
+    assert_eq!(checkout["localization"]["currency"]["isoCode"], "EUR");
+    assert_eq!(
+        (checkout["cost"]["subtotal"]["amount"].as_f64().unwrap() * 100.0).round() as i64,
+        cart["items_subtotal_price"].as_i64().unwrap()
+    );
+    // An address in another market prices the checkout in that market's currency.
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "shippingAddress", "address": {"countryCode": "US"}}]),
+    );
+    assert_eq!(body_json(&reply)["shop"]["currencyCode"], "USD");
+}
+
+#[test]
 fn the_checkout_charges_what_the_cart_says_is_due_at_checkout() {
     let state = checkout_server(&[], false);
     let path = start_checkout(

@@ -105,6 +105,10 @@ and `PUT /__lsf/session`:
 - **The localization form** (`{% form 'localization' %}`) sends the visitor to the same page on
   the web presence of the country they picked: `country_code=BE` → `/en-be/...`, and back to `/`
   for a country served there.
+- **The currency follows the country**: prices, the cart (`cart.currency`, `/cart.js`), the money
+  filters and the checkout are in the country's currency, at its market's rate or fixed prices
+  (see [localization](data-format.md#localization)), and `Shopify.currency` gives the currency
+  and the rate (`{"active":"EUR","rate":"0.92"}`).
 
 ## Theme app extensions
 

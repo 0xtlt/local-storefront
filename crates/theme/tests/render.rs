@@ -357,6 +357,56 @@ fn a_page_under_a_market_subfolder_links_under_it() {
 }
 
 #[test]
+fn prices_are_in_the_currency_of_the_visitors_market() {
+    let overlay = serde_json::json!({"localization": {
+        "countries": [{"iso_code": "CA"}, {"iso_code": "US"}, {"iso_code": "FR"}],
+        "markets": [{"handle": "europe", "countries": ["FR"], "currency": "EUR", "rate": "0.9",
+            "prices": {"canvas-tote-bag": "20.00"}}]
+    }});
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let tote = fixture.store.product_by_handle("canvas-tote-bag").unwrap();
+    let mut session = Session::initial(&fixture.store);
+    session.cart_lines = vec![CartLine {
+        variant_id: tote.variants[0].id,
+        quantity: 2,
+        properties: Default::default(),
+        selling_plan: None,
+    }];
+    let source = "{{ product.price | money }}|{{ product.price | money_with_currency }}|\
+        {{ cart.total_price | money }}|{{ cart.currency.iso_code }}|\
+        {{ localization.country.currency.iso_code }}|{{ shop.currency }}|\
+        {{ shop.enabled_currencies | map: 'iso_code' | join: ',' }}";
+    // In the shop's currency, as before.
+    assert_eq!(
+        fixture.liquid("/products/organic-cotton-t-shirt", session.clone(), source),
+        "$32.00|$32.00 USD|$48.00|USD|USD|USD|USD,EUR"
+    );
+    // In France, in euros: at the market's rate, or at its fixed price (the tote bag).
+    session.country = Some("FR".to_string());
+    assert_eq!(
+        fixture.liquid("/products/organic-cotton-t-shirt", session.clone(), source),
+        "€28,80|€28,80 EUR|€40,00|EUR|EUR|USD|USD,EUR"
+    );
+    // Shopify's scripts say it, with the rate.
+    let page = fixture
+        .render_with(request("/"), session, &Target::Page)
+        .body;
+    assert!(
+        page.contains("Shopify.currency = {\"active\":\"EUR\",\"rate\":\"0.9\"};"),
+        "{page}"
+    );
+}
+
+#[test]
 fn forms_show_the_outcome_of_a_submission() {
     let fixture = fixture();
     let mut session = Session::initial(&fixture.store);

@@ -721,7 +721,7 @@ store has none: `npx local-storefront app init` writes a set.
 
 The first language is the primary one, served at `/`. The others are served under
 `/<iso_code>/` (`/fr/products/blue-shirt`) and use the theme's `locales/<iso_code>.json`.
-Names and currencies of countries default to built-in values. Without `countries`, the store
+Names of countries default to built-in values. Without `countries`, the store
 sells in one country: the shop's (`shop.address.country_code`), or `US`. The localization form
 (`{% form 'localization' %}`) switches the session's country and language. A visitor who
 selected no country is in the shop's (`shop.address.country_code`), the one of its primary
@@ -757,6 +757,30 @@ market of the buyer (`localization.market`) and of an address (`MailingAddress.m
 
 A country in no market is a market of its own, named after the country (`france`, `united-states`).
 An address in a country the store does not sell to has no market.
+
+A market can sell in its own currency, as a Shopify market with a base currency: `currency`, the
+`rate` that converts the store's prices to it (what one unit of the store currency is worth, as a
+manual exchange rate; 1 when there is none, since lsf has no exchange rates), and `prices`, fixed
+prices of a price list, which are not converted. A key of `prices` is a SKU, a variant id, or a
+product handle for each of its variants; a value a price, or `{"price", "compare_at_price"}`.
+
+```json
+{
+  "handle": "europe",
+  "countries": ["FR", "DE"],
+  "currency": "EUR",
+  "rate": "0.92",
+  "prices": { "TEE-WHT-S": "25.00", "canvas-tote-bag": { "price": "30.00", "compare_at_price": "40.00" } }
+}
+```
+
+A country pays in its own `currency`, else in its market's, else in the store's. A visitor in it
+sees every price in that currency, rounded to its minor unit (to whole yen for JPY): products,
+variants, compare-at and unit prices, selling plans, the cart, `/cart.js`, the checkout and its
+shipping rates. `cart.currency`, `localization.country.currency` and the money filters follow;
+`shop.currency` stays the store's, and `shop.enabled_currencies` lists every currency of the
+countries. Gift cards keep their own currency, and orders of the data are priced as their
+variants are.
 
 `subfolder_suffix` serves a market under subfolders of its own, as a Shopify market whose web
 presence is a subfolder of the primary domain: `/<language>-<suffix>/` for each language
@@ -936,6 +960,7 @@ extensions:
 | `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield, and a shipping rate or a payment method a scenario's `entered` names. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
+| `invalid_value`, `invalid_format` of a market's `currency` or `rate` | A currency that is not three letters, a rate that is not a decimal above 0. A key of its `prices` that names no variant is an `unknown_variant`. |
 | `invalid_value` of a `subfolder_suffix` | A suffix that is not two letters at least, that is a script code (`latn`), or that the market of the shop's country has. Two markets with the same suffix are a `duplicate_handle`. |
 | `unknown_province` | A code of a country's `provinces` that is not one of its provinces, or `provinces` for a country that has none. The hint lists its codes. |
 | `unknown_return_line` | A return of an order names a variant that is not a line of the order. |
@@ -1693,7 +1718,7 @@ A country the store sells to.
 |---|---|---|
 | `iso_code` | string | **Required.** ISO 3166-1 alpha-2 code, e.g. `"FR"`. |
 | `name` | string | Defaults to the English name of the country. |
-| `currency` | string | ISO 4217 currency code. Defaults to the store currency. |
+| `currency` | string | ISO 4217 code of the currency its buyers pay in: prices, the cart and the checkout are in it. Defaults to the `currency` of its market, else the store currency. |
 | `unit_system` | string | `metric` or `imperial`. Defaults to `metric`. |
 | `popular` | boolean | Whether to list the country among the popular ones. |
 | `provinces` | array of string | The provinces the store ships to, by code (`["CA", "OR", "WA"]`): those a country selector offers (`data-provinces` of `country_option_tags`), sorted by name as Shopify lists them. Defaults to every province Shopify lists for the country (states, regions, prefectures); a country Shopify lists none for has none. |
@@ -1719,6 +1744,27 @@ A market: the countries the store sells to as one, as checkout Functions see it 
 | `countries` | array of string | **Required.** The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 | `subfolder_suffix` | string | Serves the market under subfolders of its own, as a Shopify market's web presence does: `"ca"` serves it at `/en-ca/`, `/fr-ca/`, one per language. Two letters at least. Without it, the market is served at `/`, with the primary market. |
+| `currency` | string | The currency its countries pay in, by ISO 4217 code (`"EUR"`), as a Shopify market's base currency: prices, the cart and the checkout are in it. A country's own `currency` wins. Defaults to the store currency. |
+| `rate` | string | What one unit of the store currency is worth in the market's currency, as a decimal string (`"0.92"`): prices are converted with it, as with a manual exchange rate on Shopify. Defaults to 1, since lsf has no exchange rates. |
+| `prices` | map of [FixedPrice](#fixedprice) | Fixed prices in the market's currency, as a Shopify price list has them, which are not converted: by variant (a SKU, an id, or a product handle for each of its variants), a price (`"25.00"`) or `{"price": "25.00", "compare_at_price": "30.00"}`. |
+
+### FixedPrice
+
+A fixed price of a market: a price, or a price and a compare-at price.
+
+One of:
+
+- [Money](#money)
+- [FixedPriceObject](#fixedpriceobject)
+
+### FixedPriceObject
+
+A fixed price with its compare-at price.
+
+| Field | Type | Description |
+|---|---|---|
+| `price` | [Money](#money) | **Required.** |
+| `compare_at_price` | [Money](#money) | None when omitted: a fixed price has the compare-at price it is given. |
 
 ### Location
 

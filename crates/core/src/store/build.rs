@@ -486,6 +486,8 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         &mut builder.diagnostics,
     );
     let mut store = Store {
+        presentment: None,
+        presented: PresentedStores::default(),
         shop,
         products,
         unlisted_products,
@@ -3251,12 +3253,68 @@ fn build_localization(
             }
             Some(suffix)
         });
+        let currency = market.currency.as_ref().and_then(|code| {
+            let code = code.trim().to_ascii_uppercase();
+            if code.len() == 3 && code.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+                Some(code)
+            } else {
+                builder
+                    .error(
+                        "invalid_value",
+                        &market_origin.child("currency"),
+                        format!("\"{code}\" is not an ISO 4217 currency code"),
+                    )
+                    .hint("three letters: \"EUR\", \"CAD\", \"JPY\"");
+                None
+            }
+        });
+        let rate = market.rate.as_ref().and_then(|text| {
+            let at = market_origin.child("rate");
+            match Rate::parse(text) {
+                Some(rate) if rate.is_zero() => {
+                    builder.error("invalid_value", &at, "a rate is above 0");
+                    None
+                }
+                Some(rate) => Some(rate),
+                None => {
+                    builder
+                        .error("invalid_format", &at, format!("\"{text}\" is not a rate"))
+                        .hint("a decimal string: what one unit of the store currency is worth in the market's, \"0.92\"");
+                    None
+                }
+            }
+        });
+        let prices = market_prices(
+            builder,
+            store,
+            &market.prices,
+            &market_origin.child("prices"),
+        );
         store.markets.push(Market {
             handle: market.handle.clone(),
             countries,
             metafields: builder.metafields(&market.metafields, &market_origin.child("metafields")),
             subfolder_suffix,
+            currency,
+            rate,
+            prices,
         });
+    }
+    // A country pays in its market's currency, unless it has its own.
+    for (position, country) in store.countries.iter_mut().enumerate() {
+        let own = input
+            .countries
+            .get(position)
+            .is_some_and(|input| input.currency.is_some());
+        let market = store.markets.iter().find(|market| {
+            market
+                .countries
+                .iter()
+                .any(|code| code.eq_ignore_ascii_case(&country.iso_code))
+        });
+        if !own && let Some(currency) = market.and_then(|market| market.currency.clone()) {
+            country.currency = currency;
+        }
     }
 
     let theme_locales = &builder.options.theme_locales;
@@ -3355,6 +3413,62 @@ fn country_provinces(
         .zip(kept)
         .filter_map(|(province, kept)| kept.then_some(province))
         .collect()
+}
+
+/// The fixed prices of a market, by variant id: a SKU or an id names a variant, a product
+/// handle each of its variants, as Shopify's `priceListFixedPricesByProductUpdate` does.
+fn market_prices(
+    builder: &mut Builder<'_>,
+    store: &Store,
+    inputs: &IndexMap<String, model::FixedPriceInput>,
+    origin: &Origin,
+) -> HashMap<u64, FixedPrice> {
+    let mut prices = HashMap::new();
+    for (reference, input) in inputs {
+        let at = origin.child(reference.as_str());
+        let (price, compare_at) = match input {
+            model::FixedPriceInput::Price(price) => (price, None),
+            model::FixedPriceInput::WithCompareAt(object) => {
+                (&object.price, object.compare_at_price.as_ref())
+            }
+        };
+        let fixed = FixedPrice {
+            price: builder.money(price, &at),
+            compare_at_price: compare_at.map(|money| builder.money(money, &at)),
+        };
+        let by_sku: Vec<u64> = store
+            .products
+            .iter()
+            .flat_map(|product| &product.variants)
+            .filter(|variant| !variant.sku.is_empty() && variant.sku == *reference)
+            .map(|variant| variant.id)
+            .collect();
+        let ids: Vec<u64> = if !by_sku.is_empty() {
+            by_sku
+        } else if let Some(product) = store.product_by_handle(reference) {
+            product.variants.iter().map(|variant| variant.id).collect()
+        } else {
+            reference
+                .parse::<u64>()
+                .ok()
+                .filter(|id| store.variant_location(*id).is_some())
+                .into_iter()
+                .collect()
+        };
+        if ids.is_empty() {
+            builder
+                .error(
+                    "unknown_variant",
+                    &at,
+                    format!("\"{reference}\" is not a variant of the store"),
+                )
+                .hint("a SKU, a variant id, or a product handle for each of its variants");
+        }
+        for id in ids {
+            prices.insert(id, fixed);
+        }
+    }
+    prices
 }
 
 /// ISO 15924 codes a subfolder suffix cannot be, as Shopify's web presences refuse them.

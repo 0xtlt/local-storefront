@@ -562,7 +562,12 @@ impl<'c> FunctionInput<'c> {
             "localization" => object(Node::Localization),
             "shop" => object(Node::Shop),
             "buyerJourney" => object(Node::BuyerJourney),
-            "presentmentCurrencyRate" => leaf("1.0"),
+            // The rate from the shop's currency to the buyer's, which a Function multiplies its
+            // fixed amounts by.
+            "presentmentCurrencyRate" => leaf(ctx.store.presentment.as_ref().map_or_else(
+                || "1.0".to_string(),
+                |presentment| presentment.rate.to_string(),
+            )),
             "fetchResult" => match ctx.fetch {
                 FetchInput::Response(Some(response)) => object(Node::HttpResponse(response)),
                 FetchInput::Response(None) => Some(Resolved::Null),

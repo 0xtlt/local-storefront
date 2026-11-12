@@ -117,6 +117,17 @@ impl Site {
         session: Session,
         now: DateTime<Utc>,
     ) -> Site {
+        // Prices are in the currency of the visitor's country, at its market's rate or fixed
+        // prices, as Shopify presents a storefront to a market.
+        let market = request
+            .market
+            .as_deref()
+            .and_then(|handle| store.market_named(handle));
+        let country = store
+            .country_at(session.country.as_deref(), market)
+            .iso_code
+            .clone();
+        let store = store.presented_for(&country);
         Site {
             theme,
             store,
@@ -172,9 +183,9 @@ impl Site {
         }
     }
 
-    /// The currency prices are displayed in.
+    /// The currency prices are displayed in: the one of the visitor's country.
     pub fn currency(&self) -> &str {
-        &self.store.shop.currency
+        self.store.currency()
     }
 
     pub fn language(&self) -> &lsf_core::store::Language {

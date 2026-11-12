@@ -2117,6 +2117,14 @@ impl<'s> Sync<'s> {
                     declared && enabled(record)
                 })
                 .filter_map(|(key, record)| {
+                    // What the Admin API does not keep of a market of the data (its subfolder,
+                    // the seed makes no web presence; its rate and fixed prices, the seed makes
+                    // no price list): the data's stays.
+                    let declared = self
+                        .store
+                        .markets
+                        .iter()
+                        .find(|market| content::market_gid(&market.handle) == key);
                     Some(model::MarketInput {
                         handle: text(record, "handle")?.to_string(),
                         countries: record
@@ -2128,14 +2136,34 @@ impl<'s> Sync<'s> {
                             .map(str::to_string)
                             .collect(),
                         metafields: self.metafields(view, key),
-                        // The Admin API keeps a market's subfolder in its web presences, which
-                        // the seed does not make: the data's stays.
-                        subfolder_suffix: self
-                            .store
-                            .markets
-                            .iter()
-                            .find(|market| content::market_gid(&market.handle) == key)
+                        subfolder_suffix: declared
                             .and_then(|market| market.subfolder_suffix.clone()),
+                        currency: declared.and_then(|market| market.currency.clone()),
+                        rate: declared
+                            .and_then(|market| market.rate.as_ref())
+                            .map(ToString::to_string),
+                        prices: declared
+                            .map(|market| {
+                                let mut prices: Vec<_> = market.prices.iter().collect();
+                                prices.sort_by_key(|(id, _)| **id);
+                                prices
+                                    .into_iter()
+                                    .map(|(id, fixed)| {
+                                        (
+                                            id.to_string(),
+                                            model::FixedPriceInput::WithCompareAt(
+                                                model::FixedPriceObject {
+                                                    price: Money::Cents(fixed.price),
+                                                    compare_at_price: fixed
+                                                        .compare_at_price
+                                                        .map(Money::Cents),
+                                                },
+                                            ),
+                                        )
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
                     })
                 })
                 .collect()

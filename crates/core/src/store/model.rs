@@ -1306,7 +1306,8 @@ pub struct CountryInput {
     /// Defaults to the English name of the country.
     #[serde(default)]
     pub name: Option<String>,
-    /// ISO 4217 currency code. Defaults to the store currency.
+    /// ISO 4217 code of the currency its buyers pay in: prices, the cart and the checkout are
+    /// in it. Defaults to the `currency` of its market, else the store currency.
     #[serde(default)]
     pub currency: Option<String>,
     /// `metric` or `imperial`. Defaults to `metric`.
@@ -1371,6 +1372,39 @@ pub struct MarketInput {
     /// it, the market is served at `/`, with the primary market.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subfolder_suffix: Option<String>,
+    /// The currency its countries pay in, by ISO 4217 code (`"EUR"`), as a Shopify market's
+    /// base currency: prices, the cart and the checkout are in it. A country's own `currency`
+    /// wins. Defaults to the store currency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// What one unit of the store currency is worth in the market's currency, as a decimal
+    /// string (`"0.92"`): prices are converted with it, as with a manual exchange rate on
+    /// Shopify. Defaults to 1, since lsf has no exchange rates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate: Option<String>,
+    /// Fixed prices in the market's currency, as a Shopify price list has them, which are not
+    /// converted: by variant (a SKU, an id, or a product handle for each of its variants), a
+    /// price (`"25.00"`) or `{"price": "25.00", "compare_at_price": "30.00"}`.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub prices: IndexMap<String, FixedPriceInput>,
+}
+
+/// A fixed price of a market: a price, or a price and a compare-at price.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum FixedPriceInput {
+    Price(Money),
+    WithCompareAt(FixedPriceObject),
+}
+
+/// A fixed price with its compare-at price.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FixedPriceObject {
+    pub price: Money,
+    /// None when omitted: a fixed price has the compare-at price it is given.
+    #[serde(default)]
+    pub compare_at_price: Option<Money>,
 }
 
 /// A file in `files/` that needs metadata. Files without an entry work too.
