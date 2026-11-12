@@ -42,7 +42,7 @@ jobs:
         if: github.ref_type == 'tag'
         run: |
           version=$(cargo metadata --no-deps --locked --format-version 1 \
-            | jq -r '.packages[] | select(.name == "lsf") | .version')
+            | jq -r '.packages[] | select(.name == "lsf-cli") | .version')
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error file=Cargo.toml::the tag $GITHUB_REF_NAME does not match the version $version"
             exit 1
