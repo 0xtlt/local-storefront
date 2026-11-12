@@ -253,7 +253,9 @@ local-storefront. The rules are the ones read from Shopify's answers in October 
 - This applies to the assets, `.liquid` ones included once they are rendered, and to the
   bundles built from the `{% stylesheet %}` and `{% javascript %}` tags.
 - A minified file ends with a link to its source map, which is served at the path of the
-  file followed by `.map`: the tools of a browser show the file as it is written.
+  file followed by `.map`: the tools of a browser show the file as it is written. The link
+  carries the `?v=` the file was asked at (`base.css?v=123` links `base.css.map?v=123`), as
+  Shopify's does, so that the map's URL changes with the file.
 - A file is served as written when its name ends with `.min.js` or `.min.css`, when the
   minified file would not be lighter, or when it cannot be read as CSS or JavaScript. In a
   stylesheet, a rule that cannot be read is kept as written and the rest is minified.

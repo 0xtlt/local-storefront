@@ -56,7 +56,7 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--static` | | Reads the theme and the data once. The fastest mode, for tests. |
 | `--strict` | | Refuses to start when the store data has errors. |
 | `--quiet`, `-q` | | Does not log requests. |
-| `--live-reload` | | Reloads open pages when the theme or the data change. It adds a script to the pages: leave it off for tests. |
+| `--live-reload` | | Reloads open pages when the theme (its `assets/` included) or the data change. It adds a script to the pages: leave it off for tests. Without it, an edit shows at the next load: see [reload as you edit](storefront.md#reload-as-you-edit). |
 | `--customer <email>` | `LSF_CUSTOMER` | Visitors arrive logged in as this customer. Also `default` (the first customer) or `none`. |
 | `--throttle <rules>` | `LSF_THROTTLE` | Answers late, to see loading states: `simulated`, `slow`, `300ms`, `cart-add=1s`. See [testing](testing.md#simulating-a-slow-network). |
 | `--timings` | | Names every section and theme block in the `Server-Timing` header. See [performance](performance.md#render-times). |
