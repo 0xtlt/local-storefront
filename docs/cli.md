@@ -14,6 +14,14 @@ Installed with mise, from a release or from source, the command is `lsf`: `lsf s
 | `--data <dir>` | `LSF_DATA` | `<theme>/shopify-local` | The store data folder. Without one, the built-in demo store. |
 | `--preview <name>` | `LSF_PREVIEW` | none | Turns on a Shopify feature preview. Repeat it, or separate names with commas. See [storefront](storefront.md#feature-previews). |
 
+On Windows, a path written as Git Bash writes it, `/c/Users/me/project`, is the folder it names,
+`C:\Users\me\project`: for every option that takes a path (`--theme`, `--data`, `--app`, the files
+of `fmt`, `--session`, `--input`, ...), and in its environment variable. Git Bash converts such a
+path itself, except when `MSYS_NO_PATHCONV` is set (see [render](#render)) or when lsf is started
+by another program, such as an npm script run by cmd.exe. On another system it is a path like any
+other; when that folder does not exist, the error names the Windows form instead of offering
+`init` with it.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -553,6 +561,12 @@ sections, as the Section Rendering API does. `/account` (lsf's page of the custo
 `/recommendations/products` and `/search/suggest` are answered by the server, as `serve`
 answers them.
 
+In Git Bash, a path that starts with `/` and has no query string reaches lsf as a Windows path,
+under the folder Git Bash is installed in (`C:/Program Files/Git/`). `render` and `profile` refuse such a path with an error
+(`2`) rather than render the 404 page. Keep the path as typed with
+`MSYS_NO_PATHCONV=1 npx local-storefront render /products/shirt`, or start it with `//`
+(`render //products/shirt`): leading slashes count as one.
+
 The HTML goes to stdout. On stderr: each Liquid error and each warning, then a summary.
 
 ```text
@@ -572,7 +586,7 @@ Prints what the render of one page spends its time on: sections, blocks, snippet
 
 | Option | What it does |
 |---|---|
-| `<path>` | The path, with its query string. Default `/`. |
+| `<path>` | The path, with its query string. Default `/`. In Git Bash, see [render](#render) for a path Git Bash turned into a Windows one. |
 | `--points` | Counts in points, what the page would cost Shopify, instead of time. |
 | `--cost <kind>=<points>,...` | Changes what a kind of thing costs in points. |
 | `--lines` | Adds every tag and every output, by file and line. |
