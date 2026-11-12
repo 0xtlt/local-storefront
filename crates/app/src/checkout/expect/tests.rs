@@ -60,6 +60,7 @@ fn checkout() -> CheckoutResult {
             amount: 720,
             function: "volume-discount".into(),
             details: Default::default(),
+            code_discount: None,
         }],
         delivery_groups: vec![DeliveryGroup {
             handle: "group-1".into(),

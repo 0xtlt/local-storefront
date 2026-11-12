@@ -145,6 +145,17 @@ fn refusal(result: &CheckoutResult) -> String {
 }
 
 fn place(shop: &mut ShopState, result: &CheckoutResult, email: Option<&str>) -> String {
+    try_place(shop, result, email)
+        .expect("the codes the checkout applied are still the buyer's")
+        .id
+}
+
+/// Records the order of a checkout, or why a code it applied is no longer the buyer's.
+fn try_place(
+    shop: &mut ShopState,
+    result: &CheckoutResult,
+    email: Option<&str>,
+) -> Result<crate::admin::domains::orders::RecordedOrder, super::Refused> {
     record_placed_order(
         shop,
         &PlacedOrder {
@@ -163,7 +174,6 @@ fn place(shop: &mut ShopState, result: &CheckoutResult, email: Option<&str>) -> 
             metafields: &[],
         },
     )
-    .id
 }
 
 #[test]
@@ -364,7 +374,7 @@ fn a_code_needs_its_minimum_on_the_items_it_applies_to() {
             &entering(&["FIFTY"], None),
             None
         )),
-        "its minimum purchase is 50.00 USD, and the items it applies to come to 32.00 USD"
+        "its minimum purchase is 50.00 USD, and the items it applies to come to 32.00 USD after the product discounts"
     );
     let enough = checkout(
         &shop,
@@ -686,5 +696,235 @@ fn a_free_shipping_order_says_its_code_is_shipping() {
     assert_eq!(
         payload["discount_applications"][0]["target_type"],
         "shipping_line"
+    );
+}
+
+/// The `asyncUsageCount` of the discount that has `code`.
+fn uses(shop: &mut ShopState, code: &str) -> Value {
+    let used = run(
+        shop,
+        r#"query($code: String!) { codeDiscountNodeByCode(code: $code) { codeDiscount {
+            ... on DiscountCodeBasic { asyncUsageCount }
+            ... on DiscountCodeFreeShipping { asyncUsageCount } } } }"#,
+        json!({"code": code}),
+    );
+    used["data"]["codeDiscountNodeByCode"]["codeDiscount"]["asyncUsageCount"].clone()
+}
+
+/// The `discountCodes` of an order, and the `discount_codes` of its `orders/create`.
+fn order_codes(shop: &ShopState, order: &str) -> (Value, Value) {
+    let record = shop.get(order).unwrap();
+    let payload = crate::admin::webhooks::payload::payload(
+        "orders/create",
+        record,
+        &crate::admin::api::samples::ShopLookup(shop),
+    )
+    .unwrap();
+    (
+        record["discountCodes"].clone(),
+        payload["discount_codes"].clone(),
+    )
+}
+
+#[test]
+fn a_limited_code_two_checkouts_priced_before_either_completed_is_redeemed_once() {
+    let mut shop = demo();
+    basic(
+        &mut shop,
+        json!({"title": "Once", "code": "ONCE", "usageLimit": 1,
+               "customerGets": {"value": {"percentage": 0.1}, "items": {"all": true}}}),
+    );
+    let cart = [(TEE, 1)];
+    // Both buyers see the code applied: neither order is placed yet.
+    let first = checkout(
+        &shop,
+        &cart,
+        &entering(&["ONCE"], Some("first@example.com")),
+        None,
+    );
+    let second = checkout(
+        &shop,
+        &cart,
+        &entering(&["ONCE"], Some("second@example.com")),
+        None,
+    );
+    assert_eq!(first.discounts.len(), 1);
+    assert_eq!(second.discounts.len(), 1);
+
+    place(&mut shop, &first, Some("first@example.com"));
+    let orders = shop.keys("Order").count();
+    // The second order, recorded after the first took the only use, is not placed.
+    assert_eq!(
+        try_place(&mut shop, &second, Some("second@example.com")),
+        Err(super::Refused {
+            code: "ONCE".into(),
+            reason: "it reached its usage limit: used 1 times of 1".into(),
+        })
+    );
+    assert_eq!(shop.keys("Order").count(), orders);
+    assert_eq!(uses(&mut shop, "ONCE"), 1);
+}
+
+#[test]
+fn a_once_per_customer_code_two_checkouts_of_one_buyer_priced_is_redeemed_once() {
+    let mut shop = demo();
+    basic(
+        &mut shop,
+        json!({"title": "Welcome", "code": "WELCOME", "appliesOncePerCustomer": true,
+               "customerGets": {"value": {"percentage": 0.1}, "items": {"all": true}}}),
+    );
+    let cart = [(TEE, 1)];
+    let buyer = entering(&["WELCOME"], Some("twice@example.com"));
+    let first = checkout(&shop, &cart, &buyer, None);
+    let second = checkout(&shop, &cart, &buyer, None);
+    place(&mut shop, &first, Some("twice@example.com"));
+    assert_eq!(
+        try_place(&mut shop, &second, Some("TWICE@example.com")).map(|_| ()),
+        Err(super::Refused {
+            code: "WELCOME".into(),
+            reason: "it applies once per customer, and the buyer has used it".into(),
+        })
+    );
+    assert_eq!(uses(&mut shop, "WELCOME"), 1);
+}
+
+#[test]
+fn a_free_shipping_code_over_its_maximum_rate_is_valid_and_not_used() {
+    let mut shop = demo();
+    free_shipping(
+        &mut shop,
+        json!({"title": "Cheap free", "code": "CHEAP", "maximumShippingPrice": "5.00", "usageLimit": 1}),
+    );
+    let mut express = entering(&["CHEAP"], None);
+    express
+        .selected_delivery
+        .insert("group-1".into(), "express".into());
+    let result = checkout(&shop, &[(TEE, 1)], &express, None);
+    // Valid, as the page shows it, but nothing comes off the 12.90 rate.
+    assert!(result.discount_codes[0].applicable);
+    assert_eq!(result.cost.shipping, 1290);
+    assert!(result.discounts.is_empty());
+
+    let order = place(&mut shop, &result, Some("buyer@example.com"));
+    assert_eq!(order_codes(&shop, &order), (json!([]), json!([])));
+    assert_eq!(uses(&mut shop, "CHEAP"), 0);
+}
+
+#[test]
+fn a_free_shipping_code_on_a_cart_without_shipping_is_valid_and_not_used() {
+    let mut shop = demo();
+    free_shipping(
+        &mut shop,
+        json!({"title": "Free shipping", "code": "FREESHIP", "usageLimit": 1}),
+    );
+    let store = demo_store();
+    let gift_card = store
+        .products
+        .iter()
+        .find(|product| product.gift_card)
+        .expect("the demo store sells a gift card")
+        .variants[0]
+        .id;
+    let result = checkout(
+        &shop,
+        &[(gift_card, 1)],
+        &entering(&["FREESHIP"], None),
+        None,
+    );
+    assert!(result.delivery_groups.is_empty());
+    assert!(result.discount_codes[0].applicable);
+    assert!(result.discounts.is_empty());
+
+    let order = place(&mut shop, &result, Some("buyer@example.com"));
+    assert_eq!(order_codes(&shop, &order), (json!([]), json!([])));
+    assert_eq!(uses(&mut shop, "FREESHIP"), 0);
+}
+
+#[test]
+fn a_once_per_customer_code_renamed_since_the_buyer_used_it_stays_used() {
+    let mut shop = demo();
+    let node = basic(
+        &mut shop,
+        json!({"title": "Welcome", "code": "OLD", "appliesOncePerCustomer": true,
+               "customerGets": {"value": {"percentage": 0.1}, "items": {"all": true}}}),
+    );
+    let cart = [(TEE, 1)];
+    let used = checkout(
+        &shop,
+        &cart,
+        &entering(&["OLD"], Some("loyal@example.com")),
+        None,
+    );
+    place(&mut shop, &used, Some("loyal@example.com"));
+
+    let renamed = run(
+        &mut shop,
+        r#"mutation($id: ID!) { discountCodeBasicUpdate(id: $id, basicCodeDiscount: {code: "NEW"}) {
+            userErrors { field message } } }"#,
+        json!({"id": node}),
+    );
+    assert_eq!(
+        renamed["data"]["discountCodeBasicUpdate"]["userErrors"],
+        json!([]),
+        "{renamed}"
+    );
+    assert_eq!(
+        refusal(&checkout(
+            &shop,
+            &cart,
+            &entering(&["NEW"], Some("loyal@example.com")),
+            None
+        )),
+        "it applies once per customer, and the buyer has used it"
+    );
+}
+
+#[test]
+fn a_once_per_customer_code_deleted_since_the_buyer_used_it_leaves_the_discount_used() {
+    let mut shop = demo();
+    let node = basic(
+        &mut shop,
+        json!({"title": "Welcome", "code": "FIRST", "appliesOncePerCustomer": true,
+               "customerGets": {"value": {"percentage": 0.1}, "items": {"all": true}}}),
+    );
+    let added = run(
+        &mut shop,
+        r#"mutation($id: ID!) { discountRedeemCodeBulkAdd(discountId: $id, codes: [{code: "SECOND"}]) {
+            userErrors { field message } } }"#,
+        json!({"id": node}),
+    );
+    assert_eq!(
+        added["data"]["discountRedeemCodeBulkAdd"]["userErrors"],
+        json!([]),
+        "{added}"
+    );
+    let cart = [(TEE, 1)];
+    let used = checkout(
+        &shop,
+        &cart,
+        &entering(&["FIRST"], Some("loyal@example.com")),
+        None,
+    );
+    place(&mut shop, &used, Some("loyal@example.com"));
+
+    let deleted = run(
+        &mut shop,
+        r#"mutation($id: ID!) { discountCodeRedeemCodeBulkDelete(discountId: $id, search: "code:FIRST") {
+            userErrors { field message } } }"#,
+        json!({"id": node}),
+    );
+    assert_eq!(
+        deleted["data"]["discountCodeRedeemCodeBulkDelete"]["userErrors"],
+        json!([]),
+        "{deleted}"
+    );
+    assert_eq!(
+        refusal(&checkout(
+            &shop,
+            &cart,
+            &entering(&["SECOND"], Some("loyal@example.com")),
+            None
+        )),
+        "it applies once per customer, and the buyer has used it"
     );
 }

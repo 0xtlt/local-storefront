@@ -1656,6 +1656,7 @@ fn with_discounts(f: &mut Fixture) {
                     value: "spring".to_string(),
                 }],
             },
+            code_discount: None,
         },
         AppliedDiscount {
             title: "Twenty off".to_string(),
@@ -1670,6 +1671,7 @@ fn with_discounts(f: &mut Fixture) {
                 value: DiscountValue::Fixed(20),
                 metafields: Vec::new(),
             },
+            code_discount: None,
         },
         AppliedDiscount {
             title: "Cheaper shipping".to_string(),
@@ -1684,6 +1686,7 @@ fn with_discounts(f: &mut Fixture) {
                 value: DiscountValue::Percentage(12.5),
                 metafields: Vec::new(),
             },
+            code_discount: None,
         },
     ];
     let allocation = |discount: usize, amount, class| DiscountAllocation {

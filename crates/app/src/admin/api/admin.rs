@@ -915,17 +915,23 @@ impl AdminApi {
 
     /// Records an order placed in the local checkout in the default shop, and delivers its
     /// `orders/create` (and `orders/paid`) webhooks. Returns the GID and the number the shop
-    /// gave the order (its next one when the checkout gives none).
-    pub fn record_order(&self, placed: &orders::PlacedOrder) -> Option<orders::RecordedOrder> {
+    /// gave the order (its next one when the checkout gives none). `Err`, and nothing recorded,
+    /// when the buyer can no longer use a code the checkout applied
+    /// ([`orders::record_placed_order`]).
+    pub fn record_order(
+        &self,
+        placed: &orders::PlacedOrder,
+    ) -> Option<Result<orders::RecordedOrder, crate::admin::domains::app::code_discounts::Refused>>
+    {
         self.change_shop(&self.default_shop(), |state| {
-            let recorded = orders::record_placed_order(state, placed);
+            let recorded = orders::record_placed_order(state, placed)?;
             // A subscription bought at the checkout is a contract, as on Shopify.
             crate::admin::domains::subscriptions::checkout::contracts_from_order(
                 state,
                 &recorded.id,
                 placed,
             );
-            recorded
+            Ok(recorded)
         })
     }
 

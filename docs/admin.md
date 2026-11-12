@@ -1631,13 +1631,21 @@ What the backend changes through the Admin API is what the storefront and the
   checkout takes the code while the discount is `ACTIVE` by its dates, its `usageLimit` is not
   reached, the buyer is one of its `context` (all buyers, the customers it lists, the members of
   the segments it lists: a guest is the customer whose email they gave), has not used it when it
-  `appliesOncePerCustomer`, and the cart meets its `minimumRequirement` (the subtotal or the
-  quantity of the items it applies to, before discounts); free shipping makes free the rates up
-  to its `maximumShippingPrice`, to the countries of its `destination`. Otherwise the page says
-  "Enter a valid discount code", and the state's `discountCodes` says why (`reason`). The order
-  carries the code (`discountCodes`, a `DiscountCodeApplication`, the allocations), so do the
-  `discount_codes` and `discount_applications` of `orders/create` and `orders/paid`, and the
-  discount's `asyncUsageCount` (and its code's) goes up by one at once. One code of these types
+  `appliesOncePerCustomer`, and the cart meets its `minimumRequirement` (the quantity of the
+  items it applies to; a subtotal at the prices the discounts before it left, as on Shopify:
+  the items it applies to after the product discounts for an amount off, the cart after the
+  product and order discounts for free shipping); free shipping makes free the rates up to its
+  `maximumShippingPrice`, to the countries of its `destination`. Otherwise the page says "Enter
+  a valid discount code", and the state's `discountCodes` says why (`reason`). The order carries
+  the code it took something off with (`discountCodes`, a `DiscountCodeApplication`, the
+  allocations), so do the `discount_codes` and `discount_applications` of `orders/create` and
+  `orders/paid` (`type` `shipping` for free shipping), and the discount's `asyncUsageCount` (and
+  its code's) goes up by one at once. A free shipping code that took nothing off (a rate over
+  its maximum, nothing to ship) is neither on the order nor used. The usage limit and the one
+  use per customer are checked again as the order is recorded, so that two checkouts priced at
+  once do not both take the last use: the second completion is refused. A use is the
+  discount's: renaming its code or deleting it (`discountCodeRedeemCodeBulkDelete`) does not
+  give a buyer who used it another one. One code of these types
   applies per checkout (lsf does not read `combinesWith`), and it stacks with the discounts of
   the Functions; of the shipping discounts, the best one applies. Not read: a `context` of
   markets (every buyer), `appliesOnOneTimePurchase` and `appliesOnSubscription`. Buy X get Y

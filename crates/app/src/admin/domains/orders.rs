@@ -1005,8 +1005,26 @@ pub struct RecordedOrder {
 /// does for a paid order. The stock is left as it is: the local checkout keeps the stock of the
 /// data, so that test purchases never sell a product out. Returns the GID and the number the
 /// order got: no two orders of the shop share a number.
-pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> RecordedOrder {
+///
+/// The codes of Shopify's own discount types the checkout applied are checked again first, in
+/// this change of the shop ([`code_discounts::redemptions`]): when the buyer can no longer use
+/// one (another order took its last use since the checkout was priced), nothing is recorded and
+/// the code is the `Err`.
+///
+/// [`code_discounts::redemptions`]: super::app::code_discounts::redemptions
+pub fn record_placed_order(
+    state: &mut ShopState,
+    placed: &PlacedOrder,
+) -> Result<RecordedOrder, super::app::code_discounts::Refused> {
     let result = placed.result;
+    let redemptions = super::app::code_discounts::redemptions(
+        state,
+        result,
+        &super::app::code_discounts::Buyer {
+            customer_id: placed.customer_id,
+            email: placed.email,
+        },
+    )?;
     let number = placed
         .number
         .filter(|number| state.with_number("Order", "number", *number).is_empty())
@@ -1134,10 +1152,12 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
         shipping,
         tax: result.cost.tax,
         order_discount: (result.cost.discounts - line_discounts).max(0),
+        // A code that took nothing off is not the order's (a free shipping code on a rate over
+        // its maximum).
         discount_codes: result
             .discount_codes
             .iter()
-            .filter(|status| status.applicable)
+            .filter(|status| status.applicable && !status.took_nothing)
             .map(|status| status.code.clone())
             .collect(),
         note: placed.note.map(str::to_string),
@@ -1158,7 +1178,15 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
     };
     let order = insert_order(state, &draft);
     record_discounts(state, &order, result);
-    // The codes it was placed with are used once more.
+    // The code discounts it was placed with are used once more.
+    if !redemptions.is_empty()
+        && let Some(record) = state.get_mut(&order)
+    {
+        record.insert(
+            super::app::code_discounts::REDEMPTIONS.into(),
+            Value::Array(redemptions),
+        );
+    }
     super::app::code_discounts::count_uses(state, &order);
     copy_cart_metafields(state, &order, placed.metafields);
     let location = placed
@@ -1212,7 +1240,7 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
             .to_string();
         payments::vault_checkout_card(state, &order, &name);
     }
-    RecordedOrder { id: order, number }
+    Ok(RecordedOrder { id: order, number })
 }
 
 /// Copies the metafields of a cart onto the order placed from it, as Shopify does from 2026-04

@@ -241,8 +241,10 @@ pub struct CodeDiscountConfig {
     /// Its codes, which the buyer enters ignoring case.
     pub codes: Vec<String>,
     pub effect: CodeDiscountEffect,
-    /// What the cart must reach for the discount to apply (`minimumRequirement`): on the items it
-    /// applies to, before discounts.
+    /// What the cart must reach for the discount to apply (`minimumRequirement`). A subtotal
+    /// counts the prices after the discounts before it, as Shopify does: for an amount off, those
+    /// of the items it applies to after the product discounts; for free shipping, those of the
+    /// cart after the product and order discounts (`crate::checkout::pipeline`).
     pub minimum: Option<MinimumRequirement>,
     /// Why the buyer cannot use it whatever the cart (it is not active, its usage limit is
     /// reached, they used it already, it is for other customers), in lsf's words. `None`: they
@@ -458,6 +460,10 @@ pub struct AppliedDiscount {
     /// What a Function input shows of the discount: its `DiscountApplication`.
     #[serde(skip)]
     pub details: DiscountDetails,
+    /// The code discount of Shopify's own types it is ([`CodeDiscountConfig::id`]), which the
+    /// order placed counts a use of. `None` for a discount of a Function.
+    #[serde(skip)]
+    pub code_discount: Option<u64>,
 }
 
 /// A discount that a Function answered and that the checkout did not apply.
@@ -568,6 +574,12 @@ pub struct DiscountCodeStatus {
     /// says "Enter a valid discount code" for every code it refuses).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// A code of a discount of Shopify's own types that is applicable and took nothing off: free
+    /// shipping on a rate over its maximum, on a cart with nothing to ship, or that a shipping
+    /// discount of a Function beat. The page shows it as entered and valid; the order placed
+    /// does not carry it, and it is not used.
+    #[serde(skip)]
+    pub took_nothing: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]

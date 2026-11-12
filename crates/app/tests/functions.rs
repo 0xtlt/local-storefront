@@ -6,7 +6,8 @@ mod common;
 use common::*;
 use lsf_app::checkout::pipeline::{compute, compute_with};
 use lsf_app::checkout::{
-    CheckoutState, DiscountClass, DiscountClass::*, DiscountConfig, Metafield,
+    CheckoutState, CodeDiscountConfig, CodeDiscountEffect, CodeDiscountItems, CodeDiscountValue,
+    DiscountClass, DiscountClass::*, DiscountConfig, Metafield, MinimumRequirement,
 };
 use lsf_app::config::{Selection, Severity, TargetKind};
 use serde_json::json;
@@ -3346,6 +3347,19 @@ fn answer_discounts(
     classes: &[DiscountClass],
     answers: &[(&str, serde_json::Value)],
 ) -> lsf_app::checkout::CheckoutResult {
+    answer_discounts_with_codes(export, cart, classes, answers, Vec::new(), &[])
+}
+
+/// [`answer_discounts`], with the code discounts of Shopify's own types `native` of the shop,
+/// and the buyer entering `codes`.
+fn answer_discounts_with_codes(
+    export: &str,
+    cart: &[(u64, u32)],
+    classes: &[DiscountClass],
+    answers: &[(&str, serde_json::Value)],
+    native: Vec<CodeDiscountConfig>,
+    codes: &[&str],
+) -> lsf_app::checkout::CheckoutResult {
     static COPIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let copy = AppCopy::new(&format!(
         "overlap-{}",
@@ -3372,12 +3386,15 @@ fn answer_discounts(
             )
         })
         .collect();
+    config.code_discounts = native;
+    let mut state = addressed();
+    state.discount_codes = codes.iter().map(|code| code.to_string()).collect();
     compute_with(
         &app,
         &Selection::only(["volume-discount"]),
         &store,
         &session,
-        &addressed(),
+        &state,
         &config,
         &|_, _, ctx| {
             let title = ctx
@@ -4045,4 +4062,178 @@ fn an_automatic_discount_of_0_applies_at_0_too() {
     assert_eq!(allocations(&result.lines[0]), [(None, 0)]);
     assert_eq!(result.lines[0].total, result.lines[0].subtotal);
     assert_eq!(result.cost.discounts, 0);
+}
+
+// ---- codes of Shopify's own discount types with the Functions ----
+
+/// A code discount of Shopify's own types, as the Admin API gives it to the checkout.
+fn native_code(
+    id: u64,
+    code: &str,
+    effect: CodeDiscountEffect,
+    minimum: Option<MinimumRequirement>,
+) -> CodeDiscountConfig {
+    CodeDiscountConfig {
+        id,
+        title: code.to_string(),
+        codes: vec![code.to_string()],
+        effect,
+        minimum,
+        refused: None,
+    }
+}
+
+const FREE_SHIPPING: CodeDiscountEffect = CodeDiscountEffect::FreeShipping {
+    maximum_price: None,
+    countries: None,
+};
+
+#[test]
+fn a_free_shipping_code_a_shipping_function_beats_is_valid_and_not_on_the_order() {
+    // Both take the 4.90 of Standard off; the Function's makes Express free too, the code's,
+    // up to 5.00, does not: the Function's is the better one.
+    let up_to_five = CodeDiscountEffect::FreeShipping {
+        maximum_price: Some(500),
+        countries: None,
+    };
+    let result = answer_discounts_with_codes(
+        "cart_delivery_options_discounts_generate_run",
+        &TEE_AND_TOTE,
+        &[Shipping],
+        &[(
+            "Free standard",
+            shipping_answer(&["standard", "express"], percentage("100")),
+        )],
+        vec![native_code(1, "SHIPFREE", up_to_five, None)],
+        &["SHIPFREE"],
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.cost.shipping, 0);
+    assert_eq!(
+        result
+            .discounts
+            .iter()
+            .map(|d| (d.title.as_str(), d.code.as_deref()))
+            .collect::<Vec<_>>(),
+        [("Free standard", None)]
+    );
+    assert_eq!(result.skipped_discounts.len(), 1);
+    assert_eq!(
+        result.skipped_discounts[0].code.as_deref(),
+        Some("SHIPFREE")
+    );
+    // Shown as entered, valid; the order placed does not carry it.
+    assert!(result.discount_codes[0].applicable);
+    let mut shop = lsf_app::admin::state::ShopState::seeded(&store(), None);
+    let recorded = lsf_app::admin::domains::orders::record_placed_order(
+        &mut shop,
+        &lsf_app::admin::domains::orders::PlacedOrder {
+            id: None,
+            number: None,
+            processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: None,
+            company_location_id: None,
+            email: Some("buyer@example.com"),
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: None,
+            metafields: &[],
+        },
+    )
+    .expect("the order is recorded");
+    assert_eq!(
+        shop.get(&recorded.id).unwrap()["discountCodes"],
+        json!([]),
+        "the code took nothing off"
+    );
+}
+
+/// Three tees (96.00), 10 % off each from a product discount Function: 86.40 of merchandise.
+fn three_tees_less_ten_percent(
+    native: Vec<CodeDiscountConfig>,
+    codes: &[&str],
+) -> lsf_app::checkout::CheckoutResult {
+    let result = answer_discounts_with_codes(
+        "cart_lines_discounts_generate_run",
+        &[(TEE, 3)],
+        &[Product],
+        &[("Ten off", product_answer(&[LINE_1], percentage("10")))],
+        native,
+        codes,
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    result
+}
+
+#[test]
+fn a_free_shipping_minimum_counts_the_prices_after_the_function_discounts() {
+    let ninety = Some(MinimumRequirement::Subtotal(9000));
+    let result = three_tees_less_ten_percent(
+        vec![native_code(1, "SHIP90", FREE_SHIPPING, ninety)],
+        &["SHIP90"],
+    );
+    assert_eq!(result.lines[0].total, 8640);
+    assert_eq!(result.cost.shipping, 490, "86.40 is under the minimum");
+    let status = &result.discount_codes[0];
+    assert!(!status.applicable);
+    assert_eq!(
+        status.reason.as_deref(),
+        Some(
+            "its minimum purchase is 90.00 USD, and the cart comes to 86.40 USD after its discounts"
+        )
+    );
+
+    // 80.00 is reached.
+    let eighty = Some(MinimumRequirement::Subtotal(8000));
+    let result = three_tees_less_ten_percent(
+        vec![native_code(1, "SHIP80", FREE_SHIPPING, eighty)],
+        &["SHIP80"],
+    );
+    assert_eq!(result.cost.shipping, 0);
+}
+
+#[test]
+fn an_amount_off_minimum_counts_the_prices_after_the_product_function_discounts() {
+    let ninety = Some(MinimumRequirement::Subtotal(9000));
+    let five_off = CodeDiscountValue::Amount {
+        cents: 500,
+        each: false,
+    };
+    // Off the order, and off the tee: 86.40 of either after the product discount.
+    for items in [
+        CodeDiscountItems::All,
+        CodeDiscountItems::Listed {
+            products: Vec::new(),
+            variants: vec![TEE],
+        },
+    ] {
+        let effect = CodeDiscountEffect::AmountOff {
+            value: five_off,
+            items: items.clone(),
+        };
+        let result =
+            three_tees_less_ten_percent(vec![native_code(1, "FIVE", effect, ninety)], &["FIVE"]);
+        assert_eq!(result.lines[0].total, 8640, "{items:?}");
+        let status = &result.discount_codes[0];
+        assert!(!status.applicable, "{items:?}");
+        assert_eq!(
+            status.reason.as_deref(),
+            Some(
+                "its minimum purchase is 90.00 USD, and the items it applies to come to 86.40 USD after the product discounts"
+            ),
+            "{items:?}"
+        );
+    }
+
+    let eighty = Some(MinimumRequirement::Subtotal(8000));
+    let effect = CodeDiscountEffect::AmountOff {
+        value: five_off,
+        items: CodeDiscountItems::All,
+    };
+    let result =
+        three_tees_less_ten_percent(vec![native_code(1, "FIVE", effect, eighty)], &["FIVE"]);
+    assert_eq!(result.lines[0].total, 8640 - 500);
 }

@@ -174,7 +174,8 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             payment: Some("Credit card"),
             metafields: &[],
         },
-    );
+    )
+    .expect("the order is recorded");
     assert_eq!(
         order,
         orders::RecordedOrder {
@@ -259,7 +260,8 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             payment: None,
             metafields: &[],
         },
-    );
+    )
+    .expect("the order is recorded");
     assert_ne!(again.id, order);
     assert_eq!(again.number, 1005);
     assert_eq!(state.get(&again.id).unwrap()["name"], json!("#1005"));
@@ -283,7 +285,8 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             payment: None,
             metafields: &[],
         },
-    );
+    )
+    .expect("the order is recorded");
     assert_eq!(next.number, 1006);
     assert_eq!(state.get(&next.id).unwrap()["name"], json!("#1006"));
     // Its id is of the shop's counter, as `orderCreate`'s, not made of its number.
@@ -353,7 +356,8 @@ fn an_order_placed_for_a_company_location_counts_in_its_counters() {
             payment: None,
             metafields: &[],
         },
-    );
+    )
+    .expect("the order is recorded");
     let total = state.get(&order.id).unwrap()["totalPriceSet"]["shopMoney"]["amount"]
         .as_str()
         .unwrap()
@@ -445,7 +449,8 @@ fn a_guest_order_with_a_customer_s_email_is_that_customer_s() {
             payment: None,
             metafields: &[],
         },
-    );
+    )
+    .expect("the order is recorded");
     assert_eq!(state.get(&order.id).unwrap()["customer"], json!(customer));
     let record = state.get(&customer).unwrap();
     let before: u64 = orders_before.as_str().unwrap().parse().unwrap();
@@ -470,6 +475,7 @@ fn a_guest_order_with_a_customer_s_email_is_that_customer_s() {
             payment: None,
             metafields: &[],
         },
-    );
+    )
+    .expect("the order is recorded");
     assert_eq!(state.get(&guest.id).unwrap()["customer"], Value::Null);
 }
