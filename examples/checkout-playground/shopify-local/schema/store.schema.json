@@ -2982,6 +2982,13 @@
             "type": "string"
           }
         },
+        "languages": {
+          "description": "The languages its countries are offered (`country.available_languages`, in this order),\nby ISO code, which are in `localization.languages`. The first is the market's default\nlanguage: a visitor who switches to one of its countries in a language it does not offer\ngets it. Defaults to every language of the store.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "metafields": {
           "type": "object",
           "additionalProperties": {

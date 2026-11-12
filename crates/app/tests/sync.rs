@@ -653,6 +653,37 @@ fn metafields_reach_liquid_and_the_function_inputs() {
     assert_eq!(input["shop"]["metafield"]["value"], json!("Spring sale"));
 }
 
+#[test]
+fn a_market_keeps_its_languages_through_the_admin_api() {
+    // The rich fixture's localization, with the languages of its market.
+    let languages = Overlay::new(
+        "market-languages",
+        json!({"localization": {
+            "countries": [{"iso_code": "FR"}, {"iso_code": "DE"},
+                {"iso_code": "GB", "currency": "GBP"}, {"iso_code": "US", "currency": "USD"}],
+            "languages": [{"iso_code": "fr"}, {"iso_code": "en"}],
+            "markets": [{"handle": "europe", "countries": ["FR", "DE"], "languages": ["en", "fr"]}]
+        }}),
+    );
+    let (base, _) = load(std::slice::from_ref(&languages));
+    let app = support::fixture_app();
+    let mut state = ShopState::seeded(&base, Some(&app));
+    let europe = content::market_gid("europe");
+    // A change of the market (`marketUpdate`) syncs the localization again.
+    set(&mut state, &europe, "handle", json!("eu"));
+    let overlay = sync::overlay(&state, &base).expect("something to sync");
+    let (store, _) = load(&[languages.clone(), overlay]);
+    let market = store.market_of("DE").expect("a market");
+    assert_eq!(market.handle, "eu");
+    assert_eq!(market.languages, ["en", "fr"]);
+    // English unpublished (`shopLocaleUpdate`): the market offers French only.
+    set(&mut state, "en", "published", json!(false));
+    let overlay = sync::overlay(&state, &base).expect("something to sync");
+    let (store, _) = load(&[languages, overlay]);
+    assert_eq!(store.market_of("DE").expect("a market").languages, ["fr"]);
+    assert!(store.language("en").is_none());
+}
+
 /// The input a validation Function with `query` reads for a cart of one unit of a product.
 fn function_input(store: &Store, handle: &str, query: &str) -> Value {
     use lsf_app::checkout::input::{FetchInput, InputContext, Owner, OwnerKind};

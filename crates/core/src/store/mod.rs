@@ -799,6 +799,9 @@ pub struct Market {
     pub handle: String,
     /// ISO 3166-1 alpha-2 codes, upper case.
     pub countries: Vec<String>,
+    /// The ISO codes of the languages it offers, as `localization.languages` spells them, its
+    /// default first. Empty when it offers every language of the store.
+    pub languages: Vec<String>,
     pub metafields: Metafields,
 }
 
@@ -1227,6 +1230,32 @@ impl Store {
                 .iter()
                 .any(|country| country.eq_ignore_ascii_case(iso_code))
         })
+    }
+
+    /// The languages a country is offered (`country.available_languages`): those of its market,
+    /// in the market's order (its default first), when the market lists some; otherwise every
+    /// language of the store, the primary first.
+    pub fn languages_of(&self, iso_code: &str) -> Vec<&Language> {
+        match self
+            .market_of(iso_code)
+            .filter(|market| !market.languages.is_empty())
+        {
+            Some(market) => market
+                .languages
+                .iter()
+                .filter_map(|code| self.language(code))
+                .collect(),
+            None => self.languages.iter().collect(),
+        }
+    }
+
+    /// The language a country defaults to: the first its market lists, else the store's
+    /// primary language.
+    pub fn default_language_of(&self, iso_code: &str) -> &Language {
+        self.market_of(iso_code)
+            .and_then(|market| market.languages.first())
+            .and_then(|code| self.language(code))
+            .unwrap_or_else(|| self.primary_language())
     }
 
     /// The entry of a type (an app's in either spelling: [`same_metaobject_type`]) and a handle.

@@ -2865,6 +2865,74 @@ mod tests {
         assert!(store.markets.is_empty() && store.market_of("US").is_none());
     }
 
+    fn iso_codes(languages: Vec<&crate::store::Language>) -> Vec<&str> {
+        languages
+            .into_iter()
+            .map(|language| language.iso_code.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn a_market_offers_its_languages_to_its_countries() {
+        // https://shopify.dev/docs/api/liquid/objects/country: `available_languages` are "the
+        // languages that have been added to the market that this country belongs to".
+        let overlay = serde_json::json!({"localization": {
+            "countries": [{"iso_code": "US"}, {"iso_code": "CA"}, {"iso_code": "DE"},
+                {"iso_code": "FR"}],
+            "languages": [{"iso_code": "en"}, {"iso_code": "fr"}, {"iso_code": "de"}],
+            "markets": [
+                {"handle": "canada", "countries": ["CA"], "languages": ["FR", "en", "fr"]},
+                {"handle": "germany", "countries": ["DE"], "languages": ["de"]},
+                {"handle": "france", "countries": ["FR"]}
+            ]
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        // The store's spelling, each once, the market's default first.
+        assert_eq!(store.market_of("CA").unwrap().languages, ["fr", "en"]);
+        // In the market's order, not the store's: a Shopify market lists its default language
+        // first (on a real store, Switzerland gives `fr, en, de` and Germany `de, en`).
+        assert_eq!(iso_codes(store.languages_of("ca")), ["fr", "en"]);
+        assert_eq!(store.default_language_of("CA").iso_code, "fr");
+        assert_eq!(iso_codes(store.languages_of("DE")), ["de"]);
+        assert_eq!(store.default_language_of("DE").iso_code, "de");
+        // A market that lists no language, and a country in no market, offer every language
+        // and default to the primary one.
+        for country in ["FR", "US", "JP"] {
+            assert_eq!(iso_codes(store.languages_of(country)), ["en", "fr", "de"]);
+            assert_eq!(store.default_language_of(country).iso_code, "en");
+        }
+    }
+
+    #[test]
+    fn a_market_language_the_store_does_not_publish_is_reported() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [{"iso_code": "CA"}],
+            "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+            "markets": [{"handle": "canada", "countries": ["CA"], "languages": ["fr", "de"]}]
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        let report = diagnostics.to_string();
+        assert!(
+            report.contains(
+                "error[unknown_language]: \"de\" is not one of the languages of the store"
+            ),
+            "{report}"
+        );
+        assert!(
+            report.contains("the store has: en, fr. Add it to \"localization.languages\""),
+            "{report}"
+        );
+        assert!(
+            report.contains("/localization/markets/0/languages/1"),
+            "{report}"
+        );
+        // The rest of the market stands.
+        assert_eq!(iso_codes(store.languages_of("CA")), ["fr"]);
+    }
+
     #[test]
     fn bad_markets_are_reported() {
         let overlay = serde_json::json!({"localization": {

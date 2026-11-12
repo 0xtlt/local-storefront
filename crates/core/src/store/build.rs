@@ -3210,6 +3210,8 @@ fn build_localization(
         store.markets.push(Market {
             handle: market.handle.clone(),
             countries,
+            // Resolved below, once the languages are known.
+            languages: Vec::new(),
             metafields: builder.metafields(&market.metafields, &market_origin.child("metafields")),
         });
     }
@@ -3263,6 +3265,40 @@ fn build_localization(
             primary: position == 0,
             iso_code,
         });
+    }
+
+    // The languages of each market, as the store spells them; a language the store does not
+    // publish is left out.
+    for (position, market) in input.markets.iter().enumerate() {
+        let market_origin = origin.child("markets").child(position);
+        let mut languages: Vec<String> = Vec::new();
+        for (index, code) in market.languages.iter().enumerate() {
+            match store.language(code) {
+                Some(language) => {
+                    if !languages.contains(&language.iso_code) {
+                        languages.push(language.iso_code.clone());
+                    }
+                }
+                None => {
+                    let known: Vec<&str> = store
+                        .languages
+                        .iter()
+                        .map(|language| language.iso_code.as_str())
+                        .collect();
+                    builder
+                        .error(
+                            "unknown_language",
+                            &market_origin.child("languages").child(index),
+                            format!("\"{code}\" is not one of the languages of the store"),
+                        )
+                        .hint(format!(
+                            "the store has: {}. Add it to \"localization.languages\"",
+                            known.join(", ")
+                        ));
+                }
+            }
+        }
+        store.markets[position].languages = languages;
     }
 }
 

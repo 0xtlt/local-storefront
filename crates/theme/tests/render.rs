@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use lsf_core::session::{FormResult, Session};
-use lsf_core::store::load::{DataSource, LoadOptions, load};
+use lsf_core::store::load::{DataSource, LoadOptions, load, load_with_overlay};
 use lsf_core::store::{CartLine, Store};
 use lsf_core::theme::Revalidate;
 use lsf_theme::render::cost::Costs;
@@ -295,6 +295,79 @@ fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
         "{{ localization.country.iso_code }}",
     );
     assert_eq!(output, "US");
+}
+
+#[test]
+fn a_country_is_offered_the_languages_of_its_market() {
+    // https://shopify.dev/docs/api/liquid/objects/country: `available_languages` are "the
+    // languages that have been added to the market that this country belongs to". On a real
+    // store, the localization form of a Dawn-based theme (`localization.available_languages`)
+    // lists `fr, en` in France, `de, en` in Germany and `fr, en, de` in Switzerland: the
+    // languages of the visitor's market, its default first.
+    let country_languages = "{% for country in localization.available_countries %}\
+        {{ country.iso_code }}:{{ country.available_languages | map: 'iso_code' | join: ',' }} \
+        {% endfor %}";
+    let visitor_languages = "{{ localization.available_languages | map: 'iso_code' | join: ',' }}";
+    // Without markets, every country is offered every language.
+    let fixture = fixture();
+    let session = || Session::initial(&fixture.store);
+    assert_eq!(
+        fixture.liquid("/", session(), country_languages),
+        "US:en,fr CA:en,fr FR:en,fr "
+    );
+    assert_eq!(fixture.liquid("/", session(), visitor_languages), "en,fr");
+
+    let overlay = serde_json::json!({"localization": {
+        "countries": [{"iso_code": "US"}, {"iso_code": "CA"}, {"iso_code": "FR"}],
+        "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+        "markets": [
+            {"handle": "north-america", "countries": ["US"], "languages": ["en"]},
+            {"handle": "france", "countries": ["FR"], "languages": ["fr", "en"]}
+        ]
+    }});
+    let options = LoadOptions {
+        theme_locales: vec!["en".to_string(), "fr".to_string()],
+        ..LoadOptions::default()
+    };
+    let (store, diagnostics) = load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture
+    };
+    let session = |country: Option<&str>| {
+        let mut session = Session::initial(&fixture.store);
+        session.country = country.map(str::to_string);
+        session
+    };
+    // Canada is in no market: it keeps every language. France lists its default first.
+    assert_eq!(
+        fixture.liquid("/", session(None), country_languages),
+        "US:en CA:en,fr FR:fr,en "
+    );
+    // `localization.available_languages` follows the visitor's country: the shop's (Canada)
+    // until they select one.
+    assert_eq!(
+        fixture.liquid("/", session(None), visitor_languages),
+        "en,fr"
+    );
+    assert_eq!(
+        fixture.liquid("/", session(Some("FR")), visitor_languages),
+        "fr,en"
+    );
+    assert_eq!(
+        fixture.liquid("/", session(Some("US")), visitor_languages),
+        "en"
+    );
+    // `shop.published_locales` stays every language of the store.
+    assert_eq!(
+        fixture.liquid(
+            "/",
+            session(Some("FR")),
+            "{{ shop.published_locales | map: 'iso_code' | join: ',' }}"
+        ),
+        "en,fr"
+    );
 }
 
 #[test]
