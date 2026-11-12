@@ -226,7 +226,8 @@ pub struct TypedMetafield {
     #[serde(rename = "type")]
     pub kind: String,
     /// The value. References are written as handles (`"blue-shirt"`), files as paths inside
-    /// `files/`, lists as JSON arrays.
+    /// `files/`, lists as JSON arrays. An object or a list may also be written as its JSON
+    /// text, as the Admin API's `value` gives it.
     pub value: Json,
 }
 
