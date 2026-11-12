@@ -1291,6 +1291,82 @@ fn metafield_values_are_the_objects_shopify_gives() {
 }
 
 #[test]
+fn a_rating_has_strings_as_on_shopify() {
+    // The rating of the Admin API's `jsonValue`, the same with numbers, and the Admin API's
+    // `value` (the JSON text) pasted as is.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "spec": [{
+                "handle": "tent",
+                "fields": {
+                    "stars": { "type": "rating", "value": { "scale_min": "1.0", "scale_max": "5.0", "value": "4.5" } },
+                    "numbers": { "type": "rating", "value": { "scale_min": 1, "scale_max": 5, "value": 4.5 } },
+                    "pasted": { "type": "rating", "value": "{\"scale_min\":\"1.0\",\"scale_max\":\"5.0\",\"value\":\"4.5\"}" },
+                    "several": { "type": "list.rating", "value": [{ "scale_min": "1.0", "scale_max": "10.0", "value": "7.5" }] }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render = |source: &str| fixture.liquid("/", Session::initial(&fixture.store), source);
+    // The issue's template: `scale_max` is the string "5.0", and the range takes it, as on
+    // Shopify. A float 5.0 would raise "invalid integer" there.
+    let stars = |field: &str| {
+        render(&format!(
+            "{{%- assign m = metaobjects.spec.tent.{field} -%}}\
+             [{{{{ m.value.scale_max }}}}] [{{{{ m.value.scale_max | json }}}}] \
+             [{{% for i in (1..m.value.scale_max) %}}*{{% endfor %}}]"
+        ))
+    };
+    assert_eq!(stars("stars"), "[5.0] [\"5.0\"] [*****]");
+    assert_eq!(stars("pasted"), "[5.0] [\"5.0\"] [*****]");
+    // Numbers are kept as they are written, as strings.
+    assert_eq!(stars("numbers"), "[5] [\"5\"] [*****]");
+    // The rating object of Shopify's Liquid reference: `rating`, `scale_max`, `scale_min`.
+    assert_eq!(
+        render("{{ metaobjects.spec.tent.stars.value | json }}"),
+        r#"{"rating":"4.5","scale_max":"5.0","scale_min":"1.0"}"#
+    );
+    assert_eq!(
+        render("{{ metaobjects.spec.tent.numbers.value | json }}"),
+        r#"{"rating":"4.5","scale_max":"5","scale_min":"1"}"#
+    );
+    // The metafield itself gives its value as the store data keeps it: strings.
+    assert_eq!(
+        render("{{ metaobjects.spec.tent.pasted | json }}"),
+        r#"{"scale_min":"1.0","scale_max":"5.0","value":"4.5"}"#
+    );
+    assert_eq!(
+        render("{{ metaobjects.spec.tent.numbers | json }}"),
+        r#"{"scale_min":"1","scale_max":"5","value":"4.5"}"#
+    );
+    // Each rating of a list too.
+    assert_eq!(
+        render(
+            "{% for r in metaobjects.spec.tent.several.value %}{{ r.rating | json }}/{{ r.scale_max | json }}{% endfor %}"
+        ),
+        r#""7.5"/"10.0""#
+    );
+    // What reads them as numbers still does.
+    assert_eq!(
+        render(
+            "{% assign m = metaobjects.spec.tent.stars %}{{ m | metafield_text }}|\
+             {{ m.value.rating | floor }}|{{ m.value.rating | modulo: 1 }}|{{ m.value.scale_max | minus: m.value.rating }}"
+        ),
+        "4.5 / 5.0|4|0.5|0.5"
+    );
+}
+
+#[test]
 fn what_is_loaded_is_charged_once() {
     let overlay = serde_json::json!({
         "metaobjects": {

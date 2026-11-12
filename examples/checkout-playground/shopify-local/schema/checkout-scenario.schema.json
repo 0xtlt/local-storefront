@@ -679,7 +679,7 @@
           "type": "string"
         },
         "value": {
-          "description": "The value. References are written as handles (`\"blue-shirt\"`), files as paths inside\n`files/`, lists as JSON arrays."
+          "description": "The value. References are written as handles (`\"blue-shirt\"`), files as paths inside\n`files/`, lists as JSON arrays. An object or a list may also be written as its JSON\ntext, as the Admin API's `value` gives it."
         }
       },
       "additionalProperties": false,
