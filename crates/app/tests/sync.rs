@@ -1096,6 +1096,80 @@ fn the_translations_of_a_metaobject_are_those_of_the_store_data() {
 }
 
 #[test]
+fn the_translations_into_a_locale_follow_its_publication() {
+    // The FAQ of the rich fixture has its question in English, the store's other language.
+    let (base, mut state) = rich();
+    let faq = content::metaobject_gid("faq", "returns");
+    let publish = r#"mutation($published: Boolean!) {
+        shopLocaleUpdate(locale: "en", shopLocale: {published: $published}) { shopLocale { locale } userErrors { message } } }"#;
+    let admin_translations = |state: &mut ShopState| {
+        mutate(
+            state,
+            r#"query($id: ID!) { translatableResource(resourceId: $id) { translations(locale: "en") { key value } } }"#,
+            json!({"id": faq}),
+        )["data"]["translatableResource"]["translations"]
+            .clone()
+    };
+    // The store as the files and the Admin API's changes make it, without an error.
+    let current = |state: &ShopState| {
+        let overlays: Vec<Overlay> = sync::overlay(state, &base).into_iter().collect();
+        load(&overlays).0
+    };
+    let question = |store: &Store| {
+        store
+            .metaobject("faq", "returns")
+            .unwrap()
+            .field_in("question", "en")
+            .unwrap()
+            .value
+            .clone()
+    };
+    let translated = json!([{"key": "question", "value": "Can I send it back?"}]);
+
+    // Unpublished: the Admin API keeps the translation, the store data leaves it out (the
+    // storefront no longer serves the locale), and `validate` has nothing to say.
+    mutate(&mut state, publish, json!({"published": false}));
+    let (store, overlay) = synced(&state, &base);
+    assert!(store.language("en").is_none());
+    let entry = store.metaobject("faq", "returns").unwrap();
+    assert!(entry.translations.is_empty(), "{overlay:#?}");
+    assert_eq!(question(&store), json!("Can I return?"));
+    assert_eq!(admin_translations(&mut state), translated);
+
+    // Published again: the translation is back.
+    mutate(&mut state, publish, json!({"published": true}));
+    let store = current(&state);
+    assert!(store.language("en").is_some());
+    assert_eq!(question(&store), json!("Can I send it back?"));
+
+    // Disabled, the locale goes with its translations: enabled and published again, it has none.
+    mutate(
+        &mut state,
+        r#"mutation { shopLocaleDisable(locale: "en") { locale userErrors { message } } }"#,
+        json!({}),
+    );
+    let store = current(&state);
+    assert!(store.language("en").is_none());
+    assert!(
+        store
+            .metaobject("faq", "returns")
+            .unwrap()
+            .translations
+            .is_empty()
+    );
+    mutate(
+        &mut state,
+        r#"mutation { shopLocaleEnable(locale: "en") { shopLocale { locale } userErrors { message } } }"#,
+        json!({}),
+    );
+    mutate(&mut state, publish, json!({"published": true}));
+    let store = current(&state);
+    assert!(store.language("en").is_some());
+    assert_eq!(question(&store), json!("Can I return?"));
+    assert_eq!(admin_translations(&mut state), json!([]));
+}
+
+#[test]
 fn the_metaobjects_of_an_app_type_reach_the_storefront_and_the_functions() {
     let (base, mut state) = rich();
     let app_id = state.app_id();

@@ -882,7 +882,9 @@ translations of a metaobject are those of the store data ([metaobject
 translations](data-format.md#translations-of-metaobjects)): `translatableResource` reads them,
 `translationsRegister` and `translationsRemove` change them, and the storefront shows them on the
 routes of their language (`/fr/...`). Those of a market, and of the other resources, are not
-shown on the storefront.
+shown on the storefront. A locale unpublished (`shopLocaleUpdate`) keeps its translations in the
+Admin API but leaves the storefront with them, until it is published again; `shopLocaleDisable`
+deletes them.
 
 **Webhooks.** `metafield_definitions/create`, `/update` (also pin and unpin), `/delete`;
 `metaobjects/create`, `/update`, `/delete`; `products/update` when a product's or a variant's

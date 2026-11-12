@@ -164,6 +164,9 @@ struct View<'s> {
     groups_of: HashMap<&'s str, Vec<&'s str>>,
     /// The company contacts of each customer.
     contacts_of: HashMap<&'s str, Vec<&'s str>>,
+    /// The locales the shop publishes: the languages of the store data, which the storefront
+    /// serves.
+    published_locales: Vec<&'s str>,
 }
 
 impl<'s> View<'s> {
@@ -175,6 +178,7 @@ impl<'s> View<'s> {
             collections_of: HashMap::new(),
             groups_of: HashMap::new(),
             contacts_of: HashMap::new(),
+            published_locales: Vec::new(),
         };
         let mut metafields: HashMap<&'s str, Vec<&'s str>> = HashMap::new();
         for key in view.keys("Metafield", removed) {
@@ -214,7 +218,22 @@ impl<'s> View<'s> {
         view.collections_of = collections_of;
         view.groups_of = groups_of;
         view.contacts_of = contacts_of;
+        view.published_locales = view
+            .keys("ShopLocale", removed)
+            .into_iter()
+            .filter_map(|key| view.get(key))
+            .filter(|record| flag(record, "published") != Some(false))
+            .filter_map(|record| text(record, "locale"))
+            .collect();
         view
+    }
+
+    /// Whether the shop publishes a locale: `shopLocaleUpdate(published: false)` keeps it and
+    /// its translations in the Admin API, but the storefront no longer serves it.
+    fn publishes(&self, locale: &str) -> bool {
+        self.published_locales
+            .iter()
+            .any(|published| published.eq_ignore_ascii_case(locale))
     }
 
     fn get(&self, key: &str) -> Option<&'s Record> {
@@ -515,6 +534,8 @@ impl<'s> Sync<'s> {
         let mut discounts = false;
         let mut functions: IndexSet<String> = IndexSet::new();
         let mut markets = false;
+        // Whether a locale was published, unpublished or disabled.
+        let mut locales = false;
 
         // Entities, then the entities that name one whose key changed or that is gone, until
         // there are no more. Those are written even when what they project is the same: the data
@@ -543,7 +564,11 @@ impl<'s> Sync<'s> {
                 }
                 match type_name {
                     "Shop" => self.shop(&mut shop_patch, &mut removals),
-                    "Market" | "ShopLocale" => markets = true,
+                    "Market" => markets = true,
+                    "ShopLocale" => {
+                        markets = true;
+                        locales = true;
+                    }
                     "DiscountAutomaticNode" | "DiscountCodeNode" => discounts = true,
                     owner if FUNCTION_OWNERS.contains(&owner) => {
                         for era in [Era::Now, Era::Seed] {
@@ -584,6 +609,15 @@ impl<'s> Sync<'s> {
                         if let Some(now) = now {
                             now.add(&mut input);
                         }
+                    }
+                }
+            }
+            // A locale published or unpublished shows or hides the translations into it: the
+            // metaobjects that have some are projected again.
+            if std::mem::take(&mut locales) {
+                for key in self.translated_metaobjects() {
+                    if !done.contains(key) {
+                        queue.push(("Metaobject", key));
                     }
                 }
             }
@@ -2003,9 +2037,22 @@ impl<'s> Sync<'s> {
         ))
     }
 
+    /// The metaobjects that have translations, now or in the seed.
+    fn translated_metaobjects(&self) -> Vec<&'s str> {
+        self.state
+            .keys("Metaobject")
+            .filter(|key| {
+                let translations = content::translations::key_of(key);
+                self.now.get(&translations).is_some() || self.seed.get(&translations).is_some()
+            })
+            .collect()
+    }
+
     /// The translations of a metaobject, by language then field key, as the store data writes
-    /// them: those for every market (the data has no market's), of the fields of a type Shopify
-    /// translates that the entry has, their values written as the fields' are.
+    /// them: those for every market (the data has no market's), into a locale the shop
+    /// publishes (the data's languages; the Admin API keeps the others until the locale is
+    /// published again or disabled), of the fields of a type Shopify translates that the entry
+    /// has, their values written as the fields' are.
     fn metaobject_translations(
         &self,
         view: &View<'s>,
@@ -2030,6 +2077,9 @@ impl<'s> Sync<'s> {
             else {
                 continue;
             };
+            if !view.publishes(locale) {
+                continue;
+            }
             let Some(model::MetafieldInput::Typed(typed)) = fields.get(name) else {
                 continue;
             };
