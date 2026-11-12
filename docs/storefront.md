@@ -83,8 +83,10 @@ in.
 
 ## What else is served as on Shopify
 
-- **Styles and scripts are minified**, with a source map, as Shopify minifies them.
-  `--no-minify` serves them as written.
+- **Styles and scripts are minified**, with a source map, as Shopify minifies them: when that
+  makes the file lighter, and without merging declarations that cascade apart, such as
+  `translate` into `transform` ([the rules](compatibility.md#minification)). `--no-minify`
+  serves them as written.
 - **Responses are compressed** with Brotli or gzip, with Shopify's `Cache-Control`, so that an
   audit of your theme sees what it would see on the store. `--no-compression` turns it off.
 - **Pages have Shopify's scripts:** the `Shopify` object, `Shopify.actions`,

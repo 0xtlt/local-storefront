@@ -31,7 +31,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 # The minifiers of scripts and of stylesheets.
 oxc = { workspace = true, features = ["minifier", "codegen"] }
 oxc_compat.workspace = true
-lightningcss = { version = "1.0.0-alpha.72", default-features = false, features = ["sourcemap"] }
+lightningcss = { version = "1.0.0-alpha.72", default-features = false, features = ["sourcemap", "visitor"] }
 parcel_sourcemap = "2"
 multer = "3"
 # The requests of the app proxy to the backend of the app, as lsf-app sends its webhooks.
