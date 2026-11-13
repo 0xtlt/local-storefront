@@ -758,6 +758,16 @@ test('a customer account target reads the account and has its own platform APIs'
   assert.equal(shopify.navigation.currentEntry.url, null, 'only a full page has an entry');
 });
 
+test('in the customer account, a missing translation is Shopify\'s MISSING KEY text and an ExtensionUsageError', () => {
+  const { shopify, posted } = account('customer-account.profile.block.render', { ext: { translations: { en: { hello: 'Hello' } } } });
+  assert.equal(shopify.i18n.translate('hello'), 'Hello');
+  assert.deepEqual(posted, []);
+  assert.equal(shopify.i18n.translate('nope'), 'MISSING KEY for locale "en": "nope"');
+  assert.deepEqual(posted, [{ type: 'log', level: 'error', args: ['ExtensionUsageError: translate(): MISSING KEY for locale "en": "nope"'] }]);
+  const bare = account('customer-account.profile.block.render').shopify;
+  assert.equal(bare.i18n.translate('hello'), 'MISSING KEY for locale "en": "hello"', 'an extension without locale files');
+});
+
 test('an order status target reads the order as the Order Status API', () => {
   const { shopify } = account('customer-account.order-status.block.render', { ctx: { orderId: ORDER.id } });
   assert.deepEqual(plain(shopify.order.value), { id: ORDER.id, name: '#1042', confirmationNumber: 'ABC123XYZ', processedAt: '2024-03-04T00:00:00+00:00' });
