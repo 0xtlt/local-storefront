@@ -1397,13 +1397,40 @@ impl AdminApi {
                 shops: &names,
                 now: Utc::now(),
             };
-            let response = {
+            let (response, installed) = {
                 let mut tokens = lock(&self.tokens);
+                let installed_before = |tokens: &Tokens| -> Vec<(String, Option<Vec<String>>)> {
+                    self.all_shops()
+                        .into_iter()
+                        .map(|(domain, _)| {
+                            let scopes = tokens
+                                .installed_scopes(&domain, &self.auth.client_id)
+                                .map(<[String]>::to_vec);
+                            (domain, scopes)
+                        })
+                        .collect()
+                };
+                let before = installed_before(&tokens);
                 let response = oauth::handle(request, &cx, &mut tokens);
                 // An authorization or a token exchange installs the app where it was not.
                 self.note_installs(&tokens);
-                response
+                // The shops whose installation a grant changed: the scopes before, and now.
+                let installed: Vec<(String, Option<Vec<String>>, Vec<String>)> = before
+                    .into_iter()
+                    .filter_map(|(domain, before)| {
+                        let now = tokens
+                            .installed_scopes(&domain, &self.auth.client_id)?
+                            .to_vec();
+                        (before.as_ref() != Some(&now)).then_some((domain, before, now))
+                    })
+                    .collect();
+                (response, installed)
             };
+            // The installation lists the scopes the grant left it, and `app/scopes_update` says
+            // they changed, as `POST /__lsf/admin/install` does.
+            for (domain, before, now) in installed {
+                self.record_scopes(&domain, &now, before.as_deref());
+            }
             // A grant may install the app again with fewer scopes, which narrows every token of
             // the installation: the requests waiting on a shop look their token up again.
             if path.trim_end_matches('/') == "/admin/oauth/access_token" {
@@ -2139,14 +2166,23 @@ impl AdminApi {
             self.note_installs(&tokens);
             (token, before)
         };
-        let changed = before
-            .as_ref()
-            .is_some_and(|before| scopes::expand(before) != scopes::expand(&scopes));
+        let changed = self.record_scopes(&domain, &scopes, before.as_deref());
+        HttpResponse::json(
+            200,
+            &json!({"ok": true, "shop": domain, "token": token, "scopes": scopes, "scopesChanged": changed}),
+        )
+    }
+
+    /// Writes the scopes the app is now installed with on a shop into its installation
+    /// (`currentAppInstallation.accessScopes`), and delivers `app/scopes_update` when they are
+    /// not those of `before` (`None`: the app was not installed). Whether they changed.
+    fn record_scopes(&self, domain: &str, scopes: &[String], before: Option<&[String]>) -> bool {
+        let changed = before.is_some_and(|before| scopes::expand(before) != scopes::expand(scopes));
         let handles: Vec<Value> = scopes
             .iter()
             .map(|scope| json!({"handle": scope}))
             .collect();
-        if let Some(shop) = self.shop(&domain) {
+        if let Some(shop) = self.shop(domain) {
             let mut live = lock(&shop);
             // The tokens carry the scopes installed now.
             live.auth_generation += 1;
@@ -2172,10 +2208,7 @@ impl AdminApi {
                 }
             }
         }
-        HttpResponse::json(
-            200,
-            &json!({"ok": true, "shop": domain, "token": token, "scopes": scopes, "scopesChanged": changed}),
-        )
+        changed
     }
 }
 

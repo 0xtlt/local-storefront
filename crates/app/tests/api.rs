@@ -343,6 +343,111 @@ fn throttles_and_refuses_queries_over_the_cost_limit() {
     assert!(answer["data"]["products"].is_object());
 }
 
+/// An OAuth grant with other scopes installs the app with them: `accessScopes` lists them, as
+/// the token's access does, and `app/scopes_update` is delivered, as `POST /__lsf/admin/install`
+/// does (issue #174).
+#[test]
+fn an_oauth_grant_with_other_scopes_lists_them_and_delivers_scopes_update() {
+    let receiver = Receiver::start(SECRET);
+    let mut app = support::fixture_app();
+    app.config.redirect_urls = vec!["https://app.example.com/auth/callback".to_string()];
+    let api = AdminApi::new(&support::demo_store(), options(Some(app), None));
+    let (_, subscribed) = graphql(
+        &api,
+        &default_token(&api),
+        "mutation($uri: String!) { webhookSubscriptionCreate(topic: APP_SCOPES_UPDATE, webhookSubscription: {uri: $uri}) { userErrors { message } } }",
+        json!({"uri": format!("{}/webhooks/scopes", receiver.url)}),
+    );
+    assert_eq!(
+        subscribed["data"]["webhookSubscriptionCreate"]["userErrors"],
+        json!([]),
+        "{subscribed}"
+    );
+    let grant = |scope: &str| -> String {
+        let authorized = send(
+            &api,
+            "GET",
+            &format!(
+                "/admin/oauth/authorize?client_id={}&scope={scope}&redirect_uri=https%3A%2F%2Fapp.example.com%2Fauth%2Fcallback&state=s1",
+                api.client_id()
+            ),
+            Value::Null,
+        );
+        assert_eq!(
+            authorized.status,
+            302,
+            "{:?}",
+            header(&authorized, "x-lsf-reason")
+        );
+        let location = header(&authorized, "location").unwrap();
+        let code = location
+            .split(['?', '&'])
+            .find_map(|pair| pair.strip_prefix("code="))
+            .unwrap_or_else(|| panic!("{location}"));
+        let exchanged = send(
+            &api,
+            "POST",
+            "/admin/oauth/access_token",
+            json!({"client_id": api.client_id(), "client_secret": SECRET, "code": code}),
+        );
+        assert_eq!(exchanged.status, 200);
+        json_of(&exchanged)["access_token"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let token = grant("read_customers");
+    let (_, installation) = graphql(
+        &api,
+        &token,
+        "{ currentAppInstallation { accessScopes { handle } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        installation["data"]["currentAppInstallation"]["accessScopes"],
+        json!([{"handle": "read_customers"}])
+    );
+    let (_, denied) = graphql(
+        &api,
+        &token,
+        "{ products(first: 1) { nodes { id } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        denied["errors"][0]["extensions"]["code"],
+        json!("ACCESS_DENIED")
+    );
+    let (headers, body) = receiver.next_raw();
+    assert_eq!(headers["x-shopify-topic"], "app/scopes_update");
+    let payload: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["current"], json!(["read_customers"]), "{payload}");
+    assert_eq!(
+        payload["previous"],
+        json!([
+            "read_products",
+            "write_products",
+            "read_orders",
+            "read_customers",
+            "write_discounts"
+        ]),
+        "{payload}"
+    );
+    // The same scopes again change nothing: no other delivery.
+    grant("read_customers");
+    let log = send(
+        &api,
+        "GET",
+        "/__lsf/webhooks?topic=app/scopes_update",
+        Value::Null,
+    );
+    assert_eq!(
+        json_of(&log)["deliveries"].as_array().unwrap().len(),
+        1,
+        "{}",
+        json_of(&log)
+    );
+}
+
 #[test]
 fn delivers_the_webhook_of_a_created_product() {
     let receiver = Receiver::start(SECRET);
