@@ -735,6 +735,80 @@ fn checkout_config(
     config
 }
 
+/// What the cart transforms of the app make of the lines of `session`'s cart, by their index in
+/// it, as the storefront cart shows them: Shopify runs a shop's cart transforms on its cart too.
+/// A line an expand or an update changed as a whole has its title, price and components; a
+/// line merged with others, and every line without an app or a cart transform the shop
+/// enables, has `None`. `store` is the one the storefront presents, in the visitor's currency.
+pub(super) fn storefront_cart_transforms(
+    state: &ServerState,
+    store: &Store,
+    session: &Session,
+) -> Vec<Option<lsf_core::cart::TransformedLine>> {
+    let Some(options) = state.options.checkout.as_ref() else {
+        return Vec::new();
+    };
+    if session.cart_lines.is_empty() {
+        return Vec::new();
+    }
+    let Ok(app) = state.load_app(&options.app_dir) else {
+        return Vec::new();
+    };
+    let Ok(selection) = options.selection(&app, None) else {
+        return Vec::new();
+    };
+    let transforms: Vec<String> = selection
+        .functions(&app)
+        .filter(|function| {
+            function
+                .targets
+                .iter()
+                .any(|target| target.kind == lsf_app::config::TargetKind::CartTransform)
+        })
+        .map(|function| function.handle.clone())
+        .collect();
+    if transforms.is_empty() {
+        return Vec::new();
+    }
+    let result = pipeline::compute(
+        &app,
+        &Selection::only(transforms),
+        store,
+        session,
+        &CheckoutState::default(),
+        &checkout_config(state, store, None),
+    );
+    let mut transformed = vec![None; session.cart_lines.len()];
+    for line in &result.lines {
+        let ([source], Some(_)) = (line.sources.as_slice(), &line.transformed_by) else {
+            continue;
+        };
+        let Some(cart_line) = session.cart_lines.get(source.index) else {
+            continue;
+        };
+        if source.quantity != cart_line.quantity {
+            continue;
+        }
+        let product_title = store
+            .variant(line.variant_id)
+            .map(|(product, _)| product.title.as_str());
+        transformed[source.index] = Some(lsf_core::cart::TransformedLine {
+            title: Some(line.title.clone()).filter(|title| Some(title.as_str()) != product_title),
+            unit_price: line.unit_price,
+            components: line
+                .components
+                .iter()
+                .map(|component| lsf_core::cart::LineComponent {
+                    variant_id: component.variant_id,
+                    quantity: component.quantity,
+                    line_price: component.subtotal,
+                })
+                .collect(),
+        });
+    }
+    transformed
+}
+
 /// The checkout as the Functions compute it for `step`: `Interaction` for everything the buyer
 /// does before the order (the page, the state, an update), `Completion` for placing the order.
 fn compute(

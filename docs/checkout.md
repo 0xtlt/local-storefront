@@ -1038,6 +1038,11 @@ them:
 
 Not every Function of the app runs: see [owners and scenarios](#owners-and-scenarios).
 
+The cart transforms run on the theme's cart too, as Shopify runs them on the online store's
+cart: Liquid `cart`, `/cart.js` and the cart page show a line an expand or an update changed,
+with its new title and price, and its components in `item.item_components`
+([compatibility](compatibility.md#known-differences) says what they leave out).
+
 A `linesMerge` of a cart transform takes `quantity` units of each cart line it names (no more than
 the line holds). The merged line is as many bundles as the greatest common divisor of those
 quantities, and each component is in a bundle as many times as its quantity says divided by that

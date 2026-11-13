@@ -6020,6 +6020,33 @@ fn a_removed_line_takes_its_share_of_a_shared_line_only() {
     assert_eq!(cart_skus(&store, &session), [sku("TEE-BLK-M", 2)]);
 }
 
+/// Issue #88: the storefront cart runs the cart transform the checkout runs: an expanded line
+/// has the title, the price and the components the transform gave it in `/cart.js`.
+#[test]
+fn the_storefront_cart_shows_a_line_the_cart_transform_expanded() {
+    let state = checkout_server(&["bundle-transform"], false);
+    let session = "cart-expand";
+    transformed_checkout(
+        &state,
+        session,
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}, {"variant": "MUG-OAT", "quantity": 1}]),
+        json!([{"type": "expand", "line": 1, "title": "Duo", "items": [
+            {"variant": variant_id(&state, "MUG-OAT"), "quantity": 1, "price": "12.00"},
+            {"variant": variant_id(&state, "TOTE-NAT"), "quantity": 1, "price": "8.00"}
+        ]}]),
+    );
+    let cart = body_json(&get(&state, "/cart.js", session));
+    let items = cart["items"].as_array().unwrap();
+    assert_eq!(items[0]["title"], "Duo", "{cart}");
+    assert_eq!(items[0]["has_components"], true);
+    assert_eq!(items[0]["final_line_price"], 2000);
+    assert_eq!(items[1]["has_components"], false);
+    assert_eq!(
+        cart["total_price"],
+        2000 + items[1]["final_line_price"].as_i64().unwrap()
+    );
+}
+
 #[test]
 fn an_expanded_line_is_removed_through_its_line_of_the_cart() {
     let state = checkout_server(&["bundle-transform"], false);

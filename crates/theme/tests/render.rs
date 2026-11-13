@@ -917,6 +917,57 @@ fn a_cart_line_of_a_product_without_an_image_has_a_featured_image_of_nulls() {
     }
 }
 
+/// Issue #88: a line a cart transform expanded shows the price and title the transform gave
+/// it, and its components in `item_components`, as Shopify's cart shows a bundle.
+#[test]
+fn a_line_a_cart_transform_expanded_has_its_components() {
+    let fixture = fixture();
+    let tote = fixture.store.product_by_handle("canvas-tote-bag").unwrap();
+    let mug = fixture.store.product_by_handle("ceramic-mug").unwrap();
+    let mut session = Session::initial(&fixture.store);
+    session.cart_lines = vec![CartLine {
+        variant_id: tote.variants[0].id,
+        quantity: 1,
+        properties: Default::default(),
+        selling_plan: None,
+    }];
+    let site =
+        fixture
+            .renderer
+            .site_with(fixture.store.clone(), request("/cart"), session, |_, _| {
+                vec![Some(lsf_core::cart::TransformedLine {
+                    title: Some("Duo".to_string()),
+                    unit_price: 2700,
+                    components: vec![lsf_core::cart::LineComponent {
+                        variant_id: mug.variants[0].id,
+                        quantity: 2,
+                        line_price: 2700,
+                    }],
+                })]
+            });
+    let page = lsf_theme::render::routes::resolve(&site);
+    let (output, errors) = fixture
+        .renderer
+        .render_liquid(
+            &site,
+            page,
+            "{%- for item in cart.items %}{{ item.title }} {{ item.final_line_price }} \
+             {% for c in item.item_components %}[{{ c.quantity }} x {{ c.variant.sku }} \
+             {{ c.final_line_price }}]{% endfor %}{% endfor %} total:{{ cart.total_price }}",
+            &[],
+        )
+        .expect("the template parses");
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(
+        output,
+        format!("Duo 2700 [2 x {} 2700] total:2700", mug.variants[0].sku)
+    );
+    let json = lsf_theme::drops::cart::cart_json(&site);
+    assert_eq!(json["items"][0]["has_components"], true);
+    assert_eq!(json["items"][0]["final_line_price"], 2700);
+    assert_eq!(json["total_price"], 2700);
+}
+
 #[test]
 fn line_item_properties_are_pairs_without_a_size() {
     // Issue #152: on Shopify `item.properties | json` is a list of `[name, value]` pairs and

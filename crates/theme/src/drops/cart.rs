@@ -21,7 +21,12 @@ pub fn resolve_lines(site: &SiteRef) -> Vec<ResolvedLine<'_>> {
     site.session
         .cart_lines
         .iter()
-        .filter_map(|line| resolve_line(&site.store, line))
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let mut resolved = resolve_line(&site.store, line)?;
+            resolved.transformed = site.cart_transforms.get(index).and_then(Option::as_ref);
+            Some(resolved)
+        })
         .collect()
 }
 
@@ -160,7 +165,7 @@ pub fn line_json(site: &SiteRef, line: &ResolvedLine<'_>) -> Json {
             "max": line.variant.quantity_rule.max,
             "increment": line.variant.quantity_rule.increment,
         },
-        "has_components": false,
+        "has_components": line.transformed.is_some_and(|line| !line.components.is_empty()),
     });
     // Only the lines bought with a selling plan have the key.
     if let Some((group, plan)) = line.selling_plan {
@@ -300,6 +305,39 @@ impl LineItemDrop {
     }
 }
 
+/// A component of a line a cart transform expanded, as `line_item.item_components` gives it: a
+/// line item of its variant, its quantity and its share of the price of the line. `None` for a
+/// variant the store does not have.
+fn component_value(site: &SiteRef, component: &lsf_core::cart::LineComponent) -> Option<Value> {
+    let (product_index, variant_index) = site.store.variant_location(component.variant_id)?;
+    let product = &site.store.products[product_index];
+    let variant = &product.variants[variant_index];
+    let title = if product.has_only_default_variant() {
+        product.title.clone()
+    } else {
+        format!("{} - {}", product.title, variant.title)
+    };
+    let price = component.line_price / i64::from(component.quantity.max(1));
+    Some(hash([
+        ("id", Value::Int(variant.id as i64)),
+        ("variant_id", Value::Int(variant.id as i64)),
+        ("product_id", Value::Int(product.id as i64)),
+        ("title", Value::from(title)),
+        ("quantity", Value::Int(i64::from(component.quantity))),
+        ("sku", Value::from(&variant.sku)),
+        ("vendor", Value::from(&product.vendor)),
+        ("price", Value::Int(price)),
+        ("final_price", Value::Int(price)),
+        ("line_price", Value::Int(component.line_price)),
+        ("final_line_price", Value::Int(component.line_price)),
+        ("product", ProductDrop::value(site, product_index)),
+        (
+            "variant",
+            VariantDrop::value(site, product_index, variant_index),
+        ),
+    ]))
+}
+
 impl Object for LineItemDrop {
     fn type_name(&self) -> &str {
         "line_item"
@@ -327,8 +365,17 @@ impl Object for LineItemDrop {
             "discount_allocations"
             | "line_level_discount_allocations"
             | "discounts"
-            | "tax_lines"
-            | "item_components" => Value::array(Vec::new()),
+            | "tax_lines" => Value::array(Vec::new()),
+            "item_components" => match line.transformed {
+                Some(transformed) => Value::array(
+                    transformed
+                        .components
+                        .iter()
+                        .filter_map(|component| component_value(site, component))
+                        .collect(),
+                ),
+                None => Value::array(Vec::new()),
+            },
             "product_id" => Value::Int(line.product.id as i64),
             "product" => self
                 .memo
