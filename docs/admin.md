@@ -850,7 +850,8 @@ does:
 
 On demand: `POST /__lsf/webhooks/trigger {"topic": "orders/create", "id"?: "<gid>"}` sends the
 webhook of a record of the shop (a representative one without `id`: for `orders/create`, the
-first order), and the command line does it without a server. In the demo store, the first order,
+first order; for `orders/cancelled`, the first cancelled order, else the first order as
+cancelled now by the customer), and the command line does it without a server. In the demo store, the first order,
 `#1001`, is fulfilled already: its fulfillment order is `CLOSED`, and a handler's
 `fulfillmentCreate` answers a `userError`. To test a fulfillment handler, [place an
 order](#place-an-order), or give the `id` of an unfulfilled one:

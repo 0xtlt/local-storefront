@@ -122,9 +122,7 @@ pub fn sample(shop: &ShopState, topic: &str, id: Option<&str>) -> Result<Sample,
         Some(id) => Some(shop.get(id).cloned().ok_or_else(|| {
             SampleError::NotFound(format!("{id} is not a record of {}", shop.domain()))
         })?),
-        None => record_types(topic)
-            .iter()
-            .find_map(|type_name| shop.all(type_name).next().cloned()),
+        None => representative(shop, topic),
     };
     let Some(mut record) = record else {
         return samples::fixed(topic).ok_or_else(|| {
@@ -164,6 +162,33 @@ pub fn sample(shop: &ShopState, topic: &str, id: Option<&str>) -> Result<Sample,
     Ok(Sample { record, lookup })
 }
 
+/// The record a topic's payload is built from when none is named: the first of the topic's
+/// type. `orders/cancelled` "Occurs whenever an order is cancelled" (`WebhookSubscriptionTopic`),
+/// so its record is the first cancelled order, else the first order, cancelled now by the
+/// customer (the reason of Shopify's example payload).
+fn representative(shop: &ShopState, topic: &str) -> Option<Record> {
+    let first = record_types(topic)
+        .iter()
+        .find_map(|type_name| shop.all(type_name).next().cloned());
+    if topic != "orders/cancelled" {
+        return first;
+    }
+    let cancelled = shop
+        .all("Order")
+        .find(|order| order.get("cancelledAt").is_some_and(|at| !at.is_null()));
+    if let Some(order) = cancelled {
+        return Some(order.clone());
+    }
+    first.map(|mut order| {
+        order.insert(
+            "cancelledAt".into(),
+            json!(crate::admin::state::value::date_time(Utc::now())),
+        );
+        order.insert("cancelReason".into(), json!("CUSTOMER"));
+        order
+    })
+}
+
 /// The samples of a shop seeded from the store data: what `lsf app webhook trigger` builds its
 /// payloads from.
 pub struct ShopSamples(pub ShopState);
@@ -184,4 +209,42 @@ pub fn payload_of(shop: &ShopState, topic: &str, id: Option<&str>) -> Result<Val
     sample.payload(topic).ok_or_else(|| {
         SampleError::NotBuilt(format!("lsf does not build the payload of `{topic}`"))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::admin::domains::test_support::{demo, rich};
+
+    /// `orders/cancelled` without an id sends a cancelled order: the data's, else the first
+    /// order cancelled now (issue #194, item 3).
+    #[test]
+    fn orders_cancelled_sends_a_cancelled_order() {
+        let shop = rich();
+        let cancelled: Vec<&Record> = shop
+            .all("Order")
+            .filter(|order| order.get("cancelledAt").is_some_and(|at| !at.is_null()))
+            .collect();
+        assert!(
+            !cancelled.is_empty(),
+            "the rich store has a cancelled order"
+        );
+        let first = shop.all("Order").next().unwrap();
+        assert!(first.get("cancelledAt").is_none_or(Value::is_null));
+        let payload = payload_of(&shop, "orders/cancelled", None).unwrap();
+        assert_eq!(payload["name"], cancelled[0]["name"]);
+        assert!(payload["cancelled_at"].is_string(), "{payload}");
+        // Another topic still takes the first order.
+        let created = payload_of(&shop, "orders/create", None).unwrap();
+        assert_eq!(created["name"], first["name"]);
+
+        let shop = demo();
+        assert!(
+            shop.all("Order")
+                .all(|order| order.get("cancelledAt").is_none_or(Value::is_null))
+        );
+        let payload = payload_of(&shop, "orders/cancelled", None).unwrap();
+        assert!(payload["cancelled_at"].is_string(), "{payload}");
+        assert_eq!(payload["cancel_reason"], "customer");
+    }
 }

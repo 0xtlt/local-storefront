@@ -348,6 +348,67 @@ fn metafields_set_refuses_values_over_the_size_of_their_type() {
     );
 }
 
+/// `cartToOrderCopyable` is for order definitions only (issue #194, item 1): elsewhere it is not
+/// `eligible`, and enabling it is `INVALID_CAPABILITY`.
+#[test]
+fn cart_to_order_copyable_is_for_order_definitions_only() {
+    let mut shop = rich();
+    let create = |shop: &mut ShopState, owner_type: &str, key: &str, enabled: bool| {
+        run(
+            shop,
+            "mutation($definition: MetafieldDefinitionInput!) { metafieldDefinitionCreate(definition: $definition) { createdDefinition { capabilities { cartToOrderCopyable { enabled eligible } } } userErrors { field message code } } }",
+            json!({"definition": {
+                "name": "Note", "namespace": "demo", "key": key, "ownerType": owner_type,
+                "type": "single_line_text_field",
+                "capabilities": {"cartToOrderCopyable": {"enabled": enabled}},
+            }}),
+        )["data"]["metafieldDefinitionCreate"]
+            .clone()
+    };
+    assert_eq!(
+        create(&mut shop, "PRODUCT", "note", true),
+        json!({"createdDefinition": null, "userErrors": [{
+            "field": ["definition", "capabilities", "cartToOrderCopyable"],
+            "message": "The metafield definition capability is invalid.",
+            "code": "INVALID_CAPABILITY",
+        }]})
+    );
+    assert_eq!(
+        create(&mut shop, "PRODUCT", "note", false)["createdDefinition"],
+        json!({"capabilities": {"cartToOrderCopyable": {"enabled": false, "eligible": false}}})
+    );
+    assert_eq!(
+        create(&mut shop, "ORDER", "note", true)["createdDefinition"],
+        json!({"capabilities": {"cartToOrderCopyable": {"enabled": true, "eligible": true}}})
+    );
+    // An update cannot enable it on a product definition either.
+    let updated = run(
+        &mut shop,
+        "mutation { metafieldDefinitionUpdate(definition: {namespace: \"demo\", key: \"note\", ownerType: PRODUCT, capabilities: {cartToOrderCopyable: {enabled: true}}}) { updatedDefinition { id } userErrors { code } } }",
+        json!({}),
+    );
+    assert_eq!(
+        updated["data"]["metafieldDefinitionUpdate"]["userErrors"],
+        json!([{"code": "INVALID_CAPABILITY"}])
+    );
+}
+
+/// lsf simulates new customer accounts, not classic ones (issue #194, item 2).
+#[test]
+fn the_shop_uses_new_customer_accounts() {
+    let mut shop = rich();
+    let answer = run(
+        &mut shop,
+        "{ shop { customerAccountsV2 { customerAccountsVersion loginLinksVisibleOnStorefrontAndCheckout loginRequiredAtCheckout } } }",
+        json!({}),
+    );
+    assert_eq!(
+        answer["data"]["shop"]["customerAccountsV2"],
+        json!({"customerAccountsVersion": "NEW_CUSTOMER_ACCOUNTS", "loginLinksVisibleOnStorefrontAndCheckout": true, "loginRequiredAtCheckout": false})
+    );
+    assert!(answer.get("extensions").is_none(), "{answer}");
+}
+
 const CREATE_DEFINITION: &str = "mutation($definition: MetafieldDefinitionInput!) {
     metafieldDefinitionCreate(definition: $definition) {
         createdDefinition { id name namespace key ownerType pinnedPosition validationStatus metafieldsCount

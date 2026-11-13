@@ -353,8 +353,8 @@ fn the_cart_metafields_an_order_definition_copies_are_the_orders() {
     );
     define(&shop, "ORDER", "custom", "count", "number_integer", true);
     define(&shop, "ORDER", "custom", "too_many", "number_integer", true);
-    // Not copied: the capability is off, the definition is of another owner type, there is no
-    // definition.
+    // Not copied: the capability is off, the definition is of another owner type (where the
+    // capability cannot be enabled), there is no definition.
     define(&shop, "ORDER", "custom", "wrap", "boolean", false);
     define(
         &shop,
@@ -362,7 +362,7 @@ fn the_cart_metafields_an_order_definition_copies_are_the_orders() {
         "custom",
         "engraving",
         "single_line_text_field",
-        true,
+        false,
     );
     let cart = [
         cart_metafield(

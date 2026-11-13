@@ -123,8 +123,9 @@ pub(super) fn whatsapp_consent_update(record: &Map<String, Value>) -> Value {
     })
 }
 
-/// `customer_account_settings/update`, from the shop: classic accounts, which lsf serves, and
-/// the shop's setting (`DISABLED`, `OPTIONAL`, `REQUIRED`).
+/// `customer_account_settings/update`, from the shop: its `customerAccountsV2` (new customer
+/// accounts, which lsf serves), else classic accounts and the shop's setting (`DISABLED`,
+/// `OPTIONAL`, `REQUIRED`).
 pub(super) fn customer_account_settings(record: &Map<String, Value>) -> Value {
     if let Value::Object(v2) = field(record, "customerAccountsV2") {
         return json!({

@@ -674,7 +674,7 @@ Shopify's banner off, as Shopify requires), `consentPolicy`, `consentPolicyRegio
 `privacyFeaturesDisable` and `privacySettings`.
 
 **Webhooks**: also `customer_account_settings/update` (built from the shop's customer account
-setting, sent on demand: no mutation changes it) and `audit_events/admin_api_activity` (each
+setting, `new_customer_accounts`, sent on demand: no mutation changes it) and `audit_events/admin_api_activity` (each
 GraphQL request, when the app subscribes to it; Shopify delivers it through Pub/Sub or
 EventBridge only, which lsf logs as not sent).
 
@@ -843,7 +843,9 @@ definition, as Shopify's reference says, and the definition is created either wa
 `metaobject_definition_id`, a `mixed_reference` `metaobject_definition_ids`, naming definitions
 the shop has: otherwise an `INVALID_OPTION` user error, for metafield definitions and the field
 definitions of metaobjects alike (the wording of the message is lsf's). `capabilities` are kept as given; of their
-effects, only `cartToOrderCopyable` of an ORDER definition is simulated: it copies a cart
+effects, only `cartToOrderCopyable` of an ORDER definition is simulated (on another owner type
+it is not `eligible`, and enabling it is `INVALID_CAPABILITY`, as Shopify allows it on order
+definitions only): it copies a cart
 metafield onto the order placed from the cart ([admin](admin.md#what-the-storefront-and-the-checkout-see)).
 The order definitions `shopify.app.toml` declares (`[order.metafields.app.<key>]`) are
 definitions of the shop from the start; those of other owner types are not read. Unlike
