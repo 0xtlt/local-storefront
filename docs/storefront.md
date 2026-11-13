@@ -122,7 +122,9 @@ and `PUT /__lsf/session`:
   the shop's: a country picked under a subfolder does not follow the visitor to `/`.
 - **The localization form** (`{% form 'localization' %}`) sends the visitor to the same page on
   the web presence of the country they picked: `country_code=BE` → `/en-be/...`, and back to `/`
-  for a country served there, in a language the country's market offers.
+  for a country served there, in a language the country's market offers. Of a `return_to` that
+  names a host (`https://other.example/x`, `//other.example/x`), only the path is kept, on the
+  local server's host, as Shopify keeps it on the shop's domain.
 - **The currency follows the country**: prices, the cart (`cart.currency`, `/cart.js`), the money
   filters and the checkout are in the country's currency, at its market's rate or fixed prices
   (see [localization](data-format.md#localization)), and `Shopify.currency` gives the currency

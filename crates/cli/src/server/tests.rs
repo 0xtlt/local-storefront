@@ -1023,6 +1023,41 @@ fn the_localization_form_moves_to_the_web_presence_of_the_country() {
 }
 
 #[test]
+fn the_localization_form_stays_on_the_storefronts_host() {
+    // Shopify answers `return_to=https://other.example/x` and `//other.example/x` with
+    // `https://<shop domain>/x`: the path, on the shop's own host.
+    let state = server();
+    with_belgian_subfolder(&state, "host");
+    let form = |body: Json| {
+        let reply = post(&state, "/localization", body, "host");
+        assert_eq!(reply.status, 302);
+        header(&reply, "location").map(str::to_string)
+    };
+    for return_to in [
+        "https://other.example/x",
+        "//other.example/x",
+        "/\\other.example/x",
+    ] {
+        assert_eq!(
+            form(json!({"return_to": return_to})).as_deref(),
+            Some("/x"),
+            "{return_to}"
+        );
+    }
+    // The path goes to the web presence of the country picked, as a path does.
+    assert_eq!(
+        form(json!({"country_code": "BE", "return_to": "https://other.example/pages/about"}))
+            .as_deref(),
+        Some("/en-be/pages/about")
+    );
+    assert_eq!(
+        form(json!({"country_code": "US", "return_to": "//other.example/en-be/cart?x=1"}))
+            .as_deref(),
+        Some("/cart?x=1")
+    );
+}
+
+#[test]
 fn a_market_subfolder_serves_the_languages_of_its_market() {
     let state = server();
     let session = "subfolder-languages";
