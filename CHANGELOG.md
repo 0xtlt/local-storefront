@@ -15,6 +15,15 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `type` or with a variable `type`. Shopify refuses such a file on upload, and every template
   that places the section. A theme that checked clean with one of these now fails `check`:
   move the tag where Shopify takes it.
+- **`lsf check` reports the attributes of a section or theme block schema that Shopify refuses
+  on upload** (`invalid_schema`, which fails the check): a `name` of more than 25 characters,
+  an unknown attribute (`max_blocks` or `enabled_on` in a theme block), `@theme` with blocks the
+  section defines, two blocks of one `type`, `settings` on `@app`, a block defined in a theme
+  block, a preset without `name` or with a block the section does not define, preset `settings`
+  in a schema without settings, a `max_blocks` of `0` or `"5"`, a `limit` of 3, a section `tag`
+  of `span`, a `class` with `"` or `<`, and `enabled_on` or `disabled_on` that Shopify does not
+  take. Shopify refuses such a section and every template that places it; a theme that checked
+  clean with one of these now fails `check`.
 - **`closest.<resource>` is the nearest resource setting, even an empty one.** A theme block
   whose own `product` setting is unset no longer gets the page's product as `closest.product`:
   it gets none, as on Shopify. Give the setting a value, or `{{ closest.product }}` as its

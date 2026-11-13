@@ -429,6 +429,336 @@ pub fn check(source: &str) -> Vec<SchemaProblem> {
     out
 }
 
+/// Whether a schema is a section's or a theme block's: they take different attributes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SchemaOf {
+    Section,
+    Block,
+}
+
+/// The attributes of a section schema, as Shopify's section schema reference lists them, and
+/// `templates`, which `enabled_on` and `disabled_on` replace.
+const SECTION_ATTRIBUTES: &[&str] = &[
+    "name",
+    "tag",
+    "class",
+    "limit",
+    "settings",
+    "blocks",
+    "max_blocks",
+    "presets",
+    "default",
+    "locales",
+    "enabled_on",
+    "disabled_on",
+    "templates",
+];
+
+/// The attributes of a theme block schema: "can only use the attributes listed".
+const BLOCK_ATTRIBUTES: &[&str] = &["name", "settings", "blocks", "presets", "tag", "class"];
+
+/// The tags a section can be wrapped in.
+const SECTION_TAGS: &[&str] = &["article", "aside", "div", "footer", "header", "section"];
+
+/// The page types of `enabled_on` and `disabled_on` templates (`request.page_type`).
+const PAGE_TYPES: &[&str] = &[
+    "*",
+    "404",
+    "article",
+    "blog",
+    "captcha",
+    "cart",
+    "collection",
+    "list-collections",
+    "customers/account",
+    "customers/activate_account",
+    "customers/addresses",
+    "customers/login",
+    "customers/order",
+    "customers/register",
+    "customers/reset_password",
+    "gift_card",
+    "index",
+    "metaobject",
+    "page",
+    "password",
+    "policy",
+    "product",
+    "search",
+];
+
+/// The most characters of a name Shopify takes: `t:` keys are not counted.
+const LONGEST_NAME: usize = 25;
+
+/// What Shopify refuses on upload in the attributes of a schema, other than its settings: a
+/// `name` of more than 25 characters, an attribute the schema does not take, how its `blocks`
+/// are declared, its `presets` and `default`, `max_blocks`, `limit`, `tag`, `class`,
+/// `enabled_on` and `disabled_on`. Nothing for a schema that does not parse: [`check`] says so.
+pub fn check_attributes(source: &str, of: SchemaOf) -> Vec<SchemaProblem> {
+    let Some(Ok(parsed)) = parse(source) else {
+        return Vec::new();
+    };
+    let Some(schema) = parsed.json.as_object() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut refuse = |pointer: &str, message: String| {
+        out.push(SchemaProblem {
+            code: "invalid_schema",
+            line: parsed.line(pointer),
+            message: format!("{message}: Shopify refuses the file"),
+            hint: None,
+        })
+    };
+    let (what, attributes) = match of {
+        SchemaOf::Section => ("a section", SECTION_ATTRIBUTES),
+        SchemaOf::Block => ("a theme block", BLOCK_ATTRIBUTES),
+    };
+    for key in schema.keys() {
+        if !attributes.contains(&key.as_str()) {
+            refuse(
+                &format!("/{key}"),
+                format!("`{key}` is not an attribute of the schema of {what}"),
+            );
+        }
+    }
+    if let Some(name) = schema.get("name").and_then(Json::as_str)
+        && !name.starts_with("t:")
+        && name.chars().count() > LONGEST_NAME
+    {
+        refuse(
+            "/name",
+            format!(
+                "the name \"{name}\" is {} characters long, more than {LONGEST_NAME}",
+                name.chars().count()
+            ),
+        );
+    }
+    let entries = schema
+        .get("blocks")
+        .and_then(Json::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let local: Vec<(usize, &Json)> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| is_local(entry) && !is_shopify_type(entry))
+        .collect();
+    if of == SchemaOf::Block {
+        for (index, entry) in &local {
+            refuse(
+                &format!("/blocks/{index}"),
+                format!(
+                    "the block \"{}\" is defined in the schema: a theme block takes no local blocks, only theme blocks and `@theme`",
+                    entry.get("name").and_then(Json::as_str).unwrap_or_default()
+                ),
+            );
+        }
+    }
+    let theme_blocks = entries
+        .iter()
+        .position(|entry| entry.get("type").and_then(Json::as_str) == Some("@theme"));
+    if of == SchemaOf::Section
+        && let Some(index) = theme_blocks
+        && !local.is_empty()
+    {
+        refuse(
+            &format!("/blocks/{index}"),
+            "`@theme` and blocks defined in the schema (with a `name`) can not be used together"
+                .to_string(),
+        );
+    }
+    let mut types: Vec<&str> = Vec::new();
+    let mut names: Vec<&str> = Vec::new();
+    for (index, entry) in &local {
+        if let Some(kind) = entry.get("type").and_then(Json::as_str) {
+            if types.contains(&kind) {
+                refuse(
+                    &format!("/blocks/{index}/type"),
+                    format!("two blocks of the schema are of type \"{kind}\""),
+                );
+            }
+            types.push(kind);
+        }
+        if let Some(name) = entry.get("name").and_then(Json::as_str) {
+            if names.contains(&name) {
+                refuse(
+                    &format!("/blocks/{index}/name"),
+                    format!("two blocks of the schema are named \"{name}\""),
+                );
+            }
+            names.push(name);
+        }
+    }
+    for (index, entry) in entries.iter().enumerate() {
+        if is_shopify_type(entry) && entry.get("settings").is_some() {
+            refuse(
+                &format!("/blocks/{index}/settings"),
+                format!(
+                    "the block `{}` has `settings`: `@app` and `@theme` take only a `type`",
+                    entry.get("type").and_then(Json::as_str).unwrap_or_default()
+                ),
+            );
+        }
+    }
+    if let Some(max) = schema.get("max_blocks") {
+        match max.as_i64() {
+            Some(max) if max > 0 => {}
+            Some(_) => refuse("/max_blocks", "`max_blocks` is not above 0".to_string()),
+            None => refuse(
+                "/max_blocks",
+                "`max_blocks` is not a whole number".to_string(),
+            ),
+        }
+    }
+    if let Some(limit) = schema.get("limit")
+        && limit.as_f64().is_some_and(|limit| limit >= 3.0)
+    {
+        refuse("/limit", format!("the `limit` {limit} is not 1 or 2"));
+    }
+    if let Some(tag) = schema.get("tag").and_then(Json::as_str) {
+        match of {
+            SchemaOf::Section if !SECTION_TAGS.contains(&tag) => refuse(
+                "/tag",
+                format!(
+                    "the `tag` \"{tag}\" is not one a section takes ({})",
+                    SECTION_TAGS.join(", ")
+                ),
+            ),
+            SchemaOf::Block if tag.chars().count() > 50 => {
+                refuse("/tag", "the `tag` is longer than 50 characters".to_string())
+            }
+            _ => {}
+        }
+    }
+    if let Some(class) = schema.get("class").and_then(Json::as_str)
+        && class.contains(['"', '<'])
+    {
+        refuse(
+            "/class",
+            format!("the `class` \"{class}\" has a character an HTML class attribute can not hold"),
+        );
+    }
+    if of == SchemaOf::Section {
+        if schema.contains_key("enabled_on") && schema.contains_key("disabled_on") {
+            refuse(
+                "/disabled_on",
+                "`enabled_on` and `disabled_on` can not be used together".to_string(),
+            );
+        }
+        for key in ["enabled_on", "disabled_on"] {
+            let Some(value) = schema.get(key) else {
+                continue;
+            };
+            let templates = value.get("templates").and_then(Json::as_array);
+            let groups = value.get("groups").and_then(Json::as_array);
+            if templates.is_none_or(Vec::is_empty) && groups.is_none_or(Vec::is_empty) {
+                refuse(
+                    &format!("/{key}"),
+                    format!("`{key}` has neither `templates` nor `groups`"),
+                );
+            }
+            for (index, template) in templates.into_iter().flatten().enumerate() {
+                if template
+                    .as_str()
+                    .is_none_or(|name| !PAGE_TYPES.contains(&name))
+                {
+                    refuse(
+                        &format!("/{key}/templates/{index}"),
+                        format!("{template} in `{key}.templates` is not a page type"),
+                    );
+                }
+            }
+            for (index, group) in groups.into_iter().flatten().enumerate() {
+                let known = group.as_str().is_some_and(|name| {
+                    matches!(name, "*" | "header" | "footer" | "aside")
+                        || name
+                            .strip_prefix("custom.")
+                            .is_some_and(|rest| !rest.is_empty())
+                });
+                if !known {
+                    refuse(
+                        &format!("/{key}/groups/{index}"),
+                        format!(
+                            "{group} in `{key}.groups` is not header, footer, aside or custom.<name>"
+                        ),
+                    );
+                }
+            }
+        }
+    }
+    // The presets and the `default`: a name, blocks the schema takes, settings it has.
+    let presets = schema.get("presets").and_then(Json::as_array);
+    for (index, preset) in presets.into_iter().flatten().enumerate() {
+        let at = format!("/presets/{index}");
+        if preset.get("name").and_then(Json::as_str).is_none() {
+            refuse(&at, format!("preset {} has no `name`", index + 1));
+        }
+        if of == SchemaOf::Section {
+            preset_contents(schema, preset, &at, &types, &mut refuse);
+        }
+    }
+    if of == SchemaOf::Section
+        && let Some(default) = schema.get("default")
+    {
+        preset_contents(schema, default, "/default", &types, &mut refuse);
+    }
+    out.sort_by_key(|problem| problem.line);
+    out
+}
+
+/// What Shopify refuses in a preset (or the `default`) of a section: a block of a type a schema
+/// with local blocks does not define, settings when the schema has none.
+fn preset_contents(
+    schema: &serde_json::Map<String, Json>,
+    preset: &Json,
+    at: &str,
+    local_types: &[&str],
+    refuse: &mut impl FnMut(&str, String),
+) {
+    if !local_types.is_empty() {
+        let mut named = Vec::new();
+        preset_block_types(preset, at, &mut named);
+        for (kind, pointer) in named {
+            if !local_types.contains(&kind.as_str())
+                && !kind.starts_with('@')
+                && !kind.contains("://")
+            {
+                refuse(
+                    &pointer,
+                    format!(
+                        "a block of a preset is of type \"{kind}\", which the schema does not define ({})",
+                        local_types.join(", ")
+                    ),
+                );
+            }
+        }
+    }
+    let has_settings = schema
+        .get("settings")
+        .and_then(Json::as_array)
+        .is_some_and(|settings| !settings.is_empty());
+    if !has_settings
+        && preset
+            .get("settings")
+            .and_then(Json::as_object)
+            .is_some_and(|settings| !settings.is_empty())
+    {
+        refuse(
+            &format!("{at}/settings"),
+            "a preset sets settings, and the schema has none".to_string(),
+        );
+    }
+}
+
+/// Whether a block entry is `@app` or `@theme`.
+fn is_shopify_type(entry: &Json) -> bool {
+    matches!(
+        entry.get("type").and_then(Json::as_str),
+        Some("@app" | "@theme")
+    )
+}
+
 /// What the rest of the theme tells about a schema.
 pub struct ThemeNames<'a> {
     /// The theme blocks: the files of `blocks/`, without `.liquid`.
@@ -689,6 +1019,172 @@ mod tests {
             problems[9].hint.as_deref(),
             Some("did you mean \"image_picker\"?")
         );
+    }
+
+    /// The messages of what Shopify refuses in the attributes of a schema, without the end.
+    fn refused(of: SchemaOf, schema: &str) -> Vec<String> {
+        check_attributes(&format!("{{% schema %}}{schema}{{% endschema %}}"), of)
+            .into_iter()
+            .map(|problem| {
+                assert_eq!(problem.code, "invalid_schema");
+                problem
+                    .message
+                    .trim_end_matches(": Shopify refuses the file")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn schema_attributes_shopify_refuses_on_upload_are_reported() {
+        use SchemaOf::{Block, Section};
+        // #182: each defect is one Shopify refused on upload.
+        let cases: &[(SchemaOf, &str, &str)] = &[
+            (
+                Section,
+                r#"{"name": "Abcdefghijklmnopqrstuvwxyz"}"#,
+                "is 26 characters long",
+            ),
+            (
+                Section,
+                r#"{"name": "M", "blocks": [{"type": "@theme"}, {"type": "local", "name": "Local"}]}"#,
+                "`@theme` and blocks defined in the schema",
+            ),
+            (
+                Section,
+                r#"{"name": "M", "blocks": [{"type": "@app"}, {"type": "@theme"}, {"type": "a", "name": "A"}]}"#,
+                "`@theme` and blocks defined in the schema",
+            ),
+            (
+                Block,
+                r#"{"name": "Item", "max_blocks": 3}"#,
+                "`max_blocks` is not an attribute",
+            ),
+            (
+                Section,
+                r#"{"name": "D", "blocks": [{"type": "a", "name": "A"}, {"type": "a", "name": "B"}]}"#,
+                "two blocks of the schema are of type \"a\"",
+            ),
+            (
+                Section,
+                r#"{"name": "D", "blocks": [{"type": "@app", "name": "App", "settings": []}]}"#,
+                "the block `@app` has `settings`",
+            ),
+            (
+                Section,
+                r#"{"name": "D", "blocks": [{"type": "a", "name": "A"}], "default": {"blocks": [{"type": "zzz"}]}}"#,
+                "a block of a preset is of type \"zzz\"",
+            ),
+            (
+                Section,
+                r#"{"name": "P", "presets": [{"category": "x"}]}"#,
+                "preset 1 has no `name`",
+            ),
+            (
+                Section,
+                r#"{"name": "P", "blocks": [{"type": "a", "name": "A"}], "presets": [{"name": "P", "blocks": [{"type": "zzz"}]}]}"#,
+                "a block of a preset is of type \"zzz\"",
+            ),
+            (
+                Section,
+                r#"{"name": "P", "presets": [{"name": "P", "settings": {"x": 1}}]}"#,
+                "a preset sets settings, and the schema has none",
+            ),
+            (
+                Section,
+                r#"{"name": "M", "max_blocks": "5"}"#,
+                "`max_blocks` is not a whole number",
+            ),
+            (
+                Section,
+                r#"{"name": "M", "max_blocks": 0}"#,
+                "`max_blocks` is not above 0",
+            ),
+            (
+                Section,
+                r#"{"name": "L", "limit": 3}"#,
+                "the `limit` 3 is not 1 or 2",
+            ),
+            (
+                Section,
+                r#"{"name": "T", "tag": "span"}"#,
+                "the `tag` \"span\" is not one",
+            ),
+            (
+                Section,
+                r#"{"name": "C", "class": "a\" <b"}"#,
+                "the `class` \"a\" <b\" has",
+            ),
+            (
+                Section,
+                r#"{"name": "F", "foo": 1}"#,
+                "`foo` is not an attribute of the schema of a section",
+            ),
+            (
+                Section,
+                r#"{"name": "E", "enabled_on": {"templates": ["*"]}, "disabled_on": {"groups": ["footer"]}}"#,
+                "`enabled_on` and `disabled_on` can not be used together",
+            ),
+            (
+                Section,
+                r#"{"name": "E", "enabled_on": {}}"#,
+                "`enabled_on` has neither",
+            ),
+            (
+                Section,
+                r#"{"name": "E", "enabled_on": {"templates": ["nope"]}}"#,
+                "\"nope\" in `enabled_on.templates` is not a page type",
+            ),
+            (
+                Section,
+                r#"{"name": "E", "enabled_on": {"groups": ["sidebar"]}}"#,
+                "\"sidebar\" in `enabled_on.groups` is not header",
+            ),
+            (
+                Block,
+                r#"{"name": "E", "enabled_on": {"templates": ["*"]}}"#,
+                "`enabled_on` is not an attribute of the schema of a theme block",
+            ),
+            (
+                Block,
+                r#"{"name": "B", "blocks": [{"type": "a", "name": "A"}]}"#,
+                "the block \"A\" is defined in the schema: a theme block takes no local blocks",
+            ),
+            (
+                Block,
+                r#"{"name": "Abcdefghijklmnopqrstuvwxyz"}"#,
+                "is 26 characters long",
+            ),
+        ];
+        for (of, schema, expected) in cases {
+            let found = refused(*of, schema);
+            assert!(
+                found.len() == 1 && found[0].contains(expected),
+                "{schema}: {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_attributes_shopify_takes_are_not_reported() {
+        use SchemaOf::{Block, Section};
+        // Shopify takes these: a `t:` name whose text is long, `max_blocks` above 50, presets
+        // with more blocks than `max_blocks`, `@app` with local blocks, the legacy `templates`.
+        for schema in [
+            r#"{"name": "t:sections.a_very_long_translation_key.name"}"#,
+            r#"{"name": "M", "max_blocks": 51, "blocks": [{"type": "a", "name": "A", "limit": 1}], "presets": [{"name": "P", "blocks": [{"type": "a"}, {"type": "a"}]}]}"#,
+            r#"{"name": "A", "blocks": [{"type": "@app"}, {"type": "a", "name": "A"}], "settings": [{"type": "text", "id": "t", "label": "T"}], "presets": [{"name": "P", "settings": {"t": "x"}}]}"#,
+            r#"{"name": "G", "tag": "section", "class": "a b", "limit": 1, "enabled_on": {"templates": ["product", "customers/account"], "groups": ["custom.overlay", "*"]}, "templates": ["index"], "locales": {}}"#,
+            r#"{"name": "T", "blocks": [{"type": "@theme"}, {"type": "text"}], "presets": [{"name": "P", "blocks": [{"type": "text"}]}]}"#,
+        ] {
+            assert_eq!(refused(Section, schema), Vec::<String>::new(), "{schema}");
+        }
+        for schema in [
+            r#"{"name": "B", "tag": "picture", "class": "x", "blocks": [{"type": "@theme"}], "presets": [{"name": "P"}], "settings": []}"#,
+            r#"{"name": "B", "tag": null}"#,
+        ] {
+            assert_eq!(refused(Block, schema), Vec::<String>::new(), "{schema}");
+        }
     }
 
     #[test]

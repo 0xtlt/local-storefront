@@ -696,6 +696,16 @@ Shopify refuses on upload:
   settings with one id, a `select` or `radio` whose `default` is not one of its `options`, a
   `range` whose `default` is outside `min` and `max` or not one of its steps, or that has more
   than 101 steps (`invalid_schema`, `unknown_setting_type`, `duplicate_setting_id`);
+- the attributes of that `{% schema %}` that Shopify refuses (`invalid_schema`): a `name` of more
+  than 25 characters (a `t:` key is not counted), an attribute the schema does not take (a theme
+  block takes `name`, `settings`, `blocks`, `presets`, `tag` and `class`), `@theme` with blocks
+  the section defines, two of its blocks with one `type` or one `name`, `settings` on `@app` or
+  `@theme`, a block defined in a theme block, a preset without `name`, a block of a preset or of
+  the `default` that the section's blocks do not define, preset `settings` in a schema without
+  settings, a `max_blocks` that is not a whole number above 0, a `limit` above 2, a section `tag`
+  other than `article`, `aside`, `div`, `footer`, `header` and `section` (a block's: more than 50
+  characters), a `class` with `"` or `<`, `enabled_on` with `disabled_on`, an empty one, or a
+  page type or a section group they do not take;
 - what the theme names but does not have: a snippet of `render` or `include`
   (`missing_snippet`), a section of `{% section %}` or of a JSON template (`missing_section`), a
   group of `{% sections %}` (`missing_section_group`), a theme block of a schema, of a JSON
@@ -817,7 +827,7 @@ counts the others.
 | `contextual_parent` | A warning: a contextual template or section group (`index.context.europe.json`) without a `parent`, or whose `parent` is not the file of `templates/` or `sections/` its name adapts (`index.json`). Its overrides apply to nothing. |
 | `contextual_context` | A warning: a contextual file whose `context` is not `{"market": "<handle>"}` or `{"b2b": true}`, the two contexts Shopify documents. Its overrides apply to nobody. |
 | `not_utf8` | A warning: a Liquid or JSON file that is not UTF-8, saved as Latin-1 or Windows-1252, at the line of its first such byte. Shopify CLI uploads each of those bytes as `�` (U+FFFD), and local-storefront reads the file the same way: a Latin-1 `café` renders as `caf�`. Save the file as UTF-8. |
-| `invalid_schema` | A `{% schema %}` Shopify refuses: JSON that does not parse, a setting without a required key (`id`, `label`, `options` of a `select`, `min`, `max` and `default` of a `range`), a `default` its setting does not take. A section or a block whose schema does not parse loses the defaults of its settings. |
+| `invalid_schema` | A `{% schema %}` Shopify refuses: JSON that does not parse, a setting without a required key (`id`, `label`, `options` of a `select`, `min`, `max` and `default` of a `range`), a `default` its setting does not take, or an attribute it refuses (a `name` longer than 25 characters, an unknown attribute, `@theme` with blocks of the section, a preset without `name`, `max_blocks`, `limit`, `tag`, `class`, `enabled_on`, `disabled_on`: the list above). A section or a block whose schema does not parse loses the defaults of its settings. |
 | `unknown_setting_type` | A setting of a schema whose `type` Shopify does not have. The `hint` gives the closest one. |
 | `duplicate_setting_id` | Two settings of one schema with the same `id`. |
 | `missing_block` | A theme block the theme names and `blocks/` does not have: in the `blocks` or the `presets` of a schema, in a JSON template or a section group, or in `{% content_for 'block', type: '…' %}`. A section with blocks of its own (with a `name`) names its own types. |

@@ -3,7 +3,7 @@
 //! that the default locale does not have. Each renders as an error on Shopify.
 
 use lsf_theme::Theme;
-use lsf_theme::theme::schema_check::{self, SchemaProblem, ThemeNames};
+use lsf_theme::theme::schema_check::{self, SchemaOf, SchemaProblem, ThemeNames};
 use serde_json::Value as Json;
 
 /// A name of the theme that is missing.
@@ -237,8 +237,9 @@ impl SchemaNames {
     }
 
     /// What Shopify refuses in the `{% schema %}` of a section or a theme block.
-    pub fn problems(&self, source: &str) -> Vec<SchemaProblem> {
+    pub fn problems(&self, source: &str, of: SchemaOf) -> Vec<SchemaProblem> {
         let mut problems = schema_check::check(source);
+        problems.extend(schema_check::check_attributes(source, of));
         problems.extend(schema_check::check_names(
             source,
             &ThemeNames {
