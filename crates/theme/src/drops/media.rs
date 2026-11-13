@@ -66,6 +66,17 @@ impl ImageDrop {
         })
     }
 
+    /// Its alt text. A product's image without one has the product's title, as on Shopify;
+    /// another image (`media.preview_image`, a setting's) keeps an empty one.
+    pub fn alt(&self) -> String {
+        match self.product {
+            Some(product) if self.image.alt.is_empty() => {
+                self.site.store.products[product].title.clone()
+            }
+            _ => self.image.alt.clone(),
+        }
+    }
+
     /// The variants this image is attached to.
     fn variant_indexes(&self) -> Vec<usize> {
         let (Some(product), Some(position)) = (self.product, self.position) else {
@@ -93,7 +104,7 @@ impl Object for ImageDrop {
             "width" => Value::Int(i64::from(image.width)),
             "height" => Value::Int(i64::from(image.height)),
             "aspect_ratio" => Value::Float(image.aspect_ratio()),
-            "alt" => Value::from(&image.alt),
+            "alt" => Value::from(self.alt()),
             "id" => Value::Int(image.id as i64),
             "media_type" => Value::str("image"),
             "position" => self.position.map_or(Value::Nil, Value::from),

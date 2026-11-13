@@ -434,6 +434,58 @@ fn an_image_picked_by_its_path_has_the_size_of_its_file() {
 }
 
 #[test]
+fn a_product_image_without_alt_text_has_the_title_of_its_product() {
+    // Issue #118: Shopify gives a product image without alt text the product's title, in
+    // `image.alt`, `media.alt`, `image_tag` and the cart's JSON. Its `preview_image` keeps an
+    // empty alt (`media.preview_image | image_url | image_tag` gives `alt=""` on Shopify).
+    let overlay = serde_json::json!({"products": [
+        {"title": "Widget", "price": 1000,
+         "images": [{"src": "widget.jpg", "width": 1600, "height": 1600}]},
+        {"title": "Gadget", "price": 1000,
+         "images": [{"src": "gadget.jpg", "alt": "Gadget, front", "width": 1600, "height": 1600}]}
+    ]});
+    let (store, diagnostics) =
+        load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let widget = store.product_by_handle("widget").expect("widget").variants[0].id;
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/products/widget",
+        Session::initial(&fixture.store),
+        "{{ product.featured_image.alt }}|{{ product.featured_media.alt }}|\
+         {{ product.images.first.alt }}|{{ product.media.first.preview_image.alt }}|\
+         {{ all_products['gadget'].featured_image.alt }}",
+    );
+    assert_eq!(output, "Widget|Widget|Widget||Gadget, front");
+    let tag = fixture.liquid(
+        "/products/widget",
+        Session::initial(&fixture.store),
+        "{{ product.featured_image | image_url: width: 100 | image_tag }}",
+    );
+    assert!(tag.contains(" alt=\"Widget\" "), "{tag}");
+    let tag = fixture.liquid(
+        "/products/widget",
+        Session::initial(&fixture.store),
+        "{{ product.media.first.preview_image | image_url: width: 100 | image_tag }}",
+    );
+    assert!(tag.contains(" alt=\"\" "), "{tag}");
+
+    let mut session = Session::initial(&fixture.store);
+    session.cart_lines = vec![CartLine {
+        variant_id: widget,
+        quantity: 1,
+        properties: Default::default(),
+        selling_plan: None,
+    }];
+    let cart = fixture.liquid("/cart", session, "{{ cart | json }}");
+    let cart: serde_json::Value = serde_json::from_str(&cart).expect("the cart's JSON");
+    assert_eq!(cart["items"][0]["featured_image"]["alt"], "Widget");
+}
+
+#[test]
 fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
     let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
     assert!(diagnostics.is_empty(), "{diagnostics}");

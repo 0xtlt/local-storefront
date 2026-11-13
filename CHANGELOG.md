@@ -187,6 +187,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `2048x2560`, an `aspect_ratio` of `0.8` and `image_url: width: 300 | image_tag` a
   `height="375"`, as on Shopify. It was 1200 x 1200 unless the data declared a size. The size
   declared in `files` of `store.json` is now used only when the file is missing.
+- **A product image without alt text has the product's title as its alt**, as on Shopify:
+  `product.featured_image.alt`, `product.featured_media.alt`, `product.images[n].alt`, the `alt`
+  of `image_tag` and `featured_image.alt` of a line in the cart's JSON gave an empty string. An
+  image with alt text keeps it, and `media.preview_image.alt` stays empty, as on Shopify.
 
 ## 0.3.0-rc.5 - 2026-11-13
 
