@@ -81,6 +81,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   no value and no `default`, and a cleared `color`, is still `blank` and prints nothing, but it
   is truthy: `{% if section.settings.color %}` now takes the branch a store takes. Test it with
   `!= blank`.
+- **`?sections=` with more than five sections answers `400` and renders nothing**, as on
+  Shopify, and a cart request that bundles more than five gives `"sections": null`. A theme or a
+  test that asks for six sections at once gets nothing on a store, and now on lsf too: ask for
+  five at most.
 
 ### Fixed
 
@@ -168,6 +172,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `default_pagination` and the `url_to_add` and `url_to_remove` of filters leave those
   parameters out, as Shopify does: infinite scroll, Ajax pagination and Ajax filters fetch the
   next page, not a bare section, and a script that adds its own `section_id` no longer sends two.
+- **The Section Rendering API renders five sections at most.** `?sections=` with six distinct
+  ids answers `400` with an empty body, as Shopify documents, where lsf rendered all six;
+  `x-lsf-reason` says why. A `/cart/add.js`, `change.js`, `update.js` or `clear.js` that bundles
+  six still changes the cart and answers `200`, with `"sections": null`, as a store does. A
+  section asked for twice counts once.
 - **A product with more than 250 variants shows what Shopify shows.** `product.variants` and a
   `for` loop over it give the first 250, the Ajax API's product JSON holds 250, and
   `product.variants_count` is still the total. A variant picker that misses variants past 250 on

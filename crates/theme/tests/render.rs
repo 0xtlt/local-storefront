@@ -1260,6 +1260,32 @@ fn section_rendering_api() {
 }
 
 #[test]
+fn more_than_five_sections_answer_400_and_render_nothing() {
+    // https://shopify.dev/docs/storefronts/themes/best-practices/performance/use-section-rendering-api:
+    // "Requesting more than five sections returns 400 Bad Request and renders nothing."
+    let fixture = fixture();
+    let ids = |list: &str| Target::Sections(list.split(',').map(str::to_string).collect());
+    let six = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &ids("footer,b,c,d,e,f"),
+    );
+    assert_eq!(six.status, 400);
+    assert_eq!(six.body, "");
+    assert!(six.not_found.is_none());
+    // Five render, missing ones included, and a section asked for twice counts once.
+    let five = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &ids("footer,b,c,d,e,footer"),
+    );
+    assert_eq!(five.status, 200);
+    let json: serde_json::Value = serde_json::from_str(&five.body).unwrap();
+    assert!(json["footer"].is_string());
+    assert!(json["e"].is_null());
+}
+
+#[test]
 fn unknown_urls_render_the_404_template() {
     let fixture = fixture();
     for path in [

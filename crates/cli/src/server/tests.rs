@@ -451,6 +451,65 @@ fn cart_responses_bundle_the_requested_sections() {
 }
 
 #[test]
+fn more_than_five_sections_render_none() {
+    // "Requesting more than five sections returns 400 Bad Request and renders nothing"
+    // (https://shopify.dev/docs/storefronts/themes/best-practices/performance/use-section-rendering-api).
+    // A section asked for twice counts once, as it renders once.
+    let state = server();
+    let six = get(&state, "/?sections=footer,b,c,d,e,f", "sections");
+    assert_eq!(six.status, 400);
+    assert!(six.body.is_empty(), "{}", text(&six));
+    assert!(
+        header(&six, "x-lsf-reason").is_some_and(|reason| reason.contains("6 sections")),
+        "{:?}",
+        six.headers
+    );
+    let five = get(&state, "/?sections=footer,b,c,d,e,footer", "sections");
+    assert_eq!(five.status, 200, "{}", text(&five));
+    assert!(body_json(&five)["footer"].is_string());
+
+    // A cart request bundling six adds the item, answers 200 and renders none: `"sections":
+    // null`, as a store answers it (issue #132).
+    let variant = variant_id(&state, "TOTE-NAT");
+    let reply = post(
+        &state,
+        "/cart/add.js",
+        json!({"items": [{"id": variant, "quantity": 1}], "sections": "footer,b,c,d,e,f"}),
+        "sections",
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let body = body_json(&reply);
+    assert!(body["sections"].is_null(), "{body}");
+    assert!(body.as_object().unwrap().contains_key("sections"), "{body}");
+    assert_eq!(
+        body_json(&get(&state, "/cart.js", "sections"))["item_count"],
+        1
+    );
+    let reply = post(
+        &state,
+        "/cart/change.js",
+        json!({"line": 1, "quantity": 2, "sections": ["footer", "b", "c", "d", "e", "f"]}),
+        "sections",
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let body = body_json(&reply);
+    assert!(body["sections"].is_null(), "{body}");
+    assert_eq!(body["item_count"], 2);
+    // Five still render.
+    let reply = post(
+        &state,
+        "/cart/update.js",
+        json!({"updates": {}, "sections": "footer,b,c,d,e"}),
+        "sections",
+    );
+    assert!(
+        body_json(&reply)["sections"]["footer"].is_string(),
+        "{}",
+        text(&reply)
+    );
+}
+
+#[test]
 fn the_control_api_sets_up_a_session() {
     let state = server();
     let reply = state.dispatch(&request(

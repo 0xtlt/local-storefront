@@ -87,10 +87,13 @@ fn selling_plan(params: &Json) -> PlanParam {
     }
 }
 
-/// Adds the bundled sections the request asked for to a JSON response.
+/// Adds the bundled sections the request asked for to a JSON response. More than five give
+/// `"sections": null` and render none, as on Shopify, and the cart still changes.
 fn with_sections(visit: &Visit<'_>, params: &Json, mut body: Json) -> Json {
     let ids = section_ids(params.get("sections"));
-    if !ids.is_empty() {
+    if lsf_theme::render::too_many_sections(&ids) {
+        body["sections"] = Json::Null;
+    } else if !ids.is_empty() {
         let url = text(params, "sections_url");
         body["sections"] = visit.render_sections(&ids, url.as_deref());
     }
