@@ -7,7 +7,13 @@
 //! - `namespace` omitted is the app's reserved namespace; `$app:x` is `app--<app id>--x`.
 //! - A definition is unique per owner type, namespace and key. Creating one where metafields
 //!   without a definition exist adopts them (they are then checked against it:
-//!   `validationStatus`); where they have another type, it is `UNSTRUCTURED_ALREADY_EXISTS`.
+//!   `validationStatus`). One of another type is adopted when its value is valid for the
+//!   definition, and takes its type; else it stays as it was, without the definition: "the
+//!   system validates any existing unstructured metafields matching the same owner type,
+//!   namespace, and key against it. The system updates each valid metafield's type to match the
+//!   definition. Invalid metafields remain unchanged but must conform to the definition when
+//!   updated." (the reference of `metafieldDefinitionCreate`). The definition is created either
+//!   way, as a store does (issue #171): `UNSTRUCTURED_ALREADY_EXISTS` is never given.
 //! - `validations` must be among the type's (`metafieldDefinitionTypes`), and `rating` needs
 //!   `scale_min` and `scale_max`.
 //! - `pin: true` pins the definition at the end (positions from 1); 20 pinned definitions per
@@ -678,19 +684,28 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         .code("TAKEN");
         return Ok(payload(json!({"createdDefinition": null}), &[error]));
     }
-    let existing = metafields_of(state, &owner_type, &namespace, &key);
-    if existing.iter().any(|id| {
-        state
-            .get(id)
-            .is_some_and(|metafield| text(metafield, "type") != kind)
-    }) {
-        let error = UserError::new(
-            &["definition"],
-            "This namespace and key combination is already in use for a set of your metafields.",
-        )
-        .code("UNSTRUCTURED_ALREADY_EXISTS");
-        return Ok(payload(json!({"createdDefinition": null}), &[error]));
-    }
+    // The metafields the definition adopts: those of its type, and those of another type whose
+    // value is valid for it, with that value as the definition's type reads it. The others stay
+    // as they are.
+    let adopted: Vec<(String, Option<types::Checked>)> = {
+        let currency = metafields::shop_currency(state);
+        let cx = types::Context {
+            state,
+            currency: &currency,
+            validations: &validations,
+        };
+        metafields_of(state, &owner_type, &namespace, &key)
+            .into_iter()
+            .filter_map(|id| {
+                let metafield = state.get(&id)?;
+                if text(metafield, "type") == kind {
+                    return Some((id, None));
+                }
+                let checked = types::check(&kind, text(metafield, "value"), &cx).ok()?;
+                Some((id, Some(checked)))
+            })
+            .collect()
+    };
     let pin = input.get("pin").and_then(Value::as_bool).unwrap_or(false);
     if pin && pinned(state, &owner_type).len() >= PINNED_LIMIT {
         let error = UserError::new(
@@ -740,7 +755,12 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     if pin {
         pin_definition(state, &id, &owner_type);
     }
-    for metafield in &existing {
+    for (metafield, checked) in &adopted {
+        if let Some(checked) = checked
+            && let Some(record) = state.get_mut(metafield)
+        {
+            metafields::write_value(record, &kind, checked);
+        }
         metafields::link_definition(state, metafield);
     }
     metafields::refresh_definition(state, &id);
