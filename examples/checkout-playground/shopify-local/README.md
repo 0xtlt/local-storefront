@@ -994,6 +994,14 @@ Metafields are grouped by namespace, then key. A plain value gets its type infer
 `{{ product.metafields.custom.size_guide.value.title }}` then behave as on Shopify, including
 `metafield_tag` and `metafield_text`.
 
+The search engine listing of a product, a collection, a page, a blog or an article is in the
+metafields `global.title_tag` and `global.description_tag`, where Shopify keeps it: they are the
+page's `page_title` and `page_description`.
+
+```json
+"metafields": { "global": { "title_tag": "Linen shirt for summer", "description_tag": "Breathable linen, cut loose." } }
+```
+
 A value may also be written as Shopify stores it, as a string, the Admin API's `value`, so that
 it can be pasted from the API as is. A value that is an object or a list (a `rating`, a `money`,
 a `weight`, a `list.` type...) may be its JSON text:

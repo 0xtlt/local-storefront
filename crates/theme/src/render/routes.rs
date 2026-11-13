@@ -1,5 +1,7 @@
 //! Maps a URL to the template that renders it and the resource it is about.
 
+use lsf_core::store::Metafields;
+
 use super::globals::meta_description;
 use super::page::{Page, Resource};
 use crate::drops::collection::CollectionScope;
@@ -28,6 +30,22 @@ fn metaobject_template(kind: &str) -> TemplateName {
 /// is for. https://shopify.dev/docs/storefronts/themes/architecture/templates/metaobject
 pub fn has_metaobject_page(theme: &Theme, kind: &str) -> bool {
     template_exists(theme, &metaobject_template(kind))
+}
+
+/// Sets the page's title and description to those of the resource's search engine listing,
+/// which Shopify keeps in the metafields `global.title_tag` and `global.description_tag`
+/// (https://shopify.dev/docs/apps/build/marketing-analytics/optimize-storefront-seo), or else to
+/// `title` and the meta description of `html`.
+fn set_listing(page: &mut Page, metafields: &Metafields, title: &str, html: &str) {
+    let tag = |key: &str| {
+        metafields
+            .get("global")
+            .and_then(|global| global.get(key))
+            .and_then(|metafield| metafield.value.as_str())
+            .filter(|value| !value.trim().is_empty())
+    };
+    page.title = tag("title_tag").unwrap_or(title).to_string();
+    page.description = meta_description(tag("description_tag").unwrap_or(html));
 }
 
 /// Applies an alternate template (`?view=` or the resource's `template_suffix`) when the theme
@@ -146,8 +164,7 @@ pub fn resolve(site: &Site) -> Page {
                 page.template,
                 view.or(data.template_suffix.as_deref()),
             );
-            page.title = data.title.clone();
-            page.description = meta_description(&data.description);
+            set_listing(&mut page, &data.metafields, &data.title, &data.description);
             page.canonical_path = format!("/products/{}", data.handle);
             page.handle = Some(data.handle.clone());
             page
@@ -189,8 +206,7 @@ pub fn resolve(site: &Site) -> Page {
                 page.template,
                 view.or(data.template_suffix.as_deref()),
             );
-            page.title = data.title.clone();
-            page.description = meta_description(&data.description);
+            set_listing(&mut page, &data.metafields, &data.title, &data.description);
             page.canonical_path = format!("/products/{}", data.handle);
             page.handle = Some(data.handle.clone());
             page.product_variant = Some(variant);
@@ -251,12 +267,10 @@ pub fn resolve(site: &Site) -> Page {
                 page.template,
                 view.or(data.template_suffix.as_deref()),
             );
-            page.title = scope
-                .vendor
-                .clone()
-                .or(scope.product_type.clone())
-                .unwrap_or_else(|| data.title.clone());
-            page.description = meta_description(&data.description);
+            set_listing(&mut page, &data.metafields, &data.title, &data.description);
+            if let Some(title) = scope.vendor.as_ref().or(scope.product_type.as_ref()) {
+                page.title = title.clone();
+            }
             page.canonical_path = format!("/collections/{handle}");
             page.handle = Some(data.handle.clone());
             page
@@ -272,8 +286,7 @@ pub fn resolve(site: &Site) -> Page {
                 page.template,
                 view.or(data.template_suffix.as_deref()),
             );
-            page.title = data.title.clone();
-            page.description = meta_description(&data.content);
+            set_listing(&mut page, &data.metafields, &data.title, &data.content);
             page.canonical_path = format!("/pages/{}", data.handle);
             page.handle = Some(data.handle.clone());
             page
@@ -330,7 +343,7 @@ pub fn resolve(site: &Site) -> Page {
                 page.template,
                 view.or(data.template_suffix.as_deref()),
             );
-            page.title = data.title.clone();
+            set_listing(&mut page, &data.metafields, &data.title, "");
             page.canonical_path = format!("/blogs/{}", data.handle);
             page.handle = Some(data.handle.clone());
             page
@@ -349,12 +362,12 @@ pub fn resolve(site: &Site) -> Page {
                 page.template,
                 view.or(data.template_suffix.as_deref()),
             );
-            page.title = data.title.clone();
-            page.description = meta_description(if data.excerpt.is_empty() {
+            let html = if data.excerpt.is_empty() {
                 &data.content
             } else {
                 &data.excerpt
-            });
+            };
+            set_listing(&mut page, &data.metafields, &data.title, html);
             page.canonical_path = format!("/blogs/{blog_handle}/{}", data.handle);
             page.handle = Some(format!("{blog_handle}/{}", data.handle));
             page

@@ -119,6 +119,9 @@ metaobject type), `product`, `collection`, `page`, `blog`, `article`, `policy`, 
 agent-discovery templates (`agents.md.liquid`, `llms.txt.liquid`, `llms-full.txt.liquid`), where
 only it and `request` are defined, as on Shopify.
 
+`page_title` and `page_description` are a resource's search engine listing, the metafields
+`global.title_tag` and `global.description_tag`, when it has one, as on Shopify.
+
 A handle that names nothing (`collections['x']`, `all_products['x']`, `pages['x']`, `blogs['x']`,
 `linklists['x']`, `linklists['']`) and a metafield namespace a resource does not have
 (`product.metafields.x`) give Shopify's [`empty` object](https://shopify.dev/docs/api/liquid/basics#empty):

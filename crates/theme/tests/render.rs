@@ -5959,6 +5959,55 @@ fn options_by_name_finds_an_option_in_any_case() {
 }
 
 #[test]
+fn page_title_and_page_description_are_the_search_engine_listing() {
+    // #100: Shopify keeps a resource's search engine listing in the metafields
+    // `global.title_tag` and `global.description_tag`
+    // (https://shopify.dev/docs/apps/build/marketing-analytics/optimize-storefront-seo), and
+    // `page_title` and `page_description` give it. Without them, the title and description.
+    let seo = |title: &str, description: &str| serde_json::json!({ "global": { "title_tag": title, "description_tag": description } });
+    let fixture = fixture_with_data(&serde_json::json!({
+        "products": [
+            {
+                "title": "Seo Tee",
+                "description": "<p>A plain tee.</p>",
+                "price": 1000,
+                "metafields": seo("Tee SEO title", "Tee & SEO description")
+            },
+            { "title": "Plain Tee", "description": "<p>A plain tee.</p>", "price": 1000 }
+        ],
+        "collections": [{
+            "handle": "seo-shirts",
+            "title": "Shirts",
+            "products": ["seo-tee"],
+            "metafields": { "global": { "title_tag": "Shirts SEO title" } }
+        }],
+        "pages": [{
+            "title": "About",
+            "handle": "seo-about",
+            "content": "<p>About us.</p>",
+            "metafields": seo("About SEO title", "About SEO description")
+        }]
+    }));
+    let listing = |path: &str| {
+        fixture.liquid(
+            path,
+            Session::initial(&fixture.store),
+            "{{ page_title }}|{{ page_description }}",
+        )
+    };
+    assert_eq!(
+        listing("/products/seo-tee"),
+        "Tee SEO title|Tee &amp; SEO description"
+    );
+    assert_eq!(listing("/products/plain-tee"), "Plain Tee|A plain tee.");
+    assert_eq!(listing("/collections/seo-shirts"), "Shirts SEO title|");
+    assert_eq!(
+        listing("/pages/seo-about"),
+        "About SEO title|About SEO description"
+    );
+}
+
+#[test]
 fn a_product_media_in_json_is_the_media_object() {
     // #99: `{{ product.media | json }}` and `{{ product.featured_media | json }}` give media
     // objects, as in `{{ product | json }}` (https://shopify.dev/docs/api/liquid/filters/json),
