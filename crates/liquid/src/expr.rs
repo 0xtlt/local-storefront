@@ -246,9 +246,9 @@ impl VariableLookup {
         };
         for lookup in &self.lookups {
             let next = match lookup {
-                Lookup::Key { name, command } => lookup_named(&object, name, *command, ctx),
+                Lookup::Key { name, command } => lookup_named(&object, name, *command, ctx)?,
                 Lookup::Index(expr) => match expr.evaluate(ctx)?.to_liquid_value() {
-                    Value::Str(key) => lookup_named(&object, &key, false, ctx),
+                    Value::Str(key) => lookup_named(&object, &key, false, ctx)?,
                     Value::Int(index) => lookup_index(&object, index),
                     _ => None,
                 },
@@ -268,16 +268,17 @@ fn bracket_inner(part: &str) -> Option<&str> {
 }
 
 /// `object[key]` during a render, where the `self` of the context reads the variable `key`.
-fn lookup_named(object: &Value, key: &str, command: bool, ctx: &Context) -> Option<Value> {
-    match lookup_key(object, key, command) {
+fn lookup_named(object: &Value, key: &str, command: bool, ctx: &Context) -> Result<Option<Value>> {
+    Ok(match lookup_key(object, key, command)? {
         Some(Value::Nil) | None if ctx.is_self(object) => Some(ctx.find_variable(key)),
         found => found,
-    }
+    })
 }
 
-/// `object[key]` for a string key, with the `size`/`first`/`last` fallbacks.
-pub fn lookup_key(object: &Value, key: &str, command: bool) -> Option<Value> {
-    match object {
+/// `object[key]` for a string key, with the `size`/`first`/`last` fallbacks. A drop's lookup
+/// may raise an error ([`crate::Object::lookup`]).
+fn lookup_key(object: &Value, key: &str, command: bool) -> Result<Option<Value>> {
+    Ok(match object {
         Value::Hash(map) => match map.get(key) {
             Some(value) => Some(value.clone()),
             None if command => match key {
@@ -289,7 +290,7 @@ pub fn lookup_key(object: &Value, key: &str, command: bool) -> Option<Value> {
             },
             None => None,
         },
-        Value::Object(drop) => match drop.get(key) {
+        Value::Object(drop) => match drop.lookup(key)? {
             Some(value) => Some(value),
             None if command => match key {
                 "size" => drop.size().map(|size| Value::Int(size as i64)),
@@ -332,7 +333,7 @@ pub fn lookup_key(object: &Value, key: &str, command: bool) -> Option<Value> {
         },
         Value::Int(_) if command && key == "size" => Some(Value::Int(8)),
         _ => None,
-    }
+    })
 }
 
 /// `object[index]` for an integer key.

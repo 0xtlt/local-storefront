@@ -1,6 +1,7 @@
 //! Everything a render needs to know that does not change while it runs: the theme, the store,
 //! the request and the visitor's session.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::{DateTime, Utc};
@@ -160,7 +161,16 @@ pub struct Site {
     /// The page `{% paginate %}` shows of each list that has a page parameter of its own, by
     /// that parameter: a list rebuilt at each lookup (a metafield's) is paged all the same.
     paginate_windows: Mutex<Vec<(String, PaginateWindow)>>,
+    /// The handles the render looked up in each list Shopify limits (`all_products`, each
+    /// metaobject type), found or not.
+    handle_lookups: Mutex<HashMap<String, HashSet<String>>>,
 }
+
+/// How many unique handles a page render may look up in `all_products` and in each metaobject
+/// type: https://shopify.dev/docs/api/liquid/objects/all_products, "a limit of 20 unique
+/// handles per page", and https://shopify.dev/docs/apps/build/metaobjects/metaobject-limits,
+/// "including handles that don't match a published entry".
+const MAX_UNIQUE_HANDLES: usize = 20;
 
 /// The items a paginated list shows: `(offset, size)`, or all of them outside `paginate`.
 pub(crate) type PaginateWindow = Arc<Mutex<Option<(usize, usize)>>>;
@@ -195,7 +205,25 @@ impl Site {
             schema_translations: OnceLock::new(),
             default_menus: Mutex::new(Vec::new()),
             paginate_windows: Mutex::new(Vec::new()),
+            handle_lookups: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Counts a lookup of `handle` in `list` (`all_products`, a metaobject type). Past
+    /// [`MAX_UNIQUE_HANDLES`] unique handles, this lookup and every later one in the list is
+    /// the error Shopify renders in place of the entry.
+    pub(crate) fn count_handle_lookup(&self, list: &str, handle: &str) -> lsf_liquid::Result<()> {
+        let mut lookups = self.handle_lookups.lock().expect("lookups poisoned");
+        let handles = lookups.entry(list.to_string()).or_default();
+        if !handles.contains(handle) {
+            handles.insert(handle.to_string());
+        }
+        if handles.len() > MAX_UNIQUE_HANDLES {
+            return Err(lsf_liquid::Error::standard(format!(
+                "Exceeded maximum number of unique handles for {list}."
+            )));
+        }
+        Ok(())
     }
 
     /// The window of the lists of a page parameter, shared by every lookup of them.

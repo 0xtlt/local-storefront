@@ -3510,6 +3510,62 @@ fn the_collections_list_is_the_store_s_own_collections() {
 }
 
 #[test]
+fn a_render_looks_up_20_unique_handles_in_all_products_and_in_each_metaobject_type() {
+    // #95: https://shopify.dev/docs/api/liquid/objects/all_products, "a limit of 20 unique
+    // handles per page", and https://shopify.dev/docs/apps/build/metaobjects/metaobject-limits,
+    // 20 handles of each type "including handles that don't match a published entry". The
+    // lookup past them, and every later one, renders the error in place of the entry.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "chart": [{ "handle": "small", "fields": { "name": "Small" } }],
+            "size": [{ "handle": "s", "fields": { "name": "S" } }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let product = &fixture.store.products[0].handle;
+    let site = fixture.renderer.site(
+        fixture.store.clone(),
+        request("/"),
+        Session::initial(&fixture.store),
+    );
+    let page = lsf_theme::render::routes::resolve(&site);
+    let source = format!(
+        "{{%- for i in (1..19) -%}}{{%- assign h = 'nope-' | append: i -%}}\
+         {{{{ all_products[h].title }}}}{{{{ metaobjects.chart[h].name }}}}{{%- endfor -%}}\
+         [{{{{ all_products['{product}'].title }}}}|{{{{ all_products.nope-1.title }}}}]\
+         [{{{{ metaobjects.chart.small.name }}}}|{{{{ metaobjects.chart.values.size }}}}]\
+         [{{{{ all_products['nope-20'].title }}}}][{{{{ all_products['{product}'].title }}}}]\
+         [{{{{ metaobjects.chart.nope-20.name }}}}][{{{{ metaobjects.size.s.name }}}}]"
+    );
+    let (output, errors) = fixture
+        .renderer
+        .render_liquid(&site, page, &source, &[])
+        .expect("the template parses");
+    let error = |list: &str| {
+        format!("Liquid error (line 1): Exceeded maximum number of unique handles for {list}.")
+    };
+    assert_eq!(
+        output,
+        format!(
+            "[{}|][Small|1][{all}][{all}][{chart}][S]",
+            fixture.store.products[0].title,
+            all = error("all_products"),
+            chart = error("chart"),
+        )
+    );
+    assert_eq!(errors.len(), 3);
+}
+
+#[test]
 fn a_resource_setting_whose_handle_names_nothing_is_truthy_and_blank() {
     // https://shopify.dev/docs/storefronts/themes/architecture/settings/input-settings#product:
     // `blank` if "the selection no longer exists", and outputting the setting "will return the
