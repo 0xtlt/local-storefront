@@ -246,6 +246,31 @@ fn wrapper_tags(wrapper: &str) -> (String, String) {
     (open, format!("</{tag}>"))
 }
 
+/// Says which of the theme's settings and translations files of the page could not be read
+/// (a byte order mark, which Shopify refuses too): the render goes on without them, so their
+/// settings and translations are missing from the page.
+fn warn_dropped_files(ctx: &Context, site: &Site) {
+    let theme = &site.theme;
+    let mut paths = vec![
+        "config/settings_schema.json".to_string(),
+        "config/settings_data.json".to_string(),
+    ];
+    for locale in [site.request.locale.clone(), theme.default_locale()] {
+        if let Some(path) = theme.translations_path(&locale)
+            && !paths.contains(&path)
+        {
+            paths.push(path);
+        }
+    }
+    for path in paths {
+        if let Err(lsf_core::Error::Json { message, .. }) = theme.json(&path) {
+            ctx.warn(format!(
+                "{path}: {message}: the file is left out of the page"
+            ));
+        }
+    }
+}
+
 /// The line of a JSON parse error: `invalid JSON at line 3, column 5: …` → 3.
 fn json_error_line(message: &str) -> Option<u32> {
     let rest = &message[message.find("at line ")? + "at line ".len()..];
@@ -315,6 +340,7 @@ impl Renderer {
         }
         let ctx = builder.build();
         globals.set("settings", settings::theme_settings(&state, &ctx));
+        warn_dropped_files(&ctx, site);
         (ctx, state, globals)
     }
 

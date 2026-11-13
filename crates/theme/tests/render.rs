@@ -2426,7 +2426,7 @@ fn a_broken_json_template_is_an_error_of_the_page() {
             ),
             (
                 "templates/index.json",
-                "{\n  \"sections\": {\n    \"a\": {\"type\": \"main\",}\n  }\n}",
+                "{\n  \"sections\": {\n    \"a\": {\"type\": \"main\" \"x\": 1}\n  }\n}",
             ),
             (
                 "templates/page.json",
@@ -2536,7 +2536,7 @@ fn a_schema_shopify_refuses_is_an_error_of_the_page_that_renders_it() {
             ),
             (
                 "sections/hero.liquid",
-                "<h1>{{ section.settings.title }}</h1>\n{% schema %}\n{\"name\": \"Hero\", \"settings\": [{\"type\": \"text\", \"id\": \"title\", \"label\": \"Title\", \"default\": \"Hello\"},]}\n{% endschema %}",
+                "<h1>{{ section.settings.title }}</h1>\n{% schema %}\n{\"name\": \"Hero\", \"settings\": [{\"type\": \"text\", \"id\": \"title\", \"label\": \"Title\", \"default\": \"Hello\"} {}]}\n{% endschema %}",
             ),
             (
                 "sections/list.liquid",
@@ -2857,4 +2857,100 @@ fn a_color_scheme_gives_its_colors_through_the_setting_and_by_id() {
         "{body}"
     );
     assert!(body.contains("section=[scheme-1 #121212]"), "{body}");
+}
+
+#[test]
+fn theme_json_with_trailing_commas_and_unknown_escapes_renders_as_on_shopify() {
+    let files = [
+        (
+            "sections/comma.liquid",
+            "<p>comma: [{{ section.settings.t }}]</p>\n{% schema %}\n{\n  \"name\": \"Comma\",\n  \
+             \"settings\": [\n    { \"type\": \"text\", \"id\": \"t\", \"label\": \"T\", \"default\": \"dflt\" },\n  ],\n}\n\
+             {% endschema %}",
+        ),
+        (
+            "sections/escape.liquid",
+            "<p>escape: [{{ section.settings.q }}]</p>{% schema %}{ \"name\": \"Escape\", \"settings\": \
+             [{ \"type\": \"text\", \"id\": \"q\", \"label\": \"Q\", \"default\": \"\\“q\\”\" }] }{% endschema %}",
+        ),
+        (
+            "sections/globals.liquid",
+            "<p>setting: [{{ settings.label }}]</p><p>locale: [{{ 'general.hi' | t }}]</p>\
+             {% schema %}{ \"name\": \"Globals\", \"settings\": [] }{% endschema %}",
+        ),
+        (
+            "config/settings_schema.json",
+            "[\n  { \"name\": \"theme_info\" },\n  { \"name\": \"Probe\", \"settings\": [\n    \
+             { \"type\": \"text\", \"id\": \"label\", \"label\": \"Label\", \"default\": \"from schema\" },\n  ] }\n]",
+        ),
+        (
+            "config/settings_data.json",
+            "{ \"current\": { \"label\": \"from data\", }, }",
+        ),
+        (
+            "locales/en.default.json",
+            "{ \"general\": { \"hi\": \"Hello\" } }",
+        ),
+        (
+            "locales/fr.json",
+            "{\n  \"general\": { \"hi\": \"Bonjour\", },\n}",
+        ),
+        (
+            "templates/index.json",
+            "{ \"sections\": { \"a\": { \"type\": \"comma\" }, \"b\": { \"type\": \"escape\" }, \
+             \"c\": { \"type\": \"globals\" } }, \"order\": [\"a\", \"b\", \"c\"] }",
+        ),
+        (
+            "templates/list-collections.json",
+            "{\n  \"sections\": { \"a\": { \"type\": \"comma\" } },\n  \"order\": [\"a\"],\n}",
+        ),
+        (
+            "layout/theme.liquid",
+            "<body>{{ content_for_layout }}</body>",
+        ),
+    ];
+    let fixture = theme_of("lenient-json", &[], &files);
+    let paragraphs = |rendered: &Rendered| -> Vec<String> {
+        rendered
+            .body
+            .split("<p>")
+            .skip(1)
+            .map(|p| p.split("</p>").next().unwrap().to_string())
+            .collect()
+    };
+    let home = fixture.page("/");
+    assert_clean(&home);
+    assert!(home.warnings.is_empty(), "{:?}", home.warnings);
+    assert_eq!(
+        paragraphs(&home),
+        [
+            "comma: [dflt]",
+            "escape: [“q”]",
+            "setting: [from data]",
+            "locale: [Hello]"
+        ]
+    );
+    let mut french = request("/");
+    french.locale = "fr".to_string();
+    french.root = "/fr".to_string();
+    let french = fixture.render_with(french, Session::initial(&fixture.store), &Target::Page);
+    assert_eq!(paragraphs(&french)[3], "locale: [Bonjour]");
+    let collections = fixture.page("/collections");
+    assert_clean(&collections);
+    assert_eq!(paragraphs(&collections), ["comma: [dflt]"]);
+
+    // A byte order mark: Shopify refuses the file, and the render says it left it out.
+    let mut files = files.to_vec();
+    let bom = "\u{feff}{ \"current\": { \"label\": \"from data\" } }";
+    files[4] = ("config/settings_data.json", bom);
+    let fixture = theme_of("lenient-json-bom", &[], &files);
+    let home = fixture.page("/");
+    assert_eq!(paragraphs(&home)[2], "setting: [from schema]");
+    assert_eq!(
+        home.warnings,
+        [
+            "config/settings_data.json: invalid JSON at line 1, column 1: the file starts with a \
+          UTF-8 byte order mark (BOM), which Shopify refuses: the file is left out of the page"
+        ]
+    );
 }

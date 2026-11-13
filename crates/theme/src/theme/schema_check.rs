@@ -110,7 +110,7 @@ fn parse(source: &str) -> Option<Result<Parsed, SchemaProblem>> {
         return None;
     }
     let first_line = source[..span.start].matches('\n').count() + 1;
-    let text = lsf_core::json::strip_comments(body);
+    let text = lsf_core::json::theme_json(body).0;
     Some(match serde_json::from_str::<Json>(&text) {
         Ok(json) => Ok(Parsed {
             lines: lsf_core::json::value_lines(&text),
@@ -360,6 +360,33 @@ fn is_local(entry: &Json) -> bool {
     entry.get("name").is_some()
 }
 
+/// What the `{% schema %}` of `source` has that strict JSON refuses and Shopify reads (a
+/// trailing comma, an unknown escape such as `\“`), with its line in the file: warnings, since
+/// Shopify takes the file and uses its values.
+pub fn lenient(source: &str) -> Vec<SchemaProblem> {
+    let Some(span) = schema::block_span(source, "schema") else {
+        return Vec::new();
+    };
+    let first_line = source[..span.start].matches('\n').count() + 1;
+    lsf_core::json::theme_json(&source[span])
+        .1
+        .into_iter()
+        .map(|(line, leniency)| SchemaProblem {
+            code: "lenient_json",
+            line: first_line + line - 1,
+            message: lenient_message("the {% schema %}", leniency),
+            hint: None,
+        })
+        .collect()
+}
+
+/// The warning for what Shopify reads in a theme JSON text and strict JSON refuses.
+pub fn lenient_message(what: &str, leniency: lsf_core::json::Leniency) -> String {
+    format!(
+        "{what} has {leniency}, which is not valid JSON: Shopify reads it, other JSON tools may not"
+    )
+}
+
 /// What Shopify refuses in the `{% schema %}` of `source`, a section or a theme block, that the
 /// file alone shows. Nothing for a file without a schema.
 pub fn check(source: &str) -> Vec<SchemaProblem> {
@@ -577,10 +604,18 @@ mod tests {
 
     #[test]
     fn json_that_does_not_parse_is_reported_at_its_line() {
-        let found = codes("<p>\n{% schema %}\n{\n  \"name\": \"Hero\",\n}\n{% endschema %}");
+        let found = codes(
+            "<p>\n{% schema %}\n{\n  \"name\": \"Hero\"\n  \"tag\": \"div\"\n}\n{% endschema %}",
+        );
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].0, "invalid_schema");
         assert_eq!(found[0].1, 5);
+        // A trailing comma and an unknown escape: Shopify reads the schema, so it is checked
+        // as it reads it, and `lenient` warns.
+        let source = "<p>\n{% schema %}\n{\n  \"name\": \"\\“Hero\",\n}\n{% endschema %}";
+        assert!(codes(source).is_empty());
+        let lenient: Vec<usize> = lenient(source).iter().map(|found| found.line).collect();
+        assert_eq!(lenient, [4, 4]);
         // An empty schema, or none, is not checked.
         assert!(codes("{% schema %}{% endschema %}").is_empty());
         assert!(codes("<p>no schema</p>").is_empty());

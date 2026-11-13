@@ -14,6 +14,14 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `config/settings_schema.json`; they now give the colors of the selected scheme, as a section's
   `color_scheme` setting already did. `settings.color_schemes['scheme-1']` gives one scheme by
   id, as on Shopify; a `for` loop over `settings.color_schemes` is unchanged.
+- **Trailing commas and unknown escapes in theme JSON are read as Shopify reads them.** A
+  `{% schema %}`, a JSON template, a locale, `config/settings_schema.json` or
+  `config/settings_data.json` with a comma before `}` or `]`, or an escape such as `\“`, now
+  gives its values (`\“` is `“`), where lsf dropped the file: settings lost their defaults, a
+  template rendered an error, a locale fell back to the default language. `check` no longer
+  says Shopify refuses such a file: it warns (`lenient_json`) and exits `0`. A file that starts
+  with a byte order mark is still an error, as on Shopify, and a render now names it in a
+  warning rather than leave its settings or translations out silently.
 
 ## 0.3.0-rc.5 - 2026-11-13
 

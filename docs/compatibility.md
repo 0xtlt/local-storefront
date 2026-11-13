@@ -129,6 +129,11 @@ locations, companies, company locations and company addresses.
 
 - JSON templates and Liquid templates, alternate templates (`?view=`, `template_suffix`),
   layouts (`{% layout %}`, `"layout"` in JSON templates, `layout none`).
+- Theme JSON read as Shopify reads it: JSON templates, section groups, locales,
+  `config/settings_schema.json`, `config/settings_data.json` and `{% schema %}` may have
+  comments, trailing commas and unknown escapes (`\“` is `“`). A file that starts with a UTF-8
+  byte order mark is refused, as Shopify refuses it on upload: a render goes on without it and
+  says so in a warning.
 - Sections, static sections (with the settings stored in `settings_data.json` or the `default`
   of their schema), section groups (`{% sections %}`), section and block settings with
   defaults from the schema, `disabled` sections and blocks.
