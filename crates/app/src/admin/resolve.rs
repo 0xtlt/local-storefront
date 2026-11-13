@@ -435,6 +435,18 @@ impl<'a> ShopResolver<'a> {
             .then(|| Obj::record(&key))
     }
 
+    /// Whether `gid` names an object of type `expected` (or of one of its types), existing or
+    /// not: `gid://shopify/Product/1` names a `Product` and a `Node`, `gid://shopify/Order/1`
+    /// does not name a `Product`, nor `gid://shopify/Nope/1` a `Node`. What is not a GID is
+    /// left to the field (an `ID` argument refuses it before).
+    fn names_type(&self, gid: &str, expected: &str) -> bool {
+        let Some(type_name) = crate::admin::state::gid_type(gid) else {
+            return true;
+        };
+        let type_name = adapt::typename(self.adapters(), type_name);
+        self.schema().is_possible(expected, type_name)
+    }
+
     /// The generic answer for a field: the root conventions for a root field, the object's own
     /// value otherwise, else a default. What a custom resolver falls back to.
     pub fn generic(&self, ctx: &FieldContext<'_>, object: &Obj) -> Result<Output<Obj>, FieldError> {
@@ -1059,6 +1071,7 @@ impl<'a> ShopResolver<'a> {
                         access::check_record(self, &object, name)?;
                         Output::Object(object)
                     }
+                    None if !self.names_type(id, "Node") => return Err(invalid_id(id)),
                     None => Output::Null,
                 });
             }
@@ -1106,7 +1119,10 @@ impl<'a> ShopResolver<'a> {
                 ));
             }
             if let Some(id) = ctx.arg_str("id") {
-                return Ok(Output::object_or_null(self.reference(id, named)));
+                return match self.reference(id, named) {
+                    None if !self.names_type(id, named) => Err(invalid_id(id)),
+                    found => Ok(Output::object_or_null(found)),
+                };
             }
             if name.ends_with("ByHandle")
                 && let Some(handle) = ctx.arg_str("handle")
@@ -1329,4 +1345,12 @@ fn successor_path(reason: &str) -> Option<&str> {
             && segment.chars().all(|c| c.is_ascii_alphanumeric())
     };
     (tail.trim() == "instead." && path.split('.').all(field)).then_some(path)
+}
+
+/// Shopify's error for a root field given a GID that does not name its type (`product` given an
+/// order's, `node` a type it does not have), as a store answers it (issue #175, a development
+/// store on 2026-11-12): `Invalid id: <gid>`, `RESOURCE_NOT_FOUND`, the field `null`. A GID of
+/// the right type that names nothing is `null` without an error.
+fn invalid_id(gid: &str) -> FieldError {
+    FieldError::new(format!("Invalid id: {gid}")).with_code("RESOURCE_NOT_FOUND")
 }
