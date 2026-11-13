@@ -147,6 +147,14 @@ test('shows discount codes, what they took off and an ignored code', () => {
   assert.match(text(byClass(tree, 'lsf-line')[0]), /SAVE10 \(−€4\.90\)/);
 });
 
+test('a line shows its properties, without the private ones (a name that starts with _)', () => {
+  const state = structuredClone(checkoutState());
+  state.lines[0].attributes = [{ key: 'Engraving', value: 'Hello' }, { key: '_internal_id', value: 'SECRET-123' }];
+  const line = text(byClass(page(state), 'lsf-line')[0]);
+  assert.match(line, /Engraving: Hello/);
+  assert.doesNotMatch(line, /_internal_id|SECRET-123/);
+});
+
 test('a code whose discount takes 0 off is applied, and shows at 0', () => {
   // As the server writes a Function's candidate of 0 % on the first line.
   const base = checkoutState();

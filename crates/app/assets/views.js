@@ -605,7 +605,9 @@ function lineItem(ctx, line, { thankYou = false } = {}) {
         line.variantTitle && h('span', { class: 'lsf-muted' }, line.variantTitle),
         line.sellingPlan?.name && h('span', { class: 'lsf-muted lsf-plan' }, line.sellingPlan.name),
         line.dueLater?.amount > 0 && h('span', { class: 'lsf-muted lsf-line-later' }, `Due later ${price(line.dueLater, state.shop)}`),
-        (line.attributes ?? []).map((attribute) => h('span', { class: 'lsf-muted' }, `${attribute.key}: ${attribute.value}`)),
+        // A property whose name starts with `_` is hidden from the buyer at checkout, as on Shopify.
+        (line.attributes ?? []).filter((attribute) => !attribute.key.startsWith('_'))
+          .map((attribute) => h('span', { class: 'lsf-muted' }, `${attribute.key}: ${attribute.value}`)),
         (line.discountAllocations ?? []).map((allocation) =>
           h('span', { class: 'lsf-tag' }, allocation.code ?? allocation.title, ` (−${price(allocation.amount, state.shop)})`)),
         line.transformedBy && h('span', { class: 'lsf-muted' }, `Changed by a cart transform (${line.transformedBy})`),

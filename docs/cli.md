@@ -239,9 +239,10 @@ Writes checkout scenarios, the files of `checkouts/` in the store data, made for
 and checkout UI extensions of the app (a generic set outside an app, or when nothing matches).
 It gives each Function the settings its input query reads (`[extensions.input.variables]`) when
 the store data has none: those of the app's own `shopify-local/`, or empty values of the type of
-each variable, in `app-settings.json` (to fill in). It gives each UI extension that declares
-settings (`[[extensions.settings.fields]]`) and has none in the store data a value of each
-field's type there too: its first choice, `false`, `0` or `""`. It creates the data folder with the demo store when it does not exist, refreshes `schema/`, never
+each variable, in `app-settings.json` (to fill in). A UI extension that declares settings
+(`[[extensions.settings.fields]]`) gets none: it reads them undefined, as a new install does on
+Shopify until the merchant sets them, and `app init` says where to give them to test them
+(`checkout.extensions.<handle>.settings`). It creates the data folder with the demo store when it does not exist, refreshes `schema/`, never
 overwrites a scenario or a data file without `--force`, and prints what it wrote, what it kept
 and what it skipped and why, then what to run next (`next: lsf app dev`, with `--app` when
 the app is not the one of the current folder). It writes to the same data folder as `init`, `--data` and

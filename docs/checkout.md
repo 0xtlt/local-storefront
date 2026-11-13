@@ -1272,8 +1272,11 @@ A validation Function can check a rule at the placing of the order only: `buyerJ
 `CHECKOUT_INTERACTION` when the page loads (and for `.json`) or changes (`update`, a line included),
 and `CHECKOUT_COMPLETION` for `complete` alone. The errors of an interaction show on the page and
 refuse nothing; `complete` runs the Functions again, as a completion, and only its errors refuse
-the order. (Shopify's documentation does not say which step blocks; this is how the local checkout
-treats them.)
+the order. Shopify says that "validation errors that your function returns always block checkout"
+([Cart and Checkout Validation API](https://shopify.dev/docs/api/functions/latest/cart-and-checkout-validation));
+it does not say what happens when the completion run returns none after an interaction run
+returned some. So a validation that errs at `CHECKOUT_INTERACTION` alone shows its errors here
+and lets the order through: return the error at both steps, or test that case on a store.
 
 The input of each Function is the result of its input query, run against the cart, the buyer and
 the store data. A metafield whose value is over 10,000 bytes is `null` there, as Shopify returns
@@ -1758,8 +1761,9 @@ store before a release:
 - **The settings of an extension** (`shopify.settings`): those of the store data or the
   scenario here, not the checkout editor's.
 - **lsf's choices**: how several customizations chain and how `linesMerge` counts
-  ([what runs](#what-runs)), which validation step blocks the order
-  ([network access](#network-access)), the split between due today and due later
+  ([what runs](#what-runs)), what an error a validation returns at `CHECKOUT_INTERACTION`
+  alone does to the order: Shopify says its errors "always block checkout", lsf refuses only on
+  the errors of the completion run ([network access](#network-access)), the split between due today and due later
   ([deferred payments](#deferred-payments)).
 - **Instruction counts near the 11 million limit**: lsf does not run `wasm-opt`, so a Rust
   Function costs 0.25 to 0.5% more here ([Rust Functions](#rust-functions)).

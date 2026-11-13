@@ -836,6 +836,23 @@ fn save_input(result: &CheckoutResult, args: &RunArgs, file: &Path) -> Result<()
                 file.display()
             ));
         }
+        [first, rest @ ..]
+            if rest
+                .iter()
+                .all(|run| run.handle == first.handle && run.target == first.target) =>
+        {
+            // One Function, one target: it ran once for each of its owners (each discount
+            // that uses it), which nothing on the command line tells apart.
+            return Err(format!(
+                "--save-input {}: {} · {} ran {} times here, once for each of its owners in \
+                 the checkout (each discount that uses it): --save-input saves one run; \
+                 `--format json` has the input of each, in `runs[i].input`",
+                file.display(),
+                first.handle,
+                first.target,
+                runs.len()
+            ));
+        }
         many => {
             let listed: Vec<String> = many
                 .iter()
@@ -1493,6 +1510,43 @@ mod tests {
             "{error}"
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A Function that backs two discounts runs twice for the same target: naming it and its
+    /// target leaves two runs, and the message says what tells them apart.
+    #[test]
+    fn save_input_says_a_function_ran_once_per_owner() {
+        let run = || lsf_app::checkout::FunctionRun {
+            handle: "percent-off".to_string(),
+            target: "cart.lines.discounts.generate.run".to_string(),
+            export: "cart-lines-discounts-generate-run".to_string(),
+            ..Default::default()
+        };
+        let result = CheckoutResult {
+            runs: vec![run(), run()],
+            ..Default::default()
+        };
+        let args = RunArgs {
+            handles: vec!["percent-off".to_string()],
+            app: None,
+            build: false,
+            session: None,
+            scenario: None,
+            checkout: None,
+            locale: None,
+            step: Step::Completion,
+            format: Format::Json,
+            input: None,
+            export: Some("cart.lines.discounts.generate.run".to_string()),
+            save_input: None,
+        };
+        let error = save_input(&result, &args, Path::new("in.json")).unwrap_err();
+        assert_eq!(
+            error,
+            "--save-input in.json: percent-off · cart.lines.discounts.generate.run ran 2 times \
+             here, once for each of its owners in the checkout (each discount that uses it): \
+             --save-input saves one run; `--format json` has the input of each, in `runs[i].input`"
+        );
     }
 
     #[test]
