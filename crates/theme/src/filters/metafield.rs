@@ -208,17 +208,10 @@ fn single_tag(
             "<a href=\"{0}\" class=\"{class}\">{0}</a>",
             escape_html(&value.to_str())
         ),
+        // `datetime="<the metafield value>"`, as Shopify's reference of `metafield_tag` has it.
         "date" | "date_time" => {
             let datetime = lsf_liquid::time::to_time(value, ctx)
-                .map(|time| {
-                    if kind == "date" {
-                        time.format("%Y-%m-%d").to_string()
-                    } else {
-                        time.with_timezone(&chrono::Utc)
-                            .format("%Y-%m-%dT%H:%M:%SZ")
-                            .to_string()
-                    }
-                })
+                .map(|_| escape_html(&value.to_str()))
                 .unwrap_or_default();
             format!(
                 "<time datetime=\"{datetime}\" class=\"{class}\">{}</time>",

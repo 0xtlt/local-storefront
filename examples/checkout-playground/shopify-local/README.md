@@ -942,6 +942,11 @@ The deprecated types the Admin API still creates are read too: a `string` is a t
 `integer` a whole number (`42` or `"42"`), a `json_string` the JSON of its text. As on Shopify,
 they give their value directly. They have no `list.` type.
 
+A `date` (`"2026-03-05"`) and a `date_time` (`"2026-03-05T14:30:00+01:00"`) are strings, and
+Liquid gives them as they are written, as Shopify does: `{{ m.value }}` prints
+`2026-03-05T14:30:00+01:00`, and the `date` filter formats it. A `date_time` without an offset
+is in GMT, as on Shopify, and prints with `+00:00`.
+
 A `rating` keeps its `value`, `scale_min` and `scale_max` as strings, as Shopify does:
 
 ```json

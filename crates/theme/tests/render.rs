@@ -2364,6 +2364,80 @@ fn metafield_values_as_the_admin_api_returns_them_render_as_their_type() {
 }
 
 #[test]
+fn date_metafields_print_the_stored_string() {
+    // https://shopify.dev/docs/api/liquid/objects/metafield: the value of a `date` or a
+    // `date_time` is "A date string. To format the string, use the date filter." A `date_time`
+    // "Defaults to Greenwich Mean Time (GMT)" (list of data types): one written without an
+    // offset is stored with `+00:00`. The demo shop is in America/New_York.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "probe": [{
+                "handle": "f",
+                "fields": {
+                    "day": { "type": "date", "value": "2026-03-05" },
+                    "at": { "type": "date_time", "value": "2026-03-05T14:30:00+01:00" },
+                    "utc": { "type": "date_time", "value": "2026-03-05T23:30:00Z" },
+                    "times": { "type": "list.date_time", "value": ["2026-03-05T14:30:00", "2026-03-06T09:00:00Z"] }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render = |source: &str| {
+        fixture.liquid(
+            "/",
+            Session::initial(&fixture.store),
+            &format!(
+                "{{%- assign f = metaobjects.probe.f -%}}{{%- assign d = f.day -%}}\
+                 {{%- assign t = f.at -%}}{source}"
+            ),
+        )
+    };
+    // The issue's repro, with what a store prints.
+    assert_eq!(
+        render("[{{ d.value }}]|[{{ d }}]|{{ d.value | json }}"),
+        r#"[2026-03-05]|[2026-03-05]|"2026-03-05""#
+    );
+    assert_eq!(
+        render("[{{ t.value }}]|[{{ t }}]|{{ t.value | json }}"),
+        r#"[2026-03-05T14:30:00+01:00]|[2026-03-05T14:30:00+01:00]|"2026-03-05T14:30:00+01:00""#
+    );
+    assert_eq!(
+        render("{{ f.utc.value }}|{{ f.times.value | join: ',' }}"),
+        "2026-03-05T23:30:00Z|2026-03-05T14:30:00+00:00,2026-03-06T09:00:00Z"
+    );
+    // The date filter still reads the time, with or without `.value`.
+    assert_eq!(
+        render(
+            "{{ d | date: '%d.%m.%Y' }}|{{ d.value | date: '%d.%m.%Y' }}|{{ t | date: '%s' }}|\
+             {{ f.utc.value | date: '%s' }}"
+        ),
+        "05.03.2026|05.03.2026|1772717400|1772753400"
+    );
+    // `metafield_tag` gives the stored value as `datetime`, as Shopify's reference shows.
+    assert_eq!(
+        render("{{ d | metafield_tag }}"),
+        r#"<time datetime="2026-03-05" class="metafield-date">March 5, 2026</time>"#
+    );
+    assert!(
+        render("{{ t | metafield_tag }}").starts_with(
+            r#"<time datetime="2026-03-05T14:30:00+01:00" class="metafield-date_time">"#
+        ),
+        "{}",
+        render("{{ t | metafield_tag }}")
+    );
+}
+
+#[test]
 fn a_handle_that_names_nothing_is_the_empty_object() {
     // https://shopify.dev/docs/api/liquid/basics#empty: "An `empty` object is returned if you
     // try to access an object that is defined, but has no value", truthy, so that themes

@@ -36,6 +36,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `product`. Code that read `description`, `type`, `tags` as an array or prices in cents from it
   reads `body_html`, `product_type`, `tags` as one comma-separated string and prices as decimal
   strings (`"20.00"`), as it must on Shopify. `/products/<handle>.js` does not change.
+- **A `date_time` metafield written without an offset is in GMT**, as Shopify's list of data
+  types says, no longer in the shop's time zone: `"2026-03-05T14:30:00"` is
+  `2026-03-05T14:30:00+00:00`, and the `date` filter formats that time.
 - **Handles follow Shopify's `handleize`.** A straight apostrophe is removed, underscores and the
   letters of other scripts are kept: `Women's Tee` → `womens-tee` (was `women-s-tee`),
   `summer_tee.json` → `summer_tee` (was `summer-tee`), `日本語 Tee` → `日本語-tee` (was `tee`).
@@ -75,6 +78,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `{{ metaobjects.faq.values | sort: 'question' }}` give what a store gives, no longer `false`,
   `1`, the unformatted date or "cannot sort values of incompatible types". A reference, a list,
   a `json`, a `color`, a `money`, a `rating` or a measurement stays the metafield.
+- **`date` and `date_time` metafields print the stored string.** `{{ m.value }}`, `{{ m }}` and
+  `{{ m.value | json }}` give `2026-03-05` and `2026-03-05T14:30:00+01:00`, as on Shopify, where
+  a `date` printed `2026-03-05 00:00:00 -0500` and a `date_time` was moved to the shop's time
+  zone. The `date` filter formats them as before, and the `datetime` of `metafield_tag` is the
+  stored value, as Shopify's reference shows.
 - **A handle lookup that finds nothing is Shopify's `empty` object, no longer nil.**
   `collections['x']`, `all_products['x']`, `pages['x']`, `blogs['x']`, `linklists['x']` and
   `product.metafields.<namespace it lacks>` are truthy and `== empty`, and

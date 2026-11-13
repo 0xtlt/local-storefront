@@ -9,7 +9,6 @@ use lsf_core::color::Color;
 use lsf_core::store::metafield_references::Referenced;
 use lsf_core::store::{Image, Media, MediaKind, MediaSource, Metafield, Metafields, Metaobject};
 use lsf_core::util::stable_id;
-use lsf_liquid::time::Time;
 use lsf_liquid::{Object, Value};
 use serde_json::Value as Json;
 
@@ -191,7 +190,6 @@ impl MetafieldDrop {
             value @ (Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_)) => {
                 Some(value)
             }
-            value if value.downcast::<Time>().is_some() => Some(value),
             _ => None,
         }
     }
@@ -366,17 +364,13 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
         "boolean" => value
             .as_bool()
             .map_or_else(|| Value::from(value), Value::Bool),
-        "date" | "date_time" => Time::parse_iso(text(), site.store.shop.timezone)
-            .map(Value::object)
-            .or_else(|| {
-                lsf_liquid::time::parse_time(
-                    &text().to_lowercase(),
-                    site.store.shop.timezone,
-                    site.now,
-                )
-                .map(Time::value)
-            })
-            .unwrap_or_else(|| Value::from(value)),
+        // "A date string. To format the string, use the date filter."
+        // (https://shopify.dev/docs/api/liquid/objects/metafield): the value as it is stored.
+        "date" => Value::from(value),
+        "date_time" => match value {
+            Json::String(text) => Value::from(date_time_text(text)),
+            other => Value::from(other),
+        },
         "money" => match value {
             Json::Object(map) => {
                 let cents = map
@@ -427,6 +421,19 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
         | "mixed_reference" => reference_value(site, kind, value),
         "file_reference" => file_value(site, text()),
         _ => Value::from(value),
+    }
+}
+
+/// A `date_time` as Shopify stores it: as it is written, with `+00:00` when it has no offset,
+/// since a `date_time` "Defaults to Greenwich Mean Time (GMT)"
+/// (https://shopify.dev/docs/apps/build/metafields/list-of-data-types).
+fn date_time_text(text: &str) -> String {
+    let local = chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S").is_ok()
+        || chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f").is_ok();
+    if local {
+        format!("{text}+00:00")
+    } else {
+        text.to_string()
     }
 }
 
