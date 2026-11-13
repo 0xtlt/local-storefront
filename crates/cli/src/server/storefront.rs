@@ -65,11 +65,20 @@ impl Visit<'_> {
         }
     }
 
+    /// The site of the visit, its cart as the cart transforms of the app make it.
     pub fn site(&self) -> Arc<Site> {
-        self.state
-            .app
-            .renderer
-            .site(self.store.clone(), self.request.clone(), self.session())
+        self.site_of(self.request.clone())
+    }
+
+    fn site_of(&self, request: Request) -> Arc<Site> {
+        self.state.app.renderer.site_with(
+            self.store.clone(),
+            request,
+            self.session(),
+            |store, session| {
+                super::checkout::storefront_cart_transforms(self.state, store, session)
+            },
+        )
     }
 
     /// The site for another storefront path, with the same visitor.
@@ -83,10 +92,7 @@ impl Visit<'_> {
             path,
             super::params::query_pairs(query),
         );
-        self.state
-            .app
-            .renderer
-            .site(self.store.clone(), request, self.session())
+        self.site_of(request)
     }
 
     /// The market whose subfolders the URL is under (`/fr-ca/...`), if it is.

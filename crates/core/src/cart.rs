@@ -15,6 +15,30 @@ pub struct ResolvedLine<'a> {
     pub variant: &'a Variant,
     /// The selling plan the line is bought with, when the product is still sold with it.
     pub selling_plan: Option<(&'a SellingPlanGroup, &'a SellingPlan)>,
+    /// What a cart transform of the shop made of the line, as the storefront cart shows it.
+    pub transformed: Option<&'a TransformedLine>,
+}
+
+/// What a cart transform made of a line of the cart (`lineExpand`, `lineUpdate`), as the
+/// storefront cart shows it: Shopify runs the cart transforms of a shop on its cart, which shows
+/// a bundle with the price and title the transform gave it, and its components.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TransformedLine {
+    /// The title the transform gave the line, when it gave one.
+    pub title: Option<String>,
+    /// The price of a unit after the transform.
+    pub unit_price: i64,
+    /// The lines an expand made of it.
+    pub components: Vec<LineComponent>,
+}
+
+/// A component of a [`TransformedLine`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LineComponent {
+    pub variant_id: u64,
+    pub quantity: u32,
+    /// What the component costs of the price of the line, for all its units.
+    pub line_price: i64,
 }
 
 impl ResolvedLine<'_> {
@@ -25,8 +49,12 @@ impl ResolvedLine<'_> {
     }
 
     /// The unit price before discounts: the price of the variant, or the one its selling plan
-    /// sets. A selling plan changes the price itself; it is not a discount.
+    /// sets, or the one a cart transform sets. A selling plan or a transform changes the price
+    /// itself; it is not a discount.
     pub fn original_price(&self) -> i64 {
+        if let Some(transformed) = self.transformed {
+            return transformed.unit_price;
+        }
         self.allocation()
             .map_or(self.variant.price, |allocation| allocation.price)
     }
@@ -42,8 +70,11 @@ impl ResolvedLine<'_> {
         }
     }
 
-    /// The unit price, taking quantity price breaks into account.
+    /// The unit price, taking quantity price breaks and a cart transform into account.
     pub fn unit_price(&self) -> i64 {
+        if let Some(transformed) = self.transformed {
+            return transformed.unit_price;
+        }
         if let Some(allocation) = self.allocation() {
             return allocation.price;
         }
@@ -74,6 +105,9 @@ impl ResolvedLine<'_> {
     }
 
     pub fn title(&self) -> String {
+        if let Some(title) = self.transformed.and_then(|line| line.title.as_ref()) {
+            return title.clone();
+        }
         if self.product.has_only_default_variant() {
             self.product.title.clone()
         } else {
@@ -110,6 +144,7 @@ pub fn resolve_line<'a>(store: &'a Store, line: &'a CartLine) -> Option<Resolved
         selling_plan: line
             .selling_plan
             .and_then(|id| store.selling_plan_of(product, id)),
+        transformed: None,
     })
 }
 

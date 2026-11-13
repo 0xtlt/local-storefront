@@ -333,8 +333,23 @@ impl Renderer {
 
     /// The immutable description of one render.
     pub fn site(&self, store: Arc<Store>, request: Request, session: Session) -> Arc<Site> {
+        self.site_with(store, request, session, |_, _| Vec::new())
+    }
+
+    /// [`Renderer::site`], with the lines of its cart as the cart transforms of the shop make
+    /// them ([`Site::cart_transforms`]): `transform` gets the store as the site presents it (in
+    /// the visitor's currency) and the session.
+    pub fn site_with(
+        &self,
+        store: Arc<Store>,
+        request: Request,
+        session: Session,
+        transform: impl FnOnce(&Store, &Session) -> Vec<Option<lsf_core::cart::TransformedLine>>,
+    ) -> Arc<Site> {
         let now = store.now.unwrap_or_else(Utc::now);
-        Arc::new(Site::new(self.theme.clone(), store, request, session, now))
+        let mut site = Site::new(self.theme.clone(), store, request, session, now);
+        site.cart_transforms = transform(&site.store, &site.session);
+        Arc::new(site)
     }
 
     fn context(

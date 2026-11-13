@@ -148,6 +148,9 @@ pub struct Site {
     pub session: Session,
     /// The instant `'now'` resolves to for this render.
     pub now: DateTime<Utc>,
+    /// What the cart transforms of the shop make of each line of the session's cart, by its
+    /// index there (`None` for a line they leave as it is); empty without an app.
+    pub cart_transforms: Vec<Option<lsf_core::cart::TransformedLine>>,
     // A page translates hundreds of keys. The theme's translations are looked up once per
     // render, because asking the theme takes locks that every other render takes too.
     translations: OnceLock<[(String, Arc<Translations>); 2]>,
@@ -187,6 +190,7 @@ impl Site {
             request,
             session,
             now,
+            cart_transforms: Vec::new(),
             translations: OnceLock::new(),
             schema_translations: OnceLock::new(),
             default_menus: Mutex::new(Vec::new()),
