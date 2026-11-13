@@ -25,6 +25,21 @@ pub use menus::MenuReference;
 pub use schema::{Schema, SettingDef, Wrapper};
 pub use template_json::{BlockInstance, BuyerContext, Layout, SectionInstance, TemplateJson};
 
+/// What lsf says of a Sass file of the theme (`assets/theme.scss.liquid`): Shopify compiles it
+/// to `theme.scss.css`, lsf does not, and Shopify's theme requirements forbid Sass.
+/// <https://shopify.dev/docs/storefronts/themes/store/requirements>
+pub fn sass_unsupported(path: &str) -> String {
+    let stem = path
+        .trim_start_matches("assets/")
+        .trim_end_matches(".liquid")
+        .trim_end_matches(".scss");
+    format!(
+        "{path} is Sass, which lsf does not support: {stem}.scss.css is not served. Shopify \
+         deprecated Sass, and its theme requirements forbid .scss and .scss.liquid files: write \
+         the stylesheet in CSS (assets/{stem}.css or assets/{stem}.css.liquid)"
+    )
+}
+
 /// A parsed Liquid file.
 pub struct LiquidFile {
     pub template: Arc<Template>,
@@ -336,6 +351,29 @@ impl Theme {
             .find_map(|name| name.strip_suffix(".default.json"))
             .unwrap_or("en")
             .to_string()
+    }
+
+    /// The Sass files of `assets/` (`theme.scss.liquid`, `theme.scss`), which lsf does not
+    /// compile.
+    pub fn sass_assets(&self) -> Vec<String> {
+        self.files
+            .list("assets")
+            .iter()
+            .filter(|name| name.ends_with(".scss") || name.ends_with(".scss.liquid"))
+            .map(|name| format!("assets/{name}"))
+            .collect()
+    }
+
+    /// The Sass file a `.scss.css` asset is compiled from on Shopify: `assets/theme.scss.liquid`
+    /// (or `assets/theme.scss`) for `theme.scss.css`.
+    pub fn sass_source(&self, name: &str) -> Option<String> {
+        let stem = name.strip_suffix(".scss.css")?;
+        [
+            format!("assets/{stem}.scss.liquid"),
+            format!("assets/{stem}.scss"),
+        ]
+        .into_iter()
+        .find(|path| self.files.exists(path))
     }
 
     /// The locales the theme has storefront translations for.

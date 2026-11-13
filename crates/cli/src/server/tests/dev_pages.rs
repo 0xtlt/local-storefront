@@ -205,3 +205,28 @@ fn a_theme_setting_of_a_session_that_the_theme_does_not_have_is_refused() {
     assert!(text(&get(&state, "/", "settings")).contains("drawer"));
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn the_css_of_a_sass_asset_says_lsf_does_not_compile_sass() {
+    let root = theme_dir(
+        "sass",
+        &[
+            LAYOUT,
+            ("templates/index.liquid", "<p class=\"x\">hello</p>"),
+            (
+                "assets/x.scss.liquid",
+                "$main: #123456;\n.x { color: $main; }\n",
+            ),
+        ],
+    );
+    let state = serve(&root, false);
+    let css = get(&state, "/cdn/shop/t/1/assets/x.scss.css", "sass");
+    let _ = std::fs::remove_dir_all(root);
+    assert_eq!(css.status, 404);
+    let reason = header(&css, "x-lsf-reason").unwrap_or_default();
+    assert!(
+        reason.starts_with("assets/x.scss.liquid is Sass, which lsf does not support"),
+        "{reason}"
+    );
+    assert_eq!(text(&css), reason);
+}

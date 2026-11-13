@@ -960,6 +960,15 @@ fn check_theme(
             note,
         ));
     }
+    // Shopify compiles Sass, lsf does not: a warning, since Shopify still serves the file.
+    for path in theme.sass_assets() {
+        tally.report(Diagnostic::new(
+            "warning",
+            "sass_asset",
+            Location::file(&path, None),
+            lsf_theme::theme::sass_unsupported(&path),
+        ));
+    }
     // The keys of the `t` filter are looked up in the default locale.
     let locale = references::default_locale(&theme);
     // The schemas are checked against the theme blocks and the default schema locale.

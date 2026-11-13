@@ -315,6 +315,9 @@ fn asset(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
             None => missing(),
         };
     }
+    if let Some(source) = theme.sass_source(name) {
+        return sass(state, &source);
+    }
     let Some(path) = files.resolve(&relative) else {
         return missing();
     };
@@ -358,6 +361,18 @@ fn asset(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
         );
     }
     missing()
+}
+
+/// The `.scss.css` URL of a Sass file of the theme, which Shopify compiles and lsf does not: a
+/// `404` that says so, in the terminal (once) and in `X-LSF-Reason`, rather than a bare one.
+fn sass(state: &ServerState, source: &str) -> Reply {
+    let reason = lsf_theme::theme::sass_unsupported(source);
+    if !state.options.quiet && super::lock(&state.notices).insert(reason.clone()) {
+        eprintln!("    error: {reason}");
+    }
+    Reply::text(404, reason.as_str())
+        .header("x-lsf-reason", super::storefront::header_text(&reason))
+        .cached(cache::MISSING_ASSET)
 }
 
 fn query_of(incoming: &Incoming) -> impl Iterator<Item = (&str, &str)> {

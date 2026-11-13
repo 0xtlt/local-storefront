@@ -2092,3 +2092,47 @@ fn naming_only_a_theme_app_extension_checks_it_alone() {
     let output = lsf(&app.0, &["app", "check"]);
     assert_eq!(output.status.code(), Some(1), "{}", text(&output));
 }
+
+#[test]
+fn check_and_render_say_lsf_does_not_compile_a_sass_asset() {
+    let theme = std::env::temp_dir().join(format!("lsf-sass-theme-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&theme);
+    for directory in ["layout", "templates", "assets"] {
+        std::fs::create_dir_all(theme.join(directory)).unwrap();
+    }
+    std::fs::write(
+        theme.join("layout/theme.liquid"),
+        "<html><head>{{ 'x.scss.css' | asset_url | stylesheet_tag }}</head>\
+         <body>{{ content_for_layout }}</body></html>",
+    )
+    .unwrap();
+    std::fs::write(theme.join("templates/index.liquid"), "hello").unwrap();
+    std::fs::write(theme.join("assets/x.scss.liquid"), "$main: #123456;").unwrap();
+    let check = lsf(&theme, &["check", "--format", "json"]);
+    let render = lsf(&theme, &["render", "/"]);
+    std::fs::remove_dir_all(&theme).ok();
+    let said = "assets/x.scss.liquid is Sass, which lsf does not support: x.scss.css is not served";
+
+    // One warning, on the file: the reference to its URL is not also a `missing_asset`.
+    assert_eq!(check.status.code(), Some(0), "{}", text(&check));
+    let json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    let diagnostics = json["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1, "{json}");
+    assert_eq!(diagnostics[0]["code"], "sass_asset", "{json}");
+    assert_eq!(diagnostics[0]["severity"], "warning", "{json}");
+    assert_eq!(diagnostics[0]["file"], "assets/x.scss.liquid", "{json}");
+    assert!(
+        diagnostics[0]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with(said),
+        "{json}"
+    );
+
+    assert_eq!(render.status.code(), Some(0), "{}", text(&render));
+    let stderr = String::from_utf8_lossy(&render.stderr);
+    assert!(
+        stderr.contains(&format!("warning: layout/theme: {said}")),
+        "{stderr}"
+    );
+}
