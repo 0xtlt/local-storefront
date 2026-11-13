@@ -273,6 +273,18 @@ fn metafield_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Valu
     )))
 }
 
+/// The types whose `metafield_text` is text a merchant wrote, which Shopify HTML-escapes: the
+/// text fields, and the `field` of a metaobject, which can only be a `single_line_text_field`.
+fn is_text(kind: &str) -> bool {
+    matches!(
+        kind,
+        "single_line_text_field"
+            | "multi_line_text_field"
+            | "metaobject_reference"
+            | "mixed_reference"
+    )
+}
+
 fn metafield_text(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let Some(drop) = input.downcast::<MetafieldDrop>() else {
         return Ok(Value::empty_string());
@@ -280,15 +292,17 @@ fn metafield_text(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Val
     let site = site(ctx)?;
     let kind = drop.base_kind();
     let value = drop.typed_value();
+    // Text is HTML-escaped, as `metafield_tag` escapes it: `Tom &amp; &quot;Jerry&quot;`.
+    let text = |raw: &Json, value: &Value| {
+        let text = text_of(site, kind, raw, value, args, ctx);
+        if is_text(kind) {
+            escape_html(&text)
+        } else {
+            text
+        }
+    };
     if !drop.is_list() {
-        return Ok(Value::from(text_of(
-            site,
-            kind,
-            &drop.field.value,
-            &value,
-            args,
-            ctx,
-        )));
+        return Ok(Value::from(text(&drop.field.value, &value)));
     }
     let raw_items = drop.field.value.as_array().cloned().unwrap_or_default();
     let texts: Vec<String> = value
@@ -296,7 +310,7 @@ fn metafield_text(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Val
         .unwrap_or_default()
         .iter()
         .zip(raw_items.iter())
-        .map(|(item, raw)| text_of(site, kind, raw, item, args, ctx))
+        .map(|(item, raw)| text(raw, item))
         .collect();
     // An English sentence: "a", "a and b", "a, b, and c".
     Ok(Value::from(match texts.as_slice() {
