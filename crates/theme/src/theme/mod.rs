@@ -6,6 +6,7 @@ pub mod locales;
 pub mod menus;
 pub mod schema;
 pub mod schema_check;
+pub mod setting_values;
 pub mod template_json;
 
 use std::collections::HashMap;
