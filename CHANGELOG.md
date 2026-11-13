@@ -604,6 +604,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `orders/cancelled`**: the first cancelled order of the shop, else the first order with
   `cancelled_at` set to now and `cancel_reason` `customer`, where they sent the first order,
   not cancelled.
+- **`productSet` with `metafields` deletes the product's metafields it does not name**, with a
+  definition or not, as Shopify's reference of the mutation says of its list fields, where lsf
+  kept them: `metafields: [note]` leaves the product with `note` alone. The metafield of the
+  identifier's `customId` and another app's reserved metafields stay; without `metafields`,
+  nothing is deleted, and a variant's `metafields` still delete none of its others.
+  **Breaking**: a backfill that sends `productSet` part of a product's metafields now deletes the
+  others locally, as it does on a store. Send them all, or write them with `metafieldsSet`.
 
 #### The command line
 
