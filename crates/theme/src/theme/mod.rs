@@ -250,6 +250,23 @@ impl Theme {
         &self.env
     }
 
+    /// The theme block a `{% content_for 'block', type: … %}` names: the file of `blocks/` named
+    /// `kind`, else the one whose name differs only by case, as Shopify finds it
+    /// (`type: 'TEXT'` renders `blocks/text.liquid`). The same on every file system. `kind`
+    /// itself when `blocks/` has neither.
+    pub fn block_type(&self, kind: &str) -> String {
+        let blocks = self.files.list("blocks");
+        let file = format!("{kind}.liquid");
+        if blocks.contains(&file) {
+            return kind.to_string();
+        }
+        blocks
+            .iter()
+            .find(|name| name.eq_ignore_ascii_case(&file))
+            .and_then(|name| name.strip_suffix(".liquid"))
+            .map_or_else(|| kind.to_string(), str::to_string)
+    }
+
     /// Loads and parses a Liquid file. `Ok(None)` means the file does not exist.
     pub fn liquid(
         &self,

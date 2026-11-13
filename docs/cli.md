@@ -698,6 +698,8 @@ Shopify refuses on upload:
   of a schema that the default schema locale does not have (`missing_schema_translation`);
 - as a warning, a file of `assets/` that `asset_url` names and the theme does not have
   (`missing_asset`);
+- as a warning, a `{% content_for 'block', type: … %}` whose type differs from its file of
+  `blocks/` only by case (`block_type_case`): Shopify renders the file;
 - as a warning, a trailing comma or an unknown escape (`\“`) in theme JSON or a
   `{% schema %}` (`lenient_json`): Shopify reads the file, other JSON tools may not;
 - as a warning, a contextual template or section group (`index.context.europe.json`) that
@@ -811,6 +813,7 @@ counts the others.
 | `duplicate_setting_id` | Two settings of one schema with the same `id`. |
 | `missing_block` | A theme block the theme names and `blocks/` does not have: in the `blocks` or the `presets` of a schema, in a JSON template or a section group, or in `{% content_for 'block', type: '…' %}`. A section with blocks of its own (with a `name`) names its own types. |
 | `missing_schema_translation` | A `t:` key of a schema that the default schema locale (`locales/en.default.schema.json`) does not have: the theme editor shows the key. |
+| `block_type_case` | A warning: `{% content_for 'block', type: 'TEXT' %}` and `blocks/text.liquid`. Shopify finds the file whatever the case of the type, and so does local-storefront; the `hint` gives the type as the file is named. |
 | `missing_asset` | A warning: `'x.js' \| asset_url` names a file `assets/` does not have (nor `assets/x.js.liquid`). The URL leads to nothing. |
 | `app_block` | With `--app`, an app block that renders nothing (an error), or a block of another app (a note). Without `--app`, a note. |
 | `fix_fallback` | A warning: what the code meant could not be written for this file, so only the fixes that keep the output were. |

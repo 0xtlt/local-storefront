@@ -473,6 +473,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 #### The command line
 
+- **`lsf check` no longer reports a `{% content_for 'block' %}` type that differs from its file
+  only by case as missing**, since Shopify renders `blocks/text.liquid` for `type: 'TEXT'`.
+  It is a `block_type_case` warning, with the type as the file is named in its `hint`, and the
+  render finds the file on every file system, no longer only on those that ignore case.
 - **`lsf profile --points` counts the products of a collection a storefront fetches**, no
   longer every product of the collection: the page of a `{% paginate %}` (4 with `by 4`), else
   at most 50, and for a `for` loop over `collection.products` with a `limit` below 50 outside

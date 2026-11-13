@@ -66,9 +66,17 @@ impl Tag for ContentFor {
                         "Syntax error in tag 'content_for' - a static block needs both `type` and `id`",
                     ));
                 };
+                // Shopify finds the block file whatever the case of the type.
+                let kind = match crate::render::state::RenderState::of(ctx) {
+                    Ok(state) => state.site.theme.block_type(&kind),
+                    Err(_) => kind,
+                };
                 // A static block uses its stored settings when the template has some, and the
                 // defaults of its schema otherwise.
-                let stored = container.blocks.get(&id).filter(|block| block.kind == kind);
+                let stored = container
+                    .blocks
+                    .get(&id)
+                    .filter(|block| block.kind.eq_ignore_ascii_case(&kind));
                 if stored.is_some_and(|block| block.disabled) {
                     return Ok(());
                 }
