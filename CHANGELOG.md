@@ -191,6 +191,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `product.featured_image.alt`, `product.featured_media.alt`, `product.images[n].alt`, the `alt`
   of `image_tag` and `featured_image.alt` of a line in the cart's JSON gave an empty string. An
   image with alt text keeps it, and `media.preview_image.alt` stays empty, as on Shopify.
+- **`image_url` with a `width` and a `height` crops from the center**, as on Shopify:
+  `image_url: width: 300, height: 200` gives `?crop=center&height=200&v=…&width=300`, and the
+  server crops the image to that box, where lsf fitted it inside. `crop: nil` and `pad_color`
+  still leave `crop` out, as on Shopify.
 
 ## 0.3.0-rc.5 - 2026-11-13
 

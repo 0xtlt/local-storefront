@@ -486,6 +486,74 @@ fn a_product_image_without_alt_text_has_the_title_of_its_product() {
 }
 
 #[test]
+fn image_url_with_a_width_and_a_height_crops_from_the_center() {
+    // Issue #121: Shopify adds `crop=center` when `image_url` has a width and a height and no
+    // `crop` (https://shopify.dev/docs/api/liquid/filters/image_url: "The default value is
+    // center"), and leaves it out with `crop: nil` and with `pad_color`. The parameters are
+    // in alphabetical order.
+    let fixture = fixture();
+    let url = |source: &str| {
+        let output = fixture.liquid(
+            "/products/organic-cotton-t-shirt",
+            Session::initial(&fixture.store),
+            source,
+        );
+        let query = output.split_once('?').expect("a query").1.to_string();
+        // `v=` is the file's version: the same for every URL of the image.
+        query
+            .split('&')
+            .map(|pair| {
+                if pair.starts_with("v=") {
+                    "v=…"
+                } else {
+                    pair
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("&")
+    };
+    let image = "product.featured_image | image_url";
+    assert_eq!(
+        url(&format!("{{{{ {image}: width: 300, height: 200 }}}}")),
+        "crop=center&height=200&v=…&width=300"
+    );
+    assert_eq!(
+        url(&format!(
+            "{{{{ {image}: width: 300, height: 300, crop: nil }}}}"
+        )),
+        "height=300&v=…&width=300"
+    );
+    assert_eq!(
+        url(&format!(
+            "{{{{ {image}: width: 400, height: 400, pad_color: '000' }}}}"
+        )),
+        "height=400&pad_color=000&v=…&width=400"
+    );
+    assert_eq!(
+        url(&format!(
+            "{{{{ {image}: width: 400, height: 400, crop: 'bottom' }}}}"
+        )),
+        "crop=bottom&height=400&v=…&width=400"
+    );
+    assert_eq!(
+        url(&format!("{{{{ {image}: width: 300 }}}}")),
+        "v=…&width=300"
+    );
+    assert_eq!(
+        url(&format!("{{{{ {image}: height: 300 }}}}")),
+        "height=300&v=…"
+    );
+    // The tag is the box, and each width of its `srcset` keeps the crop.
+    let tag = fixture.liquid(
+        "/products/organic-cotton-t-shirt",
+        Session::initial(&fixture.store),
+        &format!("{{{{ {image}: width: 300, height: 200 | image_tag }}}}"),
+    );
+    assert!(tag.contains(" width=\"300\" height=\"200\""), "{tag}");
+    assert!(tag.contains("crop=center&amp;height=200&amp;v="), "{tag}");
+}
+
+#[test]
 fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
     let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
     assert!(diagnostics.is_empty(), "{diagnostics}");

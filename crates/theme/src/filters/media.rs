@@ -156,6 +156,12 @@ fn image_url(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
         };
         params.push((key.clone(), urls::encode_component(&text)));
     }
+    // With a width and a height, Shopify crops to that box from the center unless told
+    // otherwise: `crop: nil` scales the image into the box, `pad_color` pads it.
+    let unset = |name: &str| args.named(name).is_none_or(Value::is_nil);
+    if width.is_some() && height.is_some() && args.named("crop").is_none() && unset("pad_color") {
+        params.push(("crop".to_string(), "center".to_string()));
+    }
     let base = image_base_url(site, &image);
     let url = build_url(&base, width, height, &params);
     Ok(Value::object(ImageUrl {
