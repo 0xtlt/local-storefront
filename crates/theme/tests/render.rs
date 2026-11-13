@@ -3129,6 +3129,93 @@ fn a_resource_setting_prints_its_handle() {
 }
 
 #[test]
+fn an_unset_setting_is_what_shopify_gives() {
+    // https://shopify.dev/docs/storefronts/themes/architecture/settings/input-settings: a
+    // `select` or a `radio` without `default` is its first option, a `text_alignment` is
+    // `left`, text and `color_background` are empty strings and a cleared `color` stores `""`
+    // and is blank; `number`, `url` and `image_picker` are nil. A store gives `""` for text,
+    // color and richtext (issue #133).
+    let schema = r#"{ "name": "Unset", "settings": [
+      { "type": "text", "id": "text", "label": "Text" },
+      { "type": "textarea", "id": "area", "label": "Area" },
+      { "type": "richtext", "id": "rich", "label": "Rich" },
+      { "type": "inline_richtext", "id": "inline", "label": "Inline" },
+      { "type": "html", "id": "html", "label": "HTML" },
+      { "type": "color", "id": "color", "label": "Color" },
+      { "type": "color", "id": "cleared", "label": "Cleared" },
+      { "type": "color_background", "id": "background", "label": "Background" },
+      { "type": "text_alignment", "id": "align", "label": "Alignment" },
+      { "type": "text_alignment", "id": "centered", "label": "Centered", "default": "center" },
+      { "type": "select", "id": "choice", "label": "Choice",
+        "options": [{ "value": "a", "label": "A" }, { "value": "b", "label": "B" }] },
+      { "type": "select", "id": "chosen", "label": "Chosen", "default": "b",
+        "options": [{ "value": "a", "label": "A" }, { "value": "b", "label": "B" }] },
+      { "type": "radio", "id": "radio", "label": "Radio",
+        "options": [{ "value": "x", "label": "X" }, { "value": "y", "label": "Y" }] },
+      { "type": "checkbox", "id": "check", "label": "Check" },
+      { "type": "number", "id": "number", "label": "Number" },
+      { "type": "url", "id": "url", "label": "URL" },
+      { "type": "image_picker", "id": "image", "label": "Image" },
+      { "type": "liquid", "id": "liquid", "label": "Liquid" }
+    ] }"#;
+    let ids = [
+        "text",
+        "area",
+        "rich",
+        "inline",
+        "html",
+        "color",
+        "cleared",
+        "background",
+        "align",
+        "centered",
+        "choice",
+        "chosen",
+        "radio",
+        "check",
+        "number",
+        "url",
+        "image",
+        "liquid",
+    ];
+    let probes: String = ids
+        .iter()
+        .map(|id| format!("[{{{{ s.{id} | json }}}}]"))
+        .collect();
+    let section = format!(
+        "{{%- assign s = section.settings -%}}<p>{probes}</p>\
+         <p class=\"{{{{ 'text-' | append: s.align }}}}\">{{% if s.text == blank and s.color == blank %}}blank{{% endif %}}</p>\
+         {{% schema %}}{schema}{{% endschema %}}"
+    );
+    let fixture = theme_of(
+        "unset-settings",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            ("sections/unset.liquid", &section),
+            (
+                "templates/index.json",
+                r#"{ "sections": { "main": { "type": "unset", "settings": { "cleared": "" } } }, "order": ["main"] }"#,
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    assert!(
+        rendered.body.contains(
+            "<p>[\"\"][\"\"][\"\"][\"\"][\"\"][\"\"][\"\"][\"\"][\"left\"][\"center\"][\"a\"][\"b\"]\
+             [\"x\"][false][null][null][null][null]</p>\
+             <p class=\"text-left\">blank</p>"
+        ),
+        "{}",
+        rendered.body
+    );
+}
+
+#[test]
 fn a_rating_has_strings_as_on_shopify() {
     // The rating of the Admin API's `jsonValue`, the same with numbers, and the Admin API's
     // `value` (the JSON text) pasted as is.

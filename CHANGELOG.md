@@ -76,6 +76,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `json_string` still give their value. A `number_decimal` value gives a string, as on Shopify:
   `{{ m.value | json }}` is `"1.5"` and a `list.number_decimal` is `["1.5","2.25"]`, no longer
   `1.5` and `[1.5,2.25]`.
+- **An unset text or color setting is `""`, no longer nil**, as on Shopify. A `text`,
+  `textarea`, `richtext`, `inline_richtext`, `html`, `color` or `color_background` setting with
+  no value and no `default`, and a cleared `color`, is still `blank` and prints nothing, but it
+  is truthy: `{% if section.settings.color %}` now takes the branch a store takes. Test it with
+  `!= blank`.
 
 ### Fixed
 
@@ -123,6 +128,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   or in a class, a URL or a data attribute) gives the handle of what it names, and its `.size`
   is the length of that handle, as on Shopify. Its properties, its `json` and its comparisons
   are the resource's, as before.
+- **An unset setting is what Shopify gives.** A `select` or a `radio` with no value and no
+  `default` is its first option, a `text_alignment` is `left`, and the text and color settings
+  are `""`, where lsf gave nil for all of them: `text-{{ section.settings.align }}` is
+  `text-left`, as on a store, no longer `text-`.
 - **Reference lists, `product_list` settings and `.values` have `.count`.** The value of a
   `list.product_reference` or `list.metaobject_reference` metafield, a `product_list` setting
   and `metaobjects.<type>.values` give their length with `.count` (0 for an unset
