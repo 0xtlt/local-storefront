@@ -75,7 +75,8 @@ from the app when there is one (`--app`).
 - `extensions.cost` on every answer that ran, or that was refused for its cost or by the
   throttle: `requestedQueryCost`, `actualQueryCost`, `throttleStatus` (`maximumAvailable`,
   `currentlyAvailable`, `restoreRate`), computed as Shopify documents it (scalars and enums 0,
-  objects 1, connections 2 + `first`/`last` × the cost of a node, a mutation 10), a leaky bucket
+  objects 1, connections 2 + `floor(2 ln(max(2, first/last)))` × the cost of a node, the formula
+  a Shopify engineer gave since the Winter '24 Edition, a mutation 10), a leaky bucket
   per shop and app. A query over 1000 points is refused (`MAX_COST_EXCEEDED`), an empty bucket
   answers `THROTTLED`. `--admin-throttle off` (or the store data) turns it off; the plan sets the
   size of the bucket. A request that does not parse or validate, or whose variables are wrong,

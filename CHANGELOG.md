@@ -417,6 +417,17 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   currency at `1.0`. An `expect` on totals now reads the amounts the page shows. Expectations
   written in the shop's currency for such a scenario need the market's amounts.
 
+#### The Admin API, for the backend of an app
+
+- **A connection costs what it costs on Shopify**: 2 plus what one of its nodes costs times
+  `floor(2 × ln(first))`, the logarithmic formula Shopify uses since 2024, no longer 2 plus
+  `first` times it. `products(first: 100) { nodes { id variants(first: 50) { nodes { id } } } }`
+  asks for 92 points, as on a store, where lsf asked for 5302 and refused it with
+  `MAX_COST_EXCEEDED`; `products(first: 20) { nodes { handle } }` asks for 7, no longer 22.
+  `actualQueryCost` applies the formula to the nodes returned, and `Shopify-GraphQL-Cost-Debug`
+  lists a connection's `definedCost` as `null` and what is below it for one node, as Shopify
+  does. Throttling tests now reach `THROTTLED` with the costs a store charges.
+
 #### The command line
 
 - **`lsf profile --points` counts the products of a collection a storefront fetches**, no

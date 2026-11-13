@@ -20,10 +20,16 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
   2048 values for an option. A `JSON` value (`WebPixelInput.settings`) is not a list: its
   arrays are not counted.
 - `extensions.cost`: `requestedQueryCost`, `actualQueryCost` and `throttleStatus`, as Shopify
-  computes them, from a leaky bucket per shop and app (`--admin-throttle`). With the header
-  `Shopify-GraphQL-Cost-Debug: 1`, also `fields`, the cost of each field as Shopify lists it:
-  its `path`, `definedCost`, `requestedTotalCost` and `requestedChildrenCost`, the children
-  first.
+  computes them, from a leaky bucket per shop and app (`--admin-throttle`). An object costs 1,
+  a scalar or an enum 0, a mutation 10, and a connection 2 plus what one of its nodes costs
+  times `floor(2 × ln(first))` (`first` or `last`, at least 2), the formula of Shopify's API
+  since 2024: `products(first: 20) { nodes { handle } }` costs 7 and
+  `products(first: 100) { nodes { id variants(first: 50) { nodes { id } } } }` 92, as on a store.
+  `actualQueryCost` applies it to the nodes returned. Shopify's own costs for some fields (a
+  `Count`, a value object such as `unitCost`) are not known to lsf: those fields cost 1. With the
+  header `Shopify-GraphQL-Cost-Debug: 1`, also `fields`, the cost of each field as Shopify lists
+  it: its `path`, `definedCost` (`null` for a connection), `requestedTotalCost` (for what is
+  below a connection, one node's) and `requestedChildrenCost`, the children first.
 - Ids: a record lsf creates has a 13-digit id, as Shopify's do (`gid://shopify/DraftOrder/
   4…`), the same every run for the same requests. In a test shop the ids have 14 digits, are a
   number of the shop's name, and no other shop gives them

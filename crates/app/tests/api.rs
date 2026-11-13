@@ -154,7 +154,7 @@ fn pages_products_with_cursors_and_a_query() {
         json!([{"title": "Merino Crew Socks"}, {"title": "Wool Beanie"}])
     );
     let cost = &wool["extensions"]["cost"];
-    assert_eq!(cost["requestedQueryCost"], json!(4));
+    assert_eq!(cost["requestedQueryCost"], json!(3));
     // The demo store has companies: a Plus shop, whose bucket is 20000.
     assert_eq!(cost["throttleStatus"]["maximumAvailable"], json!(20000.0));
 }
@@ -181,14 +181,17 @@ fn the_cost_debug_header_lists_the_cost_of_each_field() {
         .unwrap();
     let answer = json_of(&response);
     let cost = &answer["extensions"]["cost"];
-    assert_eq!(cost["requestedQueryCost"], json!(12));
+    // 2 + 1 × floor(2 ln 10). As on a store, a connection has no `definedCost`, and what is
+    // below it is listed for one node (community.shopify.dev, "Unexpectedly Low GraphQL Query
+    // Cost in Shopify Admin API").
+    assert_eq!(cost["requestedQueryCost"], json!(6));
     assert_eq!(
         cost["fields"],
         json!([
             {"path": ["products", "edges", "node", "title"], "definedCost": 0, "requestedTotalCost": 0, "requestedChildrenCost": null},
-            {"path": ["products", "edges", "node"], "definedCost": 1, "requestedTotalCost": 10, "requestedChildrenCost": 0},
-            {"path": ["products", "edges"], "definedCost": 0, "requestedTotalCost": 10, "requestedChildrenCost": 10},
-            {"path": ["products"], "definedCost": 2, "requestedTotalCost": 12, "requestedChildrenCost": 10},
+            {"path": ["products", "edges", "node"], "definedCost": 1, "requestedTotalCost": 1, "requestedChildrenCost": 0},
+            {"path": ["products", "edges"], "definedCost": 0, "requestedTotalCost": 1, "requestedChildrenCost": 1},
+            {"path": ["products"], "definedCost": null, "requestedTotalCost": 6, "requestedChildrenCost": 1},
         ])
     );
     let (_, plain) = graphql(&api, &token, query, Value::Null);
@@ -298,7 +301,8 @@ fn throttles_and_refuses_queries_over_the_cost_limit() {
     let (status, throttled) = graphql(
         &api,
         &token,
-        "{ products(first: 200) { nodes { id } } }",
+        // 2 + 11 × (1 + 2 + 11): over the bucket of 100.
+        "{ products(first: 250) { nodes { variants(first: 250) { nodes { id } } } } }",
         Value::Null,
     );
     assert_eq!(status, 200);
@@ -313,7 +317,7 @@ fn throttles_and_refuses_queries_over_the_cost_limit() {
         Value::Null
     );
 
-    let expensive = "{ products(first: 250) { nodes { variants(first: 250) { nodes { id } } } } }";
+    let expensive = "{ products(first: 250) { nodes { variants(first: 250) { nodes { metafields(first: 250) { nodes { id } } } } } } }";
     let (_, refused) = graphql(&api, &token, expensive, Value::Null);
     assert_eq!(
         refused["errors"][0]["extensions"]["code"],
