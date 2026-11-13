@@ -1002,6 +1002,16 @@ impl Object for ProductOptionDrop {
         Cow::Borrowed(&self.site.store.products[self.product].options[self.position].name)
     }
 
+    /// `{"name","position","values"}`, the values as strings, as Shopify gives an option.
+    fn to_json(&self) -> Json {
+        let option = &self.site.store.products[self.product].options[self.position];
+        json!({
+            "name": option.name,
+            "position": option.position,
+            "values": option.values,
+        })
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

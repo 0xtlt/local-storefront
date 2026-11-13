@@ -5959,6 +5959,29 @@ fn options_by_name_finds_an_option_in_any_case() {
 }
 
 #[test]
+fn an_option_in_json_is_its_name_position_and_values() {
+    // #98: `{{ product.options_with_values | json }}` on a store gives each option as
+    // `{"name","position","values"}`, its values as strings.
+    let fixture = fixture_with_data(&serde_json::json!({"products": [{
+        "title": "Json Tee",
+        "price": 1000,
+        "options": ["Color", "Size"],
+        "variants": [{ "options": ["Black", "S"] }, { "options": ["White", "M"] }]
+    }]}));
+    let output = fixture.liquid(
+        "/products/json-tee",
+        Session::initial(&fixture.store),
+        "{{ product.options_with_values | json }}\n{{ product.options_with_values.first | json }}",
+    );
+    assert_eq!(
+        output,
+        "[{\"name\":\"Color\",\"position\":1,\"values\":[\"Black\",\"White\"]},\
+         {\"name\":\"Size\",\"position\":2,\"values\":[\"S\",\"M\"]}]\n\
+         {\"name\":\"Color\",\"position\":1,\"values\":[\"Black\",\"White\"]}"
+    );
+}
+
+#[test]
 fn a_t_key_saved_as_a_setting_value_is_printed_as_it_is() {
     // https://shopify.dev/docs/storefronts/themes/architecture/locales/schema-locale-files:
     // `t:` translates the attributes of a schema, a `default` among them. A value saved in a
