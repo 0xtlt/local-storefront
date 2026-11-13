@@ -412,6 +412,28 @@ fn a_visitor_who_selected_no_country_is_in_the_shops_country() {
 }
 
 #[test]
+fn an_image_picked_by_its_path_has_the_size_of_its_file() {
+    // Issue #116: `settings.logo` is `shopify://shop_images/logo.png`, and `files/logo.png` a
+    // 400 x 500 image. Shopify gives the file's size to the setting and to `images[...]`.
+    let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    store.file_sizes.insert("logo.png".to_string(), (400, 500));
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{{ settings.logo.width }}x{{ settings.logo.height }} {{ settings.logo.aspect_ratio }}|\
+         {{ images['logo.png'].width }}x{{ images['logo.png'].height }}|\
+         {{ settings.logo | image_url: width: 300 | image_tag }}",
+    );
+    assert!(output.starts_with("400x500 0.8|400x500|<img "), "{output}");
+    assert!(output.contains(" width=\"300\" height=\"375\""), "{output}");
+}
+
+#[test]
 fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
     let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
     assert!(diagnostics.is_empty(), "{diagnostics}");

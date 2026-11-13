@@ -181,6 +181,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   at most 50, and for a `for` loop over `collection.products` with a `limit` below 50 outside
   `paginate`, that many, as Shopify's performance guide describes. A small paginated block on a
   large collection is no longer the costliest row of a page, and a `limit: 8` costs 8 products.
+- **An image of `files/` named by its path has the size of its file.** An `image_picker` setting
+  (`shopify://shop_images/hero.jpg`), `images['hero.jpg']` and a file metafield now read the
+  width and height of `files/hero.jpg`, as product images do: a 2048 x 2560 file gives
+  `2048x2560`, an `aspect_ratio` of `0.8` and `image_url: width: 300 | image_tag` a
+  `height="375"`, as on Shopify. It was 1200 x 1200 unless the data declared a size. The size
+  declared in `files` of `store.json` is now used only when the file is missing.
 
 ## 0.3.0-rc.5 - 2026-11-13
 

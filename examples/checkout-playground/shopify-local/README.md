@@ -897,6 +897,9 @@ size is read from it.
 { "files": { "hero.jpg": { "alt": "Storefront", "width": 2400, "height": 1200 } } }
 ```
 
+The `width` and `height` of `files` are the size of the placeholder: when `files/hero.jpg`
+exists, `settings.hero`, `images['hero.jpg']` and a file metafield have the size of the file.
+
 A setting of type `image_picker` holding `shopify://shop_images/hero.jpg` resolves to
 `files/hero.jpg`.
 

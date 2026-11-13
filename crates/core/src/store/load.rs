@@ -21,7 +21,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use indexmap::IndexMap;
 use serde::de::DeserializeOwned;
@@ -93,6 +93,38 @@ struct DataFile {
     name: String,
     kind: FileKind,
     content: String,
+}
+
+/// The images under `directory` (`files/`), by path in it with `/` between folders, sorted.
+fn image_files(directory: &Path) -> Vec<String> {
+    fn walk(directory: &Path, prefix: &str, found: &mut Vec<String>) {
+        for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = format!("{prefix}{name}");
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => walk(&entry.path(), &format!("{path}/"), found),
+                Ok(kind) if kind.is_file() => {
+                    let extension = name.rsplit('.').next().unwrap_or_default();
+                    if ["jpg", "jpeg", "png", "gif", "webp", "bmp"]
+                        .iter()
+                        .any(|image| extension.eq_ignore_ascii_case(image))
+                    {
+                        found.push(path);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut found = Vec::new();
+    walk(directory, "", &mut found);
+    found.sort();
+    found
 }
 
 fn read_directory(root: &Path, diagnostics: &mut Diagnostics) -> Vec<DataFile> {
@@ -1336,6 +1368,8 @@ pub struct SourceData {
     files_directory: Option<PathBuf>,
     /// The sizes read so far, by path in `files/` (`None`: not an image there).
     images: Mutex<HashMap<String, Option<(u32, u32)>>>,
+    /// The images of `files/`, by path in it, listed by the first build.
+    image_files: OnceLock<Vec<String>>,
 }
 
 impl SourceData {
@@ -1355,6 +1389,7 @@ impl SourceData {
             diagnostics,
             files_directory,
             images: Mutex::new(HashMap::new()),
+            image_files: OnceLock::new(),
         }
     }
 
@@ -1383,7 +1418,7 @@ impl SourceData {
             images().insert(src.to_string(), size);
             size
         };
-        let (store, build_diagnostics) = build(
+        let (mut store, build_diagnostics) = build(
             merged,
             &BuildOptions {
                 theme_locales: options.theme_locales.clone(),
@@ -1391,6 +1426,18 @@ impl SourceData {
                 probe_image: &probe,
             },
         );
+        // An image a setting or `images[...]` names by its path has the size of its file, as a
+        // product's image does.
+        let image_files = self.image_files.get_or_init(|| {
+            self.files_directory
+                .as_deref()
+                .map(image_files)
+                .unwrap_or_default()
+        });
+        store.file_sizes = image_files
+            .iter()
+            .filter_map(|src| Some((src.clone(), probe(src)?)))
+            .collect();
         diagnostics.extend(build_diagnostics);
         (store, diagnostics)
     }
@@ -1919,6 +1966,7 @@ mod tests {
             diagnostics,
             files_directory: None,
             images: Mutex::new(HashMap::new()),
+            image_files: OnceLock::new(),
         };
         let (store, diagnostics) = source.build(&LoadOptions::default(), &[]);
         let found: Vec<String> = diagnostics
@@ -2372,6 +2420,38 @@ mod tests {
         assert!(diagnostics.has_errors());
         assert_eq!(now.products.len(), 1);
         assert_eq!(now.products[0].handle, "other");
+    }
+
+    #[test]
+    fn the_images_of_files_have_the_size_of_their_file() {
+        // An image picked in a setting or read with `images[...]` is known by its path only:
+        // its size is the file's, as a product image's is (issue #116).
+        let directory = std::env::temp_dir().join(format!("lsf-file-sizes-{}", std::process::id()));
+        std::fs::create_dir_all(directory.join("files/banners")).expect("directory");
+        let png = |width: u32, height: u32, path: &str| {
+            image::RgbImage::new(width, height)
+                .save(directory.join("files").join(path))
+                .expect("png");
+        };
+        png(400, 500, "tall.png");
+        png(30, 10, "banners/wide.png");
+        std::fs::write(directory.join("files/notes.txt"), "not an image").expect("text");
+        std::fs::write(
+            directory.join("store.json"),
+            r#"{"files": {"tall.png": {"alt": "Tall", "width": 1000, "height": 1000}}}"#,
+        )
+        .expect("store");
+        let (store, diagnostics) = load(
+            &DataSource::Directory(directory.clone()),
+            &LoadOptions::default(),
+        );
+        std::fs::remove_dir_all(&directory).ok();
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        assert_eq!(store.file_sizes.get("tall.png"), Some(&(400, 500)));
+        assert_eq!(store.file_sizes.get("banners/wide.png"), Some(&(30, 10)));
+        assert_eq!(store.file_sizes.len(), 2);
+        // What the data declares stays for the alt text, and for the files that are missing.
+        assert_eq!(store.files["tall.png"].alt, "Tall");
     }
 
     #[test]
