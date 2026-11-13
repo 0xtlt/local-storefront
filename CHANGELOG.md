@@ -200,6 +200,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `image_url: width: 300, height: 200` gives `?crop=center&height=200&v=…&width=300`, and the
   server crops the image to that box, where lsf fitted it inside. `crop: nil` and `pad_color`
   still leave `crop` out, as on Shopify.
+- **`image_tag: preload: true` writes `loading="eager"`**, as on Shopify, even with
+  `loading: 'lazy'`: a preloaded hero image was lazy on lsf. `loading` now comes right after
+  `width` and `height`, wherever the theme passes it, as Shopify writes it.
 
 ## 0.3.0-rc.5 - 2026-11-13
 
