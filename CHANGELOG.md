@@ -11,6 +11,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   whose own `product` setting is unset no longer gets the page's product as `closest.product`:
   it gets none, as on Shopify. Give the setting a value, or `{{ closest.product }}` as its
   default, to keep the product of what the block is in.
+- **A metafield used without `.value` acts as its value**, as on Shopify. A `boolean` metafield
+  that is `false` is falsy in `{% if product.metafields.custom.flag %}`, so a theme test that
+  expected the branch of `true` now gets the other one.
 
 ### Fixed
 
@@ -34,6 +37,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   else its parent blocks', else the section's, and only then the template's resource, as
   Shopify resolves it. A product card in a group of another product shows that product, and a
   section's product setting reaches its blocks outside a product page too.
+- **A metafield without `.value` compares, filters and sorts as its value.** For the text,
+  number, `boolean`, `date` and `date_time` types, `if`, `unless`, `==`, `>`, the math filters,
+  `date`, `size`, and `sort`, `where` and `sum` on a field of metaobjects read the value:
+  `{% if f.finish == 'gloss' %}`, `{{ f.n | plus: 1 }}`, `{{ f.day | date: '%d.%m.%Y' }}` and
+  `{{ metaobjects.faq.values | sort: 'question' }}` give what a store gives, no longer `false`,
+  `1`, the unformatted date or "cannot sort values of incompatible types". A reference, a list,
+  a `json`, a `color`, a `money`, a `rating` or a measurement stays the metafield.
 
 ## 0.3.0-rc.5 - 2026-11-13
 

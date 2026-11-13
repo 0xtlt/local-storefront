@@ -154,6 +154,34 @@ impl MetafieldDrop {
             typed(&self.site, &self.field.kind, &self.field.value)
         }
     }
+
+    /// The value the metafield stands for when it is used without `.value`: in `if`, `==`,
+    /// `>`, math and date filters, `size`, and as the property of `sort`, `where` and `sum`.
+    /// Only the types whose value is a text, a number, a boolean or a date; a reference, a
+    /// list or a JSON value stays the metafield.
+    fn scalar(&self) -> Option<Value> {
+        if !matches!(
+            self.field.kind.as_str(),
+            "single_line_text_field"
+                | "multi_line_text_field"
+                | "url"
+                | "id"
+                | "number_integer"
+                | "number_decimal"
+                | "boolean"
+                | "date"
+                | "date_time"
+        ) {
+            return None;
+        }
+        match self.typed_value() {
+            value @ (Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_)) => {
+                Some(value)
+            }
+            value if value.downcast::<Time>().is_some() => Some(value),
+            _ => None,
+        }
+    }
 }
 
 /// A file reference: an image or a video when the extension says so.
@@ -402,6 +430,15 @@ impl Object for MetafieldDrop {
             "list?" => Value::Bool(self.is_list()),
             _ => return None,
         })
+    }
+
+    fn to_value(&self) -> Option<Value> {
+        self.scalar()
+    }
+
+    /// `{{ metafield | size }}`: the size of its value (the length of a text).
+    fn size(&self) -> Option<usize> {
+        self.scalar()?.size()
     }
 
     /// Printing a metafield prints its value, as Shopify still does for legacy themes.

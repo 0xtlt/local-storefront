@@ -1603,6 +1603,83 @@ fn metafield_values_are_the_objects_shopify_gives() {
 }
 
 #[test]
+fn a_metafield_without_value_compares_filters_and_sorts_as_its_value() {
+    // On Shopify, a metafield of a text, number, boolean or date type used without `.value`
+    // acts as its value: in `if`, `unless`, `==`, `>`, math and date filters, `size`, and as
+    // the property of `sort`, `where` and `sum`.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "probe": [{
+                "handle": "f",
+                "fields": {
+                    "off": { "type": "boolean", "value": false },
+                    "on": { "type": "boolean", "value": true },
+                    "n": { "type": "number_integer", "value": 42 },
+                    "dec": { "type": "number_decimal", "value": "1.50" },
+                    "day": { "type": "date", "value": "2026-03-05" },
+                    "finish": { "type": "single_line_text_field", "value": "gloss" },
+                    "color": { "type": "color", "value": "#ff8000" }
+                }
+            }],
+            "faq": [
+                { "handle": "one", "fields": { "question": "How long does shipping take?", "order": { "type": "number_integer", "value": 1 } } },
+                { "handle": "two", "fields": { "question": "Can I return an item?", "order": { "type": "number_integer", "value": 2 } } },
+                { "handle": "three", "fields": { "question": "Do you ship to Belgium?", "order": { "type": "number_integer", "value": 3 } } }
+            ]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render = |source: &str| {
+        fixture.liquid(
+            "/",
+            Session::initial(&fixture.store),
+            &format!("{{%- assign f = metaobjects.probe.f -%}}{source}"),
+        )
+    };
+    assert_eq!(
+        render(
+            "{% if f.off %}A{% else %}a{% endif %}|{% if f.off == false %}C{% else %}c{% endif %}|\
+             {% unless f.off %}D{% endunless %}|{% if f.on == true %}E{% else %}e{% endif %}|\
+             {% if f.finish == 'gloss' %}F{% else %}f{% endif %}|{% if f.dec == 1.5 %}G{% else %}g{% endif %}|\
+             {% if f.n > 40 %}H{% else %}h{% endif %}|{% if f.n == 42 %}J{% else %}j{% endif %}"
+        ),
+        "a|C|D|E|F|G|H|J"
+    );
+    assert_eq!(
+        render(
+            "{{ f.n | plus: 1 }}|{{ f.dec | times: 2 }}|{{ f.day | date: '%d.%m.%Y' }}|{{ f.finish | size }}"
+        ),
+        "43|3.0|05.03.2026|5"
+    );
+    assert_eq!(
+        render(
+            "{%- assign v = metaobjects.faq.values -%}\
+             {{ v | sort: 'question' | map: 'order' | join: ',' }}|\
+             {{ v | where: 'order', 3 | map: 'question' }}|{{ v | map: 'order' | sum }}"
+        ),
+        "2,3,1|Do you ship to Belgium?|6"
+    );
+    // It still prints its value, gives its stored value as JSON and has its properties. A
+    // type whose value is an object (a color) stays the metafield.
+    assert_eq!(
+        render(
+            "{{ f.n }}|{{ f.off | json }}|{{ f.n.value }}|{{ f.n.type }}|{{ f.color.value.red }}|\
+             {% if f.color == '#ff8000' %}same{% else %}other{% endif %}"
+        ),
+        "42|false|42|number_integer|255|other"
+    );
+}
+
+#[test]
 fn a_rating_has_strings_as_on_shopify() {
     // The rating of the Admin API's `jsonValue`, the same with numbers, and the Admin API's
     // `value` (the JSON text) pasted as is.

@@ -96,9 +96,14 @@ pub fn clock_now() -> DateTime<Utc> {
 pub fn to_time(input: &Value, ctx: &Context) -> Option<DateTime<Tz>> {
     let tz = ctx.time_zone();
     match input {
-        Value::Object(_) => input
-            .downcast::<Time>()
-            .map(|time| time.0.with_timezone(&tz)),
+        Value::Object(object) => match input.downcast::<Time>() {
+            Some(time) => Some(time.0.with_timezone(&tz)),
+            // A drop that stands for a time, as a `date` metafield does.
+            None => match object.to_value() {
+                Some(time @ Value::Object(_)) => to_time(&time, ctx),
+                _ => None,
+            },
+        },
         Value::Int(seconds) => tz.timestamp_opt(*seconds, 0).single(),
         Value::Str(s) => {
             if s.is_empty() {
