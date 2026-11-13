@@ -85,6 +85,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   Shopify, and a cart request that bundles more than five gives `"sections": null`. A theme or a
   test that asks for six sections at once gets nothing on a store, and now on lsf too: ask for
   five at most.
+- **A section rendered at `/variants/<id>?section_id=` has no `product`**, as on Shopify. A
+  pickup availability section that reads `product` renders empty there on a store, and now on
+  lsf too: read `product_variant` and `product_variant.product`.
 
 ### Fixed
 
@@ -167,6 +170,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `"true"` is `true`, no longer `false`, a `KILOGRAMS` unit is `kilograms`, and a deprecated
   type gives its value directly. A `boolean` that `validate` still refuses shows as it is
   written, not as `false`.
+- **A section rendered for a variant sees what Shopify gives it.** At
+  `/variants/<id>?section_id=` (and `?sections=`), the URL Dawn's pickup availability fetches,
+  `product` and `variant` are nil, `template.name` is empty, `request.page_type` is `variants`
+  and `request.path` has no trailing slash, where lsf gave the product and its template.
+  `product_variant` is the variant, as before.
 - **A section rendered alone links to the page, not to itself.** With `?section_id=` or
   `?sections=`, `paginate.next.url`, `paginate.previous.url`, `paginate.parts[].url`,
   `default_pagination` and the `url_to_add` and `url_to_remove` of filters leave those

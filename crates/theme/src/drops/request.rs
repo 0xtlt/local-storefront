@@ -25,6 +25,11 @@ impl Object for RequestDrop {
             "page_type" => Value::from(&self.page_type),
             "host" => Value::from(&request.host),
             "origin" => Value::from(request.origin()),
+            // Shopify drops the trailing slash of `/variants/<id>/?section_id=`, the URL Dawn's
+            // pickup availability fetches.
+            "path" if self.page_type == "variants" => {
+                Value::from(request.localized(request.path.trim_end_matches('/')))
+            }
             "path" => Value::from(request.localized(&request.path)),
             "locale" => language_value(&self.site, self.site.language()),
             _ => return None,

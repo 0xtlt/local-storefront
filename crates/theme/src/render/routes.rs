@@ -113,8 +113,12 @@ pub fn resolve(site: &Site) -> Page {
             page.handle = Some(data.handle.clone());
             page
         }
-        // The product of a variant, with that variant as `product_variant`: what themes ask
-        // the Section Rendering API for to show where a variant can be picked up.
+        // A variant, which themes ask the Section Rendering API for to show where it can be
+        // picked up. There, as on Shopify, the section has `product_variant` and nothing else:
+        // no `product`, no `variant`, an empty `template.name` and `request.page_type`
+        // `variants` (https://shopify.dev/docs/storefronts/themes/delivery-fulfillment/pickup-availability:
+        // "You can't access the Liquid product object in the pickup availability section").
+        // The page itself is the product's, with that variant as `product_variant`.
         ["variants", id] => {
             let found = id
                 .parse::<u64>()
@@ -123,6 +127,16 @@ pub fn resolve(site: &Site) -> Page {
             let Some((product, variant)) = found else {
                 return not_found(format!("no variant with the id \"{id}\""));
             };
+            if request.param("section_id").is_some()
+                || request.param("sections").is_some()
+                || request.param("sections[]").is_some()
+            {
+                let mut page = Page::new("", Resource::Variant { product, variant });
+                page.page_type = "variants".to_string();
+                page.canonical_path = format!("/variants/{id}");
+                page.product_variant = Some(variant);
+                return page;
+            }
             let data = &store.products[product];
             let mut page = Page::new(
                 "product",
