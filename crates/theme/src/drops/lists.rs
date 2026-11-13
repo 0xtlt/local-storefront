@@ -5,6 +5,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use lsf_core::store::{Collection, Store};
 use lsf_liquid::{Object, Value};
 
 use super::collection::CollectionDrop;
@@ -77,8 +78,8 @@ impl Lookup {
         let site = &self.site;
         let store = &site.store;
         let items: Vec<Value> = match self.kind {
-            Kind::Collections => (0..store.collections.len())
-                .map(|index| self.cached(&store.collections[index].handle))
+            Kind::Collections => listed_collections(store)
+                .filter_map(|collection| self.cached(&collection.handle))
                 .collect(),
             Kind::Pages => (0..store.pages.len())
                 .map(|index| PageDrop::value(site, index))
@@ -92,35 +93,39 @@ impl Lookup {
         Some(PaginatedList::value(items))
     }
 
-    fn cached(&self, handle: &str) -> Value {
+    fn cached(&self, handle: &str) -> Option<Value> {
         if let Some(value) = self
             .cache
             .lock()
             .expect("lookup cache poisoned")
             .get(handle)
         {
-            return value.clone();
+            return Some(value.clone());
         }
-        let value = self.find(handle).unwrap_or_else(|| self.missing(handle));
+        let value = match self.find(handle) {
+            Some(value) => value,
+            None => self.missing(handle)?,
+        };
         self.cache
             .lock()
             .expect("lookup cache poisoned")
             .insert(handle.to_string(), value.clone());
-        value
+        Some(value)
     }
 
     /// What a handle that names nothing gives: Shopify's `empty` object for a collection, a
-    /// product, a page or a blog; nil for an article. `size`, `first` and `last` stay nil.
-    fn missing(&self, handle: &str) -> Value {
+    /// product, a page or a blog; nil for an article. `size`, `first` and `last` give nothing,
+    /// so that they are the size, first and last item of the list, as `linklists` does.
+    fn missing(&self, handle: &str) -> Option<Value> {
         if matches!(handle, "size" | "first" | "last") {
-            return Value::Nil;
+            return None;
         }
-        match self.kind {
+        Some(match self.kind {
             Kind::Collections => EmptyDrop::value(EmptyDrop::COLLECTION),
             Kind::Blogs => EmptyDrop::value(EmptyDrop::BLOG),
             Kind::AllProducts | Kind::Pages => EmptyDrop::value(EmptyDrop::NONE),
             Kind::Articles | Kind::Images => Value::Nil,
-        }
+        })
     }
 
     fn list(&self) -> Option<Value> {
@@ -145,7 +150,7 @@ impl Object for Lookup {
     }
 
     fn get(&self, key: &str) -> Option<Value> {
-        Some(self.cached(key))
+        self.cached(key)
     }
 
     fn items(&self) -> Option<Arc<Vec<Value>>> {
@@ -155,7 +160,7 @@ impl Object for Lookup {
     fn size(&self) -> Option<usize> {
         let store = &self.site.store;
         Some(match self.kind {
-            Kind::Collections => store.collections.len(),
+            Kind::Collections => listed_collections(store).count(),
             Kind::AllProducts => store.products.len().min(DEFAULT_PAGE_LIMIT),
             Kind::Pages => store.pages.len(),
             Kind::Blogs => store.blogs.len(),
@@ -167,6 +172,15 @@ impl Object for Lookup {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// The collections a loop over `collections` gives: the store's own, without the catch-all
+/// `all`, which `collections.all` still finds, as on Shopify.
+fn listed_collections(store: &Store) -> impl Iterator<Item = &Collection> {
+    store
+        .collections
+        .iter()
+        .filter(|collection| collection.handle != "all")
 }
 
 impl Lookup {

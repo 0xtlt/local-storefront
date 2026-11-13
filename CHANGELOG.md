@@ -296,6 +296,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   print `0`, no longer nothing. A `product`, `collection`, `page`, `blog`, `article` or
   `link_list` setting whose handle no longer exists is truthy, `== blank` and `== nil`, and
   prints the handle.
+- **`collections` lists the store's own collections, without `all`.** A loop over
+  `collections`, `| size` and `{% paginate collections %}` no longer include the catch-all
+  `all` collection, which `collections.all` still finds, as on Shopify. `collections.size`,
+  `collections.first` and `collections.last` give the size, first and last collection of that
+  list, where they printed nothing; so do `pages` and `blogs`.
 - **A resource setting prints its handle, no longer `ProductDrop`.** A `product`, `collection`,
   `page`, `blog`, `article` or `link_list` setting printed as is (`{{ section.settings.product }}`,
   or in a class, a URL or a data attribute) gives the handle of what it names, and its `.size`
