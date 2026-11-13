@@ -674,7 +674,9 @@ changes nothing for a theme.
   it, `false` is an owner turned off, and without `enabled` the shop has none (as after an
   install, until the app creates one through the Admin API). A scenario that names the Function
   in `extensions` runs it anyway, with these metafields
-  ([what runs](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.5/docs/checkout.md#owners-and-scenarios)).
+  ([what runs](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.5/docs/checkout.md#owners-and-scenarios)). `block_on_failure` is the `blockOnFailure` of
+  the owner of a validation or a cart transform: `true` blocks the order when a run of the
+  Function fails; `false`, Shopify's default, ignores the failed run and the checkout goes on.
 - `tax_rate`: a percentage, added to the discounted subtotal.
 
 ### Checkout scenarios
@@ -733,7 +735,7 @@ Every field is optional.
 - `checkout` overrides the [`checkout` section](#checkout) of the store data. Every field that is
   present replaces the store's: `shipping_rates`, `payment_methods`, `discounts` (`[]` runs no
   discount), `tax_rate`. `functions` replaces the settings of the Functions it names and keeps
-  those of the others; an entry without `enabled` keeps the store's owner of it.
+  those of the others; an entry without `enabled` (or `block_on_failure`) keeps the store's.
 - `variant` is the look: `standard` or `shop`. `?variant=` in the URL still wins.
 - `extensions` lists the handles of the extensions (Functions and checkout UI extensions) that
   run. The others of the app are left out. It narrows what `--extension` allows. The Functions it
@@ -2214,6 +2216,7 @@ validation): its owner in the shop, and its settings.
 | Field | Type | Description |
 |---|---|---|
 | `enabled` | boolean | Whether the shop has an owner of the Function (the payment or delivery customization, validation or cart transform an app creates for it), and it is enabled. As on Shopify, the Function runs at the checkout only through an enabled owner: `true` runs it, `false` is an owner that is turned off. Without it, the shop has no owner of it, as after an install: the Function runs only for a scenario that names it in `extensions`, or for `app function run <handle>`, with these metafields. |
+| `block_on_failure` | boolean | Whether a failed run of the Function blocks the checkout: the `blockOnFailure` of its owner, a cart and checkout validation or a cart transform. As on Shopify, `false` by default: a run that fails (a trap, an output out of its schema) is ignored and the checkout goes on without its output. Other Functions never block when they fail. |
 | `metafields` | [OwnerMetafields](#ownermetafields) | The metafields of the object the Function belongs to, by `"namespace.key"`: `{"$app.function-configuration": {"type": "json", "value": {…}}}` for `metafield(namespace: "$app", key: "function-configuration")`. Shopify's list of `{namespace, key, type, value}` is taken too. |
 
 ### CheckoutExtension
@@ -2331,7 +2334,7 @@ exact amounts:
 | `delivery_options` | [ExpectedDeliveryOptions](#expecteddeliveryoptions) | The delivery options, in the order the buyer sees them, once the delivery customizations and the shipping discounts ran. A string matches the handle or the title. |
 | `discounts` | [ExpectedDiscounts](#expecteddiscounts) | The discounts applied, product, order and shipping ones. A string matches the title (the message the Function gave) or the code. |
 | `lines` | [ExpectedLines](#expectedlines) | The lines of the checkout once the cart transforms ran. A string matches the SKU or the title. |
-| `errors` | [ExpectedErrors](#expectederrors) | The errors that block the order: those validation Functions report, and those of Functions that failed. A string matches the message. `{"equals": []}`: no error. |
+| `errors` | [ExpectedErrors](#expectederrors) | The errors that block the order: those validation Functions report, and the failures of the validations and cart transforms that block on failure (`block_on_failure`). A string matches the message. `{"equals": []}`: no error. |
 | `totals` | [ExpectedTotals](#expectedtotals) | The amounts of the checkout, each exactly. |
 
 ### ScenarioStep

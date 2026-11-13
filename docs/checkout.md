@@ -430,7 +430,10 @@ opens (what `lsf app function run --scenario` does), and lists each Function tar
 the error and the scenarios it fails in: a trap or a panic, more than 11 million instructions,
 an output that does not fit the schema of its API version, a `.fetch` request out of Shopify's
 limits. A target that fails in several ways is listed once per error, each with its own
-scenarios and logs. The scenario and the Function get an error status.
+scenarios and logs. The scenario and the Function get an error status. A failure is a problem
+to fix even when the checkout goes on: Shopify ignores the output of a failed run and blocks the
+order only for a validation or a cart transform that blocks on failure ([network
+access](#network-access)).
 
 lsf stops a run at 110 million instructions, ten times Shopify's limit: an endless loop fails in
 a moment (`exceeded Shopify's limit of 11,000,000 instructions: stopped at 110,000,000`), and a
@@ -606,7 +609,7 @@ list, so `"errors": { "equals": [] }` says there is no error):
 | `delivery_options` | The delivery options, in the order the buyer sees them, once the delivery customizations and the shipping discounts ran | the handle or the title | `handle`, `title`, `cost` |
 | `discounts` | The discounts applied: product, order and shipping ones | the title or the code | `title`, `code`, `class` (`PRODUCT`, `ORDER`, `SHIPPING`), `amount` |
 | `lines` | The lines, once the cart transforms ran | the SKU or the title | `sku`, `title`, `quantity`, `price` (of one unit), `total` (after its discounts), `components`, `attributes` |
-| `errors` | The errors that block the order: those validation Functions report, and those of Functions that failed | the message | `message`, `target` |
+| `errors` | The errors that block the order: those validation Functions report, and the failures of the validations and cart transforms that [block on failure](#the-functions-that-fail) | the message | `message`, `target` |
 
 A string names an entry, so a renamed method is matched by its new name (`"Card (secure)"`) or by
 its handle. An object gives the fields the entry must have, and leaves the others free:
@@ -1215,7 +1218,19 @@ the order. (Shopify's documentation does not say which step blocks; this is how 
 treats them.)
 
 The input of each Function is the result of its input query, run against the cart, the buyer and
-the store data. A Function that fails to run adds an error that blocks the order.
+the store data.
+
+A run that fails (a trap, more than 11 million instructions, an output out of its schema, a
+request out of Shopify's limits) is ignored, as on Shopify: its output is not applied and the
+checkout goes on without it. A failed discount applies no discount, a failed delivery or payment
+customization leaves the options as they were, and the buyer can pay. Only a validation or a cart
+transform whose owner has `blockOnFailure: true` blocks the order when it fails, with the error
+`` Function `<handle>` failed: … ``: `validationCreate`, `validationUpdate` and
+`cartTransformCreate` set it through the [Admin API](admin.md), and `block_on_failure` of its
+entry of `checkout.functions` in the store data ([data format](data-format.md#checkout)). The
+failure is still the run's error: the Functions badge turns red, the dialog shows it, and
+`lsf app check` and `lsf app function run` fail on it ([the Functions that
+fail](#the-functions-that-fail)).
 
 The "Functions" badge in the bottom left corner of every page (the checkout, the thank-you page,
 `?targets=all`) says how many Functions ran, and turns red when one failed or the checkout has

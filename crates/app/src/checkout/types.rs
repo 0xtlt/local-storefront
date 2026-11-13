@@ -155,6 +155,10 @@ pub struct CheckoutConfig {
     /// `None`: every Function of the selection runs, as if each had one: the run names its
     /// Functions (a scenario's `extensions`, `lsf app function run <handle>`).
     pub owners: Option<IndexMap<String, bool>>,
+    /// The Functions whose owner (a validation, a cart transform) has `blockOnFailure: true`, by
+    /// handle: a failed run of one blocks the checkout. As on Shopify, a failed run of any other
+    /// Function is ignored, and the checkout goes on without its output.
+    pub block_on_failure: std::collections::HashSet<String>,
     /// The app is not installed on the shop: uninstalling it (`POST /__lsf/admin/uninstall`,
     /// `appUninstall`) removed its Functions, with every object that ran them, as Shopify does.
     /// No Function of the app runs then, whatever `owners`, `discounts` or the run names (a
@@ -326,7 +330,9 @@ pub struct CheckoutResult {
     /// The express buttons (`ACCELERATED_CHECKOUT`): the methods still offered there once the
     /// payment customizations ran, in order. A method can be in both.
     pub express_methods: Vec<PaymentMethod>,
-    /// Errors that block completing the checkout (validation Functions, Function failures).
+    /// Errors that block completing the checkout: those of the validation Functions, and the
+    /// failed runs of a Function whose owner blocks on failure
+    /// ([`CheckoutConfig::block_on_failure`]). Any other failed run is in [`Self::runs`] only.
     pub errors: Vec<CheckoutError>,
     pub cost: Cost,
     /// Every Function run, in order, for the debug panel and `lsf app function run`.

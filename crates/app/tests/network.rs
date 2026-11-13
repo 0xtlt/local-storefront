@@ -334,13 +334,13 @@ fn a_request_shopify_would_refuse_fails_the_function_and_the_run_target_does_not
             assert_eq!(outcome.result.runs.len(), 1);
             let error = outcome.result.runs[0].error.as_deref().unwrap();
             assert!(error.contains(expected), "{error}");
-            assert_eq!(
-                outcome.result.errors.len(),
-                1,
+            assert!(error.contains("fetch request"), "{error}");
+            // A failed run is ignored and blocks nothing, as on Shopify.
+            assert!(
+                outcome.result.errors.is_empty(),
                 "{:?}",
                 outcome.result.errors
             );
-            assert!(outcome.result.errors[0].message.contains("fetch request"));
         }
     }
 }
@@ -520,11 +520,12 @@ fn without_network_a_request_is_checked_but_not_sent() {
         assert!(
             outcome
                 .result
-                .errors
+                .runs
                 .iter()
-                .any(|error| error.message.contains("fetch request")),
+                .filter_map(|run| run.error.as_deref())
+                .any(|error| error.contains("fetch request")),
             "{:?}",
-            outcome.result.errors
+            outcome.result.runs
         );
     }
     loop {

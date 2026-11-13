@@ -2517,13 +2517,17 @@ impl<'s> Sync<'s> {
     /// A Function's owners and settings: `enabled` when an object runs it (a cart transform,
     /// which has no `enabled`, always does), `false` when every one is disabled, nothing when
     /// there is none; the metafields of the enabled ones (of the disabled ones when none is), in
-    /// the order they were created, a later one's taking the place of an earlier one's.
+    /// the order they were created, a later one's taking the place of an earlier one's; and
+    /// `block_on_failure` when one of those has a `blockOnFailure` (a validation, a cart
+    /// transform), `true` when one of them blocks.
     fn function_settings(&self, era: Era, handle: &str) -> model::CheckoutFunctionInput {
         let view = self.view(era);
         let removed = self.removed_of(&FUNCTION_OWNERS);
         let mut enabled = IndexMap::new();
         let mut disabled = IndexMap::new();
         let (mut on, mut off) = (0, 0);
+        // `blockOnFailure` of the enabled owners, then of the disabled ones.
+        let (mut block_on, mut block_off): (Option<bool>, Option<bool>) = (None, None);
         for type_name in FUNCTION_OWNERS {
             for key in view.keys(type_name, &removed) {
                 let Some(record) = view.get(key) else {
@@ -2532,17 +2536,26 @@ impl<'s> Sync<'s> {
                 if self.function_of(view, key).as_deref() != Some(handle) {
                     continue;
                 }
+                let block = flag(record, "blockOnFailure");
+                let merge = |into: &mut Option<bool>| {
+                    if let Some(block) = block {
+                        *into = Some(into.unwrap_or(false) || block);
+                    }
+                };
                 if flag(record, "enabled") == Some(false) {
                     off += 1;
                     disabled.extend(self.checkout_metafields(view, key));
+                    merge(&mut block_off);
                 } else {
                     on += 1;
                     enabled.extend(self.checkout_metafields(view, key));
+                    merge(&mut block_on);
                 }
             }
         }
         model::CheckoutFunctionInput {
             enabled: (on + off > 0).then_some(on > 0),
+            block_on_failure: if on > 0 { block_on } else { block_off },
             metafields: if on > 0 { enabled } else { disabled },
         }
     }

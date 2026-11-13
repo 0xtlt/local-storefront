@@ -152,6 +152,18 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   relied on `reason` now leaves the buyer stuck here too: show why in its UI, or pass `errors`.
   A browser test that read the reason on the page reads the Overview of the Functions dialog,
   which lists each block with its `reason`.
+- **A Function run that fails no longer blocks the order**, as on Shopify, which ignores the
+  output of a failed run ("When a function run fails, Shopify ignores that run's output"). A
+  discount, delivery customization or payment customization that traps, runs past the
+  instruction limit or answers out of its schema changes nothing, and `complete` places the
+  order where it answered `422`; so does a failed validation or cart transform by default. Only
+  a validation or a cart transform whose owner has `blockOnFailure: true` blocks the order when
+  it fails: `validationCreate`, `validationUpdate` and
+  `cartTransformCreate` set it, and so does the new `block_on_failure` of an entry of
+  `checkout.functions` in the store data. The failure stays the run's error: the Functions badge
+  is red, and `lsf app check` and `lsf app function run` still fail on it. A scenario whose
+  `expect.errors` listed `` Function `x` failed: … `` now gets no such error, unless the Function
+  blocks on failure.
 
 ### Fixed
 

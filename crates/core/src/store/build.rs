@@ -3919,6 +3919,9 @@ fn override_checkout(
         if let Some(enabled) = function.enabled {
             settings.owners.insert(handle.clone(), enabled);
         }
+        if let Some(block) = function.block_on_failure {
+            settings.block_on_failure.insert(handle.clone(), block);
+        }
     }
     if let Some(rate) = input.tax_rate {
         if rate.is_finite() && (0.0..=100.0).contains(&rate) {

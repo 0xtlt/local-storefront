@@ -47,6 +47,18 @@ fn run(app: &lsf_app::config::App, lines: &[(u64, u32)]) -> CheckoutResult {
     )
 }
 
+/// The error of the first run that failed. Shopify ignores the output of a failed run, and the
+/// checkout goes on: the error is the run's, not one that blocks the checkout.
+fn first_failure(result: &lsf_app::checkout::CheckoutResult) -> &str {
+    let error = result
+        .runs
+        .iter()
+        .find_map(|run| run.error.as_deref())
+        .expect("a run failed");
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    error
+}
+
 fn errors(app: &lsf_app::config::App) -> Vec<String> {
     app.diagnostics
         .iter()
@@ -213,7 +225,7 @@ fn a_field_the_schema_does_not_have_is_an_error_and_names_the_version() {
         );
         let app = copy.load();
         let result = run(&app, &[(TEE, 3)]);
-        let error = &result.errors[0].message;
+        let error = first_failure(&result);
         assert!(
             error.contains(&format!("not valid in API version {version}"))
                 && error.contains("`cart.note` does not exist on `Cart`"),
@@ -285,7 +297,7 @@ fn a_legacy_target_gets_the_operations_its_version_still_has() {
             )
         );
         let result = run(&app, &[(TEE, 3)]);
-        let error = &result.errors[0].message;
+        let error = first_failure(&result);
         assert!(
             error.contains(&format!(
                 "does not fit `FunctionRunResult` in API version {version}"
@@ -316,9 +328,7 @@ fn a_legacy_payment_target_only_sets_payment_terms() {
     );
     let result = run(&app, &[(TEE, 3)]);
     assert!(
-        result.errors[0]
-            .message
-            .contains("`operations[0]` has no field `paymentMethodRename`"),
+        first_failure(&result).contains("`operations[0]` has no field `paymentMethodRename`"),
         "{:?}",
         result.errors
     );
@@ -346,7 +356,7 @@ fn the_validation_output_follows_its_target() {
     );
     let app = copy.load();
     let result = run(&app, &[(TEE, 6)]);
-    let error = &result.errors[0].message;
+    let error = first_failure(&result);
     assert!(
         error.contains("does not fit `CartValidationsGenerateRunResult` in API version 2027-01")
             && error.contains("the output has no field `errors`")
@@ -376,9 +386,7 @@ fn a_cart_transform_of_the_first_generation_has_its_own_operation_names() {
     );
     let result = run(&app, &[(TEE, 3)]);
     assert!(
-        result.errors[0]
-            .message
-            .contains("`operations[0]` has no field `lineUpdate`"),
+        first_failure(&result).contains("`operations[0]` has no field `lineUpdate`"),
         "{:?}",
         result.errors
     );

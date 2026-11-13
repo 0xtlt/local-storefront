@@ -674,7 +674,9 @@ changes nothing for a theme.
   it, `false` is an owner turned off, and without `enabled` the shop has none (as after an
   install, until the app creates one through the Admin API). A scenario that names the Function
   in `extensions` runs it anyway, with these metafields
-  ([what runs](checkout.md#owners-and-scenarios)).
+  ([what runs](checkout.md#owners-and-scenarios)). `block_on_failure` is the `blockOnFailure` of
+  the owner of a validation or a cart transform: `true` blocks the order when a run of the
+  Function fails; `false`, Shopify's default, ignores the failed run and the checkout goes on.
 - `tax_rate`: a percentage, added to the discounted subtotal.
 
 ### Checkout scenarios
@@ -733,7 +735,7 @@ Every field is optional.
 - `checkout` overrides the [`checkout` section](#checkout) of the store data. Every field that is
   present replaces the store's: `shipping_rates`, `payment_methods`, `discounts` (`[]` runs no
   discount), `tax_rate`. `functions` replaces the settings of the Functions it names and keeps
-  those of the others; an entry without `enabled` keeps the store's owner of it.
+  those of the others; an entry without `enabled` (or `block_on_failure`) keeps the store's.
 - `variant` is the look: `standard` or `shop`. `?variant=` in the URL still wins.
 - `extensions` lists the handles of the extensions (Functions and checkout UI extensions) that
   run. The others of the app are left out. It narrows what `--extension` allows. The Functions it

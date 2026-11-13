@@ -252,6 +252,14 @@ pub fn seed(seed: &mut Seed) {
                 kinds.push(target.kind);
             }
         }
+        // Whether a failed run blocks the checkout (`block_on_failure`), on the owners that have
+        // the field: the validation and the cart transform.
+        let block_on_failure = store
+            .checkout
+            .block_on_failure
+            .get(&function.handle)
+            .copied()
+            .unwrap_or(false);
         let empty = Vec::new();
         let config = store
             .checkout
@@ -274,7 +282,7 @@ pub fn seed(seed: &mut Seed) {
                     "__typename": type_name,
                     "id": id,
                     "functionId": function_id,
-                    "blockOnFailure": false,
+                    "blockOnFailure": block_on_failure,
                     "metafields": metafields,
                 }),
                 TargetKind::Validation => json!({
@@ -282,7 +290,7 @@ pub fn seed(seed: &mut Seed) {
                     "id": id,
                     "title": function_title(function),
                     "enabled": enabled,
-                    "blockOnFailure": false,
+                    "blockOnFailure": block_on_failure,
                     "shopifyFunction": function_id,
                     "metafields": metafields,
                 }),
