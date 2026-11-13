@@ -7,6 +7,7 @@ use lsf_core::theme::Revalidate;
 use lsf_liquid::strict2::{self, BROKEN_TODAY, Finding, IssueKind};
 use lsf_theme::Theme;
 use lsf_theme::theme::liquid_settings::{holds_settings, string_literal, string_span};
+use lsf_theme::theme::schema_check;
 use serde::Serialize;
 
 use crate::output::count;
@@ -1121,6 +1122,22 @@ fn check_theme(
                     lsf_theme::theme::schema_check::lenient_message("the file", leniency),
                 ));
             }
+            let config = match path.as_str() {
+                "config/settings_schema.json" => {
+                    let data = theme.json("config/settings_data.json").ok().flatten();
+                    schema_check::check_settings_schema(&source, data.as_deref())
+                }
+                "config/settings_data.json" => schema_check::check_settings_data(&source),
+                _ => Vec::new(),
+            };
+            for problem in config {
+                tally.problem_with_hint(
+                    problem.code,
+                    Location::file(&path, Some(problem.line)),
+                    problem.message,
+                    problem.hint,
+                );
+            }
             if holds_settings(&path) {
                 check_liquid_settings(&theme, &env, &path, args.writes(), &mut tally);
             }
@@ -1300,6 +1317,66 @@ mod tests {
             "{report:#}"
         );
         assert_eq!(report["problems"], 4);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn theme_settings_shopify_refuses_are_problems() {
+        // #183: an id taken in two groups, a group without a name, a `current` that names no
+        // preset.
+        let root = std::env::temp_dir().join(format!("lsf-check-config-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write(
+            "layout/theme.liquid",
+            "{{ content_for_header }}{{ content_for_layout }}",
+        );
+        write(
+            "config/settings_schema.json",
+            r#"[
+  { "name": "theme_info", "theme_name": "Probe", "theme_version": "1.0.0", "theme_author": "me",
+    "theme_documentation_url": "https://example.com", "theme_support_url": "https://example.com" },
+  { "name": "One", "settings": [ { "type": "text", "id": "label", "label": "Label", "default": "one" } ] },
+  { "name": "Two", "settings": [ { "type": "text", "id": "label", "label": "Label again", "default": "two" } ] },
+  { "settings": [ { "type": "checkbox", "id": "flag", "label": "Flag", "default": true } ] }
+]"#,
+        );
+        write(
+            "config/settings_data.json",
+            r#"{ "current": "Nope", "presets": { "Default": { "label": "preset" } } }"#,
+        );
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(&str, &str, u64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["code"].as_str().unwrap(),
+                    d["file"].as_str().unwrap(),
+                    d["line"].as_u64().unwrap_or(0),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("invalid_settings_data", "config/settings_data.json", 1),
+                ("duplicate_setting_id", "config/settings_schema.json", 5),
+                ("invalid_schema", "config/settings_schema.json", 6),
+            ],
+            "{report:#}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -706,6 +706,16 @@ Shopify refuses on upload:
   other than `article`, `aside`, `div`, `footer`, `header` and `section` (a block's: more than 50
   characters), a `class` with `"` or `<`, `enabled_on` with `disabled_on`, an empty one, or a
   page type or a section group they do not take;
+- what Shopify refuses in `config/settings_schema.json` (`invalid_schema`,
+  `unknown_setting_type`, `duplicate_setting_id`): a file that is not a list, a group without a
+  `name`, a `theme_info` without `theme_name`, `theme_author`, `theme_version` (a string) or
+  `theme_documentation_url`, or with neither or both of `theme_support_email` and
+  `theme_support_url`, the settings a section schema refuses, two settings with one id in the
+  whole file, a `color_scheme_group` whose `role` lacks a role or names no definition, a
+  `color_palette` of fewer than 2 or more than 20 colors or with a color that is not hex
+  without alpha, more than 21 color schemes in `config/settings_data.json`; and a `current` of
+  `config/settings_data.json` that names a preset it does not have (`invalid_settings_data`).
+  Shopify keeps the previous version of a refused file;
 - what the theme names but does not have: a snippet of `render` or `include`
   (`missing_snippet`), a section of `{% section %}` or of a JSON template (`missing_section`), a
   group of `{% sections %}` (`missing_section_group`), a theme block of a schema, of a JSON
@@ -828,8 +838,9 @@ counts the others.
 | `contextual_context` | A warning: a contextual file whose `context` is not `{"market": "<handle>"}` or `{"b2b": true}`, the two contexts Shopify documents. Its overrides apply to nobody. |
 | `not_utf8` | A warning: a Liquid or JSON file that is not UTF-8, saved as Latin-1 or Windows-1252, at the line of its first such byte. Shopify CLI uploads each of those bytes as `�` (U+FFFD), and local-storefront reads the file the same way: a Latin-1 `café` renders as `caf�`. Save the file as UTF-8. |
 | `invalid_schema` | A `{% schema %}` Shopify refuses: JSON that does not parse, a setting without a required key (`id`, `label`, `options` of a `select`, `min`, `max` and `default` of a `range`), a `default` its setting does not take, or an attribute it refuses (a `name` longer than 25 characters, an unknown attribute, `@theme` with blocks of the section, a preset without `name`, `max_blocks`, `limit`, `tag`, `class`, `enabled_on`, `disabled_on`: the list above). A section or a block whose schema does not parse loses the defaults of its settings. |
+| `invalid_settings_data` | `config/settings_data.json` whose `current` names a preset that its `presets` do not have. Shopify refuses the file, and keeps the settings of its previous version. |
 | `unknown_setting_type` | A setting of a schema whose `type` Shopify does not have. The `hint` gives the closest one. |
-| `duplicate_setting_id` | Two settings of one schema with the same `id`. |
+| `duplicate_setting_id` | Two settings of one schema with the same `id`, or of `config/settings_schema.json`, in one group or in two. |
 | `missing_block` | A theme block the theme names and `blocks/` does not have: in the `blocks` or the `presets` of a schema, in a JSON template or a section group, or in `{% content_for 'block', type: '…' %}`. A section with blocks of its own (with a `name`) names its own types. |
 | `missing_schema_translation` | A `t:` key of a schema that the default schema locale (`locales/en.default.schema.json`) does not have: the theme editor shows the key. |
 | `block_type_case` | A warning: `{% content_for 'block', type: 'TEXT' %}` and `blocks/text.liquid`. Shopify finds the file whatever the case of the type, and so does local-storefront; the `hint` gives the type as the file is named. |
