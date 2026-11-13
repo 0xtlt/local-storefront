@@ -1279,6 +1279,38 @@ fn cart_lines_are_priced_by_their_selling_plan() {
 }
 
 #[test]
+fn weights_print_as_shopify_prints_them() {
+    // #128: a variant of 4536 g with the unit `lb`, as a store prints it.
+    let overlay = serde_json::json!({"products": [{
+        "title": "Heavy Widget",
+        "price": 1000,
+        "variants": [{ "weight": 4536, "weight_unit": "lb" }]
+    }]});
+    let (store, diagnostics) =
+        load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/products/heavy-widget",
+        Session::initial(&fixture.store),
+        "{%- assign v = product.variants.first -%}\
+         in_unit=[{{ v.weight_in_unit }}] own_unit=[{{ v.weight | weight_with_unit: v.weight_unit }}] \
+         kg=[{{ v.weight | weight_with_unit: 'kg' }}] \
+         nums=[{{ 1000 | weight_with_unit: 'kg' }}|{{ 1 | weight_with_unit: 'kg' }}|\
+         {{ 28 | weight_with_unit: 'oz' }}|{{ 2.5 | weight_with_unit: 'g' }}|\
+         {{ 1234 | weight_with_unit: 'kg' }}|{{ -1000 | weight_with_unit: 'kg' }}]",
+    );
+    assert_eq!(
+        output,
+        "in_unit=[10.0] own_unit=[10.0 lb] kg=[4.536 kg] \
+         nums=[1.0 kg|0.001 kg|1.0 oz|3 g|1.234 kg|-1.0 kg]"
+    );
+}
+
+#[test]
 fn robots_txt_keeps_the_line_breaks_of_its_template() {
     let fixture = fixture();
     let site = fixture.renderer.site(

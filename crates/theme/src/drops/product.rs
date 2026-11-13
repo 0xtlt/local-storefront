@@ -630,6 +630,23 @@ pub fn variant_json(site: &SiteRef, product_index: usize, variant_index: usize) 
     out
 }
 
+/// A weight in grams, in `unit` (`g`, `kg`, `lb`, `oz`; anything else is `kg`), as Shopify
+/// gives it in `variant.weight_in_unit` and `weight_with_unit`: grams are a whole number, the
+/// other units a decimal number rounded to the precision Shopify keeps for each (3 places for
+/// kilograms, 2 for pounds, 1 for ounces), which prints `10.0`, never `10`.
+pub fn weight_value(grams: f64, unit: &str) -> Value {
+    let rounded = |amount: f64, places: i32| {
+        let scale = 10f64.powi(places);
+        Value::Float((amount * scale).round() / scale)
+    };
+    match unit {
+        "g" => Value::Int(grams.round() as i64),
+        "lb" => rounded(grams / 453.592_37, 2),
+        "oz" => rounded(grams / 28.349_523_125, 1),
+        _ => rounded(grams / 1000.0, 3),
+    }
+}
+
 pub struct VariantDrop {
     pub site: SiteRef,
     pub product: usize,
@@ -706,10 +723,7 @@ impl Object for VariantDrop {
                 .get("product", || ProductDrop::value(site, self.product)),
             "weight" => Value::Int(variant.weight as i64),
             "weight_unit" => Value::from(&variant.weight_unit),
-            "weight_in_unit" => Value::Float(lsf_core::store::weight_in_unit(
-                variant.weight,
-                &variant.weight_unit,
-            )),
+            "weight_in_unit" => weight_value(variant.weight as f64, &variant.weight_unit),
             "inventory_quantity" => Value::Int(variant.inventory_quantity),
             "inventory_management" => {
                 if variant.inventory_tracked {
@@ -1016,5 +1030,29 @@ impl Object for ProductOptionValueDrop {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weights_are_rounded_as_shopify_rounds_them() {
+        // #128: what a store prints, and kilograms, pounds and ounces at the precision the
+        // Admin API gives them (3, 2 and 1 places).
+        let printed = |grams: f64, unit: &str| weight_value(grams, unit).to_str().into_owned();
+        assert_eq!(printed(4536.0, "lb"), "10.0");
+        assert_eq!(printed(4536.0, "kg"), "4.536");
+        assert_eq!(printed(1000.0, "kg"), "1.0");
+        assert_eq!(printed(1.0, "kg"), "0.001");
+        assert_eq!(printed(1234.0, "kg"), "1.234");
+        assert_eq!(printed(-1000.0, "kg"), "-1.0");
+        assert_eq!(printed(28.0, "oz"), "1.0");
+        assert_eq!(printed(6.7, "oz"), "0.2");
+        assert_eq!(printed(200.0, "lb"), "0.44");
+        assert_eq!(printed(2.5, "g"), "3");
+        assert_eq!(printed(500.0, "g"), "500");
+        assert!(matches!(weight_value(500.0, "g"), Value::Int(500)));
     }
 }

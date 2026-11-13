@@ -219,13 +219,8 @@ fn weight_with_unit(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<
         .get(0)
         .map(|unit| unit.to_str().into_owned())
         .unwrap_or_else(|| "kg".to_string());
-    let amount = match unit.as_str() {
-        "g" => grams,
-        "oz" => grams / 28.349_523_125,
-        "lb" => grams / 453.592_37,
-        _ => grams / 1000.0,
-    };
-    Ok(Value::from(format!("{} {unit}", compact_number(amount))))
+    let amount = crate::drops::product::weight_value(grams, &unit);
+    Ok(Value::from(format!("{} {unit}", amount.to_str())))
 }
 
 fn unit_price_with_measurement(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
