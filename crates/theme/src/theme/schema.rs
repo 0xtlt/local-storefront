@@ -11,6 +11,9 @@ pub struct SettingDef {
     pub default: Option<Json>,
     /// The metaobject type a `metaobject` or `metaobject_list` setting picks from.
     pub metaobject_type: Option<String>,
+    /// The value of the first of the `options` of a `select` or `radio` setting: what it is
+    /// when it has neither a value nor a `default`.
+    pub first_option: Option<String>,
 }
 
 /// A block type a section declares in its schema.
@@ -67,6 +70,13 @@ pub fn parse_settings(list: Option<&Json>) -> Vec<SettingDef> {
                 default: entry.get("default").cloned(),
                 metaobject_type: entry
                     .get("metaobject_type")
+                    .and_then(Json::as_str)
+                    .map(str::to_string),
+                first_option: entry
+                    .get("options")
+                    .and_then(Json::as_array)
+                    .and_then(|options| options.first())
+                    .and_then(|option| option.get("value"))
                     .and_then(Json::as_str)
                     .map(str::to_string),
             })

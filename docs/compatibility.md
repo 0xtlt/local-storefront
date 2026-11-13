@@ -229,6 +229,10 @@ locations, companies, company locations and company addresses.
   `product`, `collection`, `page`, `blog`, `article`, `metaobject`, `product_list`,
   `collection_list`, `metaobject_list`, `link_list`, `color`, `color_palette`, `color_scheme`, `color_scheme_group`, `font_picker`,
   `url`, `liquid`, `checkbox`, `number` and `range`; the other types are passed as written.
+  A setting with neither a value nor a `default` is what Shopify gives: the first option of a
+  `select` or a `radio`, `left` for a `text_alignment`, `""` for `text`, `textarea`,
+  `richtext`, `inline_richtext`, `html`, `color` and `color_background` (a cleared `color`
+  too), `false` for a `checkbox`, and nil for the others.
   A `metaobject` setting holds the entry's handle, `<type>.<handle>`, `<type>/<handle>` or
   `gid://shopify/Metaobject/<id>`. A `product`, `collection`, `page`, `blog`, `article` or
   `link_list` setting prints the handle of what it names (`blog/article` for an article), and

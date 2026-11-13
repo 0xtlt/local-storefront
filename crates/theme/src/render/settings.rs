@@ -349,7 +349,11 @@ fn convert(
             Value::Float(f) if f.fract() == 0.0 => Value::Int(*f as i64),
             other => other.clone(),
         },
-        "color" => color_value(&value),
+        // A cleared color is stored as `""`, and is `""`, which is `blank`.
+        "color" => match &value {
+            Value::Str(text) if text.trim().is_empty() => Value::empty_string(),
+            _ => color_value(&value),
+        },
         "color_palette" => match &value {
             Value::Hash(map) => Value::hash(
                 map.iter()
@@ -569,6 +573,20 @@ fn convert(
     }
 }
 
+/// What a setting with neither a value nor a `default` is, as Shopify's input settings reference
+/// says: the first option of a `select` or a `radio`, `left` for a `text_alignment`, an empty
+/// string for the settings that hold text or a color, and nil for the others (`number`, `url`,
+/// `image_picker`, a resource, ...).
+fn unset(def: &SettingDef) -> Value {
+    match def.kind.as_str() {
+        "select" | "radio" => def.first_option.as_deref().map_or(Value::Nil, Value::str),
+        "text_alignment" => Value::str("left"),
+        "text" | "textarea" | "richtext" | "inline_richtext" | "html" | "color"
+        | "color_background" => Value::empty_string(),
+        _ => Value::Nil,
+    }
+}
+
 /// Resolves the settings of a section, a block or the theme into a hash.
 ///
 /// Only the settings the schema declares are exposed, as on Shopify. `vars` are the variables
@@ -628,7 +646,7 @@ pub fn resolve_translated(
         }
         let raw: Option<&Json> = values.get(&def.id).or(def.default.as_ref());
         let value = match raw {
-            None | Some(Json::Null) => Value::Nil,
+            None | Some(Json::Null) => unset(def),
             Some(Json::String(text)) => {
                 if let Some(key) = text.strip_prefix("t:") {
                     // A translated default from the schema locale file.
