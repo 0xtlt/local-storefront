@@ -6,7 +6,7 @@ use std::sync::Arc;
 use lsf_core::store::{Link, LinkTarget, Menu};
 use lsf_liquid::{Object, Value};
 
-use super::SiteRef;
+use super::{EmptyDrop, SiteRef};
 use crate::render::cost;
 
 /// The global `linklists`: menus by handle.
@@ -19,11 +19,14 @@ impl Object for LinkListsDrop {
         "linklists"
     }
 
+    /// A menu by its handle. A handle that names no menu, `''` too, gives Shopify's `empty`
+    /// object: truthy, with no links.
     fn get(&self, key: &str) -> Option<Value> {
-        self.site
-            .store
-            .menu(key)
-            .map(|menu| LinkListDrop::value(&self.site, menu))
+        match self.site.store.menu(key) {
+            Some(menu) => Some(LinkListDrop::value(&self.site, menu)),
+            None if matches!(key, "size" | "first" | "last") => None,
+            None => Some(EmptyDrop::value(EmptyDrop::LINK_LIST)),
+        }
     }
 
     fn items(&self) -> Option<Arc<Vec<Value>>> {

@@ -12,7 +12,7 @@ use super::content::{ArticleDrop, BlogDrop, PageDrop};
 use super::media::ImageDrop;
 use super::metafield::image_from_src;
 use super::product::ProductDrop;
-use super::{DEFAULT_PAGE_LIMIT, PaginatedList, SiteRef};
+use super::{DEFAULT_PAGE_LIMIT, EmptyDrop, PaginatedList, SiteRef};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -101,12 +101,26 @@ impl Lookup {
         {
             return value.clone();
         }
-        let value = self.find(handle).unwrap_or(Value::Nil);
+        let value = self.find(handle).unwrap_or_else(|| self.missing(handle));
         self.cache
             .lock()
             .expect("lookup cache poisoned")
             .insert(handle.to_string(), value.clone());
         value
+    }
+
+    /// What a handle that names nothing gives: Shopify's `empty` object for a collection, a
+    /// product, a page or a blog; nil for an article. `size`, `first` and `last` stay nil.
+    fn missing(&self, handle: &str) -> Value {
+        if matches!(handle, "size" | "first" | "last") {
+            return Value::Nil;
+        }
+        match self.kind {
+            Kind::Collections => EmptyDrop::value(EmptyDrop::COLLECTION),
+            Kind::Blogs => EmptyDrop::value(EmptyDrop::BLOG),
+            Kind::AllProducts | Kind::Pages => EmptyDrop::value(EmptyDrop::NONE),
+            Kind::Articles | Kind::Images => Value::Nil,
+        }
     }
 
     fn list(&self) -> Option<Value> {

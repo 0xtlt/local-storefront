@@ -11,6 +11,7 @@ use lsf_liquid::{Context, Hash, Object, Template, Value, Variable};
 use serde_json::{Map, Value as Json};
 
 use super::state::RenderState;
+use crate::drops::EmptyDrop;
 use crate::drops::collection::CollectionDrop;
 use crate::drops::color::ColorDrop;
 use crate::drops::content::{ArticleDrop, BlogDrop, PageDrop};
@@ -310,30 +311,34 @@ fn convert(
             None => value,
         },
         "product" => match handle_of(&value) {
-            Some(handle) => store
-                .product_index(handle)
-                .map_or(Value::Nil, |index| ProductDrop::value(site, index)),
+            Some(handle) => store.product_index(handle).map_or_else(
+                || EmptyDrop::setting(EmptyDrop::NONE, handle),
+                |index| ProductDrop::value(site, index),
+            ),
             None if is_object => value,
             None => Value::Nil,
         },
         "collection" => match handle_of(&value) {
-            Some(handle) => store
-                .collection_index(handle)
-                .map_or(Value::Nil, |index| CollectionDrop::value(site, index)),
+            Some(handle) => store.collection_index(handle).map_or_else(
+                || EmptyDrop::setting(EmptyDrop::COLLECTION, handle),
+                |index| CollectionDrop::value(site, index),
+            ),
             None if is_object => value,
             None => Value::Nil,
         },
         "page" => match handle_of(&value) {
-            Some(handle) => store
-                .page_index(handle)
-                .map_or(Value::Nil, |index| PageDrop::value(site, index)),
+            Some(handle) => store.page_index(handle).map_or_else(
+                || EmptyDrop::setting(EmptyDrop::NONE, handle),
+                |index| PageDrop::value(site, index),
+            ),
             None if is_object => value,
             None => Value::Nil,
         },
         "blog" => match handle_of(&value) {
-            Some(handle) => store
-                .blog_index(handle)
-                .map_or(Value::Nil, |index| BlogDrop::value(site, index)),
+            Some(handle) => store.blog_index(handle).map_or_else(
+                || EmptyDrop::setting(EmptyDrop::BLOG, handle),
+                |index| BlogDrop::value(site, index),
+            ),
             None if is_object => value,
             None => Value::Nil,
         },
@@ -348,7 +353,7 @@ fn convert(
                         store.article_index(blog_index, article)?,
                     ))
                 })
-                .unwrap_or(Value::Nil),
+                .unwrap_or_else(|| EmptyDrop::setting(EmptyDrop::NONE, path)),
             None if is_object => value,
             None => Value::Nil,
         },
@@ -404,9 +409,10 @@ fn convert(
             _ => Value::array(Vec::new()),
         },
         "link_list" => match handle_of(&value) {
-            Some(handle) => store
-                .menu(handle)
-                .map_or(Value::Nil, |menu| LinkListDrop::value(site, menu)),
+            Some(handle) => store.menu(handle).map_or_else(
+                || EmptyDrop::setting(EmptyDrop::LINK_LIST, handle),
+                |menu| LinkListDrop::value(site, menu),
+            ),
             None if is_object => value,
             None => Value::Nil,
         },

@@ -89,6 +89,13 @@ pub trait Object: Send + Sync + 'static {
         None
     }
 
+    /// `self == other` when the object defines its own `==`, as a Ruby drop may: `Some` is the
+    /// answer, `None` compares as any object does. Only the left side of `==` is asked, as in
+    /// Ruby, where `nil == drop` is `NilClass#==`.
+    fn equals(&self, _other: &Value) -> Option<bool> {
+        None
+    }
+
     fn as_any(&self) -> &dyn Any;
 }
 
@@ -355,6 +362,11 @@ impl Value {
 
     /// Ruby's `==`.
     pub fn ruby_eq(&self, other: &Value) -> bool {
+        if let Value::Object(object) = self
+            && let Some(equal) = object.equals(other)
+        {
+            return equal;
+        }
         match (self, other) {
             (Value::Nil, Value::Nil) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,

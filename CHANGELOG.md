@@ -14,6 +14,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **A metafield used without `.value` acts as its value**, as on Shopify. A `boolean` metafield
   that is `false` is falsy in `{% if product.metafields.custom.flag %}`, so a theme test that
   expected the branch of `true` now gets the other one.
+- **A handle that names nothing is truthy.** `{% if collections[handle] %}`,
+  `{% if linklists[section.settings.menu] %}` and `{% if section.settings.product %}` with a
+  deleted product now take the branch a store takes, the truthy one. Test the lookup with
+  `== empty` or `== blank`, as Shopify's docs advise.
 
 ### Fixed
 
@@ -44,6 +48,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `{{ metaobjects.faq.values | sort: 'question' }}` give what a store gives, no longer `false`,
   `1`, the unformatted date or "cannot sort values of incompatible types". A reference, a list,
   a `json`, a `color`, a `money`, a `rating` or a measurement stays the metafield.
+- **A handle lookup that finds nothing is Shopify's `empty` object, no longer nil.**
+  `collections['x']`, `all_products['x']`, `pages['x']`, `blogs['x']`, `linklists['x']` and
+  `product.metafields.<namespace it lacks>` are truthy and `== empty`, and
+  `collections['x'].products.size`, `blogs['x'].articles.size` and `linklists['x'].links.size`
+  print `0`, no longer nothing. A `product`, `collection`, `page`, `blog`, `article` or
+  `link_list` setting whose handle no longer exists is truthy, `== blank` and `== nil`, and
+  prints the handle.
 
 ## 0.3.0-rc.5 - 2026-11-13
 

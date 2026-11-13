@@ -111,6 +111,13 @@ metaobject type), `product`, `collection`, `page`, `blog`, `article`, `policy`, 
 `content_for_header`, `content_for_layout`, `country_option_tags`, `all_country_option_tags`,
 `powered_by_link`, `additional_checkout_buttons`, `robots`, `self`.
 
+A handle that names nothing (`collections['x']`, `all_products['x']`, `pages['x']`, `blogs['x']`,
+`linklists['x']`, `linklists['']`) and a metafield namespace a resource does not have
+(`product.metafields.x`) give Shopify's [`empty` object](https://shopify.dev/docs/api/liquid/basics#empty):
+truthy, `== empty` and `== blank`, printing nothing, with empty `products`, `articles` and
+`links` (their `size` is 0) and nil for its other properties; `json` gives
+`{"error":"json not allowed for this object"}`. `articles['blog/x']` is still nil.
+
 With their related types: variants, options and option values (with swatches), media (images,
 videos, external videos, 3D models), image presentation and focal points, collection filters
 (with swatches) and sort options, links, addresses, orders and line items (a cart line has the
@@ -190,7 +197,9 @@ locations, companies, company locations and company addresses.
   `collection_list`, `metaobject_list`, `link_list`, `color`, `color_palette`, `color_scheme`, `color_scheme_group`, `font_picker`,
   `url`, `liquid`, `checkbox`, `number` and `range`; the other types are passed as written.
   A `metaobject` setting holds the entry's handle, `<type>.<handle>`, `<type>/<handle>` or
-  `gid://shopify/Metaobject/<id>`. Dynamic sources are evaluated (`{{ product.title }}`,
+  `gid://shopify/Metaobject/<id>`. A `product`, `collection`, `page`, `blog`, `article` or
+  `link_list` setting whose handle names nothing is truthy, `== blank`, `== empty` and `== nil`,
+  and prints its handle, as on Shopify. Dynamic sources are evaluated (`{{ product.title }}`,
   `{{ closest.product.metafields.custom.x }}`).
   A `color_scheme` setting, of a section, a block or the theme, gives the scheme's colors under
   `settings` (`section.settings.scheme.settings.background`), and `settings.color_schemes` gives

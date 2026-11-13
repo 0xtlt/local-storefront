@@ -1680,6 +1680,147 @@ fn a_metafield_without_value_compares_filters_and_sorts_as_its_value() {
 }
 
 #[test]
+fn a_handle_that_names_nothing_is_the_empty_object() {
+    // https://shopify.dev/docs/api/liquid/basics#empty: "An `empty` object is returned if you
+    // try to access an object that is defined, but has no value", truthy, so that themes
+    // compare it with `empty`. all_products: "If the product isn't found, then `empty` is
+    // returned."
+    let fixture = fixture();
+    let render = |source: &str| {
+        fixture.liquid(
+            "/products/organic-cotton-t-shirt",
+            Session::initial(&fixture.store),
+            source,
+        )
+    };
+    let probe = |name: &str, lookup: &str, size: &str| {
+        render(&format!(
+            "{{% assign x = {lookup} %}}{name}: {{% if x %}}truthy{{% else %}}falsy{{% endif %}} \
+             {{% if x == empty %}}empty{{% endif %}} size={{{{ {size} }}}}"
+        ))
+    };
+    assert_eq!(
+        probe("collection", "collections['nope']", "x.products.size"),
+        "collection: truthy empty size=0"
+    );
+    assert_eq!(
+        probe("product", "all_products['nope']", "x.size"),
+        "product: truthy empty size=0"
+    );
+    assert_eq!(
+        probe("page", "pages['nope']", "x.size"),
+        "page: truthy empty size=0"
+    );
+    assert_eq!(
+        probe("blog", "blogs['nope']", "x.articles.size"),
+        "blog: truthy empty size=0"
+    );
+    assert_eq!(
+        probe("menu", "linklists['nope']", "x.links.size"),
+        "menu: truthy empty size=0"
+    );
+    assert_eq!(
+        probe("menu", "linklists['']", "x.links.size"),
+        "menu: truthy empty size=0"
+    );
+    assert_eq!(
+        probe("namespace", "product.metafields.nope", "x.size"),
+        "namespace: truthy empty size=0"
+    );
+    // It prints nothing, its other properties are nil, and `json` refuses it, as on Shopify.
+    // A missing key inside a namespace is still nil, and `size` of the lookups is not a handle.
+    assert_eq!(
+        render(
+            "[{{ collections['nope'] }}]|[{{ collections['nope'].title }}]|\
+             {{ collections['nope'] | json }}|\
+             {% if product.metafields.custom.nope %}found{% else %}nil{% endif %}|\
+             {{ linklists.size }}|{{ product.metafields.size }}"
+        ),
+        format!(
+            "[]|[]|{{\"error\":\"json not allowed for this object\"}}|nil|{}|",
+            fixture.store.menus.len()
+        )
+    );
+}
+
+#[test]
+fn a_resource_setting_whose_handle_names_nothing_is_truthy_and_blank() {
+    // https://shopify.dev/docs/storefronts/themes/architecture/settings/input-settings#product:
+    // `blank` if "the selection no longer exists", and outputting the setting "will return the
+    // object's handle". The value is truthy, `== blank`, `== empty` and `== nil`.
+    let settings = [
+        ("product", "deleted-product", ""),
+        ("collection", "deleted-collection", " {{ x.products.size }}"),
+        ("page", "deleted-page", ""),
+        ("blog", "deleted-blog", " {{ x.articles.size }}"),
+        ("article", "news/deleted-article", ""),
+        ("link_list", "deleted-menu", " {{ x.links.size }}"),
+    ];
+    let sections: serde_json::Map<String, serde_json::Value> = settings
+        .iter()
+        .map(|(kind, handle, _)| {
+            (
+                (*kind).to_string(),
+                serde_json::json!({ "type": kind, "settings": { "x": handle } }),
+            )
+        })
+        .collect();
+    let template = serde_json::json!({
+        "sections": sections,
+        "order": settings.iter().map(|(kind, _, _)| *kind).collect::<Vec<_>>(),
+    })
+    .to_string();
+    let sources: Vec<(String, String)> = settings
+        .iter()
+        .map(|(kind, _, extra)| {
+            (
+                format!("sections/{kind}.liquid"),
+                format!(
+                    "{{% assign x = section.settings.x %}}<p>[{{{{ x }}}}] \
+                     {{% if x %}}truthy{{% else %}}falsy{{% endif %}} \
+                     {{% if x == blank %}}blank{{% endif %}} {{% if x == empty %}}empty{{% endif %}} \
+                     {{% if x == nil %}}nil{{% endif %}}{extra}</p>\
+                     {{% schema %}}{{\"name\": \"S\", \"tag\": null, \"settings\": \
+                     [{{\"type\": \"{kind}\", \"id\": \"x\", \"label\": \"X\"}}]}}{{% endschema %}}"
+                ),
+            )
+        })
+        .collect();
+    let mut files: Vec<(&str, &str)> = vec![
+        (
+            "layout/theme.liquid",
+            "<body>{{ content_for_layout }}</body>",
+        ),
+        ("templates/index.json", &template),
+    ];
+    files.extend(
+        sources
+            .iter()
+            .map(|(path, source)| (path.as_str(), source.as_str())),
+    );
+    let fixture = theme_of("dead-resource-settings", &[], &files);
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    let lines: Vec<&str> = rendered
+        .body
+        .split("<p>")
+        .skip(1)
+        .map(|line| line.split("</p>").next().unwrap())
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "[deleted-product] truthy blank empty nil",
+            "[deleted-collection] truthy blank empty nil 0",
+            "[deleted-page] truthy blank empty nil",
+            "[deleted-blog] truthy blank empty nil 0",
+            "[news/deleted-article] truthy blank empty nil",
+            "[deleted-menu] truthy blank empty nil 0",
+        ]
+    );
+}
+
+#[test]
 fn a_rating_has_strings_as_on_shopify() {
     // The rating of the Admin API's `jsonValue`, the same with numbers, and the Admin API's
     // `value` (the JSON text) pasted as is.
