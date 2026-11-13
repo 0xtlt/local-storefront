@@ -591,11 +591,9 @@ export function startCheckout({ root, initial, document, window, location, fetch
         }
         const { blocks } = await host.intercept();
         if (blocks.length > 0) {
-          const reasons = blocks.map((block) => block.reason).filter(Boolean);
-          ui.block = {
-            reason: reasons.join(' ') || 'An extension is blocking this order.',
-            errors: blocks.flatMap((block) => block.errors),
-          };
+          // The buyer sees the `errors` of a block, never its `reason`: Shopify keeps that for
+          // its own debugging. The Functions dialog lists both, for the developer.
+          ui.block = { blocks, errors: blocks.flatMap((block) => block.errors) };
           return;
         }
         // Behind whatever the extensions changed while they answered.

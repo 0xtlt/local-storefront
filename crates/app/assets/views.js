@@ -566,7 +566,9 @@ function actionsSection(ctx) {
     { class: 'lsf-actions' },
     placed.general.length > 0 &&
       banner('critical', placed.general.map((message) => h('p', null, message)), { 'data-banner': 'errors' }),
-    ui.block && banner('critical', [h('p', null, ui.block.reason), blockErrors.map((message) => h('p', null, message))], { 'data-banner': 'blocked' }),
+    // A block without errors stops the payment and says nothing, as on Shopify: its `reason`
+    // is not for the buyer (the Functions dialog shows it).
+    blockErrors.length > 0 && banner('critical', blockErrors.map((message) => h('p', null, message)), { 'data-banner': 'blocked' }),
     ui.failure && banner('critical', h('p', null, ui.failure), { 'data-banner': 'failure' }),
     slot('purchase.checkout.actions.render-before', { key: 'actions' }),
     h('div', { class: 'lsf-actions-row' },
@@ -1032,7 +1034,8 @@ function runDetail(ctx, runs, index) {
 }
 
 /** What the page and the app hold besides the runs: the other skin, the extensions, the errors
- * that block the checkout and the discounts that were not applied. */
+ * that block the checkout, what the extensions blocked the payment with, and the discounts that
+ * were not applied. */
 function functionsOverview(ctx) {
   const { state } = ctx;
   const refused = new Set((ctx.refusals ?? []).map((refusal) => refusal.handle));
@@ -1070,6 +1073,12 @@ function functionsOverview(ctx) {
       h('ul', null, state.idle.map((idle) => h('li', { key: idle.handle, class: focused(idle.handle) }, h('code', null, idle.handle), ` ${idle.reason}.`)))),
     (state.errors ?? []).length > 0 && h('div', null, h('h4', null, 'Errors that block the checkout'),
       h('ul', null, state.errors.map((error) => h('li', { class: focused(error.function) }, error.message, error.function && h('code', null, error.function), error.target && h('code', null, error.target))))),
+    // What `buyerJourney.intercept` blocked the last payment with. The buyer sees only the
+    // errors; the reason is for the developer, as Shopify keeps it for its own debugging.
+    (ctx.ui?.block?.blocks ?? []).length > 0 && h('div', { 'data-test': 'intercept-blocks' }, h('h4', null, 'Payment blocked by extensions'),
+      h('ul', null, ctx.ui.block.blocks.map((block) => h('li', { key: block.handle, class: focused(block.handle) },
+        h('strong', null, block.handle), block.reason ? ` reason: ${block.reason}` : ' (no reason)',
+        block.errors.length === 0 && h('span', { class: 'lsf-muted' }, ' · no errors: the buyer sees no message'))))),
     (state.skippedDiscounts ?? []).length > 0 && h('div', { 'data-test': 'skipped-discounts' }, h('h4', null, 'Discounts not applied'),
       h('ul', null, state.skippedDiscounts.map((skipped) => h('li', null, h('strong', null, skipped.title), skipped.code && h('code', null, skipped.code), ` ${skipped.reason}`, h('code', null, skipped.function))))),
     thrown.length > 0 && h('div', { 'data-test': 'extension-errors' }, h('h4', null, 'Errors of the checkout UI extensions'),

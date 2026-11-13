@@ -1248,7 +1248,11 @@ does.
 The checkout UI extensions render where their targets say: in the page, one sandboxed frame
 each. They read the checkout through the `shopify` global and change it with the `apply*Change`
 methods, `buyerJourney.intercept` can block the payment, and they draw with the Polaris web
-components (`s-text`, `s-button`, ...), as from API version 2025-10. React and remote-ui
+components (`s-text`, `s-button`, ...), as from API version 2025-10. A block shows the buyer its
+`errors` (at the field their `target` names, else above the button) and never its `reason`,
+which Shopify keeps for its own debugging: a block with no `errors` stops the payment without a
+word, so the extension says why in its own UI. The Overview of the Functions dialog lists each
+block with its `reason`. React and remote-ui
 extensions (2025-07 and older) do not run: lsf runs 2026-10 and 2027-01 only.
 
 What an extension throws, while its bundle loads, when a target renders or in a listener, and
