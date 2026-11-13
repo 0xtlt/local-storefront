@@ -2954,3 +2954,96 @@ fn theme_json_with_trailing_commas_and_unknown_escapes_renders_as_on_shopify() {
         ]
     );
 }
+
+#[test]
+fn closest_is_the_nearest_resource_setting_then_the_template() {
+    let template = r#"{
+      "sections": {
+        "main": {
+          "type": "feat",
+          "settings": { "product": "canvas-tote-bag" },
+          "blocks": {
+            "a": { "type": "card", "settings": {} },
+            "b": { "type": "plain", "settings": {} },
+            "g": {
+              "type": "group",
+              "settings": { "product": "ceramic-mug" },
+              "blocks": { "c": { "type": "card", "settings": {} }, "d": { "type": "plain", "settings": {} } },
+              "block_order": ["c", "d"]
+            }
+          },
+          "block_order": ["a", "b", "g"]
+        },
+        "param": { "type": "param" }
+      },
+      "order": ["main", "param"]
+    }"#;
+    let fixture = theme_of(
+        "closest-settings",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<body>{{ content_for_layout }}</body>",
+            ),
+            (
+                "sections/feat.liquid",
+                "<p>section=[{{ closest.product.handle }}]</p>{% content_for 'blocks' %}\
+                 {% schema %}{\"name\": \"Feat\", \"settings\": [{\"type\": \"product\", \"id\": \"product\", \
+                 \"label\": \"Product\"}], \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            (
+                "sections/param.liquid",
+                "{% content_for 'block', type: 'plain', id: 'p', closest.product: all_products['merino-crew-socks'] %}\
+                 {% content_for 'block', type: 'card', id: 'q', closest.product: all_products['merino-crew-socks'] %}\
+                 {% schema %}{\"name\": \"Param\", \"settings\": []}{% endschema %}",
+            ),
+            (
+                "blocks/card.liquid",
+                "<p>card {{ block.id | split: '__' | last }}=[{{ closest.product.handle }}]</p>\
+                 {% schema %}{\"name\": \"Card\", \"settings\": [{\"type\": \"product\", \"id\": \"product\", \
+                 \"label\": \"Product\"}]}{% endschema %}",
+            ),
+            (
+                "blocks/plain.liquid",
+                "<p>plain {{ block.id | split: '__' | last }}=[{{ closest.product.handle }}]</p>\
+                 {% schema %}{\"name\": \"Plain\", \"settings\": []}{% endschema %}",
+            ),
+            (
+                "blocks/group.liquid",
+                "<p>group {{ block.id | split: '__' | last }}=[{{ closest.product.handle }}]</p>{% content_for 'blocks' %}\
+                 {% schema %}{\"name\": \"Group\", \"settings\": [{\"type\": \"product\", \"id\": \"product\", \
+                 \"label\": \"Product\"}], \"blocks\": [{\"type\": \"@theme\"}]}{% endschema %}",
+            ),
+            ("templates/product.json", template),
+            ("templates/index.json", template),
+        ],
+    );
+    // The page's product, then the home page, which has none: the same, from the settings.
+    for path in ["/products/linen-overshirt", "/"] {
+        let rendered = fixture.page(path);
+        assert_clean(&rendered);
+        let lines: Vec<&str> = rendered
+            .body
+            .split("<p>")
+            .skip(1)
+            .map(|line| line.split("</p>").next().unwrap())
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "section=[canvas-tote-bag]",
+                // A block's own product setting is its closest, even unset.
+                "card a=[]",
+                "plain b=[canvas-tote-bag]",
+                "group g=[ceramic-mug]",
+                "card c=[]",
+                "plain d=[ceramic-mug]",
+                // `closest.product:` of `content_for`, under the block's own setting.
+                "plain p=[merino-crew-socks]",
+                "card q=[]",
+            ],
+            "{path}"
+        );
+    }
+}
