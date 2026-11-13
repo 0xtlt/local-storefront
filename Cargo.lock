@@ -2397,6 +2397,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "unicode-general-category",
 ]
 
 [[package]]

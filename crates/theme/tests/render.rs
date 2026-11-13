@@ -340,6 +340,32 @@ fn search_results_follow_sort_by() {
 }
 
 #[test]
+fn handleize_follows_a_shopify_store() {
+    // The issue's probe, with what a development store rendered (2026-11-12):
+    // https://github.com/0xtlt/local-storefront/issues/85
+    let fixture = fixture();
+    let render = |source: &str| fixture.liquid("/", Session::initial(&fixture.store), source);
+    assert_eq!(
+        render(
+            "[{{ \"Women's T-Shirts & Tops\" | handleize }}]\n[{{ \"L'été\" | handle }}]\n\
+             [{{ 'A_B' | handleize }}]\n[{{ 'Ελληνικά Русский 日本語' | handleize }}]\n\
+             [{{ '😀 smile 😀' | handleize }}]\n[{{ 'Straße Œuvre ﬁne' | handleize }}]"
+        ),
+        "[womens-t-shirts-tops]\n[lete]\n[a_b]\n[ελληνικά-русский-日本語]\n[😀-smile-😀]\n\
+         [strasse-oeuvre-ﬁne]"
+    );
+    // A tag's URL is its handle, the same as `handleize` gives.
+    assert_eq!(
+        fixture.liquid(
+            "/collections/all",
+            Session::initial(&fixture.store),
+            "{{ \"Women's Tops\" | link_to_tag: \"Women's Tops\" }}"
+        ),
+        "<a href=\"/collections/all/womens-tops\" title=\"Show products matching tag Women&#39;s Tops\">Women's Tops</a>"
+    );
+}
+
+#[test]
 fn liquid_template_with_translations_and_dates() {
     let rendered = fixture().page("/pages/about");
     assert_clean(&rendered);

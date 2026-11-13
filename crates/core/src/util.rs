@@ -20,58 +20,87 @@ pub fn count(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-/// Turns a string into a Shopify handle: lowercase ASCII letters and digits separated by
-/// single hyphens. Accented Latin letters are transliterated (`Crème brûlée` → `creme-brulee`).
+/// Turns a string into a Shopify handle, as the `handleize` filter does and as Shopify makes the
+/// handle of a resource from its title: lowercase, with a single hyphen for each run of spaces
+/// and punctuation, and none at the ends. Latin accents are folded (`Crème brûlée` →
+/// `creme-brulee`, `Straße` → `strasse`), a straight apostrophe is removed
+/// (`Women's` → `womens`), and underscores and the letters of other scripts, emoji and
+/// ligatures are kept (`A_B` → `a_b`, `Ελληνικά 日本語` → `ελληνικά-日本語`).
 pub fn handleize(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut pending_hyphen = false;
-    for c in input.chars() {
-        let mapped = transliterate(c);
-        for c in mapped.chars() {
-            if c.is_ascii_alphanumeric() {
+    for c in input.chars().flat_map(char::to_lowercase) {
+        for c in transliterate(c).chars() {
+            if c == '\'' {
+                continue;
+            }
+            if separates_words(c) {
+                pending_hyphen = true;
+            } else {
                 if pending_hyphen && !out.is_empty() {
                     out.push('-');
                 }
                 pending_hyphen = false;
-                out.push(c.to_ascii_lowercase());
-            } else {
-                pending_hyphen = true;
+                out.push(c);
             }
         }
     }
     out
 }
 
+/// What a handle replaces with a hyphen: spaces, control characters and punctuation (ASCII's
+/// symbols included, `&` or `+`), but the underscore.
+fn separates_words(c: char) -> bool {
+    use unicode_general_category::{GeneralCategory, get_general_category};
+    if c == '_' {
+        return false;
+    }
+    if c.is_ascii() {
+        return !c.is_ascii_alphanumeric();
+    }
+    c.is_whitespace()
+        || c.is_control()
+        || matches!(
+            get_general_category(c),
+            GeneralCategory::ConnectorPunctuation
+                | GeneralCategory::DashPunctuation
+                | GeneralCategory::OpenPunctuation
+                | GeneralCategory::ClosePunctuation
+                | GeneralCategory::InitialPunctuation
+                | GeneralCategory::FinalPunctuation
+                | GeneralCategory::OtherPunctuation
+                | GeneralCategory::SpaceSeparator
+                | GeneralCategory::LineSeparator
+                | GeneralCategory::ParagraphSeparator
+        )
+}
+
+/// A Latin letter with an accent, lowercase, as the plain letters it is folded to.
 fn transliterate(c: char) -> String {
     let replacement = match c {
-        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' | 'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å'
-        | 'Ā' | 'Ă' | 'Ą' => "a",
-        'æ' | 'Æ' => "ae",
-        'ç' | 'ć' | 'č' | 'ĉ' | 'ċ' | 'Ç' | 'Ć' | 'Č' | 'Ĉ' | 'Ċ' => "c",
-        'ď' | 'đ' | 'Ď' | 'Đ' | 'ð' | 'Ð' => "d",
-        'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' | 'È' | 'É' | 'Ê' | 'Ë' | 'Ē' | 'Ĕ'
-        | 'Ė' | 'Ę' | 'Ě' => "e",
-        'ĝ' | 'ğ' | 'ġ' | 'ģ' | 'Ĝ' | 'Ğ' | 'Ġ' | 'Ģ' => "g",
-        'ĥ' | 'ħ' | 'Ĥ' | 'Ħ' => "h",
-        'ì' | 'í' | 'î' | 'ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' | 'Ì' | 'Í' | 'Î' | 'Ï' | 'Ĩ' | 'Ī'
-        | 'Ĭ' | 'Į' | 'İ' => "i",
-        'ĵ' | 'Ĵ' => "j",
-        'ķ' | 'Ķ' => "k",
-        'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' | 'Ĺ' | 'Ļ' | 'Ľ' | 'Ŀ' | 'Ł' => "l",
-        'ñ' | 'ń' | 'ņ' | 'ň' | 'Ñ' | 'Ń' | 'Ņ' | 'Ň' => "n",
-        'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ŏ' | 'ő' | 'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' | 'Ø'
-        | 'Ō' | 'Ŏ' | 'Ő' => "o",
-        'œ' | 'Œ' => "oe",
-        'ŕ' | 'ŗ' | 'ř' | 'Ŕ' | 'Ŗ' | 'Ř' => "r",
-        'ś' | 'ŝ' | 'ş' | 'š' | 'Ś' | 'Ŝ' | 'Ş' | 'Š' => "s",
+        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' => "a",
+        'æ' => "ae",
+        'ç' | 'ć' | 'č' | 'ĉ' | 'ċ' => "c",
+        'ď' | 'đ' | 'ð' => "d",
+        'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => "e",
+        'ĝ' | 'ğ' | 'ġ' | 'ģ' => "g",
+        'ĥ' | 'ħ' => "h",
+        'ì' | 'í' | 'î' | 'ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => "i",
+        'ĵ' => "j",
+        'ķ' => "k",
+        'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' => "l",
+        'ñ' | 'ń' | 'ņ' | 'ň' => "n",
+        'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ŏ' | 'ő' => "o",
+        'œ' => "oe",
+        'ŕ' | 'ŗ' | 'ř' => "r",
+        'ś' | 'ŝ' | 'ş' | 'š' => "s",
         'ß' => "ss",
-        'ţ' | 'ť' | 'ŧ' | 'Ţ' | 'Ť' | 'Ŧ' => "t",
-        'þ' | 'Þ' => "th",
-        'ù' | 'ú' | 'û' | 'ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' | 'Ù' | 'Ú' | 'Û' | 'Ü' | 'Ũ'
-        | 'Ū' | 'Ŭ' | 'Ů' | 'Ű' | 'Ų' => "u",
-        'ŵ' | 'Ŵ' => "w",
-        'ý' | 'ÿ' | 'ŷ' | 'Ý' | 'Ÿ' | 'Ŷ' => "y",
-        'ź' | 'ż' | 'ž' | 'Ź' | 'Ż' | 'Ž' => "z",
+        'ţ' | 'ť' | 'ŧ' => "t",
+        'þ' => "th",
+        'ù' | 'ú' | 'û' | 'ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' => "u",
+        'ŵ' => "w",
+        'ý' | 'ÿ' | 'ŷ' => "y",
+        'ź' | 'ż' | 'ž' => "z",
         other => return other.to_string(),
     };
     replacement.to_string()
@@ -362,6 +391,31 @@ mod tests {
         );
         assert_eq!(handleize("Crème brûlée"), "creme-brulee");
         assert_eq!(handleize("Straße"), "strasse");
+    }
+
+    #[test]
+    fn handleizes_as_a_shopify_store_does() {
+        // What a development store's `handleize` gave for each input (2026-11-12):
+        // https://github.com/0xtlt/local-storefront/issues/85
+        // A straight apostrophe is removed, a curly one is a hyphen; underscores, other scripts,
+        // emoji and ligatures are kept; Latin accents are folded.
+        for (input, handle) in [
+            ("Women's T-Shirts & Tops", "womens-t-shirts-tops"),
+            ("L'été", "lete"),
+            ("A_B", "a_b"),
+            ("Ελληνικά Русский 日本語", "ελληνικά-русский-日本語"),
+            ("😀 smile 😀", "😀-smile-😀"),
+            ("Straße Œuvre ﬁne", "strasse-oeuvre-ﬁne"),
+            ("L'été à Paris", "lete-a-paris"),
+            ("it's 100% (new)!", "its-100-new"),
+            ("  --A__B--  ", "a__b"),
+            ("ı İ", "i-i\u{307}"),
+            ("Été 2026", "ete-2026"),
+            ("Crème Brûlée", "creme-brulee"),
+            ("Women’s Tops", "women-s-tops"),
+        ] {
+            assert_eq!(handleize(input), handle, "{input:?}");
+        }
     }
 
     #[test]

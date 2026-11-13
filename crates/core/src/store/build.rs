@@ -322,7 +322,7 @@ impl Builder<'_> {
                         format!("\"{handle}\" is not a valid handle"),
                     )
                     .hint(format!(
-                        "handles are lowercase letters, digits and hyphens, e.g. \"{}\"",
+                        "handles are lowercase, with hyphens between words, e.g. \"{}\"",
                         handleize(if handle.is_empty() { title } else { handle })
                     ));
                 }
@@ -877,7 +877,7 @@ fn build_shop(builder: &mut Builder<'_>, input: &model::ShopInput, origin: &Orig
         permanent_domain: input
             .permanent_domain
             .clone()
-            .unwrap_or_else(|| format!("{}.myshopify.com", handleize(&name))),
+            .unwrap_or_else(|| format!("{}.myshopify.com", domain_label(&name))),
         money_format: input
             .money_format
             .clone()
@@ -4487,4 +4487,14 @@ pub fn apply_session_input(
         session.cart_note = cart.note.clone().unwrap_or_default();
         session.cart_attributes = cart.attributes.clone();
     }
+}
+
+/// The label of the shop's `<label>.myshopify.com`: the handle of its name, kept to what a domain
+/// name may hold (`Joe's Café` → `joes-cafe`).
+fn domain_label(name: &str) -> String {
+    handleize(name)
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
 }
