@@ -151,30 +151,15 @@ pub(super) fn request_for(store: &Store, host: String, path_and_query: &str) -> 
     request.query = form_urlencoded::parse(query.as_bytes())
         .map(|(key, value)| (key.into_owned(), value.into_owned()))
         .collect();
-    // A locale prefix selects the language, as on the server.
-    let first = path
-        .trim_start_matches('/')
-        .split('/')
-        .next()
-        .unwrap_or_default();
-    request.locale = store.primary_language().iso_code.clone();
-    if let Some(language) = store
-        .languages
-        .iter()
-        .find(|language| !language.primary && language.iso_code.eq_ignore_ascii_case(first))
-    {
-        request.locale = language.iso_code.clone();
-        request.root = language.root_url.clone();
-        let rest = path
-            .trim_start_matches('/')
-            .strip_prefix(first)
-            .unwrap_or_default();
-        request.path = if rest.is_empty() {
-            "/".to_string()
-        } else {
-            rest.to_string()
-        };
-    }
+    // A locale prefix selects the language, and a market's subfolder (`/en-be`) the market, as
+    // on the server: `render` answers what `serve` answers.
+    let (language, root, rest) = store.split_locale(path);
+    request.locale = language.iso_code.clone();
+    request.market = store
+        .market_of_root(&root)
+        .map(|market| market.handle.clone());
+    request.root = root;
+    request.path = rest;
     request
 }
 

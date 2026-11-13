@@ -195,6 +195,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `width` and `height`, wherever the theme passes it, as Shopify writes it.
 - **`image_url` raises on what is not an image, and `image_tag` without a size**, as Shopify
   does: see Breaking changes.
+- **`lsf render` and `lsf profile` answer a market's subfolders.** `/en-be/`, `/fr-be/products/…`
+  and a section rendered alone there (`/en-be/?section_id=…`) render in the market's country,
+  currency and language, as `serve` answers them and as Shopify serves a market's subfolders,
+  where they were the theme's 404 (and `render --strict` failed on the routes
+  `routes --all` lists).
 
 #### The checkout of an app
 
