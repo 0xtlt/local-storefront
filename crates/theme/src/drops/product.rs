@@ -259,7 +259,7 @@ impl Object for ProductDrop {
                 )
             }),
             "options_by_name" => self.memo.get("options_by_name", || {
-                Value::hash(
+                Value::object(OptionsByName(
                     product
                         .options
                         .iter()
@@ -271,7 +271,7 @@ impl Object for ProductDrop {
                             )
                         })
                         .collect(),
-                )
+                ))
             }),
             "media" => self.memo.get("media", || {
                 Value::array(
@@ -828,6 +828,52 @@ fn number(value: f64) -> Value {
         Value::Int(value as i64)
     } else {
         Value::Float(value)
+    }
+}
+
+/// `product.options_by_name`: the options by their name, which a lookup matches in any case, as
+/// on Shopify ("When accessing a specific option, the name is case-insensitive"). Otherwise a
+/// hash: a loop gives `[name, option]` pairs.
+struct OptionsByName(lsf_liquid::Hash);
+
+impl Object for OptionsByName {
+    fn type_name(&self) -> &str {
+        "options_by_name"
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        self.0.get(key).cloned().or_else(|| {
+            let key = key.to_lowercase();
+            self.0
+                .iter()
+                .find(|(name, _)| name.to_lowercase() == key)
+                .map(|(_, option)| option.clone())
+        })
+    }
+
+    fn items(&self) -> Option<std::sync::Arc<Vec<Value>>> {
+        Some(std::sync::Arc::new(
+            self.0
+                .iter()
+                .map(|(name, option)| Value::array(vec![Value::str(name), option.clone()]))
+                .collect(),
+        ))
+    }
+
+    fn size(&self) -> Option<usize> {
+        Some(self.0.len())
+    }
+
+    fn render(&self) -> Cow<'_, str> {
+        Cow::Owned(Value::hash(self.0.clone()).inspect())
+    }
+
+    fn to_json(&self) -> Json {
+        Value::hash(self.0.clone()).to_json()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
