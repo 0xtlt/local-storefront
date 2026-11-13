@@ -48,6 +48,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`/cart/add.js` answers `422` for an unknown variant**, no longer `404`, as the Ajax Cart API
   reference shows: `{"status":422,"message":"Cart Error","description":"Cannot find variant"}`.
   A theme test that expects `404` from `add.js` needs `422`.
+- **`image_url` raises `invalid url input` on what is not an image**, as on Shopify: nil, a
+  product, a variant or a cart line without an image, an empty string, a URL of another site.
+  lsf printed an empty string (or a URL that led nowhere), so an unguarded `image_url` passed on
+  lsf and showed a Liquid error on the store; `render --strict` now fails on it. **`image_tag`
+  raises `image_url must define width or height`** when `image_url` has neither. Guard the
+  image (`{% if product.featured_image %}`) and give `image_url` a width.
 
 ### Fixed
 
@@ -203,6 +209,8 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`image_tag: preload: true` writes `loading="eager"`**, as on Shopify, even with
   `loading: 'lazy'`: a preloaded hero image was lazy on lsf. `loading` now comes right after
   `width` and `height`, wherever the theme passes it, as Shopify writes it.
+- **`image_url` raises on what is not an image, and `image_tag` without a size**, as Shopify
+  does: see Breaking changes.
 
 ## 0.3.0-rc.5 - 2026-11-13
 

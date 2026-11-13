@@ -134,14 +134,24 @@ fn dimension(args: &FilterArgs, name: &str) -> Result<Option<u32>> {
     }
 }
 
+/// Whether a string given to `image_url` is a URL of another site than the shop's CDN.
+fn foreign_url(input: &Value) -> bool {
+    let Value::Str(text) = input else {
+        return false;
+    };
+    let absolute = text.starts_with("//") || text.contains("://");
+    absolute && !text.contains("/cdn/shop/")
+}
+
 fn image_url(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let site = site(ctx)?;
-    if input.is_nil() {
-        return Ok(Value::Nil);
+    // Shopify raises on what is not an image: nil, a product or a line item without one, a
+    // URL of another site.
+    let invalid = || Error::argument("invalid url input");
+    if foreign_url(input) {
+        return Err(invalid());
     }
-    let Some((image, alt)) = resolve_image(site, input) else {
-        return Ok(Value::Nil);
-    };
+    let (image, alt) = resolve_image(site, input).ok_or_else(invalid)?;
     let width = dimension(args, "width")?;
     let height = dimension(args, "height")?;
     let mut params: Vec<(String, String)> = Vec::new();
@@ -267,6 +277,9 @@ fn image_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
             html_attributes(&args.named, &["preload", "widths"])
         )));
     };
+    if url.width.is_none() && url.height.is_none() {
+        return Err(Error::argument("image_url must define width or height"));
+    }
     let (output_width, output_height) = output_size(url);
 
     let alt = match args.named("alt") {

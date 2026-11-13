@@ -661,6 +661,85 @@ fn a_preloaded_image_tag_loads_eagerly() {
 }
 
 #[test]
+fn image_url_raises_on_what_is_not_an_image() {
+    // Issue #124: Shopify prints `invalid url input` for nil, a product or a line item without
+    // an image and a URL of another site, and `image_tag` raises when `image_url` has neither a
+    // width nor a height (https://shopify.dev/docs/api/liquid/filters/image_url: "If neither
+    // are specified, then an error is returned"); `image_url` alone gives the URL, as in
+    // Dawn's `og:image`.
+    let overlay = serde_json::json!({"products": [
+        {"title": "Widget", "price": 1000,
+         "images": [{"src": "widget.jpg", "width": 1600, "height": 1600}]},
+        {"title": "Plain", "price": 500}
+    ]});
+    let (store, diagnostics) =
+        load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let plain = store.product_by_handle("plain").expect("plain").variants[0].id;
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let mut session = Session::initial(&fixture.store);
+    session.cart_lines = vec![CartLine {
+        variant_id: plain,
+        quantity: 1,
+        properties: Default::default(),
+        selling_plan: None,
+    }];
+    let render = |source: &str| {
+        let site = fixture.renderer.site(
+            fixture.store.clone(),
+            request("/products/widget"),
+            session.clone(),
+        );
+        let page = lsf_theme::render::routes::resolve(&site);
+        let (output, errors) = fixture
+            .renderer
+            .render_liquid(&site, page, source, &[])
+            .expect("the template parses");
+        let errors: Vec<String> = errors.iter().map(|error| error.bare_message()).collect();
+        (output, errors)
+    };
+    let invalid = "Liquid error (line 1): invalid url input";
+    for source in [
+        "{{ nothing | image_url: width: 100 }}",
+        "{{ all_products['plain'].featured_image | image_url: width: 100 }}",
+        "{{ all_products['plain'] | image_url: width: 100 }}",
+        "{{ all_products['plain'].variants.first | image_url: width: 100 }}",
+        "{{ cart.items.first.image | image_url: width: 10 }}",
+        "{{ cart.items.first | image_url: width: 10 }}",
+        "{{ '' | image_url: width: 100 }}",
+        "{{ 'https://example.com/a.jpg' | image_url: width: 100 }}",
+    ] {
+        let (output, errors) = render(source);
+        assert_eq!(output, invalid, "{source}");
+        assert_eq!(errors, ["invalid url input"], "{source}");
+    }
+    let (output, errors) = render("{{ product.featured_image | image_url | image_tag }}");
+    assert_eq!(
+        output,
+        "Liquid error (line 1): image_url must define width or height"
+    );
+    assert_eq!(errors.len(), 1);
+    // What is an image still works: an image, its `src`, a URL of the shop's CDN, and
+    // `image_url` without a size.
+    let (output, errors) = render(
+        "{{ product.featured_image.src | image_url: width: 100 }}|\
+         {{ product.featured_image | image_url: width: 100 | image_url: width: 50 }}|\
+         {{ product.featured_image | image_url }}",
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    let urls: Vec<&str> = output.split('|').collect();
+    assert!(
+        urls[0].contains("/cdn/shop/files/widget.jpg?") && urls[0].ends_with("&width=100"),
+        "{output}"
+    );
+    assert!(urls[1].ends_with("&width=50"), "{output}");
+    assert!(!urls[2].contains("width="), "{output}");
+}
+
+#[test]
 fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
     let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
     assert!(diagnostics.is_empty(), "{diagnostics}");
