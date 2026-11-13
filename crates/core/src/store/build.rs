@@ -63,6 +63,7 @@ pub struct MergedInput {
     pub locations: Vec<Sourced<model::LocationInput>>,
     pub selling_plan_groups: Vec<Sourced<model::SellingPlanGroupInput>>,
     pub metaobjects: Vec<(String, Sourced<model::MetaobjectInput>)>,
+    pub metaobject_definitions: IndexMap<String, Sourced<model::MetaobjectDefinitionInput>>,
     pub localization: Option<Sourced<model::LocalizationInput>>,
     pub files: IndexMap<String, model::FileInput>,
     pub session: Option<Sourced<model::SessionInput>>,
@@ -524,6 +525,13 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         locations,
         selling_plan_groups: Vec::new(),
         metaobjects: Vec::new(),
+        metaobject_url_handles: input
+            .metaobject_definitions
+            .iter()
+            .filter_map(|(kind, definition)| {
+                Some((kind.clone(), definition.value.url_handle.clone()?))
+            })
+            .collect(),
         countries: Vec::new(),
         markets: Vec::new(),
         languages: Vec::new(),

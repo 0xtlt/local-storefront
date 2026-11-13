@@ -565,6 +565,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   part, or the initial of the customer logged in) leads to the sign-in page or to `/account`;
   the account sheet is not drawn.
 
+- **The page of a metaobject entry is at the URL handle of its type**, which
+  `metaobject_definitions.<type>.url_handle` of the store data sets, as Shopify's definitions
+  set `urlHandle`: with `"info": {"url_handle": "infos"}`, the entry `about` is at
+  `/pages/infos/about`, and so are `metaobject.system.url`, `canonical_url`,
+  `shopify://metaobjects/info/about` in a `url` setting and the menus of the Admin API;
+  `/pages/info/about` is not found. A type without one is still at `/pages/<type>/<handle>`.
+
 #### The Admin API, for the backend of an app
 
 - **An order placed with a cart transform bundle lists its components**, as on Shopify: a line

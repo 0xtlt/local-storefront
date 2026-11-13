@@ -6,8 +6,9 @@
 //! shopify-local/
 //!   *.json            any number of files, each holding any of: shop, products, collections,
 //!                     pages, blogs, menus, customers, companies, gift_cards, locations,
-//!                     selling_plan_groups, swatches, metaobjects, localization, files,
-//!                     session, checkout, now, theme_settings, app. They are merged.
+//!                     selling_plan_groups, swatches, metaobjects, metaobject_definitions,
+//!                     localization, files, session, checkout, now, theme_settings, app.
+//!                     They are merged.
 //!   products/*.json   one product per file (or an array); the file name is the default handle
 //!   collections/*.json, pages/*.json, blogs/*.json, customers/*.json, menus/*.json
 //!   checkouts/*.json  checkout scenarios, one per file
@@ -511,7 +512,11 @@ fn salvage_store(
                 }
             }
             [
-                section @ ("menus" | "swatches" | "files" | "metaobjects"),
+                section @ ("menus"
+                | "swatches"
+                | "files"
+                | "metaobjects"
+                | "metaobject_definitions"),
                 key,
                 ..,
             ] => removed_keys.push(((*section).to_string(), (*key).to_string())),
@@ -744,6 +749,12 @@ fn merge_store_file(
     for (name, value) in input.swatches {
         let origin = origin(format!("/swatches/{name}"));
         merged.swatches.insert(name, Sourced { value, origin });
+    }
+    for (kind, value) in input.metaobject_definitions {
+        let origin = origin(format!("/metaobject_definitions/{kind}"));
+        merged
+            .metaobject_definitions
+            .insert(kind, Sourced { value, origin });
     }
     for (handle, value) in input.menus {
         if merged.menus.contains_key(&handle) {
@@ -1065,6 +1076,12 @@ fn apply_overlay(
     for (name, value) in input.swatches {
         let origin = origin(format!("/swatches/{name}"));
         merged.swatches.insert(name, Sourced { value, origin });
+    }
+    for (kind, value) in input.metaobject_definitions {
+        let origin = origin(format!("/metaobject_definitions/{kind}"));
+        merged
+            .metaobject_definitions
+            .insert(kind, Sourced { value, origin });
     }
     for (handle, value) in input.menus {
         let origin = origin(format!("/menus/{handle}"));

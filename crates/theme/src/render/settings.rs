@@ -93,7 +93,13 @@ fn resolve_url(site: &Site, raw: &str, origin: UrlOrigin) -> String {
     let path = match raw.strip_prefix("shopify://") {
         // The page of a metaobject entry: `shopify://metaobjects/<type>/<handle>`.
         Some(rest) if rest.starts_with("metaobjects/") => {
-            format!("/pages/{}", &rest["metaobjects/".len()..])
+            let entry = &rest["metaobjects/".len()..];
+            match entry.split_once('/') {
+                Some((kind, handle)) => {
+                    format!("/pages/{}/{handle}", site.store.metaobject_url_handle(kind))
+                }
+                None => format!("/pages/{entry}"),
+            }
         }
         Some(rest) => format!("/{rest}"),
         None if origin == UrlOrigin::Default || (origin == UrlOrigin::Saved && raw == "/") => {

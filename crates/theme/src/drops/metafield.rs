@@ -844,10 +844,11 @@ impl Object for MetaobjectDrop {
                         &self.site.theme,
                         &self.entry.kind,
                     ) {
-                        Value::from(self.site.request.localized(&format!(
-                            "/pages/{}/{}",
-                            self.entry.kind, self.entry.handle
-                        )))
+                        Value::from(
+                            self.site
+                                .request
+                                .localized(&self.site.store.metaobject_path(&self.entry)),
+                        )
                     } else {
                         Value::Nil
                     },

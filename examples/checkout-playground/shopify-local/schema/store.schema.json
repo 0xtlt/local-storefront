@@ -99,6 +99,14 @@
       },
       "default": {}
     },
+    "metaobject_definitions": {
+      "description": "The definitions of metaobject types, by type: what a type sets for all its entries.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/MetaobjectDefinitionInput"
+      },
+      "default": {}
+    },
     "localization": {
       "description": "The countries and languages of the store. At most one data file may define it.",
       "anyOf": [
@@ -2852,7 +2860,7 @@
           }
         },
         "template_suffix": {
-          "description": "Selects `templates/metaobject/<type>.<suffix>.json` instead of\n`templates/metaobject/<type>.json` for the page of the entry, which is\n`/pages/<type>/<handle>`.",
+          "description": "Selects `templates/metaobject/<type>.<suffix>.json` instead of\n`templates/metaobject/<type>.json` for the page of the entry, which is\n`/pages/<url_handle>/<handle>` (`url_handle` of its definition, else its type).",
           "type": [
             "string",
             "null"
@@ -2864,6 +2872,21 @@
       "required": [
         "handle"
       ]
+    },
+    "MetaobjectDefinitionInput": {
+      "description": "The definition of a metaobject type (`metaobject_definitions.<type>`).",
+      "type": "object",
+      "properties": {
+        "url_handle": {
+          "description": "The handle of the type's web pages, Shopify's `capabilities.onlineStore.data.urlHandle`:\nthe entries are served at `/pages/<url_handle>/<handle>`. Defaults to the type.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
     },
     "LocalizationInput": {
       "description": "The countries and languages the store sells in (the `localization` object).\n\nThe first language is the primary one and is served at `/`; the others are served under\n`/<iso_code>/`. Defaults to one country, the shop's (`shop.address.country_code`, else `US`),\nand the theme's default language.",

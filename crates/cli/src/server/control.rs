@@ -168,7 +168,7 @@ pub fn routes(state: &ServerState) -> Vec<String> {
             .filter(|entry| {
                 lsf_theme::render::routes::has_metaobject_page(&state.app.theme, &entry.kind)
             })
-            .map(|entry| format!("/pages/{}/{}", entry.kind, entry.handle)),
+            .map(|entry| store.metaobject_path(entry)),
     );
     routes.extend(store.gift_cards.iter().map(|card| card.path(store.shop.id)));
     routes.extend(

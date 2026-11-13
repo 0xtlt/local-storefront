@@ -90,6 +90,20 @@ pub fn definition_of(state: &ShopState, kind: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The handle of the web pages of a type (`capabilities.onlineStore.data.urlHandle` of its
+/// definition), else the type: its entries are at `/pages/<url handle>/<handle>`.
+pub fn url_handle<'a>(state: &'a ShopState, kind: &'a str) -> &'a str {
+    definition_of(state, kind)
+        .and_then(|id| state.get(&id))
+        .and_then(|definition| {
+            definition
+                .get("capabilities")?
+                .pointer("/onlineStore/data/urlHandle")?
+                .as_str()
+        })
+        .unwrap_or(kind)
+}
+
 fn entry_of(state: &ShopState, kind: &str, handle: &str) -> Option<String> {
     state
         .with_handle("Metaobject", handle, Some(("type", kind)))

@@ -1003,9 +1003,20 @@ and read with `{{ metaobjects.designer.sam.name }}` or
 `{% for d in metaobjects.designer.values %}`.
 
 A type whose theme has `templates/metaobject/<type>.json` (or `.liquid`) is a type with web
-pages on Shopify: each entry is served at `/pages/<type>/<handle>`, the template sees it as
-`metaobject`, and `metaobject.system.url` is that URL. Without the template the entry has no
-page and `system.url` is blank. `"template_suffix": "alt"` on an entry renders it with
+pages on Shopify: each entry is served at `/pages/<url handle>/<handle>`, the template sees it
+as `metaobject`, and `metaobject.system.url` is that URL. The URL handle is set on the type's
+definition, Shopify's `urlHandle` of its online store capability; it is the type unless
+`metaobject_definitions` gives another one:
+
+```json
+{
+  "metaobject_definitions": { "info": { "url_handle": "infos" } },
+  "metaobjects": { "info": [{ "handle": "about", "fields": { "title": "About us" } }] }
+}
+```
+
+`about` is then at `/pages/infos/about`, and `/pages/info/about` is not found, as on Shopify.
+Without the template the entry has no page and `system.url` is blank. `"template_suffix": "alt"` on an entry renders it with
 `templates/metaobject/<type>.alt.json`, and `?view=alt` does the same for one request. The page
 title is the entry's `title` or `name` field, or its handle. `shopify://metaobjects/<type>/<handle>`
 in a `url` setting leads to the page.

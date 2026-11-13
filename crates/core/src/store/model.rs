@@ -1453,9 +1453,19 @@ pub struct MetaobjectInput {
     pub translations: IndexMap<String, IndexMap<String, Json>>,
     /// Selects `templates/metaobject/<type>.<suffix>.json` instead of
     /// `templates/metaobject/<type>.json` for the page of the entry, which is
-    /// `/pages/<type>/<handle>`.
+    /// `/pages/<url_handle>/<handle>` (`url_handle` of its definition, else its type).
     #[serde(default)]
     pub template_suffix: Option<String>,
+}
+
+/// The definition of a metaobject type (`metaobject_definitions.<type>`).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MetaobjectDefinitionInput {
+    /// The handle of the type's web pages, Shopify's `capabilities.onlineStore.data.urlHandle`:
+    /// the entries are served at `/pages/<url_handle>/<handle>`. Defaults to the type.
+    #[serde(default)]
+    pub url_handle: Option<String>,
 }
 
 /// A reference to a variant: its numeric id, its SKU, or a product handle (meaning that
@@ -2159,6 +2169,9 @@ pub struct StoreInput {
     /// Metaobject entries by type.
     #[serde(default)]
     pub metaobjects: IndexMap<String, Vec<MetaobjectInput>>,
+    /// The definitions of metaobject types, by type: what a type sets for all its entries.
+    #[serde(default)]
+    pub metaobject_definitions: IndexMap<String, MetaobjectDefinitionInput>,
     /// The countries and languages of the store. At most one data file may define it.
     #[serde(default)]
     pub localization: Option<LocalizationInput>,

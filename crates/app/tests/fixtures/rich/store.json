@@ -185,6 +185,7 @@
     { "code": "DISABLED00000000", "initial_value": 2500, "enabled": false, "currency": "GBP" },
     { "code": "OLDCARD000000000", "initial_value": 1000, "expires_on": "2025-12-31" }
   ],
+  "metaobject_definitions": { "designer": { "url_handle": "designers" } },
   "metaobjects": {
     "designer": [
       { "handle": "ines", "fields": { "name": "Inès", "bio": { "type": "multi_line_text_field", "value": "Paris based.\nLinen lover." }, "portrait": { "type": "file_reference", "value": "lookbook/hero.jpg" }, "signature_piece": { "type": "product_reference", "value": "linen-dress" } } },
