@@ -163,6 +163,23 @@ pub fn page_closest(ctx: &Context) -> Arc<Hash> {
     Arc::new(closest)
 }
 
+/// The resource types `closest` gives.
+const CLOSEST_TYPES: [&str; 5] = ["product", "collection", "article", "blog", "page"];
+
+/// `closest` inside a section or a block: its own resource setting of each type, even when it
+/// is empty, over the one of what it is in, as Shopify resolves it (the block, its parent
+/// blocks, the section, then the template).
+fn closest_of(parent: &Arc<Hash>, schema: &Schema, settings: &Value) -> Arc<Hash> {
+    let mut own: Option<Hash> = None;
+    for kind in CLOSEST_TYPES {
+        if let Some(def) = schema.settings.iter().find(|def| def.kind == kind) {
+            own.get_or_insert_with(|| (**parent).clone())
+                .insert(kind.to_string(), settings.get(&def.id));
+        }
+    }
+    own.map_or_else(|| parent.clone(), Arc::new)
+}
+
 /// The blocks listed in `section.blocks`, in order.
 fn section_blocks(
     state: &RenderState,
@@ -301,11 +318,12 @@ pub fn render_section(
     })?;
     report_schema(ctx, &path, &file);
     let schema = &file.schema;
-    let closest = page_closest(ctx);
+    let settings = settings::resolve(state, ctx, &schema.settings, &instance.settings, &[]);
+    let closest = closest_of(&page_closest(ctx), schema, &settings);
     let section = Value::object(SectionDrop {
         id: placement.id.clone(),
         kind: instance.kind.clone(),
-        settings: settings::resolve(state, ctx, &schema.settings, &instance.settings, &[]),
+        settings,
         blocks: section_blocks(state, ctx, &placement.id, schema, instance, &closest),
         index: state.next_section_index(placement.location),
         location: placement.location.to_string(),
@@ -456,20 +474,24 @@ pub fn render_block(
     let first_id = theme_block_id(&container.section_id, key);
     let place = format!("{}/{key}", container.path);
     let id = state.block_render_id(&first_id, &place);
+    // Its settings' dynamic sources see the closest resources of what it is in; its Liquid and
+    // its blocks see its own.
+    let settings = settings::resolve(
+        state,
+        ctx,
+        &schema.settings,
+        &instance.settings,
+        &[
+            ("closest", Value::object(ClosestDrop(closest.clone()))),
+            ("section", container.section.clone()),
+        ],
+    );
+    let closest = closest_of(closest, schema, &settings);
     let closest_value = Value::object(ClosestDrop(closest.clone()));
     let block = Value::object(BlockDrop {
         id: id.clone(),
         kind: instance.kind.clone(),
-        settings: settings::resolve(
-            state,
-            ctx,
-            &schema.settings,
-            &instance.settings,
-            &[
-                ("closest", closest_value.clone()),
-                ("section", container.section.clone()),
-            ],
-        ),
+        settings,
         content: None,
         app: None,
     });

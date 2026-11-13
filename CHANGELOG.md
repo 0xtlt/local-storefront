@@ -5,6 +5,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 ## Unreleased
 
+### Breaking changes
+
+- **`closest.<resource>` is the nearest resource setting, even an empty one.** A theme block
+  whose own `product` setting is unset no longer gets the page's product as `closest.product`:
+  it gets none, as on Shopify. Give the setting a value, or `{{ closest.product }}` as its
+  default, to keep the product of what the block is in.
+
 ### Fixed
 
 #### Themes and the storefront
@@ -22,6 +29,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   says Shopify refuses such a file: it warns (`lenient_json`) and exits `0`. A file that starts
   with a byte order mark is still an error, as on Shopify, and a render now names it in a
   warning rather than leave its settings or translations out silently.
+- **`closest.product` follows block and section settings.** In a theme block, `closest.product`
+  (and `closest.collection`, `article`, `blog`, `page`) is the block's own resource setting,
+  else its parent blocks', else the section's, and only then the template's resource, as
+  Shopify resolves it. A product card in a group of another product shows that product, and a
+  section's product setting reaches its blocks outside a product page too.
 
 ## 0.3.0-rc.5 - 2026-11-13
 

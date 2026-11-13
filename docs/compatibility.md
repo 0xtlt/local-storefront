@@ -139,6 +139,13 @@ locations, companies, company locations and company addresses.
   defaults from the schema, `disabled` sections and blocks.
 - Theme blocks (`blocks/*.liquid`), nested blocks, static blocks, `{% content_for 'blocks' %}`
   and `{% content_for 'block' %}`, `closest.<resource>`.
+- `closest.product`, `closest.collection`, `closest.article`, `closest.blog` and `closest.page`
+  are, as on Shopify, the setting of that type of the block being rendered, else of its parent
+  blocks, else of the section, else the resource of the template. The nearest setting counts
+  even when it is empty: a block with an unset `product` setting has no `closest.product`. A
+  `closest.product:` parameter of `{% content_for %}` stands for the setting of the block that
+  passes it, so the rendered block's own setting comes first. `closest.metaobject` is not
+  supported.
 - The id of a theme block (`block.id`, and its wrapper's `id="shopify-block-<id>"`) is
   `<prefix>__<key>`, the key being its key in the JSON template or the `id` of a static block.
   A block rendered again on the same page is numbered as on Shopify: the first render is
