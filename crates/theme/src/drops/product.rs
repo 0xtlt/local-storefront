@@ -11,7 +11,7 @@ use lsf_liquid::{Object, Value};
 use serde_json::{Value as Json, json};
 
 use super::color::ColorDrop;
-use super::media::{ImageDrop, MediaDrop, image_base_url, image_media_json};
+use super::media::{ImageDrop, MediaDrop, image_base_url};
 use super::metafield::MetafieldsDrop;
 use super::selling_plan::{
     allocation_json, allocation_value, allocations_value, group_json, group_value, plan_value,
@@ -278,7 +278,7 @@ impl Object for ProductDrop {
                     product
                         .media
                         .iter()
-                        .map(|media| MediaDrop::value(site, media, Some(self.index)))
+                        .map(|media| MediaDrop::of_product(site, media, self.index))
                         .collect(),
                 )
             }),
@@ -301,7 +301,7 @@ impl Object for ProductDrop {
                 None => Value::Nil,
             },
             "featured_media" => match product.media.first() {
-                Some(media) => MediaDrop::value(site, media, Some(self.index)),
+                Some(media) => MediaDrop::of_product(site, media, self.index),
                 None => Value::Nil,
             },
             "collections" => self.memo.get("collections", || {
@@ -384,10 +384,7 @@ impl Object for ProductDrop {
         let media: Vec<Json> = product
             .media
             .iter()
-            .map(|media| match (&media.kind, &media.preview) {
-                (MediaKind::Image, Some(image)) => image_media_json(site, media, image),
-                _ => MediaDrop::value(site, media, Some(self.index)).to_json(),
-            })
+            .map(|media| MediaDrop::of_product(site, media, self.index).to_json())
             .collect();
         json!({
             "id": product.id,

@@ -144,6 +144,10 @@ and the order keep it. One `_` is not private, nor are line item properties.
 (under the language and market prefix of the request: `/fr-be/products/tee`) and each variant's
 `quantity_price_breaks` (`[]` when it has none), as on Shopify.
 
+`{{ product.media | json }}` and `{{ product.featured_media | json }}` give media objects, as
+`{{ product | json }}` does, and `product.images` and `product.featured_image` give URLs, as on
+Shopify.
+
 With their related types: variants (`product.variants` gives the first 250, as on Shopify, and
 `product.variants_count` all of them; so does the product JSON of the Ajax API), options and
 option values (with swatches; an option's `json` is its `name`, `position` and `values`, as on

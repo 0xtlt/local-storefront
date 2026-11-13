@@ -38,6 +38,8 @@ pub struct ImageDrop {
     pub product: Option<usize>,
     /// 1-based position among the product's media.
     pub position: Option<usize>,
+    /// The media it is, in `product.media`: its `json` is then the media's.
+    media: Option<Media>,
     memo: Memo,
 }
 
@@ -48,6 +50,7 @@ impl ImageDrop {
             image: image.clone(),
             product: None,
             position: None,
+            media: None,
             memo: Memo::default(),
         })
     }
@@ -62,6 +65,7 @@ impl ImageDrop {
             image: image.clone(),
             product: Some(product),
             position: Some(position),
+            media: None,
             memo: Memo::default(),
         })
     }
@@ -145,7 +149,10 @@ impl Object for ImageDrop {
     }
 
     fn to_json(&self) -> serde_json::Value {
-        serde_json::Value::String(image_base_url(&self.site, &self.image))
+        match &self.media {
+            Some(media) => image_media_json(&self.site, media, &self.image),
+            None => serde_json::Value::String(image_base_url(&self.site, &self.image)),
+        }
     }
 
     fn identity(&self) -> Option<String> {
@@ -218,6 +225,22 @@ impl MediaDrop {
                 site: site.clone(),
                 media: media.clone(),
             }),
+        }
+    }
+
+    /// A media of `product.media` and `product.featured_media`. An image is the image drop
+    /// whose `json` is the media object, not its URL, as on Shopify.
+    pub fn of_product(site: &SiteRef, media: &Media, product: usize) -> Value {
+        match (&media.kind, &media.preview) {
+            (MediaKind::Image, Some(image)) => Value::object(ImageDrop {
+                site: site.clone(),
+                image: image.clone(),
+                product: Some(product),
+                position: Some(media.position),
+                media: Some(media.clone()),
+                memo: Memo::default(),
+            }),
+            _ => Self::value(site, media, Some(product)),
         }
     }
 }
@@ -324,8 +347,8 @@ impl Object for MediaDrop {
     }
 }
 
-/// The JSON of an image media, as it appears in a product's `media` array.
-pub fn image_media_json(site: &SiteRef, media: &Media, image: &Image) -> serde_json::Value {
+/// The JSON of an image media, in `product.media` and in the product's own `json`.
+fn image_media_json(site: &SiteRef, media: &Media, image: &Image) -> serde_json::Value {
     json!({
         "alt": if image.alt.is_empty() { serde_json::Value::Null } else { json!(image.alt) },
         "id": media.id,
