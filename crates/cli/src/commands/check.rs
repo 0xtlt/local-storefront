@@ -930,6 +930,14 @@ fn check_theme(
                         problem.hint,
                     );
                 }
+                for lenient in lsf_theme::theme::schema_check::lenient(&source) {
+                    tally.report(Diagnostic::new(
+                        "warning",
+                        lenient.code,
+                        Location::file(&path, Some(lenient.line)),
+                        lenient.message,
+                    ));
+                }
             }
             for missing in references::missing_assets(&theme, &source) {
                 let mut diagnostic = Diagnostic::new(
@@ -985,6 +993,15 @@ fn check_theme(
                 };
                 tally.problem("invalid_json", Location::file(&path, None), message);
                 continue;
+            }
+            let source = theme.files().read(&path).unwrap_or_default();
+            for (line, leniency) in lsf_core::json::theme_json(&source).1 {
+                tally.report(Diagnostic::new(
+                    "warning",
+                    "lenient_json",
+                    Location::file(&path, Some(line)),
+                    lsf_theme::theme::schema_check::lenient_message("the file", leniency),
+                ));
             }
             if holds_settings(&path) {
                 check_liquid_settings(&theme, &env, &path, args.writes(), &mut tally);
@@ -1189,7 +1206,7 @@ mod tests {
         );
         write(
             "sections/broken.liquid",
-            "<p>\n{% schema %}\n{ \"name\": \"Broken\", }\n{% endschema %}",
+            "<p>\n{% schema %}\n{ \"name\": \"Broken\" \"tag\": \"div\" }\n{% endschema %}",
         );
         write(
             "sections/slides.liquid",
@@ -1364,6 +1381,70 @@ mod tests {
             changed_words("a b", "a"),
             ("a b".to_string(), "a".to_string())
         );
+    }
+
+    #[test]
+    fn trailing_commas_and_unknown_escapes_are_warnings_and_a_bom_an_error() {
+        let root = std::env::temp_dir().join(format!("lsf-check-lenient-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write("layout/theme.liquid", "{{ content_for_layout }}");
+        write(
+            "sections/comma.liquid",
+            "{{ section.settings.t }}\n{% schema %}\n{\n  \"name\": \"Comma\",\n  \"settings\": [\n    \
+             { \"type\": \"text\", \"id\": \"t\", \"label\": \"T\", \"default\": \"\\u201cq\\“\" },\n  ],\n}\n{% endschema %}",
+        );
+        write(
+            "templates/index.json",
+            "{\n  \"sections\": { \"a\": { \"type\": \"comma\" } },\n  \"order\": [\"a\"],\n}",
+        );
+        write("locales/en.default.json", "\u{feff}{}");
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(String, String, String, u64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["severity"].as_str().unwrap().to_string(),
+                    d["code"].as_str().unwrap().to_string(),
+                    d["file"].as_str().unwrap().to_string(),
+                    d["line"].as_u64().unwrap_or(0),
+                )
+            })
+            .collect();
+        let of = |severity: &str, code: &str, file: &str, line: u64| {
+            (
+                severity.to_string(),
+                code.to_string(),
+                file.to_string(),
+                line,
+            )
+        };
+        assert_eq!(
+            found,
+            [
+                // The escape `\“`, then the comma after the setting, then the one after `]`.
+                of("warning", "lenient_json", "sections/comma.liquid", 6),
+                of("warning", "lenient_json", "sections/comma.liquid", 6),
+                of("warning", "lenient_json", "sections/comma.liquid", 7),
+                of("warning", "lenient_json", "templates/index.json", 3),
+                of("error", "invalid_json", "locales/en.default.json", 0),
+            ]
+        );
+        // Only the byte order mark counts: Shopify takes the other files.
+        assert_eq!(report["problems"], 1);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

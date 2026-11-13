@@ -156,15 +156,109 @@ pub fn value_lines(text: &str) -> std::collections::HashMap<String, usize> {
     walker.lines
 }
 
-/// Parses JSON that may contain comments, naming the file in errors.
+/// What Shopify lets through in a theme JSON file that strict JSON does not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Leniency {
+    /// A comma before `}` or `]`.
+    TrailingComma,
+    /// An escape JSON does not have, such as `\“`: Shopify keeps the character.
+    UnknownEscape(char),
+}
+
+impl std::fmt::Display for Leniency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Leniency::TrailingComma => f.write_str("a trailing comma"),
+            Leniency::UnknownEscape(c) => write!(f, "an unknown escape `\\{c}`"),
+        }
+    }
+}
+
+/// A theme JSON text as Shopify reads it, turned into strict JSON: comments removed, trailing
+/// commas removed, and an unknown escape (`\“`) replaced with its character. The lines stay
+/// where they were, for messages. Also returns what was let through, with its line.
+pub fn theme_json(source: &str) -> (String, Vec<(usize, Leniency)>) {
+    let text = strip_comments(source);
+    let mut out = String::with_capacity(text.len());
+    let mut found = Vec::new();
+    let mut line = 1;
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    // The last character outside strings and whitespace: a comma is trailing after a value,
+    // not after `{`, `[` or another comma (`{,}` stays an error, as on Shopify).
+    let mut previous = ' ';
+    while let Some(c) = chars.next() {
+        if c == '\n' {
+            line += 1;
+        }
+        if !in_string && !c.is_whitespace() {
+            let before = previous;
+            previous = c;
+            if c == ','
+                && !matches!(before, '{' | '[' | ',')
+                && matches!(chars.clone().find(|c| !c.is_whitespace()), Some('}' | ']'))
+            {
+                found.push((line, Leniency::TrailingComma));
+                out.push(' ');
+                continue;
+            }
+        }
+        if in_string {
+            match c {
+                '\\' => match chars.next() {
+                    Some(escaped @ ('"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' | 'u')) => {
+                        out.push('\\');
+                        out.push(escaped);
+                    }
+                    Some(other) => {
+                        if other == '\n' {
+                            line += 1;
+                        }
+                        found.push((line, Leniency::UnknownEscape(other)));
+                        // Shopify drops the backslash and keeps the character.
+                        out.push(other);
+                    }
+                    None => out.push('\\'),
+                },
+                '"' => {
+                    in_string = false;
+                    out.push(c);
+                }
+                _ => out.push(c),
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_string = true;
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    (out, found)
+}
+
+/// Parses a theme JSON file as Shopify reads it ([`theme_json`]), naming the file in errors.
+/// A UTF-8 byte order mark is still an error: Shopify refuses a file that starts with one.
 pub fn parse_lenient(path: &str, source: &str) -> Result<serde_json::Value> {
-    serde_json::from_str(&strip_comments(source)).map_err(|error| Error::Json {
+    let error = |message: String| Error::Json {
         path: path.to_string(),
-        message: format!(
-            "invalid JSON at line {}, column {}: {error}",
-            error.line(),
-            error.column()
-        ),
+        message,
+    };
+    if source.starts_with('\u{feff}') {
+        return Err(error(
+            "invalid JSON at line 1, column 1: the file starts with a UTF-8 byte order mark (BOM), \
+             which Shopify refuses"
+                .to_string(),
+        ));
+    }
+    serde_json::from_str(&theme_json(source).0).map_err(|e| {
+        error(format!(
+            "invalid JSON at line {}, column {}: {e}",
+            e.line(),
+            e.column()
+        ))
     })
 }
 
@@ -179,5 +273,36 @@ mod tests {
         let value = parse_lenient("test.json", source).unwrap();
         assert_eq!(value["a"], "// not a comment /* nor this */");
         assert_eq!(value["b"], 1);
+    }
+
+    #[test]
+    fn reads_trailing_commas_and_unknown_escapes_as_shopify_does() {
+        let source = "{\n  \"a\": [1, 2, ],\n  \"b\": \"\\“q\\” \\n \\\" \\u00e9\", // note\n}\n";
+        let value = parse_lenient("test.json", source).unwrap();
+        assert_eq!(value["a"], serde_json::json!([1, 2]));
+        assert_eq!(value["b"], "“q” \n \" é");
+        assert_eq!(
+            theme_json(source).1,
+            [
+                (2, Leniency::TrailingComma),
+                (3, Leniency::UnknownEscape('“')),
+                (3, Leniency::UnknownEscape('”')),
+                (3, Leniency::TrailingComma),
+            ]
+        );
+        // A comma with no value before it is not a trailing comma.
+        for source in ["{,}", "[,]", "[1,,]"] {
+            assert!(parse_lenient("t.json", source).is_err(), "{source}");
+        }
+        // A comma in a string stays.
+        assert_eq!(parse_lenient("t.json", "[\"a,]\"]").unwrap()[0], "a,]");
+    }
+
+    #[test]
+    fn a_byte_order_mark_is_refused() {
+        let error = parse_lenient("t.json", "\u{feff}{}")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("byte order mark"), "{error}");
     }
 }

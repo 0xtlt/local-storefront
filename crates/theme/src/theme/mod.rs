@@ -265,7 +265,7 @@ impl Theme {
                 Template::parse_named(&self.env, source, Some(name)).map(|template| {
                     let schema = schema::extract_block(source, "schema")
                         .and_then(|body| {
-                            serde_json::from_str::<Json>(&lsf_core::json::strip_comments(body)).ok()
+                            serde_json::from_str::<Json>(&lsf_core::json::theme_json(body).0).ok()
                         })
                         .map(Schema::from_json)
                         .unwrap_or_default();
@@ -345,16 +345,22 @@ impl Theme {
 
     /// Storefront translations for a locale, falling back from `fr-CA` to `fr`.
     pub fn translations(&self, locale: &str) -> Arc<Translations> {
+        match self.translations_path(locale) {
+            Some(path) => self.translations_file(&path),
+            None => Arc::new(Translations::default()),
+        }
+    }
+
+    /// The file of the storefront translations of a locale: `locales/fr-CA.json`, else
+    /// `locales/fr.json`, when the theme has one.
+    pub fn translations_path(&self, locale: &str) -> Option<String> {
         let default = self.default_locale();
         let language = locale.split('-').next().unwrap_or(locale);
-        for candidate in [locale, language] {
+        [locale, language].into_iter().find_map(|candidate| {
             let suffix = if candidate == default { ".default" } else { "" };
             let path = format!("locales/{candidate}{suffix}.json");
-            if self.files.exists(&path) {
-                return self.translations_file(&path);
-            }
-        }
-        Arc::new(Translations::default())
+            self.files.exists(&path).then_some(path)
+        })
     }
 
     /// Translations for the `t:` keys used in schemas (setting defaults, names).

@@ -695,7 +695,9 @@ Shopify refuses on upload:
   key of the `t` filter that the default locale does not have (`missing_translation`), a `t:` key
   of a schema that the default schema locale does not have (`missing_schema_translation`);
 - as a warning, a file of `assets/` that `asset_url` names and the theme does not have
-  (`missing_asset`).
+  (`missing_asset`);
+- as a warning, a trailing comma or an unknown escape (`\“`) in theme JSON or a
+  `{% schema %}` (`lenient_json`): Shopify reads the file, other JSON tools may not.
 
 Only names written as literals are checked. It reads `layout/`, `templates/`, `sections/`,
 `blocks/`, `snippets/`, and the `liquid` settings of the JSON templates, section groups and
@@ -794,7 +796,8 @@ counts the others.
 | `liquid_syntax` | A file that does not parse at all. |
 | `unknown_filter` | A filter local-storefront does not know. Either a typo: Shopify skips an unknown filter, and the value comes out unchanged. A filter of Shopify one or two letters away, with the same letters, or a name of another template language (`uppercase`) is in the `hint`. Or a filter of Shopify that local-storefront lacks: [report it](https://github.com/0xtlt/local-storefront/issues). |
 | `block_outside_template` | `{% block %}` outside `layout/` and `templates/` (with `--preview liquid-july-26`). |
-| `invalid_json` | A JSON file that does not parse. |
+| `invalid_json` | A JSON file that does not parse, even as Shopify reads it (comments, trailing commas and unknown escapes allowed), or that starts with a UTF-8 byte order mark, which Shopify refuses. |
+| `lenient_json` | A warning: a trailing comma, or an escape JSON does not have (`\“`), in a JSON file of the theme or a `{% schema %}`. Shopify reads the file and uses its values (an unknown escape keeps its character); strict JSON parsers refuse it. |
 | `invalid_schema` | A `{% schema %}` Shopify refuses: JSON that does not parse, a setting without a required key (`id`, `label`, `options` of a `select`, `min`, `max` and `default` of a `range`), a `default` its setting does not take. A section or a block whose schema does not parse loses the defaults of its settings. |
 | `unknown_setting_type` | A setting of a schema whose `type` Shopify does not have. The `hint` gives the closest one. |
 | `duplicate_setting_id` | Two settings of one schema with the same `id`. |
