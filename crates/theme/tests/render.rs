@@ -3738,3 +3738,37 @@ fn closest_is_the_nearest_resource_setting_then_the_template() {
         );
     }
 }
+/// The fixture theme against the demo store plus `overlay` (store data).
+fn fixture_with_data(overlay: &serde_json::Value) -> Fixture {
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    }
+}
+
+#[test]
+fn options_by_name_finds_an_option_in_any_case() {
+    // #125, and https://shopify.dev/docs/api/liquid/objects/product#product-options_by_name:
+    // "When accessing a specific option, the name is case-insensitive."
+    let fixture = fixture_with_data(&serde_json::json!({"products": [{
+        "title": "Case Tee",
+        "price": 1000,
+        "options": ["Color"],
+        "variants": [{ "options": ["Red"] }, { "options": ["Blue"] }]
+    }]}));
+    let output = fixture.liquid(
+        "/products/case-tee",
+        Session::initial(&fixture.store),
+        "[{{ product.options_by_name['Color'].name }}][{{ product.options_by_name['color'].name }}]\
+         [{{ product.options_by_name['COLOR'].values.size }}][{{ product.options_by_name.color.name }}]\
+         [{{ product.options_by_name['size'].name }}][{{ product.options_by_name.size }}]\
+         {% for pair in product.options_by_name %}[{{ pair[0] }}={{ pair[1].values | join: ',' }}]{% endfor %}",
+    );
+    assert_eq!(output, "[Color][Color][2][Color][][1][Color=Red,Blue]");
+}

@@ -123,6 +123,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `ελληνικά-русский-日本語`, `😀 smile 😀` → `😀-smile-😀`, `Straße Œuvre ﬁne` →
   `strasse-oeuvre-ﬁne`. Ids, anchors, tag and filter URLs, and collections looked up by a
   handleized product type, now match the store's.
+- **`product.options_by_name` finds an option in any case**, as Shopify documents ("the name is
+  case-insensitive"): `options_by_name['color']`, `['COLOR']` and `.color` find the option
+  `Color`. Swatch and size-chart code that looks options up by a lower-case name works locally.
 
 #### The checkout of an app
 
