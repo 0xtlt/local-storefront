@@ -545,6 +545,15 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   starts with `_`, as Shopify hides them from the buyer at checkout. The Functions, the
   extensions' `shopify.lines` and the order still have them.
 
+- **`/agents.md`, `/llms.txt` and `/llms-full.txt` render the theme's templates**, where they
+  were the theme's 404 page. `/llms.txt` renders `templates/llms.txt.liquid`, else
+  `templates/agents.md.liquid`, and `/llms-full.txt` the same with `llms-full.txt.liquid`, as
+  Shopify looks them up. They render as plain text, at the bare domain only, with `request` and
+  the `agents` object (`store_name`, `store_url`, `ucp_discovery_url`, `mcp_endpoint_url`,
+  `ucp_versions`, `currency`, `sitemap_url`) and no other global: `{{ shop.name }}` is blank, as
+  on Shopify. A theme without these templates still gets a 404, which now says that Shopify
+  serves a file of its own there.
+
 #### The Admin API, for the backend of an app
 
 - **An order placed with a cart transform bundle lists its components**, as on Shopify: a line

@@ -374,6 +374,20 @@ pub fn resolve(site: &Site) -> Page {
             page.canonical_path = card.path(store.shop.id);
             page
         }
+        // What `Renderer::render_agents` did not render: the file Shopify serves without a
+        // template, or a path under a prefix, where Shopify has none.
+        [file] if super::seo::AGENT_FILES.iter().any(|(name, _)| name == file) => {
+            return not_found(if request.root.is_empty() {
+                format!(
+                    "the theme has no template for /{file}: Shopify serves an {file} of its own \
+                     there, which lsf does not have; add templates/agents.md.liquid"
+                )
+            } else {
+                format!(
+                    "/{file} is served at the bare domain only, without a locale or market prefix"
+                )
+            });
+        }
         // Customer accounts are Shopify's new ones, which are not part of a theme: its
         // `templates/customers` are never rendered.
         ["account", ..] => {

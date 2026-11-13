@@ -288,6 +288,50 @@ pub fn default_robots(site: &Site) -> String {
     out
 }
 
+/// The agent-discovery files of a store, served at the bare domain, each with the templates of
+/// the theme it is rendered from, in the order Shopify looks for them. Without any of them,
+/// Shopify serves a file of its own.
+/// <https://shopify.dev/docs/storefronts/themes/architecture/templates/agents-md-liquid#relationship-to-llms-txt-and-llms-full-txt>
+pub const AGENT_FILES: [(&str, &[&str]); 3] = [
+    ("agents.md", &["agents.md"]),
+    ("llms.txt", &["llms.txt", "agents.md"]),
+    ("llms-full.txt", &["llms-full.txt", "agents.md"]),
+];
+
+/// The versions of the Universal Commerce Protocol `agents.ucp_versions` lists, newest first:
+/// the version Shopify's documentation of its UCP endpoints follows.
+/// <https://shopify.dev/docs/agents/catalog>
+const UCP_VERSIONS: [&str; 1] = ["2026-08-25"];
+
+/// The `agents` object of `agents.md.liquid`, `llms.txt.liquid` and `llms-full.txt.liquid`.
+/// <https://shopify.dev/docs/storefronts/themes/architecture/templates/agents-md-liquid#the-agents-object>
+pub fn agents_value(site: &Site) -> Value {
+    let store_url = site.request.origin();
+    hash([
+        ("store_name", Value::from(&site.store.shop.name)),
+        (
+            "ucp_discovery_url",
+            Value::from(format!("{store_url}/.well-known/ucp")),
+        ),
+        (
+            "mcp_endpoint_url",
+            Value::from(format!("{store_url}/api/ucp/mcp")),
+        ),
+        (
+            "ucp_versions",
+            Value::array(
+                UCP_VERSIONS
+                    .iter()
+                    .map(|&version| Value::from(version))
+                    .collect(),
+            ),
+        ),
+        ("currency", Value::from(&site.store.shop.currency)),
+        ("sitemap_url", Value::from(sitemap_url(site))),
+        ("store_url", Value::from(store_url)),
+    ])
+}
+
 /// The kinds of child sitemaps, as they appear in their URL: `sitemap_<kind>_1.xml`.
 pub const SITEMAP_KINDS: [&str; 4] = ["products", "pages", "collections", "blogs"];
 

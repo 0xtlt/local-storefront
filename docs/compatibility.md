@@ -115,7 +115,9 @@ metaobject type), `product`, `collection`, `page`, `blog`, `article`, `policy`, 
 `gift_card`, `search`, `predictive_search`, `recommendations`, `paginate`, `form`, `forloop`, `tablerowloop`, `canonical_url`, `page_title`,
 `page_description`, `page_image`, `handle`, `current_page`, `current_tags`, `shop_locale`,
 `content_for_header`, `content_for_layout`, `country_option_tags`, `all_country_option_tags`,
-`powered_by_link`, `additional_checkout_buttons`, `robots`, `self`.
+`powered_by_link`, `additional_checkout_buttons`, `robots`, `self`, and `agents` in the
+agent-discovery templates (`agents.md.liquid`, `llms.txt.liquid`, `llms-full.txt.liquid`), where
+only it and `request` are defined, as on Shopify.
 
 A handle that names nothing (`collections['x']`, `all_products['x']`, `pages['x']`, `blogs['x']`,
 `linklists['x']`, `linklists['']`) and a metafield namespace a resource does not have
@@ -587,6 +589,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Measurement units | `.unit` of a `weight` or a `dimension` is its short unit (`kg`, `cm`), and of a `volume` in milliliters, centiliters or US gallons `mL`, `cL` or `gal`, as a store gives them. The other volume units, and the units of the other measurement types, are given as the data writes them: how a store writes them is not confirmed. |
 | Integers | 64-bit. Liquid on Shopify uses arbitrary-precision integers. |
 | Byte strings | Strings are text (UTF-8). `base64_decode` of bytes that are not text replaces them with `�`, where Shopify carries the bytes on to the next filter. |
+| Agent-discovery files | `/agents.md`, `/llms.txt` and `/llms-full.txt` render the theme's templates. Without one, Shopify serves a file of its own, which lsf does not have: the path is a `404` that says so. `agents.ucp_versions` is `2026-08-25`, the version of the Universal Commerce Protocol Shopify's documentation of its endpoints follows; a store may list more. The content type, `text/markdown` for `agents.md` and `text/plain` for the others, is lsf's choice. |
 | Sitemaps | `/robots.txt` is rendered from `templates/robots.txt.liquid`, or with Shopify's default rules. `/sitemap.xml` links one sitemap per kind (products, pages, collections, blogs), in the primary language only and without paging. |
 | Compression | Pages, styles, scripts and JSON are compressed with Brotli or gzip for the clients that accept it, at fast levels: the sizes are close to a storefront's, not equal. `--no-compression` turns it off. |
 | Caching | Shopify keeps rendered pages in a cache of its own. An answer from that cache has an `ETag` and no `Cache-Control`; local-storefront always answers like a page that was just rendered. Files have no `Last-Modified`, so nothing is answered with `304 Not Modified`. |
