@@ -1159,6 +1159,26 @@ fn check_theme(
                 && lsf_theme::theme::template_json::is_contextual(name)
             {
                 check_contextual(&theme, directory, name, &mut tally);
+            } else if matches!(directory, "templates" | "templates/customers") {
+                let lines = lsf_core::json::value_lines(&lsf_core::json::theme_json(&source).0);
+                for problem in theme.template_problems(&path) {
+                    // The line of the value, or of the closest one above it.
+                    let mut pointer = problem.pointer.as_str();
+                    let line = loop {
+                        if let Some(line) = lines.get(pointer) {
+                            break *line;
+                        }
+                        match pointer.rsplit_once('/') {
+                            Some((parent, _)) => pointer = parent,
+                            None => break 1,
+                        }
+                    };
+                    tally.problem(
+                        "invalid_template",
+                        Location::file(&path, Some(line)),
+                        problem.message,
+                    );
+                }
             }
             if matches!(directory, "templates" | "templates/customers" | "sections") {
                 for missing in references::in_json_template(&theme, &path) {
@@ -1331,6 +1351,125 @@ mod tests {
             "{report:#}"
         );
         assert_eq!(report["problems"], 4);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn json_templates_shopify_refuses_are_problems() {
+        // #94: the issue's three templates, then one template per row of its table.
+        let root = std::env::temp_dir().join(format!("lsf-check-templates-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write(
+            "layout/theme.liquid",
+            "{{ content_for_header }}{{ content_for_layout }}",
+        );
+        write(
+            "sections/hello.liquid",
+            "<p>hello</p>{% schema %}{ \"name\": \"Hello\", \"settings\": [] }{% endschema %}",
+        );
+        write(
+            "sections/limited.liquid",
+            "{% for block in section.blocks %}<p>{{ block.type }}</p>{% endfor %}\n{% schema %}\n{ \"name\": \"Limited\", \"blocks\": [ { \"type\": \"one\", \"name\": \"One\", \"limit\": 1 } ] }\n{% endschema %}",
+        );
+        write(
+            "sections/nest.liquid",
+            "{% content_for 'blocks' %}{% schema %}{ \"name\": \"Nest\", \"blocks\": [{ \"type\": \"@theme\" }] }{% endschema %}",
+        );
+        write(
+            "blocks/box.liquid",
+            "{% content_for 'blocks' %}{% schema %}{ \"name\": \"Box\", \"blocks\": [{ \"type\": \"@theme\" }] }{% endschema %}",
+        );
+        let hello = r#"{ "type": "hello" }"#;
+        let mut nested = r#"{ "type": "box" }"#.to_string();
+        for _ in 0..10 {
+            nested = format!(r#"{{ "type": "box", "blocks": {{ "b": {nested} }} }}"#);
+        }
+        let many_sections: Vec<String> = (0..26).map(|n| format!("\"s{n}\": {hello}")).collect();
+        let many_order: Vec<String> = (0..26).map(|n| format!("\"s{n}\"")).collect();
+        let many_blocks: Vec<String> = (0..51)
+            .map(|n| format!("\"b{n}\": {{ \"type\": \"box\" }}"))
+            .collect();
+        let templates: Vec<(&str, String)> = vec![
+            ("index", format!(r#"{{ "sections": {{ "main": {hello} }}, "order": ["main", "ghost"] }}"#)),
+            ("collection", format!(r#"{{ "sections": {{ "main": {hello}, "extra": {hello} }}, "order": ["main"] }}"#)),
+            ("product", "{\n  \"sections\": {\n    \"main\": { \"type\": \"limited\", \"blocks\": { \"a\": { \"type\": \"one\" }, \"b\": { \"type\": \"one\" } }, \"block_order\": [\"a\", \"b\"] }\n  },\n  \"order\": [\"main\"]\n}".to_string()),
+            ("page.twice", format!(r#"{{ "sections": {{ "main": {hello} }}, "order": ["main", "main"] }}"#)),
+            ("page.no-order", format!(r#"{{ "sections": {{ "main": {hello} }} }}"#)),
+            ("page.no-type", r#"{ "sections": { "main": { "settings": {} } }, "order": ["main"] }"#.to_string()),
+            ("page.empty", r#"{ "sections": {}, "order": [] }"#.to_string()),
+            ("page.many", format!(r#"{{ "sections": {{ {} }}, "order": [{}] }}"#, many_sections.join(", "), many_order.join(", "))),
+            ("page.blocks", format!(r#"{{ "sections": {{ "main": {{ "type": "nest", "blocks": {{ {} }} }} }}, "order": ["main"] }}"#, many_blocks.join(", "))),
+            ("page.deep", format!(r#"{{ "sections": {{ "main": {{ "type": "nest", "blocks": {{ "b": {nested} }} }} }}, "order": ["main"] }}"#)),
+            ("page.foo", format!(r#"{{ "sections": {{ "main": {hello} }}, "order": ["main"], "foo": 1 }}"#)),
+            ("page.span", format!(r#"{{ "sections": {{ "main": {hello} }}, "order": ["main"], "wrapper": "span" }}"#)),
+            ("page.missing", format!(r#"{{ "sections": {{ "main": {hello} }}, "order": ["main"], "layout": "missing" }}"#)),
+            ("page.five", format!(r#"{{ "sections": {{ "main": {hello} }}, "order": ["main"], "layout": 5 }}"#)),
+            // Shopify takes these.
+            ("search", format!(r#"{{ "sections": {{ "main": {hello} }}, "order": ["main"], "layout": "theme", "wrapper": "main#a.b[data-x=y]" }}"#)),
+            ("blog", format!(r#"{{ "sections": {{ "main": {hello} }}, "order": ["main"], "layout": false }}"#)),
+        ];
+        for (name, content) in &templates {
+            write(&format!("templates/{name}.json"), content);
+        }
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(String, String)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["code"] == "invalid_template")
+            .map(|d| {
+                (
+                    d["file"].as_str().unwrap().to_string(),
+                    d["message"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        let expect = [
+            ("collection", "the section \"extra\" is not in `order`"),
+            ("index", "`order` has \"ghost\", which is not in `sections`"),
+            ("page.blocks", "has 51 blocks, more than 50"),
+            ("page.deep", "nested 11 levels deep, more than 8"),
+            ("page.empty", "the template has no section"),
+            ("page.five", "the `layout` 5 is not a string or false"),
+            ("page.foo", "`foo` is not an attribute of a JSON template"),
+            ("page.many", "the template has 26 sections, more than 25"),
+            (
+                "page.missing",
+                "the layout \"missing\" is not a file of layout/",
+            ),
+            ("page.no-order", "the template has no `order`"),
+            ("page.no-type", "the section \"main\" has no `type`"),
+            ("page.span", "the `wrapper` \"span\" is not a div"),
+            ("page.twice", "`order` has \"main\" twice"),
+            (
+                "product",
+                "has 2 blocks of type \"one\", more than its `limit` of 1",
+            ),
+        ];
+        assert_eq!(found.len(), expect.len(), "{found:#?}");
+        for ((file, message), (name, expected)) in found.iter().zip(expect) {
+            assert_eq!(file, &format!("templates/{name}.json"), "{found:#?}");
+            assert!(message.contains(expected), "{file}: {message}");
+        }
+        // The line of the problem: the block of the product template.
+        let product = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["file"] == "templates/product.json")
+            .unwrap();
+        assert_eq!(product["line"], 3, "{product:#}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
