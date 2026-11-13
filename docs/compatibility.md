@@ -127,7 +127,8 @@ videos, external videos, 3D models), image presentation and focal points, collec
 `/cart/change.js`; `/cart.js` has no such field), comments, metafields of every type (a
 `color` is a color, a measurement has `type`, `value` and `unit`, a `money` prints as cents,
 has the `currency` it is written in, and the money filters and `metafield_text` format it in
-that currency, a reference is a GID or the key the data gives the entity
+that currency; in a market with another currency, a `money` in the shop's currency is
+converted at the market's rate, as prices are, a reference is a GID or the key the data gives the entity
 ([reference values](data-format.md#reference-values)), a `file_reference` is an image, a video or a file by its extension;
 a metafield of a text, number, `boolean`, `date` or `date_time` type used without `.value` acts
 as its value in `if`, `==`, `>`, the math and date filters, `size`, and `sort`, `where` and

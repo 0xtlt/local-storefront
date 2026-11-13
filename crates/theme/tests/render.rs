@@ -2098,6 +2098,70 @@ fn a_resource_setting_whose_handle_names_nothing_is_truthy_and_blank() {
 }
 
 #[test]
+fn money_metafields_are_in_the_currency_of_the_visitors_market() {
+    // The issue's store, with the rate of the issue's store on Shopify for the variant.
+    for (rate, product_line, variant_line) in [
+        (
+            "0.9",
+            "€9,00|€7,20 EUR|720|EUR|<span class=\"metafield-money\">€7,20 EUR</span>|€7,20 EUR",
+            "€584,96|58496|EUR",
+        ),
+        (
+            "0.918078665",
+            "€9,18|€7,34 EUR|734|EUR|<span class=\"metafield-money\">€7,34 EUR</span>|€7,34 EUR",
+            "€596,71|59671|EUR",
+        ),
+    ] {
+        let overlay = serde_json::json!({
+            "localization": {
+                "countries": [{"iso_code": "US"}, {"iso_code": "BE"}],
+                "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+                "markets": [{"handle": "us", "countries": ["US"]},
+                    {"handle": "europe", "countries": ["BE"], "currency": "EUR", "rate": rate,
+                     "subfolder_suffix": "be"}]
+            },
+            "products": [{"title": "Widget", "handle": "widget", "price": "10.00",
+                "metafields": {"custom": {"lowest": {"type": "money",
+                    "value": {"amount": "8.00", "currency_code": "USD"}}}},
+                "variants": [{"metafields": {"custom": {"unit": {"type": "money",
+                    "value": {"amount": "649.95", "currency_code": "USD"}}}}}]}]
+        });
+        let options = LoadOptions {
+            theme_locales: vec!["en".to_string(), "fr".to_string()],
+            ..LoadOptions::default()
+        };
+        let (store, diagnostics) =
+            lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let fixture = Fixture {
+            store: Arc::new(store),
+            ..fixture()
+        };
+        let source = "{% assign m = product.metafields.custom.lowest %}{{ product.price | money }}|\
+            {{ m.value | money_with_currency }}|{{ m.value }}|{{ m.value.currency.iso_code }}|\
+            {{ m | metafield_tag }}|{{ m | metafield_text }}\
+            {% assign u = product.selected_or_first_available_variant.metafields.custom.unit %}\
+            #{{ u.value | money }}|{{ u.value }}|{{ u.value.currency.iso_code }}";
+        let session = Session::initial(&fixture.store);
+        // At `/`, in the shop's currency, as written.
+        assert_eq!(
+            fixture.liquid("/products/widget", session.clone(), source),
+            "$10.00|$8.00 USD|800|USD|<span class=\"metafield-money\">$8.00 USD</span>|$8.00 USD\
+             #$649.95|64995|USD"
+        );
+        // Under `/en-be/`, converted at the market's rate, like the price.
+        let mut under = request("/products/widget");
+        under.root = "/en-be".to_string();
+        under.market = Some("europe".to_string());
+        assert_eq!(
+            fixture.liquid_for(under, session, source),
+            format!("{product_line}#{variant_line}"),
+            "rate {rate}"
+        );
+    }
+}
+
+#[test]
 fn a_rating_has_strings_as_on_shopify() {
     // The rating of the Admin API's `jsonValue`, the same with numbers, and the Admin API's
     // `value` (the JSON text) pasted as is.
