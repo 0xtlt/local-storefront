@@ -298,6 +298,14 @@ fn cart_change_keeps_to_the_stock_as_add_does() {
             .collect()
     };
     let change = |body: Json| post(&state, "/cart/change.js", body, session);
+    // `change.js` answers with its description as `message`; `add.js` with `Cart Error`.
+    let refused_change = |reply: &Reply, description: &str| {
+        assert_eq!(reply.status, 422, "{}", text(reply));
+        assert_eq!(
+            body_json(reply),
+            json!({"status": 422, "message": description, "description": description})
+        );
+    };
     let refused = |reply: &Reply, description: &str| {
         assert_eq!(reply.status, 422, "{}", text(reply));
         assert_eq!(
@@ -306,19 +314,28 @@ fn cart_change_keeps_to_the_stock_as_add_does() {
         );
     };
 
-    // Three bowls are in stock: a line of 1 asked to hold 5 holds 3, and the answer says so.
+    // Three bowls are in stock: a line of 1 asked to hold 5 holds 3, and the answer counts what
+    // the line holds, not the 2 added.
     let add = |body: Json| post(&state, "/cart/add.js", body, session);
     let added = add(json!({"id": bowl}));
     assert_eq!(added.status, 200, "{}", text(&added));
-    refused(
+    refused_change(
         &change(json!({"line": 1, "quantity": 5})),
-        "Only 2 items were added to your cart due to availability.",
+        "Only 3 items were added to your cart due to availability.",
     );
     assert_eq!(quantities(), [3]);
     // With all of them in the cart, the line stays as it is.
-    refused(
+    refused_change(
         &change(json!({"line": 1, "quantity": 4})),
         "The maximum quantity of this item is already in your cart.",
+    );
+    // A line that is not in the cart: the same shape, as the Ajax Cart API reference shows.
+    let missing = change(json!({"line": 9, "quantity": 1}));
+    assert_eq!(missing.status, 400, "{}", text(&missing));
+    assert_eq!(
+        body_json(&missing),
+        json!({"status": 400, "message": "no valid id or line parameter",
+               "description": "no valid id or line parameter"})
     );
     assert_eq!(quantities(), [3]);
     // Fewer is always fine.

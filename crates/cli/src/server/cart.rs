@@ -18,6 +18,17 @@ fn error(status: u16, description: impl Into<String>) -> Reply {
     )
 }
 
+/// An error of `/cart/change.js`, whose `message` is its `description`, not `Cart Error`: the
+/// Ajax Cart API reference shows it so for `change.js` (`"message": "no valid id or line
+/// parameter"`), and a store capping a line at its stock answers the same way.
+fn change_error(status: u16, description: impl Into<String>) -> Reply {
+    let description = description.into();
+    Reply::json(
+        status,
+        &json!({"status": status, "message": description, "description": description}),
+    )
+}
+
 /// Whether the client expects JSON back (`/cart/add.js`) or a page (`/cart/add` from a form).
 fn wants_json(visit: &Visit<'_>) -> bool {
     visit.incoming.path.ends_with(".js")
@@ -170,8 +181,11 @@ fn add_item(visit: &Visit<'_>, item: &Json) -> Result<String, Reply> {
         .min();
     let (to_add, problem) = match fit(most, in_cart, in_cart.saturating_add(quantity)) {
         Fit::All => (quantity, None),
-        Fit::Capped(total, problem) => (total - in_cart, Some(problem)),
-        Fit::Refused(problem) => return Err(problem),
+        Fit::Capped(total) => (
+            total - in_cart,
+            Some(error(422, capped_notice(total - in_cart))),
+        ),
+        Fit::Refused => return Err(error(422, full_notice())),
     };
     visit.update_session(|session| {
         match session
@@ -200,10 +214,12 @@ fn add_item(visit: &Visit<'_>, item: &Json) -> Result<String, Reply> {
 enum Fit {
     /// All of it.
     All,
-    /// Less: the variant's new total in the cart, and the error that says so.
-    Capped(u32, Reply),
-    /// None of it, the cart unchanged: the error that says why.
-    Refused(Reply),
+    /// Less: the variant's new total in the cart. The answer is a `422` that says how many
+    /// ([`capped_notice`]).
+    Capped(u32),
+    /// None of it, the cart unchanged: a `422` that says the most is in the cart
+    /// ([`full_notice`]).
+    Refused,
 }
 
 /// One of the cart notices of every Shopify store (`shopify.notices.cart.*`), its `%{name}`
@@ -226,20 +242,26 @@ fn stock_of(variant: &Variant) -> Option<u32> {
 /// fits. Above the most, the cart takes what fits and answers `422`, as Shopify's `add.js` and
 /// `change.js` do.
 fn fit(most: Option<u32>, held: u32, total: u32) -> Fit {
-    let Some(most) = most.filter(|most| total > *most && total > held) else {
-        return Fit::All;
-    };
-    if most <= held {
-        return Fit::Refused(error(
-            422,
-            notice("maximum_available_quantity_reached", &[]),
-        ));
+    match most.filter(|most| total > *most && total > held) {
+        None => Fit::All,
+        Some(most) if most <= held => Fit::Refused,
+        Some(most) => Fit::Capped(most),
     }
-    let added = match most - held {
+}
+
+/// What a capped request answers: "Only N items were added to your cart due to availability."
+/// `add.js` counts the units it added; `change.js` the quantity the line now holds, as a store
+/// does (a line of 1 asked for 50 with 10 in stock: "Only 10 items were added").
+fn capped_notice(count: u32) -> String {
+    match count {
         1 => notice("only_one_added_to_cart", &[]),
-        added => notice("only_n_added_to_cart", &[("quantity", added)]),
-    };
-    Fit::Capped(most, error(422, added))
+        count => notice("only_n_added_to_cart", &[("quantity", count)]),
+    }
+}
+
+/// What a request answers when the most the cart can hold is in it already.
+fn full_notice() -> String {
+    notice("maximum_available_quantity_reached", &[])
 }
 
 fn line_title(product: &lsf_core::store::Product, variant: &Variant) -> String {
@@ -310,7 +332,7 @@ pub fn change(visit: &Visit<'_>) -> Reply {
     let lines = visit.session().cart_lines;
     let Some(index) = target_line(&lines, &params) else {
         return if wants_json(visit) {
-            error(400, "no valid id or line parameter")
+            change_error(400, "no valid id or line parameter")
         } else {
             Reply::redirect(&visit.localized("/cart"))
         };
@@ -340,7 +362,7 @@ pub fn change(visit: &Visit<'_>) -> Reply {
         Ok(plan) => plan,
         Err(problem) => {
             return if wants_json(visit) {
-                error(422, problem)
+                change_error(422, problem)
             } else {
                 Reply::redirect(&visit.localized("/cart"))
             };
@@ -365,13 +387,13 @@ pub fn change(visit: &Visit<'_>) -> Reply {
                 others.saturating_add(asked),
             ) {
                 Fit::All => Some(quantity),
-                Fit::Capped(total, problem) => {
-                    capped = Some(problem);
+                Fit::Capped(total) => {
+                    capped = Some(change_error(422, capped_notice(total - others)));
                     Some(i64::from(total - others))
                 }
-                Fit::Refused(problem) => {
+                Fit::Refused => {
                     return if wants_json(visit) {
-                        problem
+                        change_error(422, full_notice())
                     } else {
                         Reply::redirect(&visit.localized("/cart"))
                     };
