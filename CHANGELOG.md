@@ -126,6 +126,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`product.options_by_name` finds an option in any case**, as Shopify documents ("the name is
   case-insensitive"): `options_by_name['color']`, `['COLOR']` and `.color` find the option
   `Color`. Swatch and size-chart code that looks options up by a lower-case name works locally.
+- **`weight_with_unit` and `variant.weight_in_unit` print weights as Shopify does.** Grams are
+  a whole number (`3 g`), and the other units a decimal number at the precision Shopify keeps:
+  kilograms to 3 places, pounds to 2, ounces to 1, with its `.0` (`10.0 lb`, `4.536 kg`,
+  `0.001 kg`, `1.0 oz`). A variant of 4536 g in `lb` gives `weight_in_unit` `10.0`, no longer
+  `10.000168212706047`. Shipping weight lines read as on a store.
 
 #### The checkout of an app
 
