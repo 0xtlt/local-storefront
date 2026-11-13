@@ -846,7 +846,8 @@ extension's `order.action.menu-item.render` opens its `order.action.render` in a
   from its `fulfillment_status` (`fulfilled`: one shipment of every line; `partial`: its first
   line), its returns from its `returns` ([data reference](data-reference.md#orderreturn)).
 - **The `shopify` global** of a customer account target has what every target has (`i18n`,
-  `storage`, `sessionToken`, `settings`, `localization`, `extension`, `analytics`), and:
+  `storage`, `sessionToken`, `settings`, `localization`, `extension`, `analytics`, and `version`,
+  the extension's `api_version`), and:
   `authenticatedAccount` (`customer`, `purchasingCompany`); `navigation`; `toast.show`, which shows
   a toast at the bottom of the page; `intents.invoke`, which answers `closed`. The order status
   targets and the full page of an order have the Order Status API (`order`, `lines`, `cost`,
