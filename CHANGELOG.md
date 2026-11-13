@@ -200,6 +200,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   currency and language, as `serve` answers them and as Shopify serves a market's subfolders,
   where they were the theme's 404 (and `render --strict` failed on the routes
   `routes --all` lists).
+- **Security: the localization form no longer redirects to another host.** `POST /localization`
+  with `return_to=https://other.example/x` or `//other.example/x` answered a `302` to that host
+  (an open redirect). It now keeps the path and redirects on lsf's own host (`/x`, or `/en-be/x`
+  for a country served there), as Shopify redirects to the path on the shop's domain. A theme
+  that puts an absolute URL in `return_to` stays on the local server, as it stays on the shop.
 
 #### The checkout of an app
 

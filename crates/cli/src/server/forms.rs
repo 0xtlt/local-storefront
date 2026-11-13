@@ -136,6 +136,43 @@ pub fn comment(visit: &Visit<'_>) -> Reply {
     Reply::redirect(&format!("{}#comment_form", visit.localized(&article)))
 }
 
+/// The path of a `return_to`, on the storefront's own host. Shopify keeps the path of a URL
+/// that names a host (`https://other.example/x`, `//other.example/x`) and redirects to it on
+/// the shop's domain, so the localization form never leads off the shop.
+fn own_path(return_to: &str) -> String {
+    // Browsers drop tabs and line breaks from a URL and read `\` as `/` before its query:
+    // `/\other.example` is `//other.example`.
+    let url: String = return_to
+        .trim()
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .collect();
+    let query = url.find(['?', '#']).unwrap_or(url.len());
+    let url = url[..query].replace('\\', "/") + &url[query..];
+    // A scheme (`https:`, `javascript:`), then an authority (`//host`).
+    let scheme_end = url
+        .find(':')
+        .filter(|&end| {
+            url[..end].starts_with(|c: char| c.is_ascii_alphabetic())
+                && url[..end]
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        })
+        .map_or(0, |end| end + 1);
+    let rest = &url[scheme_end..];
+    let rest = if rest.starts_with("//") {
+        let after = rest.trim_start_matches('/');
+        &after[after.find(['/', '?', '#']).unwrap_or(after.len())..]
+    } else {
+        rest
+    };
+    if rest.starts_with('/') {
+        rest.to_string()
+    } else {
+        format!("/{rest}")
+    }
+}
+
 pub fn localization(visit: &Visit<'_>) -> Reply {
     let params = visit.incoming.all_params();
     let text = |key: &str| super::params::text(&params, key).filter(|value| !value.is_empty());
@@ -144,7 +181,7 @@ pub fn localization(visit: &Visit<'_>) -> Reply {
     {
         visit.update_session(|session| session.country = Some(country.to_uppercase()));
     }
-    let return_to = text("return_to").unwrap_or_else(|| "/".to_string());
+    let return_to = own_path(&text("return_to").unwrap_or_else(|| "/".to_string()));
     let store = &visit.store;
     let (current, root, path) = store.split_locale(&return_to);
     let page_presence = store.market_of_root(&root);
@@ -247,4 +284,37 @@ pub fn checkout(visit: &Visit<'_>) -> Reply {
             visit.localized("/cart")
         ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::own_path;
+
+    #[test]
+    fn return_to_keeps_the_path_on_the_storefronts_host() {
+        // Shopify answers both with `Location: https://<shop domain>/x`.
+        assert_eq!(own_path("https://other.example/x"), "/x");
+        assert_eq!(own_path("//other.example/x"), "/x");
+        assert_eq!(
+            own_path("HTTP://other.example:8080/fr/x?a=1#top"),
+            "/fr/x?a=1#top"
+        );
+        assert_eq!(own_path("https://other.example"), "/");
+        assert_eq!(own_path("https://other.example?a=1"), "/?a=1");
+        // What a browser reads as another host too.
+        assert_eq!(own_path("/\\other.example/x"), "/x");
+        assert_eq!(own_path("///other.example/x"), "/x");
+        assert_eq!(own_path(" //other.example/x"), "/x");
+        assert_eq!(own_path("/\t/other.example/x"), "/x");
+        assert_eq!(own_path("javascript:alert(1)"), "/alert(1)");
+        // A path stays as it is.
+        assert_eq!(
+            own_path("/en-be/products/tee?variant=1"),
+            "/en-be/products/tee?variant=1"
+        );
+        assert_eq!(own_path("/"), "/");
+        assert_eq!(own_path("cart"), "/cart");
+        assert_eq!(own_path("/a:b"), "/a:b");
+        assert_eq!(own_path("/search?q=a\\b"), "/search?q=a\\b");
+    }
 }
