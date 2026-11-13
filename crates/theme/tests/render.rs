@@ -3113,7 +3113,136 @@ fn a_rating_has_strings_as_on_shopify() {
             "{% assign m = metaobjects.spec.tent.stars %}{{ m | metafield_text }}|\
              {{ m.value.rating | floor }}|{{ m.value.rating | modulo: 1 }}|{{ m.value.scale_max | minus: m.value.rating }}"
         ),
-        "4.5 / 5.0|4|0.5|0.5"
+        "4.5|4|0.5|0.5"
+    );
+}
+
+#[test]
+fn metafield_tag_and_text_print_each_type_as_shopify_does() {
+    // The issue's store and template; the expected lines are Shopify's, on a store.
+    let overlay = serde_json::json!({
+        "products": [
+            {"title": "Widget", "handle": "widget", "price": "10.00", "variants": [{"sku": "W-1"}],
+             "metafields": {"custom": {
+                "nums": {"type": "list.number_integer", "value": [3, 1, 2]},
+                "related": {"type": "list.product_reference", "value": ["alpha"]},
+                "faq": {"type": "metaobject_reference", "value": "faq/one"},
+                "faqs": {"type": "list.metaobject_reference", "value": ["faq/one", "faq/two"]},
+                "lang": {"type": "language", "value": "pt-BR"},
+                "link": {"type": "link", "value": {"text": "Docs & more", "url": "https://example.com/docs"}},
+                "site": {"type": "url", "value": "https://example.com/a?b=1&c=2"},
+                "stars": {"type": "rating", "value": {"scale_min": "0.0", "scale_max": "10.0", "value": "3.5"}},
+                "pick": {"type": "variant_reference", "value": "W-1"},
+                "care": {"type": "rich_text_field", "value": {"type": "root", "children": [
+                    {"type": "heading", "level": 2, "children": [{"type": "text", "value": "Care"}]},
+                    {"type": "paragraph", "children": [{"type": "text", "value": "Wipe dry."}]}]}},
+                "guide": {"type": "rich_text_field", "value": {"type": "root", "children": [
+                    {"type": "paragraph", "children": [{"type": "link", "url": "https://example.com/care",
+                        "title": "Care guide", "target": "_blank",
+                        "children": [{"type": "text", "value": "guide"}]}]}]}},
+                "who": {"type": "mixed_reference", "value": "faq/one"},
+                "tee": {"type": "file_reference", "value": "tee-1.jpg"}
+             }}},
+            {"title": "Alpha", "handle": "alpha", "price": "10.00"}
+        ],
+        "metaobjects": {"faq": [
+            {"handle": "one", "fields": {"question": "How long does shipping take?"}},
+            {"handle": "two", "fields": {"question": "Can I return an item?"}}
+        ]}
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..theme_of(
+            "metafield-tags",
+            &[],
+            &[
+                ("layout/theme.liquid", "{{ content_for_layout }}"),
+                (
+                    "templates/product.liquid",
+                    "{%- assign f = product.metafields.custom -%}\n\
+                     nums: [{{ f.nums | metafield_tag }}] [{{ f.nums | metafield_text }}]\n\
+                     related: [{{ f.related | metafield_tag }}]\n\
+                     faq: [{{ f.faq | metafield_tag }}]\n\
+                     faq field: [{{ f.faq | metafield_tag: field: 'question' }}]\n\
+                     faqs: [{{ f.faqs | metafield_tag }}]\n\
+                     lang: [{{ f.lang | metafield_tag }}]\n\
+                     link: [{{ f.link | metafield_tag }}] [{{ f.link | metafield_text }}]\n\
+                     url: [{{ f.site | metafield_tag }}]\n\
+                     rating: [{{ f.stars | metafield_tag }}]\n\
+                     variant: [{{ f.pick | metafield_tag }}]\n\
+                     rich: [{{ f.care | metafield_text }}]\n\
+                     rich link: [{{ f.guide | metafield_tag }}]\n\
+                     faqs field: [{{ f.faqs | metafield_tag: field: 'question' }}]\n\
+                     mixed: [{{ f.who | metafield_tag }}] [{{ f.who | metafield_text }}]\n\
+                     rating text: [{{ f.stars | metafield_text }}]\n\
+                     file text: [{{ f.tee | metafield_text }}] [{{ f.tee.value | image_url }}]\n\
+                     variant id: {{ f.pick.value.id }}",
+                ),
+            ],
+        )
+    };
+    let rendered = fixture.page("/products/widget");
+    let lines: Vec<&str> = rendered.body.lines().collect();
+    let variant = lines.last().unwrap().trim_start_matches("variant id: ");
+    let error = |kind: &str| {
+        format!(
+            "Liquid error (templates/product line {}): metafield_tag requires a 'field' parameter \
+             for metafields of type '{kind}'",
+            if kind == "metaobject_reference" { 4 } else { 6 }
+        )
+    };
+    let file = |line: &str| {
+        let (text, url) = line
+            .trim_start_matches("file text: [")
+            .trim_end_matches(']')
+            .split_once("] [")
+            .unwrap();
+        // The URL of the file, as `image_url` gives it without a size.
+        (text.to_string(), url.to_string())
+    };
+    let (file_text, file_url) = file(lines[16]);
+    assert_eq!(file_text, file_url);
+    assert!(
+        file_text.contains("/cdn/shop/files/tee-1.jpg"),
+        "{file_text}"
+    );
+    assert_eq!(
+        lines[..16],
+        [
+            "nums: [] []".to_string(),
+            "related: []".to_string(),
+            format!("faq: [{}]", error("metaobject_reference")),
+            "faq field: [<span class=\"metafield-single_line_text_field\">How long does shipping take?</span>]"
+                .to_string(),
+            format!("faqs: [{}]", error("list.metaobject_reference")),
+            "lang: []".to_string(),
+            "link: [<a href=\"https://example.com/docs\" class=\"metafield-url\">Docs &amp; more</a>] []"
+                .to_string(),
+            "url: [<a href=\"https://example.com/a?b=1&amp;c=2\" class=\"metafield-url\">example.com/a?b=1&amp;c=2</a>]"
+                .to_string(),
+            "rating: [<span class=\"metafield-rating\">3.5</span>]".to_string(),
+            format!(
+                "variant: [<a href=\"/products/widget?variant={variant}\" \
+                 class=\"metafield-variant_reference\">Default Title</a>]"
+            ),
+            "rich: [Care".to_string(),
+            "Wipe dry.]".to_string(),
+            "rich link: [<div class=\"metafield-rich_text_field\"><p><a href=\"https://example.com/care\" \
+             target=\"_blank\" title=\"Care guide\">guide</a></p></div>]"
+                .to_string(),
+            "faqs field: [<ul class=\"metafield-single_line_text_field-array\">\
+             <li class=\"metafield-single_line_text_field\">How long does shipping take?</li>\
+             <li class=\"metafield-single_line_text_field\">Can I return an item?</li></ul>]"
+                .to_string(),
+            "mixed: [] []".to_string(),
+            "rating text: [3.5]".to_string(),
+        ]
     );
 }
 

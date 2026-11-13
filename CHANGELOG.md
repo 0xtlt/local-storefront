@@ -54,6 +54,15 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   lsf and showed a Liquid error on the store; `render --strict` now fails on it. **`image_tag`
   raises `image_url must define width or height`** when `image_url` has neither. Guard the
   image (`{% if product.featured_image %}`) and give `image_url` a width.
+- **`metafield_tag` and `metafield_text` print what Shopify prints, and nothing where it prints
+  nothing.** A list other than `list.single_line_text_field` and `list.metaobject_reference`
+  (`list.number_integer`, `list.product_reference`...) prints nothing, no longer a `<ul>` or a
+  sentence; so do a `language`, a `mixed_reference`, a `customer_reference` and a
+  `company_reference` with `metafield_tag`. `metafield_tag` of a `metaobject_reference` or a
+  `list.metaobject_reference` without `field:` is a Liquid error, `metafield_tag requires a
+  'field' parameter for metafields of type 'metaobject_reference'`, no longer the handle. A
+  `rating` prints `3.5`, no longer `3.5 / 10.0`. A theme that shows these on lsf shows nothing,
+  or the error, on a store: give a metaobject its `field:`, and loop over the other lists.
 
 ### Fixed
 
@@ -214,6 +223,14 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   a `multi_line_text_field`, the items of a `list.single_line_text_field` and the `field` of a
   metaobject give `Tom &amp; &quot;Jerry&quot; &lt;b&gt;x&lt;/b&gt; l&#39;été`, as on Shopify,
   no longer the raw text: `<b>` in a value shows as text, and the text is safe in an attribute.
+- **`metafield_tag` prints links, URLs, variants and rich text as Shopify does.** A `link` is
+  `<a href="https://example.com/docs" class="metafield-url">Docs &amp; more</a>`, no longer a
+  Ruby hash, and its `metafield_text` is empty. A `url` is shown without its scheme
+  (`example.com/a?b=1&amp;c=2`), a `variant_reference` is a link to the variant, a link of rich
+  text keeps its `target` and `title`, and a metaobject's `field:` and a list of metaobjects have
+  the classes of a `single_line_text_field`. `metafield_text` of a rich text puts each block on a
+  line of its own (`Care` and `Wipe dry.`), and that of a `file_reference` is the file's URL, as
+  on a store.
 
 #### The checkout of an app
 
