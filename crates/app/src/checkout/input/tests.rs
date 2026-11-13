@@ -1021,6 +1021,35 @@ fn shop_metafield() {
     );
 }
 
+/// Shopify returns no metafield whose value is over 10,000 bytes: the Function reads `null`.
+#[test]
+fn a_metafield_over_10000_bytes_reads_null() {
+    let mut f = Fixture::new();
+    for (key, size) in [("at_limit", 10_000), ("over", 10_001)] {
+        f.store
+            .shop
+            .metafields
+            .entry("custom".to_string())
+            .or_default()
+            .insert(
+                key.to_string(),
+                StoreMetafield {
+                    kind: "multi_line_text_field".to_string(),
+                    value: json!("b".repeat(size)),
+                },
+            );
+    }
+    let out = f.run(
+        r#"{ shop {
+            at_limit: metafield(namespace: "custom", key: "at_limit") { type }
+            over: metafield(namespace: "custom", key: "over") { type } } }"#,
+    );
+    assert_eq!(
+        out["shop"],
+        json!({"at_limit": {"type": "multi_line_text_field"}, "over": null})
+    );
+}
+
 #[test]
 fn cart_metafields_are_the_ones_the_extensions_wrote() {
     let mut f = Fixture::new();

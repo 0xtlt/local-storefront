@@ -1242,7 +1242,10 @@ the order. (Shopify's documentation does not say which step blocks; this is how 
 treats them.)
 
 The input of each Function is the result of its input query, run against the cart, the buyer and
-the store data.
+the store data. A metafield whose value is over 10,000 bytes is `null` there, as Shopify returns
+none ("Metafields with values exceeding 10,000 bytes in size will not be returned",
+[input query limits](https://shopify.dev/docs/api/functions/latest#input-query-limits)): keep a
+Function's configuration under that size.
 
 A run that fails (a trap, more than 11 million instructions, an output out of its schema, a
 request out of Shopify's limits) is ignored, as on Shopify: its output is not applied and the
