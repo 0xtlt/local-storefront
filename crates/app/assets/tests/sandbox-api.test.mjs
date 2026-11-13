@@ -37,6 +37,7 @@ test('reads the checkout as signals', () => {
   assert.equal(shopify.extensionPoint, 'purchase.checkout.block.render');
   assert.equal(shopify.extension.target, 'purchase.checkout.block.render');
   assert.equal(shopify.extension.apiVersion, '2026-10');
+  assert.equal(shopify.version, '2026-10', 'the API version, which a version gate compares');
   assert.deepEqual(plain(shopify.extension.capabilities.value), ['api_access', 'block_progress']);
 });
 

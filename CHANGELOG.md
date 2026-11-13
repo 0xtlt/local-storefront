@@ -491,6 +491,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   it in Liquid `cart` and `/cart.js`, which count it in the totals, `has_components: true`, and
   its components in Liquid `item.item_components`. The cart showed the raw line, so a theme's
   bundle display was tested on lines Shopify never shows. A merged line still shows as its lines.
+- **`shopify.version` is the extension's API version** (`"2026-10"`), no longer `"lsf"`, in
+  checkout and customer account UI extensions, as Shopify's Version API gives it. A gate such as
+  `shopify.version >= '2026-04'` now compares versions, and a URL built from it names one.
 - **`lsf app check` and `lsf app function run --scenario` price a scenario as its served
   checkout does.** A buyer in a market with its own currency gets the cart in that currency and
   the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's

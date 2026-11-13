@@ -452,7 +452,7 @@
 
     // --- Platform APIs, on every target
     api.extensionPoint = target;
-    api.version = 'lsf';
+    api.version = init.apiVersion;
     api.extension = { apiVersion: init.apiVersion, scriptUrl: script, target, rendered: null, capabilities: null };
     signalProperty(api.extension, 'capabilities', () => capabilities);
     signalProperty(api.extension, 'rendered', () => true);
