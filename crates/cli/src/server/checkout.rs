@@ -556,13 +556,15 @@ fn scenario_start(
 pub(super) fn run_scenario(
     state: &ServerState,
     app: &App,
-    store: &Store,
+    store: &Arc<Store>,
     scenario: &lsf_core::store::CheckoutScenario,
     runs: pipeline::RunOptions,
     step: BuyerJourneyStep,
 ) -> Result<CheckoutResult, String> {
     let (session, mut checkout, _) =
         scenario_start(state, store, scenario).map_err(|problems| problems.join("; "))?;
+    // Priced as the served checkout of the scenario prices it: in the currency of its buyer.
+    let store = &crate::checkout::presented_for_checkout(store, &session, &checkout);
     let language = scenario
         .language
         .as_deref()
@@ -744,14 +746,9 @@ fn compute(
     let variant = variant_of(state, session_id, incoming);
     // One read, so that the basis is what the result is computed from.
     let (session, store, mut checkout, basis) = read(state, session_id);
-    // Priced in the currency of the buyer's country (the one of the shipping address, else the
-    // one of the session), as Shopify's checkout follows the market of the address.
-    let country = checkout
-        .shipping_country()
-        .filter(|code| store.country(code).is_some())
-        .map(str::to_string)
-        .unwrap_or_else(|| lsf_app::checkout::input::buyer_country(&store, &session));
-    let store = store.presented_for(&country);
+    // Priced in the currency of the buyer's country, as Shopify's checkout follows the market
+    // of the address.
+    let store = crate::checkout::presented_for_checkout(&store, &session, &checkout);
     let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
     let language = language_of(state, &store, incoming);
     let (app, selection, result) = price(state, &session, &store, &mut checkout, language, step)?;

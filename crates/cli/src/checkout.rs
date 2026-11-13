@@ -753,6 +753,24 @@ pub fn entered_by(scenario: &CheckoutScenario) -> CheckoutState {
     }
 }
 
+/// The store as a checkout prices it: in the currency of the buyer's country (the one of the
+/// shipping address when the store sells there, else the one of the session), at its market's
+/// rate or fixed prices, as Shopify's checkout follows the market of the address. The served
+/// checkout, `lsf app check` and `lsf app function run` all run the Functions on it, so that
+/// they read the same cart and `presentmentCurrencyRate`.
+pub fn presented_for_checkout(
+    store: &std::sync::Arc<Store>,
+    session: &Session,
+    checkout: &CheckoutState,
+) -> std::sync::Arc<Store> {
+    let country = checkout
+        .shipping_country()
+        .filter(|code| store.country(code).is_some())
+        .map(str::to_string)
+        .unwrap_or_else(|| lsf_app::checkout::input::buyer_country(store, session));
+    store.presented_for(&country)
+}
+
 /// Opens `scenario` on `session`, which the caller made (`Session::initial` for a command, the
 /// server's initial session for the server): applies its cart and buyer, then the country of the
 /// address it entered, as entering the address does (markets decide on it). Returns what the
@@ -864,6 +882,19 @@ pub fn write_demo_scenarios(dir: &Path, scenarios: &[(&str, &str)]) {
     for (name, content) in scenarios {
         std::fs::write(dir.join("checkouts").join(name), content).expect("scenario");
     }
+}
+
+/// Test data: the store data of `dir` (the demo store of [`write_demo_scenarios`]) with France
+/// in a market that pays in euros at 0.5.
+#[cfg(test)]
+pub fn sell_to_france_in_euros_at_half(dir: &Path) {
+    let path = dir.join("store.json");
+    let mut store: Json =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("store.json")).expect("json");
+    store["localization"]["markets"] = serde_json::json!([
+        {"handle": "europe", "countries": ["FR"], "currency": "EUR", "rate": "0.5"}
+    ]);
+    std::fs::write(path, store.to_string()).expect("store.json");
 }
 
 #[cfg(test)]

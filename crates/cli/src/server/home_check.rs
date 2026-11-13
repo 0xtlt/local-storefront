@@ -121,7 +121,7 @@ type FailedRun = (String, String, String, String);
 /// request of a `.fetch` target is sent. The budget is checked before each Function runs: a
 /// scenario whose Functions did not all run in time is not checked (the runs of it that failed
 /// before still count).
-pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> Report {
+pub fn run(state: &ServerState, app: &App, store: &Arc<Store>, budget: Duration) -> Report {
     check(state, app, store, budget, false)
 }
 
@@ -131,7 +131,7 @@ pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> R
 pub fn run_with_expectations(
     state: &ServerState,
     app: &App,
-    store: &Store,
+    store: &Arc<Store>,
     budget: Duration,
 ) -> Report {
     check(state, app, store, budget, true)
@@ -140,7 +140,7 @@ pub fn run_with_expectations(
 fn check(
     state: &ServerState,
     app: &App,
-    store: &Store,
+    store: &Arc<Store>,
     budget: Duration,
     expectations: bool,
 ) -> Report {

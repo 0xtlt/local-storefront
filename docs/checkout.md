@@ -1410,7 +1410,7 @@ payment method has its placements: `[ACCELERATED_CHECKOUT]` is an express button
 
 | Option | What it does |
 |---|---|
-| `--scenario <name>` | A [scenario](#scenarios) of the store data: its cart, buyer, language, `checkout` settings and the extensions it names. `--session`, `--checkout` and `--locale` go on top of it. |
+| `--scenario <name>` | A [scenario](#scenarios) of the store data: its cart, buyer, language, `checkout` settings and the extensions it names. `--session`, `--checkout` and `--locale` go on top of it. The cart is priced as the served checkout of the scenario prices it: in the currency of the buyer's country, at its market's `rate` (`presentmentCurrencyRate`). |
 | `--session <file or JSON>` | The session to run for: a [session](data-reference.md#session) with a `cart`, a `customer`, a `country`. Defaults to the `session` of the store data. |
 | `--checkout <file or JSON>` | What the buyer entered: `email`, `phone`, `shippingAddress`, `selectedDelivery`, `selectedPayment`, `discountCodes`, `metafields`. |
 | `--locale <iso>` | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |
@@ -1666,7 +1666,9 @@ store before a release:
 - **Currencies and price lists**: a buyer pays in the currency of the country of the shipping
   address (else of the one selected on the storefront), at its market's `rate` or fixed `prices`
   ([localization](data-format.md#localization)); the Functions read that rate as
-  `presentmentCurrencyRate`. Shopify's rounding rules of converted prices and B2B catalogs are
+  `presentmentCurrencyRate`. The served checkout, `lsf app check` and
+  `lsf app function run --scenario` price a scenario alike, so an `expect` on totals reads the
+  amounts the page shows. Shopify's rounding rules of converted prices and B2B catalogs are
   not applied ([markets](compatibility.md#known-differences)).
 - **B2B catalogs, pickup points, local pickup, fulfillment constraints and order routing**: not
   run.
