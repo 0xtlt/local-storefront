@@ -517,6 +517,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`/account/addresses` leads to the profile of the app's customer account**, as on Shopify with
   new customer accounts, no longer to the order list: a theme's `routes.account_addresses_url`
   lands on `/account/profile`, where the addresses are.
+- **The customer account takes its language from `?locale=`**, as Shopify's, whose account has no
+  language in its path: `/account/profile?locale=fr` gives its extensions French
+  (`shopify.localization.language`, `shopify.i18n`), and the session keeps it for the next pages
+  until another `?locale=`. lsf ignored the parameter.
 - **`lsf app check` and `lsf app function run --scenario` price a scenario as its served
   checkout does.** A buyer in a market with its own currency gets the cart in that currency and
   the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's

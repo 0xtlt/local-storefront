@@ -19,7 +19,7 @@
 
 use lsf_app::checkout::app_metafields::OrderOwner;
 use lsf_app::config::Selection;
-use lsf_core::store::{Customer, Metafields, Order, Store};
+use lsf_core::store::{Customer, Language, Metafields, Order, Store};
 use serde_json::{Value as Json, json};
 
 use super::checkout::{self, origin_of};
@@ -111,8 +111,7 @@ fn state_json(
         .map_err(|problem| Reply::text(500, problem))?;
     let selection = Selection::resolve(&app, &options.extensions)
         .map_err(|problem| Reply::text(500, problem))?;
-    let language = checkout::language_of(state, &store, incoming);
-    let root = checkout::root_of(language);
+    let (language, root) = account_language(state, &store, incoming, session_id);
     let identity = Identity::of(&store, &session);
     let customer = identity.customer.and_then(|id| store.customer_by_id(id));
     let placed = state
@@ -236,7 +235,7 @@ fn state_json(
         "page": page.name(),
         "root": format!("{root}/account"),
         "extensionPage": extension_page,
-        "home": checkout::home_path(state, root),
+        "home": checkout::home_path(state, &root),
         "shop": {
             "id": format!("gid://shopify/Shop/{}", store.shop.id),
             "name": store.shop.name,
@@ -290,6 +289,35 @@ fn state_json(
     checkout::place_extensions(&mut json, state.app_uninstalled());
     json["builds"] = state.builds.to_json();
     Ok(json)
+}
+
+/// The language of the customer account, and the locale root of its path. Shopify's account has
+/// no language in its path: `?locale=fr` names it, and the session keeps it for the next pages
+/// until another `?locale=`. lsf's `/fr/account` names one too, for the page it is on.
+fn account_language<'a>(
+    state: &ServerState,
+    store: &'a Store,
+    incoming: &Incoming,
+    session_id: &str,
+) -> (&'a Language, String) {
+    let asked = incoming
+        .query_param("locale")
+        .and_then(|code| store.language(code))
+        .map(|language| language.iso_code.clone());
+    let kept = state.with_session(session_id, |entry| {
+        if asked.is_some() {
+            entry.checkout.account_locale.clone_from(&asked);
+        }
+        entry.checkout.account_locale.clone()
+    });
+    let (prefix, root, _) = state.localize(store, &incoming.path);
+    let code = asked
+        .or_else(|| (!root.is_empty()).then_some(prefix))
+        .or(kept);
+    let language = code
+        .and_then(|code| store.language(&code))
+        .unwrap_or_else(|| store.primary_language());
+    (language, root)
 }
 
 /// The metafields of an order as the default shop of the Admin API keeps them: those the
