@@ -275,6 +275,7 @@ pub fn process_exchanges(state: &mut ShopState, order: &str, items: &[(String, i
             .and_then(Value::as_bool)
             .unwrap_or(true);
         let draft = LineDraft {
+            group: None,
             product: text(&record, "productId").map(str::to_string),
             variant: variant.clone(),
             inventory_item: inventory_item.clone(),

@@ -862,3 +862,125 @@ fn after_an_uninstall_an_order_delivers_nothing_and_a_reinstall_brings_the_app_s
     assert_eq!(topic, "orders/create");
     assert_eq!(payload["name"], json!("#1008"));
 }
+
+/// The issue's bundle: a line a cart transform expanded is ordered as its components, each in
+/// a `LineItemGroup` that names the bundle, as Shopify stores a bundle in an order.
+#[test]
+fn a_bundle_is_ordered_as_its_components_in_a_line_item_group() {
+    let receiver = Receiver::start(SECRET);
+    let api = api();
+    subscribe(&api, &receiver, &["ORDERS_CREATE"]);
+    let store = support::demo_store();
+    let tee = store.product_by_handle("organic-cotton-t-shirt").unwrap();
+    let mug = store.product_by_handle("ceramic-mug").unwrap();
+    let component = |variant: &lsf_core::store::Variant, unit_price: i64| ResultLine {
+        variant_id: variant.id,
+        product_id: mug.id,
+        title: mug.title.clone(),
+        sku: Some(variant.sku.clone()),
+        quantity: 1,
+        unit_price,
+        subtotal: unit_price,
+        total: unit_price,
+        requires_shipping: true,
+        ..ResultLine::default()
+    };
+    // The kit costs 30.00, 3.00 off: its components share what it costs, in proportion.
+    let kit = ResultLine {
+        id: "gid://shopify/CartLine/1".into(),
+        variant_id: tee.variants[0].id,
+        product_id: tee.id,
+        title: "Kit".into(),
+        sku: Some(tee.variants[0].sku.clone()),
+        quantity: 1,
+        unit_price: 3000,
+        subtotal: 3000,
+        total: 2700,
+        requires_shipping: true,
+        components: vec![
+            component(&mug.variants[0], 2000),
+            component(&mug.variants[1], 1000),
+        ],
+        transformed_by: Some("expand".into()),
+        ..ResultLine::default()
+    };
+    let result = CheckoutResult {
+        lines: vec![kit],
+        cost: Cost {
+            subtotal: 3000,
+            discounts: 300,
+            total: 2700,
+            due_now: 2700,
+            checkout_charge_amount: 3000,
+            currency_code: "USD".into(),
+            ..Cost::default()
+        },
+        ..CheckoutResult::default()
+    };
+    let order = api
+        .record_order(&PlacedOrder {
+            id: None,
+            number: Some(1004),
+            processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: None,
+            company_location_id: None,
+            email: Some("buyer@example.com"),
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: Some("Credit card"),
+            metafields: &[],
+        })
+        .expect("the order is recorded")
+        .expect("no code is refused")
+        .id;
+
+    let answer = graphql(
+        &api,
+        r#"query($id: ID!) { order(id: $id) { subtotalPriceSet { shopMoney { amount } }
+            lineItems(first: 5) { nodes { sku quantity discountedTotalSet { shopMoney { amount } }
+                lineItemGroup { id title quantity variantSku } } } } }"#,
+        json!({"id": order}),
+    );
+    let order_data = &answer["data"]["order"];
+    let items = order_data["lineItems"]["nodes"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{answer}");
+    let group = &items[0]["lineItemGroup"];
+    assert_eq!(group["title"], "Kit", "{answer}");
+    assert_eq!(group["quantity"], 1);
+    assert_eq!(group["variantSku"], json!(tee.variants[0].sku));
+    assert_eq!(items[1]["lineItemGroup"], *group);
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| (
+                item["sku"].clone(),
+                item["discountedTotalSet"]["shopMoney"]["amount"].clone()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (json!(mug.variants[0].sku), json!("18.0")),
+            (json!(mug.variants[1].sku), json!("9.0")),
+        ]
+    );
+    assert_eq!(
+        order_data["subtotalPriceSet"]["shopMoney"]["amount"],
+        "27.0"
+    );
+
+    let (_, created) = &receiver.take(1)[0];
+    let lines = created["line_items"].as_array().unwrap();
+    let group_id = lsf_app::admin::state::parse_gid(group["id"].as_str().unwrap())
+        .unwrap()
+        .1;
+    assert_eq!(lines.len(), 2);
+    for line in lines {
+        assert_eq!(
+            line["sales_line_item_group_id"],
+            json!(group_id),
+            "{created}"
+        );
+    }
+}
