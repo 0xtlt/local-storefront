@@ -11,6 +11,10 @@ address forms.
 countries of `data/regions/` (their currency and continent, `group_name`) and their English names
 from `data/cldr/locales/en/territories.yml`.
 
+`src/store/country_names.rs` is generated from the same commit by
+`tools/worldwide/country_names.rb`: the names of the countries Shopify lists in the languages lsf
+names, from `data/cldr/locales/<locale>/territories.yml`.
+
 Shopify/worldwide is distributed under the MIT license:
 
 Copyright 2023-present, Shopify Inc.

@@ -335,6 +335,12 @@ fn format_address(input: &Value, _args: &FilterArgs, _ctx: &Context) -> Result<V
         .copied()
         .collect::<Vec<_>>()
         .join(" ");
+    // The name of its country on the page: `États-Unis` on `/fr/`.
+    let country = crate::drops::localization::country_name(
+        &drop.site,
+        &address.country_code,
+        &address.country,
+    );
     let locality = [
         address.city.as_str(),
         address.province_code.as_str(),
@@ -351,7 +357,7 @@ fn format_address(input: &Value, _args: &FilterArgs, _ctx: &Context) -> Result<V
         address.address1.as_str(),
         address.address2.as_str(),
         locality.as_str(),
-        address.country.as_str(),
+        country.as_str(),
     ];
     let html: Vec<String> = lines
         .iter()

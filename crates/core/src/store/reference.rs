@@ -558,6 +558,40 @@ pub fn policy_title(handle: &str) -> &'static str {
     }
 }
 
+/// The name Shopify gives a country on a page in a language: `États-Unis` in French,
+/// `Vereinigte Staaten` in German. A regional language (`fr-CA`) has the names of its language
+/// when it has none of its own. `None` for a language lsf has no names in and for a country
+/// Shopify does not list.
+pub fn country_name_in(code: &str, language: &str) -> Option<&'static str> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+
+    use super::country_names::{CODES, NAMES};
+
+    static TABLES: OnceLock<HashMap<String, Vec<&'static str>>> = OnceLock::new();
+    let tables = TABLES.get_or_init(|| {
+        NAMES
+            .iter()
+            .map(|(language, names)| (language.to_ascii_lowercase(), names.lines().collect()))
+            .collect()
+    });
+    let index = CODES
+        .binary_search(&code.to_ascii_uppercase().as_str())
+        .ok()?;
+    let language = language.to_ascii_lowercase().replace('_', "-");
+    let names = tables.get(&language).or_else(|| {
+        let base = language.split('-').next().unwrap_or_default();
+        tables.get(base)
+    })?;
+    names.get(index).copied()
+}
+
+/// Puts names in the order Shopify lists them in: by name, accents aside (`Belgique`, `Canada`,
+/// `États-Unis`).
+pub fn sort_by_name<T>(items: &mut [T], name: impl Fn(&T) -> &str) {
+    items.sort_by_cached_key(|item| super::collate::sort_key(name(item)));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,5 +694,37 @@ mod tests {
             codes.dedup();
             assert_eq!(codes.len(), provinces.len(), "{country} has a code twice");
         }
+    }
+
+    #[test]
+    fn countries_have_the_names_shopify_gives_them_in_each_language() {
+        assert_eq!(country_name_in("US", "fr"), Some("États-Unis"));
+        assert_eq!(country_name_in("us", "FR-ca"), Some("États-Unis"));
+        assert_eq!(country_name_in("BE", "de"), Some("Belgien"));
+        assert_eq!(country_name_in("CH", "de"), Some("Schweiz"));
+        assert_eq!(country_name_in("US", "de"), Some("Vereinigte Staaten"));
+        assert_eq!(country_name_in("US", "en"), Some("United States"));
+        assert_eq!(country_name_in("HK", "en"), Some("Hong Kong SAR"));
+        // `pt-BR` reads `pt`, `pt-PT` has its own, `nb` those of `no`.
+        assert_eq!(country_name_in("CZ", "pt-BR"), Some("Tchéquia"));
+        assert_eq!(country_name_in("CZ", "pt-PT"), Some("Chéquia"));
+        assert_eq!(country_name_in("US", "nb"), Some("USA"));
+        assert_eq!(country_name_in("US", "zh-CN"), Some("美国"));
+        assert_eq!(country_name_in("US", "zh-TW"), Some("美國"));
+        assert_eq!(country_name_in("US", "xx"), None);
+        assert_eq!(country_name_in("CU", "fr"), None);
+        assert_eq!(country_name_in("ZZ", "fr"), None);
+        // Every language lsf knows has a name for every country.
+        for (language, _, _) in LANGUAGES {
+            for code in super::super::country_names::CODES {
+                assert!(
+                    country_name_in(code, language).is_some(),
+                    "{code} in {language}"
+                );
+            }
+        }
+        let mut names = ["États-Unis", "Canada", "Belgique"];
+        sort_by_name(&mut names, |name| name);
+        assert_eq!(names, ["Belgique", "Canada", "États-Unis"]);
     }
 }

@@ -74,6 +74,9 @@ impl Object for AddressDrop {
             .copied()
             .collect::<Vec<_>>()
             .join(" ");
+        // The name of its country on the page: `États-Unis` on `/fr/`.
+        let country =
+            super::localization::country_name(&self.site, &address.country_code, &address.country);
         Some(match key {
             "id" => Value::Int(address.id as i64),
             "first_name" => Value::from(&address.first_name),
@@ -97,7 +100,7 @@ impl Object for AddressDrop {
             "country_code" => Value::from(&address.country_code),
             // The country prints as its name and exposes `iso_code`.
             "country" => Value::object(CountryName {
-                name: address.country.clone(),
+                name: country,
                 iso_code: address.country_code.clone(),
             }),
             "phone" => Value::from(&address.phone),
@@ -107,7 +110,7 @@ impl Object for AddressDrop {
                     address.address1.as_str(),
                     address.city.as_str(),
                     address.province.as_str(),
-                    address.country.as_str(),
+                    country.as_str(),
                 ]
                 .iter()
                 .filter(|part| !part.is_empty())

@@ -97,6 +97,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`country_option_tags` and `all_country_option_tags` start with a `---` option**, as on
   Shopify: `<option value="---" data-provinces="[]">---</option>`. A theme test that compares
   their first option, or counts them, sees one more.
+- **`localization.available_countries` is sorted by the countries' names**, in the language of
+  the page, as on Shopify (`Belgium`, `Canada`, `United States`; `Belgique`, `Canada`,
+  `États-Unis` on `/fr/`), no longer in the order of the store data. A theme test that expects
+  the order of `localization.countries` needs the order of the names.
 
 ### Fixed
 
@@ -297,6 +301,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `all_country_option_tags` lists all 237, by name, where it listed the 63. The data is
   Shopify's own address data (Shopify/worldwide), as the provinces already were. Bulgaria pays
   in euros by default, as it has since 2026.
+- **Countries have their names in the language of the page.** On `/fr/`, `country.name`,
+  `localization.country.name`, `shop.address.country`, an address's `summary` and
+  `format_address` give `États-Unis`, `Belgique`, `Suisse` (on `/de/`: `Vereinigte Staaten`,
+  `Belgien`, `Schweiz`), where lsf gave the English names on every page. The names are those
+  of Shopify's address data (Shopify/worldwide, from the Unicode CLDR) in the 38 languages lsf
+  names. A country with a `name` in the store data keeps it.
 
 #### The checkout of an app
 

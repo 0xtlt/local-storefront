@@ -53,10 +53,27 @@ pub fn language_value(site: &SiteRef, language: &Language) -> Value {
     ])
 }
 
+/// The name of a country on the page: the one Shopify gives it in the page's language
+/// (`États-Unis` on `/fr/`), unless the data names the country otherwise. A language lsf has no
+/// names in keeps the English one.
+pub fn country_name(site: &SiteRef, iso_code: &str, name: &str) -> String {
+    let named_by_default = name.is_empty()
+        || name.eq_ignore_ascii_case(iso_code)
+        || reference::country_name(iso_code) == Some(name)
+        || reference::country_name_in(iso_code, "en") == Some(name);
+    match reference::country_name_in(iso_code, &site.language().iso_code) {
+        Some(localized) if named_by_default => localized.to_string(),
+        _ => name.to_string(),
+    }
+}
+
 pub fn country_value(site: &SiteRef, country: &Country) -> Value {
     hash([
         ("iso_code", Value::from(&country.iso_code)),
-        ("name", Value::from(&country.name)),
+        (
+            "name",
+            Value::from(country_name(site, &country.iso_code, &country.name)),
+        ),
         ("unit_system", Value::from(&country.unit_system)),
         ("currency", currency_value(&country.currency)),
         ("popular?", Value::Bool(country.popular)),
@@ -112,13 +129,28 @@ impl Object for LocalizationDrop {
     fn get(&self, key: &str) -> Option<Value> {
         let site = &self.site;
         Some(match key {
-            "available_countries" => Value::array(
-                site.store
+            // By their names on the page, as Shopify lists them: `Belgique`, `Canada`,
+            // `États-Unis` on `/fr/`.
+            "available_countries" => {
+                let mut countries: Vec<(String, &Country)> = site
+                    .store
                     .countries
                     .iter()
-                    .map(|country| country_value(site, country))
-                    .collect(),
-            ),
+                    .map(|country| {
+                        (
+                            country_name(site, &country.iso_code, &country.name),
+                            country,
+                        )
+                    })
+                    .collect();
+                reference::sort_by_name(&mut countries, |(name, _)| name);
+                Value::array(
+                    countries
+                        .into_iter()
+                        .map(|(_, country)| country_value(site, country))
+                        .collect(),
+                )
+            }
             // The languages of the visitor's market, as the Storefront API's
             // `Localization.availableLanguages` ("available for the active country").
             "available_languages" => available_languages(site, &site.country().iso_code),
