@@ -51,6 +51,14 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   1 to 50, a `video_url` that accepts another provider, and a `visible_if` that is not Liquid
   starting with `{{`. Shopify refuses the section and every template that places it; a theme
   that checked clean with one of these now fails `check`.
+- **`lsf check` reports the JSON templates whose structure Shopify refuses on upload**
+  (`invalid_template`, which fails the check): an `order` entry that is not in `sections`, a
+  section that is not in `order`, a duplicate in `order`, no `order`, a section without `type`,
+  no section or more than 25, more than 50 blocks in a section or more of a type than its
+  `limit`, theme blocks nested deeper than 8 levels, an unknown attribute, a `wrapper` of
+  `span`, and a `layout` that is not a layout of the theme. Shopify keeps the previous version
+  of such a template, so its page never changes, where lsf rendered the new one. A theme that
+  checked clean with one of these now fails `check`.
 - **`closest.<resource>` is the nearest resource setting, even an empty one.** A theme block
   whose own `product` setting is unset no longer gets the page's product as `closest.product`:
   it gets none, as on Shopify. Give the setting a value, or `{{ closest.product }}` as its

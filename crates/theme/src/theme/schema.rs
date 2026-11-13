@@ -23,6 +23,8 @@ pub struct SettingDef {
 pub struct BlockDef {
     pub kind: String,
     pub settings: Vec<SettingDef>,
+    /// How many blocks of the type a section may hold (`limit`).
+    pub limit: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -107,6 +109,7 @@ impl Schema {
                 Some(BlockDef {
                     kind: block.get("type")?.as_str()?.to_string(),
                     settings: parse_settings(block.get("settings")),
+                    limit: block.get("limit").and_then(Json::as_u64),
                 })
             })
             .collect();
