@@ -214,7 +214,10 @@ How they behave, as shopify.dev documents it:
 - **Queries**: `products` and `productVariants` take their documented sort keys
   (`INVENTORY_TOTAL`, `FULL_TITLE`, `SKU`, …) and search filters (`sku`, `barcode`, `price`,
   `inventory_total`, `is_price_reduced`, `out_of_stock_somewhere`, `published_status`,
-  `option1`, `location_id`, …); `productByIdentifier` and `productVariantByIdentifier` find a
+  `option1`, `location_id`, …). `title:` matches a product's whole title, ignoring case, as a
+  store does: `title:"Organic Cotton T-Shirt"`, `title:Organic*` and `title:*cotton*` find it,
+  `title:cotton` does not (a word of the title is found without a field: `cotton`);
+  `productByIdentifier` and `productVariantByIdentifier` find a
   `customId`; `productTags`, `productTypes`, `productVendors`, `inCollection`,
   `InventoryItem.inventoryLevel(locationId:)`, `publishedOnPublication`,
   `resourcePublications`, the `appliesTo…` fields of selling plan groups are answered.

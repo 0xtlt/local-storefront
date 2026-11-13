@@ -13,7 +13,7 @@
 //! | a `time` or `date` (`created_at`) | `createdAt` |
 //! | a `boolean` (`gift_card`) | `giftCard`, else `isGiftCard` |
 //! | a number | the number (or the decimal string) in the camelCase field |
-//! | a `string` | the camelCase field (or its plural), tokenized text for `title`, `name`, `body`, `description`, `note`, a whole keyword otherwise |
+//! | a `string` | the camelCase field (or its plural), tokenized text for `title`, `name`, `body`, `description`, `note`, a whole keyword otherwise (a product's `title` is a keyword: `domains::catalog::queries`) |
 //! | `metafields.{namespace}.{key}` | the `value` of the record's metafield |
 //! | `fields.{key}` | the `value` of the record's field (a metaobject's) |
 //! | `default` (a term without a field) | the title, name, handle, email, vendor, product type, SKU and tags |

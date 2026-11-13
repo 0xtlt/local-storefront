@@ -151,6 +151,47 @@ fn connections_answer_shopifys_errors() {
     );
 }
 
+/// `title:` matches a product's whole title, or a prefix of it, as a store does (issue #170, a
+/// development store on 2026-11-12): not a word inside it, which the default search finds.
+#[test]
+fn a_title_filter_matches_the_whole_title_of_a_product() {
+    let mut shop = demo();
+    let created = run(
+        &mut shop,
+        r#"mutation { a: productCreate(product: {title: "Tee"}) { userErrors { message } } b: productCreate(product: {title: "Tee & Trousers Set"}) { userErrors { message } } }"#,
+    );
+    assert!(created.get("errors").is_none(), "{created}");
+    let found = |shop: &mut ShopState, query: &str| -> Vec<String> {
+        let answer = run(
+            shop,
+            &format!(
+                "{{ products(first: 50, query: {}) {{ nodes {{ title }} }} }}",
+                json!(query)
+            ),
+        );
+        titles(&answer["data"]["products"])
+    };
+    let cotton = ["Organic Cotton T-Shirt"];
+    // The issue's repro: a word of the title finds nothing.
+    assert_eq!(found(&mut shop, "title:cotton"), Vec::<String>::new());
+    assert_eq!(found(&mut shop, "title:Cotton"), Vec::<String>::new());
+    assert_eq!(found(&mut shop, "title:*Cotton"), Vec::<String>::new());
+    assert_eq!(found(&mut shop, "title:*T-Shirt"), Vec::<String>::new());
+    assert_eq!(found(&mut shop, "title:\"Organic Cotton T-Shirt\""), cotton);
+    assert_eq!(found(&mut shop, "title:'organic cotton t-shirt'"), cotton);
+    assert_eq!(found(&mut shop, "title:Organic*"), cotton);
+    assert_eq!(found(&mut shop, "title:*cotton*"), cotton);
+    assert_eq!(found(&mut shop, "title:*cot*shirt*"), cotton);
+    // `title:Tee` is the product titled "Tee" alone.
+    assert_eq!(found(&mut shop, "title:Tee"), ["Tee"]);
+    assert_eq!(
+        found(&mut shop, "title:tee*"),
+        ["Tee", "Tee & Trousers Set"]
+    );
+    // Without a field, a word of the title still finds it.
+    assert_eq!(found(&mut shop, "organic"), cotton);
+}
+
 #[test]
 fn search_sort_and_counts() {
     let mut shop = demo();
@@ -176,11 +217,11 @@ fn search_sort_and_counts() {
         titles(&not_sale["data"]["products"]),
         ["Organic Cotton T-Shirt"]
     );
-    let words = run(
+    let whole = run(
         &mut shop,
-        "{ products(first: 50, query: \"title:wool\") { nodes { title } } }",
+        "{ products(first: 50, query: \"title:'wool beanie'\") { nodes { title } } }",
     );
-    assert_eq!(titles(&words["data"]["products"]), ["Wool Beanie"]);
+    assert_eq!(titles(&whole["data"]["products"]), ["Wool Beanie"]);
     let free = run(
         &mut shop,
         "{ products(first: 50, query: \"beanie\") { nodes { title } } }",

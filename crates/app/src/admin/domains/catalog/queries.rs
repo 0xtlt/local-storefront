@@ -4,8 +4,12 @@
 //! `productTypes`, `productVendors`, and the fields that take an argument
 //! (`Product.inCollection`, `InventoryItem.inventoryLevel`, `Location.inventoryLevel`).
 //!
-//! What the generic rules read already (`title`, `product_type`, `vendor`, `status`, `tag`,
-//! `handle`, the dates, `collection_id`, `variant_id`, …) is not repeated here. The filters lsf
+//! What the generic rules read already (`product_type`, `vendor`, `status`, `tag`, `handle`, the
+//! dates, `collection_id`, `variant_id`, …) is not repeated here. A product's `title` is matched
+//! whole, as a store matches it (issue #170, a development store on 2026-11-12): `title:Tee`
+//! finds the product titled `Tee`, not `Tee & Trousers Set`, `title:snowboard` finds none of the
+//! snowboards, `title:The*` and `title:*snowboard*` find them; a word of the title is found by
+//! the default search (`snowboard`). The filters lsf
 //! cannot read (`category_id`, `bundles`, `delivery_profile_id`, …) are ignored with a note in
 //! `extensions.lsf.notes`, as the resolver does for any.
 //!
@@ -45,6 +49,14 @@ pub fn register(registry: &mut Registry) {
             SortValue::of(
                 r.item_map(item)
                     .and_then(|product| product.get("createdAt")),
+            )
+        })
+        .search_field("Product", "title", |_r, _item, product| {
+            Some(
+                text_of(product, "title")
+                    .map(SearchValue::Keyword)
+                    .into_iter()
+                    .collect(),
             )
         })
         .search_field("Product", "sku", |r, _item, product| {

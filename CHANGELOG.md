@@ -427,6 +427,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `actualQueryCost` applies the formula to the nodes returned, and `Shopify-GraphQL-Cost-Debug`
   lists a connection's `definedCost` as `null` and what is below it for one node, as Shopify
   does. Throttling tests now reach `THROTTLED` with the costs a store charges.
+- **`products(query: "title:…")` matches the whole title**, ignoring case, as a store does, no
+  longer a word of it: `title:cotton` no longer finds "Organic Cotton T-Shirt", and `title:Tee`
+  finds the product titled "Tee" but not "Tee & Trousers Set". `title:"Organic Cotton T-Shirt"`,
+  `title:Organic*` and `title:*cotton*` (a `*` inside a prefix matches anything) find it, and a
+  word without a field (`cotton`) still does. An app that looked products up by a word of their
+  title finds nothing on a store: use the whole title, a prefix, or the default search.
 
 #### The command line
 
