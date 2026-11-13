@@ -3118,6 +3118,55 @@ fn a_rating_has_strings_as_on_shopify() {
 }
 
 #[test]
+fn metafield_text_escapes_text_as_metafield_tag_does() {
+    // The issue's value, and Shopify's output on a store: `metafield_text` escapes the text as
+    // `metafield_tag` does, a multi-line text, a list of texts and a metaobject's field too.
+    let overlay = serde_json::json!({
+        "products": [{"title": "Widget", "handle": "widget", "price": "10.00",
+            "metafields": {"custom": {
+                "name": {"type": "single_line_text_field", "value": "Tom & \"Jerry\" <b>x</b> l'été"},
+                "notes": {"type": "multi_line_text_field", "value": "Line one\nLine <i>two</i>"},
+                "tags": {"type": "list.single_line_text_field", "value": ["<a>", "b & c"]},
+                "faq": {"type": "metaobject_reference", "value": "faq/one"}
+            }}}],
+        "metaobjects": {"faq": [{"handle": "one", "fields": {"question": "Is <b>it</b> & that?"}}]}
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render =
+        |source: &str| fixture.liquid("/products/widget", Session::initial(&fixture.store), source);
+    assert_eq!(
+        render(
+            "{{ product.metafields.custom.name | metafield_text }}\n\
+             {{ product.metafields.custom.name | metafield_tag }}"
+        ),
+        "Tom &amp; &quot;Jerry&quot; &lt;b&gt;x&lt;/b&gt; l&#39;été\n\
+         <span class=\"metafield-single_line_text_field\">Tom &amp; &quot;Jerry&quot; \
+         &lt;b&gt;x&lt;/b&gt; l&#39;été</span>"
+    );
+    assert_eq!(
+        render("{{ product.metafields.custom.notes | metafield_text }}"),
+        "Line one\nLine &lt;i&gt;two&lt;/i&gt;"
+    );
+    assert_eq!(
+        render("{{ product.metafields.custom.tags | metafield_text }}"),
+        "&lt;a&gt; and b &amp; c"
+    );
+    assert_eq!(
+        render("{{ product.metafields.custom.faq | metafield_text: field: 'question' }}"),
+        "Is &lt;b&gt;it&lt;/b&gt; &amp; that?"
+    );
+}
+
+#[test]
 fn what_is_loaded_is_charged_once() {
     let overlay = serde_json::json!({
         "metaobjects": {

@@ -142,7 +142,7 @@ converted at the market's rate, as prices are, a reference is a GID or the key t
 ([reference values](data-format.md#reference-values)), a `file_reference` is an image, a video or a file by its extension;
 a metafield of a text, number, `boolean`, `date` or `date_time` type used without `.value` acts
 as its value in `if`, `==`, `>`, the math and date filters, `size`, and `sort`, `where` and
-`sum`, as on Shopify;
+`sum`, as on Shopify; `metafield_text` HTML-escapes text, as `metafield_tag` does;
 the value of a `list.product_reference` or `list.metaobject_reference` is a list drop, as on
 Shopify: `.count` and `.size` give its length, `.first`, `.last` and `[n]` give nothing, and the
 `first` and `last` filters, `for` and `paginate` reach its items; the other lists are arrays),

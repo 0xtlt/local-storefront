@@ -210,6 +210,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   pages and Ajax answers of a visitor who has a cart set `cart_currency=<currency>`, the currency
   of the answer (`EUR` under `/en-be/`), as Shopify sets both. A script or a currency converter
   that reads them gets a value locally too.
+- **`metafield_text` HTML-escapes text, as `metafield_tag` does.** A `single_line_text_field`,
+  a `multi_line_text_field`, the items of a `list.single_line_text_field` and the `field` of a
+  metaobject give `Tom &amp; &quot;Jerry&quot; &lt;b&gt;x&lt;/b&gt; l&#39;été`, as on Shopify,
+  no longer the raw text: `<b>` in a value shows as text, and the text is safe in an attribute.
 
 #### The checkout of an app
 
