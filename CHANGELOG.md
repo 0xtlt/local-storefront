@@ -63,6 +63,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   'field' parameter for metafields of type 'metaobject_reference'`, no longer the handle. A
   `rating` prints `3.5`, no longer `3.5 / 10.0`. A theme that shows these on lsf shows nothing,
   or the error, on a store: give a metaobject its `field:`, and loop over the other lists.
+- **A loop over a list of references or `metaobjects.<type>.values` gets the first 50 items**,
+  as on Shopify, no longer all of them; `.count` and `.size` are still the total. Wrap the loop
+  in `paginate` to reach the others. `paginate` of such a list now shows one page of it, up to
+  250 items, and pages it with a parameter of its own, `page_` and 8 hexadecimal digits
+  (`/products/widget?page_1a2b3c4d=2`), as Shopify does, no longer `?page=2`. Code that builds
+  `?page=` for these lists reads `paginate.page_param` instead.
 
 ### Fixed
 

@@ -28,7 +28,7 @@ use chrono::{DateTime, Utc};
 use lsf_liquid::time::Time;
 use lsf_liquid::{Hash, Value};
 
-use crate::site::Site;
+use crate::site::{PaginateWindow, Site};
 
 /// Memoizes lazily computed properties, so that repeated lookups return the same value (and
 /// the same `Arc`, which pagination relies on).
@@ -165,10 +165,13 @@ pub struct PaginatedList {
     /// Makes an item of a list made with [`PaginatedList::fetched`] the first time a page reads
     /// it.
     make: Option<Box<dyn Fn(usize) -> Value + Send + Sync>>,
-    window: Mutex<Option<(usize, usize)>>,
+    window: PaginateWindow,
     /// The type of one of Shopify's list drops, when the list is one: see
     /// [`PaginatedList::list_drop`].
     list: Option<&'static str>,
+    /// The query parameter of its page, when it has one of its own: see
+    /// [`PaginatedList::paged_list_drop`].
+    page_param: Option<String>,
 }
 
 impl PaginatedList {
@@ -176,8 +179,9 @@ impl PaginatedList {
         Value::object(PaginatedList {
             all: items.into_iter().map(OnceLock::from).collect(),
             make: None,
-            window: Mutex::new(None),
+            window: PaginateWindow::default(),
             list: None,
+            page_param: None,
         })
     }
 
@@ -190,8 +194,9 @@ impl PaginatedList {
         Value::object(PaginatedList {
             all: (0..len).map(|_| OnceLock::new()).collect(),
             make: Some(Box::new(make)),
-            window: Mutex::new(None),
+            window: PaginateWindow::default(),
             list: None,
+            page_param: None,
         })
     }
 
@@ -199,7 +204,8 @@ impl PaginatedList {
     /// `list.product_reference` or `list.metaobject_reference` metafield, of a `product_list`
     /// setting and of `metaobjects.<type>.values`. It is not an array: `.first`, `.last` and
     /// `[n]` give nothing, `.count` and `.size` the number of items. The `first` and `last`
-    /// filters, `for` and `paginate` reach its items, all of them outside `paginate`.
+    /// filters, `for` and `paginate` reach its items, the first [`DEFAULT_PAGE_LIMIT`] outside
+    /// `paginate`.
     ///
     /// <https://shopify.dev/docs/api/liquid/objects/metafield#metafield-determining-the-length-of-a-list-metafield>:
     /// a list of a reference type has `count`; the others "are rendered as arrays".
@@ -207,9 +213,35 @@ impl PaginatedList {
         Value::object(PaginatedList {
             all: items.into_iter().map(OnceLock::from).collect(),
             make: None,
-            window: Mutex::new(None),
+            window: PaginateWindow::default(),
             list: Some(kind),
+            page_param: None,
         })
+    }
+
+    /// A list drop that `paginate` pages with a query parameter of its own, `page_<hash>`, as
+    /// Shopify pages a list of references and `metaobjects.<type>.values`
+    /// (`/products/widget?page_b72aba52=2`). `key` names the list: each lookup of the same list
+    /// has the same parameter, and shows the page `paginate` set.
+    ///
+    /// <https://shopify.dev/docs/apps/build/metafields/metafield-limits>: "a loop over a list
+    /// of references [...] returns only the first 50 items. To access more items, use the
+    /// paginate tag, which returns up to 250 items per page."
+    pub fn paged_list_drop(site: &Site, kind: &'static str, key: &str, items: Vec<Value>) -> Value {
+        let hash = lsf_core::util::stable_id("paginate", key) & 0xffff_ffff;
+        let page_param = format!("page_{hash:08x}");
+        Value::object(PaginatedList {
+            all: items.into_iter().map(OnceLock::from).collect(),
+            make: None,
+            window: site.paginate_window(&page_param),
+            list: Some(kind),
+            page_param: Some(page_param),
+        })
+    }
+
+    /// The query parameter of the list's page: `page`, or its own.
+    pub fn page_param(&self) -> &str {
+        self.page_param.as_deref().unwrap_or("page")
     }
 
     /// The number of items across all pages.
@@ -260,13 +292,18 @@ impl lsf_liquid::Object for PaginatedList {
         }
     }
 
+    /// The size of a list drop is all of its items, even those a loop does not reach, as
+    /// Shopify's: "returns the total number of referenced entries, even when a loop without
+    /// paginate returns only the first 50".
+    fn size(&self) -> Option<usize> {
+        match self.list {
+            Some(_) => Some(self.total()),
+            None => self.items().map(|items| items.len()),
+        }
+    }
+
     fn items(&self) -> Option<Arc<Vec<Value>>> {
-        let all = if self.list.is_some() {
-            self.all.len()
-        } else {
-            DEFAULT_PAGE_LIMIT
-        };
-        let (offset, size) = self.window().unwrap_or((0, all));
+        let (offset, size) = self.window().unwrap_or((0, DEFAULT_PAGE_LIMIT));
         Some(self.range(offset, offset.saturating_add(size)))
     }
 

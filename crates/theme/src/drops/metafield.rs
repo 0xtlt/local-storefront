@@ -79,6 +79,14 @@ impl FieldsDrop {
             cost::loaded(cost::METAFIELD, (owner, namespace, key));
         }
     }
+
+    /// `namespace.key`.
+    fn name(&self, key: &str) -> String {
+        match &self.namespace {
+            Some((_, namespace)) => format!("{namespace}.{key}"),
+            None => key.to_string(),
+        }
+    }
 }
 
 impl Object for FieldsDrop {
@@ -91,7 +99,7 @@ impl Object for FieldsDrop {
         self.read(key);
         self.fields
             .get(key)
-            .map(|field| MetafieldDrop::value(&self.site, field))
+            .map(|field| MetafieldDrop::value(&self.site, field, self.name(key)))
     }
 
     /// Iterating yields `[key, metafield]` pairs, like a hash.
@@ -103,7 +111,7 @@ impl Object for FieldsDrop {
                     self.read(key);
                     Value::array(vec![
                         Value::from(key),
-                        MetafieldDrop::value(&self.site, field),
+                        MetafieldDrop::value(&self.site, field, self.name(key)),
                     ])
                 })
                 .collect(),
@@ -118,13 +126,17 @@ impl Object for FieldsDrop {
 pub struct MetafieldDrop {
     pub site: SiteRef,
     pub field: Metafield,
+    /// Where it is, `namespace.key` or `<type>/<handle>.key`: with its value, it names the page
+    /// parameter of a list of references.
+    pub name: String,
 }
 
 impl MetafieldDrop {
-    pub fn value(site: &SiteRef, field: &Metafield) -> Value {
+    pub fn value(site: &SiteRef, field: &Metafield, name: String) -> Value {
         Value::object(MetafieldDrop {
             site: site.clone(),
             field: field.clone(),
+            name,
         })
     }
 
@@ -153,11 +165,17 @@ impl MetafieldDrop {
                         .collect()
                 })
                 .unwrap_or_default();
-            // A list of products or of metaobjects is one of Shopify's list drops; the other
-            // lists are arrays, as on Shopify.
+            // A list of products or of metaobjects is one of Shopify's list drops, which
+            // `paginate` pages with a parameter of its own; the other lists are arrays, as on
+            // Shopify.
+            let key = || format!("{}\0{}", self.name, self.field.value);
             match self.base_kind() {
-                "product_reference" => PaginatedList::list_drop("product_list", items),
-                "metaobject_reference" => PaginatedList::list_drop("metaobject_list", items),
+                "product_reference" => {
+                    PaginatedList::paged_list_drop(&self.site, "product_list", &key(), items)
+                }
+                "metaobject_reference" => {
+                    PaginatedList::paged_list_drop(&self.site, "metaobject_list", &key(), items)
+                }
                 _ => Value::array(items),
             }
         } else {
@@ -656,7 +674,10 @@ impl Object for MetaobjectDrop {
         // On a localized route (`/fr/...`), a field shows its translation when it has one.
         self.entry
             .field_in(key, &self.site.request.locale)
-            .map(|field| MetafieldDrop::value(&self.site, &field))
+            .map(|field| {
+                let name = format!("{}/{}.{key}", self.entry.kind, self.entry.handle);
+                MetafieldDrop::value(&self.site, &field, name)
+            })
     }
 
     fn identity(&self) -> Option<String> {
@@ -719,8 +740,10 @@ impl Object for MetaobjectTypeDrop {
                 .filter(|entry| entry.is_of(&self.kind))
         };
         match key {
-            "values" => Some(PaginatedList::list_drop(
+            "values" => Some(PaginatedList::paged_list_drop(
+                &self.site,
                 "metaobject_list",
+                &format!("metaobjects.{}", self.kind),
                 entries()
                     .map(|entry| MetaobjectDrop::value(&self.site, entry))
                     .collect(),
