@@ -4,7 +4,7 @@ use lsf_core::money::format_money;
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::number::float_to_s;
 use lsf_liquid::time::strftime;
-use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
+use lsf_liquid::{Context, Environment, Error, FilterArgs, Result, Value};
 use serde_json::Value as Json;
 
 use super::media::video_html;
@@ -32,11 +32,8 @@ fn text_of(
             ),
             None => value.to_str().into_owned(),
         },
-        "rating" => format!(
-            "{} / {}",
-            float_to_s(number(&value.get("rating"))),
-            float_to_s(number(&value.get("scale_max")))
-        ),
+        // The rating alone, `4.5`, as Shopify's reference of `metafield_tag` shows it.
+        "rating" => value.get("rating").to_str().into_owned(),
         kind if is_measurement(kind) => format!(
             "{} {}",
             measure(&value.get("value")),
@@ -58,20 +55,46 @@ fn text_of(
         | "page_reference"
         | "variant_reference"
         | "article_reference" => value.get("title").to_str().into_owned(),
-        "metaobject_reference" | "mixed_reference" => {
-            let field = args.named("field").map(|field| field.to_str().into_owned());
-            match field {
-                Some(field) => value.get(&field).get("value").to_str().into_owned(),
-                None => value.get("system").get("handle").to_str().into_owned(),
-            }
-        }
+        "metaobject_reference" => match field(args) {
+            Some(field) => value.get(&field).get("value").to_str().into_owned(),
+            None => value.get("system").get("handle").to_str().into_owned(),
+        },
+        // Shopify prints nothing for these.
+        kind if prints_nothing(kind) => String::new(),
+        "link" => String::new(),
+        // The file's URL, as the `src` of its `metafield_tag`.
+        "file_reference" => match value.downcast::<ImageDrop>() {
+            Some(image) => crate::urls::file_url(site, &image.image.src),
+            None if value.downcast::<MediaDrop>().is_some() => compact(value),
+            None => value.get("url").to_str().into_owned(),
+        },
         "rich_text_field" => rich_text_plain(raw),
         _ => compact(value),
     }
 }
 
-fn number(value: &Value) -> f64 {
-    lsf_liquid::number::to_number(value).to_f64()
+/// The `field` parameter of a metaobject reference.
+fn field(args: &FilterArgs) -> Option<String> {
+    args.named("field").map(|field| field.to_str().into_owned())
+}
+
+/// The types `metafield_tag` and `metafield_text` print nothing for on Shopify.
+fn prints_nothing(kind: &str) -> bool {
+    matches!(
+        kind,
+        "mixed_reference" | "customer_reference" | "company_reference"
+    )
+}
+
+/// The lists the filters support, as Shopify's reference says: "doesn't currently support list
+/// metafields other than `list.single_line_text_field` and `list.metaobject_reference`".
+fn is_supported_list(kind: &str) -> bool {
+    matches!(kind, "single_line_text_field" | "metaobject_reference")
+}
+
+/// A URL as the text of its link, without its scheme: `example.com/a`, as Shopify prints it.
+fn without_scheme(url: &str) -> &str {
+    url.split_once("://").map_or(url, |(_, rest)| rest)
 }
 
 /// Rich text is stored either as HTML or as Shopify's rich text JSON tree.
@@ -116,10 +139,19 @@ fn rich_text_html(raw: &Json) -> String {
                 out.push_str("</li>");
             }
             Some("link") => {
-                out.push_str(&format!(
-                    "<a href=\"{}\">",
-                    escape_html(value.get("url").and_then(Json::as_str).unwrap_or_default())
-                ));
+                // `href`, then `target` and `title` when the link has them, as Shopify writes it.
+                out.push_str("<a");
+                for attribute in ["url", "target", "title"] {
+                    if let Some(text) = value.get(attribute).and_then(Json::as_str) {
+                        let name = if attribute == "url" {
+                            "href"
+                        } else {
+                            attribute
+                        };
+                        out.push_str(&format!(" {name}=\"{}\"", escape_html(text)));
+                    }
+                }
+                out.push('>');
                 children(out);
                 out.push_str("</a>");
             }
@@ -151,19 +183,45 @@ fn rich_text_html(raw: &Json) -> String {
     }
 }
 
+/// Rich text as text: the text of each block (a paragraph, a heading, a list item) on a line of
+/// its own, as Shopify gives it.
 fn rich_text_plain(raw: &Json) -> String {
-    let html = rich_text_html(raw);
-    let mut out = String::new();
-    let mut in_tag = false;
-    for c in html.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            c if !in_tag => out.push(c),
-            _ => {}
+    fn strip_tags(html: &str) -> String {
+        let mut out = String::new();
+        let mut in_tag = false;
+        for c in html.chars() {
+            match c {
+                '<' => in_tag = true,
+                '>' => in_tag = false,
+                c if !in_tag => out.push(c),
+                _ => {}
+            }
+        }
+        out
+    }
+    fn blocks(value: &Json, out: &mut Vec<String>) {
+        match value.get("type").and_then(Json::as_str) {
+            Some("root" | "list") => {
+                for child in value
+                    .get("children")
+                    .and_then(Json::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    blocks(child, out);
+                }
+            }
+            _ => out.push(strip_tags(&rich_text_html(value))),
         }
     }
-    out
+    match raw {
+        Json::String(html) => strip_tags(html),
+        tree => {
+            let mut out = Vec::new();
+            blocks(tree, &mut out);
+            out.join("\n")
+        }
+    }
 }
 
 fn single_tag(
@@ -178,17 +236,33 @@ fn single_tag(
     let class = format!("metafield-{kind}");
     let text = || escape_html(&text_of(site, kind, raw, value, args, ctx));
     match kind {
-        "product_reference" | "collection_reference" | "page_reference" => {
+        kind if prints_nothing(kind) => String::new(),
+        "language" => String::new(),
+        // The field of the entry, which can only be a `single_line_text_field`.
+        "metaobject_reference" => format!(
+            "<{element} class=\"metafield-single_line_text_field\">{}</{element}>",
+            text()
+        ),
+        "link" => format!(
+            "<a href=\"{}\" class=\"metafield-url\">{}</a>",
+            escape_html(&value.get("url").to_str()),
+            escape_html(&value.get("text").to_str())
+        ),
+        "product_reference" | "collection_reference" | "page_reference" | "variant_reference" => {
             format!(
                 "<a href=\"{}\" class=\"{class}\">{}</a>",
                 escape_html(&value.get("url").to_str()),
                 text()
             )
         }
-        "url" => format!(
-            "<a href=\"{0}\" class=\"{class}\">{0}</a>",
-            escape_html(&value.to_str())
-        ),
+        "url" => {
+            let url = value.to_str();
+            format!(
+                "<a href=\"{}\" class=\"{class}\">{}</a>",
+                escape_html(&url),
+                escape_html(without_scheme(&url))
+            )
+        }
         // `datetime="<the metafield value>"`, as Shopify's reference of `metafield_tag` has it.
         "date" | "date_time" => {
             let datetime = lsf_liquid::time::to_time(value, ctx)
@@ -240,6 +314,15 @@ fn metafield_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Valu
     };
     let site = site(ctx)?;
     let kind = drop.base_kind();
+    if kind == "metaobject_reference" && field(args).is_none() {
+        return Err(Error::argument(format!(
+            "metafield_tag requires a 'field' parameter for metafields of type '{}'",
+            drop.field.kind
+        )));
+    }
+    if drop.is_list() && !is_supported_list(kind) {
+        return Ok(Value::empty_string());
+    }
     let value = drop.typed_value();
     if !drop.is_list() {
         return Ok(Value::from(single_tag(
@@ -268,8 +351,14 @@ fn metafield_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Valu
         .zip(raw_items.iter())
         .map(|(item, raw)| single_tag(site, kind, raw, item, args, ctx, "li"))
         .collect();
+    // A list of metaobjects lists their field, a `single_line_text_field`.
+    let class = if kind == "metaobject_reference" {
+        "single_line_text_field"
+    } else {
+        kind
+    };
     Ok(Value::from(format!(
-        "<{list} class=\"metafield-{kind}-array\">{items}</{list}>"
+        "<{list} class=\"metafield-{class}-array\">{items}</{list}>"
     )))
 }
 
@@ -291,6 +380,9 @@ fn metafield_text(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Val
     };
     let site = site(ctx)?;
     let kind = drop.base_kind();
+    if drop.is_list() && !is_supported_list(kind) {
+        return Ok(Value::empty_string());
+    }
     let value = drop.typed_value();
     // Text is HTML-escaped, as `metafield_tag` escapes it: `Tom &amp; &quot;Jerry&quot;`.
     let text = |raw: &Json, value: &Value| {
