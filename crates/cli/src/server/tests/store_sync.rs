@@ -364,6 +364,54 @@ fn a_validation_runs_once_the_backend_creates_it_and_stops_when_it_is_disabled()
 }
 
 #[test]
+fn a_validation_created_to_block_on_failure_blocks_the_checkout_when_it_fails() {
+    let state = checkout_admin_server();
+    let created = mutate(
+        &state,
+        r#"mutation { validationCreate(validation: {functionHandle: "quantity-limit", enable: true, blockOnFailure: true}) { validation { id blockOnFailure } userErrors { field message } } }"#,
+        json!({}),
+    );
+    assert_eq!(created["validation"]["blockOnFailure"], true, "{created}");
+    // The checkout reads the shop the backend changed.
+    let session = "co-validation-blocks";
+    let path = cart_checkout(
+        &state,
+        session,
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+    );
+    assert_eq!(get(&state, &format!("{path}.json"), session).status, 200);
+    let (_, store) = state.snapshot(session);
+    assert_eq!(
+        store.checkout.block_on_failure.get("quantity-limit"),
+        Some(&true)
+    );
+    let config = crate::checkout::config_for(&store, None);
+    assert!(config.block_on_failure.contains("quantity-limit"));
+
+    // `validationUpdate` turns it off again.
+    mutate(
+        &state,
+        r#"mutation($id: ID!) { validationUpdate(id: $id, validation: {enable: true, blockOnFailure: false}) { validation { blockOnFailure } userErrors { field message } } }"#,
+        json!({ "id": created["validation"]["id"] }),
+    );
+    let path = cart_checkout(
+        &state,
+        "co-validation-ignores",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+    );
+    assert_eq!(
+        get(&state, &format!("{path}.json"), "co-validation-ignores").status,
+        200
+    );
+    let (_, store) = state.snapshot("co-validation-ignores");
+    assert!(
+        !crate::checkout::config_for(&store, None)
+            .block_on_failure
+            .contains("quantity-limit")
+    );
+}
+
+#[test]
 fn toggling_a_payment_customization_changes_the_payment_methods_of_the_checkout() {
     let state = checkout_admin_server();
     // The app's setup: a payment customization of its Function, that hides "Bank Deposit".

@@ -5633,6 +5633,66 @@ fn change_line(state: &ServerState, path: &str, session: &str, change: Json) -> 
     )
 }
 
+/// "When a function run fails, Shopify ignores that run's output" (shopify.dev, Functions error
+/// handling): the order is placed without it, unless the owner of the validation or cart
+/// transform blocks on failure (`blockOnFailure`).
+#[test]
+fn a_failed_function_run_blocks_the_order_only_when_its_owner_blocks_on_failure() {
+    for block in [false, true] {
+        let session = if block {
+            "co-run-fails-blocks"
+        } else {
+            "co-run-fails"
+        };
+        let state = checkout_server(&["bundle-transform"], false);
+        // Its settings update a line the cart does not have: the run fails.
+        let path = start_checkout(
+            &state,
+            session,
+            json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+            json!({"checkout": {"functions": {"bundle-transform": {
+                "enabled": true,
+                "block_on_failure": block,
+                "metafields": {"$app:config.settings": {"type": "json", "value": {
+                    "operations": [{"type": "update", "line": 5, "title": "Nowhere"}]
+                }}}
+            }}}}),
+        );
+        let reply = operations(&state, &path, session, buyer_details());
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        let json = body_json(&reply);
+        let run = json["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["handle"] == "bundle-transform")
+            .cloned()
+            .unwrap_or_else(|| panic!("no run: {json}"));
+        assert!(run["error"].is_string(), "the run failed: {run}");
+        assert_eq!(
+            json["lines"][0]["sku"], "TEE-BLK-M",
+            "its output is ignored"
+        );
+
+        let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+        if block {
+            assert_eq!(reply.status, 422, "{}", text(&reply));
+            let errors = &body_json(&reply)["errors"];
+            assert_eq!(errors[0]["function"], "bundle-transform", "{errors}");
+            assert!(
+                errors[0]["message"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("Function `bundle-transform`"),
+                "{errors}"
+            );
+        } else {
+            assert_eq!(reply.status, 200, "the order is placed: {}", text(&reply));
+            assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+        }
+    }
+}
+
 #[test]
 fn a_merged_line_is_removed_through_the_lines_it_is_made_of() {
     let state = checkout_server(&["bundle-transform"], false);

@@ -656,6 +656,12 @@ pub fn config_from_settings(settings: &CheckoutSettings) -> CheckoutConfig {
             .collect(),
         // As on Shopify: a Function that is not a discount runs through an enabled owner.
         owners: Some(settings.owners.clone()),
+        block_on_failure: settings
+            .block_on_failure
+            .iter()
+            .filter(|(_, block)| **block)
+            .map(|(handle, _)| handle.clone())
+            .collect(),
         // The server says so when the Admin API uninstalled the app (`ServerState::checkout_config`).
         uninstalled: false,
         tax_rate_bps: settings.tax_rate_bps,

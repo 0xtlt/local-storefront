@@ -1021,6 +1021,7 @@ validation): its owner in the shop, and its settings.
 | Field | Type | Description |
 |---|---|---|
 | `enabled` | boolean | Whether the shop has an owner of the Function (the payment or delivery customization, validation or cart transform an app creates for it), and it is enabled. As on Shopify, the Function runs at the checkout only through an enabled owner: `true` runs it, `false` is an owner that is turned off. Without it, the shop has no owner of it, as after an install: the Function runs only for a scenario that names it in `extensions`, or for `app function run <handle>`, with these metafields. |
+| `block_on_failure` | boolean | Whether a failed run of the Function blocks the checkout: the `blockOnFailure` of its owner, a cart and checkout validation or a cart transform. As on Shopify, `false` by default: a run that fails (a trap, an output out of its schema) is ignored and the checkout goes on without its output. Other Functions never block when they fail. |
 | `metafields` | [OwnerMetafields](#ownermetafields) | The metafields of the object the Function belongs to, by `"namespace.key"`: `{"$app.function-configuration": {"type": "json", "value": {…}}}` for `metafield(namespace: "$app", key: "function-configuration")`. Shopify's list of `{namespace, key, type, value}` is taken too. |
 
 ## CheckoutExtension
@@ -1138,7 +1139,7 @@ exact amounts:
 | `delivery_options` | [ExpectedDeliveryOptions](#expecteddeliveryoptions) | The delivery options, in the order the buyer sees them, once the delivery customizations and the shipping discounts ran. A string matches the handle or the title. |
 | `discounts` | [ExpectedDiscounts](#expecteddiscounts) | The discounts applied, product, order and shipping ones. A string matches the title (the message the Function gave) or the code. |
 | `lines` | [ExpectedLines](#expectedlines) | The lines of the checkout once the cart transforms ran. A string matches the SKU or the title. |
-| `errors` | [ExpectedErrors](#expectederrors) | The errors that block the order: those validation Functions report, and those of Functions that failed. A string matches the message. `{"equals": []}`: no error. |
+| `errors` | [ExpectedErrors](#expectederrors) | The errors that block the order: those validation Functions report, and the failures of the validations and cart transforms that block on failure (`block_on_failure`). A string matches the message. `{"equals": []}`: no error. |
 | `totals` | [ExpectedTotals](#expectedtotals) | The amounts of the checkout, each exactly. |
 
 ## ScenarioStep

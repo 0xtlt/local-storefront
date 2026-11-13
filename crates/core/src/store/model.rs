@@ -1753,6 +1753,12 @@ pub struct CheckoutFunctionInput {
     /// `app function run <handle>`, with these metafields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// Whether a failed run of the Function blocks the checkout: the `blockOnFailure` of its
+    /// owner, a cart and checkout validation or a cart transform. As on Shopify, `false` by
+    /// default: a run that fails (a trap, an output out of its schema) is ignored and the
+    /// checkout goes on without its output. Other Functions never block when they fail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_on_failure: Option<bool>,
     /// The metafields of the object the Function belongs to, by `"namespace.key"`:
     /// `{"$app.function-configuration": {"type": "json", "value": {…}}}` for
     /// `metafield(namespace: "$app", key: "function-configuration")`. Shopify's list of
@@ -1951,8 +1957,9 @@ pub struct ScenarioExpectInput {
     /// title.
     #[serde(default)]
     pub lines: Option<ExpectList<ExpectedLine>>,
-    /// The errors that block the order: those validation Functions report, and those of
-    /// Functions that failed. A string matches the message. `{"equals": []}`: no error.
+    /// The errors that block the order: those validation Functions report, and the failures of
+    /// the validations and cart transforms that block on failure (`block_on_failure`). A string
+    /// matches the message. `{"equals": []}`: no error.
     #[serde(default)]
     pub errors: Option<ExpectList<ExpectedError>>,
     /// The amounts of the checkout, each exactly.

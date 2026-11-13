@@ -830,11 +830,9 @@ fn an_expand_cannot_combine_component_prices_and_an_overall_decrease() {
             {"variant": TOTE, "quantity": 1, "price": "5.00"}
         ]
     }));
-    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(failures(&result).len(), 1, "{:?}", result.errors);
     assert!(
-        result.errors[0]
-            .message
-            .contains("cannot_combine_price_adjustment_and_price_per_component"),
+        failures(&result)[0].contains("cannot_combine_price_adjustment_and_price_per_component"),
         "{:?}",
         result.errors
     );
@@ -850,11 +848,9 @@ fn an_expand_prices_all_its_components_or_none() {
         "type": "expand", "line": 1,
         "items": [{"variant": MUG, "quantity": 1, "price": "10.00"}, {"variant": TOTE, "quantity": 1}]
     }));
-    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(failures(&result).len(), 1, "{:?}", result.errors);
     assert!(
-        result.errors[0]
-            .message
-            .contains("expanded_items_missing_prices"),
+        failures(&result)[0].contains("expanded_items_missing_prices"),
         "{:?}",
         result.errors
     );
@@ -868,11 +864,9 @@ fn an_expand_cannot_decrease_the_price_by_more_than_100_percent() {
         "type": "expand", "line": 1, "percentageDecrease": "101",
         "items": [{"variant": MUG, "quantity": 1}]
     }));
-    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(failures(&result).len(), 1, "{:?}", result.errors);
     assert!(
-        result.errors[0]
-            .message
-            .contains("invalid_price_adjustment_percentage_decrease"),
+        failures(&result)[0].contains("invalid_price_adjustment_percentage_decrease"),
         "{:?}",
         result.errors
     );
@@ -911,9 +905,9 @@ fn a_function_cannot_give_negative_prices_to_expanded_items() {
             {"variant": TOTE, "quantity": 1, "price": "5.00"}
         ]
     }));
-    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(failures(&result).len(), 1, "{:?}", result.errors);
     assert!(
-        result.errors[0].message.contains("is negative"),
+        failures(&result)[0].contains("is negative"),
         "{:?}",
         result.errors
     );
@@ -929,7 +923,7 @@ fn a_function_cannot_give_an_overflowing_price_to_expanded_items() {
             "type": "expand", "line": 1,
             "items": [{"variant": MUG, "quantity": 1, "price": price}]
         }));
-        assert_eq!(result.errors.len(), 1, "{price}: {:?}", result.errors);
+        assert_eq!(failures(&result).len(), 1, "{price}: {:?}", result.errors);
         assert!(result.lines[0].components.is_empty(), "{price}");
         assert_eq!(result.cost.subtotal, 6400, "{price}");
     }
@@ -941,7 +935,7 @@ fn a_function_cannot_decrease_a_price_by_a_negative_percentage() {
         "type": "expand", "line": 1, "percentageDecrease": "-25",
         "items": [{"variant": MUG, "quantity": 1}]
     }));
-    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(failures(&result).len(), 1, "{:?}", result.errors);
     assert!(result.lines[0].components.is_empty());
     assert_eq!(result.cost.subtotal, 6400);
 }
@@ -965,7 +959,7 @@ fn a_function_cannot_update_a_line_to_a_negative_or_overflowing_price() {
             &addressed(),
             &config,
         );
-        assert_eq!(result.errors.len(), 1, "{price}: {:?}", result.errors);
+        assert_eq!(failures(&result).len(), 1, "{price}: {:?}", result.errors);
         // Nothing of the operation is applied, not even its title.
         assert_ne!(result.lines[0].title, "Cheap", "{price}");
         assert_eq!(result.lines[0].unit_price, 3200, "{price}");
@@ -993,7 +987,7 @@ fn a_function_cannot_merge_lines_at_a_negative_percentage() {
         &addressed(),
         &config,
     );
-    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(failures(&result).len(), 1, "{:?}", result.errors);
     assert_eq!(result.lines.len(), 2, "the lines are not merged");
     assert_eq!(result.cost.subtotal, 4600);
 }
@@ -1020,9 +1014,9 @@ fn out_of_range_discount(class: DiscountClass, settings: serde_json::Value) {
         &addressed(),
         &config,
     );
-    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(failures(&result).len(), 1, "{:?}", result.errors);
     assert!(
-        result.errors[0].message.contains("between 0 and 100"),
+        failures(&result)[0].contains("between 0 and 100"),
         "{:?}",
         result.errors
     );
@@ -1301,7 +1295,7 @@ fn discounts_apply_to_the_lines_a_cart_transform_made() {
 }
 
 #[test]
-fn a_function_that_fails_is_reported_and_blocks_the_checkout() {
+fn a_function_that_fails_is_reported_and_its_output_ignored() {
     let app = app();
     let store = store();
     let session = session(&store, &[(TEE, 1)]);
@@ -1323,12 +1317,8 @@ fn a_function_that_fails_is_reported_and_blocks_the_checkout() {
     assert!(run.output.is_none());
     let error = run.error.as_deref().expect("the run failed");
     assert!(error.contains("the cart has no line 5"), "{error}");
-    assert_eq!(result.errors.len(), 1);
-    assert!(result.errors[0].message.contains("bundle-transform"));
-    assert_eq!(
-        result.errors[0].function.as_deref(),
-        Some("bundle-transform")
-    );
+    // Its owner does not block on failure (Shopify's default): the order is not blocked.
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
     // The checkout is still described.
     assert_eq!(result.cost.subtotal, 3200);
 }
@@ -1470,8 +1460,11 @@ fn the_input_builder_gets_the_context_of_each_run() {
         &config,
         &build,
     );
-    // The hand-written input has a line of 7 items: the validation fails, the discount (minimum quantity 0) applies.
-    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    // The hand-written input lacks what the validation reads: its run fails, and is ignored (its
+    // owner does not block on failure). The discount (minimum quantity 0) applies.
+    assert!(run_for(&result, "quantity-limit").error.is_some());
+    assert!(run_for(&result, "volume-discount").error.is_none());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
     let seen = seen.into_inner();
     assert_eq!(seen.len(), 2, "{seen:?}");
 
@@ -1558,7 +1551,7 @@ fn the_metafield_of_the_variables_must_be_json() {
             .unwrap()
             .contains("is not JSON")
     );
-    assert_eq!(result.errors.len(), 1);
+    assert_eq!(failures(&result).len(), 1);
 }
 
 #[test]
@@ -1572,13 +1565,16 @@ fn a_function_without_a_module_is_an_error_not_a_panic() {
         .find(|f| f.handle == "quantity-limit")
         .unwrap()
         .wasm_path = "/nowhere/function.wasm".into();
+    let mut config = config();
+    // Its validation blocks on failure: the failure is an error of the checkout.
+    config.block_on_failure.insert("quantity-limit".into());
     let result = compute(
         &app,
         &Selection::only(["quantity-limit"]),
         &store,
         &session,
         &addressed(),
-        &config(),
+        &config,
     );
     assert_eq!(result.errors.len(), 1);
     assert!(
@@ -1587,6 +1583,129 @@ fn a_function_without_a_module_is_an_error_not_a_panic() {
         result.errors
     );
     assert!(result.runs[0].error.is_some());
+}
+
+/// The errors of the runs that failed: Shopify ignores their output, and only a validation or
+/// a cart transform that blocks on failure makes them errors of the checkout.
+fn failures(result: &lsf_app::checkout::CheckoutResult) -> Vec<&str> {
+    result
+        .runs
+        .iter()
+        .filter_map(|run| run.error.as_deref())
+        .collect()
+}
+
+/// Runs the Functions of `selection` on an input none of them can read: each traps, as a
+/// Function that throws does.
+fn trapped(
+    selection: &[&str],
+    config: &lsf_app::checkout::CheckoutConfig,
+) -> lsf_app::checkout::CheckoutResult {
+    let app = app();
+    let store = store();
+    let session = session(&store, &[(TEE, 3)]);
+    let build =
+        |_: &str, _: Option<&serde_json::Value>, _: &lsf_app::checkout::input::InputContext| {
+            Ok(json!({"cart": "not a cart"}))
+        };
+    compute_with(
+        &app,
+        &Selection::only(selection.iter().copied()),
+        &store,
+        &session,
+        &addressed(),
+        config,
+        &build,
+    )
+}
+
+#[test]
+fn a_failed_discount_or_delivery_customization_run_is_ignored_and_blocks_nothing_as_on_shopify() {
+    // "When a function run fails, Shopify ignores that run's output" (shopify.dev, Functions
+    // error handling): a failed discount applies no discount, and the buyer can pay.
+    let mut config = config();
+    config.discounts = vec![discount(
+        "volume-discount",
+        "Broken",
+        None,
+        &[Product],
+        json!({"minimumQuantity": 1, "percentage": 10}),
+    )];
+    let result = trapped(&["volume-discount", "delivery-rules"], &config);
+    let failed: Vec<&str> = result
+        .runs
+        .iter()
+        .filter(|run| run.error.is_some())
+        .map(|run| run.handle.as_str())
+        .collect();
+    assert!(failed.contains(&"volume-discount"), "{:?}", result.runs);
+    assert!(failed.contains(&"delivery-rules"), "{:?}", result.runs);
+    assert!(
+        result.errors.is_empty(),
+        "nothing blocks the order: {:?}",
+        result.errors
+    );
+    assert!(
+        result.discounts.is_empty(),
+        "the failed discount applies nothing"
+    );
+    // The delivery options are those of the checkout, as the failed run left them.
+    let options: Vec<&str> = result.delivery_groups[0]
+        .options
+        .iter()
+        .map(|option| option.handle.as_str())
+        .collect();
+    assert_eq!(options, ["standard", "express"]);
+}
+
+#[test]
+fn a_failed_validation_or_cart_transform_run_blocks_only_with_block_on_failure() {
+    // "By default, the failure itself doesn't block cart or checkout. To block cart and
+    // checkout progress when a run fails, set `blockOnFailure` to `true`" (shopify.dev).
+    let selection = ["quantity-limit", "bundle-transform"];
+    let result = trapped(&selection, &config());
+    assert!(
+        result.runs.iter().filter(|run| run.error.is_some()).count() >= 2,
+        "{:?}",
+        result.runs
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+    let mut blocking = config();
+    blocking.block_on_failure.insert("quantity-limit".into());
+    blocking.block_on_failure.insert("bundle-transform".into());
+    let result = trapped(&selection, &blocking);
+    let handles: Vec<&str> = result
+        .errors
+        .iter()
+        .filter_map(|error| error.function.as_deref())
+        .collect();
+    assert_eq!(
+        handles,
+        ["bundle-transform", "quantity-limit"],
+        "{:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0]
+            .message
+            .starts_with("Function `bundle-transform` failed: "),
+        "{:?}",
+        result.errors
+    );
+
+    // `blockOnFailure` is an owner's of a validation or a cart transform: a discount's failure
+    // never blocks.
+    let mut discounts = config();
+    discounts.block_on_failure.insert("volume-discount".into());
+    discounts.discounts = vec![discount(
+        "volume-discount",
+        "Broken",
+        None,
+        &[Product],
+        json!({}),
+    )];
+    assert!(trapped(&["volume-discount"], &discounts).errors.is_empty());
 }
 
 // ---- lines are priced like the storefront cart ----
@@ -2072,7 +2191,7 @@ fn transform(operation: serde_json::Value) -> lsf_app::checkout::CheckoutResult 
 const LINE_1: &str = "gid://shopify/CartLine/1";
 const LINE_2: &str = "gid://shopify/CartLine/2";
 
-/// The run failed with `error` in its message, and the checkout says so once.
+/// The run failed with `error` in its message, and the checkout goes on without it.
 fn assert_refused(result: &lsf_app::checkout::CheckoutResult, handle: &str, error: &str) {
     let run = run_for(result, handle);
     assert!(
@@ -2080,12 +2199,8 @@ fn assert_refused(result: &lsf_app::checkout::CheckoutResult, handle: &str, erro
         "{:?} does not say `{error}`",
         run.error
     );
-    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
-    assert!(
-        result.errors[0].message.contains(error),
-        "{:?}",
-        result.errors
-    );
+    // A failed run blocks nothing, as on Shopify, which ignores its output.
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
 }
 
 /// The cart as it was before any Function ran.
@@ -2201,7 +2316,7 @@ fn a_quantity_of_an_expand_that_overflows_the_line_is_refused() {
             {"merchandiseId": format!("gid://shopify/ProductVariant/{MUG}"), "quantity": 2147483647},
         ],
     }}));
-    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(failures(&result).len(), 1, "{:?}", result.errors);
     assert!(run_for(&result, "bundle-transform").error.is_some());
     assert_untouched(&result);
 }

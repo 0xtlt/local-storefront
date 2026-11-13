@@ -1115,6 +1115,9 @@ pub struct CheckoutSettings {
     /// The Functions of `functions` the shop has an owner of (`"enabled"`), by handle: whether
     /// it is enabled. Only those that are run at the checkout, unless a scenario names them.
     pub owners: IndexMap<String, bool>,
+    /// The Functions of `functions` whose owner says whether a failed run blocks the checkout
+    /// (`"block_on_failure"`), by handle.
+    pub block_on_failure: IndexMap<String, bool>,
     /// Basis points: 2000 is 20 %.
     pub tax_rate_bps: i64,
     /// UI extension handle → the values of its settings, by key (`shopify.settings`).
@@ -1146,6 +1149,7 @@ impl Default for CheckoutSettings {
             discounts: Vec::new(),
             functions: IndexMap::new(),
             owners: IndexMap::new(),
+            block_on_failure: IndexMap::new(),
             tax_rate_bps: 0,
             extensions: IndexMap::new(),
         }

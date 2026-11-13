@@ -729,6 +729,13 @@
             "null"
           ]
         },
+        "block_on_failure": {
+          "description": "Whether a failed run of the Function blocks the checkout: the `blockOnFailure` of its\nowner, a cart and checkout validation or a cart transform. As on Shopify, `false` by\ndefault: a run that fails (a trap, an output out of its schema) is ignored and the\ncheckout goes on without its output. Other Functions never block when they fail.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "metafields": {
           "description": "The metafields of the object the Function belongs to, by `\"namespace.key\"`:\n`{\"$app.function-configuration\": {\"type\": \"json\", \"value\": {…}}}` for\n`metafield(namespace: \"$app\", key: \"function-configuration\")`. Shopify's list of\n`{namespace, key, type, value}` is taken too.",
           "$ref": "#/$defs/OwnerMetafields",
@@ -842,7 +849,7 @@
           "default": null
         },
         "errors": {
-          "description": "The errors that block the order: those validation Functions report, and those of\nFunctions that failed. A string matches the message. `{\"equals\": []}`: no error.",
+          "description": "The errors that block the order: those validation Functions report, and the failures of\nthe validations and cart transforms that block on failure (`block_on_failure`). A string\nmatches the message. `{\"equals\": []}`: no error.",
           "anyOf": [
             {
               "$ref": "#/$defs/ExpectedErrors"

@@ -835,7 +835,8 @@ fn check(name: &str, result: &CheckoutResult) {
                 "{}",
                 run.logs
             );
-            assert_eq!(result.errors.len(), 1);
+            // Ignored, as on Shopify: its validation does not block on failure.
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
         }
         "fn-broken-instruction-limit" => {
             let run = the_run(
@@ -921,11 +922,12 @@ fn check(name: &str, result: &CheckoutResult) {
             assert_eq!(result.runs.len(), 1, "the .run target does not run");
             assert!(result.runs[0].exchange.is_none(), "no request is sent");
             assert_eq!(
-                errors(result),
-                [
-                    "Function `broken-fetch-timeout`: fetch request: policy.readTimeoutMs must be between 100 and 2000 milliseconds, got 5000"
-                ]
+                result.runs[0].error.as_deref(),
+                Some(
+                    "fetch request: policy.readTimeoutMs must be between 100 and 2000 milliseconds, got 5000"
+                )
             );
+            assert!(errors(result).is_empty(), "the failed run blocks nothing");
         }
         "fn-listed" => {
             assert!(result.runs.is_empty(), "{:?}", ran(result));

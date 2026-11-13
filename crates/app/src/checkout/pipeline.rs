@@ -557,7 +557,8 @@ impl<'a> Pipeline<'a> {
         let mut execution = runner::run(&function.wasm_path, &target.export, &input);
         judge(function, version, spec, &mut execution);
         // What is applied has the lists the schema asks for; the run keeps what the Function
-        // answered. A failed run applies nothing: only a run that succeeds copies its output.
+        // answered. A failed run applies nothing, as on Shopify, which ignores its output: only
+        // a run that succeeds copies its output.
         let applied = match (&execution.error, &execution.output) {
             (None, Some(output)) => {
                 let mut applied = output.clone();
@@ -567,15 +568,14 @@ impl<'a> Pipeline<'a> {
                 Some(applied)
             }
             _ => {
-                self.errors.push(CheckoutError {
-                    message: format!(
+                self.failed(
+                    function,
+                    format!(
                         "Function `{}` failed: {}",
                         function.handle,
                         execution.error.as_deref().unwrap_or("no output")
                     ),
-                    target: None,
-                    function: Some(function.handle.clone()),
-                });
+                );
                 None
             }
         };
@@ -593,6 +593,30 @@ impl<'a> Pipeline<'a> {
         applied
     }
 
+    /// A run of `function` failed. Shopify ignores the output of a failed run and goes on
+    /// without it ("When a function run fails, Shopify ignores that run's output", shopify.dev,
+    /// Functions error handling): the failure is in the run, for the developer, and blocks the
+    /// checkout only when the Function is a validation or a cart transform whose owner has
+    /// `blockOnFailure: true`.
+    fn failed(&mut self, function: &FunctionExtension, message: String) {
+        let blocks = self.config.block_on_failure.contains(&function.handle)
+            && function.targets.iter().any(|target| {
+                matches!(
+                    target.kind,
+                    TargetKind::Validation
+                        | TargetKind::ValidationFetch
+                        | TargetKind::CartTransform
+                )
+            });
+        if blocks {
+            self.errors.push(CheckoutError {
+                message,
+                target: None,
+                function: Some(function.handle.clone()),
+            });
+        }
+    }
+
     fn record_failure(
         &mut self,
         function: &FunctionExtension,
@@ -600,11 +624,10 @@ impl<'a> Pipeline<'a> {
         input: Value,
         error: String,
     ) {
-        self.errors.push(CheckoutError {
-            message: format!("Function `{}` failed: {error}", function.handle),
-            target: None,
-            function: Some(function.handle.clone()),
-        });
+        self.failed(
+            function,
+            format!("Function `{}` failed: {error}", function.handle),
+        );
         self.runs.push(FunctionRun {
             handle: function.handle.clone(),
             target: target.target.clone(),
@@ -633,11 +656,10 @@ impl<'a> Pipeline<'a> {
                 None => message.clone(),
             });
         }
-        self.errors.push(CheckoutError {
-            message: format!("Function `{}`: {message}", function.handle),
-            target: None,
-            function: Some(function.handle.clone()),
-        });
+        self.failed(
+            function,
+            format!("Function `{}`: {message}", function.handle),
+        );
     }
 
     // ---- cart transform ----
