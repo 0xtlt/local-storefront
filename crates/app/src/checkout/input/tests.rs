@@ -1175,6 +1175,7 @@ fn the_reserved_app_namespace_has_three_spellings() {
 #[test]
 fn a_key_of_the_store_data_is_found_under_any_spelling_of_the_app_namespace() {
     // The data writes the app's namespace both ways: each key is under one of them.
+    let store = Fixture::new().store;
     let mut metafields = lsf_core::store::Metafields::new();
     for (namespace, key, value) in [
         ("$app:config", "mode", "strict"),
@@ -1191,12 +1192,15 @@ fn a_key_of_the_store_data_is_found_under_any_spelling_of_the_app_namespace() {
     for namespace in ["$app:config", "app--4242--config"] {
         for (key, value) in [("mode", "strict"), ("limit", "3")] {
             assert_eq!(
-                store_metafield(&metafields, namespace, key),
+                store_metafield(&store, &metafields, namespace, key),
                 Some(("single_line_text_field".to_string(), value.to_string())),
                 "{namespace}.{key}"
             );
         }
-        assert_eq!(store_metafield(&metafields, namespace, "nope"), None);
+        assert_eq!(
+            store_metafield(&store, &metafields, namespace, "nope"),
+            None
+        );
     }
 }
 
@@ -2200,6 +2204,69 @@ fn a_shop_metaobject_is_found_by_type_and_handle() {
             "missing": null,
         })
     );
+}
+
+/// The issue's case: the store data names a variant by its SKU and products by their handles;
+/// the input reads the GIDs Shopify stores, in a metaobject's fields as in a metafield.
+#[test]
+fn references_read_as_the_gids_shopify_stores() {
+    let mut f = Fixture::new();
+    let product = f.store.products[0].clone();
+    let variant = &product.variants[0];
+    let field = |kind: &str, value: serde_json::Value| StoreMetafield {
+        kind: kind.to_string(),
+        value,
+    };
+    f.store.metaobjects.push(lsf_core::store::Metaobject {
+        kind: "rule".to_string(),
+        handle: "main".to_string(),
+        fields: [
+            ("gift", field("variant_reference", json!(variant.sku))),
+            (
+                "products",
+                field("list.product_reference", json!([product.handle, "gone"])),
+            ),
+            (
+                "written",
+                field("product_reference", json!("gid://shopify/Product/7")),
+            ),
+        ]
+        .into_iter()
+        .map(|(key, field)| (key.to_string(), field))
+        .collect(),
+        translations: Default::default(),
+        template_suffix: None,
+    });
+    f.store
+        .shop
+        .metafields
+        .entry("custom".to_string())
+        .or_default()
+        .insert(
+            "featured".to_string(),
+            field("product_reference", json!(product.handle)),
+        );
+    let out = f.run(
+        r#"{ shop {
+            featured: metafield(namespace: "custom", key: "featured") { value }
+            metaobject(handle: {type: "rule", handle: "main"}) {
+                gift: field(key: "gift") { value }
+                products: field(key: "products") { value jsonValue }
+                written: field(key: "written") { value } } } }"#,
+    );
+    let (product, variant) = (
+        format!("gid://shopify/Product/{}", product.id),
+        format!("gid://shopify/ProductVariant/{}", variant.id),
+    );
+    assert_eq!(out["shop"]["featured"]["value"], product);
+    let metaobject = &out["shop"]["metaobject"];
+    assert_eq!(metaobject["gift"]["value"], variant);
+    // A reference that names nothing stays as written.
+    assert_eq!(
+        metaobject["products"]["jsonValue"],
+        json!([product, "gone"])
+    );
+    assert_eq!(metaobject["written"]["value"], "gid://shopify/Product/7");
 }
 
 #[test]

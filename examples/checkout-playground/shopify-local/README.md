@@ -1090,6 +1090,13 @@ API](https://github.com/0xtlt/local-storefront/blob/v0.3.0-rc.5/docs/admin.md) a
 and handle, so the GID of an entry copied from a Shopify store names nothing here. Write
 `"type/handle"` instead.
 
+Whichever form the data uses, a Function's input (`value`, `jsonValue`) and a checkout UI
+extension's `appMetafields` read Shopify's form, the GID, as they do on a store: a
+`variant_reference` written `"MUG-1"` reads `"gid://shopify/ProductVariant/<id>"`, and a
+`list.product_reference` written `["ceramic-mug"]` reads `["gid://shopify/Product/<id>"]`, so a
+Function can compare it with a line's `merchandise.id`. A reference that names nothing reads as
+written.
+
 Any other form reads `nil` in Liquid and is an error. `"faq.size"`, `"faq:size"`, `"size"` and
 `{"type": "faq", "handle": "size"}` are neither Shopify's form nor lsf's, and `validate` says
 what to write:

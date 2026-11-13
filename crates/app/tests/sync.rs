@@ -643,12 +643,13 @@ fn metafields_reach_liquid_and_the_function_inputs() {
     assert_eq!(market.countries, ["FR", "DE"]);
     assert_eq!(store.countries.len(), base.countries.len());
 
-    // The Function inputs read the metafields of the store.
+    // The Function inputs read the metafields of the store, a reference as its GID.
     let query = r#"query Input { cart { lines { merchandise { ... on ProductVariant { product { metafield(namespace: "custom", key: "pairs_with") { value } } } } } } shop { metafield(namespace: "custom", key: "banner") { value } } }"#;
     let input = function_input(&store, "preorder-boots", query);
+    let dress = store.product_by_handle("linen-dress").unwrap();
     assert_eq!(
         input["cart"]["lines"][0]["merchandise"]["product"]["metafield"]["value"],
-        json!("linen-dress")
+        json!(format!("gid://shopify/Product/{}", dress.id))
     );
     assert_eq!(input["shop"]["metafield"]["value"], json!("Spring sale"));
 }

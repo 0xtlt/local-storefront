@@ -239,7 +239,7 @@ impl<'c> Graph for FunctionInput<'c> {
                 .unwrap_or_else(|| "$app".to_string());
             let key = args.required_string("key")?;
             // "Metafields with values exceeding 10,000 bytes in size will not be returned."
-            return Ok(Some(match source.find(&namespace, &key) {
+            return Ok(Some(match source.find(self.ctx.store, &namespace, &key) {
                 Some((kind, value)) if value.len() <= METAFIELD_VALUE_LIMIT => {
                     Resolved::Object(Node::Metafield(kind, value))
                 }
@@ -472,7 +472,10 @@ impl<'c> Graph for FunctionInput<'c> {
                 _ => None,
             },
             Node::MetaobjectField(key, field) => {
-                let value = source_text(&field.value);
+                let value = self
+                    .ctx
+                    .store
+                    .stored_metafield_value(&field.kind, &field.value);
                 match name {
                     "key" => leaf(*key),
                     "type" => leaf(&field.kind),
@@ -1251,14 +1254,6 @@ fn metaobject_id(entry: &Metaobject) -> String {
     )
 }
 
-/// The text a metafield value is kept as: JSON for everything that is not a string.
-fn source_text(value: &Json) -> String {
-    match value {
-        Json::String(text) => text.clone(),
-        other => other.to_string(),
-    }
-}
-
 fn has_tag(tags: Option<&[String]>, wanted: &str) -> bool {
     tags.is_some_and(|tags| tags.iter().any(|tag| tag.eq_ignore_ascii_case(wanted)))
 }
@@ -1307,11 +1302,16 @@ impl Source<'_> {
     /// The `(type, value)` of a metafield. The reserved namespace of the app is written
     /// `$app` in queries and data (`$app:config`) and `app--<id>--config` by Shopify: all three
     /// name the same one.
-    fn find(&self, namespace: &str, key: &str) -> Option<(String, String)> {
+    fn find(
+        &self,
+        store: &lsf_core::Store,
+        namespace: &str,
+        key: &str,
+    ) -> Option<(String, String)> {
         let wanted = canonical_namespace(namespace);
         match self {
             Source::Core(None) => None,
-            Source::Core(Some(metafields)) => store_metafield(metafields, namespace, key),
+            Source::Core(Some(metafields)) => store_metafield(store, metafields, namespace, key),
             Source::Owned(metafields) => metafields
                 .iter()
                 .find(|metafield| {
@@ -1326,6 +1326,7 @@ impl Source<'_> {
 /// (see [`Source::find`]). The data can write the app's namespace both ways, a key under each:
 /// every spelling is looked through.
 pub(crate) fn store_metafield(
+    store: &lsf_core::Store,
     metafields: &Metafields,
     namespace: &str,
     key: &str,
@@ -1335,7 +1336,10 @@ pub(crate) fn store_metafield(
         .iter()
         .filter(|(candidate, _)| canonical_namespace(candidate) == wanted)
         .find_map(|(_, entries)| entries.get(key))?;
-    Some((metafield.kind.clone(), source_text(&metafield.value)))
+    Some((
+        metafield.kind.clone(),
+        store.stored_metafield_value(&metafield.kind, &metafield.value),
+    ))
 }
 
 /// The namespace as the queries and the store data write it: `app--<id>--config` is
