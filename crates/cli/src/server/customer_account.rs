@@ -120,6 +120,10 @@ fn state_json(
         theirs.sort_by_key(|order| std::cmp::Reverse(order.created_at));
         orders.extend(theirs.into_iter().map(|order| order_json(&store, order)));
     }
+    let origin = origin_of(incoming);
+    for order in &mut orders {
+        absolute_images(&mut order["lines"], &origin);
+    }
 
     let order = match page {
         Page::Order(id)
@@ -496,6 +500,19 @@ fn order_json(store: &Store, order: &Order) -> Json {
         "unfulfilledLineIds": unfulfilled,
         "returns": returns,
     })
+}
+
+/// Makes the image of each line, and of its bundle components, an absolute URL on `origin`, as
+/// Shopify gives the image of an order's line (a URL of its CDN) where the checkout writes a path.
+fn absolute_images(lines: &mut Json, origin: &str) {
+    for line in lines.as_array_mut().into_iter().flatten() {
+        if let Some(path) = line["image"].as_str().filter(|path| path.starts_with('/')) {
+            line["image"] = json!(format!("{origin}{path}"));
+        }
+        if let Some(components) = line.get_mut("components") {
+            absolute_images(components, origin);
+        }
+    }
 }
 
 /// The order the session placed in the local checkout, as `order_json` writes the others.

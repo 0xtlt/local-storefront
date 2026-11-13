@@ -844,7 +844,10 @@ extension's `order.action.menu-item.render` opens its `order.action.render` in a
   of the data (`now`) if it has one: a test reads the same number and date every time. They live
   as long as the session (`DELETE /__lsf/sessions` forgets every one). An order's shipments come
   from its `fulfillment_status` (`fulfilled`: one shipment of every line; `partial`: its first
-  line), its returns from its `returns` ([data reference](data-reference.md#orderreturn)).
+  line), its returns from its `returns` ([data reference](data-reference.md#orderreturn)). The
+  image of a line (`shopify.lines`, `merchandise.image.url`) is an absolute URL on lsf's origin
+  (`http://127.0.0.1:9292/cdn/shop/files/…`), as Shopify gives one of its CDN; it is the full
+  image, not Shopify's 128-pixel rendition.
 - **The `shopify` global** of a customer account target has what every target has (`i18n`,
   `storage`, `sessionToken`, `settings`, `localization`, `extension`, `analytics`, and `version`,
   the extension's `api_version`), and:
