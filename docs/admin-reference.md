@@ -11,6 +11,11 @@ say. To point a backend at it, get its tokens, receive its webhooks and test it,
   `locations` and `extensions.code`, `you must provide one of first or last`, `first cannot
   exceed 250. …`, `ACCESS_DENIED`, `THROTTLED`, `MAX_COST_EXCEEDED`. A mutation's validation errors
   are its `userErrors`, and a mutation that fails changes nothing.
+- A root field given a GID of another type (`product(id:)` an order's, `productVariant(id:)` a
+  product's, `node(id:)` a type the schema does not have) is `null` with the error
+  `Invalid id: <gid>` (`RESOURCE_NOT_FOUND`), the other fields answered, as on Shopify. A GID of
+  the right type that names nothing is `null` without an error, and so is an unknown id in
+  `nodes(ids:)`.
 - An input list takes 250 items at most, as on Shopify: `nodes(ids:)` with 251 ids, or any
   longer list of an argument or of an input object, written in the query or given by a
   variable, is refused before anything runs, with `MAX_INPUT_SIZE_EXCEEDED` (`The input array

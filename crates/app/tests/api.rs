@@ -224,6 +224,48 @@ fn reads_any_record_by_node() {
     );
 }
 
+/// A GID of another type answers the field `null` with Shopify's `Invalid id` error, the other
+/// fields answered; a GID of the right type that names nothing is `null` without one (issue #175,
+/// a development store on 2026-11-12).
+#[test]
+fn a_gid_of_another_type_is_an_invalid_id() {
+    let api = demo_api();
+    let token = default_token(&api);
+    let product = "gid://shopify/Product/4511006830056";
+    let (status, answer) = graphql(
+        &api,
+        &token,
+        "query($product: ID!) {
+          a: product(id: \"gid://shopify/Order/1\") { id }
+          b: productVariant(id: $product) { id }
+          c: node(id: \"gid://shopify/Nope/1\") { id }
+          d: product(id: $product) { id }
+          e: product(id: \"gid://shopify/Product/1\") { id }
+          f: nodes(ids: [\"gid://shopify/Nope/1\"]) { id }
+        }",
+        json!({"product": product}),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(
+        answer["data"],
+        json!({"a": null, "b": null, "c": null, "d": {"id": product}, "e": null, "f": [null]})
+    );
+    let errors: Vec<Value> = answer["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| json!({"message": error["message"], "extensions": error["extensions"], "path": error["path"]}))
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            json!({"message": "Invalid id: gid://shopify/Order/1", "extensions": {"code": "RESOURCE_NOT_FOUND"}, "path": ["a"]}),
+            json!({"message": format!("Invalid id: {product}"), "extensions": {"code": "RESOURCE_NOT_FOUND"}, "path": ["b"]}),
+            json!({"message": "Invalid id: gid://shopify/Nope/1", "extensions": {"code": "RESOURCE_NOT_FOUND"}, "path": ["c"]}),
+        ]
+    );
+}
+
 #[test]
 fn denies_what_the_scopes_of_the_app_do_not_cover() {
     // The fixture app: read_products, write_products, read_orders, read_customers, write_discounts.

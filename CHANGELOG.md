@@ -450,6 +450,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `shopify.app.toml`, and no `app/scopes_update` was sent. Both now follow the grant, as
   `POST /__lsf/admin/install` does, so an app that decides from them whether to send the
   merchant through OAuth again sees what its token can do.
+- **A GID of the wrong type is an `Invalid id` error.** `product(id:)` given an order's GID,
+  `productVariant(id:)` a product's, or `node(id:)` a type that does not exist answer the field
+  `null` with `{"message": "Invalid id: gid://shopify/Order/1", "extensions": {"code":
+  "RESOURCE_NOT_FOUND"}, "path": ["a"]}`, as a store does, where lsf answered a quiet `null`.
+  The other fields of the query are answered. A GID of the right type that names nothing is
+  still `null` without an error. Code that only reads `data` sees no change; code that fails on
+  any `errors` now fails locally as it does on a store.
 
 #### The command line
 
