@@ -193,3 +193,85 @@ fn a_page_that_renders_lsfs_default_menu_warns_without_failing() {
     );
     let _ = std::fs::remove_dir_all(&theme);
 }
+
+#[test]
+fn a_market_subfolder_renders_in_its_market_as_serve_answers_it() {
+    let theme = std::env::temp_dir().join(format!("lsf-render-market-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&theme);
+    for (path, content) in [
+        (
+            "layout/theme.liquid",
+            "<!doctype html><html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+        ),
+        (
+            "templates/index.liquid",
+            r#"<p id="probe">{{ localization.country.iso_code }}|{{ cart.currency.iso_code }}|{{ request.locale.iso_code }}|{{ routes.root_url }}</p>"#,
+        ),
+        ("templates/404.liquid", r#"<p id="probe">not found</p>"#),
+        (
+            "sections/probe.liquid",
+            "<p id=\"section\">{{ localization.country.iso_code }}|{{ cart.currency.iso_code }}</p>\n{% schema %}\n{ \"name\": \"Probe\" }\n{% endschema %}",
+        ),
+        ("locales/en.default.json", "{}"),
+        ("locales/fr.json", "{}"),
+        (
+            "shopify-local/store.json",
+            r#"{
+              "shop": { "name": "Probe", "currency": "USD", "address": { "country_code": "US" } },
+              "localization": {
+                "languages": [{ "iso_code": "en" }, { "iso_code": "fr" }],
+                "countries": [{ "iso_code": "US" }, { "iso_code": "BE" }],
+                "markets": [
+                  { "handle": "us", "countries": ["US"] },
+                  { "handle": "europe", "countries": ["BE"], "currency": "EUR", "rate": "0.9", "subfolder_suffix": "be" }
+                ]
+              }
+            }"#,
+        ),
+    ] {
+        let path = theme.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_lsf"))
+            .arg("render")
+            .args(args)
+            .current_dir(&theme)
+            .env_remove("LSF_THEME")
+            .env_remove("LSF_DATA")
+            .env_remove("LSF_CUSTOMER")
+            .output()
+            .unwrap()
+    };
+    for (path, probe) in [
+        ("/", r#"<p id="probe">US|USD|en|/</p>"#),
+        ("/fr", r#"<p id="probe">US|USD|fr|/fr</p>"#),
+        ("/en-be", r#"<p id="probe">BE|EUR|en|/en-be</p>"#),
+        ("/fr-be/", r#"<p id="probe">BE|EUR|fr|/fr-be</p>"#),
+    ] {
+        let output = run(&[path, "--strict"]);
+        assert_eq!(output.status.code(), Some(0), "{path}: {}", stderr(&output));
+        assert!(
+            stdout(&output).contains(probe),
+            "{path}: {}",
+            stdout(&output)
+        );
+        assert!(
+            stderr(&output).contains("status 200 · template index"),
+            "{path}: {}",
+            stderr(&output)
+        );
+    }
+    // A section rendered alone under the subfolder is in the market too.
+    let output = run(&["/en-be/?section_id=probe"]);
+    assert!(
+        stdout(&output).contains(r#"<p id="section">BE|EUR</p>"#),
+        "{}",
+        stdout(&output)
+    );
+    // A subfolder in a language the market does not offer is not found, as with `serve`.
+    let output = run(&["/es-be", "--strict"]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    let _ = std::fs::remove_dir_all(&theme);
+}

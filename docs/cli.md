@@ -556,7 +556,9 @@ npx local-storefront render '/collections/all?sort_by=price-ascending' --strict 
 | `--session <json>` | The session as `PUT /__lsf/session` takes it (`customer`, `cart`, `country`, `company_location`), as JSON or the path of a JSON file. `--customer` and `--cart` apply on top. A name the data does not have exits with `2`. |
 | `--format github` | Prints each Liquid error as a [GitHub Actions annotation](#github-annotations), on stderr, with its file and line. Default `text`. |
 
-`render` answers a path as `serve` does. A `section_id` or `sections` in the query renders those
+`render` answers a path as `serve` does. A language prefix (`/fr/…`) and a market's subfolder
+(`/en-be/…`, see [markets](storefront.md#countries-and-markets-in-the-url)) render in that
+language, and in that market's country and currency. A `section_id` or `sections` in the query renders those
 sections, as the Section Rendering API does. `/account` (lsf's page of the customer account),
 `/recommendations/products` and `/search/suggest` are answered by the server, as `serve`
 answers them.
