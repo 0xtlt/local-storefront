@@ -587,6 +587,14 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   the page's language, and `suggestions` is empty, since lsf has no geolocation.
   `/blogs/<handle>.atom` is an Atom feed of the blog's articles, newest first.
 
+- **Fixed bundles.** A variant's `components` (a variant and a quantity each) make it a fixed
+  bundle, as `productVariantRelationshipBulkUpdate` does: its stock is the fewest bundles its
+  components make, its cart line has `has_components: true` in `/cart.js`, and Liquid's
+  `item.item_components` lists its components with their quantity and a part of the line's
+  price, where the data could not model one. With `--app`, the Admin API seeds them as
+  `productVariantComponents` (`requiresComponents: true`), and the components the backend sets
+  reach the storefront.
+
 #### The Admin API, for the backend of an app
 
 - **An order placed with a cart transform bundle lists its components**, as on Shopify: a line

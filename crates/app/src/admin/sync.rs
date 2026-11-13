@@ -132,10 +132,11 @@ const PARENT_FIELDS: [(&str, &str); 11] = [
 ];
 
 /// The lists of records a record holds, which belong to it.
-const CHILD_LISTS: [(&str, &str); 11] = [
+const CHILD_LISTS: [(&str, &str); 12] = [
     ("Product", "variants"),
     ("Product", "options"),
     ("Product", "media"),
+    ("ProductVariant", "productVariantComponents"),
     ("ProductOption", "optionValues"),
     ("InventoryItem", "inventoryLevels"),
     ("Blog", "articles"),
@@ -1329,6 +1330,20 @@ impl<'s> Sync<'s> {
                 })
                 .unwrap_or_default(),
             store_availabilities: store_availabilities.map(|stocked| stocked.into_iter().collect()),
+            components: list(record, "productVariantComponents")
+                .filter_map(|component| {
+                    let component = view.get(component)?;
+                    let variant = parse_gid(text(component, "productVariant")?)?.1;
+                    Some(model::VariantComponentInput {
+                        variant: model::VariantRef::Id(variant),
+                        quantity: component
+                            .get("quantity")
+                            .and_then(Value::as_u64)
+                            .and_then(|quantity| u32::try_from(quantity).ok())
+                            .unwrap_or(1),
+                    })
+                })
+                .collect(),
             metafields: self.metafields(view, key),
         })
     }

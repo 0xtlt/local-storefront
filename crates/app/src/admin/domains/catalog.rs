@@ -428,7 +428,10 @@ fn seed_product(
         "giftCardTemplateSuffix": null,
         "isGiftCard": product.gift_card,
         "requiresSellingPlan": product.requires_selling_plan,
-        "hasVariantsThatRequiresComponents": false,
+        "hasVariantsThatRequiresComponents": product
+            .variants
+            .iter()
+            .any(|variant| !variant.components.is_empty()),
         "options": options,
         "variants": variants,
         "media": media,
@@ -683,6 +686,28 @@ fn seed_variant(
         .filter_map(|index| selling_plan_groups.get(*index))
         .collect();
     let metafields = seed.metafields(&id, "PRODUCTVARIANT", &created, &variant.metafields);
+    // The components of a fixed bundle of the data, as `productVariantRelationshipBulkUpdate`
+    // keeps them.
+    let components: Vec<String> = variant
+        .components
+        .iter()
+        .map(|(component, quantity)| {
+            let component_id = gid(
+                "ProductVariantComponent",
+                stable_id(
+                    "product_variant_component",
+                    &format!("{}/{component}", variant.id),
+                ),
+            );
+            seed.insert(json!({
+                "__typename": "ProductVariantComponent",
+                "id": component_id,
+                "productVariant": gid("ProductVariant", *component),
+                "quantity": quantity,
+            }));
+            component_id
+        })
+        .collect();
     seed.insert(json!({
         "__typename": "ProductVariant",
         "id": id,
@@ -707,7 +732,8 @@ fn seed_variant(
         "inventoryQuantity": variant.inventory_quantity,
         "availableForSale": variant.available,
         "taxable": variant.taxable,
-        "requiresComponents": false,
+        "requiresComponents": !components.is_empty(),
+        "productVariantComponents": components,
         "product": product_gid(product),
         "media": media.map(media_gid).into_iter().collect::<Vec<_>>(),
         "image": media

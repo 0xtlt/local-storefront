@@ -563,6 +563,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         &product_inputs,
     );
     build_recommendations(&mut builder, &mut store, &product_inputs);
+    build_bundles(&mut builder, &mut store, &product_inputs);
     build_selling_plans(
         &mut builder,
         &mut store,
@@ -1332,6 +1333,7 @@ fn build_products(
                     locations,
                     &variant_origin.child("store_availabilities"),
                 ),
+                components: Vec::new(),
                 metafields: builder
                     .metafields(&variant.metafields, &variant_origin.child("metafields")),
             });
@@ -1758,6 +1760,95 @@ fn build_collections(
 
 /// How many products a product recommends when the data does not say which.
 const RECOMMENDATIONS: usize = 10;
+
+/// The components of the fixed bundles, checked as `productVariantRelationshipBulkUpdate`
+/// checks them (a bundle is not its own component, and nested bundles aren't supported), and
+/// the stock they give their bundle: "The parent inventory quantity is the minimum of the
+/// component's inventory quantities", each divided by the quantity one bundle takes. A
+/// component that is not tracked, or that sells when out of stock, does not limit it; the
+/// bundle can be bought while every component can.
+/// <https://shopify.dev/docs/apps/build/product-merchandising/bundles/start-building>
+fn build_bundles(
+    builder: &mut Builder<'_>,
+    store: &mut Store,
+    inputs: &[Sourced<model::ProductInput>],
+) {
+    // Each bundle: where it is, where its components are written, and its components.
+    type Bundle = ((usize, usize), Origin, Vec<(usize, usize, u32)>);
+    let mut bundles: Vec<Bundle> = Vec::new();
+    for (
+        product,
+        Sourced {
+            value: input,
+            origin,
+        },
+    ) in inputs.iter().enumerate()
+    {
+        for (index, variant) in input.variants.iter().enumerate() {
+            if variant.components.is_empty() || index >= store.products[product].variants.len() {
+                continue;
+            }
+            let components_origin = origin.child("variants").child(index).child("components");
+            let mut components = Vec::new();
+            for (position, component) in variant.components.iter().enumerate() {
+                let component_origin = components_origin.child(position).child("variant");
+                match resolve_variant(store, &component.variant) {
+                    None => unknown_variant(builder, store, &component.variant, &component_origin),
+                    Some(found) if found == (product, index) => {
+                        builder.error(
+                            "invalid_value",
+                            &component_origin,
+                            "a bundle cannot contain itself as a component".to_string(),
+                        );
+                    }
+                    Some((component_product, component_variant)) => components.push((
+                        component_product,
+                        component_variant,
+                        component.quantity.max(1),
+                    )),
+                }
+            }
+            bundles.push(((product, index), components_origin, components));
+        }
+    }
+    for ((product, index), origin, components) in &bundles {
+        let nested = components
+            .iter()
+            .any(|(component_product, component_variant, _)| {
+                bundles
+                    .iter()
+                    .any(|(bundle, ..)| *bundle == (*component_product, *component_variant))
+            });
+        if nested {
+            builder.error(
+                "invalid_value",
+                origin,
+                "nested bundles aren't supported: a component cannot be a bundle itself"
+                    .to_string(),
+            );
+            continue;
+        }
+        let mut quantity: Option<i64> = None;
+        let mut available = true;
+        let mut ids = Vec::new();
+        for (component_product, component_variant, per_bundle) in components {
+            let component = &store.products[*component_product].variants[*component_variant];
+            if component.inventory_tracked
+                && component.inventory_policy != InventoryPolicy::Continue
+            {
+                let made = component.inventory_quantity.max(0) / i64::from(*per_bundle);
+                quantity = Some(quantity.map_or(made, |known| known.min(made)));
+            }
+            available &= component.available;
+            ids.push((component.id, *per_bundle));
+        }
+        let bundle = &mut store.products[*product].variants[*index];
+        bundle.components = ids;
+        bundle.inventory_tracked = quantity.is_some();
+        bundle.inventory_quantity = quantity.unwrap_or(0);
+        bundle.available = available && quantity.is_none_or(|quantity| quantity > 0);
+    }
+}
 
 fn build_recommendations(
     builder: &mut Builder<'_>,

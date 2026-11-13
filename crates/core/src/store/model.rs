@@ -432,8 +432,25 @@ pub struct VariantInput {
     /// the variant, and it is in stock there when the variant is available.
     #[serde(default)]
     pub store_availabilities: Option<IndexMap<String, bool>>,
+    /// The variants this variant is made of, which makes it a fixed bundle, as
+    /// `productVariantRelationshipBulkUpdate` makes one: each with the quantity one bundle
+    /// takes. The bundle's stock is the fewest bundles its tracked components make, and a cart
+    /// line of it lists its components (`item_components`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<VariantComponentInput>,
     #[serde(default)]
     pub metafields: Metafields,
+}
+
+/// A component of a fixed bundle: a variant, and how many of it one bundle takes.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VariantComponentInput {
+    /// A variant, by id or SKU, or a product handle (its first variant).
+    pub variant: VariantRef,
+    /// Defaults to 1.
+    #[serde(default = "one")]
+    pub quantity: u32,
 }
 
 /// Where a product is in its life, as the Shopify admin shows it.

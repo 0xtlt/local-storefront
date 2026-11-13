@@ -2227,6 +2227,58 @@ mod tests {
     }
 
     #[test]
+    fn a_fixed_bundle_has_its_components_and_their_stock() {
+        let (store, diagnostics) = inline(serde_json::json!({
+            "products": [
+                {"title": "Part A", "price": "20.00", "variants": [{"sku": "PART-A", "inventory_quantity": 7}]},
+                {"title": "Part B", "price": "15.00", "variants": [{"sku": "PART-B", "inventory_quantity": 30}]},
+                {"title": "Gift wrap", "price": "1.00", "variants": [{"sku": "WRAP"}]},
+                {"title": "Set", "price": "30.00", "variants": [{"sku": "SET", "components": [
+                    {"variant": "PART-A", "quantity": 2}, {"variant": "PART-B", "quantity": 3}, {"variant": "WRAP"}
+                ]}]},
+                {"title": "Box", "price": "50.00", "variants": [{"sku": "BOX", "components": [
+                    {"variant": "SET"}, {"variant": "BOX"}, {"variant": "NOPE"}
+                ]}]}
+            ]
+        }));
+        let report = diagnostics.to_string();
+        for expected in [
+            "a bundle cannot contain itself as a component",
+            "\"NOPE\" is neither the SKU of a variant nor the handle of a product",
+            "nested bundles aren't supported",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
+        let set = &store.product_by_handle("set").unwrap().variants[0];
+        let ids = |sku: &str| {
+            store
+                .products
+                .iter()
+                .flat_map(|product| &product.variants)
+                .find(|variant| variant.sku == sku)
+                .unwrap()
+                .id
+        };
+        assert_eq!(
+            set.components,
+            [(ids("PART-A"), 2), (ids("PART-B"), 3), (ids("WRAP"), 1)]
+        );
+        // The fewest bundles the tracked components make: 7 / 2 and 30 / 3; the wrap is not
+        // tracked.
+        assert!(set.inventory_tracked && set.available);
+        assert_eq!(set.inventory_quantity, 3);
+        // A nested bundle keeps no components.
+        assert!(
+            store.product_by_handle("box").unwrap().variants[0]
+                .components
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn swatches_locations_and_selling_plans_are_resolved() {
         let (store, diagnostics) = inline(serde_json::json!({
             "swatches": {"Sand": {"color": "rgb(216, 199, 168)", "image": "swatches/sand.jpg"}},

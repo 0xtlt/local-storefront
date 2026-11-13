@@ -381,3 +381,52 @@ fn a_url_redirect_sends_a_path_that_finds_nothing_to_its_target() {
     assert_eq!(location("/products/tee"), (200, None));
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn a_cart_line_of_a_fixed_bundle_lists_its_components() {
+    let root = theme_dir(
+        "bundle",
+        &[
+            LAYOUT,
+            (
+                "templates/cart.liquid",
+                "{% for item in cart.items %}{{ item.title }}:{% for c in item.item_components %}\
+                 [{{ c.title }} x{{ c.quantity }} {{ c.line_price }}]{% endfor %}{% endfor %}",
+            ),
+            (
+                "shopify-local/store.json",
+                r#"{"products": [
+                    {"title": "Part A", "price": "20.00", "variants": [{"sku": "PART-A"}]},
+                    {"title": "Part B", "price": "10.00", "variants": [{"sku": "PART-B"}]},
+                    {"title": "Set", "price": "25.00", "variants": [{"sku": "SET", "components": [
+                        {"variant": "PART-A"}, {"variant": "PART-B", "quantity": 2}
+                    ]}]}
+                ]}"#,
+            ),
+        ],
+    );
+    let state = serve(&root, false);
+    let set = state
+        .loaded()
+        .store
+        .product_by_handle("set")
+        .unwrap()
+        .variants[0]
+        .id;
+    let added = super::post(
+        &state,
+        "/cart/add.js",
+        serde_json::json!({"id": set, "quantity": 2}),
+        "bundle",
+    );
+    assert_eq!(added.status, 200, "{}", text(&added));
+    let cart = super::body_json(&get(&state, "/cart.js", "bundle"));
+    let page = text(&get(&state, "/cart", "bundle"));
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(cart["items"][0]["has_components"], true, "{cart}");
+    // The line's 50.00 allocated by the components' prices: 20.00 and 2 × 10.00 a bundle.
+    assert!(
+        page.contains("Set:[Part A x2 2500][Part B x4 2500]"),
+        "{page}"
+    );
+}

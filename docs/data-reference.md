@@ -293,6 +293,7 @@ A product variant.
 | `quantity_rule` | [QuantityRule](#quantityrule) |  |
 | `quantity_price_breaks` | array of [QuantityPriceBreak](#quantitypricebreak) |  |
 | `store_availabilities` | map of boolean | The locations (from `locations`, by name) that stock this variant, and whether it is in stock there: `{"Portland": true, "Seattle": false}`. When omitted, every location stocks the variant, and it is in stock there when the variant is available. |
+| `components` | array of [VariantComponent](#variantcomponent) | The variants this variant is made of, which makes it a fixed bundle, as `productVariantRelationshipBulkUpdate` makes one: each with the quantity one bundle takes. The bundle's stock is the fewest bundles its tracked components make, and a cart line of it lists its components (`item_components`). |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## Money
@@ -343,6 +344,25 @@ A volume price: the unit price from a given quantity.
 |---|---|---|
 | `minimum_quantity` | integer | **Required.** |
 | `price` | [Money](#money) | **Required.** |
+
+## VariantComponent
+
+A component of a fixed bundle: a variant, and how many of it one bundle takes.
+
+| Field | Type | Description |
+|---|---|---|
+| `variant` | [VariantRef](#variantref) | **Required.** A variant, by id or SKU, or a product handle (its first variant). |
+| `quantity` | integer | Defaults to 1. |
+
+## VariantRef
+
+A reference to a variant: its numeric id, its SKU, or a product handle (meaning that
+product's first variant).
+
+One of:
+
+- integer
+- string
 
 ## Media
 
@@ -604,16 +624,6 @@ A line of an order.
 |---|---|---|
 | `variant` | [VariantRef](#variantref) | **Required.** A variant, by id or SKU, or a product handle (its first variant is used). |
 | `quantity` | integer | Defaults to 1. |
-
-## VariantRef
-
-A reference to a variant: its numeric id, its SKU, or a product handle (meaning that
-product's first variant).
-
-One of:
-
-- integer
-- string
 
 ## OrderReturn
 

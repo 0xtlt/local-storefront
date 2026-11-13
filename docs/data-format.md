@@ -188,6 +188,33 @@ product with options lists its variants; each gives one value per option:
   collection, a menu, an order) leaves them out without an error; the Admin API lists them with
   their status.
 
+### Fixed bundles
+
+A variant with `components` is a fixed bundle, as `productVariantRelationshipBulkUpdate` or the
+Shopify Bundles app make one: each component is a variant (by id, SKU or product handle) and the
+quantity one bundle takes of it (1 by default).
+
+```json
+{
+  "title": "Set",
+  "price": "30.00",
+  "variants": [{ "sku": "SET", "components": [
+    { "variant": "PART-A", "quantity": 2 },
+    { "variant": "PART-B" }
+  ] }]
+}
+```
+
+As on Shopify, the bundle's stock is the fewest bundles its components make (a component that
+is not tracked, or that sells when out of stock, does not limit it), and it can be bought while
+every component can. In the cart, its line has `has_components: true` in `/cart.js` and its
+components in Liquid's `item.item_components`: each component's variant, its quantity (per bundle
+times the line's), and a part of the line's price. Shopify allocates that price with a weighted
+algorithm it does not detail; lsf weighs each component by its price times its quantity. A
+bundle cannot be its own component, and a component cannot be a bundle (nested bundles aren't
+supported). With `--app`, the Admin API has them as `productVariantComponents`
+(`requiresComponents: true`), and the components the backend sets apply to the storefront.
+
 ## Collections
 
 ```json

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use lsf_core::cart::{ResolvedLine, resolve_line};
+use lsf_core::cart::{ResolvedLine, resolve_line, variant_image};
 use lsf_core::util::short_hash;
 use lsf_liquid::{Hash, Object, Value};
 use serde_json::{Value as Json, json};
@@ -165,7 +165,10 @@ pub fn line_json(site: &SiteRef, line: &ResolvedLine<'_>) -> Json {
             "max": line.variant.quantity_rule.max,
             "increment": line.variant.quantity_rule.increment,
         },
-        "has_components": line.transformed.is_some_and(|line| !line.components.is_empty()),
+        // A line a cart transform made has its components; another line, those of its
+        // variant when it is a fixed bundle.
+        "has_components": line.transformed.is_some_and(|line| !line.components.is_empty())
+            || !line.variant.components.is_empty(),
     });
     // Only the lines bought with a selling plan have the key.
     if let Some((group, plan)) = line.selling_plan {
@@ -367,14 +370,27 @@ impl Object for LineItemDrop {
             | "discounts"
             | "tax_lines" => Value::array(Vec::new()),
             "item_components" => match line.transformed {
-                Some(transformed) => Value::array(
+                Some(transformed) if !transformed.components.is_empty() => Value::array(
                     transformed
                         .components
                         .iter()
                         .filter_map(|component| component_value(site, component))
                         .collect(),
                 ),
-                None => Value::array(Vec::new()),
+                _ => Value::array(
+                    line.components(&site.store)
+                        .into_iter()
+                        .map(|component| {
+                            Value::object(ItemComponentDrop {
+                                site: site.clone(),
+                                product: component.product_index,
+                                variant: component.variant_index,
+                                quantity: component.quantity,
+                                line_price: component.line_price,
+                            })
+                        })
+                        .collect(),
+                ),
             },
             "product_id" => Value::Int(line.product.id as i64),
             "product" => self
@@ -445,6 +461,89 @@ impl Object for LineItemDrop {
         lines
             .get(self.index)
             .map_or(Json::Null, |line| line_json(&self.site, line))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// A component of a fixed bundle in the cart, a `line_item` of `item_components`: its variant,
+/// the quantity the bundle line holds of it, and the part of the line's price it carries. It is
+/// no line of the cart: it has no key, and its discounts are the bundle line's.
+/// <https://shopify.dev/docs/api/liquid/objects/line_item#line_item-item_components>
+struct ItemComponentDrop {
+    site: SiteRef,
+    product: usize,
+    variant: usize,
+    quantity: i64,
+    line_price: i64,
+}
+
+impl Object for ItemComponentDrop {
+    fn type_name(&self) -> &str {
+        "line_item"
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        let site = &self.site;
+        let product = &site.store.products[self.product];
+        let variant = &product.variants[self.variant];
+        Some(match key {
+            "id" | "variant_id" => Value::Int(variant.id as i64),
+            "quantity" => Value::Int(self.quantity),
+            "title" => Value::from(if product.has_only_default_variant() {
+                product.title.clone()
+            } else {
+                format!("{} - {}", product.title, variant.title)
+            }),
+            "price" | "final_price" | "original_price" => {
+                Value::Int(self.line_price / self.quantity.max(1))
+            }
+            "line_price" | "final_line_price" | "original_line_price" => {
+                Value::Int(self.line_price)
+            }
+            "total_discount" | "line_level_total_discount" => Value::Int(0),
+            "discount_allocations"
+            | "line_level_discount_allocations"
+            | "discounts"
+            | "tax_lines"
+            | "item_components" => Value::array(Vec::new()),
+            "product_id" => Value::Int(product.id as i64),
+            "product" => ProductDrop::value(site, self.product),
+            "variant" => VariantDrop::value(site, self.product, self.variant),
+            "sku" => Value::from(&variant.sku),
+            "vendor" => Value::from(&product.vendor),
+            "taxable" => Value::Bool(variant.taxable),
+            "gift_card" => Value::Bool(product.gift_card),
+            "requires_shipping" => Value::Bool(variant.requires_shipping),
+            "grams" => Value::Int(variant.weight as i64),
+            "url" => Value::from(format!(
+                "{}?variant={}",
+                product_url(site, product),
+                variant.id
+            )),
+            "image" => ImageDrop::optional(site, variant_image(product, variant)),
+            "options_with_values" => Value::array(
+                product
+                    .options
+                    .iter()
+                    .zip(&variant.options)
+                    .map(|(option, value)| {
+                        hash([
+                            ("name", Value::from(&option.name)),
+                            ("value", Value::from(value)),
+                        ])
+                    })
+                    .collect(),
+            ),
+            "key"
+            | "message"
+            | "error_message"
+            | "parent_relationship"
+            | "selling_plan_allocation" => Value::Nil,
+            _ => return None,
+        })
     }
 
     fn as_any(&self) -> &dyn Any {

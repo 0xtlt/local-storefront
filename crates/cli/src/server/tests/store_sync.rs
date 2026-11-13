@@ -1302,3 +1302,39 @@ fn a_url_redirect_the_backend_creates_sends_its_path_to_its_target() {
     );
     assert_eq!(get(&state, "/old-mug", "sync").status, 404);
 }
+
+#[test]
+fn a_fixed_bundle_the_backend_makes_lists_its_components_in_the_cart() {
+    let state = admin_server();
+    let variant = |handle: &str| {
+        catalog::variant_gid(
+            &state
+                .loaded()
+                .store
+                .product_by_handle(handle)
+                .unwrap()
+                .variants[0],
+        )
+    };
+    let (parent, tote, socks) = (
+        variant("ceramic-mug"),
+        variant("canvas-tote-bag"),
+        variant("merino-crew-socks"),
+    );
+    mutate(
+        &state,
+        "mutation($input: [ProductVariantRelationshipUpdateInput!]!) { productVariantRelationshipBulkUpdate(input: $input) { parentProductVariants { id } userErrors { field message code } } }",
+        json!({"input": [{"parentProductVariantId": parent,
+            "productVariantRelationshipsToCreate": [{"id": tote, "quantity": 1}, {"id": socks, "quantity": 2}]}]}),
+    );
+    let id = lsf_app::admin::state::parse_gid(&parent).unwrap().1;
+    let added = post(
+        &state,
+        "/cart/add.js",
+        json!({"id": id, "quantity": 1}),
+        "bundle",
+    );
+    assert_eq!(added.status, 200, "{}", text(&added));
+    let cart = body_json(&get(&state, "/cart.js", "bundle"));
+    assert_eq!(cart["items"][0]["has_components"], true, "{cart}");
+}
