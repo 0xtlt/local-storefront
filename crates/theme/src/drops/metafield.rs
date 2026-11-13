@@ -216,15 +216,24 @@ fn file_value(site: &SiteRef, src: &str) -> Value {
     ])
 }
 
-/// An image known only by its path in `files/`, with the metadata declared for that file.
+/// An image known only by its path in `files/`, with the metadata declared for that file. Its
+/// size is the file's when it exists, as a product image's is, else the declared one, else
+/// 1200 × 1200.
 pub fn image_from_src(site: &SiteRef, src: &str) -> Image {
     let meta = site.store.files.get(src);
+    let read = site.store.file_sizes.get(src);
     Image {
         id: stable_id("image", src),
         src: src.to_string(),
         alt: meta.map(|meta| meta.alt.clone()).unwrap_or_default(),
-        width: meta.and_then(|meta| meta.width).unwrap_or(1200),
-        height: meta.and_then(|meta| meta.height).unwrap_or(1200),
+        width: read
+            .map(|(width, _)| *width)
+            .or(meta.and_then(|meta| meta.width))
+            .unwrap_or(1200),
+        height: read
+            .map(|(_, height)| *height)
+            .or(meta.and_then(|meta| meta.height))
+            .unwrap_or(1200),
         focal_point: meta.and_then(|meta| meta.focal_point),
     }
 }

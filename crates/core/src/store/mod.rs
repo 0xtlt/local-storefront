@@ -1209,6 +1209,9 @@ pub struct Store {
     pub markets: Vec<Market>,
     pub languages: Vec<Language>,
     pub files: IndexMap<String, FileMeta>,
+    /// The pixel size of each image of `files/`, read from the file: what an image known only by
+    /// its path (an `image_picker` setting, `images[...]`, a file metafield) measures.
+    pub file_sizes: HashMap<String, (u32, u32)>,
     pub session_defaults: SessionDefaults,
     /// How the local checkout is set up.
     pub checkout: CheckoutSettings,

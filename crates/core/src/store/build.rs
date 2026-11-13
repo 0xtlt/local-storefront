@@ -528,6 +528,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         markets: Vec::new(),
         languages: Vec::new(),
         files: IndexMap::new(),
+        file_sizes: HashMap::new(),
         session_defaults: SessionDefaults::default(),
         checkout: CheckoutSettings::default(),
         scenarios: Vec::new(),
