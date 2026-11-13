@@ -773,7 +773,7 @@ fn a_country_is_offered_the_languages_of_its_market() {
     let session = || Session::initial(&fixture.store);
     assert_eq!(
         fixture.liquid("/", session(), country_languages),
-        "US:en,fr CA:en,fr FR:en,fr "
+        "CA:en,fr FR:en,fr US:en,fr "
     );
     assert_eq!(fixture.liquid("/", session(), visitor_languages), "en,fr");
 
@@ -803,7 +803,7 @@ fn a_country_is_offered_the_languages_of_its_market() {
     // Canada is in no market: it keeps every language. France lists its default first.
     assert_eq!(
         fixture.liquid("/", session(None), country_languages),
-        "US:en CA:en,fr FR:fr,en "
+        "CA:en,fr FR:fr,en US:en "
     );
     // `localization.available_languages` follows the visitor's country: the shop's (Canada)
     // until they select one.
@@ -938,12 +938,12 @@ fn localization_market_is_the_market_of_the_visitors_country() {
     // At `/`, the market of the United States; each country names its own market.
     assert_eq!(
         fixture.liquid("/", session.clone(), source),
-        format!("us|{us}||US|US:us;BE:europe;")
+        format!("us|{us}||US|BE:europe;US:us;")
     );
     // Under `/en-be/`, the market of Belgium, with its metafields.
     assert_eq!(
         fixture.liquid_for(under_en_be("/"), session, source),
-        format!("europe|{europe}|silver|BE|US:us;BE:europe;")
+        format!("europe|{europe}|silver|BE|BE:europe;US:us;")
     );
     // Its id is the one of the Admin API and of the Functions.
     assert_eq!(
@@ -1455,9 +1455,10 @@ fn every_country_has_its_name_and_continent_and_a_selector_lists_them_all() {
             session.clone(),
             "{% for c in localization.available_countries %}{{ c.iso_code }}={{ c.name }}/{{ c.continent }};{% endfor %}"
         ),
-        "US=United States/North America;AD=Andorra/Europe;AL=Albania/Europe;KE=Kenya/Africa;\
-         MA=Morocco/Africa;QA=Qatar/Asia;UY=Uruguay/South America;FR=France/Europe;\
-         BE=Belgium/Europe;CA=Canada/North America;"
+        // Sorted by name, as `localization.available_countries` is on Shopify.
+        "AL=Albania/Europe;AD=Andorra/Europe;BE=Belgium/Europe;CA=Canada/North America;\
+         FR=France/Europe;KE=Kenya/Africa;MA=Morocco/Africa;QA=Qatar/Asia;\
+         US=United States/North America;UY=Uruguay/South America;"
     );
     // Shopify's 237 countries and its `---`: 238 options, so 239 parts.
     assert_eq!(
@@ -1483,6 +1484,64 @@ fn every_country_has_its_name_and_continent_and_a_selector_lists_them_all() {
         all.ends_with("<option value=\"Zimbabwe\" data-provinces=\"[]\">Zimbabwe</option>"),
         "{all}"
     );
+}
+
+#[test]
+fn countries_have_their_names_in_the_language_of_the_page_and_are_sorted_by_them() {
+    let overlay = serde_json::json!({
+        "shop": {"address": {
+            "company": "", "address1": "1 Main St", "address2": "", "city": "Portland",
+            "province": "Oregon", "province_code": "OR", "zip": "97201",
+            "country": "United States", "country_code": "US"
+        }},
+        "localization": {
+            "countries": [{"iso_code": "US"}, {"iso_code": "BE"}, {"iso_code": "DE"}, {"iso_code": "CA"}],
+            "languages": [{"iso_code": "en"}, {"iso_code": "fr"}, {"iso_code": "de"}]
+        }
+    });
+    let options = LoadOptions {
+        theme_locales: vec!["en".to_string(), "fr".to_string(), "de".to_string()],
+        ..LoadOptions::default()
+    };
+    let (store, diagnostics) = load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let session = || Session::initial(&fixture.store);
+    let page = |locale: &str, source: &str| {
+        let mut request = request("/");
+        if locale != "en" {
+            request.locale = locale.to_string();
+            request.root = format!("/{locale}");
+        }
+        fixture.liquid_for(request, session(), source)
+    };
+    let countries = "{% for c in localization.available_countries %}{{ c.name }};{% endfor %}";
+    assert_eq!(
+        page("en", countries),
+        "Belgium;Canada;Germany;United States;"
+    );
+    assert_eq!(
+        page("fr", countries),
+        "Allemagne;Belgique;Canada;États-Unis;"
+    );
+    assert_eq!(
+        page("de", countries),
+        "Belgien;Deutschland;Kanada;Vereinigte Staaten;"
+    );
+    assert_eq!(page("fr", "{{ localization.country.name }}"), "États-Unis");
+    // The shop's address, and `format_address`.
+    assert_eq!(
+        page(
+            "fr",
+            "{{ shop.address.country }}|{{ shop.address.country.name }}|{{ shop.address.summary }}"
+        ),
+        "États-Unis|États-Unis|1 Main St, Portland, Oregon, États-Unis"
+    );
+    assert!(page("fr", "{{ shop.address | format_address }}").ends_with("<br>États-Unis</p>"));
+    assert_eq!(page("en", "{{ shop.address.country }}"), "United States");
 }
 
 #[test]

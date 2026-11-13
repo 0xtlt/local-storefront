@@ -730,7 +730,7 @@ A country the store sells to.
 | Field | Type | Description |
 |---|---|---|
 | `iso_code` | string | **Required.** ISO 3166-1 alpha-2 code, e.g. `"FR"`. |
-| `name` | string | Defaults to the English name of the country. |
+| `name` | string | Defaults to the name Shopify gives the country in the language of the page: `United States`, `États-Unis` on `/fr/`. A name given here is the same in every language. |
 | `currency` | string | ISO 4217 code of the currency its buyers pay in: prices, the cart and the checkout are in it. Defaults to the `currency` of its market, else the store currency. |
 | `unit_system` | string | `metric` or `imperial`. Defaults to `metric`. |
 | `popular` | boolean | Whether to list the country among the popular ones. |

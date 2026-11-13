@@ -1308,7 +1308,8 @@ pub struct ShopInput {
 pub struct CountryInput {
     /// ISO 3166-1 alpha-2 code, e.g. `"FR"`.
     pub iso_code: String,
-    /// Defaults to the English name of the country.
+    /// Defaults to the name Shopify gives the country in the language of the page: `United
+    /// States`, `États-Unis` on `/fr/`. A name given here is the same in every language.
     #[serde(default)]
     pub name: Option<String>,
     /// ISO 4217 code of the currency its buyers pay in: prices, the cart and the checkout are

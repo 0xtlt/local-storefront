@@ -161,6 +161,12 @@ with its handle, its id and its metafields), fonts, colors, color schemes, quant
 unit prices, selling plan groups, selling plans and their allocations, store availabilities and
 locations, companies, company locations and company addresses.
 
+On a page in another language (`/fr/`, `/fr-be/`), a country has the name Shopify gives it in
+that language (`États-Unis`, `Vereinigte Staaten`): `country.name`, an address's `country` and
+`summary`, and `format_address`; `localization.available_countries` is sorted by those names
+(`Belgique`, `Canada`, `États-Unis`), as on Shopify. The names are those of Shopify's address
+data, in the 38 languages lsf names; a page in another language has the English names.
+
 ## Theme architecture
 
 - JSON templates and Liquid templates, alternate templates (`?view=`, `template_suffix`),

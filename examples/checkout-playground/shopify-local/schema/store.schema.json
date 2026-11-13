@@ -2903,7 +2903,7 @@
           "type": "string"
         },
         "name": {
-          "description": "Defaults to the English name of the country.",
+          "description": "Defaults to the name Shopify gives the country in the language of the page: `United\nStates`, `États-Unis` on `/fr/`. A name given here is the same in every language.",
           "type": [
             "string",
             "null"

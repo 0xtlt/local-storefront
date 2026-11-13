@@ -4,6 +4,7 @@
 pub mod build;
 mod collate;
 mod countries;
+mod country_names;
 mod date;
 pub mod demo;
 pub mod docs;

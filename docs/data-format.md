@@ -774,6 +774,10 @@ selected no country is in the shop's (`shop.address.country_code`), the one of i
 market, on the storefront as at the checkout; in the first country when the store does not sell
 to the shop's.
 
+On a page in another language, a country without a `name` of its own has the name Shopify gives
+it in that language (`États-Unis` on `/fr/`), and `localization.available_countries` lists the
+countries by those names, as Shopify does.
+
 A country has the provinces Shopify lists for it (the states of the United States, the provinces
 of Canada, the prefectures of Japan, the regions of the United Kingdom: 37 countries, from
 Shopify's address data). The country selectors of a theme list them as Shopify does: in
