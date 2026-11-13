@@ -3,7 +3,10 @@
 use lsf_core::store::SortOrder;
 use lsf_liquid::Value;
 
-use super::collection::{CollectionDrop, options_value, sort_products};
+use super::collection::{
+    CollectionDrop, criteria, matches as passes_filters, options_value, sort_products,
+    storefront_filters,
+};
 use super::content::{ArticleDrop, PageDrop};
 use super::product::ProductDrop;
 use super::{PaginatedList, SiteRef, hash, strings};
@@ -300,18 +303,44 @@ pub fn search_value(site: &SiteRef) -> Value {
     if order != SortOrder::Manual {
         searched.sort_by_key(|kind| *kind != SearchType::Product);
     }
+    // Storefront filters narrow the products, and leave out every other result: "If you apply
+    // filters on the search results page, then all non-product results are filtered out."
+    // https://shopify.dev/docs/storefronts/themes/navigation-search/filtering/storefront-filtering/support-storefront-filtering
+    let active = criteria(&site.request);
+    if !active.is_empty() {
+        searched.retain(|kind| *kind == SearchType::Product);
+    }
+    let found = run(site, &query, &searched, order);
+    // The filters are those of the products found, before the URL's filters narrow them.
+    let base: Vec<usize> = found
+        .iter()
+        .filter(|(kind, _)| *kind == SearchType::Product)
+        .flat_map(|(_, results)| results)
+        .filter_map(|result| result.downcast::<ProductDrop>().map(|drop| drop.index))
+        .collect();
+    let products = &site.store.products;
     // Pagination slices this list, so it is sorted before `paginate` sees it.
-    let results: Vec<Value> = run(site, &query, &searched, order)
+    let results: Vec<Value> = found
         .into_iter()
         .flat_map(|(_, results)| results)
+        .filter(|result| {
+            result
+                .downcast::<ProductDrop>()
+                .is_none_or(|drop| passes_filters(&products[drop.index], &active))
+        })
         .collect();
+    let filters = if base.is_empty() {
+        Value::array(Vec::new())
+    } else {
+        storefront_filters(site, base, active)
+    };
     hash([
         ("terms", Value::from(&query)),
         ("performed", Value::Bool(performed)),
         ("results_count", Value::from(results.len())),
         ("results", PaginatedList::value(results)),
         ("types", type_names(&types)),
-        ("filters", Value::array(Vec::new())),
+        ("filters", filters),
         ("sort_options", options_value(&SORT_OPTIONS)),
         ("sort_by", Value::str(applied_sort_by(order))),
         ("default_sort_by", Value::str("relevance")),

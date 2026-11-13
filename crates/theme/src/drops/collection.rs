@@ -50,7 +50,7 @@ pub fn sort_products(products: &[Product], indexes: &mut [usize], order: SortOrd
 
 /// One selected storefront filter.
 #[derive(Clone, Debug, PartialEq)]
-enum Criterion {
+pub(crate) enum Criterion {
     Availability(bool),
     PriceMin(i64),
     PriceMax(i64),
@@ -67,7 +67,8 @@ fn parse_price(value: &str) -> Option<i64> {
     Some((amount * 100.0).round() as i64)
 }
 
-fn criteria(request: &Request) -> Vec<Criterion> {
+/// The storefront filters a page's URL selects (`filter.v.*`, `filter.p.*`).
+pub(crate) fn criteria(request: &Request) -> Vec<Criterion> {
     request
         .query
         .iter()
@@ -88,7 +89,7 @@ fn criteria(request: &Request) -> Vec<Criterion> {
 
 /// Whether a product passes the filters. Values of the same filter are alternatives (OR),
 /// different filters must all match (AND). Variant-level filters must match on one variant.
-fn matches(product: &Product, criteria: &[Criterion]) -> bool {
+pub(crate) fn matches(product: &Product, criteria: &[Criterion]) -> bool {
     let any_or_none =
         |values: Vec<bool>| values.is_empty() || values.into_iter().any(|matched| matched);
     let product_level = any_or_none(
@@ -257,237 +258,250 @@ impl CollectionDrop {
     }
 
     fn filters(&self) -> Value {
-        let site = &self.site;
-        let products = &site.store.products;
-        let base = self.base_products();
         let active = if self.scope.is_some() {
-            criteria(&site.request)
+            criteria(&self.site.request)
         } else {
             Vec::new()
         };
-        let request = &site.request;
-        // The page's URL without a given filter parameter (or one of its values), keeping the
-        // rest but the page, as Shopify writes it (`Request::page_url`).
-        let query_without = |name: &str, value: Option<&str>| -> String {
-            request.page_url(
-                None,
-                request.page_query().filter(|(key, existing)| {
-                    *key != "page"
-                        && !(*key == name && value.is_none_or(|value| value == *existing))
-                }),
-            )
-        };
-        let query_with = |name: &str, value: &str| -> String {
-            request.page_url(
-                None,
-                request
-                    .page_query()
-                    .filter(|(key, _)| *key != "page")
-                    .chain([(name, value)]),
-            )
-        };
-        // Counts are computed with every other filter applied, as Shopify's facets are.
-        let count_with =
-            |criterion: Criterion, same_filter: &dyn Fn(&Criterion) -> bool| -> usize {
-                let mut others: Vec<Criterion> =
-                    active.iter().filter(|c| !same_filter(c)).cloned().collect();
-                others.push(criterion);
-                base.iter()
-                    .filter(|&&index| matches(&products[index], &others))
-                    .count()
-            };
-        let list_filter = |label: &str,
-                           param: &str,
-                           values: Vec<(String, String, Criterion)>,
-                           swatch_of: &dyn Fn(&str) -> Option<Swatch>,
-                           same_filter: &dyn Fn(&Criterion) -> bool|
-         -> Value {
-            // A filter whose values have swatches is presented with them.
-            let has_swatches = values.iter().any(|(value, ..)| swatch_of(value).is_some());
-            let values: Vec<Value> = values
-                .into_iter()
-                .map(|(value, label, criterion)| {
-                    let is_active = active.contains(&criterion);
-                    hash([
-                        ("param_name", Value::from(param)),
-                        ("value", Value::from(&value)),
-                        ("label", Value::from(label)),
-                        ("active", Value::Bool(is_active)),
-                        ("count", Value::from(count_with(criterion, same_filter))),
-                        ("url_to_add", Value::from(query_with(param, &value))),
-                        (
-                            "url_to_remove",
-                            Value::from(query_without(param, Some(&value))),
-                        ),
-                        ("swatch", swatch_value(site, swatch_of(&value).as_ref())),
-                        ("image", Value::Nil),
-                    ])
-                })
-                .collect();
-            let (active_values, inactive_values): (Vec<Value>, Vec<Value>) = values
-                .iter()
-                .cloned()
-                .partition(|value| value.get("active").is_truthy());
-            hash([
-                ("param_name", Value::from(param)),
-                ("label", Value::from(label)),
-                ("type", Value::str("list")),
-                ("operator", Value::str("OR")),
-                (
-                    "presentation",
-                    Value::str(if has_swatches { "swatch" } else { "text" }),
-                ),
-                ("values", Value::array(values)),
-                ("active_values", Value::array(active_values)),
-                ("inactive_values", Value::array(inactive_values)),
-                ("url_to_remove", Value::from(query_without(param, None))),
-            ])
-        };
+        storefront_filters(&self.site, self.base_products(), active)
+    }
+}
 
-        let mut filters = Vec::new();
-        filters.push(list_filter(
-            "Availability",
-            "filter.v.availability",
-            vec![
-                (
-                    "1".to_string(),
-                    "In stock".to_string(),
-                    Criterion::Availability(true),
-                ),
-                (
-                    "0".to_string(),
-                    "Out of stock".to_string(),
-                    Criterion::Availability(false),
-                ),
-            ],
-            &|_| None,
-            &|c| matches!(c, Criterion::Availability(_)),
-        ));
-
-        let range_max = base
-            .iter()
-            .map(|&index| products[index].price_max())
-            .max()
-            .unwrap_or(0);
-        let bound = |name: &str| -> Value {
-            let current = site.request.param(name).and_then(parse_price);
-            hash([
-                ("param_name", Value::from(name)),
-                ("value", current.map_or(Value::Nil, Value::Int)),
-                ("active", Value::Bool(current.is_some())),
-                ("label", Value::Nil),
-                ("count", Value::Nil),
-                ("url_to_remove", Value::from(query_without(name, None))),
-            ])
-        };
-        filters.push(hash([
-            ("param_name", Value::str("filter.v.price")),
-            ("label", Value::str("Price")),
-            ("type", Value::str("price_range")),
-            ("operator", Value::str("AND")),
-            ("presentation", Value::str("text")),
-            ("min_value", bound("filter.v.price.gte")),
-            ("max_value", bound("filter.v.price.lte")),
-            ("range_max", Value::Int(range_max)),
-            ("values", Value::array(Vec::new())),
-            ("active_values", Value::array(Vec::new())),
-            ("inactive_values", Value::array(Vec::new())),
-            (
-                "url_to_remove",
-                Value::from(
-                    request.page_url(
-                        None,
-                        request.page_query().filter(|(key, _)| {
-                            *key != "page" && !key.starts_with("filter.v.price.")
-                        }),
+/// The storefront filters of a list of products, `base`, before the filters of the URL,
+/// `active`: those of a collection page and of the search page, which are the same.
+/// https://shopify.dev/docs/storefronts/themes/navigation-search/filtering/storefront-filtering
+pub(crate) fn storefront_filters(
+    site: &SiteRef,
+    base: Vec<usize>,
+    active: Vec<Criterion>,
+) -> Value {
+    let products = &site.store.products;
+    let request = &site.request;
+    // The page's URL without a given filter parameter (or one of its values), keeping the
+    // rest but the page, as Shopify writes it (`Request::page_url`).
+    let query_without = |name: &str, value: Option<&str>| -> String {
+        request.page_url(
+            None,
+            request.page_query().filter(|(key, existing)| {
+                *key != "page" && !(*key == name && value.is_none_or(|value| value == *existing))
+            }),
+        )
+    };
+    let query_with = |name: &str, value: &str| -> String {
+        request.page_url(
+            None,
+            request
+                .page_query()
+                .filter(|(key, _)| *key != "page")
+                .chain([(name, value)]),
+        )
+    };
+    // Counts are computed with every other filter applied, as Shopify's facets are.
+    let count_with = |criterion: Criterion, same_filter: &dyn Fn(&Criterion) -> bool| -> usize {
+        let mut others: Vec<Criterion> =
+            active.iter().filter(|c| !same_filter(c)).cloned().collect();
+        others.push(criterion);
+        base.iter()
+            .filter(|&&index| matches(&products[index], &others))
+            .count()
+    };
+    let list_filter = |label: &str,
+                       param: &str,
+                       values: Vec<(String, String, Criterion)>,
+                       swatch_of: &dyn Fn(&str) -> Option<Swatch>,
+                       same_filter: &dyn Fn(&Criterion) -> bool|
+     -> Value {
+        // A filter whose values have swatches is presented with them.
+        let has_swatches = values.iter().any(|(value, ..)| swatch_of(value).is_some());
+        let values: Vec<Value> = values
+            .into_iter()
+            .map(|(value, label, criterion)| {
+                let is_active = active.contains(&criterion);
+                hash([
+                    ("param_name", Value::from(param)),
+                    ("value", Value::from(&value)),
+                    ("label", Value::from(label)),
+                    ("active", Value::Bool(is_active)),
+                    ("count", Value::from(count_with(criterion, same_filter))),
+                    ("url_to_add", Value::from(query_with(param, &value))),
+                    (
+                        "url_to_remove",
+                        Value::from(query_without(param, Some(&value))),
                     ),
+                    ("swatch", swatch_value(site, swatch_of(&value).as_ref())),
+                    ("image", Value::Nil),
+                ])
+            })
+            .collect();
+        let (active_values, inactive_values): (Vec<Value>, Vec<Value>) = values
+            .iter()
+            .cloned()
+            .partition(|value| value.get("active").is_truthy());
+        hash([
+            ("param_name", Value::from(param)),
+            ("label", Value::from(label)),
+            ("type", Value::str("list")),
+            ("operator", Value::str("OR")),
+            (
+                "presentation",
+                Value::str(if has_swatches { "swatch" } else { "text" }),
+            ),
+            ("values", Value::array(values)),
+            ("active_values", Value::array(active_values)),
+            ("inactive_values", Value::array(inactive_values)),
+            ("url_to_remove", Value::from(query_without(param, None))),
+        ])
+    };
+
+    let mut filters = Vec::new();
+    filters.push(list_filter(
+        "Availability",
+        "filter.v.availability",
+        vec![
+            (
+                "1".to_string(),
+                "In stock".to_string(),
+                Criterion::Availability(true),
+            ),
+            (
+                "0".to_string(),
+                "Out of stock".to_string(),
+                Criterion::Availability(false),
+            ),
+        ],
+        &|_| None,
+        &|c| matches!(c, Criterion::Availability(_)),
+    ));
+
+    let range_max = base
+        .iter()
+        .map(|&index| products[index].price_max())
+        .max()
+        .unwrap_or(0);
+    let bound = |name: &str| -> Value {
+        let current = site.request.param(name).and_then(parse_price);
+        hash([
+            ("param_name", Value::from(name)),
+            ("value", current.map_or(Value::Nil, Value::Int)),
+            ("active", Value::Bool(current.is_some())),
+            ("label", Value::Nil),
+            ("count", Value::Nil),
+            ("url_to_remove", Value::from(query_without(name, None))),
+        ])
+    };
+    filters.push(hash([
+        ("param_name", Value::str("filter.v.price")),
+        ("label", Value::str("Price")),
+        ("type", Value::str("price_range")),
+        ("operator", Value::str("AND")),
+        ("presentation", Value::str("text")),
+        ("min_value", bound("filter.v.price.gte")),
+        ("max_value", bound("filter.v.price.lte")),
+        ("range_max", Value::Int(range_max)),
+        ("values", Value::array(Vec::new())),
+        ("active_values", Value::array(Vec::new())),
+        ("inactive_values", Value::array(Vec::new())),
+        (
+            "url_to_remove",
+            Value::from(
+                request.page_url(
+                    None,
+                    request
+                        .page_query()
+                        .filter(|(key, _)| *key != "page" && !key.starts_with("filter.v.price.")),
                 ),
             ),
-        ]));
+        ),
+    ]));
 
-        let distinct = |pick: &dyn Fn(&Product) -> Vec<String>| -> Vec<String> {
-            let mut values: Vec<String> = Vec::new();
-            for &index in &base {
-                for value in pick(&products[index]) {
-                    if !value.is_empty() && !values.contains(&value) {
-                        values.push(value);
-                    }
-                }
-            }
-            values
-        };
-        let mut types = distinct(&|product| vec![product.product_type.clone()]);
-        types.sort();
-        if types.len() > 1 {
-            filters.push(list_filter(
-                "Product type",
-                "filter.p.product_type",
-                types
-                    .into_iter()
-                    .map(|kind| (kind.clone(), kind.clone(), Criterion::ProductType(kind)))
-                    .collect(),
-                &|_| None,
-                &|c| matches!(c, Criterion::ProductType(_)),
-            ));
-        }
-        let mut vendors = distinct(&|product| vec![product.vendor.clone()]);
-        vendors.sort();
-        if vendors.len() > 1 {
-            filters.push(list_filter(
-                "Brand",
-                "filter.p.vendor",
-                vendors
-                    .into_iter()
-                    .map(|vendor| (vendor.clone(), vendor.clone(), Criterion::Vendor(vendor)))
-                    .collect(),
-                &|_| None,
-                &|c| matches!(c, Criterion::Vendor(_)),
-            ));
-        }
-        // One filter per option name, in order of first appearance.
-        let mut option_names: Vec<String> = Vec::new();
+    let distinct = |pick: &dyn Fn(&Product) -> Vec<String>| -> Vec<String> {
+        let mut values: Vec<String> = Vec::new();
         for &index in &base {
-            for option in &products[index].options {
-                if option.name != "Title" && !option_names.contains(&option.name) {
-                    option_names.push(option.name.clone());
+            for value in pick(&products[index]) {
+                if !value.is_empty() && !values.contains(&value) {
+                    values.push(value);
                 }
             }
         }
-        for name in option_names {
-            let handle = handleize(&name);
-            let values = distinct(&|product| {
-                product
+        values
+    };
+    let mut types = distinct(&|product| vec![product.product_type.clone()]);
+    types.sort();
+    if types.len() > 1 {
+        filters.push(list_filter(
+            "Product type",
+            "filter.p.product_type",
+            types
+                .into_iter()
+                .map(|kind| (kind.clone(), kind.clone(), Criterion::ProductType(kind)))
+                .collect(),
+            &|_| None,
+            &|c| matches!(c, Criterion::ProductType(_)),
+        ));
+    }
+    let mut vendors = distinct(&|product| vec![product.vendor.clone()]);
+    vendors.sort();
+    if vendors.len() > 1 {
+        filters.push(list_filter(
+            "Brand",
+            "filter.p.vendor",
+            vendors
+                .into_iter()
+                .map(|vendor| (vendor.clone(), vendor.clone(), Criterion::Vendor(vendor)))
+                .collect(),
+            &|_| None,
+            &|c| matches!(c, Criterion::Vendor(_)),
+        ));
+    }
+    // One filter per option name, in order of first appearance.
+    let mut option_names: Vec<String> = Vec::new();
+    for &index in &base {
+        for option in &products[index].options {
+            if option.name != "Title" && !option_names.contains(&option.name) {
+                option_names.push(option.name.clone());
+            }
+        }
+    }
+    for name in option_names {
+        let handle = handleize(&name);
+        let values = distinct(&|product| {
+            product
+                .options
+                .iter()
+                .filter(|option| option.name == name)
+                .flat_map(|option| option.values.clone())
+                .collect()
+        });
+        let same_handle = handle.clone();
+        // The swatch of a value: the one a product of the collection gives it.
+        let swatch_of = |value: &str| {
+            base.iter().find_map(|&index| {
+                products[index]
                     .options
                     .iter()
                     .filter(|option| option.name == name)
-                    .flat_map(|option| option.values.clone())
-                    .collect()
-            });
-            let same_handle = handle.clone();
-            // The swatch of a value: the one a product of the collection gives it.
-            let swatch_of = |value: &str| {
-                base.iter().find_map(|&index| {
-                    products[index]
-                        .options
-                        .iter()
-                        .filter(|option| option.name == name)
-                        .find_map(|option| option.swatch(value))
-                        .cloned()
+                    .find_map(|option| option.swatch(value))
+                    .cloned()
+            })
+        };
+        filters.push(list_filter(
+            &name,
+            &format!("filter.v.option.{handle}"),
+            values
+                .into_iter()
+                .map(|value| {
+                    (
+                        value.clone(),
+                        value.clone(),
+                        Criterion::VariantOption(handle.clone(), value),
+                    )
                 })
-            };
-            filters.push(list_filter(
-                &name,
-                &format!("filter.v.option.{handle}"),
-                values
-                    .into_iter()
-                    .map(|value| (value.clone(), value.clone(), Criterion::VariantOption(handle.clone(), value)))
-                    .collect(),
-                &swatch_of,
-                &move |c| matches!(c, Criterion::VariantOption(option, _) if *option == same_handle),
-            ));
-        }
-        Value::array(filters)
+                .collect(),
+            &swatch_of,
+            &move |c| matches!(c, Criterion::VariantOption(option, _) if *option == same_handle),
+        ));
     }
+    Value::array(filters)
 }
 
 pub fn collection_url(site: &SiteRef, collection: &Collection) -> String {

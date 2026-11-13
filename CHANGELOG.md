@@ -319,6 +319,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   does: an object with `alt`, `aspect_ratio`, `height`, `url` and `width`, all `null` when there
   is no image. A product also has `variants` (empty), and a collection its `published_at`.
   Predictive search code that reads `product.featured_image.url` no longer throws on lsf.
+- **Storefront filters work on the search page.** `search.filters` lists the filters of the
+  products found (availability, price, product type, vendor, variant options, with their
+  counts), as `collection.filters` does, and `filter.v.*` and `filter.p.*` narrow the results.
+  A filter leaves out the pages and articles, as Shopify does. `search.filters` was always empty
+  and the parameters were ignored, so a filter sidebar on the search page rendered nothing.
 
 #### The checkout of an app
 
