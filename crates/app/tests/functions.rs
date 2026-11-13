@@ -2102,13 +2102,13 @@ fn answering_module(export: &str, spin: u32) -> String {
 (module
   (import "wasi_snapshot_preview1" "fd_read" (func $fd_read (param i32 i32 i32 i32) (result i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
-  (memory (export "memory") 1)
+  (memory (export "memory") 4)
   (func (export "EXPORT") (local $i i32)
     (loop $spin
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br_if $spin (i32.lt_u (local.get $i) (i32.const SPIN))))
     (i32.store (i32.const 0) (i32.const 256))
-    (i32.store (i32.const 4) (i32.const 4096))
+    (i32.store (i32.const 4) (i32.const 200000))
     (drop (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)))
     (i32.store (i32.const 4) (i32.load (i32.const 8)))
     (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 12)))))
@@ -2385,6 +2385,72 @@ fn a_function_past_the_instruction_limit_fails_and_its_output_is_not_applied() {
     assert_refused(&slow, "bundle-transform", "instructions");
     assert_ne!(slow.lines[0].title, "Spun", "the output was applied");
     assert_untouched(&slow);
+}
+
+#[test]
+fn a_run_over_shopifys_input_or_output_size_fails_and_its_output_is_not_applied() {
+    let update = |title: String| json!({"operations": [{"lineUpdate": {"cartLineId": LINE_1, "title": title}}]});
+    // The module answers its input: an output of about 45 kB, over the 40 kB of a cart of up to
+    // 200 lines, from an input under its 128 kB.
+    let big = answer(
+        "bundle-transform",
+        "run",
+        0,
+        update("x".repeat(45_000)),
+        |_| {},
+    );
+    let run = run_for(&big, "bundle-transform");
+    assert!(run.output.is_some());
+    assert_refused(
+        &big,
+        "bundle-transform",
+        "Shopify ignores an output over 40,000",
+    );
+    assert!(!run.error.as_deref().unwrap().contains("the input is"));
+    assert_untouched(&big);
+    // Over 128 kB, the input is refused too.
+    let huge = answer(
+        "bundle-transform",
+        "run",
+        0,
+        update("x".repeat(130_000)),
+        |_| {},
+    );
+    assert_refused(
+        &huge,
+        "bundle-transform",
+        "Shopify does not run a Function on an input over 128,000",
+    );
+    assert_untouched(&huge);
+}
+
+#[test]
+fn a_module_over_256_kib_fails_as_shopify_does_not_deploy_it() {
+    let output = json!({"operations": []});
+    let big = answer_on(
+        "bundle-transform",
+        "run",
+        0,
+        output,
+        |copy, store| {
+            // The answering module with 300,000 bytes of data: a module of more than 256 KiB.
+            let module = answering_module("run", 0).replace(
+                "(func (export",
+                &format!(
+                    "(data (i32.const 300000) \"{}\")\n  (func (export",
+                    "w".repeat(300_000)
+                ),
+            );
+            std::fs::write(copy.file("bundle-transform", "dist/function.wasm"), module).unwrap();
+            session(store, &CART)
+        },
+        |_| {},
+    );
+    assert_refused(
+        &big,
+        "bundle-transform",
+        "Shopify does not deploy a Function over 262,144 bytes (256 KiB)",
+    );
 }
 
 #[test]

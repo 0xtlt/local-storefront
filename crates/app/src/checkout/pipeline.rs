@@ -558,7 +558,8 @@ impl<'a> Pipeline<'a> {
         };
 
         let mut execution = runner::run(&function.wasm_path, &target.export, &input);
-        judge(function, version, spec, &mut execution);
+        let limits = runner::Limits::for_lines(self.lines.len());
+        judge(function, version, spec, &input, limits, &mut execution);
         // What is applied has the lists the schema asks for; the run keeps what the Function
         // answered. A failed run applies nothing, as on Shopify, which ignores its output: only
         // a run that succeeds copies its output.
@@ -3276,12 +3277,15 @@ fn id_matches(id: &str, handle: &str) -> bool {
 }
 
 /// What makes the run of `function` a failure besides a trap, as Shopify judges it: a module
-/// that was never built, an output that does not fit the schema of its API version, more
-/// instructions than Shopify allows.
+/// that was never built, an output that does not fit the schema of its API version, and
+/// Shopify's resource limits: a module it does not deploy, more instructions, a bigger input or
+/// output than `limits` allow (the linear memory is the runner's to stop).
 fn judge(
     function: &FunctionExtension,
     version: ApiVersion,
     spec: crate::config::version::TargetSpec,
+    input: &Value,
+    limits: runner::Limits,
     execution: &mut runner::Execution,
 ) {
     // The runner knows the path; the Function knows how lsf builds it.
@@ -3304,34 +3308,72 @@ fn judge(
             spec.result
         ));
     }
-    // Shopify stops a Function that runs past the limit: its output does not count. One lsf
-    // stopped says so already.
-    if execution.instructions > runner::INSTRUCTIONS_LIMIT
-        && execution.instructions < runner::INSTRUCTIONS_CAP
-    {
-        let message = format!(
-            "used {} instructions: Shopify stops a Function past {}",
-            execution.instructions,
-            runner::INSTRUCTIONS_LIMIT
-        );
+    // Over a limit, Shopify fails the run: its output does not count.
+    let mut fail = |message: String| {
         execution.error = Some(match execution.error.take() {
             Some(previous) => format!("{previous}; {message}"),
             None => message,
         });
+    };
+    if let Some(problem) = runner::oversized_module(&function.wasm_path) {
+        fail(problem);
     }
+    let size = json_size(input);
+    if size > limits.input {
+        fail(format!(
+            "the input is {} bytes: Shopify does not run a Function on an input over {}",
+            runner::thousands(size),
+            runner::thousands(limits.input)
+        ));
+    }
+    if let Some(output) = &execution.output
+        && json_size(output) > limits.output
+    {
+        fail(format!(
+            "the output is {} bytes: Shopify ignores an output over {}",
+            runner::thousands(json_size(output)),
+            runner::thousands(limits.output)
+        ));
+    }
+    // One lsf stopped at its cap says so already.
+    if execution.instructions > limits.instructions
+        && execution.instructions < runner::INSTRUCTIONS_CAP
+    {
+        fail(format!(
+            "used {} instructions: Shopify stops a Function past {}",
+            execution.instructions, limits.instructions
+        ));
+    }
+}
+
+/// The bytes of `value` as compact JSON.
+fn json_size(value: &Value) -> u64 {
+    serde_json::to_vec(value).map_or(0, |bytes| bytes.len() as u64)
 }
 
 /// Runs `target` of `function` on `input`, as given (a fixture, an input `--save-input` wrote),
 /// rather than one built from a checkout: the output is checked against the schema of its API
-/// version and the instruction limit, as in a checkout, and nothing is applied.
+/// version and Shopify's resource limits, as in a checkout, and nothing is applied.
 pub fn run_with_input(
     function: &FunctionExtension,
     target: &FunctionTarget,
     input: Value,
 ) -> FunctionRun {
     let mut execution = runner::run(&function.wasm_path, &target.export, &input);
+    // The limits of the cart the input holds, when it asks for its lines.
+    let lines = input
+        .pointer("/cart/lines")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
     match (function.version, target.spec()) {
-        (Some(version), Some(spec)) => judge(function, version, spec, &mut execution),
+        (Some(version), Some(spec)) => judge(
+            function,
+            version,
+            spec,
+            &input,
+            runner::Limits::for_lines(lines),
+            &mut execution,
+        ),
         _ if execution.error.is_none() => {
             execution.error = Some(format!(
                 "`{}` is not run by the local checkout",

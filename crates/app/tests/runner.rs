@@ -84,6 +84,37 @@ fn a_wasi_function_reads_stdin_and_writes_stdout() {
     assert!(execution.instructions > 0);
 }
 
+/// Grows its memory of one page by `PAGES` pages of 64 KiB.
+const GROWS: &str = r#"
+(module
+  (memory (export "memory") 1)
+  (func (export "_start") (drop (memory.grow (i32.const PAGES)))))
+"#;
+
+#[test]
+fn a_run_stops_past_shopifys_10_mib_of_linear_memory() {
+    let dir = temp_dir("memory");
+    // 160 pages: 10 MiB exactly. The run then fails on its empty output only.
+    let within = write(&dir, "within.wasm", &GROWS.replace("PAGES", "159"));
+    let execution = runner::run(&within, "_start", &json!({}));
+    assert!(
+        execution
+            .error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("the output is not valid")),
+        "{:?}",
+        execution.error
+    );
+    let past = write(&dir, "past.wasm", &GROWS.replace("PAGES", "160"));
+    let execution = runner::run(&past, "_start", &json!({}));
+    assert_eq!(
+        execution.error.as_deref(),
+        Some(
+            "exceeded Shopify's limit of 10,485,760 bytes of linear memory: it asked for 10,551,296"
+        )
+    );
+}
+
 #[test]
 fn an_exit_code_is_a_failure() {
     let dir = temp_dir("exit");

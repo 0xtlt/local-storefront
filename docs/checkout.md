@@ -442,13 +442,32 @@ prefix of its URL (`/fr/` links to `/fr/checkout`; `/__lsf/checkouts?locale=fr` 
 
 The home page runs the Functions of every scenario that opens, as its checkout would when it
 opens (what `lsf app function run --scenario` does), and lists each Function target that fails, with
-the error and the scenarios it fails in: a trap or a panic, more than 11 million instructions,
-an input query over [Shopify's limits](#the-schema-of-a-function), an output that does not fit
-the schema of its API version, a `.fetch` request out of Shopify's limits. A target that fails in
-several ways is listed once per error, each with its own scenarios and logs. The scenario and the
-Function get an error status. A failure is a problem to fix even when the checkout goes on:
-Shopify ignores the output of a failed run and blocks the order only for a validation or a cart
-transform that blocks on failure ([network access](#network-access)).
+the error and the scenarios it fails in: a trap or a panic, a run over one of
+[Shopify's resource limits](#resource-limits), an input query over
+[Shopify's limits](#the-schema-of-a-function), an output that does not fit the schema of its
+API version, a `.fetch` request out of Shopify's limits. A target that fails in several ways is
+listed once per error, each with its own scenarios and logs. The scenario and the Function get an
+error status. A failure is a problem to fix even when the checkout goes on: Shopify ignores the
+output of a failed run and blocks the order only for a validation or a cart transform that blocks
+on failure ([network access](#network-access)).
+
+#### Resource limits
+
+A run fails over one of Shopify's
+[resource limits](https://shopify.dev/docs/api/functions/latest#resource-limits), as on Shopify,
+which ignores its output:
+
+| Limit | Shopify's | The error |
+|---|---|---|
+| Compiled module | 256 KiB (262,144 bytes) | `the module is 334,239 bytes: Shopify does not deploy a Function over 262,144 bytes (256 KiB)`; `app build` warns about it too |
+| Linear memory, all the memories of the run (a JavaScript Function's Javy provider's too) | 10 MiB (10,485,760 bytes) | `exceeded Shopify's limit of 10,485,760 bytes of linear memory: it asked for …`: the grow past it stops the run |
+| Instructions | 11 million | `used 11234567 instructions: Shopify stops a Function past 11000000` |
+| Input, as JSON | 128 kB (128,000 bytes) | `the input is 146,171 bytes: Shopify does not run a Function on an input over 128,000` |
+| Output, as JSON | 40 kB (40,000 bytes) | `the output is 45,080 bytes: Shopify ignores an output over 40,000` |
+
+The last three are for a cart of up to 200 lines; for a bigger cart they grow in proportion to
+its lines, as Shopify's "dynamic limits" do (300 lines: 16.5 million instructions, 192 kB, 60 kB).
+`lsf app function run --input` takes the lines of the input's `cart.lines`.
 
 lsf stops a run at 110 million instructions, ten times Shopify's limit: an endless loop fails in
 a moment (`exceeded Shopify's limit of 11,000,000 instructions: stopped at 110,000,000`), and a
@@ -1664,7 +1683,8 @@ extensions before checking them.
 ```
 
 `app check` fails on a scenario that does not validate, on a Function that traps or panics,
-runs past 11 million instructions or answers an output out of its schema, and on an
+runs over one of Shopify's [resource limits](#resource-limits) or answers an output out of its
+schema, and on an
 [expectation](#expected-results) of a scenario that is not met: a discount of the wrong amount,
 PayPal left in the express buttons. It also fails on an extension the checkout does not offer
 (an `api_version` other than `2026-10` and `2027-01`, no module or bundle), on a Function whose

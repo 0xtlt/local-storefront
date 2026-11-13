@@ -1,7 +1,7 @@
 {
   "$schema": "../schema/checkout-scenario.schema.json",
-  "title": "Edge case: a huge output",
-  "description": "broken-huge-output answers 2,000 renames of the first delivery option: a big output in the Functions dialog, and the last title wins.",
+  "title": "Edge case: an output over Shopify's limit",
+  "description": "broken-huge-output answers 2,000 renames of the first delivery option: 198,909 bytes, over Shopify's 40 kB for an output. The run fails and the options stay as they were; the Functions dialog shows the output all the same.",
   "session": {
     "customer": "none",
     "cart": {

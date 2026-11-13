@@ -232,6 +232,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `hasAnyTag` 3, a `metafield` 3, another leaf 1...). The run fails as any failed run does, and
   `lsf app check` fails on it; such a query ran on lsf and passed, and could not be deployed. Lower its cost as Shopify's reference advises: one
   metafield that holds a JSON object, each costly field selected once.
+- **A Function run over Shopify's resource limits fails**, as on Shopify; lsf checked the
+  instruction count only. The limits: a compiled module over 256 KiB (Shopify does not deploy it,
+  and `app build` warns), a run whose linear memory grows past 10 MiB (the grow stops it), an
+  input over 128 kB or an output over 40 kB (as JSON, for a cart of up to 200 lines). The
+  input, output and instruction limits grow in proportion to the lines of a cart of more than
+  200, as Shopify's dynamic limits do. Such a run passed `lsf app check`; it now fails it, and
+  its output is ignored, as a failed run's is.
 
 ### Fixed
 
