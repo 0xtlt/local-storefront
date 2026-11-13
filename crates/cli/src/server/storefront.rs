@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use lsf_core::{Session, Store};
 use lsf_theme::drops::collection::CollectionDrop;
-use lsf_theme::drops::product::{ProductDrop, storefront_json};
+use lsf_theme::drops::product::{ProductDrop, ajax_product_json, storefront_json};
 use lsf_theme::drops::search::{predictive_search_value, recommendations_value};
 use lsf_theme::render::page::{Page, Resource};
 use lsf_theme::render::{Rendered, Target, seo};
@@ -564,7 +564,7 @@ fn product_json(visit: &Visit<'_>, name: &str) -> Reply {
         &if wrapped {
             json!({ "product": storefront_json(&site, index) })
         } else {
-            ProductDrop::value(&site, index).to_json()
+            ajax_product_json(&site, index)
         },
     )
 }

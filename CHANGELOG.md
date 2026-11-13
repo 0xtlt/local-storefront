@@ -135,6 +135,8 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `{{ cart | json }}`, `/cart.js`, nor in the answer of `/cart/update.js` and the other cart
   endpoints. The checkout and the order still have it. A theme test that read a `__` attribute
   back from the cart needs another way, as it would on a store.
+- **`/products/<handle>.js` has no `content` key**, as on Shopify: read `description`.
+  `{{ product | json }}` keeps `content`, as shopify.dev's `json` filter shows.
 
 ### Fixed
 
@@ -361,6 +363,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`item.featured_image.url` of an image-less product reads `null` in the cart's JSON**, where
   it threw a `TypeError` on lsf: the line's `featured_image` is an object of nulls, as Shopify
   sends it.
+- **`/products/<handle>.js` has the product's `url` and the variants' `quantity_price_breaks`**,
+  as on Shopify. `url` carries the language and market prefix of the request
+  (`/fr-be/products/tee`), so a quick view or a recently-viewed list links to the product
+  instead of `undefined`. `quantity_price_breaks` is `[]` for a variant without breaks, else
+  `{"minimum_quantity", "price"}` in cents.
 
 #### The checkout of an app
 

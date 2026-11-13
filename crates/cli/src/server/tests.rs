@@ -725,6 +725,68 @@ fn product_json_has_shopifys_json_format_not_the_js_one() {
 }
 
 #[test]
+fn product_js_has_the_url_of_the_product_and_quantity_price_breaks() {
+    // #156: `/products/<handle>.js` has the product's `url`, under the prefix of the request,
+    // and each variant's `quantity_price_breaks`, and no `content`, as on Shopify.
+    // https://shopify.dev/docs/api/ajax/reference/product
+    let state = server();
+    let session = "product-js";
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {
+            "localization": {
+                "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+                "countries": [{"iso_code": "US"}, {"iso_code": "BE"}],
+                "markets": [
+                    {"handle": "us", "countries": ["US"]},
+                    {"handle": "belgium", "countries": ["BE"], "currency": "EUR", "rate": "0.9",
+                     "subfolder_suffix": "be"}
+                ]
+            },
+            "products": [{
+                "id": 100, "title": "Tee", "description": "<p>A plain tee.</p>",
+                "options": ["Size"], "price": 2000,
+                "variants": [
+                    {"id": 101, "options": ["S"], "inventory_quantity": 50,
+                     "quantity_price_breaks": [{"minimum_quantity": 3, "price": "18.00"}]},
+                    {"id": 102, "options": ["M"], "inventory_quantity": 50}
+                ]
+            }]
+        }}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let keys = |value: &Json| {
+        value
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let js = body_json(&get(&state, "/products/tee.js", session));
+    assert_eq!(
+        keys(&js),
+        "id,title,handle,description,published_at,created_at,vendor,type,tags,price,price_min,\
+         price_max,available,price_varies,compare_at_price,compare_at_price_min,\
+         compare_at_price_max,compare_at_price_varies,variants,images,featured_image,options,url,\
+         media,requires_selling_plan,selling_plan_groups"
+    );
+    assert_eq!(js["url"], "/products/tee");
+    assert_eq!(
+        js["variants"][0]["quantity_price_breaks"],
+        json!([{"minimum_quantity": 3, "price": 1800}])
+    );
+    assert_eq!(js["variants"][1]["quantity_price_breaks"], json!([]));
+    for prefix in ["/fr", "/en-be", "/fr-be"] {
+        let js = body_json(&get(&state, &format!("{prefix}/products/tee.js"), session));
+        assert_eq!(js["url"], format!("{prefix}/products/tee"));
+    }
+}
+
+#[test]
 fn product_json_images_have_ids_and_the_variants_they_show() {
     let state = server();
     let product = &body_json(&get(&state, "/products/ceramic-mug.json", "images"))["product"];
