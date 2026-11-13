@@ -238,8 +238,14 @@ locations, companies, company locations and company addresses.
   `link_list` setting prints the handle of what it names (`blog/article` for an article), and
   its `.size` is the length of that handle, as on Shopify; its properties, `json` and
   comparisons are the resource's. One whose handle names nothing is truthy, `== blank`,
-  `== empty` and `== nil`, and prints its handle, as on Shopify. Dynamic sources are evaluated (`{{ product.title }}`,
-  `{{ closest.product.metafields.custom.x }}`). A `product_list` setting is a list drop, as
+  `== empty` and `== nil`, and prints its handle, as on Shopify. Dynamic sources are evaluated
+  (`{{ product.title }}`, `{{ closest.product.metafields.custom.x }}`). A `url` setting prints
+  its URL as Shopify's `url` object does: on a localized route (`/fr/`, a market subfolder such
+  as `/en-be/`) a picked resource (`shopify://collections/all` → `/fr/collections/all`), the
+  home page (`/` → `/fr`) and the schema's `default` (`/collections` or `/collections/all`, the
+  collection pages) get the locale prefix; a path entered as text (`/pages/contact`), a dynamic
+  source, an anchor (`#faq`) and an absolute URL are printed exactly as they were entered.
+  `.type` and `.object` are not given: the setting is the URL's text. A `product_list` setting is a list drop, as
   `metaobjects.<type>.values` is: `.count` gives its length (0 when nothing is selected), and
   `.first`, `.last` and `[n]` give nothing. Fed by a `list.product_reference` metafield
   (`"{{ product.metafields.custom.related.value }}"`), it holds the metafield's products in
