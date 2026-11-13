@@ -432,6 +432,58 @@ impl Object for ProductDrop {
     }
 }
 
+/// The product as `/products/<handle>.js` gives it: `{{ product | json }}` without `content`,
+/// with the product's `url` (under the language and market prefix of the request) and each
+/// variant's `quantity_price_breaks` (`[]` when it has none).
+/// https://shopify.dev/docs/api/ajax/reference/product
+pub fn ajax_product_json(site: &SiteRef, index: usize) -> Json {
+    let product = &site.store.products[index];
+    let Json::Object(fields) = ProductDrop::value(site, index).to_json() else {
+        return Json::Null;
+    };
+    let mut out = serde_json::Map::with_capacity(fields.len() + 1);
+    for (key, mut value) in fields {
+        match key.as_str() {
+            "content" => continue,
+            "media" => {
+                out.insert("url".to_string(), json!(product_url(site, product)));
+            }
+            "variants" => {
+                if let Json::Array(variants) = &mut value {
+                    for (variant, json) in product.variants.iter().zip(variants.iter_mut()) {
+                        let breaks: Vec<Json> = variant
+                            .quantity_price_breaks
+                            .iter()
+                            .map(|(minimum, price)| json!({"minimum_quantity": minimum, "price": price}))
+                            .collect();
+                        insert_after(
+                            json,
+                            "quantity_rule",
+                            "quantity_price_breaks",
+                            json!(breaks),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+        out.insert(key, value);
+    }
+    Json::Object(out)
+}
+
+/// Inserts `key` right after `after` in a JSON object, or at its end when `after` is not there.
+fn insert_after(object: &mut Json, after: &str, key: &str, value: Json) {
+    let Json::Object(fields) = object else {
+        return;
+    };
+    let position = fields
+        .keys()
+        .position(|name| name == after)
+        .map_or(fields.len(), |position| position + 1);
+    fields.shift_insert(position, key.to_string(), value);
+}
+
 /// The most variants `product.variants` and the product JSON of the Ajax API give: the first 250,
 /// of the up to 2,048 a product can have. `product.variants_count` stays the total.
 /// https://shopify.dev/docs/storefronts/themes/product-merchandising/variants/support-high-variant-products

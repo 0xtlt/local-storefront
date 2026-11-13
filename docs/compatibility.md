@@ -128,6 +128,10 @@ A cart attribute whose name starts with `__` is private, as on Shopify: `cart.at
 `cart | json`, `/cart.js` and the answers of the cart endpoints leave it out, and the checkout
 and the order keep it. One `_` is not private, nor are line item properties.
 
+`/products/<handle>.js` is `{{ product | json }}` without `content`, with the product's `url`
+(under the language and market prefix of the request: `/fr-be/products/tee`) and each variant's
+`quantity_price_breaks` (`[]` when it has none), as on Shopify.
+
 With their related types: variants (`product.variants` gives the first 250, as on Shopify, and
 `product.variants_count` all of them; so does the product JSON of the Ajax API), options and
 option values (with swatches), media (images,
