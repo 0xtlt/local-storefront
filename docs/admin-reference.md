@@ -804,6 +804,11 @@ shop, the app's installation).
   a string amount in the shop's currency, measurements as `{"value", "unit"}`, references as
   GIDs of records that exist. `metafieldDefinitionTypes` lists the types with their categories and
   validations.
+- A value is at most the size Shopify allows its type, in bytes: 2KB for an `id` or a `url`,
+  128KB for a `json`, 64KB for the others, each item of a list as its type, and 2MB in all
+  ([metafield limits](https://shopify.dev/docs/apps/build/metafields/metafield-limits)). Over
+  it, `TOO_LONG` on `value` ("Value is too long (maximum is 65536 bytes).", lsf's wording). The
+  larger `json` values Shopify lets apps of before April 1, 2026 keep are refused.
 - 25 inputs at most (26 is `MAX_INPUT_SIZE_EXCEEDED`, before anything runs), all or nothing:
   one error and nothing is set. Errors have Shopify's `field`
   (`["metafields", "0", "value"]`) and `code` (`INVALID_VALUE`, `INVALID_TYPE`, `BLANK`,

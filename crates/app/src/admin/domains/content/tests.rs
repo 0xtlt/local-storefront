@@ -267,6 +267,87 @@ fn deletes_metafields() {
     assert_eq!(topics(&mut shop), ["products/update"]);
 }
 
+/// A value larger than its type allows is refused, in bytes (issue #173, shopify.dev's
+/// "Metafield limits"): 64KB for most types, 2KB for a `url`, 128KB for a `json`, each item of a
+/// list as its type, and nothing is set.
+#[test]
+fn metafields_set_refuses_values_over_the_size_of_their_type() {
+    let mut shop = rich();
+    let owner = shop.keys("Shop").next().unwrap().to_string();
+    let set = |shop: &mut ShopState, key: &str, kind: &str, value: String| {
+        let answer = run(
+            shop,
+            SET,
+            json!({"metafields": [{"ownerId": owner, "namespace": "demo", "key": key, "type": kind, "value": value}]}),
+        );
+        let mut set = answer["data"]["metafieldsSet"].clone();
+        for error in set["userErrors"].as_array_mut().unwrap() {
+            error.as_object_mut().unwrap().remove("elementIndex");
+        }
+        set
+    };
+    let too_long = |limit: usize| json!([{"field": ["metafields", "0", "value"], "message": format!("Value is too long (maximum is {limit} bytes)."), "code": "TOO_LONG"}]);
+    // The issue's three writes.
+    let text = set(
+        &mut shop,
+        "text",
+        "single_line_text_field",
+        "x".repeat(70_000),
+    );
+    assert_eq!(text["userErrors"], too_long(65_536));
+    assert_eq!(text["metafields"], Value::Null);
+    let link = set(
+        &mut shop,
+        "link",
+        "url",
+        format!("https://example.com/{}", "a".repeat(3_000)),
+    );
+    assert_eq!(link["userErrors"], too_long(2_048));
+    let blob = set(
+        &mut shop,
+        "blob",
+        "json",
+        json!("a".repeat(133_000)).to_string(),
+    );
+    assert_eq!(blob["userErrors"], too_long(131_072));
+    // Bytes, not characters: 40,000 `é` are 80,000 bytes.
+    let accents = set(
+        &mut shop,
+        "text",
+        "multi_line_text_field",
+        "é".repeat(40_000),
+    );
+    assert_eq!(accents["userErrors"], too_long(65_536));
+    // Each item of a list, as its type.
+    let items = json!(["short", "y".repeat(65_537)]).to_string();
+    let list = set(&mut shop, "list", "list.single_line_text_field", items);
+    assert_eq!(list["userErrors"], too_long(65_536));
+    // Up to the limit, the value is set.
+    let full = set(
+        &mut shop,
+        "text",
+        "single_line_text_field",
+        "x".repeat(65_536),
+    );
+    assert_eq!(full["userErrors"], json!([]));
+    let full = set(
+        &mut shop,
+        "blob",
+        "json",
+        json!("a".repeat(131_070)).to_string(),
+    );
+    assert_eq!(full["userErrors"], json!([]));
+    let read = run(
+        &mut shop,
+        "{ shop { metafields(first: 10, namespace: \"demo\") { nodes { key } } } }",
+        json!({}),
+    );
+    assert_eq!(
+        read["data"]["shop"]["metafields"]["nodes"],
+        json!([{"key": "text"}, {"key": "blob"}])
+    );
+}
+
 const CREATE_DEFINITION: &str = "mutation($definition: MetafieldDefinitionInput!) {
     metafieldDefinitionCreate(definition: $definition) {
         createdDefinition { id name namespace key ownerType pinnedPosition validationStatus metafieldsCount

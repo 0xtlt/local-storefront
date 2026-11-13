@@ -17,6 +17,13 @@
 //!   validations ([`super::types`]).
 //! - `compareDigest`: given, the metafield must exist with that digest; `null`, it must not
 //!   exist yet; left out, nothing is compared. A mismatch is `STALE_OBJECT`.
+//! - A value is at most the size of its type ("Metafield limits", shopify.dev): "Most metafield
+//!   types have a 64KB (65,536 bytes) size limit, with the following exceptions: id 2KB, json
+//!   128KB, url 2KB", in bytes, not characters; each item of a list has the size of its type,
+//!   and "Every metafield value, of every type, has a global size limit of 2MB (2,097,152
+//!   bytes)", the whole list included. Over it, `TOO_LONG` (the code of the schema; the message
+//!   is lsf's, Shopify's is not published). lsf's app is a new one: the `json` values over 128KB
+//!   that apps of before April 1, 2026 may keep are refused.
 //! - An owner of a type that has no metafields is a GraphQL error, "invalid id" (as Shopify
 //!   answers a `MediaImage` owner in a community report); an owner of a right type that does not
 //!   exist is "Owner does not exist." (Shopify's, community.shopify.dev).
@@ -734,6 +741,10 @@ pub fn check_input(
             return None;
         }
     }
+    if let Some(message) = too_long(&kind, get("value").unwrap_or_default()) {
+        errors.push(input_error(path, "value", message, "TOO_LONG"));
+        return None;
+    }
     let validations = validations_of(state, definition.as_deref());
     let currency = shop_currency(state);
     let cx = Context {
@@ -753,6 +764,45 @@ pub fn check_input(
             None
         }
     }
+}
+
+/// Every metafield value's limit, in bytes: 2MB.
+const GLOBAL_LIMIT: usize = 2 * 1024 * 1024;
+
+/// The size limit of a value of a type that is not a list, in bytes.
+fn size_limit(kind: &str) -> usize {
+    match kind {
+        "id" | "url" => 2 * 1024,
+        "json" => 128 * 1024,
+        _ => 64 * 1024,
+    }
+}
+
+/// Why `value` is too large for a metafield of type `kind`, or `None`: the type's limit, of each
+/// item for a list, and the global limit of the whole value.
+fn too_long(kind: &str, value: &str) -> Option<String> {
+    let message = |limit: usize| format!("Value is too long (maximum is {limit} bytes).");
+    if value.len() > GLOBAL_LIMIT {
+        return Some(message(GLOBAL_LIMIT));
+    }
+    let Some(base) = kind.strip_prefix("list.") else {
+        let limit = size_limit(kind);
+        return (value.len() > limit).then(|| message(limit));
+    };
+    // An item is measured as the value of its type would be: a string as its text, anything
+    // else as its JSON. A value that is not a list is the type's to refuse.
+    let limit = size_limit(base);
+    let items = match serde_json::from_str::<Value>(value) {
+        Ok(Value::Array(items)) => items,
+        _ => return None,
+    };
+    items
+        .iter()
+        .any(|item| match item {
+            Value::String(text) => text.len() > limit,
+            other => other.to_string().len() > limit,
+        })
+        .then(|| message(limit))
 }
 
 /// The `metafields` (`[MetafieldInput]`) of a page, a blog or an article, checked: an input with

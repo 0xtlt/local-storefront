@@ -438,6 +438,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   valid for the definition takes its type and joins it (`"12.50"` becomes a `number_decimal`);
   the others stay as they were, with `definition: null` (`"12,50 EUR"` stays a
   `single_line_text_field`), as Shopify's reference of the mutation describes.
+- **`metafieldsSet` refuses a value larger than Shopify allows**, with a `TOO_LONG` user error
+  on its `value`, where lsf stored it: 64KB (65,536 bytes) for most types, 2KB for `url` and
+  `id`, 128KB for `json`, each item of a list as its type, 2MB in all, counted in bytes as
+  Shopify counts them. The `metafields` input of a product, a customer or an app discount is
+  checked the same way. An import that writes such values now fails locally as it does on a
+  store.
 
 #### The command line
 
