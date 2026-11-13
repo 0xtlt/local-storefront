@@ -73,7 +73,14 @@ pub fn line_json(site: &SiteRef, line: &ResolvedLine<'_>) -> Json {
                 "url": image_base_url(site, image),
                 "width": image.width,
             }),
-            None => Json::Null,
+            // A product without an image: an object whose fields are null, as on Shopify.
+            None => json!({
+                "aspect_ratio": null,
+                "alt": null,
+                "height": null,
+                "url": null,
+                "width": null,
+            }),
         },
         "image": image.map(|image| image_base_url(site, image)),
         "handle": line.product.handle,
