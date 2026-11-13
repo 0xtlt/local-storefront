@@ -827,6 +827,7 @@ data. The home page links to it ("Customer account").
 | `/account` | The orders of the customer logged in | `order-index.announcement.render`, `order-index.block.render`, `order.action.menu-item.render` on each order |
 | `/account/orders/<id>` | The status of an order: its shipments, what is not shipped, its returns, the details, the payment and the summary | the 9 `order-status.*` targets, `order.action.menu-item.render` |
 | `/account/profile` | Name, contact, addresses, payment methods; for a B2B customer, the company and each location it buys for (addresses, payment, staff) | the 8 `profile.*` targets |
+| `/account/addresses` | Leads to `/account/profile` (`302`), as the storefront's `routes.account_addresses_url` does with new customer accounts | |
 | `/account/pages/<handle>/…` | The full page of an extension | `customer-account.page.render` |
 | `/account/orders/<id>/pages/<handle>/…` | The full page of an extension for an order | `customer-account.order.page.render` |
 

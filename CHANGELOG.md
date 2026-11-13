@@ -514,6 +514,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `shopify.lines` of a customer account extension gives `http://127.0.0.1:9292/cdn/shop/files/…`
   as `merchandise.image.url`, no longer a path, so `new URL(url)` and a backend that fetches it
   work locally too.
+- **`/account/addresses` leads to the profile of the app's customer account**, as on Shopify with
+  new customer accounts, no longer to the order list: a theme's `routes.account_addresses_url`
+  lands on `/account/profile`, where the addresses are.
 - **`lsf app check` and `lsf app function run --scenario` price a scenario as its served
   checkout does.** A buyer in a market with its own currency gets the cart in that currency and
   the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's
