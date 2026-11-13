@@ -159,6 +159,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   bundle that meets a sold-out pick no longer leaves the items before it in the cart.
 - **`/cart/add.js` with an unknown variant id answers `422`**, with `Cannot find variant`, as
   Shopify does. `Shopify.actions.updateCart` still reports it on the line's `merchandiseId`.
+- **Measurement and rating metafields print as a store prints them.** `{{ m.value }}` of a
+  `dimension`, `weight` or `volume` gives `1.5 cm`, `2.25 kg`, `500 mL` (two decimals at most),
+  and of a `rating` `3.5`, where lsf printed a Ruby hash. `.value.value` is a decimal (`500.0`),
+  and `.value.unit` the unit Shopify's Liquid gives: `kg`, `cm`, … for `kilograms`,
+  `centimeters`, …, and `mL`, `cL` and `gal` for `ml`, `cl` and `us_gal`. `metafield_tag` and
+  `metafield_text` show these units too.
 
 #### The checkout of an app
 

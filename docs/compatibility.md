@@ -134,7 +134,8 @@ videos, external videos, 3D models), image presentation and focal points, collec
 value written as the Admin API returns it is read as its type (`"true"` is `true`), the
 deprecated `string`, `integer` and `json_string` give their value directly, a
 `date` or a `date_time` is the string it is stored as, a
-`color` is a color, a measurement has `type`, `value` and `unit`, a `money` prints as cents,
+`color` is a color, a measurement has `type`, a decimal `value` and the `unit` Liquid gives
+(`kg`, `cm`, `mL`) and prints both (`1.5 cm`), a `rating` prints its rating, a `money` prints as cents,
 has the `currency` it is written in, and the money filters and `metafield_text` format it in
 that currency; in a market with another currency, a `money` in the shop's currency is
 converted at the market's rate, as prices are, a reference is a GID or the key the data gives the entity
@@ -522,6 +523,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Fonts | Shopify's font library is not bundled. `font_face` and `font_url` generate the same markup and URLs; the files are blank unless provided in `files/fonts/`. |
 | Shopify's shared assets | Requests under `/cdn/shopifycloud/` (payment buttons, model viewer UI, ...) get an empty file of the right type. The files of `shopify_asset_url` are served from the binary: `vendor/qrcode.js` is the qrcode.js library (MIT), as on Shopify; `shopify_common.js` has our own `Shopify.formatMoney`, `Shopify.resizeImage` and `Shopify.CountryProvinceSelector` (the province selector of an address form, filled from `data-provinces`); `option_selection.js`, `api.jquery.js`, `customer_area.js` and `currencies.js` only log a warning to the console, and `customer.css` is empty, because Shopify's code is proprietary; `gift-card/card.svg` is a drawing of our own, of the size of Shopify's, and `gift-card/add-to-apple-wallet.svg` a placeholder drawing. Any other name is a 404, logged by the server. |
 | Theme editor | `request.design_mode` is always `false`, `Shopify.designMode` is not set, and `block.shopify_attributes` is empty. |
+| Measurement units | `.unit` of a `weight` or a `dimension` is its short unit (`kg`, `cm`), and of a `volume` in milliliters, centiliters or US gallons `mL`, `cL` or `gal`, as a store gives them. The other volume units, and the units of the other measurement types, are given as the data writes them: how a store writes them is not confirmed. |
 | Integers | 64-bit. Liquid on Shopify uses arbitrary-precision integers. |
 | Byte strings | Strings are text (UTF-8). `base64_decode` of bytes that are not text replaces them with `�`, where Shopify carries the bytes on to the next filter. |
 | Sitemaps | `/robots.txt` is rendered from `templates/robots.txt.liquid`, or with Shopify's default rules. `/sitemap.xml` links one sitemap per kind (products, pages, collections, blogs), in the primary language only and without paging. |

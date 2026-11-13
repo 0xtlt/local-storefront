@@ -963,7 +963,9 @@ A typed value is checked against its type, as Shopify checks it. `{"type": "numb
 "value": "two"}` is an `invalid_metafield` error, and so is a `weight` in `"kgs"` or a
 `rating` outside its scale. A `weight`, `dimension` or `volume` takes the units Shopify lists
 (`kilograms`, `centimeters`, `milliliters`...), in any case (`KILOGRAMS`), and their short
-forms (`kg`, `cm`, `ml`). A
+forms (`kg`, `cm`, `ml`). In Liquid a measurement prints its value and unit as a store does
+(`1.5 cm`, `500 mL`), and `.unit` is the unit Shopify's Liquid gives (`kg` for `kilograms`, `mL`
+for `ml`). A
 `language` is a locale code (`fr`, `pt-BR`). A type Shopify does not have is an
 `unknown_metafield_type`. A reference that names nothing of the data is an
 `unknown_reference` ([reference values](#reference-values)).
