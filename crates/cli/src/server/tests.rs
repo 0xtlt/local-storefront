@@ -3543,7 +3543,11 @@ async fn live_reload_tells_pages_about_changes_over_a_websocket() {
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(super::run(std::sync::Arc::new(state), listener));
+    let server = tokio::spawn(super::run(
+        std::sync::Arc::new(state),
+        listener,
+        std::future::pending(),
+    ));
 
     // The page carries the script, which opens the socket.
     let page = http_get(address, "/").await;
@@ -3653,7 +3657,7 @@ async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::Jo
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        let _ = super::run(std::sync::Arc::new(state), listener).await;
+        let _ = super::run(std::sync::Arc::new(state), listener, std::future::pending()).await;
     });
     (address, server)
 }
@@ -3684,7 +3688,7 @@ async fn a_part_of_a_file_is_sent_as_it_is_even_to_a_browser_that_accepts_compre
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        let _ = super::run(std::sync::Arc::new(state), listener).await;
+        let _ = super::run(std::sync::Arc::new(state), listener, std::future::pending()).await;
     });
     let browser = ("accept-encoding", "gzip, deflate, br, zstd");
     let path = "/cdn/shop/files/data.json";

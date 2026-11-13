@@ -467,7 +467,9 @@ test('a data-save-bar form shows the save bar while it differs from what it was'
   frame.fire('change', {});
   await tick();
   frame.event('saveBar.discard', {});
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  // The reset's timer, then the one of the save bar it updates.
+  await tick();
+  await tick();
   assert.equal(input.value, 'Mug');
   assert.equal(frame.last('saveBar').visible, false);
 });

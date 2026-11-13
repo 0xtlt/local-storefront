@@ -1099,12 +1099,13 @@ async fn live_reload(
 /// (`lsf_liquid::RenderLimits`, 10 s) at the latest.
 pub const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(3);
 
-/// Serves the storefront until the process is interrupted.
+/// Serves the storefront until `stop`, [`interrupted`] for the command line.
 pub async fn run(
     state: Arc<ServerState>,
     listener: tokio::net::TcpListener,
+    stop: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
-    run_until(state, listener, interrupted(), SHUTDOWN_DEADLINE).await
+    run_until(state, listener, stop, SHUTDOWN_DEADLINE).await
 }
 
 /// Serves the storefront until `stop` completes, then for the requests being answered, and for
@@ -1154,25 +1155,31 @@ pub async fn run_until(
 /// `kill`) and `SIGHUP` (the terminal closed). The server then stops as it does on Ctrl-C: with
 /// `--watch`, the builds that run are stopped and the published modules removed. On Windows,
 /// only Ctrl-C is waited for.
-async fn interrupted() {
+///
+/// On Unix, the signals are caught from the call on, in the runtime it is called in: a signal
+/// that comes before the server runs (during the builds at start, or right after `ready:`) stops
+/// it as well, where it would otherwise kill the process.
+pub fn interrupted() -> impl std::future::Future<Output = ()> + Send + 'static {
     #[cfg(unix)]
-    {
+    let signals = {
         use tokio::signal::unix::{SignalKind, signal};
-        let (Ok(mut term), Ok(mut hangup)) = (
-            signal(SignalKind::terminate()),
-            signal(SignalKind::hangup()),
-        ) else {
-            let _ = tokio::signal::ctrl_c().await;
+        [
+            SignalKind::interrupt(),
+            SignalKind::terminate(),
+            SignalKind::hangup(),
+        ]
+        .map(signal)
+    };
+    async move {
+        #[cfg(unix)]
+        if let [Ok(mut interrupt), Ok(mut term), Ok(mut hangup)] = signals {
+            tokio::select! {
+                _ = interrupt.recv() => {}
+                _ = term.recv() => {}
+                _ = hangup.recv() => {}
+            }
             return;
-        };
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = term.recv() => {}
-            _ = hangup.recv() => {}
         }
-    }
-    #[cfg(not(unix))]
-    {
         let _ = tokio::signal::ctrl_c().await;
     }
 }
