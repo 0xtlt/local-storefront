@@ -2,7 +2,6 @@
 
 use lsf_core::money::format_money;
 use lsf_liquid::filters::escape_html;
-use lsf_liquid::number::float_to_s;
 use lsf_liquid::time::strftime;
 use lsf_liquid::{Context, Environment, Error, FilterArgs, Result, Value};
 use serde_json::Value as Json;
