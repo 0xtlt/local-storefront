@@ -106,6 +106,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `| money_with_currency`, `.value` (cents), `.value.currency`, `metafield_tag` and
   `metafield_text` give `€7,20 EUR` for 8.00 USD at `0.9`, as on Shopify. One written in another
   currency keeps it.
+- **Metafield values as the Admin API returns them are read.** Shopify stores every value as a
+  string, so `validate` now takes a `boolean` written `"true"` or `"false"`, a `number_integer`
+  written `"42"` (in a list too), a unit written as the API's enum (`KILOGRAMS`) and the
+  deprecated types `string`, `integer` and `json_string`, where it gave errors. In Liquid,
+  `"true"` is `true`, no longer `false`, a `KILOGRAMS` unit is `kilograms`, and a deprecated
+  type gives its value directly. A `boolean` that `validate` still refuses shows as it is
+  written, not as `false`.
 - **A section rendered alone links to the page, not to itself.** With `?section_id=` or
   `?sections=`, `paginate.next.url`, `paginate.previous.url`, `paginate.parts[].url`,
   `default_pagination` and the `url_to_add` and `url_to_remove` of filters leave those

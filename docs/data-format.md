@@ -930,10 +930,17 @@ Metafields are grouped by namespace, then key. A plain value gets its type infer
 `{{ product.metafields.custom.size_guide.value.title }}` then behave as on Shopify, including
 `metafield_tag` and `metafield_text`.
 
-A value that is an object or a list (a `rating`, a `money`, a `weight`, a `list.` type...) may
-also be written as its JSON text, the Admin API's `value`, so that it can be pasted from the API
-as is: `"{\"scale_min\":\"1.0\",\"scale_max\":\"5.0\",\"value\":\"4.5\"}"`. A `json`
-metafield is the exception: a string is a value of it.
+A value may also be written as Shopify stores it, as a string, the Admin API's `value`, so that
+it can be pasted from the API as is. A value that is an object or a list (a `rating`, a `money`,
+a `weight`, a `list.` type...) may be its JSON text:
+`"{\"scale_min\":\"1.0\",\"scale_max\":\"5.0\",\"value\":\"4.5\"}"`. A `json` metafield is the
+exception: a string is a value of it. A `boolean` may be `"true"` or `"false"`, a
+`number_integer` `"42"` (and a `list.number_integer` `["10", "20"]`), and a unit the API's enum
+(`KILOGRAMS`, read as `kilograms`).
+
+The deprecated types the Admin API still creates are read too: a `string` is a text, an
+`integer` a whole number (`42` or `"42"`), a `json_string` the JSON of its text. As on Shopify,
+they give their value directly. They have no `list.` type.
 
 A `rating` keeps its `value`, `scale_min` and `scale_max` as strings, as Shopify does:
 
@@ -950,7 +957,8 @@ number `5.0`). A number in the data is kept as it is written, as a string: `"sca
 A typed value is checked against its type, as Shopify checks it. `{"type": "number_integer",
 "value": "two"}` is an `invalid_metafield` error, and so is a `weight` in `"kgs"` or a
 `rating` outside its scale. A `weight`, `dimension` or `volume` takes the units Shopify lists
-(`kilograms`, `centimeters`, `milliliters`...) and their short forms (`kg`, `cm`, `ml`). A
+(`kilograms`, `centimeters`, `milliliters`...), in any case (`KILOGRAMS`), and their short
+forms (`kg`, `cm`, `ml`). A
 `language` is a locale code (`fr`, `pt-BR`). A type Shopify does not have is an
 `unknown_metafield_type`. A reference that names nothing of the data is an
 `unknown_reference` ([reference values](#reference-values)).
