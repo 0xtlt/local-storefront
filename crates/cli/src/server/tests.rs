@@ -1785,6 +1785,32 @@ fn the_cart_cookie_appears_with_the_cart() {
 }
 
 #[test]
+fn private_cart_attributes_are_kept_and_hidden_from_the_ajax_api() {
+    // #155: "Private cart attributes are not available in the Liquid cart.attributes object or
+    // the Ajax API." https://shopify.dev/docs/api/ajax/reference/cart#private-cart-attributes
+    let state = server();
+    let session = "private";
+    let updated = post(
+        &state,
+        "/cart/update.js",
+        json!({"attributes": {"gift_wrap": "yes", "_hidden": "h", "__private": "p"}}),
+        session,
+    );
+    assert_eq!(updated.status, 200, "{}", text(&updated));
+    let public = json!({"gift_wrap": "yes", "_hidden": "h"});
+    assert_eq!(body_json(&updated)["attributes"], public);
+    assert_eq!(
+        body_json(&get(&state, "/cart.js", session))["attributes"],
+        public
+    );
+    // The cart still holds it, for the checkout and the order.
+    assert_eq!(
+        body_json(&get(&state, "/__lsf/session", session))["cart"]["attributes"]["__private"],
+        "p"
+    );
+}
+
+#[test]
 fn cart_attributes_can_be_removed_and_the_cart_bundles_sections() {
     let state = server();
     post(

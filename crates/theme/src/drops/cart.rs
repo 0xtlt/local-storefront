@@ -81,6 +81,18 @@ impl Object for LineItemProperties {
     }
 }
 
+/// The cart attributes a theme and the Ajax API see: all but the private ones, whose name starts
+/// with `__`. "Private cart attributes are not available in the Liquid `cart.attributes` object
+/// or the Ajax API." The checkout and the order still have them.
+/// https://shopify.dev/docs/api/ajax/reference/cart#private-cart-attributes
+pub fn public_attributes(attributes: &IndexMap<String, String>) -> IndexMap<String, String> {
+    attributes
+        .iter()
+        .filter(|(name, _)| !name.starts_with("__"))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
+
 pub fn line_json(site: &SiteRef, line: &ResolvedLine<'_>) -> Json {
     let image = line.image();
     let url = format!(
@@ -165,7 +177,7 @@ pub fn cart_json(site: &SiteRef) -> Json {
     json!({
         "token": cart_token(site),
         "note": if site.session.cart_note.is_empty() { Json::Null } else { json!(site.session.cart_note) },
-        "attributes": site.session.cart_attributes,
+        "attributes": public_attributes(&site.session.cart_attributes),
         "original_total_price": original_total,
         "total_price": total,
         "total_discount": original_total - total,
@@ -249,7 +261,7 @@ impl Object for CartDrop {
                     Value::from(&site.session.cart_note)
                 }
             }
-            "attributes" => properties_value(&site.session.cart_attributes),
+            "attributes" => properties_value(&public_attributes(&site.session.cart_attributes)),
             "currency" => currency_value(site.currency()),
             "requires_shipping" => {
                 Value::Bool(lines.iter().any(|line| line.variant.requires_shipping))
