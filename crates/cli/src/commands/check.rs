@@ -1140,6 +1140,20 @@ fn check_theme(
             }
             if holds_settings(&path) {
                 check_liquid_settings(&theme, &env, &path, args.writes(), &mut tally);
+                let lines = lsf_core::json::value_lines(&lsf_core::json::theme_json(&source).0);
+                for problem in theme.setting_value_problems(&path) {
+                    let location = Location {
+                        file: path.clone(),
+                        line: lines.get(&problem.setting.pointer()).copied(),
+                        setting: Some(problem.setting.dotted()),
+                        setting_line: None,
+                    };
+                    tally.problem(
+                        "invalid_setting_value",
+                        location,
+                        format!("{}: Shopify refuses the file", problem.message),
+                    );
+                }
             }
             if matches!(directory, "templates" | "templates/customers" | "sections")
                 && lsf_theme::theme::template_json::is_contextual(name)
@@ -1317,6 +1331,89 @@ mod tests {
             "{report:#}"
         );
         assert_eq!(report["problems"], 4);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn setting_values_shopify_refuses_are_problems() {
+        // #186: a range value above its max, Liquid in a text setting.
+        let root = std::env::temp_dir().join(format!("lsf-check-values-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write(
+            "layout/theme.liquid",
+            "{{ content_for_header }}{{ content_for_layout }}",
+        );
+        write(
+            "sections/values.liquid",
+            r#"<p>[{{ section.settings.r }}] [{{ section.settings.t }}]</p>
+{% schema %}
+{
+  "name": "Values",
+  "settings": [
+    { "type": "range", "id": "r", "label": "R", "min": 0, "max": 10, "step": 1, "default": 5 },
+    { "type": "text", "id": "t", "label": "T" }
+  ]
+}
+{% endschema %}"#,
+        );
+        write(
+            "templates/index.json",
+            r#"{ "sections": { "a": { "type": "values", "settings": { "r": 99 } } }, "order": ["a"] }"#,
+        );
+        write(
+            "templates/collection.json",
+            "{\n  \"sections\": {\n    \"a\": {\n      \"type\": \"values\",\n      \"settings\": { \"t\": \"{% if true %}yes{% endif %}\" }\n    }\n  },\n  \"order\": [\"a\"]\n}",
+        );
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(&str, &str, u64, &str)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["code"].as_str().unwrap(),
+                    d["file"].as_str().unwrap(),
+                    d["line"].as_u64().unwrap_or(0),
+                    d["setting"].as_str().unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    "invalid_setting_value",
+                    "templates/collection.json",
+                    5,
+                    "sections.a.settings.t"
+                ),
+                (
+                    "invalid_setting_value",
+                    "templates/index.json",
+                    1,
+                    "sections.a.settings.r"
+                ),
+            ],
+            "{report:#}"
+        );
+        assert!(
+            report["diagnostics"][1]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("Setting 'r' can't be greater than 10"),
+            "{report:#}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

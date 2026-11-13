@@ -33,6 +33,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   (`invalid_settings_data`). Shopify keeps the previous version of such a file, so every
   `settings.*` value stays on the old schema; lsf rendered with the new one. A theme that
   checked clean with one of these now fails `check`.
+- **`lsf check` reports the setting values of a JSON template, a section group or
+  `config/settings_data.json` that Shopify refuses on upload** (`invalid_setting_value`, which
+  fails the check): a `range` value out of its `min` and `max` (`99` for a range of 0 to 10) or
+  that is not a number, Liquid in a text setting that is not a dynamic source
+  (`{% if true %}yes{% endif %}`, `{{ page.title` unclosed), a `liquid` value over 50 kB. lsf
+  rendered the raw value; Shopify refuses the file. A theme that checked clean with one of these
+  now fails `check`.
 - **`closest.<resource>` is the nearest resource setting, even an empty one.** A theme block
   whose own `product` setting is unset no longer gets the page's product as `closest.product`:
   it gets none, as on Shopify. Give the setting a value, or `{{ closest.product }}` as its

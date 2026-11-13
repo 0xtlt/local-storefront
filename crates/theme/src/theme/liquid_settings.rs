@@ -32,14 +32,76 @@ pub fn holds_settings(path: &str) -> bool {
             || path == "config/settings_data.json")
 }
 
+/// One value stored for a setting of a section or a block in a JSON file of the theme, with
+/// its definition.
+#[derive(Clone, Debug)]
+pub struct StoredSetting {
+    /// The keys that lead to the value from the root of the file.
+    pub path: Vec<String>,
+    pub def: SettingDef,
+    pub value: Json,
+}
+
+impl StoredSetting {
+    /// The path written with dots: `sections.main.settings.heading`.
+    pub fn dotted(&self) -> String {
+        self.path.join(".")
+    }
+
+    /// The path as a JSON pointer: `/sections/main/settings/heading`.
+    pub fn pointer(&self) -> String {
+        self.path
+            .iter()
+            .map(|key| format!("/{}", key.replace('~', "~0").replace('/', "~1")))
+            .collect()
+    }
+}
+
+/// What a walk over the stored settings calls for each value: its definition, the value, the
+/// keys that lead to it.
+type Visit<'v> = dyn FnMut(&SettingDef, &Json, Vec<String>) + 'v;
+
 impl Theme {
     /// The values of the `liquid` settings in a JSON file of the theme, by what the schemas of
     /// its sections and blocks say (and `config/settings_schema.json` for the theme settings).
     pub fn liquid_settings(&self, path: &str) -> Vec<LiquidSetting> {
-        let Ok(Some(json)) = self.json(path) else {
-            return Vec::new();
-        };
         let mut found = Vec::new();
+        let mut visit = |def: &SettingDef, value: &Json, path: Vec<String>| {
+            if def.kind == "liquid"
+                && let Some(value) = value.as_str()
+            {
+                found.push(LiquidSetting {
+                    path,
+                    value: value.to_string(),
+                });
+            }
+        };
+        self.walk_settings(path, true, &mut visit);
+        found
+    }
+
+    /// The values the sections and the blocks of a JSON file of the theme store for their
+    /// settings (a template, a section group, the sections of `config/settings_data.json`),
+    /// with their definitions. The theme settings are not among them.
+    pub fn stored_settings(&self, path: &str) -> Vec<StoredSetting> {
+        let mut found = Vec::new();
+        let mut visit = |def: &SettingDef, value: &Json, path: Vec<String>| {
+            found.push(StoredSetting {
+                path,
+                def: def.clone(),
+                value: value.clone(),
+            });
+        };
+        self.walk_settings(path, false, &mut visit);
+        found
+    }
+
+    /// Calls `visit` for each value of a setting a JSON file stores: those of its sections and
+    /// their blocks, and with `theme`, the theme settings of `config/settings_data.json`.
+    fn walk_settings(&self, path: &str, theme: bool, visit: &mut Visit<'_>) {
+        let Ok(Some(json)) = self.json(path) else {
+            return;
+        };
         if path == "config/settings_data.json" {
             let (key, current) = match json.get("current") {
                 Some(Json::String(preset)) => (
@@ -49,24 +111,25 @@ impl Theme {
                 other => (vec!["current".to_string()], other),
             };
             if let Some(current) = current {
-                let mut defs: Vec<SettingDef> = Vec::new();
-                if let Ok(Some(schema)) = self.json("config/settings_schema.json") {
-                    for group in schema.as_array().into_iter().flatten() {
-                        defs.extend(parse_settings(group.get("settings")));
+                if theme {
+                    let mut defs: Vec<SettingDef> = Vec::new();
+                    if let Ok(Some(schema)) = self.json("config/settings_schema.json") {
+                        for group in schema.as_array().into_iter().flatten() {
+                            defs.extend(parse_settings(group.get("settings")));
+                        }
                     }
+                    // The theme settings sit directly in `current`.
+                    collect(&defs, current, &key, visit);
                 }
-                // The theme settings sit directly in `current`.
-                collect(&defs, current, &key, &mut found);
-                self.sections(current, &key, &mut found);
+                self.sections(current, &key, visit);
             }
         } else {
-            self.sections(&json, &[], &mut found);
+            self.sections(&json, &[], visit);
         }
-        found
     }
 
-    /// The `liquid` settings of the sections of `parent.sections` and of their blocks.
-    fn sections(&self, parent: &Json, path: &[String], found: &mut Vec<LiquidSetting>) {
+    /// The settings of the sections of `parent.sections` and of their blocks.
+    fn sections(&self, parent: &Json, path: &[String], visit: &mut Visit<'_>) {
         for (id, section) in parent
             .get("sections")
             .and_then(Json::as_object)
@@ -78,7 +141,7 @@ impl Theme {
             };
             let schema = self.schema(&format!("sections/{kind}.liquid"));
             let path = extend(path, &["sections", id]);
-            settings_of(&schema.settings, section, &path, found);
+            settings_of(&schema.settings, section, &path, visit);
             for (block_id, block) in blocks(section) {
                 let Some(block_kind) = block.get("type").and_then(Json::as_str) else {
                     continue;
@@ -86,30 +149,24 @@ impl Theme {
                 let block_path = extend(&path, &["blocks", block_id]);
                 // A block the section declares, or a theme block.
                 match schema.blocks.iter().find(|def| def.kind == block_kind) {
-                    Some(def) => settings_of(&def.settings, block, &block_path, found),
-                    None => self.theme_block(block_kind, block, &block_path, found),
+                    Some(def) => settings_of(&def.settings, block, &block_path, visit),
+                    None => self.theme_block(block_kind, block, &block_path, visit),
                 }
             }
         }
     }
 
-    /// The `liquid` settings of a theme block (`blocks/<kind>.liquid`) and of its own blocks.
-    fn theme_block(
-        &self,
-        kind: &str,
-        block: &Json,
-        path: &[String],
-        found: &mut Vec<LiquidSetting>,
-    ) {
+    /// The settings of a theme block (`blocks/<kind>.liquid`) and of its own blocks.
+    fn theme_block(&self, kind: &str, block: &Json, path: &[String], visit: &mut Visit<'_>) {
         // App blocks (`shopify://apps/...`) and `@app` have no file in the theme.
         if kind.contains('/') || kind.starts_with('@') {
             return;
         }
         let schema = self.schema(&format!("blocks/{kind}.liquid"));
-        settings_of(&schema.settings, block, path, found);
+        settings_of(&schema.settings, block, path, visit);
         for (id, child) in blocks(block) {
             if let Some(child_kind) = child.get("type").and_then(Json::as_str) {
-                self.theme_block(child_kind, child, &extend(path, &["blocks", id]), found);
+                self.theme_block(child_kind, child, &extend(path, &["blocks", id]), visit);
             }
         }
     }
@@ -129,21 +186,18 @@ fn extend(path: &[String], keys: &[&str]) -> Vec<String> {
     path
 }
 
-/// The `liquid` settings of a section or a block, in its `settings`.
-fn settings_of(defs: &[SettingDef], owner: &Json, path: &[String], found: &mut Vec<LiquidSetting>) {
+/// The settings of a section or a block, in its `settings`.
+fn settings_of(defs: &[SettingDef], owner: &Json, path: &[String], visit: &mut Visit<'_>) {
     if let Some(settings) = owner.get("settings") {
-        collect(defs, settings, &extend(path, &["settings"]), found);
+        collect(defs, settings, &extend(path, &["settings"]), visit);
     }
 }
 
-/// The string values of `settings` whose definition has the type `liquid`.
-fn collect(defs: &[SettingDef], settings: &Json, path: &[String], found: &mut Vec<LiquidSetting>) {
-    for def in defs.iter().filter(|def| def.kind == "liquid") {
-        if let Some(value) = settings.get(&def.id).and_then(Json::as_str) {
-            found.push(LiquidSetting {
-                path: extend(path, &[&def.id]),
-                value: value.to_string(),
-            });
+/// The values of `settings` that have a definition.
+fn collect(defs: &[SettingDef], settings: &Json, path: &[String], visit: &mut Visit<'_>) {
+    for def in defs {
+        if let Some(value) = settings.get(&def.id) {
+            visit(def, value, extend(path, &[&def.id]));
         }
     }
 }
