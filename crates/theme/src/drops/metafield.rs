@@ -399,19 +399,37 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
         // Strings, as Shopify gives them: `{"rating": "4.5", "scale_max": "5.0", "scale_min":
         // "0.0"}` in its Liquid reference. `(1..rating.scale_max)` takes the string "5.0"; it
         // raises "invalid integer" on the number 5.0, here as on Shopify.
-        "rating" => hash([
-            ("rating", text_of_number(value.get("value"))),
-            ("scale_max", text_of_number(value.get("scale_max"))),
-            ("scale_min", text_of_number(value.get("scale_min"))),
-        ]),
-        kind if is_measurement(kind) => hash([
-            ("type", Value::str(kind)),
-            ("value", decimal(value.get("value"))),
-            (
-                "unit",
-                Value::from(value.get("unit").and_then(Json::as_str).unwrap_or_default()),
-            ),
-        ]),
+        // Shopify's `rating` object prints its rating (`3.5`).
+        "rating" => {
+            let rating = text_of_number(value.get("value"));
+            PrintedDrop::value(
+                "rating",
+                rating.to_str().into_owned(),
+                hash([
+                    ("rating", rating),
+                    ("scale_max", text_of_number(value.get("scale_max"))),
+                    ("scale_min", text_of_number(value.get("scale_min"))),
+                ]),
+            )
+        }
+        // Shopify's `measurement` object, with a decimal `value` (`500.0`) and the unit Liquid
+        // gives (`mL`): it prints both, as `metafield_text` does (`1.5 cm`).
+        kind if is_measurement(kind) => {
+            let number = decimal(value.get("value"));
+            let unit = liquid_unit(
+                kind,
+                value.get("unit").and_then(Json::as_str).unwrap_or_default(),
+            );
+            PrintedDrop::value(
+                "measurement",
+                format!("{} {unit}", measure(&number)),
+                hash([
+                    ("type", Value::str(kind)),
+                    ("value", number),
+                    ("unit", Value::from(unit)),
+                ]),
+            )
+        }
         "product_reference"
         | "collection_reference"
         | "page_reference"
@@ -446,13 +464,97 @@ fn text_of_number(value: Option<&Json>) -> Value {
     }
 }
 
+/// The number of a measurement: a decimal, as on Shopify, where `500` is `500.0`.
 fn decimal(value: Option<&Json>) -> Value {
     match value {
         Some(Json::String(text)) => text
             .parse::<f64>()
             .map_or_else(|_| Value::from(text), Value::Float),
+        Some(Json::Number(number)) => number
+            .as_f64()
+            .map_or_else(|| Value::from(number.to_string()), Value::Float),
         Some(other) => Value::from(other),
         None => Value::Nil,
+    }
+}
+
+/// The unit of a measurement as Shopify's Liquid gives it: `kg` and `cm` for `kilograms` and
+/// `centimeters`, `mL`, `cL` and `gal` for `milliliters` (`ml`), `centiliters` (`cl`) and
+/// `us_gallons` (`us_gal`), as a store prints them. Another unit is given as it is written.
+pub fn liquid_unit(kind: &str, unit: &str) -> String {
+    let lower = unit.to_ascii_lowercase();
+    let short = match (kind, lower.as_str()) {
+        ("weight", "grams" | "g") => "g",
+        ("weight", "kilograms" | "kg") => "kg",
+        ("weight", "ounces" | "oz") => "oz",
+        ("weight", "pounds" | "lb") => "lb",
+        ("dimension", "millimeters" | "mm") => "mm",
+        ("dimension", "centimeters" | "cm") => "cm",
+        ("dimension", "meters" | "m") => "m",
+        ("dimension", "inches" | "in") => "in",
+        ("dimension", "feet" | "ft") => "ft",
+        ("dimension", "yards" | "yd") => "yd",
+        ("volume", "milliliters" | "ml") => "mL",
+        ("volume", "centiliters" | "cl") => "cL",
+        ("volume", "us_gallons" | "us_gal") => "gal",
+        _ => return unit.to_string(),
+    };
+    short.to_string()
+}
+
+/// The number of a measurement as Shopify prints it: two decimals at most, without trailing
+/// zeros (https://shopify.dev/docs/api/liquid/filters/metafield_text).
+pub fn measure(value: &Value) -> String {
+    match value {
+        Value::Float(f) => compact(&Value::Float((f * 100.0).round() / 100.0)),
+        other => compact(other),
+    }
+}
+
+/// A number without a trailing `.0`.
+pub fn compact(value: &Value) -> String {
+    match value {
+        Value::Float(f) => {
+            let text = lsf_liquid::number::float_to_s(*f);
+            text.strip_suffix(".0").map(str::to_string).unwrap_or(text)
+        }
+        other => other.to_str().into_owned(),
+    }
+}
+
+/// An object of Shopify's Liquid that has properties and prints as a text of its own: a
+/// `measurement` prints `1.5 cm`, a `rating` `3.5`. Its JSON is its properties.
+struct PrintedDrop {
+    kind: &'static str,
+    text: String,
+    fields: Value,
+}
+
+impl PrintedDrop {
+    fn value(kind: &'static str, text: String, fields: Value) -> Value {
+        Value::object(PrintedDrop { kind, text, fields })
+    }
+}
+
+impl Object for PrintedDrop {
+    fn type_name(&self) -> &str {
+        self.kind
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        self.fields.as_hash()?.get(key).cloned()
+    }
+
+    fn render(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.text)
+    }
+
+    fn to_json(&self) -> Json {
+        self.fields.to_json()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

@@ -12,27 +12,8 @@ use super::misc::to_script_safe_json;
 use super::money::money_formats;
 use super::site;
 use crate::drops::media::{ImageDrop, MediaDrop, image_base_url};
-use crate::drops::metafield::{MetafieldDrop, MoneyDrop, is_measurement};
+use crate::drops::metafield::{MetafieldDrop, MoneyDrop, compact, is_measurement, measure};
 use crate::site::Site;
-
-/// The number of a measurement as Shopify prints it: two decimals at most, without trailing
-/// zeros.
-fn measure(value: &Value) -> String {
-    match value {
-        Value::Float(f) => compact(&Value::Float((f * 100.0).round() / 100.0)),
-        other => compact(other),
-    }
-}
-
-fn compact(value: &Value) -> String {
-    match value {
-        Value::Float(f) => {
-            let text = float_to_s(*f);
-            text.strip_suffix(".0").map(str::to_string).unwrap_or(text)
-        }
-        other => other.to_str().into_owned(),
-    }
-}
 
 /// The text of one (non-list) metafield value.
 fn text_of(

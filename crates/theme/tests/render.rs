@@ -2438,6 +2438,77 @@ fn date_metafields_print_the_stored_string() {
 }
 
 #[test]
+fn measurement_and_rating_metafields_print_as_a_store_prints_them() {
+    // Shopify's `measurement` object (https://shopify.dev/docs/api/liquid/objects/measurement)
+    // is `{"type": "volume", "unit": "mL", "value": "500.0"}`, and a store prints it as its
+    // value and unit, with two decimals at most, as `metafield_text` formats measurements. A
+    // `rating` prints its rating.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "probe": [{
+                "handle": "f",
+                "fields": {
+                    "len": { "type": "dimension", "value": { "value": 1.5, "unit": "cm" } },
+                    "mass": { "type": "weight", "value": { "value": 2.25, "unit": "kg" } },
+                    "vol": { "type": "volume", "value": { "value": 500, "unit": "ml" } },
+                    "cl": { "type": "volume", "value": { "value": 33, "unit": "cl" } },
+                    "gal": { "type": "volume", "value": { "value": 1, "unit": "us_gal" } },
+                    "stars": { "type": "rating", "value": { "scale_min": "0.0", "scale_max": "10.0", "value": "3.5" } },
+                    "fine": { "type": "weight", "value": { "value": 1.234, "unit": "grams" } },
+                    "long": { "type": "dimension", "value": { "value": 30, "unit": "centimeters" } }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render = |source: &str| {
+        fixture.liquid(
+            "/",
+            Session::initial(&fixture.store),
+            &format!("{{%- assign f = metaobjects.probe.f -%}}{source}"),
+        )
+    };
+    // The issue's repro, with what a store prints.
+    assert_eq!(
+        render("{{ f.len.value }}|{{ f.mass.value }}|{{ f.vol.value }}|{{ f.stars.value }}"),
+        "1.5 cm|2.25 kg|500 mL|3.5"
+    );
+    assert_eq!(
+        render(
+            "{{ f.len.value.value }} {{ f.len.value.unit }}|{{ f.vol.value.value }} {{ f.vol.value.unit }}|\
+             {{ f.cl.value.unit }}|{{ f.gal.value.unit }}"
+        ),
+        "1.5 cm|500.0 mL|cL|gal"
+    );
+    // Two decimals at most; the unit names of Shopify's docs give the same short units.
+    assert_eq!(
+        render("{{ f.fine.value }}|{{ f.long.value }}|{{ f.fine }}|{{ f.fine | metafield_text }}"),
+        "1.23 g|30 cm|1.23 g|1.23 g"
+    );
+    // The properties do not change: `type`, and the rating's strings.
+    assert_eq!(
+        render(
+            "{{ f.vol.value.type }}|{{ f.stars.value.rating }}|{{ f.stars.value.scale_min }}|\
+             {{ f.stars.value.scale_max }}|{{ f.stars.value | json }}"
+        ),
+        r#"volume|3.5|0.0|10.0|{"rating":"3.5","scale_max":"10.0","scale_min":"0.0"}"#
+    );
+    assert_eq!(
+        render("{{ f.vol | metafield_tag }}"),
+        r#"<span class="metafield-volume"><span class="metafield-volume_value">500 </span><span class="metafield-volume_unit">mL</span></span>"#
+    );
+}
+
+#[test]
 fn a_handle_that_names_nothing_is_the_empty_object() {
     // https://shopify.dev/docs/api/liquid/basics#empty: "An `empty` object is returned if you
     // try to access an object that is defined, but has no value", truthy, so that themes
