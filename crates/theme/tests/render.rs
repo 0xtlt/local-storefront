@@ -3296,6 +3296,109 @@ fn metafield_text_escapes_text_as_metafield_tag_does() {
 }
 
 #[test]
+fn reference_lists_and_metaobject_values_are_paged_as_on_shopify() {
+    // The issue's store: a product whose `custom.related` lists 60 products, a type `faq` of
+    // three entries and a type `note` of 60.
+    let handles: Vec<String> = (1..=60).map(|i| format!("p{i:02}")).collect();
+    let mut products = vec![
+        serde_json::json!({"title": "Widget", "handle": "widget", "price": "10.00",
+        "metafields": {"custom": {"related": {"type": "list.product_reference", "value": handles}}}}),
+    ];
+    products.extend(handles.iter().map(|handle| {
+        serde_json::json!({"title": handle.to_uppercase(), "handle": handle, "price": "10.00"})
+    }));
+    let notes: Vec<serde_json::Value> = (1..=60)
+        .map(|i| serde_json::json!({"handle": format!("n{i:02}"), "fields": {"text": format!("N{i}")}}))
+        .collect();
+    let faqs: Vec<serde_json::Value> = ["one", "two", "three"]
+        .iter()
+        .map(|handle| serde_json::json!({"handle": handle, "fields": {"question": handle}}))
+        .collect();
+    let overlay = serde_json::json!({
+        "products": products,
+        "metaobjects": {"faq": faqs, "note": notes}
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render =
+        |path: &str, source: &str| fixture.liquid(path, Session::initial(&fixture.store), source);
+    // The issue's template. A loop gets the first 50 items, as on Shopify, and `size` and
+    // `count` are still all of them.
+    assert_eq!(
+        render(
+            "/products/widget",
+            "{%- assign n = 0 -%}{%- for p in product.metafields.custom.related.value -%}\
+             {%- assign n = n | plus: 1 -%}{%- endfor -%}loop: {{ n }}|\
+             {%- assign m = 0 -%}{%- for e in metaobjects.note.values -%}{%- assign m = m | plus: 1 -%}\
+             {%- endfor -%}values loop: {{ m }}|{{ metaobjects.note.values.size }}|\
+             {{ product.metafields.custom.related.value.count }}|\
+             {{ product.metafields.custom.related.value | size }}"
+        ),
+        "loop: 50|values loop: 50|60|60|60"
+    );
+    let related = "{% paginate product.metafields.custom.related.value by 2 %}{{ paginate.items }}|\
+                   {{ paginate.pages }}|{{ paginate.current_page }}|\
+                   {% for p in product.metafields.custom.related.value %}{{ p.handle }},{% endfor %}|\
+                   {{ paginate.next.url }}|{{ paginate.page_param }}{% endpaginate %}";
+    let faq = "{% paginate metaobjects.faq.values by 2 %}{{ paginate.items }}|{{ paginate.pages }}|\
+               {% for o in metaobjects.faq.values %}{{ o.system.handle }},{% endfor %}|\
+               {{ paginate.next.url }}|{{ paginate.page_param }}{% endpaginate %}";
+    // Each list has a parameter of its own, `page_` and 8 hexadecimal digits.
+    let param = |line: &str| line.rsplit('|').next().unwrap().to_string();
+    let first = render("/products/widget", related);
+    let related_param = param(&first);
+    let faq_first = render("/products/widget", faq);
+    let faq_param = param(&faq_first);
+    for param in [&related_param, &faq_param] {
+        let hash = param.strip_prefix("page_").expect("page_<hash>");
+        assert!(
+            hash.len() == 8 && hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "{param}"
+        );
+    }
+    assert_ne!(related_param, faq_param);
+    // `paginate` slices the loop inside it, and its URLs use the list's parameter.
+    assert_eq!(
+        first,
+        format!("60|30|1|p01,p02,|/products/widget?{related_param}=2|{related_param}")
+    );
+    assert_eq!(
+        faq_first,
+        format!("3|2|one,two,|/products/widget?{faq_param}=2|{faq_param}")
+    );
+    // The page of the list's parameter is shown; `page` is not the list's.
+    assert_eq!(
+        render(
+            &format!("/products/widget?{related_param}=2&page=5"),
+            related
+        ),
+        format!("60|30|2|p03,p04,|/products/widget?{related_param}=3&page=5|{related_param}")
+    );
+    assert_eq!(
+        render(&format!("/products/widget?{faq_param}=2"), faq),
+        format!("3|2|three,||{faq_param}")
+    );
+    // Up to 250 items a page.
+    assert_eq!(
+        render(
+            "/products/widget",
+            "{% paginate metaobjects.note.values by 250 %}{{ paginate.page_size }}|\
+             {% for o in metaobjects.note.values %}{% if forloop.last %}{{ forloop.length }}{% endif %}\
+             {% endfor %}{% endpaginate %}"
+        ),
+        "250|60"
+    );
+}
+
+#[test]
 fn what_is_loaded_is_charged_once() {
     let overlay = serde_json::json!({
         "metaobjects": {

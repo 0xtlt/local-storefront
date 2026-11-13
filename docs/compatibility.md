@@ -148,7 +148,10 @@ Liquid error for `metafield_tag` of a metaobject without `field:`, and `metafiel
 HTML-escapes text, as `metafield_tag` does;
 the value of a `list.product_reference` or `list.metaobject_reference` is a list drop, as on
 Shopify: `.count` and `.size` give its length, `.first`, `.last` and `[n]` give nothing, and the
-`first` and `last` filters, `for` and `paginate` reach its items; the other lists are arrays),
+`first` and `last` filters, `for` and `paginate` reach its items; the other lists are arrays;
+as on Shopify, a loop over it or over `metaobjects.<type>.values` outside `paginate` gets its
+first 50 items, and `paginate` gives up to 250 a page, with a page parameter of the list's own,
+`page_` and 8 hexadecimal digits (`paginate.page_param`), not `page`),
 metaobjects, countries, languages (with `direction`, from the script of the language),
 currencies, markets (`localization.market` and `country.market` are the market of the country,
 with its handle, its id and its metafields), fonts, colors, color schemes, quantity rules and quantity price breaks,
@@ -216,7 +219,10 @@ locations, companies, company locations and company addresses.
   `paginate.parts[].url`, `default_pagination`, a filter's and a filter value's `url_to_add` and
   `url_to_remove`) lead to the page, also in a section rendered alone: `section_id` and
   `sections` are left out, and the parameters are written as Shopify writes them, `page` first,
-  the others sorted by name (`/collections/all?page=2&sort_by=price-ascending`).
+  the others sorted by name (`/collections/all?page=2&sort_by=price-ascending`). A list of
+  references and `metaobjects.<type>.values` are paged with a parameter of their own
+  (`/products/widget?page_1a2b3c4d=2`), as on Shopify; its digits are lsf's own, a hash of
+  where the list is, not those of a store: build page links from `paginate.page_param`.
 - Settings resolved to the objects Liquid expects: `image_picker`, `video`, `video_url`,
   `product`, `collection`, `page`, `blog`, `article`, `metaobject`, `product_list`,
   `collection_list`, `metaobject_list`, `link_list`, `color`, `color_palette`, `color_scheme`, `color_scheme_group`, `font_picker`,

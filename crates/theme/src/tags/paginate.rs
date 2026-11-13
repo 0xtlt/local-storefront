@@ -23,9 +23,15 @@ struct Paginate {
 /// and without the parameters of a section rendered alone, as Shopify writes it
 /// (`/collections/all?page=2&sort_by=price-ascending`).
 pub fn paginate_url(request: &Request, page: usize) -> String {
-    request.page_url(
+    paginate_url_with(request, "page", page)
+}
+
+/// [`paginate_url`] for a list paged with a parameter of its own (`page_b72aba52`).
+fn paginate_url_with(request: &Request, param: &str, page: usize) -> String {
+    request.page_url_with(
+        param,
         Some(page),
-        request.page_query().filter(|(key, _)| *key != "page"),
+        request.page_query().filter(|(key, _)| *key != param),
     )
 }
 
@@ -49,11 +55,6 @@ impl Tag for Paginate {
         };
         let state = RenderState::of(ctx)?;
         let request = &state.site.request;
-        let current_page = request
-            .param("page")
-            .and_then(|page| page.parse::<usize>().ok())
-            .filter(|page| *page >= 1)
-            .unwrap_or(1);
 
         // `collections`, `pages` and `blogs` paginate through their underlying list.
         let collection = match collection.downcast::<Lookup>().and_then(Lookup::paginated) {
@@ -61,6 +62,15 @@ impl Tag for Paginate {
             None => collection,
         };
         let list = collection.downcast::<PaginatedList>();
+        // A list of references and `metaobjects.<type>.values` have a parameter of their own.
+        let param = list.map_or("page", PaginatedList::page_param).to_string();
+        let paginate_url =
+            |request: &Request, page: usize| paginate_url_with(request, &param, page);
+        let current_page = request
+            .param(&param)
+            .and_then(|page| page.parse::<usize>().ok())
+            .filter(|page| *page >= 1)
+            .unwrap_or(1);
         let total = match (list, &collection) {
             (Some(list), _) => list.total(),
             (None, Value::Array(items)) => items.len(),
@@ -101,7 +111,7 @@ impl Tag for Paginate {
         paginate.insert("current_offset".to_string(), Value::from(offset));
         paginate.insert("items".to_string(), Value::from(total));
         paginate.insert("pages".to_string(), Value::from(page_count));
-        paginate.insert("page_param".to_string(), Value::str("page"));
+        paginate.insert("page_param".to_string(), Value::from(param.as_str()));
         paginate.insert("parts".to_string(), Value::array(parts));
         if current_page > 1 {
             paginate.insert(

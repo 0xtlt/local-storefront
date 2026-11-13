@@ -92,11 +92,21 @@ impl Request {
         page: Option<usize>,
         params: impl IntoIterator<Item = (&'a str, &'a str)>,
     ) -> String {
+        self.page_url_with("page", page, params)
+    }
+
+    /// [`Request::page_url`] with the page in `param`, a list's own (`page_b72aba52`).
+    pub fn page_url_with<'a>(
+        &self,
+        param: &str,
+        page: Option<usize>,
+        params: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> String {
         use lsf_core::urls::encode_component;
         let mut params: Vec<(&str, &str)> = params.into_iter().collect();
         params.sort_by_key(|(key, _)| *key);
         let pairs: Vec<String> = page
-            .map(|page| format!("page={page}"))
+            .map(|page| format!("{param}={page}"))
             .into_iter()
             .chain(params.iter().map(|(key, value)| {
                 format!("{}={}", encode_component(key), encode_component(value))
@@ -144,7 +154,13 @@ pub struct Site {
     schema_translations: OnceLock<Arc<Translations>>,
     /// The handles of the menus lsf made up that the render used, in the order it first did.
     default_menus: Mutex<Vec<String>>,
+    /// The page `{% paginate %}` shows of each list that has a page parameter of its own, by
+    /// that parameter: a list rebuilt at each lookup (a metafield's) is paged all the same.
+    paginate_windows: Mutex<Vec<(String, PaginateWindow)>>,
 }
+
+/// The items a paginated list shows: `(offset, size)`, or all of them outside `paginate`.
+pub(crate) type PaginateWindow = Arc<Mutex<Option<(usize, usize)>>>;
 
 impl Site {
     pub fn new(
@@ -174,7 +190,19 @@ impl Site {
             translations: OnceLock::new(),
             schema_translations: OnceLock::new(),
             default_menus: Mutex::new(Vec::new()),
+            paginate_windows: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The window of the lists of a page parameter, shared by every lookup of them.
+    pub(crate) fn paginate_window(&self, param: &str) -> PaginateWindow {
+        let mut windows = self.paginate_windows.lock().expect("windows poisoned");
+        if let Some((_, window)) = windows.iter().find(|(known, _)| known == param) {
+            return window.clone();
+        }
+        let window = PaginateWindow::default();
+        windows.push((param.to_string(), window.clone()));
+        window
     }
 
     /// Notes that the render uses a menu lsf made up ([`lsf_core::store::Menu::supplied_by_lsf`]).
