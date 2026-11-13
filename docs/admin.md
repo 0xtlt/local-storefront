@@ -622,7 +622,10 @@ a reset say so too). The server prints it once per token, `--quiet` or not:
 `read_customers`) and `node`. `write_x` covers `read_x`. To see what the backend does with fewer
 scopes: `POST /__lsf/admin/install {"scopes": "read_orders"}` installs the app again with them
 (every token of the app on the shop now reads less, the printed one and those of token exchange
-and OAuth alike, and `app/scopes_update` is delivered).
+and OAuth alike, and `app/scopes_update` is delivered). An offline OAuth grant
+(`/admin/oauth/authorize?scope=…`, then `/admin/oauth/access_token`) with other scopes does the
+same: `currentAppInstallation.accessScopes` lists the scopes of the grant, and
+`app/scopes_update` is delivered.
 
 **Scopes changed in `shopify.app.toml`** while lsf runs do not change the installation: the app
 keeps the scopes lsf started with, as an installed app keeps what the merchant granted on

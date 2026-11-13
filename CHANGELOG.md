@@ -444,6 +444,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   Shopify counts them. The `metafields` input of a product, a customer or an app discount is
   checked the same way. An import that writes such values now fails locally as it does on a
   store.
+- **An OAuth grant with other scopes shows in `accessScopes` and sends `app/scopes_update`.**
+  An offline grant through `/admin/oauth/authorize` with another `scope` already narrowed every
+  token of the installation; `currentAppInstallation.accessScopes` kept listing the scopes of
+  `shopify.app.toml`, and no `app/scopes_update` was sent. Both now follow the grant, as
+  `POST /__lsf/admin/install` does, so an app that decides from them whether to send the
+  merchant through OAuth again sees what its token can do.
 
 #### The command line
 
