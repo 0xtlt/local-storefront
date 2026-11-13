@@ -275,6 +275,66 @@ const CREATE_DEFINITION: &str = "mutation($definition: MetafieldDefinitionInput!
     }
 }";
 
+/// A definition over metafields of another type is created, as on a store (issue #171): the
+/// values valid for it take its type and join it, the others stay as they were, without it
+/// (the reference of `metafieldDefinitionCreate`).
+#[test]
+fn a_definition_over_metafields_of_another_type_adopts_the_valid_ones() {
+    let mut shop = rich();
+    let product = find(&shop, "Product", "handle", "linen-dress");
+    let other = find(&shop, "Product", "handle", "coffee-subscription");
+    let set = run(
+        &mut shop,
+        SET,
+        json!({"metafields": [
+            {"ownerId": product, "namespace": "demo", "key": "price_text", "type": "single_line_text_field", "value": "12,50 EUR"},
+            {"ownerId": other, "namespace": "demo", "key": "price_text", "type": "single_line_text_field", "value": "12.50"},
+        ]}),
+    );
+    assert_eq!(
+        set["data"]["metafieldsSet"]["userErrors"],
+        json!([]),
+        "{set}"
+    );
+    shop.take_events();
+    let answer = run(
+        &mut shop,
+        "mutation { metafieldDefinitionCreate(definition: {name: \"Price\", namespace: \"demo\", key: \"price_text\", ownerType: PRODUCT, type: \"number_decimal\"}) { createdDefinition { id type { name } metafieldsCount validationStatus } userErrors { field message code } } }",
+        json!({}),
+    );
+    let created = &answer["data"]["metafieldDefinitionCreate"];
+    assert_eq!(created["userErrors"], json!([]), "{answer}");
+    assert_eq!(
+        created["createdDefinition"]["type"]["name"],
+        "number_decimal"
+    );
+    assert_eq!(created["createdDefinition"]["metafieldsCount"], json!(1));
+    assert_eq!(
+        created["createdDefinition"]["validationStatus"],
+        "ALL_VALID"
+    );
+    let definition = created["createdDefinition"]["id"].clone();
+    let read = |shop: &mut ShopState, id: &str| {
+        run(
+            shop,
+            "query($id: ID!) { product(id: $id) { metafield(namespace: \"demo\", key: \"price_text\") { type value jsonValue definition { id } } } }",
+            json!({"id": id}),
+        )["data"]["product"]["metafield"]
+            .clone()
+    };
+    // Not a decimal: unchanged, outside the definition.
+    assert_eq!(
+        read(&mut shop, &product),
+        json!({"type": "single_line_text_field", "value": "12,50 EUR", "jsonValue": "12,50 EUR", "definition": null})
+    );
+    // A decimal: the definition's type.
+    assert_eq!(
+        read(&mut shop, &other),
+        json!({"type": "number_decimal", "value": "12.50", "jsonValue": "12.50", "definition": {"id": definition}})
+    );
+    assert_eq!(topics(&mut shop), ["metafield_definitions/create"]);
+}
+
 #[test]
 fn creates_definitions_that_validate_metafields() {
     let mut shop = rich();

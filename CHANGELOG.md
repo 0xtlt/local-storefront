@@ -433,6 +433,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `title:Organic*` and `title:*cotton*` (a `*` inside a prefix matches anything) find it, and a
   word without a field (`cotton`) still does. An app that looked products up by a word of their
   title finds nothing on a store: use the whole title, a prefix, or the default search.
+- **`metafieldDefinitionCreate` creates a definition over metafields of another type**, as a
+  store does, where lsf answered `UNSTRUCTURED_ALREADY_EXISTS`. Each existing value that is
+  valid for the definition takes its type and joins it (`"12.50"` becomes a `number_decimal`);
+  the others stay as they were, with `definition: null` (`"12,50 EUR"` stays a
+  `single_line_text_field`), as Shopify's reference of the mutation describes.
 
 #### The command line
 

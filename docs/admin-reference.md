@@ -827,7 +827,9 @@ shop, the app's installation).
 namespaces and for reference types with metafields), `metafieldDefinitionPin`,
 `metafieldDefinitionUnpin`; `metafieldDefinitions(ownerType:, namespace:, key:, pinnedStatus:,
 sortKey:)` and `metafieldDefinition(identifier:)`. A definition created where metafields exist
-takes them and checks them (`validationStatus`). A `metaobject_reference` (and its list) needs
+takes them and checks them (`validationStatus`). Those of another type are taken when their
+value is valid for the definition, and get its type; the others stay as they were, without a
+definition, as Shopify's reference says, and the definition is created either way. A `metaobject_reference` (and its list) needs
 `metaobject_definition_id`, a `mixed_reference` `metaobject_definition_ids`, naming definitions
 the shop has: otherwise an `INVALID_OPTION` user error, for metafield definitions and the field
 definitions of metaobjects alike (the wording of the message is lsf's). `capabilities` are kept as given; of their
