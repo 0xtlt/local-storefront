@@ -16,7 +16,7 @@ use serde_json::Value as Json;
 use super::color::ColorDrop;
 use super::localization::currency_value;
 use super::media::{ImageDrop, MediaDrop};
-use super::{SiteRef, hash};
+use super::{EmptyDrop, SiteRef, hash};
 use crate::render::cost;
 
 /// `resource.metafields`: namespaces of metafields.
@@ -44,19 +44,19 @@ impl Object for MetafieldsDrop {
     }
 
     fn get(&self, key: &str) -> Option<Value> {
-        let fields = self.metafields.get(key);
-        if fields.is_none() {
+        let Some(fields) = self.metafields.get(key) else {
             // Asking for a metafield that is not there is a lookup all the same.
             cost::loaded(cost::METAFIELD, (self.owner, key, ""));
-        }
-        fields.map(|fields| {
-            Value::object(FieldsDrop {
-                site: self.site.clone(),
-                fields: fields.clone(),
-                kind: "metafield_namespace",
-                namespace: Some((self.owner, key.to_string())),
-            })
-        })
+            // A namespace the resource does not have is Shopify's `empty` object.
+            return (!matches!(key, "size" | "first" | "last"))
+                .then(|| EmptyDrop::value(EmptyDrop::NONE));
+        };
+        Some(Value::object(FieldsDrop {
+            site: self.site.clone(),
+            fields: fields.clone(),
+            kind: "metafield_namespace",
+            namespace: Some((self.owner, key.to_string())),
+        }))
     }
 
     fn as_any(&self) -> &dyn Any {

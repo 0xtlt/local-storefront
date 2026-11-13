@@ -81,6 +81,79 @@ pub(crate) fn hash<const N: usize>(pairs: [(&str, Value); N]) -> Value {
 
 pub(crate) type SiteRef = Arc<Site>;
 
+/// What Shopify gives for a handle that names nothing (`collections['nope']`,
+/// `all_products['nope']`, `pages`, `blogs`, `linklists`), a metafield namespace a resource
+/// does not have, and a resource setting whose handle no longer exists: the `empty` object.
+/// It is truthy, `== empty` and `== blank`, and its lists (`products`, `articles`, `links`)
+/// are empty, so their `size` is 0. Its other properties are nil.
+///
+/// <https://shopify.dev/docs/api/liquid/basics#empty>: "An `empty` object is returned if you
+/// try to access an object that is defined, but has no value. For example a page or product
+/// that's been deleted".
+pub struct EmptyDrop {
+    /// The properties that are lists on the object that was asked for.
+    lists: &'static [&'static str],
+    /// The handle a resource setting holds: it prints it, for the themes that still read the
+    /// handle of a setting, and it is `== nil`, as on Shopify.
+    setting: Option<String>,
+}
+
+impl EmptyDrop {
+    pub const COLLECTION: &'static [&'static str] = &["products"];
+    pub const BLOG: &'static [&'static str] = &["articles"];
+    pub const LINK_LIST: &'static [&'static str] = &["links"];
+    pub const NONE: &'static [&'static str] = &[];
+
+    /// The `empty` object of a lookup that found nothing.
+    pub fn value(lists: &'static [&'static str]) -> Value {
+        Value::object(EmptyDrop {
+            lists,
+            setting: None,
+        })
+    }
+
+    /// The value of a resource setting whose handle names nothing.
+    pub fn setting(lists: &'static [&'static str], handle: &str) -> Value {
+        Value::object(EmptyDrop {
+            lists,
+            setting: Some(handle.to_string()),
+        })
+    }
+}
+
+impl lsf_liquid::Object for EmptyDrop {
+    fn type_name(&self) -> &str {
+        "empty"
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        self.lists.contains(&key).then(|| Value::array(Vec::new()))
+    }
+
+    fn size(&self) -> Option<usize> {
+        Some(0)
+    }
+
+    fn equals(&self, other: &Value) -> Option<bool> {
+        (self.setting.is_some() && other.is_nil()).then_some(true)
+    }
+
+    fn render(&self) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed(self.setting.as_deref().unwrap_or_default())
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        match self.setting {
+            Some(_) => serde_json::Value::Null,
+            None => serde_json::json!({ "error": "json not allowed for this object" }),
+        }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// The page size Shopify applies to a collection that is iterated without `paginate`.
 pub const DEFAULT_PAGE_LIMIT: usize = 50;
 

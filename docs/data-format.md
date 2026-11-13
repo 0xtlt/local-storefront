@@ -427,12 +427,12 @@ none:
 { "menus": { "footer": { "links": [] } } }
 ```
 
-Any other handle the data does not have is not made up. In lsf, `linklists['customer-care']` is
-then `nil`, and so is a `link_list` setting that names it: both equal `blank`, and a loop over
-their `links` renders nothing. Shopify documents that a `link_list` setting whose menu does not
-exist is `blank`. Its reference does not say what `linklists` gives for a handle the store does
-not have. `lsf validate` warns about each menu the theme names that the data does not have
-(`missing_menu`).
+Any other handle the data does not have is not made up. `linklists['customer-care']` is then
+Shopify's [`empty` object](https://shopify.dev/docs/api/liquid/basics#empty), as on a store:
+truthy, `== empty` and `== blank`, with no `links` (`links.size` is `0`). A `link_list` setting
+that names it is truthy and `== blank` too, and prints its handle. Shopify documents that a
+`link_list` setting whose menu does not exist is `blank`. `lsf validate` warns about each menu
+the theme names that the data does not have (`missing_menu`).
 
 ## The shop
 
