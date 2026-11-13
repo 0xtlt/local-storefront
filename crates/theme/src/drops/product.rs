@@ -218,7 +218,7 @@ impl Object for ProductDrop {
             }
             "variants" => self.memo.get("variants", || {
                 Value::array(
-                    (0..product.variants.len())
+                    (0..product.variants.len().min(MAX_VARIANTS))
                         .map(|variant| VariantDrop::value(site, self.index, variant))
                         .collect(),
                 )
@@ -408,7 +408,7 @@ impl Object for ProductDrop {
             "compare_at_price_min": product.compare_at_price_min(),
             "compare_at_price_max": product.compare_at_price_max(),
             "compare_at_price_varies": product.compare_at_price_min() != product.compare_at_price_max(),
-            "variants": (0..product.variants.len()).map(|variant| variant_json(site, self.index, variant)).collect::<Vec<_>>(),
+            "variants": (0..product.variants.len().min(MAX_VARIANTS)).map(|variant| variant_json(site, self.index, variant)).collect::<Vec<_>>(),
             "images": images,
             "featured_image": images.first().cloned().unwrap_or(Json::Null),
             "options": product.options.iter().map(|option| option.name.clone()).collect::<Vec<_>>(),
@@ -431,6 +431,13 @@ impl Object for ProductDrop {
         self
     }
 }
+
+/// The most variants `product.variants` and the product JSON of the Ajax API give: the first 250,
+/// of the up to 2,048 a product can have. `product.variants_count` stays the total.
+/// https://shopify.dev/docs/storefronts/themes/product-merchandising/variants/support-high-variant-products
+/// https://shopify.dev/docs/api/ajax ("Product JSON responses are limited to a maximum of 250
+/// variants")
+pub const MAX_VARIANTS: usize = 250;
 
 /// ISO 8601 in the shop's time zone, as Shopify's JSON has it.
 pub fn iso(site: &SiteRef, time: chrono::DateTime<chrono::Utc>) -> String {

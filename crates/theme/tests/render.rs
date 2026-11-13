@@ -121,6 +121,43 @@ fn product_page() {
     assert_snapshot("product.html", &rendered.body);
 }
 
+/// A product with options Size (S1 to S20) and Color (C1 to C15): 300 variants.
+fn product_with_300_variants() -> serde_json::Value {
+    let variants: Vec<serde_json::Value> = (1..=20)
+        .flat_map(|size| (1..=15).map(move |color| serde_json::json!({"options": [format!("S{size}"), format!("C{color}")]})))
+        .collect();
+    serde_json::json!({"title": "Big", "price": "10.00", "options": ["Size", "Color"], "variants": variants})
+}
+
+#[test]
+fn product_variants_stop_at_250_and_variants_count_is_the_total() {
+    // "we've restricted product.variants to return a maximum of 250 variants", and a loop over
+    // it "only iterates through the first 250 variants":
+    // https://shopify.dev/docs/storefronts/themes/product-merchandising/variants/support-high-variant-products
+    // https://github.com/0xtlt/local-storefront/issues/82
+    let overlay = serde_json::json!({"products": [product_with_300_variants()]});
+    let fixture = theme_with_data(
+        "variants-cap",
+        &overlay,
+        &[("layout/theme.liquid", "{{ content_for_layout }}")],
+    );
+    let session = Session::initial(&fixture.store);
+    assert_eq!(
+        fixture.liquid(
+            "/products/big",
+            session.clone(),
+            "{% assign n = 0 %}{% for v in product.variants %}{% assign n = n | plus: 1 %}{% endfor %}\
+             [{{ product.variants.size }}|{{ product.variants_count }}|{{ n }}|{{ product.variants.last.title }}]"
+        ),
+        "[250|300|250|S17 / C10]"
+    );
+    // The same cap in the product's JSON, which `/products/<handle>.js` answers.
+    let json: serde_json::Value =
+        serde_json::from_str(&fixture.liquid("/products/big", session, "{{ product | json }}"))
+            .unwrap();
+    assert_eq!(json["variants"].as_array().unwrap().len(), 250);
+}
+
 #[test]
 fn product_page_selects_the_variant_from_the_url() {
     let fixture = fixture();

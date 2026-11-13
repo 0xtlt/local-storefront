@@ -29,6 +29,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   Shopify does: `/collections/all?page=2&sort_by=price-ascending`, no longer
   `?sort_by=price-ascending&page=2`. Theme tests that compare these URLs as text need the new
   order.
+- **`product.variants` and the product JSON stop at 250 variants**, as on Shopify. A theme or a
+  test that reads variant 251 or later from `product.variants`, `/products/<handle>.js`, `.json`,
+  `/products.json` or `{{ product | json }}` no longer finds it: it would not on Shopify either.
 
 ### Fixed
 
@@ -95,6 +98,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `default_pagination` and the `url_to_add` and `url_to_remove` of filters leave those
   parameters out, as Shopify does: infinite scroll, Ajax pagination and Ajax filters fetch the
   next page, not a bare section, and a script that adds its own `section_id` no longer sends two.
+- **A product with more than 250 variants shows what Shopify shows.** `product.variants` and a
+  `for` loop over it give the first 250, the Ajax API's product JSON holds 250, and
+  `product.variants_count` is still the total. A variant picker that misses variants past 250 on
+  Shopify misses them locally too.
 
 #### The checkout of an app
 
