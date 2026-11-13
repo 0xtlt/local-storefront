@@ -10,10 +10,11 @@ use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
 use super::site;
+use crate::drops::SiteRef;
 use crate::drops::cart::{CartDrop, cart_token, resolve_lines};
 use crate::drops::collection::CollectionDrop;
 use crate::drops::content::ArticleDrop;
-use crate::drops::product::ProductDrop;
+use crate::drops::product::{ProductDrop, VariantDrop, product_url};
 
 /// Serializes JSON the way Shopify's `json` filter does: compact, with the characters that are
 /// unsafe inside a `<script>` element escaped.
@@ -104,30 +105,57 @@ fn money_string(cents: i64) -> String {
     format!("{}.{:02}", cents / 100, cents.abs() % 100)
 }
 
-/// schema.org structured data for a product or an article.
+/// The schema.org `Offer` of a variant, at the product's URL `url`.
+fn variant_offer(site: &SiteRef, url: &str, variant: &lsf_core::store::Variant) -> Json {
+    json!({
+        "@id": format!("{url}?variant={}#offer", variant.id),
+        "@type": "Offer",
+        "availability": if variant.available { "http://schema.org/InStock" } else { "http://schema.org/OutOfStock" },
+        "price": money_string(variant.price),
+        "priceCurrency": site.currency(),
+        "url": format!("{}{url}?variant={}", site.request.origin(), variant.id),
+    })
+}
+
+/// The schema.org `Product` of a variant: an item of a `ProductGroup`'s `hasVariant`, and what
+/// `{{ variant | structured_data }}` prints, as on Shopify.
+fn variant_product(site: &SiteRef, product: &lsf_core::store::Product, variant: usize) -> Json {
+    let variant = &product.variants[variant];
+    let url = product_url(site, product);
+    let name = if product.has_only_default_variant() {
+        product.title.clone()
+    } else {
+        format!("{} - {}", product.title, variant.title)
+    };
+    json!({
+        "@id": format!("{url}?variant={}#variant", variant.id),
+        "@type": "Product",
+        "image": product_image(site, product),
+        "name": name,
+        "offers": variant_offer(site, &url, variant),
+        "sku": variant.sku,
+    })
+}
+
+/// The image of a product in its structured data.
+fn product_image(site: &SiteRef, product: &lsf_core::store::Product) -> Option<String> {
+    product.images().next().map(|image| {
+        format!(
+            "{}:{}&width=1920",
+            site.request.scheme,
+            crate::drops::media::image_base_url(site, image)
+        )
+    })
+}
+
+/// schema.org structured data for a product, a variant or an article.
 fn structured_data(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let site = site(ctx)?;
     let origin = site.request.origin();
     if let Some(drop) = input.downcast::<ProductDrop>() {
         let product = drop.product();
         let url = drop.url();
-        let image = product.images().next().map(|image| {
-            format!(
-                "{}:{}&width=1920",
-                site.request.scheme,
-                crate::drops::media::image_base_url(site, image)
-            )
-        });
-        let offer = |variant: &lsf_core::store::Variant| {
-            json!({
-                "@id": format!("{url}?variant={}#offer", variant.id),
-                "@type": "Offer",
-                "availability": if variant.available { "http://schema.org/InStock" } else { "http://schema.org/OutOfStock" },
-                "price": money_string(variant.price),
-                "priceCurrency": site.currency(),
-                "url": format!("{origin}{url}?variant={}", variant.id),
-            })
-        };
+        let image = product_image(site, product);
         let data = if product.variants.len() == 1 {
             json!({
                 "@context": "http://schema.org/",
@@ -138,7 +166,7 @@ fn structured_data(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<V
                 "description": plain_text(&product.description),
                 "image": image,
                 "name": product.title,
-                "offers": offer(&product.variants[0]),
+                "offers": variant_offer(site, &url, &product.variants[0]),
                 "url": format!("{origin}{url}"),
             })
         } else {
@@ -149,19 +177,19 @@ fn structured_data(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<V
                 "brand": { "@type": "Brand", "name": product.vendor },
                 "category": product.product_type,
                 "description": plain_text(&product.description),
-                "hasVariant": product.variants.iter().map(|variant| json!({
-                    "@id": format!("{url}?variant={}#variant", variant.id),
-                    "@type": "Product",
-                    "image": image,
-                    "name": format!("{} - {}", product.title, variant.title),
-                    "offers": offer(variant),
-                    "sku": variant.sku,
-                })).collect::<Vec<_>>(),
+                "hasVariant": (0..product.variants.len())
+                    .map(|variant| variant_product(site, product, variant))
+                    .collect::<Vec<_>>(),
                 "name": product.title,
                 "productGroupID": product.id.to_string(),
                 "url": format!("{origin}{url}"),
             })
         };
+        return Ok(Value::from(to_script_safe_json(&data)));
+    }
+    if let Some(drop) = input.downcast::<VariantDrop>() {
+        let product = &site.store.products[drop.product];
+        let data = variant_product(site, product, drop.index);
         return Ok(Value::from(to_script_safe_json(&data)));
     }
     if let Some(drop) = input.downcast::<ArticleDrop>() {

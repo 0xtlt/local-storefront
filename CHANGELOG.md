@@ -131,6 +131,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   kilograms to 3 places, pounds to 2, ounces to 1, with its `.0` (`10.0 lb`, `4.536 kg`,
   `0.001 kg`, `1.0 oz`). A variant of 4536 g in `lb` gives `weight_in_unit` `10.0`, no longer
   `10.000168212706047`. Shipping weight lines read as on a store.
+- **`{{ variant | structured_data }}` prints the variant's schema.org `Product`**, with its
+  `Offer`, as a store does, no longer nothing: `@id` (`…?variant=<id>#variant`), `image`,
+  `name` (`<title> - <variant>`, the title alone for a product without options), `offers` and
+  `sku`. It is the item of the product's `hasVariant`. JSON-LD of the selected variant can be
+  checked locally.
 
 #### The checkout of an app
 
