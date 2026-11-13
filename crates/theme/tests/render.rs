@@ -1744,6 +1744,91 @@ fn a_video_file_in_a_metaobject_is_a_video() {
 }
 
 #[test]
+fn a_variant_has_structured_data() {
+    // #127: Shopify prints a schema.org `Product` for a variant, with its `Offer`, the shape of
+    // an item of a `ProductGroup`'s `hasVariant`.
+    let overlay = serde_json::json!({"products": [
+        {
+            "title": "Widget",
+            "price": 1000,
+            "images": [{ "src": "widget.jpg", "width": 1600, "height": 1600 }],
+            "variants": [{ "sku": "W-1" }]
+        },
+        {
+            "title": "Sized Widget",
+            "price": 1200,
+            "options": ["Size"],
+            "variants": [{ "options": ["S"], "sku": "SW-S" }, { "options": ["M"], "sku": "SW-M" }]
+        }
+    ]});
+    let (store, diagnostics) =
+        load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render = |path: &str, source: &str| {
+        let output = fixture.liquid(path, Session::initial(&fixture.store), source);
+        serde_json::from_str::<serde_json::Value>(&output).expect(&output)
+    };
+    let widget = render(
+        "/products/widget",
+        "{{ product.selected_or_first_available_variant | structured_data }}",
+    );
+    let id = widget["offers"]["url"]
+        .as_str()
+        .unwrap()
+        .rsplit('=')
+        .next()
+        .unwrap()
+        .to_string();
+    let keys = |value: &serde_json::Value| -> Vec<String> {
+        value.as_object().unwrap().keys().cloned().collect()
+    };
+    assert_eq!(
+        keys(&widget),
+        ["@id", "@type", "image", "name", "offers", "sku"]
+    );
+    assert_eq!(
+        widget["@id"],
+        format!("/products/widget?variant={id}#variant")
+    );
+    assert_eq!(widget["@type"], "Product");
+    assert!(
+        widget["image"]
+            .as_str()
+            .is_some_and(|image| image.contains("/cdn/shop/files/widget.jpg?v=")
+                && image.ends_with("&width=1920")),
+        "{widget}"
+    );
+    assert_eq!(widget["name"], "Widget");
+    assert_eq!(
+        widget["offers"],
+        serde_json::json!({
+            "@id": format!("/products/widget?variant={id}#offer"),
+            "@type": "Offer",
+            "availability": "http://schema.org/InStock",
+            "price": "10.00",
+            "priceCurrency": "USD",
+            "url": format!("http://shop.test/products/widget?variant={id}"),
+        })
+    );
+    assert_eq!(widget["sku"], "W-1");
+
+    // A variant of a product with options is named after it too.
+    let sized = render(
+        "/products/sized-widget",
+        "{{ product.variants.first | structured_data }}",
+    );
+    assert_eq!(sized["name"], "Sized Widget - S");
+    assert_eq!(sized["sku"], "SW-S");
+    // The same as in the product's `hasVariant`.
+    let group = render("/products/sized-widget", "{{ product | structured_data }}");
+    assert_eq!(group["hasVariant"][0], sized);
+}
+
+#[test]
 fn an_apps_own_metaobject_type_is_found_by_either_name() {
     // The store data writes an app's own type `$app:author`. A theme names it with the app's id
     // (its real one, which lsf does not know), an app's extension with `$app`: both find the
