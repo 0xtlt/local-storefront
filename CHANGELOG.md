@@ -556,6 +556,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   missing: `is not a valid section type`, `Could not find asset`, or no template at all. It is
   now read as Shopify CLI uploads it, each byte that is not UTF-8 becoming `�`, so the page
   shows `caf�`, as a store does.
+- **`date` and `time_tag` without a format print the locale's `default` format**, as
+  `format: 'default'` does on Shopify (`Thursday, March 5, 2026 at 2:08 am -0500`). `date` was
+  a Liquid error (`wrong number of arguments`), and `time_tag` printed `date_at_time`.
 
 #### The checkout of an app
 

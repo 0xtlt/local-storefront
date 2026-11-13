@@ -156,20 +156,21 @@ pub(super) fn date_pattern(site: &Site, name: &str) -> Option<String> {
         .or_else(|| named_format(name).map(str::to_string))
 }
 
+/// `date` and `time_tag` without a format print the locale's `default` format, as
+/// `format: 'default'` does.
+const DEFAULT_FORMAT: &str = "default";
+
 fn date(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
-    let pattern = match args.named("format") {
-        Some(name) => {
-            let name = name.to_str();
+    let pattern = match (args.named("format"), args.get(0)) {
+        (None, Some(format)) => format.to_str().into_owned(),
+        (name, _) => {
+            let name = name.map_or(DEFAULT_FORMAT.into(), Value::to_str);
             date_pattern(site(ctx)?, &name).ok_or_else(|| {
                 Error::argument(format!(
                     "date format '{name}' is not defined in the locale file"
                 ))
             })?
         }
-        None => match args.get(0) {
-            Some(format) => format.to_str().into_owned(),
-            None => return Err(Error::wrong_arity(1, "2")),
-        },
     };
     if pattern.is_empty() {
         return Ok(input.clone());
@@ -187,11 +188,11 @@ fn time_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
         return Ok(input.clone());
     };
     let pattern = match (args.named("format"), args.get(0)) {
-        (Some(name), _) => {
-            date_pattern(site(ctx)?, &name.to_str()).unwrap_or_else(|| "%B %-d, %Y".to_string())
-        }
         (None, Some(format)) => format.to_str().into_owned(),
-        (None, None) => "%B %-d, %Y at %-I:%M %P".to_string(),
+        (name, _) => {
+            let name = name.map_or(DEFAULT_FORMAT.into(), Value::to_str);
+            date_pattern(site(ctx)?, &name).unwrap_or_else(|| "%B %-d, %Y".to_string())
+        }
     };
     let text = strftime(&time, &pattern).map_err(Error::argument)?;
     let datetime = match args.named("datetime") {

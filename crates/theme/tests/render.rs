@@ -511,6 +511,22 @@ fn liquid_template_with_translations_and_dates() {
 }
 
 #[test]
+fn date_and_time_tag_without_a_format_print_the_default_format() {
+    // Issue #97: as `format: 'default'` does, on Shopify.
+    let fixture = fixture();
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{% assign at = '2026-03-05T07:08:09Z' %}{{ at | date }}|{{ at | time_tag }}",
+    );
+    assert_eq!(
+        output,
+        "Thursday, March 5, 2026 at 2:08 am -0500|\
+         <time datetime=\"2026-03-05T07:08:09Z\">Thursday, March 5, 2026 at 2:08 am -0500</time>"
+    );
+}
+
+#[test]
 fn translations_follow_the_locale() {
     let fixture = fixture();
     let mut request = request("/pages/about");

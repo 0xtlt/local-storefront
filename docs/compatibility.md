@@ -98,7 +98,8 @@ buyer's country. Among them
 `img_url` family, `money` and its variants with every `money_format` placeholder (in a market
 with another currency, Shopify's format of that currency, which `shop.money_format` and
 `shop.money_with_currency_format` give too), `t` with
-pluralization and interpolation, `date` with locale formats, `json`, `structured_data`,
+pluralization and interpolation, `date` with locale formats (the `default` one when none is
+given, as for `time_tag`), `json`, `structured_data`,
 `payment_type_svg_tag`, `placeholder_svg_tag`, `font_face`, `color_*`, `metafield_tag`,
 `default_pagination`, `link_to_*`, `highlight`, `time_tag`.
 `handleize` (and its alias `handle`) gives what a store gives: Latin accents folded, a straight
