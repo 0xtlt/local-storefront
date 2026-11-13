@@ -2623,14 +2623,14 @@ fn a_metafield_without_value_compares_filters_and_sorts_as_its_value() {
         ),
         "2,3,1|Do you ship to Belgium?|6"
     );
-    // It still prints its value, gives its stored value as JSON and has its properties. A
-    // type whose value is an object (a color) stays the metafield.
+    // It still prints its value and has its properties, and `json` refuses it, as on Shopify.
+    // A type whose value is an object (a color) stays the metafield.
     assert_eq!(
         render(
             "{{ f.n }}|{{ f.off | json }}|{{ f.n.value }}|{{ f.n.type }}|{{ f.color.value.red }}|\
              {% if f.color == '#ff8000' %}same{% else %}other{% endif %}"
         ),
-        "42|false|42|number_integer|255|other"
+        "42|{\"error\":\"json not allowed for this object\"}|42|number_integer|255|other"
     );
 }
 
@@ -3091,14 +3091,10 @@ fn a_rating_has_strings_as_on_shopify() {
         render("{{ metaobjects.spec.tent.numbers.value | json }}"),
         r#"{"rating":"4.5","scale_max":"5","scale_min":"1"}"#
     );
-    // The metafield itself gives its value as the store data keeps it: strings.
+    // The metafield itself is refused, as on Shopify.
     assert_eq!(
         render("{{ metaobjects.spec.tent.pasted | json }}"),
-        r#"{"scale_min":"1.0","scale_max":"5.0","value":"4.5"}"#
-    );
-    assert_eq!(
-        render("{{ metaobjects.spec.tent.numbers | json }}"),
-        r#"{"scale_min":"1","scale_max":"5","value":"4.5"}"#
+        r#"{"error":"json not allowed for this object"}"#
     );
     // Each rating of a list too.
     assert_eq!(
@@ -3395,6 +3391,95 @@ fn reference_lists_and_metaobject_values_are_paged_as_on_shopify() {
              {% endfor %}{% endpaginate %}"
         ),
         "250|60"
+    );
+}
+
+#[test]
+fn json_gives_metaobjects_and_namespaces_and_refuses_metafields() {
+    // The issue's store, with a rich text field `answer`, as the entries of the issue's store
+    // had, and a deprecated `string` and `integer`.
+    let answer = |text: &str| {
+        serde_json::json!({"type": "rich_text_field", "value": {"type": "root", "children": [
+            {"type": "paragraph", "children": [{"type": "text", "value": text}]}]}})
+    };
+    let overlay = serde_json::json!({
+        "products": [{"title": "Widget", "handle": "widget", "price": "10.00",
+            "metafields": {"custom": {
+                "faq": {"type": "metaobject_reference", "value": "faq/two"},
+                "faqs": {"type": "list.metaobject_reference", "value": ["faq/one", "faq/two"]},
+                "decs": {"type": "list.number_decimal", "value": ["1.5", "2.25"]}
+            }, "legacy": {
+                "text": {"type": "string", "value": "legacy"},
+                "count": {"type": "integer", "value": 5}
+            }}}],
+        "metaobjects": {"faq": [
+            {"handle": "one", "fields": {"question": "How long does shipping take?",
+                "order": {"type": "number_integer", "value": 1}, "answer": answer("Care & use")}},
+            {"handle": "two", "fields": {"question": "Can I return an item?",
+                "order": {"type": "number_integer", "value": 2}, "answer": answer("Yes")}}
+        ]}
+    });
+    let (store, _) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render =
+        |source: &str| fixture.liquid("/products/widget", Session::initial(&fixture.store), source);
+    let two = r#"{"answer":{"type":"root","children":[{"type":"paragraph","children":[{"type":"text","value":"Yes"}]}]},"order":2,"question":"Can I return an item?"}"#;
+    let one = r#"{"answer":{"type":"root","children":[{"type":"paragraph","children":[{"type":"text","value":"Care \u0026amp; use"}]}]},"order":1,"question":"How long does shipping take?"}"#;
+    let refused = r#"{"error":"json not allowed for this object"}"#;
+    // The issue's template, line by line. The text of rich text is HTML-escaped, and `json`
+    // writes `&` as `\u0026`, as it does every `&`.
+    assert_eq!(render("{{ metaobjects.faq.two | json }}"), two);
+    assert_eq!(
+        render("{{ product.metafields.custom.faq.value | json }}"),
+        two
+    );
+    assert_eq!(
+        render("{{ product.metafields.custom.faqs.value | json }}"),
+        format!("[{one},{two}]")
+    );
+    assert_eq!(
+        render("{{ product.metafields.custom | json }}"),
+        format!(r#"{{"decs":["1.5","2.25"],"faq":{two},"faqs":[{one},{two}]}}"#)
+    );
+    assert_eq!(
+        render("{{ product.metafields.custom.decs.value | json }}"),
+        r#"["1.5","2.25"]"#
+    );
+    assert_eq!(
+        render("{{ product.metafields.custom.decs | json }}"),
+        refused
+    );
+    // Every metafield of a current type is refused; the deprecated types give their value.
+    assert_eq!(
+        render(
+            "{{ product.metafields.custom.faq | json }}|{{ metaobjects.faq.one.question | json }}|\
+             {{ product.metafields.legacy.text | json }}|{{ product.metafields.legacy.count | json }}"
+        ),
+        format!(r#"{refused}|{refused}|"legacy"|5"#)
+    );
+    // So are `metaobject.system` and `metaobjects.<type>`, which still give their properties.
+    assert_eq!(
+        render(
+            "{{ metaobjects.faq.one.system | json }}|{{ metaobjects.faq | json }}|\
+             {{ metaobjects.faq.one.system.handle }}"
+        ),
+        format!("{refused}|{refused}|one")
+    );
+    // A decimal still computes and prints as a number, and rich text reads as before.
+    assert_eq!(
+        render(
+            "{% assign d = product.metafields.custom.decs.value %}{{ d | first }}|\
+             {{ d | first | plus: 1 }}|{% if d.last > 2 %}more{% endif %}|{{ d | join: ',' }}|\
+             {{ metaobjects.faq.one.answer.value.children.first.children.first.value }}"
+        ),
+        "1.5|2.5|more|1.5,2.25|Care & use"
     );
 }
 

@@ -2,6 +2,7 @@
 
 use std::any::Any;
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
@@ -15,7 +16,7 @@ use serde_json::Value as Json;
 use super::color::ColorDrop;
 use super::localization::currency_value;
 use super::media::{ImageDrop, MediaDrop};
-use super::{EmptyDrop, PaginatedList, SiteRef, hash};
+use super::{EmptyDrop, PaginatedList, SiteRef, hash, json_not_allowed};
 use crate::render::cost;
 
 /// `resource.metafields`: namespaces of metafields.
@@ -100,6 +101,18 @@ impl Object for FieldsDrop {
         self.fields
             .get(key)
             .map(|field| MetafieldDrop::value(&self.site, field, self.name(key)))
+    }
+
+    /// `{{ product.metafields.custom | json }}`: the value of each metafield, by key, as
+    /// Shopify gives them.
+    fn to_json(&self) -> Json {
+        values_json(
+            self.fields.keys().map(|key| {
+                self.read(key);
+                (key.as_str(), self.fields.get(key).map(Cow::Borrowed))
+            }),
+            &self.site,
+        )
     }
 
     /// Iterating yields `[key, metafield]` pairs, like a hash.
@@ -204,7 +217,12 @@ impl MetafieldDrop {
         ) {
             return None;
         }
-        match self.typed_value() {
+        let value = self.typed_value();
+        if value.downcast::<Time>().is_some() {
+            return Some(value);
+        }
+        // A decimal stands for its number.
+        match value.to_liquid_value() {
             value @ (Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_)) => {
                 Some(value)
             }
@@ -384,7 +402,10 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
         "number_decimal" => match value {
             Json::String(text) => text
                 .parse::<f64>()
-                .map_or_else(|_| Value::from(value), Value::Float),
+                .map_or_else(|_| Value::from(value), Decimal::value),
+            Json::Number(number) if number.is_f64() => number
+                .as_f64()
+                .map_or_else(|| Value::from(value), Decimal::value),
             other => Value::from(other),
         },
         // A value `validate` refuses is shown as it is written, not as `false`.
@@ -465,6 +486,10 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
         | "metaobject_reference"
         | "mixed_reference" => reference_value(site, kind, value),
         "file_reference" => file_value(site, text()),
+        "rich_text_field" if value.is_object() => Value::object(RichText {
+            tree: Value::from(value),
+            raw: value.clone(),
+        }),
         _ => Value::from(value),
     }
 }
@@ -479,6 +504,159 @@ fn date_time_text(text: &str) -> String {
         format!("{text}+00:00")
     } else {
         text.to_string()
+    }
+}
+
+thread_local! {
+    /// How many metaobjects deep `| json` is: an entry that references itself, directly or
+    /// not, stops there.
+    static JSON_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// The JSON of named values, sorted by key, as Shopify gives a metaobject's fields and a
+/// namespace's metafields: `{"answer": ..., "order": 2, "question": "Can I return an item?"}`.
+fn values_json<'a>(
+    fields: impl Iterator<Item = (&'a str, Option<Cow<'a, Metafield>>)>,
+    site: &SiteRef,
+) -> Json {
+    let depth = JSON_DEPTH.with(Cell::get);
+    if depth >= 4 {
+        return Json::Null;
+    }
+    JSON_DEPTH.with(|cell| cell.set(depth + 1));
+    let mut values: Vec<(String, Json)> = fields
+        .filter_map(|(key, field)| {
+            let drop = MetafieldDrop {
+                site: site.clone(),
+                field: field?.into_owned(),
+            };
+            Some((key.to_string(), drop.typed_value().to_json()))
+        })
+        .collect();
+    JSON_DEPTH.with(|cell| cell.set(depth));
+    values.sort_by(|(a, _), (b, _)| a.cmp(b));
+    Json::Object(values.into_iter().collect())
+}
+
+/// The value of a `number_decimal`: a number, which `| json` gives as a string, as Shopify
+/// gives its decimals (`"1.5"`).
+struct Decimal(f64);
+
+impl Decimal {
+    fn value(number: f64) -> Value {
+        Value::object(Decimal(number))
+    }
+}
+
+impl Object for Decimal {
+    fn type_name(&self) -> &str {
+        "number"
+    }
+
+    fn to_value(&self) -> Option<Value> {
+        Some(Value::Float(self.0))
+    }
+
+    fn to_json(&self) -> Json {
+        Json::String(lsf_liquid::number::float_to_s(self.0))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// The value of a `rich_text_field`: its tree, whose `| json` HTML-escapes the text, as
+/// Shopify's does (`"Care &amp; use"`).
+struct RichText {
+    tree: Value,
+    raw: Json,
+}
+
+impl Object for RichText {
+    fn type_name(&self) -> &str {
+        "rich_text"
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        Some(self.tree.get(key)).filter(|value| !value.is_nil())
+    }
+
+    fn items(&self) -> Option<Arc<Vec<Value>>> {
+        self.tree.items()
+    }
+
+    fn size(&self) -> Option<usize> {
+        self.tree.size()
+    }
+
+    fn render(&self) -> Cow<'_, str> {
+        Cow::Owned(self.tree.to_str().into_owned())
+    }
+
+    fn to_json(&self) -> Json {
+        fn escaped(node: &Json) -> Json {
+            match node {
+                Json::Object(map) => {
+                    let text = map.get("type").and_then(Json::as_str) == Some("text");
+                    Json::Object(
+                        map.iter()
+                            .map(|(key, value)| match (text, key.as_str(), value) {
+                                (true, "value", Json::String(text)) => (
+                                    key.clone(),
+                                    Json::String(lsf_liquid::filters::escape_html(text)),
+                                ),
+                                _ => (key.clone(), escaped(value)),
+                            })
+                            .collect(),
+                    )
+                }
+                Json::Array(items) => Json::Array(items.iter().map(escaped).collect()),
+                other => other.clone(),
+            }
+        }
+        escaped(&self.raw)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// An object Shopify does not serialise, such as `metaobject.system`: `| json` refuses it.
+struct RefusesJson {
+    inner: Value,
+}
+
+impl RefusesJson {
+    fn value(inner: Value) -> Value {
+        Value::object(RefusesJson { inner })
+    }
+}
+
+impl Object for RefusesJson {
+    fn type_name(&self) -> &str {
+        "metaobject_system"
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        Some(self.inner.get(key)).filter(|value| !value.is_nil())
+    }
+
+    fn items(&self) -> Option<Arc<Vec<Value>>> {
+        self.inner.items()
+    }
+
+    fn render(&self) -> Cow<'_, str> {
+        Cow::Owned(self.inner.to_str().into_owned())
+    }
+
+    fn to_json(&self) -> Json {
+        json_not_allowed()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -613,8 +791,13 @@ impl Object for MetafieldDrop {
         Cow::Owned(self.typed_value().to_str().into_owned())
     }
 
+    /// Shopify refuses `| json` of a metafield: `{{ m.value | json }}` gives its value. Only
+    /// the deprecated types, which "return the metafield value directly", give it.
     fn to_json(&self) -> Json {
-        self.field.value.clone()
+        match self.field.kind.as_str() {
+            "string" | "integer" | "json_string" => self.typed_value().to_json(),
+            _ => json_not_allowed(),
+        }
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -644,7 +827,7 @@ impl Object for MetaobjectDrop {
 
     fn get(&self, key: &str) -> Option<Value> {
         if key == "system" {
-            return Some(hash([
+            return Some(RefusesJson::value(hash([
                 ("type", Value::from(&self.entry.kind)),
                 ("handle", Value::from(&self.entry.handle)),
                 (
@@ -669,7 +852,7 @@ impl Object for MetaobjectDrop {
                         Value::Nil
                     },
                 ),
-            ]));
+            ])));
         }
         // On a localized route (`/fr/...`), a field shows its translation when it has one.
         self.entry
@@ -678,6 +861,18 @@ impl Object for MetaobjectDrop {
                 let name = format!("{}/{}.{key}", self.entry.kind, self.entry.handle);
                 MetafieldDrop::value(&self.site, &field, name)
             })
+    }
+
+    /// `{{ entry | json }}`: the value of each field, by key, as Shopify gives them.
+    fn to_json(&self) -> Json {
+        let locale = &self.site.request.locale;
+        values_json(
+            self.entry
+                .fields
+                .keys()
+                .map(|key| (key.as_str(), self.entry.field_in(key, locale))),
+            &self.site,
+        )
     }
 
     fn identity(&self) -> Option<String> {
@@ -753,6 +948,10 @@ impl Object for MetaobjectTypeDrop {
                 .find(|entry| entry.handle == handle)
                 .map(|entry| MetaobjectDrop::value(&self.site, entry)),
         }
+    }
+
+    fn to_json(&self) -> Json {
+        json_not_allowed()
     }
 
     fn as_any(&self) -> &dyn Any {

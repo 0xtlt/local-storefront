@@ -69,6 +69,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   250 items, and pages it with a parameter of its own, `page_` and 8 hexadecimal digits
   (`/products/widget?page_1a2b3c4d=2`), as Shopify does, no longer `?page=2`. Code that builds
   `?page=` for these lists reads `paginate.page_param` instead.
+- **`| json` refuses a metafield, `metaobject.system` and `metaobjects.<type>`**, as Shopify
+  does: `{{ product.metafields.custom.x | json }}` gives
+  `{"error":"json not allowed for this object"}`, no longer the stored value. Write
+  `{{ product.metafields.custom.x.value | json }}`. The deprecated types `string`, `integer` and
+  `json_string` still give their value. A `number_decimal` value gives a string, as on Shopify:
+  `{{ m.value | json }}` is `"1.5"` and a `list.number_decimal` is `["1.5","2.25"]`, no longer
+  `1.5` and `[1.5,2.25]`.
 
 ### Fixed
 
@@ -237,6 +244,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   the classes of a `single_line_text_field`. `metafield_text` of a rich text puts each block on a
   line of its own (`Care` and `Wipe dry.`), and that of a `file_reference` is the file's URL, as
   on a store.
+- **`| json` gives a metaobject entry and a metafield namespace.** `{{ metaobjects.faq.two | json }}`,
+  `{{ product.metafields.custom.faq.value | json }}` and a list of references give the value of
+  each field by key, `{"order":2,"question":"Can I return an item?"}` and an array of those, and
+  `{{ product.metafields.custom | json }}` the values of the namespace, as on Shopify, no longer
+  `null`. Themes that hand metaobjects to JavaScript get them locally. The text of rich text is
+  HTML-escaped in its JSON, as on Shopify (`Care &amp; use`).
 
 #### The checkout of an app
 
