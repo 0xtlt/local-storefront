@@ -299,3 +299,41 @@ fn an_agent_file_without_a_template_is_not_found_and_says_why() {
         "{reason}"
     );
 }
+
+#[test]
+fn a_page_with_the_account_component_gets_its_script_and_its_customer() {
+    let root = theme_dir(
+        "account-component",
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{% if template.name == 'index' %}\
+                 <shopify-account menu=\"customer-account-main-menu\"><a href=\"/account\">Account</a></shopify-account>\
+                 {% endif %}{{ content_for_layout }}</body></html>",
+            ),
+            ("templates/index.liquid", "home"),
+            ("templates/cart.liquid", "cart"),
+        ],
+    );
+    let state = serve(&root, false);
+    let home = text(&get(&state, "/", "account"));
+    let cart = text(&get(&state, "/cart", "account"));
+    let script = get(
+        &state,
+        "/cdn/storefront/web-components/account.js",
+        "account",
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        home.contains(
+            "<script src=\"//shop.test/cdn/storefront/web-components/account.js\" type=\"module\" crossorigin fetchpriority=\"low\" async></script>\
+             <script id=\"shopify-customer-account-data\" type=\"application/json\">{\"customer\":null,\"shop\":{\"id\":\"gid:\\/\\/shopify\\/Shop\\/"
+        ),
+        "{home}"
+    );
+    // A page without the component gets neither.
+    assert!(!cart.contains("account.js"), "{cart}");
+    assert!(!cart.contains("shopify-customer-account-data"), "{cart}");
+    assert_eq!(script.status, 200);
+    assert!(text(&script).contains("customElements.define('shopify-account'"));
+}
