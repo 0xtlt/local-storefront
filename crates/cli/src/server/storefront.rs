@@ -501,10 +501,18 @@ fn page(visit: &Visit<'_>) -> Reply {
 /// objects (`predictive_search`, `recommendations`) rather than a page.
 fn special_section(visit: &Visit<'_>, template: &str) -> Reply {
     let target = target(visit.incoming);
+    // Without a section to render, a store answers `422` (an invalid parameter error), as HTML:
+    // "Invalid parameter error: Missing section_id param" for predictive search, an empty body
+    // for recommendations.
+    // https://shopify.dev/docs/api/ajax/reference/predictive-search#error-responses
     if target == Target::Page {
-        return Reply::text(
-            400,
-            "this endpoint needs a section_id or sections parameter",
+        return Reply::html(
+            422,
+            if template == "search" {
+                "Invalid parameter error: Missing section_id param"
+            } else {
+                ""
+            },
         );
     }
     let site = visit.site();
@@ -555,7 +563,7 @@ fn product_json(visit: &Visit<'_>, name: &str) -> Reply {
         None => (name.trim_end_matches(".js"), false),
     };
     let site = visit.site();
-    let Some(index) = site.store.product_index(handle) else {
+    let Some(index) = site.store.product_index_for_url(handle) else {
         return Reply::json(404, &json!({"status": 404, "error": "Not Found"}));
     };
     // `.json` is not `.js` wrapped: it has a format of its own.
@@ -577,7 +585,8 @@ fn products_json(visit: &Visit<'_>, collection: Option<&str>) -> Reply {
                 Some(drop) => drop.product_indexes(),
                 None => Vec::new(),
             },
-            None => return Reply::json(404, &json!({"status": 404, "error": "Not Found"})),
+            // A store answers an unknown collection with no products, not a `404`.
+            None => Vec::new(),
         },
         None => (0..site.store.products.len()).collect(),
     };

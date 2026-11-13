@@ -137,6 +137,15 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   back from the cart needs another way, as it would on a store.
 - **`/products/<handle>.js` has no `content` key**, as on Shopify: read `description`.
   `{{ product | json }}` keeps `content`, as shopify.dev's `json` filter shows.
+- **`/cart/update.js` with a variant id that names no variant answers `404`** with
+  `{"status":404,"message":"Cart Error","description":"Cannot find variant"}` and changes nothing,
+  as the Ajax Cart API reference shows. It answered `200`, so a theme's error branch never ran.
+  The cart page's form still goes back to the cart, without adding the unknown variant.
+- **`/collections/<unknown>/products.json` answers `200` with `{"products":[]}`**, no longer
+  `404`, as a store does.
+- **`/search/suggest` and `/recommendations/products` without `section_id` answer `422`**, as
+  HTML, no longer `400` as text: `Invalid parameter error: Missing section_id param` for
+  predictive search, an empty body for recommendations, as a store does.
 
 ### Fixed
 
@@ -368,6 +377,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   (`/fr-be/products/tee`), so a quick view or a recently-viewed list links to the product
   instead of `undefined`. `quantity_price_breaks` is `[]` for a variant without breaks, else
   `{"minimum_quantity", "price"}` in cents.
+- **A product's URL works in any case**: `/products/TEE` and `/products/TEE.js` answer the product
+  `tee`, as on Shopify, where they were `404`. Collection URLs keep their case, as on Shopify.
+- **Storefront search reads `-` and `NOT`**: `tee -blue` and `tee NOT blue` list the matches of
+  `tee` without those of `blue`, as Shopify's search syntax says, where lsf found nothing.
+  `title:<word>` finds the products with that word in their title, not only those titled
+  `<word>`, and a `type` the store does not know is ignored: with no type it knows, the search
+  covers them all, as on Shopify.
 
 #### The checkout of an app
 

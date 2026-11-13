@@ -1254,6 +1254,13 @@ impl Store {
         self.product_handles.get(handle).copied()
     }
 
+    /// The product a URL names: its handle in any case, as a store answers
+    /// `/products/TEE` with the product `tee`. Collection URLs keep their case.
+    pub fn product_index_for_url(&self, handle: &str) -> Option<usize> {
+        self.product_index(handle)
+            .or_else(|| self.product_index(&handle.to_lowercase()))
+    }
+
     pub fn product_by_handle(&self, handle: &str) -> Option<&Product> {
         self.product_index(handle)
             .map(|index| &self.products[index])
