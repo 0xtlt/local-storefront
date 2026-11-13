@@ -88,6 +88,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **A section rendered at `/variants/<id>?section_id=` has no `product`**, as on Shopify. A
   pickup availability section that reads `product` renders empty there on a store, and now on
   lsf too: read `product_variant` and `product_variant.product`.
+- **A path typed in a `url` setting keeps its path on a localized route**, as on Shopify. On
+  `/fr/` or a market subfolder (`/en-be/`), `/pages/contact` prints `/pages/contact`, no longer
+  `/fr/pages/contact`; a value from a dynamic source (`{{ request.path }}`) is printed as it is,
+  no longer prefixed a second time (`/fr/fr`). A picked resource (`shopify://…`), the home page
+  (`/`) and the schema's `default` (`/collections`, `/collections/all`) keep the prefix. A theme
+  test that expected `/fr/pages/contact` from a typed path needs `/pages/contact`.
 
 ### Fixed
 

@@ -70,15 +70,36 @@ impl Dynamic<'_> {
     }
 }
 
-/// Resolves `shopify://` links and prefixes storefront paths with the locale root.
-pub fn resolve_url(site: &Site, raw: &str) -> String {
+/// Where the value of a `url` setting comes from, which decides whether it gets the locale prefix.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UrlOrigin {
+    /// Saved in the settings: picked in the theme editor (`shopify://…`) or entered as text.
+    Saved,
+    /// The `default` of the schema, `/collections` or `/collections/all`.
+    Default,
+    /// A dynamic source (`{{ page.url }}`).
+    Dynamic,
+}
+
+/// The URL a `url` setting prints, as the `url` object's `url` gives it
+/// (<https://shopify.dev/docs/api/liquid/objects/url>): "URLs that point to store resources,
+/// the home page, and the collection pages include the path prefix of the current locale",
+/// "relative paths and anchors are returned exactly as they were entered". So a resource picked
+/// in the theme editor (`shopify://…`), the home page (`/`, a `home_link`) and the `default`
+/// (the docs accept only `/collections` and `/collections/all`, the collection pages) are
+/// prefixed; a path entered as text (a `relative_link` "even if the path matches a resource"),
+/// a path from a dynamic source, an anchor and an absolute URL are printed as they are.
+fn resolve_url(site: &Site, raw: &str, origin: UrlOrigin) -> String {
     let path = match raw.strip_prefix("shopify://") {
         // The page of a metaobject entry: `shopify://metaobjects/<type>/<handle>`.
         Some(rest) if rest.starts_with("metaobjects/") => {
             format!("/pages/{}", &rest["metaobjects/".len()..])
         }
         Some(rest) => format!("/{rest}"),
-        None => raw.to_string(),
+        None if origin == UrlOrigin::Default || (origin == UrlOrigin::Saved && raw == "/") => {
+            raw.to_string()
+        }
+        None => return raw.to_string(),
     };
     if path.starts_with('/') && !path.starts_with("//") {
         site.request.localized(&path)
@@ -333,6 +354,7 @@ fn convert(
     dynamic: &mut Dynamic<'_>,
     def: &SettingDef,
     value: Value,
+    origin: UrlOrigin,
 ) -> Value {
     let site = &state.site;
     let store = &site.store;
@@ -390,7 +412,7 @@ fn convert(
             None => Value::Nil,
         },
         "url" => match value.as_str() {
-            Some(raw) if !raw.is_empty() => Value::from(resolve_url(site, raw)),
+            Some(raw) if !raw.is_empty() => Value::from(resolve_url(site, raw, origin)),
             Some(_) => Value::Nil,
             None => value,
         },
@@ -633,7 +655,11 @@ pub fn resolve_translated(
                 .get(&def.id)
                 .or(def.default.as_ref())
                 .map_or(Value::Nil, Value::from);
-            (def.id.as_str(), convert(state, &mut dynamic, def, value))
+            let origin = url_origin(def, values);
+            (
+                def.id.as_str(),
+                convert(state, &mut dynamic, def, value, origin),
+            )
         });
     dynamic.schemes = group.as_ref().map(|(_, schemes)| schemes.clone());
     let mut out = Hash::with_capacity(defs.len());
@@ -662,9 +688,21 @@ pub fn resolve_translated(
             }
             Some(other) => Value::from(other),
         };
-        out.insert(def.id.clone(), convert(state, &mut dynamic, def, value));
+        out.insert(
+            def.id.clone(),
+            convert(state, &mut dynamic, def, value, url_origin(def, values)),
+        );
     }
     Value::hash(out)
+}
+
+/// Where the value of a setting comes from, for a `url` setting: see [`resolve_url`].
+fn url_origin(def: &SettingDef, values: &Map<String, Json>) -> UrlOrigin {
+    match values.get(&def.id).or(def.default.as_ref()) {
+        Some(Json::String(text)) if text.contains("{{") => UrlOrigin::Dynamic,
+        _ if values.contains_key(&def.id) => UrlOrigin::Saved,
+        _ => UrlOrigin::Default,
+    }
 }
 
 /// The theme settings: the definitions from `config/settings_schema.json`, the values from

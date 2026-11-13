@@ -2156,6 +2156,7 @@ fn a_profile_counts_the_products_of_a_collection_a_page_fetches() {
         (products, rendered.body.matches("<p>").count())
     };
     let each = "<p>{{ p.title }}</p>";
+    // A dynamic source is a `relative_link` too: `request.path` already has the prefix.
     // The issue's repro: a page of 4.
     assert_eq!(
         products_of(
@@ -4380,6 +4381,125 @@ fn the_entries_of_a_metaobject_type_have_pages() {
         rendered.body.contains("<u>/fr/pages/event/summer</u>"),
         "{}",
         rendered.body
+    );
+}
+
+#[test]
+fn a_url_setting_entered_as_text_keeps_its_path_on_a_localized_route() {
+    // https://shopify.dev/docs/api/liquid/objects/url: "URLs that point to store resources, the
+    // home page, and the collection pages include the path prefix of the current locale",
+    // "relative paths and anchors are returned exactly as they were entered". A path entered as
+    // text is a `relative_link` "even if the path matches a resource", except `/`, a
+    // `home_link`. The `default` can only be `/collections` or `/collections/all`, the
+    // collection pages (input-settings#url).
+    let overlay = serde_json::json!({"localization": {
+        "countries": [{"iso_code": "US"}, {"iso_code": "BE"}],
+        "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+        "markets": [{"handle": "us", "countries": ["US"]},
+            {"handle": "europe", "countries": ["BE"], "subfolder_suffix": "be"}]
+    }});
+    let schema = serde_json::json!([
+        {"name": "theme_info"},
+        {"name": "Links", "settings": [
+            {"type": "url", "id": "typed_link", "label": "Typed"},
+            {"type": "url", "id": "picked_link", "label": "Picked"},
+            {"type": "url", "id": "external_link", "label": "External"},
+            {"type": "url", "id": "anchor_link", "label": "Anchor"},
+            {"type": "url", "id": "home_link", "label": "Home"},
+            {"type": "url", "id": "catalog_link", "label": "Catalog", "default": "/collections/all"},
+            {"type": "url", "id": "collections_link", "label": "Collections", "default": "/collections"}
+        ]}
+    ])
+    .to_string();
+    let data = serde_json::json!({"current": {
+        "typed_link": "/pages/contact",
+        "picked_link": "shopify://collections/all",
+        "external_link": "https://example.com/x",
+        "anchor_link": "#faq",
+        "home_link": "/"
+    }})
+    .to_string();
+    let section = "<i>{{ section.settings.link }}|{{ section.settings.dynamic }}|\
+                   {% for block in section.blocks %}{{ block.settings.link }}{% endfor %}</i>\n\
+                   {% schema %}{\"name\": \"Links\", \"settings\": [{\"type\": \"url\", \"id\": \"link\"}, \
+                   {\"type\": \"url\", \"id\": \"dynamic\"}], \"blocks\": [{\"type\": \"link\", \"name\": \"Link\", \
+                   \"settings\": [{\"type\": \"url\", \"id\": \"link\"}]}]}{% endschema %}";
+    let template = serde_json::json!({
+        "sections": { "links": {
+            "type": "links",
+            "settings": { "link": "/collections/all", "dynamic": "{{ request.path }}" },
+            "blocks": { "b": { "type": "link", "settings": { "link": "shopify://pages/contact" } } },
+            "block_order": ["b"]
+        } },
+        "order": ["links"]
+    })
+    .to_string();
+    let fixture = theme_with_data(
+        "url-settings-typed",
+        &overlay,
+        &[
+            ("config/settings_schema.json", &schema),
+            ("config/settings_data.json", &data),
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            ("sections/links.liquid", section),
+            ("templates/index.json", &template),
+        ],
+    );
+    let source = "{{ settings.typed_link }}|{{ settings.picked_link }}|{{ settings.external_link }}|\
+                  {{ settings.anchor_link }}|{{ settings.home_link }}|{{ settings.catalog_link }}|\
+                  {{ settings.collections_link }}";
+    let session = Session::initial(&fixture.store);
+    let render = |root: &str, market: Option<&str>| {
+        let mut under = request("/");
+        under.root = root.to_string();
+        under.market = market.map(str::to_string);
+        if root == "/fr" {
+            under.locale = "fr".to_string();
+        }
+        let settings = fixture.liquid_for(under.clone(), session.clone(), source);
+        let page = fixture.render_with(under, session.clone(), &Target::Page);
+        assert_eq!(page.status, 200, "{}", page.body);
+        let section = page
+            .body
+            .split_once("<i>")
+            .and_then(|(_, rest)| rest.split_once("</i>"))
+            .map(|(inside, _)| inside.to_string())
+            .unwrap_or_else(|| page.body.clone());
+        (settings, section)
+    };
+    // A dynamic source is a `relative_link` too: `request.path` already has the prefix.
+    // The issue's repro: `/pages/contact|/fr/collections/all` on `/fr/`.
+    assert_eq!(
+        render("/fr", None),
+        (
+            "/pages/contact|/fr/collections/all|https://example.com/x|#faq|/fr|\
+             /fr/collections/all|/fr/collections"
+                .to_string(),
+            "/collections/all|/fr|/fr/pages/contact".to_string()
+        )
+    );
+    // The same on a market subfolder.
+    assert_eq!(
+        render("/en-be", Some("europe")),
+        (
+            "/pages/contact|/en-be/collections/all|https://example.com/x|#faq|/en-be|\
+             /en-be/collections/all|/en-be/collections"
+                .to_string(),
+            "/collections/all|/en-be|/en-be/pages/contact".to_string()
+        )
+    );
+    // Without a prefix, every value is its path.
+    assert_eq!(
+        render("", None),
+        (
+            "/pages/contact|/collections/all|https://example.com/x|#faq|/|/collections/all|\
+             /collections"
+                .to_string(),
+            "/collections/all|/|/pages/contact".to_string()
+        )
     );
 }
 
