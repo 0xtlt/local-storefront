@@ -282,12 +282,13 @@ fn search_results_follow_sort_by() {
     let prices = "{{ search.sort_by }}|{% for result in search.results %}\
                   {{ result.object_type }}:{{ result.price | default: 0 }} {% endfor %}";
 
-    // Pages are asked for first: they still come after the products.
+    // Pages are asked for first: they still come after the products. The scented candle
+    // (2800), sold out, comes last (`unavailable_products` is `last` by default).
     let relevance = list("/search?q=a&type=page,product", prices);
     assert_eq!(
         relevance,
         "relevance|page:0 page:0 page:0 product:3200 product:6800 product:2400 product:2200 \
-         product:2800 product:3400 product:1600 product:2500 "
+         product:3400 product:1600 product:2500 product:2800 "
     );
     // Without `sort_by`, or with a value the search page does not know, the order is relevance.
     assert_eq!(
@@ -306,16 +307,16 @@ fn search_results_follow_sort_by() {
             "/search?q=a&type=page,product&sort_by=price-ascending",
             prices
         ),
-        "price-ascending|product:1600 product:2200 product:2400 product:2500 product:2800 \
-         product:3200 product:3400 product:6800 page:0 page:0 page:0 "
+        "price-ascending|product:1600 product:2200 product:2400 product:2500 product:3200 \
+         product:3400 product:6800 page:0 page:0 page:0 product:2800 "
     );
     assert_eq!(
         list(
             "/search?q=a&type=page,product&sort_by=price-descending",
             prices
         ),
-        "price-descending|product:6800 product:3400 product:3200 product:2800 product:2500 \
-         product:2400 product:2200 product:1600 page:0 page:0 page:0 "
+        "price-descending|product:6800 product:3400 product:3200 product:2500 product:2400 \
+         product:2200 product:1600 page:0 page:0 page:0 product:2800 "
     );
 
     // The page is cut out of the sorted list.
@@ -325,7 +326,7 @@ fn search_results_follow_sort_by() {
             "{% paginate search.results by 3 %}{% for result in search.results %}\
              {{ result.price }} {% endfor %}{% endpaginate %}"
         ),
-        "2800 2500 2400 "
+        "2500 2400 2200 "
     );
 
     assert_eq!(
@@ -412,6 +413,68 @@ fn storefront_filters_narrow_search_results() {
     assert_eq!(render("/search?q=zzzz", names), "");
     assert_eq!(render("/search?q=a&type=page", names), "");
     assert_eq!(render("/search", names), "");
+}
+
+#[test]
+fn search_hides_unavailable_products_or_puts_them_last() {
+    // `unavailable_products`: "hide - Exclude unavailable products or variants. last - Show
+    // unavailable products or variants after all other matching results. Defaults to last."
+    // https://shopify.dev/docs/storefronts/themes/navigation-search/search
+    // https://github.com/0xtlt/local-storefront/issues/160
+    let fixture = fixture();
+    let list =
+        |path: &str, source: &str| fixture.liquid(path, Session::initial(&fixture.store), source);
+    // The scented candle is the demo's sold-out product, the ceramic mug an available one.
+    let results = "{{ search.results_count }}|{% for r in search.results %}\
+                   {{ r.handle }}:{{ r.available }} {% endfor %}";
+    let candle = "scented-candle:false ";
+    let mug = "ceramic-mug:true ";
+    assert_eq!(
+        list(
+            "/search?q=handle:ceramic-mug OR handle:scented-candle&type=product",
+            results
+        ),
+        format!("2|{mug}{candle}")
+    );
+    assert_eq!(
+        list(
+            "/search?q=handle:ceramic-mug OR handle:scented-candle&type=product&options[unavailable_products]=last",
+            results
+        ),
+        format!("2|{mug}{candle}")
+    );
+    assert_eq!(
+        list(
+            "/search?q=handle:ceramic-mug OR handle:scented-candle&type=product&options[unavailable_products]=hide",
+            results
+        ),
+        format!("1|{mug}")
+    );
+    // `show` keeps the order of the data, where the candle comes after the mug too: the
+    // candle first in a price sort shows it in its place.
+    assert_eq!(
+        list(
+            "/search?q=handle:ceramic-mug OR handle:scented-candle&type=product&sort_by=price-descending\
+             &options[unavailable_products]=show",
+            results
+        ),
+        format!("2|{candle}{mug}")
+    );
+    assert_eq!(
+        list(
+            "/search?q=handle:ceramic-mug OR handle:scented-candle&type=product&sort_by=price-descending",
+            results
+        ),
+        format!("2|{mug}{candle}")
+    );
+    // Hidden products are not counted, nor paginated.
+    assert_eq!(
+        list(
+            "/search?q=a&type=product&options[unavailable_products]=hide",
+            "{{ search.results_count }}{% for r in search.results %} {{ r.available }}{% endfor %}"
+        ),
+        "7 true true true true true true true"
+    );
 }
 
 #[test]

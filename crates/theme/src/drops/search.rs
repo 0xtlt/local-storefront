@@ -114,13 +114,42 @@ fn applied_sort_by(order: SortOrder) -> &'static str {
     }
 }
 
+/// What a search does with the products that cannot be bought (`unavailable_products`): `show`
+/// them in their place, `hide` them, or put them `last`, the default.
+/// https://shopify.dev/docs/storefronts/themes/navigation-search/search
+/// https://shopify.dev/docs/api/ajax/reference/predictive-search
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Unavailable {
+    Show,
+    Hide,
+    Last,
+}
+
+impl Unavailable {
+    fn parse(value: Option<&str>) -> Unavailable {
+        match value {
+            Some("show") => Unavailable::Show,
+            Some("hide") => Unavailable::Hide,
+            _ => Unavailable::Last,
+        }
+    }
+}
+
+/// Whether a result is a product that cannot be bought.
+fn unavailable(site: &SiteRef, result: &Value) -> bool {
+    result
+        .downcast::<ProductDrop>()
+        .is_some_and(|drop| !site.store.products[drop.index].available())
+}
+
 /// Runs a search and returns the matching resources as drops, grouped by type. Products are
-/// sorted by `order`.
+/// sorted by `order`, then the unavailable ones hidden or put after the others.
 pub fn run(
     site: &SiteRef,
     query: &str,
     types: &[SearchType],
     order: SortOrder,
+    unavailable: Unavailable,
 ) -> Vec<(SearchType, Vec<Value>)> {
     cost::asked(cost::SEARCH);
     let clauses = clauses(query);
@@ -179,6 +208,14 @@ pub fn run(
                     .map(|(index, _)| index)
                     .collect();
                 sort_products(&store.products, &mut indexes, order);
+                match unavailable {
+                    Unavailable::Show => {}
+                    Unavailable::Hide => indexes.retain(|&index| store.products[index].available()),
+                    // A stable sort: the order is kept within each part.
+                    Unavailable::Last => {
+                        indexes.sort_by_key(|&index| !store.products[index].available())
+                    }
+                }
                 indexes
                     .into_iter()
                     .map(|index| ProductDrop::value(site, index))
@@ -310,7 +347,9 @@ pub fn search_value(site: &SiteRef) -> Value {
     if !active.is_empty() {
         searched.retain(|kind| *kind == SearchType::Product);
     }
-    let found = run(site, &query, &searched, order);
+    let unavailable_products =
+        Unavailable::parse(site.request.param("options[unavailable_products]"));
+    let found = run(site, &query, &searched, order, unavailable_products);
     // The filters are those of the products found, before the URL's filters narrow them.
     let base: Vec<usize> = found
         .iter()
@@ -320,7 +359,7 @@ pub fn search_value(site: &SiteRef) -> Value {
         .collect();
     let products = &site.store.products;
     // Pagination slices this list, so it is sorted before `paginate` sees it.
-    let results: Vec<Value> = found
+    let mut results: Vec<Value> = found
         .into_iter()
         .flat_map(|(_, results)| results)
         .filter(|result| {
@@ -334,6 +373,10 @@ pub fn search_value(site: &SiteRef) -> Value {
     } else {
         storefront_filters(site, base, active)
     };
+    // `last` puts them "after all other matching results", pages and articles too.
+    if unavailable_products == Unavailable::Last {
+        results.sort_by_key(|result| unavailable(site, result));
+    }
     hash([
         ("terms", Value::from(&query)),
         ("performed", Value::Bool(performed)),
@@ -369,7 +412,17 @@ pub fn predictive_search_value(site: &SiteRef) -> Value {
     let mut collections = Vec::new();
     let mut pages = Vec::new();
     let mut articles = Vec::new();
-    for (kind, mut results) in run(site, &query, &types, SortOrder::Manual) {
+    let unavailable_products = Unavailable::parse(
+        site.request
+            .param("resources[options][unavailable_products]"),
+    );
+    for (kind, mut results) in run(
+        site,
+        &query,
+        &types,
+        SortOrder::Manual,
+        unavailable_products,
+    ) {
         results.truncate(limit);
         match kind {
             SearchType::Product => products = results,

@@ -845,6 +845,63 @@ fn suggestions_have_shopifys_featured_image_variants_and_published_at() {
 }
 
 #[test]
+fn suggest_json_hides_unavailable_products_or_puts_them_last() {
+    // `resources[options][unavailable_products]`: "hide: Hide unavailable products. last: Show
+    // unavailable products below other matching results. The default value is last."
+    // https://shopify.dev/docs/api/ajax/reference/predictive-search
+    // https://github.com/0xtlt/local-storefront/issues/160
+    let state = server();
+    let session = "suggest-unavailable";
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"products": [
+            {
+                "id": 200, "title": "Sold out quokka", "price": 1200,
+                "variants": [{"id": 201, "inventory_quantity": 0}]
+            },
+            {
+                "id": 100, "title": "Quokka", "options": ["Size"], "price": 2000,
+                "variants": [
+                    {"id": 101, "options": ["S"], "inventory_quantity": 50},
+                    {"id": 102, "options": ["M"], "inventory_quantity": 50}
+                ]
+            }
+        ]}}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let handles = |options: &str| -> Vec<String> {
+        let path = format!("/search/suggest.json?q=quokka&resources[type]=product{options}");
+        body_json(&get(&state, &path, session))["resources"]["results"]["products"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|product| product["handle"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let last = vec!["quokka".to_string(), "sold-out-quokka".to_string()];
+    assert_eq!(handles(""), last);
+    assert_eq!(
+        handles("&resources[options][unavailable_products]=last"),
+        last
+    );
+    assert_eq!(
+        handles("&resources[options][unavailable_products]=hide"),
+        vec!["quokka".to_string()]
+    );
+    assert_eq!(
+        handles("&resources[options][unavailable_products]=show"),
+        vec!["sold-out-quokka".to_string(), "quokka".to_string()]
+    );
+    // The limit counts what is left once they are hidden.
+    assert_eq!(
+        handles("&resources[options][unavailable_products]=hide&resources[limit]=1"),
+        vec!["quokka".to_string()]
+    );
+}
+
+#[test]
 fn a_submitted_form_shows_its_outcome_once() {
     let state = server();
     let mut submit = request(

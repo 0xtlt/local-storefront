@@ -101,6 +101,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   the page, as on Shopify (`Belgium`, `Canada`, `United States`; `Belgique`, `Canada`,
   `États-Unis` on `/fr/`), no longer in the order of the store data. A theme test that expects
   the order of `localization.countries` needs the order of the names.
+- **A search puts the products that cannot be bought last**, as Shopify does by default
+  (`unavailable_products` is `last`): on `/search` after every other result, pages and articles
+  included, and in `/search/suggest.json` after the other products. `hide` leaves them out of the
+  results and of `search.results_count`, and `show` keeps them in their place. lsf ignored the
+  option. A theme test that expects a sold-out product in its place among the results needs
+  `options[unavailable_products]=show`.
 
 ### Fixed
 
