@@ -114,25 +114,36 @@ pub fn show(visit: &Visit<'_>) -> Reply {
     )
 }
 
-/// Adds one item to the session's cart. Returns the key of the line it ended up in.
-fn add_item(visit: &Visit<'_>, item: &Json) -> Result<String, Reply> {
+/// Why an item of `/cart/add.js` did not all go into the cart.
+enum AddError {
+    /// Nothing of the request goes into the cart, the items before it included: a store
+    /// answers a sold-out item among others with `422` and an unchanged cart.
+    Refused(Reply),
+    /// The item went in, capped at what the cart can hold: what is in the cart stays.
+    Capped(Reply),
+}
+
+/// Adds one item to `lines`, the cart being built. Returns the key of the line it ended up in.
+fn add_item(visit: &Visit<'_>, lines: &mut Vec<CartLine>, item: &Json) -> Result<String, AddError> {
+    let refused = |reply| Err(AddError::Refused(reply));
     let store = &visit.store;
     let Some(variant_id) = integer(item, "id").map(|id| id as u64) else {
-        return Err(error(
+        return refused(error(
             400,
             "Parameter Missing or Invalid: Required parameter missing or invalid: items",
         ));
     };
+    // A `422`, not a `404`, as the Ajax Cart API reference shows for `add.js`.
     let Some((product, variant)) = store.variant(variant_id) else {
-        return Err(error(404, "Cannot find variant"));
+        return refused(error(422, "Cannot find variant"));
     };
     let quantity = integer(item, "quantity").unwrap_or(1);
     if quantity < 1 {
-        return Err(error(422, "Quantity must be 1 or more"));
+        return refused(error(422, "Quantity must be 1 or more"));
     }
     let quantity = quantity as u32;
     if !variant.available {
-        return Err(error(
+        return refused(error(
             422,
             format!(
                 "The product '{}' is already sold out.",
@@ -144,7 +155,7 @@ fn add_item(visit: &Visit<'_>, item: &Json) -> Result<String, Reply> {
         PlanParam::Absent | PlanParam::Cleared => None,
         PlanParam::Id(id) if store.selling_plan_of(product, id).is_some() => Some(id),
         PlanParam::Id(_) | PlanParam::Invalid => {
-            return Err(error(
+            return refused(error(
                 422,
                 format!(
                     "The selling plan is not available for {}.",
@@ -154,7 +165,7 @@ fn add_item(visit: &Visit<'_>, item: &Json) -> Result<String, Reply> {
         }
     };
     if selling_plan.is_none() && product.requires_selling_plan {
-        return Err(error(
+        return refused(error(
             422,
             "Variant can only be purchased with a selling plan.",
         ));
@@ -166,9 +177,7 @@ fn add_item(visit: &Visit<'_>, item: &Json) -> Result<String, Reply> {
         selling_plan,
     };
     let key = line_key(&line);
-    let in_cart: u32 = visit
-        .session()
-        .cart_lines
+    let in_cart: u32 = lines
         .iter()
         .filter(|existing| existing.variant_id == variant_id)
         .map(|existing| existing.quantity)
@@ -185,27 +194,21 @@ fn add_item(visit: &Visit<'_>, item: &Json) -> Result<String, Reply> {
             total - in_cart,
             Some(error(422, capped_notice(total - in_cart))),
         ),
-        Fit::Refused => return Err(error(422, full_notice())),
+        Fit::Refused => return refused(error(422, full_notice())),
     };
-    visit.update_session(|session| {
-        match session
-            .cart_lines
-            .iter_mut()
-            .find(|existing| line_key(existing) == key)
-        {
-            Some(existing) => existing.quantity += to_add,
-            // New lines go to the top of the cart.
-            None => session.cart_lines.insert(
-                0,
-                CartLine {
-                    quantity: to_add,
-                    ..line.clone()
-                },
-            ),
-        }
-    });
+    match lines.iter_mut().find(|existing| line_key(existing) == key) {
+        Some(existing) => existing.quantity += to_add,
+        // New lines go to the top of the cart.
+        None => lines.insert(
+            0,
+            CartLine {
+                quantity: to_add,
+                ..line
+            },
+        ),
+    }
     match problem {
-        Some(problem) => Err(problem),
+        Some(problem) => Err(AddError::Capped(problem)),
         None => Ok(key),
     }
 }
@@ -279,18 +282,28 @@ pub fn add(visit: &Visit<'_>) -> Reply {
         _ => vec![params.clone()],
     };
     let many = params.get("items").is_some();
+    // The items go into a copy of the cart, which replaces the cart once they all went in: an
+    // item refused leaves the cart as it was, as a store does.
+    let mut lines = visit.session().cart_lines;
     let mut keys = Vec::new();
     for item in &items {
-        match add_item(visit, item) {
-            Ok(key) => keys.push(key),
-            Err(reply) => {
-                if wants_json(visit) {
-                    return reply;
-                }
-                return Reply::redirect(&visit.localized("/cart"));
+        let reply = match add_item(visit, &mut lines, item) {
+            Ok(key) => {
+                keys.push(key);
+                continue;
             }
+            Err(AddError::Refused(reply)) => reply,
+            Err(AddError::Capped(reply)) => {
+                visit.update_session(|session| session.cart_lines = lines);
+                reply
+            }
+        };
+        if wants_json(visit) {
+            return reply;
         }
+        return Reply::redirect(&visit.localized("/cart"));
     }
+    visit.update_session(|session| session.cart_lines = lines);
     if !wants_json(visit) {
         let return_to = text(&params, "return_to").unwrap_or_else(|| visit.localized("/cart"));
         return Reply::redirect(&return_to);

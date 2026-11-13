@@ -34,7 +34,7 @@ export function cartServer() {
     if (path === '/cart.js') return json(200, cart());
     if (path === '/cart/add.js') {
       const variant = variants[body.id];
-      if (!variant) return json(404, { description: 'Cannot find variant' });
+      if (!variant) return json(422, { status: 422, message: 'Cart Error', description: 'Cannot find variant' });
       const existing = state.lines.find((line) => line.id === body.id);
       const quantity = (existing?.quantity ?? 0) + body.quantity;
       if (quantity > variant.stock) {

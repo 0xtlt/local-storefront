@@ -228,7 +228,8 @@
         signal,
       );
       if (ok) continue;
-      if (status === 404) {
+      // An unknown variant: a `422` with this description, as on Shopify.
+      if (status === 404 || data?.description === 'Cannot find variant') {
         refuse('INVALID', ['lines', String(line.index), 'merchandiseId'], refusal(data, status));
       } else if (status === 422 || status === 400) {
         refuse('INVALID', ['lines', String(line.index), 'quantity'], refusal(data, status));

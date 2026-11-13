@@ -255,8 +255,13 @@ fn the_cart_api_reports_errors_like_shopify() {
         "The product 'Scented Candle' is already sold out."
     );
 
-    let missing = post(&state, "/cart/add.js", json!({"id": 1}), "errors");
-    assert_eq!(missing.status, 404);
+    // An unknown variant is a `422`, as the Ajax Cart API reference shows (#150).
+    let missing = post(&state, "/cart/add.js", json!({"id": 123}), "errors");
+    assert_eq!(missing.status, 422);
+    assert_eq!(
+        body_json(&missing),
+        json!({"status": 422, "message": "Cart Error", "description": "Cannot find variant"})
+    );
 
     // Only one overshirt in size L is in stock.
     let large = variant_id(&state, "OVS-L");
@@ -270,6 +275,71 @@ fn the_cart_api_reports_errors_like_shopify() {
         body_json(&too_many)["description"],
         "The maximum quantity of this item is already in your cart."
     );
+}
+
+#[test]
+fn cart_add_with_an_item_refused_adds_none_of_the_items() {
+    // #149: in-stock, sold out, in-stock. A store answers `422` and its cart holds nothing.
+    let state = server();
+    let session = "bundle";
+    let mug = variant_id(&state, "MUG-OAT");
+    let candle = variant_id(&state, "CNDL-FIG");
+    let large = variant_id(&state, "OVS-L");
+    let item_count = || body_json(&get(&state, "/cart.js", session))["item_count"].clone();
+
+    let sold_out = post(
+        &state,
+        "/cart/add.js",
+        json!({"items": [
+            {"id": mug, "quantity": 1},
+            {"id": candle, "quantity": 1},
+            {"id": large, "quantity": 1}
+        ]}),
+        session,
+    );
+    assert_eq!(sold_out.status, 422, "{}", text(&sold_out));
+    assert_eq!(
+        body_json(&sold_out)["description"],
+        "The product 'Scented Candle' is already sold out."
+    );
+    assert_eq!(item_count(), 0);
+
+    // An unknown variant among the items: the same, with a `422` (#150).
+    let unknown = post(
+        &state,
+        "/cart/add.js",
+        json!({"items": [{"id": mug, "quantity": 1}, {"id": 123, "quantity": 1}]}),
+        session,
+    );
+    assert_eq!(unknown.status, 422, "{}", text(&unknown));
+    assert_eq!(body_json(&unknown)["description"], "Cannot find variant");
+    assert_eq!(item_count(), 0);
+
+    // What the cart held before stays.
+    assert_eq!(
+        post(&state, "/cart/add.js", json!({"id": mug}), session).status,
+        200
+    );
+    let refused = post(
+        &state,
+        "/cart/add.js",
+        json!({"items": [{"id": large, "quantity": 1}, {"id": candle, "quantity": 1}]}),
+        session,
+    );
+    assert_eq!(refused.status, 422);
+    let cart = body_json(&get(&state, "/cart.js", session));
+    assert_eq!(cart["item_count"], 1);
+    assert_eq!(cart["items"][0]["sku"], "MUG-OAT");
+
+    // Items that all go in still do.
+    let added = post(
+        &state,
+        "/cart/add.js",
+        json!({"items": [{"id": mug, "quantity": 1}, {"id": large, "quantity": 1}]}),
+        session,
+    );
+    assert_eq!(added.status, 200, "{}", text(&added));
+    assert_eq!(item_count(), 3);
 }
 
 #[test]
@@ -3031,7 +3101,7 @@ fn responses_say_how_long_to_keep_them_as_shopify_does() {
         )
     );
     let refused = post(&state, "/cart/add.js", json!({"id": 1}), "cache");
-    assert_eq!(refused.status, 404);
+    assert_eq!(refused.status, 422);
     assert_eq!(
         header(&refused, "cache-control"),
         Some("no-cache, no-store")
