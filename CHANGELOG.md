@@ -107,6 +107,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   results and of `search.results_count`, and `show` keeps them in their place. lsf ignored the
   option. A theme test that expects a sold-out product in its place among the results needs
   `options[unavailable_products]=show`.
+- **`/search/suggest.json` answers `422` to a missing `q` and to invalid parameters**, as the
+  Predictive Search API reference says: a missing or blank `q`, a `resources[limit]` that is not
+  a number, or a `resources[type]`, `resources[limit_scope]`, `resources[options][fields]` or
+  `resources[options][unavailable_products]` it does not take, with
+  `{"status":422,"message":"Invalid parameter error","description":…}` and no `resources`. It
+  answered `200`. A limit out of range is still brought between 1 and 10. Code that requests
+  suggestions for an empty input must not read `resources` from the answer.
 
 ### Fixed
 

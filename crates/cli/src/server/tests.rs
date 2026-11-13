@@ -902,6 +902,83 @@ fn suggest_json_hides_unavailable_products_or_puts_them_last() {
 }
 
 #[test]
+fn suggest_json_answers_422_to_invalid_parameters() {
+    // https://shopify.dev/docs/api/ajax/reference/predictive-search: `q` is required, and "All
+    // errors related to the request parameters are returned with a 422 status code".
+    // https://github.com/0xtlt/local-storefront/issues/154
+    let state = server();
+    let error = |path: &str| {
+        let reply = get(&state, path, "suggest-errors");
+        assert_eq!(reply.status, 422, "{path}: {}", text(&reply));
+        assert_eq!(
+            header(&reply, "content-type"),
+            Some("application/json; charset=utf-8"),
+            "{path}"
+        );
+        let body = body_json(&reply);
+        assert_eq!(body["status"], 422, "{path}");
+        assert_eq!(body["message"], "Invalid parameter error", "{path}");
+        assert!(body.get("resources").is_none(), "{path}");
+        body["description"].as_str().unwrap().to_string()
+    };
+    let missing_q = "param is missing or the value is empty: q";
+    assert_eq!(error("/search/suggest.json"), missing_q);
+    assert_eq!(error("/search/suggest.json?q="), missing_q);
+    assert_eq!(error("/search/suggest.json?q=%20"), missing_q);
+    assert_eq!(
+        error("/search/suggest.json?q=mug&resources[limit]=abc"),
+        "expected String to be a integer: limit"
+    );
+    assert_eq!(
+        error("/search/suggest.json?q=mug&resources[limit_scope]=bogus"),
+        "Invalid option for `limit_scope` parameter"
+    );
+    assert_eq!(
+        error("/search/suggest.json?q=mug&resources[type]=bogus"),
+        "Type `bogus` is not supported."
+    );
+    assert_eq!(
+        error("/search/suggest.json?q=mug&resources[type]=product,bogus"),
+        "Type `bogus` is not supported."
+    );
+    assert_eq!(
+        error("/search/suggest.json?q=mug&resources[options][fields]=bogus"),
+        "Invalid option for `fields` parameter"
+    );
+    assert_eq!(
+        error("/search/suggest.json?q=mug&resources[options][unavailable_products]=bogus"),
+        "Invalid option for `unavailable_products` parameter"
+    );
+
+    // Valid values, and limits out of range, are answered.
+    for path in [
+        "/search/suggest.json?q=mug",
+        "/search/suggest.json?q=mug&resources[type]=product,query&resources[limit]=0",
+        "/search/suggest.json?q=mug&resources[limit]=-1&resources[limit_scope]=each",
+        "/search/suggest.json?q=mug&resources[limit]=11&resources[limit_scope]=all",
+        "/search/suggest.json?q=mug&resources[options][unavailable_products]=hide",
+        "/search/suggest.json?q=mug&resources[options][fields]=title,variants.sku,vendor",
+    ] {
+        let reply = get(&state, path, "suggest-errors");
+        assert_eq!(reply.status, 200, "{path}: {}", text(&reply));
+        assert!(
+            body_json(&reply)["resources"]["results"].is_object(),
+            "{path}"
+        );
+    }
+    let products = |path: &str| {
+        body_json(&get(&state, path, "suggest-errors"))["resources"]["results"]["products"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(
+        products("/search/suggest.json?q=mug&resources[type]=product&resources[limit]=0"),
+        1
+    );
+}
+
+#[test]
 fn a_submitted_form_shows_its_outcome_once() {
     let state = server();
     let mut submit = request(
