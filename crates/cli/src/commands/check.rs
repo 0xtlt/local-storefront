@@ -11,6 +11,7 @@ use serde::Serialize;
 
 use crate::output::count;
 
+mod placement;
 mod references;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
@@ -1004,6 +1005,13 @@ fn check_theme(
                 tally.problem("liquid_syntax", Location::file(&path, line), message);
                 continue;
             }
+            for misplaced in placement::problems(directory, &source) {
+                tally.problem(
+                    "liquid_syntax",
+                    Location::file(&path, Some(misplaced.line)),
+                    format!("Shopify's parser refuses this file: {}", misplaced.message),
+                );
+            }
             if env.tag("block").is_some()
                 && !matches!(directory, "layout" | "templates" | "templates/customers")
                 && let Some(line) = block_call_line(&source)
@@ -1407,6 +1415,87 @@ mod tests {
     }
 
     #[test]
+    fn tags_where_shopifys_parser_refuses_them_are_problems() {
+        // #185: a section group in a section, `content_for 'blocks'` twice, a schema in a
+        // snippet.
+        let root = std::env::temp_dir().join(format!("lsf-check-placement-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write(
+            "layout/theme.liquid",
+            "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+        );
+        write(
+            "sections/header-group.json",
+            r#"{"type": "header", "name": "Header", "sections": {"header": {"type": "header"}}, "order": ["header"]}"#,
+        );
+        write(
+            "sections/header.liquid",
+            "<header>header</header>\n{% schema %}\n{ \"name\": \"Header\", \"settings\": [] }\n{% endschema %}",
+        );
+        write(
+            "sections/group-inside.liquid",
+            "<div>{% sections 'header-group' %}</div>\n{% schema %}\n{ \"name\": \"Group inside\", \"settings\": [] }\n{% endschema %}",
+        );
+        write(
+            "sections/blocks-twice.liquid",
+            "{% content_for 'blocks' %}{% content_for 'blocks' %}\n{% schema %}\n{ \"name\": \"Blocks twice\", \"blocks\": [ { \"type\": \"@theme\" } ] }\n{% endschema %}",
+        );
+        write(
+            "sections/uses-snippet.liquid",
+            "{% render 'with-schema' %}\n{% schema %}\n{ \"name\": \"Uses snippet\", \"settings\": [] }\n{% endschema %}",
+        );
+        write(
+            "snippets/with-schema.liquid",
+            "<p>snippet</p>\n{% schema %}\n{ \"name\": \"Snippet\" }\n{% endschema %}",
+        );
+        write(
+            "templates/index.json",
+            r#"{"sections": {"a": {"type": "group-inside"}, "b": {"type": "blocks-twice"}, "c": {"type": "uses-snippet"}}, "order": ["a", "b", "c"]}"#,
+        );
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(&str, &str, u64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["code"].as_str().unwrap(),
+                    d["file"].as_str().unwrap(),
+                    d["line"].as_u64().unwrap_or(0),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("liquid_syntax", "sections/blocks-twice.liquid", 1),
+                ("liquid_syntax", "sections/group-inside.liquid", 1),
+                ("liquid_syntax", "snippets/with-schema.liquid", 2),
+            ],
+            "{report:#}"
+        );
+        assert!(
+            report["diagnostics"][1]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Unknown tag 'sections'"),
+            "{report:#}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn schemas_block_types_and_assets_are_checked() {
         let root = std::env::temp_dir().join(format!("lsf-check-schema-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -1424,7 +1513,7 @@ mod tests {
         );
         write(
             "blocks/price.liquid",
-            "{% content_for 'block', type: 'pirce', id: 'x' %}",
+            "{% content_for 'block', type: 'pirce', id: 'x' %}\n{% schema %}{\"name\": \"Price\"}{% endschema %}",
         );
         write(
             "sections/main.liquid",
