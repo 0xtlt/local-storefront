@@ -681,7 +681,92 @@ fn suggestion(value: &lsf_liquid::Value) -> Json {
     entry
 }
 
+/// Why Shopify refuses the parameters of `/search/suggest.json`, in the `description` of its
+/// `422`: a missing or blank `q`, or a value a parameter of `resources` does not take. An
+/// out-of-range `limit` is not an error: it is brought between 1 and 10.
+/// https://shopify.dev/docs/api/ajax/reference/predictive-search
+fn suggest_parameter_error(incoming: &Incoming) -> Option<String> {
+    if incoming
+        .query_param("q")
+        .is_none_or(|q| q.trim().is_empty())
+    {
+        return Some("param is missing or the value is empty: q".to_string());
+    }
+    // An optional parameter left empty is its default.
+    let param = |name: &str| incoming.query_param(name).filter(|value| !value.is_empty());
+    let listed = |value: &str, allowed: &[&str]| {
+        value
+            .split(',')
+            .find(|item| !allowed.contains(&item.trim()))
+            .map(|item| item.trim().to_string())
+    };
+    if let Some(unknown) = param("resources[type]").and_then(|types| {
+        listed(
+            types,
+            &["product", "page", "article", "collection", "query"],
+        )
+    }) {
+        return Some(format!("Type `{unknown}` is not supported."));
+    }
+    if param("resources[limit]").is_some_and(|limit| limit.trim().parse::<i64>().is_err()) {
+        return Some("expected String to be a integer: limit".to_string());
+    }
+    // `(parameter, its name in the description, the values it takes, whether it takes a
+    // comma-separated list of them)`.
+    let options = [
+        (
+            "resources[limit_scope]",
+            "limit_scope",
+            &["all", "each"][..],
+            false,
+        ),
+        (
+            "resources[options][unavailable_products]",
+            "unavailable_products",
+            &["show", "hide", "last"][..],
+            false,
+        ),
+        (
+            "resources[options][fields]",
+            "fields",
+            &[
+                "author",
+                "body",
+                "product_type",
+                "tag",
+                "title",
+                "variants.barcode",
+                "variants.sku",
+                "variants.title",
+                "vendor",
+            ][..],
+            true,
+        ),
+    ];
+    options
+        .into_iter()
+        .find_map(|(name, label, allowed, list)| {
+            let value = param(name)?;
+            let invalid = if list {
+                listed(value, allowed).is_some()
+            } else {
+                !allowed.contains(&value)
+            };
+            invalid.then(|| format!("Invalid option for `{label}` parameter"))
+        })
+}
+
 fn suggest_json(visit: &Visit<'_>) -> Reply {
+    if let Some(description) = suggest_parameter_error(visit.incoming) {
+        return Reply::json(
+            422,
+            &json!({
+                "status": 422,
+                "message": "Invalid parameter error",
+                "description": description,
+            }),
+        );
+    }
     let site = visit.site();
     let search = predictive_search_value(&site);
     let resources = search.get("resources");
