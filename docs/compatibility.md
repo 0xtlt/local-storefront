@@ -120,7 +120,9 @@ truthy, `== empty` and `== blank`, printing nothing, with empty `products`, `art
 `links` (their `size` is 0) and nil for its other properties; `json` gives
 `{"error":"json not allowed for this object"}`. `articles['blog/x']` is still nil.
 
-With their related types: variants, options and option values (with swatches), media (images,
+With their related types: variants (`product.variants` gives the first 250, as on Shopify, and
+`product.variants_count` all of them; so does the product JSON of the Ajax API), options and
+option values (with swatches), media (images,
 videos, external videos, 3D models), image presentation and focal points, collection filters
 (with swatches) and sort options, links, addresses, orders and line items (a cart line has the
 `index` shopify.dev leaves out: its 0-based position, which Horizon posts plus 1 as the `line` of

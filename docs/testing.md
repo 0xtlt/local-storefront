@@ -224,7 +224,8 @@ await page.goto('/products/sold-out-thing');
 - `theme_settings`, `files` and `swatches` are merged key by key.
 
 Other sessions keep seeing the data on disk. This is the way to test edge cases (an empty
-collection, a product with 100 variants, a sold-out state, a long title, another currency)
+collection, a product with 300 variants, of which `product.variants` and `/products/<handle>.js`
+give the first 250 as on Shopify, a sold-out state, a long title, another currency)
 without growing the shared fixtures.
 
 The same goes for a subscription, a pickup location or a swatch. This test sells a product of
@@ -516,7 +517,7 @@ Everything a theme talks to on a storefront:
 | Alternate templates | `?view=<suffix>` and the `template_suffix` of the resource. |
 | Section Rendering API | `?section_id=<id>` and `?sections=<id>,<id>` on any page. An id the page does not have is a 404 for `section_id` and `null` in `sections`; either way `x-lsf-not-found` names it and lists the ids the page has. An id asked for twice in `sections` is rendered once, as on Shopify. |
 | Cart Ajax API | `GET /cart.js`, `POST /cart/add.js`, `/cart/change.js`, `/cart/update.js`, `/cart/clear.js` (with `sections` and `sections_url`), and the form posts `/cart/add`, `/cart`. `add.js` and `change.js` keep to the stock as Shopify does: more than the stock puts what is in stock in the cart and answers `422`. `update.js` does not check it (Shopify does not either for the lines already in the cart). |
-| Product and search JSON | `/products/<handle>.js`, `/products.json`, `/collections/<handle>/products.json`, `/search/suggest.json`, `/search/suggest?section_id=`, `/recommendations/products.json`, `/recommendations/products?section_id=&product_id=`. |
+| Product and search JSON | `/products/<handle>.js`, `/products.json`, `/collections/<handle>/products.json`, `/search/suggest.json`, `/search/suggest?section_id=`, `/recommendations/products.json`, `/recommendations/products?section_id=&product_id=`. A product's JSON holds its first 250 variants, as Shopify's does. |
 | Forms | Contact, newsletter (`customer`), blog comment, customer logout, localization (country and language), storefront password. The outcome shows in `form.posted_successfully?` and `form.errors` on the next page, once. A wrong storefront password comes back to `/password` with the error; the right one (`password`, or `shop.password`) goes to the home page. |
 | CDN | `/cdn/shop/t/1/assets/<file>` (including `.liquid` assets), `/cdn/shop/files/<path>` with image transformations, the compiled `{% stylesheet %}` and `{% javascript %}` bundles, fonts. |
 | Control | `/__lsf` (a status page), `/__lsf/status`, `/__lsf/session`, `DELETE /__lsf/sessions`, `/__lsf/login?customer=<email>`, `/__lsf/schema/<kind>`, `POST /__lsf/reload`, `GET` and `DELETE /__lsf/timings`, `/__lsf/profile?path=<path>`. With `--app`, those of the checkout and the Admin API too ([control API](control-api.md#apps-checkout-and-admin-api)). |

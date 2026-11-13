@@ -473,6 +473,46 @@ fn the_control_api_explains_invalid_input() {
 }
 
 #[test]
+fn product_json_holds_250_variants_at_most() {
+    // "Product JSON responses are limited to a maximum of 250 variants":
+    // https://shopify.dev/docs/api/ajax, https://shopify.dev/docs/api/ajax/reference/product
+    // https://github.com/0xtlt/local-storefront/issues/82
+    let state = server();
+    let session = "big";
+    let variants: Vec<Json> = (1..=20)
+        .flat_map(|size| {
+            (1..=15).map(move |color| json!({"options": [format!("S{size}"), format!("C{color}")]}))
+        })
+        .collect();
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"products": [
+            {"title": "Big", "price": "10.00", "options": ["Size", "Color"], "variants": variants}
+        ]}}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let count = |json: &Json| json["variants"].as_array().unwrap().len();
+    assert_eq!(
+        count(&body_json(&get(&state, "/products/big.js", session))),
+        250
+    );
+    assert_eq!(
+        count(&body_json(&get(&state, "/products/big.json", session))["product"]),
+        250
+    );
+    let all = body_json(&get(&state, "/products.json?limit=250", session));
+    let big = all["products"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|product| product["handle"] == "big")
+        .expect("the product is listed");
+    assert_eq!(count(big), 250);
+}
+
+#[test]
 fn json_endpoints() {
     let state = server();
     let product = body_json(&get(&state, "/products/ceramic-mug.js", "json"));
