@@ -124,6 +124,10 @@ truthy, `== empty` and `== blank`, printing nothing, with empty `products`, `art
 `links` (their `size` is 0) and nil for its other properties; `json` gives
 `{"error":"json not allowed for this object"}`. `articles['blog/x']` is still nil.
 
+A cart attribute whose name starts with `__` is private, as on Shopify: `cart.attributes`,
+`cart | json`, `/cart.js` and the answers of the cart endpoints leave it out, and the checkout
+and the order keep it. One `_` is not private, nor are line item properties.
+
 With their related types: variants (`product.variants` gives the first 250, as on Shopify, and
 `product.variants_count` all of them; so does the product JSON of the Ajax API), options and
 option values (with swatches), media (images,

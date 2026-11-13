@@ -980,6 +980,35 @@ fn line_item_properties_are_pairs_without_a_size() {
 }
 
 #[test]
+fn private_cart_attributes_are_not_in_liquid() {
+    // #155: a cart attribute whose name starts with `__` is private: Liquid's
+    // `cart.attributes` and `cart | json` leave it out, as on Shopify. One `_` is not private.
+    let fixture = fixture();
+    let mut session = Session::initial(&fixture.store);
+    session.cart_attributes = [("gift_wrap", "yes"), ("_hidden", "h"), ("__private", "p")]
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .into_iter()
+        .collect();
+    let output = fixture.liquid(
+        "/cart",
+        session,
+        "attrs:{% for a in cart.attributes %}[{{ a[0] }}={{ a[1] }}]{% endfor %} \
+         private:{{ cart.attributes.__private | json }} json:{{ cart.attributes | json }} \
+         cart:{{ cart | json }}",
+    );
+    let (liquid, cart) = output.split_once(" cart:").expect("the cart's JSON");
+    assert_eq!(
+        liquid,
+        r#"attrs:[gift_wrap=yes][_hidden=h] private:null json:{"gift_wrap":"yes","_hidden":"h"}"#
+    );
+    let cart: serde_json::Value = serde_json::from_str(cart).expect("the cart's JSON");
+    assert_eq!(
+        cart["attributes"],
+        serde_json::json!({"gift_wrap": "yes", "_hidden": "h"})
+    );
+}
+
+#[test]
 fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
     let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
     assert!(diagnostics.is_empty(), "{diagnostics}");

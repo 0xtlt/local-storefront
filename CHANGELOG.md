@@ -130,6 +130,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `{% if item.properties.size > 0 %}` is false, as on a store. A loop, `item.properties.Engraving`,
   `{{ item.properties | size }}` and `item.properties == empty` (shopify.dev's test) are
   unchanged. `/cart.js` keeps `properties` as an object.
+- **Private cart attributes are hidden from the theme and the Ajax API**, as on Shopify: an
+  attribute whose name starts with `__` is no longer in Liquid `cart.attributes`,
+  `{{ cart | json }}`, `/cart.js`, nor in the answer of `/cart/update.js` and the other cart
+  endpoints. The checkout and the order still have it. A theme test that read a `__` attribute
+  back from the cart needs another way, as it would on a store.
 
 ### Fixed
 
