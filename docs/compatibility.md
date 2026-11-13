@@ -59,6 +59,8 @@ not parse, and filters that do not exist here.
 `decrement`, `doc`, `echo`, `for`, `form`, `if`, `ifchanged`, `include`, `increment`, `#`,
 `javascript`, `layout`, `liquid`, `paginate`, `raw`, `render`, `schema`, `section`,
 `sections`, `style`, `stylesheet`, `tablerow`, `unless`.
+`paginate` pages by 1 to 250 items, and by 20 when `by` is nil (an unset setting), as on
+Shopify.
 
 With `--preview liquid-july-26`: `block` and `partial`. Without it they are unknown tags, as
 on a live store.
