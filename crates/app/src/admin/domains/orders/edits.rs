@@ -1007,6 +1007,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                     .and_then(|measurement| measurement.get("weight"))
                     .cloned();
                 let draft = LineDraft {
+                    group: None,
                     product: product.clone(),
                     variant: variant.clone(),
                     inventory_item: inventory_item.clone(),

@@ -122,6 +122,8 @@ pub struct LineDraft {
     pub weight: Option<Value>,
     pub grams: u64,
     pub attributes: Vec<(String, String)>,
+    /// The `LineItemGroup` of the bundle the line is a component of.
+    pub group: Option<String>,
 }
 
 /// The shipping line of an [`OrderDraft`].
@@ -357,6 +359,7 @@ fn line_draft(seed: &Seed, product: &Product, variant: &Variant, quantity: u32) 
         .or_else(|| product.images().next())
         .map(|image| seed.image(image, "ImageSource"));
     LineDraft {
+        group: None,
         product: Some(catalog::product_gid(product)),
         variant: Some(catalog::variant_gid(variant)),
         inventory_item: Some(catalog::inventory_item_gid(variant.id)),
@@ -934,12 +937,114 @@ pub fn line_item_record(
         "image": line.image,
         "weight": line.weight,
         "customAttributes": attributes,
+        "lineItemGroup": line.group,
         "discountAllocations": [],
         "taxLines": [],
         "duties": [],
         "sellingPlan": null,
         "createdAt": created,
     }))
+}
+
+/// The line of an order placed in the local checkout for `line` of the checkout, with
+/// `discount` taken off it, in the `LineItemGroup` `group` when it is a component of a bundle.
+fn placed_line(
+    state: &ShopState,
+    line: &crate::checkout::ResultLine,
+    discount: i64,
+    group: Option<String>,
+) -> LineDraft {
+    let variant = gid("ProductVariant", line.variant_id);
+    let variant_record = state.get(&variant);
+    // The variant's own item: one the Admin API created has an id of the counter, not
+    // the one lsf-core would derive.
+    let inventory_item = variant_record
+        .and_then(|record| record.get("inventoryItem"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let weight = inventory_item
+        .as_deref()
+        .and_then(|item| state.get(item))
+        .and_then(|item| item.get("measurement"))
+        .and_then(|measurement| measurement.get("weight"))
+        .cloned();
+    LineDraft {
+        product: Some(gid("Product", line.product_id)),
+        variant: Some(variant.clone()),
+        inventory_item,
+        title: line.title.clone(),
+        variant_title: line
+            .variant_title
+            .clone()
+            .filter(|title| title != "Default Title"),
+        sku: line.sku.clone().filter(|sku| !sku.is_empty()),
+        vendor: Some(line.vendor.clone()).filter(|vendor| !vendor.is_empty()),
+        quantity: line.quantity,
+        unit_price: line.unit_price,
+        discount,
+        requires_shipping: line.requires_shipping,
+        taxable: variant_record
+            .and_then(|record| record.get("taxable"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        gift_card: state
+            .get(&gid("Product", line.product_id))
+            .and_then(|record| record.get("isGiftCard"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        image: None,
+        weight,
+        grams: 0,
+        attributes: line
+            .attributes
+            .iter()
+            .map(|attribute| (attribute.key.clone(), attribute.value.clone()))
+            .collect(),
+        group,
+    }
+}
+
+/// `amount` shared in proportion to `weights`, to the cent: the last share takes what the
+/// others leave.
+fn split(amount: i64, weights: &[i64]) -> Vec<i64> {
+    let whole: i64 = weights.iter().sum();
+    let mut left = amount;
+    weights
+        .iter()
+        .enumerate()
+        .map(|(position, weight)| {
+            let share = if position + 1 == weights.len() {
+                left
+            } else {
+                model::share(amount, *weight, whole)
+            };
+            left -= share;
+            share
+        })
+        .collect()
+}
+
+/// Records the `LineItemGroup` of the components of the bundle `line`: its title, quantity,
+/// product, variant and attributes, as the parent line had them. Returns its GID.
+fn insert_line_item_group(state: &mut ShopState, line: &crate::checkout::ResultLine) -> String {
+    let id = state.new_gid("LineItemGroup");
+    let attributes: Vec<Value> = line
+        .attributes
+        .iter()
+        .map(|attribute| json!({"key": attribute.key, "value": attribute.value}))
+        .collect();
+    state.insert(value::object(json!({
+        "__typename": "LineItemGroup",
+        "id": id,
+        "title": line.title,
+        "quantity": line.quantity,
+        // A merge's parent variant may not be in the shop: no product then.
+        "productId": (line.product_id != 0).then(|| gid("Product", line.product_id)),
+        "variantId": gid("ProductVariant", line.variant_id),
+        "variantSku": line.sku.as_deref().filter(|sku| !sku.is_empty()),
+        "customAttributes": attributes,
+    })));
+    id
 }
 
 /// Whether two `MailingAddress`es are the same place for the same person (their ids aside).
@@ -1143,59 +1248,52 @@ pub fn record_placed_order(
         .and_then(|record| record.get("taxExempt"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let lines = result
-        .lines
-        .iter()
-        .map(|line| {
-            let variant = gid("ProductVariant", line.variant_id);
-            let variant_record = state.get(&variant);
-            // The variant's own item: one the Admin API created has an id of the counter, not
-            // the one lsf-core would derive.
-            let inventory_item = variant_record
-                .and_then(|record| record.get("inventoryItem"))
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            let weight = inventory_item
-                .as_deref()
-                .and_then(|item| state.get(item))
-                .and_then(|item| item.get("measurement"))
-                .and_then(|measurement| measurement.get("weight"))
-                .cloned();
-            LineDraft {
-                product: Some(gid("Product", line.product_id)),
-                variant: Some(variant.clone()),
-                inventory_item,
-                title: line.title.clone(),
-                variant_title: line
-                    .variant_title
-                    .clone()
-                    .filter(|title| title != "Default Title"),
-                sku: line.sku.clone().filter(|sku| !sku.is_empty()),
-                vendor: Some(line.vendor.clone()).filter(|vendor| !vendor.is_empty()),
-                quantity: line.quantity,
-                unit_price: line.unit_price,
-                discount: line.subtotal - line.total,
-                requires_shipping: line.requires_shipping,
-                taxable: variant_record
-                    .and_then(|record| record.get("taxable"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true),
-                gift_card: state
-                    .get(&gid("Product", line.product_id))
-                    .and_then(|record| record.get("isGiftCard"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                image: None,
-                weight,
-                grams: 0,
-                attributes: line
-                    .attributes
+    // A line a cart transform made of others (an expand, a merge) is ordered as its components,
+    // in a group that names the bundle, as Shopify stores a bundle in an order. The discount
+    // allocations of each line of the order go with it.
+    let mut lines = Vec::new();
+    let mut line_allocations = Vec::new();
+    for line in &result.lines {
+        if line.components.is_empty() {
+            lines.push(placed_line(state, line, line.subtotal - line.total, None));
+            line_allocations.push(line.discount_allocations.clone());
+            continue;
+        }
+        let group = insert_line_item_group(state, line);
+        // The components are priced at their own prices; what the bundle costs less (its
+        // discounts, a price adjustment of the merge) is shared among them in proportion, so
+        // that they cost what the bundle costs, and so is each of its discount allocations.
+        let originals: Vec<i64> = line
+            .components
+            .iter()
+            .map(|component| component.unit_price * i64::from(component.quantity))
+            .collect();
+        let reduction = (originals.iter().sum::<i64>() - line.total).max(0);
+        let discounts = split(reduction, &originals);
+        let allocations: Vec<Vec<i64>> = line
+            .discount_allocations
+            .iter()
+            .map(|allocation| split(allocation.amount, &originals))
+            .collect();
+        for (position, component) in line.components.iter().enumerate() {
+            lines.push(placed_line(
+                state,
+                component,
+                discounts[position],
+                Some(group.clone()),
+            ));
+            line_allocations.push(
+                line.discount_allocations
                     .iter()
-                    .map(|attribute| (attribute.key.clone(), attribute.value.clone()))
+                    .zip(&allocations)
+                    .map(|(allocation, shares)| crate::checkout::DiscountAllocation {
+                        amount: shares[position],
+                        ..allocation.clone()
+                    })
                     .collect(),
-            }
-        })
-        .collect();
+            );
+        }
+    }
     let selected = result.delivery_groups.iter().find_map(|group| {
         let handle = group.selected.as_ref()?;
         group.options.iter().find(|option| &option.handle == handle)
@@ -1268,7 +1366,7 @@ pub fn record_placed_order(
         presentment: None,
     };
     let order = insert_order(state, &draft);
-    record_discounts(state, &order, result);
+    record_discounts(state, &order, result, &line_allocations);
     // The code discounts it was placed with are used once more.
     if !redemptions.is_empty()
         && let Some(record) = state.get_mut(&order)
@@ -1385,7 +1483,12 @@ fn copy_cart_metafields(
 /// a code), and on each line and on the shipping line the `DiscountAllocation`s the discounts
 /// made, which name their application. What `Order.discountApplications`, the lines'
 /// `discountAllocations` and the `discount_applications` of the order webhooks read.
-fn record_discounts(state: &mut ShopState, order: &str, result: &crate::checkout::CheckoutResult) {
+fn record_discounts(
+    state: &mut ShopState,
+    order: &str,
+    result: &crate::checkout::CheckoutResult,
+    line_allocations: &[Vec<crate::checkout::DiscountAllocation>],
+) {
     let Some(currency) = state
         .get(order)
         .and_then(|record| record.get("currencyCode"))
@@ -1443,8 +1546,8 @@ fn record_discounts(state: &mut ShopState, order: &str, result: &crate::checkout
             })
             .collect()
     };
-    for (line, item) in result.lines.iter().zip(line_items(state, order)) {
-        let made = allocations(&line.discount_allocations);
+    for (made, item) in line_allocations.iter().zip(line_items(state, order)) {
+        let made = allocations(made);
         if let Some(record) = state.get_mut(&item) {
             record.insert("discountAllocations".to_string(), made);
         }

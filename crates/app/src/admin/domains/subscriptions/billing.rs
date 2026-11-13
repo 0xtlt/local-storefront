@@ -297,6 +297,7 @@ fn create_order(
                 .and_then(|record| text(record, "inventoryItem"))
                 .map(str::to_string);
             LineDraft {
+                group: None,
                 product: line
                     .get("productId")
                     .and_then(Value::as_str)

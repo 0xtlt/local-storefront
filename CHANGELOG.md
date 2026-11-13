@@ -503,6 +503,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 #### The Admin API, for the backend of an app
 
+- **An order placed with a cart transform bundle lists its components**, as on Shopify: a line
+  the transform expanded or merged becomes a line item for each component, each in a
+  `LineItemGroup` that names the bundle (`LineItem.lineItemGroup`, `sales_line_item_group_id`
+  in `orders/create`). The order had the parent line alone. The components share the bundle's
+  price and discounts in proportion to their prices. An app that read the bundle as one line of
+  the order reads its components, as it must on a store.
 - **A connection costs what it costs on Shopify**: 2 plus what one of its nodes costs times
   `floor(2 × ln(first))`, the logarithmic formula Shopify uses since 2024, no longer 2 plus
   `first` times it. `products(first: 100) { nodes { id variants(first: 50) { nodes { id } } } }`

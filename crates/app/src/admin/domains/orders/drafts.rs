@@ -1141,6 +1141,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     let line_drafts: Vec<LineDraft> = lines
         .iter()
         .map(|line| LineDraft {
+            group: None,
             product: text(line, "product").map(str::to_string),
             variant: text(line, "variant").map(str::to_string),
             inventory_item: text(line, "variant")

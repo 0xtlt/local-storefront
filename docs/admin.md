@@ -11,7 +11,11 @@ A product the backend creates through the Admin API is a product of the local sh
 theme's pages at once ([what the storefront and the checkout
 see](#what-the-storefront-and-the-checkout-see)); an order placed in the [local
 checkout](checkout.md) is an order the Admin API lists, and its `orders/create` webhook reaches
-the backend.
+the backend. A line a cart transform expanded or merged is ordered as its components, each in a
+`LineItemGroup` that names the bundle (its `title`, `quantity`, `productId`, `variantId`,
+`variantSku` and `customAttributes`, read through `LineItem.lineItemGroup`;
+`sales_line_item_group_id` in the webhooks), as Shopify stores a bundle: they share what the
+bundle cost, its discounts too, in proportion to their prices.
 
 The embedded app's own pages open in [lsf's admin](#preview-the-embedded-app): an admin around
 the app, with a local App Bridge, so that its session tokens, title bar, navigation, save bar,
