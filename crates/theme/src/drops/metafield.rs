@@ -112,6 +112,7 @@ impl Object for FieldsDrop {
                 (key.as_str(), self.fields.get(key).map(Cow::Borrowed))
             }),
             &self.site,
+            |key| self.name(key),
         )
     }
 
@@ -218,9 +219,6 @@ impl MetafieldDrop {
             return None;
         }
         let value = self.typed_value();
-        if value.downcast::<Time>().is_some() {
-            return Some(value);
-        }
         // A decimal stands for its number.
         match value.to_liquid_value() {
             value @ (Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_)) => {
@@ -518,6 +516,7 @@ thread_local! {
 fn values_json<'a>(
     fields: impl Iterator<Item = (&'a str, Option<Cow<'a, Metafield>>)>,
     site: &SiteRef,
+    name: impl Fn(&str) -> String,
 ) -> Json {
     let depth = JSON_DEPTH.with(Cell::get);
     if depth >= 4 {
@@ -529,6 +528,7 @@ fn values_json<'a>(
             let drop = MetafieldDrop {
                 site: site.clone(),
                 field: field?.into_owned(),
+                name: name(key),
             };
             Some((key.to_string(), drop.typed_value().to_json()))
         })
@@ -872,6 +872,7 @@ impl Object for MetaobjectDrop {
                 .keys()
                 .map(|key| (key.as_str(), self.entry.field_in(key, locale))),
             &self.site,
+            |key| format!("{}/{}.{key}", self.entry.kind, self.entry.handle),
         )
     }
 
