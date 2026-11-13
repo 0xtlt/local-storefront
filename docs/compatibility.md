@@ -199,6 +199,9 @@ data, in the 38 languages lsf names; a page in another language has the English 
   comments, trailing commas and unknown escapes (`\“` is `“`). A file that starts with a UTF-8
   byte order mark is refused, as Shopify refuses it on upload: a render goes on without it and
   says so in a warning.
+- A Liquid or JSON file that is not UTF-8 (saved as Latin-1 or Windows-1252) is read as
+  Shopify stores it once Shopify CLI uploads it: each byte that is not UTF-8 is `�` (U+FFFD),
+  so a Latin-1 `café` renders as `caf�`. `lsf check` warns about it (`not_utf8`).
 - Sections, static sections (with the settings stored in `settings_data.json` or the `default`
   of their schema), section groups (`{% sections %}`), section and block settings with
   defaults from the schema, `disabled` sections and blocks.
