@@ -18,6 +18,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `{% if linklists[section.settings.menu] %}` and `{% if section.settings.product %}` with a
   deleted product now take the branch a store takes, the truthy one. Test the lookup with
   `== empty` or `== blank`, as Shopify's docs advise.
+- **`.first`, `.last` and `[n]` give nothing on reference lists, `product_list` settings and
+  `metaobjects.<type>.values`**, as on Shopify, where they are list drops. A theme that reads
+  `related.value.first` shows a blank on a store, and now on lsf too: use
+  `{% assign x = related.value | first %}` or a `for` loop. `list.single_line_text_field` and the
+  other lists that are not references stay arrays.
 
 ### Fixed
 
@@ -55,6 +60,15 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   print `0`, no longer nothing. A `product`, `collection`, `page`, `blog`, `article` or
   `link_list` setting whose handle no longer exists is truthy, `== blank` and `== nil`, and
   prints the handle.
+- **Reference lists, `product_list` settings and `.values` have `.count`.** The value of a
+  `list.product_reference` or `list.metaobject_reference` metafield, a `product_list` setting
+  and `metaobjects.<type>.values` give their length with `.count` (0 for an unset
+  `product_list`), and print `ProductListDrop` or `MetaobjectListDrop`. The `first` and `last`
+  filters, `for` and `paginate` reach their items.
+- **A `product_list` setting fed by a list metafield holds its products.** With
+  `"{{ product.metafields.custom.related.value }}"` as its value in a JSON template, a
+  "related products" section shows the metafield's products, in their order, no longer
+  nothing.
 
 ## 0.3.0-rc.5 - 2026-11-13
 

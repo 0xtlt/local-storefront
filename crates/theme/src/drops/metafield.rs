@@ -16,7 +16,7 @@ use serde_json::Value as Json;
 use super::color::ColorDrop;
 use super::localization::currency_value;
 use super::media::{ImageDrop, MediaDrop};
-use super::{EmptyDrop, SiteRef, hash};
+use super::{EmptyDrop, PaginatedList, SiteRef, hash};
 use crate::render::cost;
 
 /// `resource.metafields`: namespaces of metafields.
@@ -143,13 +143,24 @@ impl MetafieldDrop {
 
     pub fn typed_value(&self) -> Value {
         if self.is_list() {
-            let items = self.field.value.as_array().cloned().unwrap_or_default();
-            Value::array(
-                items
-                    .iter()
-                    .map(|item| typed(&self.site, self.base_kind(), item))
-                    .collect(),
-            )
+            let items: Vec<Value> = self
+                .field
+                .value
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|item| typed(&self.site, self.base_kind(), item))
+                        .collect()
+                })
+                .unwrap_or_default();
+            // A list of products or of metaobjects is one of Shopify's list drops; the other
+            // lists are arrays, as on Shopify.
+            match self.base_kind() {
+                "product_reference" => PaginatedList::list_drop("product_list", items),
+                "metaobject_reference" => PaginatedList::list_drop("metaobject_list", items),
+                _ => Value::array(items),
+            }
         } else {
             typed(&self.site, &self.field.kind, &self.field.value)
         }
@@ -570,7 +581,8 @@ impl Object for MetaobjectTypeDrop {
                 .filter(|entry| entry.is_of(&self.kind))
         };
         match key {
-            "values" => Some(Value::array(
+            "values" => Some(PaginatedList::list_drop(
+                "metaobject_list",
                 entries()
                     .map(|entry| MetaobjectDrop::value(&self.site, entry))
                     .collect(),

@@ -12,6 +12,7 @@ use serde_json::{Map, Value as Json};
 
 use super::state::RenderState;
 use crate::drops::EmptyDrop;
+use crate::drops::PaginatedList;
 use crate::drops::collection::CollectionDrop;
 use crate::drops::color::ColorDrop;
 use crate::drops::content::{ArticleDrop, BlogDrop, PageDrop};
@@ -365,9 +366,9 @@ fn convert(
             None if is_object => value,
             None => Value::Nil,
         },
-        "metaobject_list" => match &value {
+        "metaobject_list" => match value.items() {
             // A dynamic source may give entries already; stored references are looked up.
-            Value::Array(references) => Value::array(
+            Some(references) => Value::array(
                 references
                     .iter()
                     .filter_map(|reference| {
@@ -383,20 +384,29 @@ fn convert(
                     })
                     .collect(),
             ),
-            other if other.items().is_some() => value,
-            _ => Value::array(Vec::new()),
+            None => Value::array(Vec::new()),
         },
-        "product_list" => match &value {
-            Value::Array(handles) => Value::array(
-                handles
-                    .iter()
-                    .filter_map(|handle| store.product_index(handle.as_str()?))
-                    .map(|index| ProductDrop::value(site, index))
-                    .collect(),
-            ),
-            other if other.items().is_some() => value,
-            _ => Value::array(Vec::new()),
-        },
+        // Shopify's `ProductListDrop`, empty when nothing is selected. Stored handles are
+        // looked up; a dynamic source (`{{ product.metafields.custom.related.value }}`) gives
+        // the products themselves, which are kept in their order.
+        "product_list" => PaginatedList::list_drop(
+            "product_list",
+            value
+                .items()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| {
+                            if item.downcast::<ProductDrop>().is_some() {
+                                return Some(item.clone());
+                            }
+                            let index = store.product_index(item.as_str()?)?;
+                            Some(ProductDrop::value(site, index))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        ),
         "collection_list" => match &value {
             Value::Array(handles) => Value::array(
                 handles

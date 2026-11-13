@@ -163,6 +163,9 @@ pub const DEFAULT_PAGE_LIMIT: usize = 50;
 pub struct PaginatedList {
     all: Arc<Vec<Value>>,
     window: Mutex<Option<(usize, usize)>>,
+    /// The type of one of Shopify's list drops, when the list is one: see
+    /// [`PaginatedList::list_drop`].
+    list: Option<&'static str>,
 }
 
 impl PaginatedList {
@@ -170,6 +173,23 @@ impl PaginatedList {
         Value::object(PaginatedList {
             all: Arc::new(items),
             window: Mutex::new(None),
+            list: None,
+        })
+    }
+
+    /// One of Shopify's list drops (`product_list` prints `ProductListDrop`): the value of a
+    /// `list.product_reference` or `list.metaobject_reference` metafield, of a `product_list`
+    /// setting and of `metaobjects.<type>.values`. It is not an array: `.first`, `.last` and
+    /// `[n]` give nothing, `.count` and `.size` the number of items. The `first` and `last`
+    /// filters, `for` and `paginate` reach its items, all of them outside `paginate`.
+    ///
+    /// <https://shopify.dev/docs/api/liquid/objects/metafield#metafield-determining-the-length-of-a-list-metafield>:
+    /// a list of a reference type has `count`; the others "are rendered as arrays".
+    pub fn list_drop(kind: &'static str, items: Vec<Value>) -> Value {
+        Value::object(PaginatedList {
+            all: Arc::new(items),
+            window: Mutex::new(None),
+            list: Some(kind),
         })
     }
 
@@ -186,15 +206,29 @@ impl PaginatedList {
 
 impl lsf_liquid::Object for PaginatedList {
     fn type_name(&self) -> &str {
-        "array"
+        self.list.unwrap_or("array")
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        self.list?;
+        match key {
+            "count" => Some(Value::from(self.total())),
+            "first" | "last" => Some(Value::Nil),
+            _ => None,
+        }
     }
 
     fn items(&self) -> Option<Arc<Vec<Value>>> {
+        let all = if self.list.is_some() {
+            self.all.len()
+        } else {
+            DEFAULT_PAGE_LIMIT
+        };
         let (offset, size) = self
             .window
             .lock()
             .expect("window poisoned")
-            .unwrap_or((0, DEFAULT_PAGE_LIMIT));
+            .unwrap_or((0, all));
         if offset == 0 && size >= self.all.len() {
             return Some(self.all.clone());
         }
@@ -204,6 +238,9 @@ impl lsf_liquid::Object for PaginatedList {
     }
 
     fn index(&self, index: i64) -> Option<Value> {
+        if self.list.is_some() {
+            return Some(Value::Nil);
+        }
         let items = self.items()?;
         let len = items.len() as i64;
         let index = if index < 0 { index + len } else { index };
@@ -211,6 +248,19 @@ impl lsf_liquid::Object for PaginatedList {
     }
 
     fn render(&self) -> std::borrow::Cow<'_, str> {
+        if let Some(kind) = self.list {
+            let mut name: String = kind
+                .split('_')
+                .map(|word| {
+                    let mut chars = word.chars();
+                    chars.next().map_or_else(String::new, |first| {
+                        first.to_uppercase().chain(chars).collect()
+                    })
+                })
+                .collect();
+            name.push_str("Drop");
+            return std::borrow::Cow::Owned(name);
+        }
         let mut out = String::new();
         for item in self.items().unwrap_or_default().iter() {
             item.render_to(&mut out);

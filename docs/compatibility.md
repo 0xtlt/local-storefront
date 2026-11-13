@@ -129,7 +129,10 @@ that currency, a reference is a GID or the key the data gives the entity
 ([reference values](data-format.md#reference-values)), a `file_reference` is an image, a video or a file by its extension;
 a metafield of a text, number, `boolean`, `date` or `date_time` type used without `.value` acts
 as its value in `if`, `==`, `>`, the math and date filters, `size`, and `sort`, `where` and
-`sum`, as on Shopify),
+`sum`, as on Shopify;
+the value of a `list.product_reference` or `list.metaobject_reference` is a list drop, as on
+Shopify: `.count` and `.size` give its length, `.first`, `.last` and `[n]` give nothing, and the
+`first` and `last` filters, `for` and `paginate` reach its items; the other lists are arrays),
 metaobjects, countries, languages (with `direction`, from the script of the language),
 currencies, markets, fonts, colors, color schemes, quantity rules and quantity price breaks,
 unit prices, selling plan groups, selling plans and their allocations, store availabilities and
@@ -200,7 +203,11 @@ locations, companies, company locations and company addresses.
   `gid://shopify/Metaobject/<id>`. A `product`, `collection`, `page`, `blog`, `article` or
   `link_list` setting whose handle names nothing is truthy, `== blank`, `== empty` and `== nil`,
   and prints its handle, as on Shopify. Dynamic sources are evaluated (`{{ product.title }}`,
-  `{{ closest.product.metafields.custom.x }}`).
+  `{{ closest.product.metafields.custom.x }}`). A `product_list` setting is a list drop, as
+  `metaobjects.<type>.values` is: `.count` gives its length (0 when nothing is selected), and
+  `.first`, `.last` and `[n]` give nothing. Fed by a `list.product_reference` metafield
+  (`"{{ product.metafields.custom.related.value }}"`), it holds the metafield's products in
+  their order.
   A `color_scheme` setting, of a section, a block or the theme, gives the scheme's colors under
   `settings` (`section.settings.scheme.settings.background`), and `settings.color_schemes` gives
   its schemes in a `for` loop and one of them by id (`settings.color_schemes['scheme-1']`).
