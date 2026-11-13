@@ -1455,9 +1455,10 @@ fn every_country_has_its_name_and_continent_and_a_selector_lists_them_all() {
             session.clone(),
             "{% for c in localization.available_countries %}{{ c.iso_code }}={{ c.name }}/{{ c.continent }};{% endfor %}"
         ),
-        "US=United States/North America;AD=Andorra/Europe;AL=Albania/Europe;KE=Kenya/Africa;\
-         MA=Morocco/Africa;QA=Qatar/Asia;UY=Uruguay/South America;FR=France/Europe;\
-         BE=Belgium/Europe;CA=Canada/North America;"
+        // Sorted by name, as `localization.available_countries` is on Shopify.
+        "AL=Albania/Europe;AD=Andorra/Europe;BE=Belgium/Europe;CA=Canada/North America;\
+         FR=France/Europe;KE=Kenya/Africa;MA=Morocco/Africa;QA=Qatar/Asia;\
+         US=United States/North America;UY=Uruguay/South America;"
     );
     // Shopify's 237 countries and its `---`: 238 options, so 239 parts.
     assert_eq!(
