@@ -271,6 +271,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `config/settings_data.json` that saves `"text": "t:sections.heading.default"` now shows
   `t:sections.heading.default`, where lsf showed the translation: a value left over from a
   preset shows the raw key on a store too. A schema `default` of `t:…` is still translated.
+- **`t` no longer takes `default:`, and a missing plural form is `Translation missing`**, as on
+  Shopify. `{{ 'x.nope' | t: default: 'DEF' }}` printed `DEF`; Shopify has no such argument and
+  prints `Translation missing: en.x.nope`. A `count` whose form is missing and that has no
+  `other` (`{ "one": … }` with a count of 2) printed another form; it is now
+  `Translation missing` too. A theme that relied on either now shows what the storefront shows.
 
 ### Fixed
 
@@ -562,6 +567,19 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`{% paginate … by %}` a nil value pages by 20**, as Shopify does: an unset section setting
   or an undefined variable (`by section.settings.per_page`) was a Liquid error, `invalid
   integer`, and the block did not render.
+- **`t` keeps a placeholder it has no argument for, as Shopify does.** Given no argument at all,
+  `{{ 'x.hello' | t }}` prints `Hello {{ name }}`; given others but not `name`, it prints
+  Shopify's error, `I18n Error: Missing interpolation value "name" for "Hello {{ name }}"`. lsf
+  printed `Hello `, which hid the mistake. `name: nil` still prints `Hello `.
+- **`t` with `count` picks the plural form Shopify picks**: the `zero` form for 0 (and 0.0) in
+  every language, else the CLDR category of the number, decimals included (`1.5 items` in
+  English, `1.5 article` in French) and the `many` of a million in French, Spanish, Italian,
+  Portuguese and Catalan, else `other`. A text count (`'0'`) takes `other`. lsf rounded decimals down and
+  never used `zero` or `many`.
+- **`t` prints a group of keys as Shopify does**, as a Ruby hash
+  (`{"key"=>"deep value"}`, HTML-escaped unless the key ends in `_html`): a key that names a
+  group, and plural forms without `count`, which printed the `other` form with an empty count.
+  A key with a leading dot (`.plain`) is read as `plain`, where lsf looked up `en..plain`.
 
 #### The checkout of an app
 
