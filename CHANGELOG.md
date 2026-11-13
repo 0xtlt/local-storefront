@@ -315,6 +315,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   them. `/` and the other markets keep the parent. `"context": {"b2b": true}` applies to a
   customer who buys for a company (`customer.b2b?`). The Section Rendering API renders the same
   sections as the page.
+- **`/search/suggest.json` gives products and collections a `featured_image`**, as Shopify
+  does: an object with `alt`, `aspect_ratio`, `height`, `url` and `width`, all `null` when there
+  is no image. A product also has `variants` (empty), and a collection its `published_at`.
+  Predictive search code that reads `product.featured_image.url` no longer throws on lsf.
 
 #### The checkout of an app
 

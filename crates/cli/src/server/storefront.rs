@@ -602,6 +602,28 @@ fn products_json(visit: &Visit<'_>, collection: Option<&str>) -> Reply {
     Reply::json(200, &json!({ "products": products }))
 }
 
+/// The `featured_image` of a suggestion: always an object, whose keys are all `null` when
+/// there is no image, as on Shopify.
+/// https://shopify.dev/docs/api/ajax/reference/predictive-search
+fn featured_image(image: &lsf_liquid::Value) -> Json {
+    if image.is_nil() {
+        return json!({
+            "alt": null,
+            "aspect_ratio": null,
+            "height": null,
+            "url": null,
+            "width": null,
+        });
+    }
+    json!({
+        "alt": image.get("alt").to_json(),
+        "aspect_ratio": image.get("aspect_ratio").to_json(),
+        "height": image.get("height").to_json(),
+        "url": image.to_json(),
+        "width": image.get("width").to_json(),
+    })
+}
+
 /// A search result as `/search/suggest.json` describes resources.
 fn suggestion(value: &lsf_liquid::Value) -> Json {
     let text = |key: &str| value.get(key).to_json();
@@ -628,6 +650,10 @@ fn suggestion(value: &lsf_liquid::Value) -> Json {
             entry["vendor"] = text("vendor");
             entry["tags"] = text("tags");
             entry["image"] = value.get("featured_image").to_json();
+            // Shopify lists a variant only when the query matches terms of its title alone,
+            // which this search does not tell apart.
+            entry["variants"] = json!([]);
+            entry["featured_image"] = featured_image(&value.get("featured_image"));
         }
         "article" => {
             entry["body"] = text("content");
@@ -640,6 +666,16 @@ fn suggestion(value: &lsf_liquid::Value) -> Json {
         }
         _ => {
             entry["body"] = text("description");
+            // The collection's own image: not the first product's, which Liquid falls back to.
+            entry["featured_image"] = featured_image(&value.get("image"));
+            if let Some(collection) = value.downcast::<CollectionDrop>() {
+                entry["published_at"] = json!(
+                    collection
+                        .collection()
+                        .published_at
+                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+                );
+            }
         }
     }
     entry
