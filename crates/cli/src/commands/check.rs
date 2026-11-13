@@ -1335,6 +1335,80 @@ mod tests {
     }
 
     #[test]
+    fn setting_defaults_shopify_refuses_are_problems() {
+        // #93: a richtext default without `<p>`, a url default that is a page, a color that is
+        // a name.
+        let root = std::env::temp_dir().join(format!("lsf-check-defaults-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write(
+            "layout/theme.liquid",
+            "{{ content_for_header }}{{ content_for_layout }}",
+        );
+        for (name, body, setting) in [
+            (
+                "richtext-default",
+                "<div>{{ section.settings.t }}</div>",
+                r#"{ "type": "richtext", "id": "t", "label": "Text", "default": "Hello" }"#,
+            ),
+            (
+                "url-default",
+                "<a href=\"{{ section.settings.u }}\">link</a>",
+                r#"{ "type": "url", "id": "u", "label": "Link", "default": "/pages/about" }"#,
+            ),
+            (
+                "color-default",
+                "<p style=\"color: {{ section.settings.c }}\">color</p>",
+                r#"{ "type": "color", "id": "c", "label": "Color", "default": "red" }"#,
+            ),
+        ] {
+            write(
+                &format!("sections/{name}.liquid"),
+                &format!(
+                    "{body}\n{{% schema %}}\n{{ \"name\": \"{name}\", \"settings\": [ {setting} ] }}\n{{% endschema %}}"
+                ),
+            );
+        }
+        write(
+            "templates/index.json",
+            r#"{"sections": {"a": {"type": "richtext-default"}, "b": {"type": "url-default"}, "c": {"type": "color-default"}}, "order": ["a", "b", "c"]}"#,
+        );
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(&str, &str, u64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["code"].as_str().unwrap(),
+                    d["file"].as_str().unwrap(),
+                    d["line"].as_u64().unwrap_or(0),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("invalid_schema", "sections/color-default.liquid", 3),
+                ("invalid_schema", "sections/richtext-default.liquid", 3),
+                ("invalid_schema", "sections/url-default.liquid", 3),
+            ],
+            "{report:#}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn setting_values_shopify_refuses_are_problems() {
         // #186: a range value above its max, Liquid in a text setting.
         let root = std::env::temp_dir().join(format!("lsf-check-values-{}", std::process::id()));

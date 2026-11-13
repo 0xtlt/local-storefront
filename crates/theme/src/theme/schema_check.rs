@@ -232,6 +232,13 @@ fn check_settings(parsed: &Parsed, list: &Json, pointer: &str, out: &mut Vec<Sch
             }
             seen.push(id);
         }
+        for message in setting_rules(item, kind) {
+            problem(
+                "invalid_schema",
+                format!("{name}: {message}: Shopify refuses the file"),
+                None,
+            );
+        }
         let default = item.get("default");
         match kind {
             "select" | "radio" => {
@@ -328,12 +335,12 @@ fn check_settings(parsed: &Parsed, list: &Json, pointer: &str, out: &mut Vec<Sch
                         ),
                         None,
                     );
-                } else if (max - min) / step > MOST_STEPS {
+                } else if ((max - min) / step).floor() + 1.0 > MOST_STEPS {
                     problem(
                         "invalid_schema",
                         format!(
                             "{name} has {} steps from {min} to {max}: Shopify takes 101 at most. Make the `step` bigger",
-                            ((max - min) / step).floor()
+                            ((max - min) / step).floor() + 1.0
                         ),
                         None,
                     );
@@ -362,6 +369,273 @@ fn check_settings(parsed: &Parsed, list: &Json, pointer: &str, out: &mut Vec<Sch
             _ => {}
         }
     }
+}
+
+/// The most characters of a setting's `label` and `info` (a `t:` key is not counted).
+const LONGEST_LABEL: usize = 70;
+const LONGEST_INFO: usize = 500;
+
+/// The settings that pick a resource, and take no `default`.
+const NO_DEFAULT: [&str; 5] = ["article", "blog", "collection", "page", "product"];
+
+/// The settings that pick a list of resources, with a `limit` of 1 to 50.
+const LISTS: [&str; 4] = [
+    "article_list",
+    "collection_list",
+    "metaobject_list",
+    "product_list",
+];
+
+/// The top-level tags a `richtext` default may have.
+const RICHTEXT_BLOCKS: [&str; 9] = ["p", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"];
+
+/// The tags an `inline_richtext` default may not have: it is not wrapped in a paragraph.
+const NOT_INLINE: [&str; 15] = [
+    "p",
+    "div",
+    "ul",
+    "ol",
+    "li",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "br",
+    "blockquote",
+    "table",
+    "section",
+];
+
+/// The tags of an HTML text, as (name, closing, self-closing), and whether text sits at the
+/// top level, outside every tag.
+fn html_tags(html: &str) -> (Vec<(String, bool, bool)>, Vec<usize>) {
+    let mut tags = Vec::new();
+    // The depth at which each piece of text is.
+    let mut text_depths = Vec::new();
+    let mut depth: usize = 0;
+    let mut rest = html;
+    while !rest.is_empty() {
+        let Some(open) = rest.find('<') else {
+            if !rest.trim().is_empty() {
+                text_depths.push(depth);
+            }
+            break;
+        };
+        if !rest[..open].trim().is_empty() {
+            text_depths.push(depth);
+        }
+        let Some(close) = rest[open..].find('>') else {
+            text_depths.push(depth);
+            break;
+        };
+        let inner = &rest[open + 1..open + close];
+        let closing = inner.starts_with('/');
+        let name: String = inner
+            .trim_start_matches('/')
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .collect::<String>()
+            .to_ascii_lowercase();
+        let self_closing = inner.ends_with('/') || matches!(name.as_str(), "br" | "img" | "hr");
+        if !name.is_empty() {
+            if closing {
+                depth = depth.saturating_sub(1);
+            }
+            tags.push((name, closing, self_closing));
+            if !closing && !self_closing {
+                depth += 1;
+            }
+        }
+        rest = &rest[open + close + 1..];
+    }
+    (tags, text_depths)
+}
+
+/// What Shopify refuses in a `richtext` default: a top-level node that is not a paragraph, a
+/// list or a heading (`Hello`, `<div>`).
+fn richtext_default(html: &str) -> Option<String> {
+    let (tags, text_depths) = html_tags(html);
+    if text_depths.contains(&0) {
+        return Some("its default has text outside a `<p>` or a `<ul>`".to_string());
+    }
+    let mut depth: usize = 0;
+    for (name, closing, self_closing) in tags {
+        if closing {
+            depth = depth.saturating_sub(1);
+            continue;
+        }
+        if depth == 0 && !RICHTEXT_BLOCKS.contains(&name.as_str()) {
+            return Some(format!(
+                "its default has a top-level `<{name}>`: only `<p>` and `<ul>` are"
+            ));
+        }
+        if !self_closing {
+            depth += 1;
+        }
+    }
+    None
+}
+
+/// Whether a `color` default is a color, or a dynamic source (`{{ settings.colors.primary }}`).
+fn is_color(text: &str) -> bool {
+    let text = text.trim();
+    if text.starts_with("{{") && text.ends_with("}}") {
+        return true;
+    }
+    if let Some(hex) = text.strip_prefix('#') {
+        return matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit());
+    }
+    let lower = text.to_ascii_lowercase();
+    ["rgb(", "rgba(", "hsl(", "hsla("]
+        .iter()
+        .any(|function| lower.starts_with(function))
+        && lower.ends_with(')')
+}
+
+/// Whether a text is written by the theme, not a `t:` key the locale gives.
+fn literal(text: &str) -> Option<&str> {
+    (!text.starts_with("t:")).then_some(text)
+}
+
+/// The Liquid environment `visible_if` is parsed with.
+fn liquid() -> &'static lsf_liquid::Environment {
+    static ENVIRONMENT: std::sync::OnceLock<lsf_liquid::Environment> = std::sync::OnceLock::new();
+    ENVIRONMENT.get_or_init(|| crate::render::environment_with(&[]))
+}
+
+/// What Shopify refuses in one setting of a schema, beyond its required keys and the type of
+/// its `default`: each message says what is wrong.
+fn setting_rules(item: &Json, kind: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let default = item.get("default").filter(|default| !default.is_null());
+    let text_default = default.and_then(Json::as_str).and_then(literal);
+    for (key, most) in [("label", LONGEST_LABEL), ("info", LONGEST_INFO)] {
+        if let Some(text) = item.get(key).and_then(Json::as_str).and_then(literal)
+            && text.chars().count() > most
+        {
+            out.push(format!(
+                "its `{key}` is {} characters long, more than {most}",
+                text.chars().count()
+            ));
+        }
+    }
+    if let Some(id) = item.get("id").and_then(Json::as_str)
+        && id.contains(char::is_whitespace)
+    {
+        out.push(format!("its id \"{id}\" has a space"));
+    }
+    if let Some(condition) = item.get("visible_if").and_then(Json::as_str) {
+        if !condition.trim_start().starts_with("{{") {
+            out.push("its `visible_if` does not start with `{{`".to_string());
+        } else if let Err(error) = lsf_liquid::Template::parse(liquid(), condition) {
+            out.push(format!("its `visible_if` is not valid Liquid ({error})"));
+        }
+    }
+    match kind {
+        "header" | "paragraph" if item.get("label").is_some() => {
+            out.push(format!("a {kind} takes no `label`, only `content`"));
+        }
+        "text" | "textarea" => {
+            for key in ["default", "placeholder"] {
+                if let Some(value) = item
+                    .get(key)
+                    .filter(|value| !value.is_string() && !value.is_null())
+                {
+                    out.push(format!("its `{key}` {value} is not a string"));
+                }
+            }
+        }
+        _ if NO_DEFAULT.contains(&kind) && item.get("default").is_some() => {
+            out.push(format!("a {kind} setting takes no `default`"));
+        }
+        _ if LISTS.contains(&kind) => {
+            if let Some(limit) = item.get("limit")
+                && limit
+                    .as_i64()
+                    .is_none_or(|limit| !(1..=50).contains(&limit))
+            {
+                out.push(format!("its `limit` {limit} is not from 1 to 50"));
+            }
+        }
+        "richtext" => {
+            if let Some(message) = text_default.and_then(richtext_default) {
+                out.push(message);
+            }
+        }
+        "inline_richtext" => {
+            if let Some(html) = text_default {
+                let (tags, _) = html_tags(html);
+                if let Some((name, _, _)) = tags
+                    .iter()
+                    .find(|(name, _, _)| NOT_INLINE.contains(&name.as_str()))
+                {
+                    out.push(format!(
+                        "its default has a `<{name}>`, which inline rich text does not take"
+                    ));
+                }
+            }
+        }
+        "url" => {
+            if let Some(url) = text_default
+                && !matches!(url, "/collections" | "/collections/all")
+            {
+                out.push(format!(
+                    "its default \"{url}\" is not `/collections` or `/collections/all`, the defaults a url takes"
+                ));
+            }
+        }
+        "color" => {
+            if let Some(color) = text_default
+                && !color.is_empty()
+                && !is_color(color)
+            {
+                out.push(format!(
+                    "its default \"{color}\" is not a color (`#121212`, `rgba(0, 0, 0, 0.5)`) or a dynamic source"
+                ));
+            }
+        }
+        "text_alignment" => {
+            if let Some(alignment) = default
+                && !matches!(alignment.as_str(), Some("left" | "center" | "right"))
+            {
+                out.push(format!(
+                    "its default {alignment} is not left, center or right"
+                ));
+            }
+        }
+        "video_url" => {
+            let accept = item.get("accept").and_then(Json::as_array);
+            if let Some(provider) = accept
+                .into_iter()
+                .flatten()
+                .find(|provider| !matches!(provider.as_str(), Some("youtube" | "vimeo")))
+            {
+                out.push(format!(
+                    "its `accept` has {provider}: it takes only \"youtube\" and \"vimeo\""
+                ));
+            }
+        }
+        "select" | "radio" => {
+            let mut values: Vec<&str> = Vec::new();
+            for option in item
+                .get("options")
+                .and_then(Json::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(value) = option.get("value").and_then(Json::as_str) {
+                    if values.contains(&value) {
+                        out.push(format!("two of its options have the value \"{value}\""));
+                    }
+                    values.push(value);
+                }
+            }
+        }
+        _ => {}
+    }
+    out
 }
 
 /// The roles of a color scheme preview, each a definition of the scheme; those that may be a
@@ -1305,6 +1579,78 @@ mod tests {
             problems[9].hint.as_deref(),
             Some("did you mean \"image_picker\"?")
         );
+    }
+
+    /// The messages for a section with one setting.
+    fn one_setting(setting: &str) -> Vec<String> {
+        check(&format!(
+            "{{% schema %}}{{\"name\": \"S\", \"settings\": [{setting}]}}{{% endschema %}}"
+        ))
+        .into_iter()
+        .map(|problem| problem.message)
+        .collect()
+    }
+
+    #[test]
+    fn setting_rules_shopify_enforces_on_upload_are_reported() {
+        // #93: each setting is one Shopify refused on upload.
+        let long_label = "L".repeat(300);
+        let long_info = "I".repeat(1000);
+        let cases: Vec<(String, &str)> = vec![
+            (r#"{"type": "richtext", "id": "t", "label": "T", "default": "Hello"}"#.into(), "text outside a `<p>`"),
+            (r#"{"type": "richtext", "id": "t", "label": "T", "default": "<div>Hello</div>"}"#.into(), "a top-level `<div>`"),
+            (r#"{"type": "url", "id": "u", "label": "U", "default": "/pages/about"}"#.into(), "\"/pages/about\" is not `/collections`"),
+            (r#"{"type": "url", "id": "u", "label": "U", "default": "https://example.com"}"#.into(), "is not `/collections`"),
+            (r#"{"type": "color", "id": "c", "label": "C", "default": "red"}"#.into(), "\"red\" is not a color"),
+            (r#"{"type": "color", "id": "c", "label": "C", "default": "notacolor"}"#.into(), "is not a color"),
+            (r#"{"type": "inline_richtext", "id": "i", "label": "I", "default": "<p>Hello</p>"}"#.into(), "a `<p>`"),
+            (r#"{"type": "inline_richtext", "id": "i", "label": "I", "default": "<h2>Hello</h2>"}"#.into(), "a `<h2>`"),
+            (r#"{"type": "text_alignment", "id": "a", "label": "A", "default": "middle"}"#.into(), "\"middle\" is not left"),
+            (r#"{"type": "text", "id": "t", "label": "T", "default": 5}"#.into(), "`default` 5 is not a string"),
+            (r#"{"type": "text", "id": "t", "label": "T", "placeholder": 5}"#.into(), "`placeholder` 5 is not a string"),
+            (r#"{"type": "product", "id": "p", "label": "P", "default": "x"}"#.into(), "takes no `default`"),
+            (r#"{"type": "header", "content": "H", "id": "h", "label": "H"}"#.into(), "takes no `label`"),
+            (format!(r#"{{"type": "text", "id": "t", "label": "{long_label}"}}"#), "`label` is 300 characters long"),
+            (format!(r#"{{"type": "text", "id": "t", "label": "T", "info": "{long_info}"}}"#), "`info` is 1000 characters long"),
+            (r#"{"type": "text", "id": "my id", "label": "T"}"#.into(), "has a space"),
+            (r#"{"type": "select", "id": "s", "label": "S", "options": [{"value": "a", "label": "A"}, {"value": "a", "label": "B"}]}"#.into(), "two of its options have the value \"a\""),
+            (r#"{"type": "range", "id": "r", "label": "R", "min": 0, "max": 101, "step": 1, "default": 0}"#.into(), "102 steps"),
+            (r#"{"type": "collection_list", "id": "c", "label": "C", "limit": 51}"#.into(), "`limit` 51 is not from 1 to 50"),
+            (r#"{"type": "product_list", "id": "p", "label": "P", "limit": 0}"#.into(), "`limit` 0 is not from 1 to 50"),
+            (r#"{"type": "video_url", "id": "v", "label": "V", "accept": ["tiktok"]}"#.into(), "\"tiktok\""),
+            (r#"{"type": "checkbox", "id": "b", "label": "B", "visible_if": "section.settings.x"}"#.into(), "does not start with `{{`"),
+            (r#"{"type": "checkbox", "id": "b", "label": "B", "visible_if": "{{ section.settings.x"}"#.into(), "is not valid Liquid"),
+        ];
+        for (setting, expected) in &cases {
+            let found = one_setting(setting);
+            assert!(
+                found.len() == 1 && found[0].contains(expected),
+                "{setting}: {found:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn settings_shopify_takes_are_not_reported() {
+        for setting in [
+            r#"{"type": "richtext", "id": "t", "label": "T", "default": "<p>Hello <strong>you</strong></p><ul><li>a</li></ul>"}"#,
+            r#"{"type": "richtext", "id": "t", "label": "T", "default": "t:sections.rich_text.default"}"#,
+            r#"{"type": "url", "id": "u", "label": "U", "default": "/collections/all"}"#,
+            r##"{"type": "color", "id": "c", "label": "C", "default": "#00000026"}"##,
+            r#"{"type": "color", "id": "c", "label": "C", "default": "{{ settings.color_palette.foreground }}"}"#,
+            r#"{"type": "color", "id": "c", "label": "C", "default": "rgba(0, 0, 0, 0.5)"}"#,
+            r#"{"type": "inline_richtext", "id": "i", "label": "I", "default": "<strong>Hi</strong> <a href=\"/\">there</a>"}"#,
+            r#"{"type": "text_alignment", "id": "a", "label": "A", "default": "center"}"#,
+            r#"{"type": "text", "id": "my-id", "label": "t:a.very.long.translation.key.that.goes.on.and.on.and.on.beyond.seventy.characters"}"#,
+            r#"{"type": "range", "id": "r", "label": "R", "min": 0, "max": 100, "step": 1, "default": 0}"#,
+            r#"{"type": "product_list", "id": "p", "label": "P", "limit": 50}"#,
+            r#"{"type": "link_list", "id": "m", "label": "M", "default": "main-menu"}"#,
+            r#"{"type": "video_url", "id": "v", "label": "V", "accept": ["youtube", "vimeo"]}"#,
+            r#"{"type": "header", "content": "H", "info": "I", "visible_if": "{{ section.settings.a }}"}"#,
+            r#"{"type": "checkbox", "id": "b", "label": "B", "visible_if": "{{ section.settings.x == 'a' and block.settings.y }}"}"#,
+        ] {
+            assert_eq!(one_setting(setting), Vec::<String>::new(), "{setting}");
+        }
     }
 
     const THEME_INFO_OK: &str = r#"{ "name": "theme_info", "theme_name": "Probe", "theme_version": "1.0.0", "theme_author": "me", "theme_documentation_url": "https://example.com", "theme_support_url": "https://example.com" }"#;

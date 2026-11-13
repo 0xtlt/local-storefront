@@ -40,6 +40,17 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   (`{% if true %}yes{% endif %}`, `{{ page.title` unclosed), a `liquid` value over 50 kB. lsf
   rendered the raw value; Shopify refuses the file. A theme that checked clean with one of these
   now fails `check`.
+- **`lsf check` reports the settings of a section or theme block schema that Shopify refuses on
+  upload** (`invalid_schema`, which fails the check): a `richtext` default that is not in
+  `<p>` or `<ul>` (`Hello`, `<div>`), an `inline_richtext` default with `<p>` or `<h2>`, a `url`
+  default other than `/collections` and `/collections/all`, a `color` default that is a name
+  (`red`), a `text_alignment` default of `middle`, a number as the `default` or `placeholder` of
+  a `text`, a `default` on a `product` setting, a `label` on a `header`, a `label` over 70
+  characters or an `info` over 500, an id with a space, two `select` options with one value, a
+  `range` of more than 101 steps (0 to 101 by 1, which lsf let through), a list `limit` outside
+  1 to 50, a `video_url` that accepts another provider, and a `visible_if` that is not Liquid
+  starting with `{{`. Shopify refuses the section and every template that places it; a theme
+  that checked clean with one of these now fails `check`.
 - **`closest.<resource>` is the nearest resource setting, even an empty one.** A theme block
   whose own `product` setting is unset no longer gets the page's product as `closest.product`:
   it gets none, as on Shopify. Give the setting a value, or `{{ closest.product }}` as its
