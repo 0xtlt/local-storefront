@@ -184,6 +184,9 @@ data, in the 38 languages lsf names; a page in another language has the English 
 
 - JSON templates and Liquid templates, alternate templates (`?view=`, `template_suffix`),
   layouts (`{% layout %}`, `"layout"` in JSON templates, `layout none`).
+- A `t:` key in a schema (a setting's `default`) is read from the schema locale files; one
+  saved as a setting's value, in a JSON template, a section group or
+  `config/settings_data.json`, is printed as it is, as on Shopify.
 - Contextual templates and section groups (`templates/index.context.<context>.json`,
   `sections/header-group.context.<context>.json`), as the theme editor writes them when a
   merchant adapts a page for a market or for B2B: a file whose `parent` is the template or the
