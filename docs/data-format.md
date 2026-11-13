@@ -881,8 +881,10 @@ URLs keep the shape Shopify gives them but point to the local server, never to S
 
 The server resizes and crops on the fly with Shopify's parameters: `width`, `height`, `crop`
 (`top`, `center`, `bottom`, `left`, `right`, or a region with `crop_left`, `crop_top`,
-`crop_width`, `crop_height`), `pad_color`, `format` and `quality`. Images are never scaled up
-beyond their own size, as on Shopify. The legacy `img_url` sizes
+`crop_width`, `crop_height`), `pad_color`, `format` and `quality`. As on Shopify, `image_url`
+with a `width` and a `height` crops from the center (`crop=center`) unless it is given another
+`crop`, `crop: nil` or a `pad_color`. Images are never scaled up beyond their own size, as on
+Shopify. The legacy `img_url` sizes
 (`shirt_400x400_crop_center.jpg`) work too.
 
 **The file does not have to exist.** When it is missing, the server draws a placeholder of the
