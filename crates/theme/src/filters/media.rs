@@ -61,7 +61,7 @@ pub fn resolve_image(site: &std::sync::Arc<Site>, input: &Value) -> Option<(Imag
     match input {
         Value::Object(object) => {
             if let Some(drop) = input.downcast::<ImageDrop>() {
-                return Some((drop.image.clone(), drop.image.alt.clone()));
+                return Some((drop.image.clone(), drop.alt()));
             }
             if let Some(url) = input.downcast::<ImageUrl>() {
                 return Some((url.image.clone(), url.alt.clone()));

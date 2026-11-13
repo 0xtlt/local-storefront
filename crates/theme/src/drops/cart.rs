@@ -67,7 +67,8 @@ pub fn line_json(site: &SiteRef, line: &ResolvedLine<'_>) -> Json {
         "featured_image": match image {
             Some(image) => json!({
                 "aspect_ratio": image.aspect_ratio(),
-                "alt": image.alt,
+                // A product image without alt text has the product's title, as on Shopify.
+                "alt": if image.alt.is_empty() { &line.product.title } else { &image.alt },
                 "height": image.height,
                 "url": image_base_url(site, image),
                 "width": image.width,
