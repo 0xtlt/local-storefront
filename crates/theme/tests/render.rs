@@ -554,6 +554,82 @@ fn image_url_with_a_width_and_a_height_crops_from_the_center() {
 }
 
 #[test]
+fn image_tag_lists_the_width_of_image_url_and_is_the_size_it_asks_for() {
+    // Issue #120, and https://shopify.dev/docs/storefronts/themes/best-practices/performance/use-filter-chains:
+    // the default widths with the width of `image_url` added, or the widths of `widths:`, kept
+    // up to the width of `image_url`; the tag's size is the one asked for, not the file's.
+    let overlay = serde_json::json!({"products": [
+        {"title": "Widget", "price": 1000,
+         "images": [{"src": "widget.jpg", "alt": "W", "width": 1600, "height": 1600}]},
+        {"title": "Small", "price": 1000,
+         "images": [{"src": "small.jpg", "alt": "S", "width": 1024, "height": 1024}]}
+    ]});
+    let (store, diagnostics) =
+        load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    // The tag with each URL reduced to its width.
+    let tag = |product: &str, chain: &str| {
+        let output = fixture.liquid(
+            "/",
+            Session::initial(&fixture.store),
+            &format!("{{{{ all_products['{product}'].featured_image | {chain} }}}}"),
+        );
+        let mut short = String::new();
+        let mut rest = output.as_str();
+        while let Some(start) = rest.find("//") {
+            short.push_str(&rest[..start]);
+            let end = rest[start..]
+                .find([' ', '"'])
+                .map_or(rest.len(), |end| start + end);
+            let url = &rest[start..end];
+            short.push_str(url.rsplit_once("width=").map_or("…", |(_, width)| width));
+            rest = &rest[end..];
+        }
+        short.push_str(rest);
+        short
+    };
+    assert_eq!(
+        tag("widget", "image_url: width: 400 | image_tag"),
+        r#"<img src="400" alt="W" srcset="352 352w, 400 400w" width="400" height="400">"#
+    );
+    assert_eq!(
+        tag("widget", "image_url: width: 3000 | image_tag"),
+        r#"<img src="3000" alt="W" srcset="352 352w, 832 832w, 1200 1200w, 1920 1920w, 3000 3000w" width="3000" height="3000">"#
+    );
+    assert_eq!(
+        tag(
+            "widget",
+            "image_url: width: 1600 | image_tag: widths: '100, 200, 2000'"
+        ),
+        r#"<img src="1600" alt="W" srcset="100 100w, 200 200w" width="1600" height="1600">"#
+    );
+    assert_eq!(
+        tag(
+            "small",
+            "image_url: width: 1600 | image_tag: widths: '100, 200, 2000'"
+        ),
+        r#"<img src="1600" alt="S" srcset="100 100w, 200 200w" width="1600" height="1600">"#
+    );
+    // Below the smallest default width, the width asked for is the only one.
+    assert_eq!(
+        tag("widget", "image_url: width: 200 | image_tag"),
+        r#"<img src="200" alt="W" srcset="200 200w" width="200" height="200">"#
+    );
+    // Nothing left after the filter: no `srcset`.
+    assert_eq!(
+        tag(
+            "widget",
+            "image_url: width: 300 | image_tag: widths: '400, 500'"
+        ),
+        r#"<img src="300" alt="W" width="300" height="300">"#
+    );
+}
+
+#[test]
 fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
     let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
     assert!(diagnostics.is_empty(), "{diagnostics}");

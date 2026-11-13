@@ -194,7 +194,9 @@ fn build_url(
     urls::with_sorted_params(base, &all)
 }
 
-/// The size the transformed image is displayed at: `(width, height)`.
+/// The size `image_tag` gives the transformed image: `(width, height)`. It is the size the URL
+/// asks for, even beyond the file's own, as on Shopify: a 1600 px wide image asked for at
+/// `width: 3000` is a 3000 px wide tag.
 fn output_size(url: &ImageUrl) -> (u32, u32) {
     let (natural_width, natural_height) = (
         f64::from(url.image.width.max(1)),
@@ -203,25 +205,14 @@ fn output_size(url: &ImageUrl) -> (u32, u32) {
     let ratio = natural_width / natural_height;
     let cropped = url.params.iter().any(|(key, _)| key == "crop");
     let (width, height) = match (url.width, url.height) {
-        (Some(width), Some(height)) if cropped => (
-            f64::from(width).min(natural_width),
-            f64::from(height).min(natural_height),
-        ),
+        (Some(width), Some(height)) if cropped => (f64::from(width), f64::from(height)),
         (Some(width), Some(height)) => {
             // Without a crop the image is scaled to fit inside the box.
-            let scale = (f64::from(width) / natural_width)
-                .min(f64::from(height) / natural_height)
-                .min(1.0);
+            let scale = (f64::from(width) / natural_width).min(f64::from(height) / natural_height);
             (natural_width * scale, natural_height * scale)
         }
-        (Some(width), None) => {
-            let width = f64::from(width).min(natural_width);
-            (width, width / ratio)
-        }
-        (None, Some(height)) => {
-            let height = f64::from(height).min(natural_height);
-            (height * ratio, height)
-        }
+        (Some(width), None) => (f64::from(width), f64::from(width) / ratio),
+        (None, Some(height)) => (f64::from(height) * ratio, f64::from(height)),
         (None, None) => (natural_width, natural_height),
     };
     (width.round() as u32, height.round() as u32)
@@ -288,8 +279,10 @@ fn image_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
         escape_html(&alt)
     );
 
-    // srcset: an explicit one wins, then explicit widths, then Shopify's defaults up to the
-    // requested width.
+    // srcset: an explicit one wins. Otherwise, as Shopify documents it
+    // (https://shopify.dev/docs/storefronts/themes/best-practices/performance/use-filter-chains):
+    // the widths of `widths:`, or the defaults with the width of `image_url` added, kept up to
+    // the width of the `image_url` output; none left, no `srcset`.
     let width_attribute = args
         .named("width")
         .filter(|width| !width.is_nil())
@@ -298,27 +291,22 @@ fn image_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
         Some(Value::Nil) => None,
         Some(custom) => Some(custom.to_str().into_owned()),
         None => {
-            let widths = match args.named("widths") {
+            let limit = url.width.unwrap_or(output_width);
+            let mut widths = match args.named("widths") {
                 Some(widths) => parse_widths(widths),
                 None => {
-                    let limit = url.width.unwrap_or(output_width);
-                    let mut widths: Vec<u32> = DEFAULT_SRCSET_WIDTHS
-                        .iter()
-                        .copied()
-                        .filter(|width| *width < limit)
-                        .collect();
+                    let mut widths = DEFAULT_SRCSET_WIDTHS.to_vec();
+                    widths.extend(url.width);
                     if let Some(width) = width_attribute {
                         widths.push(width as u32);
-                    }
-                    if widths.is_empty() {
-                        widths.push(limit);
                     }
                     widths.sort_unstable();
                     widths.dedup();
                     widths
                 }
             };
-            Some(srcset(url, &widths))
+            widths.retain(|width| (1..=limit).contains(width));
+            (!widths.is_empty()).then(|| srcset(url, &widths))
         }
     };
     if let Some(srcset_value) = &srcset_value {
