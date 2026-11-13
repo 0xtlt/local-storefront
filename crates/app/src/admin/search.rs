@@ -14,7 +14,10 @@
 //! - a term without a field searches the record's default text, case-insensitively;
 //! - `:` on a tokenized field (`Text`) finds the term among its words, on any other field it is
 //!   equality; `:` ignores case, and an unquoted value with commas is a list of alternatives
-//!   (`handle:a,b`, `channel:web,pos`), as several filters document;
+//!   (`handle:a,b`, `channel:web,pos`), as several filters document. On a field matched whole
+//!   (`Keyword`), `x*` is what starts with `x`, and a `*` before the last one matches anything
+//!   (`*snowboard*` is what has `snowboard` in it); a value whose last `*` is not at its end is
+//!   matched as written (`*hydrogen` finds nothing);
 //! - dates are [`date`]'s periods (`created_at:<=2024`, `updated_at:>'2020-10-21T23:39:20Z'`,
 //!   `created_at:<now`);
 //! - **a field the type does not know is ignored**: "If you specify an invalid field, then the
@@ -415,8 +418,9 @@ impl Options {
 pub enum SearchValue {
     /// Tokenized text (`title`, `body`): `:` finds the term, or the phrase, among its words.
     Text(String),
-    /// A value matched whole (`status`, `handle`, `sku`, `vendor`, a tag, an email): `:` is
-    /// equality, ignoring case; `*` a prefix.
+    /// A value matched whole (`status`, `handle`, `sku`, `vendor`, a tag, an email, a product's
+    /// title): `:` is equality, ignoring case; `*` a prefix, in which another `*` matches
+    /// anything.
     Keyword(String),
     /// `inventory_total`, `price`, `orders_count`.
     Number(f64),
@@ -562,7 +566,7 @@ fn matches_one(
         },
         SearchValue::Keyword(field) => match (comparator, wanted) {
             (Comparator::Eq, Value::Prefix(prefix)) => {
-                field.to_lowercase().starts_with(&prefix.to_lowercase())
+                starts_with_pattern(&field.to_lowercase(), &prefix.to_lowercase())
             }
             (Comparator::Eq, _) => field.to_lowercase() == text.to_lowercase(),
             _ => compare_text(comparator, field, text),
@@ -585,6 +589,24 @@ fn matches_one(
                 }
         }
     }
+}
+
+/// Whether `text` starts with `pattern`, each `*` of the pattern matching any run of characters:
+/// the prefix of `title:*snowboard*` is `*snowboard`, which `The Collection Snowboard: Hydrogen`
+/// starts with.
+fn starts_with_pattern(text: &str, pattern: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let first = parts.next().unwrap_or_default();
+    let Some(mut rest) = text.strip_prefix(first) else {
+        return false;
+    };
+    for part in parts {
+        match rest.find(part) {
+            Some(at) => rest = &rest[at + part.len()..],
+            None => return false,
+        }
+    }
+    true
 }
 
 /// `value` compared with `wanted` as `comparator` asks: `value < wanted` for `:<`.
