@@ -56,6 +56,10 @@ use crate::app::App;
 pub const SESSION_COOKIE: &str = "_lsf_session";
 /// The cookie Shopify keeps the cart token in. Scripts read it to know whether a cart exists.
 pub const CART_COOKIE: &str = "cart";
+/// The cookie Shopify keeps the currency of the cart in, set by its pages and its Ajax answers.
+pub const CART_CURRENCY_COOKIE: &str = "cart_currency";
+/// The cookie Shopify keeps the country picked with the localization form in.
+pub const LOCALIZATION_COOKIE: &str = "localization";
 
 /// The cart token of a session: stable for the session, different between sessions.
 pub fn cart_token_of(session_id: &str) -> String {

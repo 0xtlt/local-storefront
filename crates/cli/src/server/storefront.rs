@@ -13,7 +13,8 @@ use serde_json::{Value as Json, json};
 
 use super::reply::{Reply, cache};
 use super::{
-    CART_COOKIE, Incoming, SESSION_COOKIE, ServerState, account, cart, forms, live_reload, timing,
+    CART_COOKIE, CART_CURRENCY_COOKIE, Incoming, SESSION_COOKIE, ServerState, account, cart, forms,
+    live_reload, timing,
 };
 
 /// A request being handled for a given visitor.
@@ -154,7 +155,10 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
         Some(moved) => moved,
         None => route(&visit),
     };
-    let reply = with_cache_policy(&visit, with_cart_cookie(&visit, reply));
+    let reply = with_cache_policy(
+        &visit,
+        with_cart_currency_cookie(&visit, with_cart_cookie(&visit, reply)),
+    );
     if is_new {
         reply.header(
             "set-cookie",
@@ -259,7 +263,26 @@ fn with_cart_cookie(visit: &Visit<'_>, reply: Reply) -> Reply {
     if !(session.has_cart() || changes_cart(visit)) {
         return reply;
     }
-    let cookie = format!("{CART_COOKIE}={}", session.cart_token);
+    with_cookie(
+        visit,
+        reply,
+        format!("{CART_COOKIE}={}", session.cart_token),
+    )
+}
+
+/// Gives the visitor who has a cart the `cart_currency` cookie, the currency the answer is in
+/// (`EUR` under `/en-be/`), as Shopify's pages and Ajax answers set it. A redirect sets none:
+/// the page it leads to does.
+fn with_cart_currency_cookie(visit: &Visit<'_>, reply: Reply) -> Reply {
+    if (300..400).contains(&reply.status) || !(visit.session().has_cart() || changes_cart(visit)) {
+        return reply;
+    }
+    let currency = visit.site().currency().to_string();
+    with_cookie(visit, reply, format!("{CART_CURRENCY_COOKIE}={currency}"))
+}
+
+/// Sets a cookie scripts can read (`name=value`), unless the browser sent it with that value.
+fn with_cookie(visit: &Visit<'_>, reply: Reply, cookie: String) -> Reply {
     let known = visit
         .incoming
         .header("cookie")

@@ -205,6 +205,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   (an open redirect). It now keeps the path and redirects on lsf's own host (`/x`, or `/en-be/x`
   for a country served there), as Shopify redirects to the path on the shop's domain. A theme
   that puts an absolute URL in `return_to` stays on the local server, as it stays on the shop.
+- **The localization form sets the `localization` cookie, and the cart sets `cart_currency`.**
+  `POST /localization` with a country the store sells to sets `localization=<country>`, and the
+  pages and Ajax answers of a visitor who has a cart set `cart_currency=<currency>`, the currency
+  of the answer (`EUR` under `/en-be/`), as Shopify sets both. A script or a currency converter
+  that reads them gets a value locally too.
 
 #### The checkout of an app
 
