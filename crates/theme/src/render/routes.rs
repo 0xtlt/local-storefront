@@ -7,9 +7,13 @@ use crate::drops::request::TemplateName;
 use crate::site::Site;
 use crate::theme::Theme;
 
+/// A contextual file (`index.context.europe.json`) is no template: it holds overrides of its
+/// parent, so `?view=context.europe` does not name it.
 fn template_exists(theme: &Theme, name: &TemplateName) -> bool {
     let path = format!("templates/{}", name.full());
-    theme.files().exists(&format!("{path}.json")) || theme.files().exists(&format!("{path}.liquid"))
+    let json = format!("{path}.json");
+    (theme.files().exists(&json) && !crate::theme::template_json::is_contextual(&json))
+        || theme.files().exists(&format!("{path}.liquid"))
 }
 
 /// The template of the pages of a metaobject type: `templates/metaobject/<type>`.

@@ -444,7 +444,7 @@ impl Renderer {
                 let template_started = Instant::now();
                 let (content, layout) = match source {
                     Some((source, name)) => self.render_source_template(&ctx, source, name),
-                    None => self.render_template(&ctx, &page),
+                    None => self.render_template(&ctx, site, &page),
                 };
                 timings.template = Some(template_started.elapsed());
                 globals.set("content_for_layout", Value::from(content.clone()));
@@ -467,7 +467,7 @@ impl Renderer {
                     platform::decorate(site, &page, html),
                 )
             }
-            Target::Section(id) => match self.render_section_by_id(&ctx, &page, id) {
+            Target::Section(id) => match self.render_section_by_id(&ctx, site, &page, id) {
                 Some(html) => (200, "text/html; charset=utf-8", html),
                 None => {
                     missing_sections.push(id.clone());
@@ -490,7 +490,7 @@ impl Renderer {
                     if sections.contains_key(id) {
                         continue;
                     }
-                    let html = self.render_section_by_id(&ctx, &page, id);
+                    let html = self.render_section_by_id(&ctx, site, &page, id);
                     if html.is_none() {
                         missing_sections.push(id.clone());
                     }
@@ -537,7 +537,7 @@ impl Renderer {
             not_found: match (&page.resource, target) {
                 (Resource::NotFound(reason), Target::Page) => Some(reason.clone()),
                 _ if !missing_sections.is_empty() => {
-                    Some(self.missing_sections_reason(&page, &missing_sections))
+                    Some(self.missing_sections_reason(site, &page, &missing_sections))
                 }
                 _ => None,
             },
@@ -549,15 +549,16 @@ impl Renderer {
         }
     }
 
-    fn template_json(&self, page: &Page) -> Option<TemplateJson> {
-        self.theme
-            .template_json(&format!("templates/{}.json", page.template.full()))
+    /// The JSON template of the page, with the overrides of its contextual files for the
+    /// visitor.
+    fn template_json(&self, site: &Site, page: &Page) -> Option<TemplateJson> {
+        site.template_json(&format!("templates/{}.json", page.template.full()))
             .ok()
             .flatten()
     }
 
     /// Renders the template of the page: the content that goes into `content_for_layout`.
-    fn render_template(&self, ctx: &Context, page: &Page) -> (String, Layout) {
+    fn render_template(&self, ctx: &Context, site: &Site, page: &Page) -> (String, Layout) {
         let name = page.template.full();
         let default_layout = if page.template.name == "password" {
             Layout::Named("password".to_string())
@@ -566,7 +567,7 @@ impl Renderer {
         };
 
         // A JSON template lists sections.
-        match self.theme.template_json(&format!("templates/{name}.json")) {
+        match site.template_json(&format!("templates/{name}.json")) {
             Ok(Some(template)) => {
                 // A JSON template is no Liquid file: in a profile it is named as one.
                 let _span = ctx
@@ -713,7 +714,13 @@ impl Renderer {
 
     /// Renders one section by id, wherever it is defined: the page's JSON template, a section
     /// group, or a section file rendered with its default settings.
-    fn render_section_by_id(&self, ctx: &Context, page: &Page, id: &str) -> Option<String> {
+    fn render_section_by_id(
+        &self,
+        ctx: &Context,
+        site: &Site,
+        page: &Page,
+        id: &str,
+    ) -> Option<String> {
         let name = page.template.full();
         let render = |placement: Placement<'_>, instance: &SectionInstance| -> String {
             match render_section(ctx, &placement, instance) {
@@ -722,7 +729,7 @@ impl Renderer {
             }
         };
 
-        if let Some(template) = self.template_json(page) {
+        if let Some(template) = self.template_json(site, page) {
             for (key, instance) in &template.sections {
                 if template_section_id(&name, key) == id {
                     return Some(render(
@@ -746,8 +753,7 @@ impl Renderer {
                 let Some(key) = id.strip_prefix(&template_section_id(&other, "")) else {
                     continue;
                 };
-                let instance = self
-                    .theme
+                let instance = site
                     .template_json(&format!("templates/{other}.json"))
                     .ok()
                     .flatten()
@@ -763,15 +769,17 @@ impl Renderer {
             }
         }
         for file in self.theme.files().list("sections").iter() {
-            let Some(group_name) = file.strip_suffix(".json") else {
+            let Some(group_name) = file
+                .strip_suffix(".json")
+                .filter(|_| !crate::theme::template_json::is_contextual(file))
+            else {
                 continue;
             };
             let prefix = crate::tags::group_id_prefix(group_name);
             let Some(key) = id.strip_prefix(&prefix) else {
                 continue;
             };
-            let group = self
-                .theme
+            let group = site
                 .template_json(&format!("sections/{file}"))
                 .ok()
                 .flatten()?;
@@ -806,19 +814,22 @@ impl Renderer {
 
     /// Why the Section Rendering API found no section: the ids asked for, and the ids the page
     /// has (its template's sections, those of the section groups).
-    fn missing_sections_reason(&self, page: &Page, missing: &[String]) -> String {
+    fn missing_sections_reason(&self, site: &Site, page: &Page, missing: &[String]) -> String {
         let name = page.template.full();
         let mut ids = Vec::new();
-        if let Some(template) = self.template_json(page) {
+        if let Some(template) = self.template_json(site, page) {
             for key in &template.order {
                 ids.push(template_section_id(&name, key));
             }
         }
         for file in self.theme.files().list("sections").iter() {
-            let Some(group_name) = file.strip_suffix(".json") else {
+            let Some(group_name) = file
+                .strip_suffix(".json")
+                .filter(|_| !crate::theme::template_json::is_contextual(file))
+            else {
                 continue;
             };
-            if let Ok(Some(group)) = self.theme.template_json(&format!("sections/{file}")) {
+            if let Ok(Some(group)) = site.template_json(&format!("sections/{file}")) {
                 let prefix = crate::tags::group_id_prefix(group_name);
                 ids.extend(group.order.iter().map(|key| format!("{prefix}{key}")));
             }

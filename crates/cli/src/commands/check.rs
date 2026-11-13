@@ -782,6 +782,78 @@ fn check_liquid_settings(
 }
 
 /// The JSON report of `--format json`.
+/// A contextual template or section group (`index.context.europe.json`): a warning when lsf
+/// applies it nowhere, because its `parent` is not a file of the theme or its `context` is not
+/// a market or B2B.
+fn check_contextual(theme: &Theme, directory: &str, name: &str, tally: &mut Tally) {
+    let path = format!("{directory}/{name}");
+    let Ok(Some(json)) = theme.json(&path) else {
+        return;
+    };
+    let source = theme.files().read(&path).unwrap_or_default();
+    let line_of = |key: &str| {
+        source
+            .lines()
+            .position(|line| line.contains(&format!("\"{key}\"")))
+            .map(|index| index + 1)
+    };
+    // The parent its name gives: `index.json` for `index.context.europe.json`.
+    let named = name
+        .split_once(".context.")
+        .map(|(stem, _)| format!("{stem}.json"))
+        .unwrap_or_default();
+    let parent = json.get("parent").and_then(serde_json::Value::as_str);
+    let problem = match parent {
+        None => Some((
+            "the contextual file has no `parent`: its overrides apply to nothing".to_string(),
+            format!("add \"parent\": \"{named}\""),
+        )),
+        Some(parent) if !theme.files().exists(&format!("{directory}/{parent}")) => Some((
+            format!(
+                "the parent \"{parent}\" of the contextual file is not in {directory}/: its overrides apply to nothing"
+            ),
+            format!("name the file it adapts, \"{named}\""),
+        )),
+        Some(parent) if parent != named => Some((
+            format!(
+                "the parent \"{parent}\" is not the file the name of the contextual file adapts: its overrides apply to nothing"
+            ),
+            format!("name it \"{named}\", or rename the file after its parent"),
+        )),
+        _ => None,
+    };
+    if let Some((message, hint)) = problem {
+        let mut diagnostic = Diagnostic::new(
+            "warning",
+            "contextual_parent",
+            Location::file(&path, line_of("parent")),
+            message,
+        );
+        diagnostic.hint = Some(hint);
+        tally.report(diagnostic);
+    }
+    let context = match lsf_theme::theme::template_json::context_of(&json) {
+        None => {
+            Some("the contextual file has no `context`: its overrides apply to nobody".to_string())
+        }
+        Some(Err(why)) => Some(format!("{why}: its overrides apply to nobody")),
+        Some(Ok(_)) => None,
+    };
+    if let Some(message) = context {
+        let mut diagnostic = Diagnostic::new(
+            "warning",
+            "contextual_context",
+            Location::file(&path, line_of("context")),
+            message,
+        );
+        diagnostic.hint = Some(
+            "Shopify's contexts are {\"market\": \"<market handle>\"} and {\"b2b\": true}"
+                .to_string(),
+        );
+        tally.report(diagnostic);
+    }
+}
+
 fn json_report(files: usize, tally: &Tally) -> serde_json::Value {
     serde_json::json!({
         "ok": tally.problems == 0,
@@ -1005,6 +1077,11 @@ fn check_theme(
             }
             if holds_settings(&path) {
                 check_liquid_settings(&theme, &env, &path, args.writes(), &mut tally);
+            }
+            if matches!(directory, "templates" | "templates/customers" | "sections")
+                && lsf_theme::theme::template_json::is_contextual(name)
+            {
+                check_contextual(&theme, directory, name, &mut tally);
             }
             if matches!(directory, "templates" | "templates/customers" | "sections") {
                 for missing in references::in_json_template(&theme, &path) {
@@ -1443,6 +1520,108 @@ mod tests {
             ]
         );
         // Only the byte order mark counts: Shopify takes the other files.
+        assert_eq!(report["problems"], 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn contextual_files_are_checked_and_one_that_applies_nowhere_is_a_warning() {
+        let root =
+            std::env::temp_dir().join(format!("lsf-check-contextual-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write(
+            "layout/theme.liquid",
+            "{% sections 'header-group' %}{{ content_for_layout }}",
+        );
+        write("sections/note.liquid", "{{ section.settings.text }}");
+        write(
+            "sections/header-group.json",
+            r#"{ "type": "header", "name": "Header", "sections": { "a": { "type": "note" } }, "order": ["a"] }"#,
+        );
+        write(
+            "sections/header-group.context.europe.json",
+            r#"{ "context": { "market": "europe" }, "parent": "header-group.json", "sections": { "a": { "settings": { "text": "x" } } } }"#,
+        );
+        write(
+            "templates/index.json",
+            r#"{ "sections": { "a": { "type": "note" } }, "order": ["a"] }"#,
+        );
+        // Overrides that add a section of a type the theme lacks: checked as in a template.
+        write(
+            "templates/index.context.b2b.json",
+            r#"{ "context": { "b2b": true }, "parent": "index.json", "sections": { "b": { "type": "gone" } } }"#,
+        );
+        write(
+            "templates/index.context.ca.json",
+            "{\n  \"context\": { \"market\": \"ca\" },\n  \"sections\": {}\n}",
+        );
+        write(
+            "templates/product.context.ca.json",
+            "{\n  \"context\": { \"country\": \"CA\" },\n  \"parent\": \"product.json\"\n}",
+        );
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(String, String, String, u64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["severity"].as_str().unwrap().to_string(),
+                    d["code"].as_str().unwrap().to_string(),
+                    d["file"].as_str().unwrap().to_string(),
+                    d["line"].as_u64().unwrap_or(0),
+                )
+            })
+            .collect();
+        let of = |severity: &str, code: &str, file: &str, line: u64| {
+            (
+                severity.to_string(),
+                code.to_string(),
+                file.to_string(),
+                line,
+            )
+        };
+        assert_eq!(
+            found,
+            [
+                of(
+                    "error",
+                    "missing_section",
+                    "templates/index.context.b2b.json",
+                    1
+                ),
+                of(
+                    "warning",
+                    "contextual_parent",
+                    "templates/index.context.ca.json",
+                    0
+                ),
+                of(
+                    "warning",
+                    "contextual_parent",
+                    "templates/product.context.ca.json",
+                    3
+                ),
+                of(
+                    "warning",
+                    "contextual_context",
+                    "templates/product.context.ca.json",
+                    2
+                ),
+            ]
+        );
+        assert_eq!(files, 8);
         assert_eq!(report["problems"], 1);
         let _ = std::fs::remove_dir_all(&root);
     }

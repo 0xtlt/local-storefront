@@ -22,7 +22,7 @@ use crate::app_extensions::AppExtensions;
 pub use locales::Translations;
 pub use menus::MenuReference;
 pub use schema::{Schema, SettingDef, Wrapper};
-pub use template_json::{BlockInstance, Layout, SectionInstance, TemplateJson};
+pub use template_json::{BlockInstance, BuyerContext, Layout, SectionInstance, TemplateJson};
 
 /// A parsed Liquid file.
 pub struct LiquidFile {
@@ -381,8 +381,46 @@ impl Theme {
         Ok(self.json(path)?.map(|json| TemplateJson::from_json(&json)))
     }
 
+    /// A JSON template or a section group as a buyer sees it: with the overrides of the
+    /// contextual files whose `parent` it is and whose `context` is the buyer's
+    /// (`index.context.<market>.json`), the market's first, then the B2B one's, as Shopify
+    /// applies them.
+    pub fn template_json_for(
+        &self,
+        path: &str,
+        buyer: &BuyerContext,
+    ) -> Result<Option<TemplateJson>> {
+        let Some(parent) = self.json(path)? else {
+            return Ok(None);
+        };
+        let (directory, file) = path.rsplit_once('/').unwrap_or(("", path));
+        let Some(stem) = file.strip_suffix(".json") else {
+            return Ok(Some(TemplateJson::from_json(&parent)));
+        };
+        let prefix = format!("{stem}.context.");
+        let mut contexts: Vec<Arc<Json>> = self
+            .files
+            .list(directory)
+            .iter()
+            .filter(|name| name.starts_with(&prefix) && template_json::is_contextual(name))
+            .filter_map(|name| self.json(&format!("{directory}/{name}")).ok().flatten())
+            .filter(|json| json.get("parent").and_then(Json::as_str) == Some(file))
+            .filter(|json| template_json::applies_to(json, buyer))
+            .collect();
+        if contexts.is_empty() {
+            return Ok(Some(TemplateJson::from_json(&parent)));
+        }
+        // The B2B overrides last: they win over the market's.
+        contexts.sort_by_key(|json| json.pointer("/context/b2b") == Some(&Json::Bool(true)));
+        let mut merged = (*parent).clone();
+        for overrides in contexts {
+            template_json::apply_overrides(&mut merged, &overrides);
+        }
+        Ok(Some(TemplateJson::from_json(&merged)))
+    }
+
     /// The names of the templates the theme defines, e.g. `product`, `page.contact`,
-    /// `customers/login`.
+    /// `customers/login`. A contextual file (`index.context.europe.json`) is not one.
     pub fn template_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         for (directory, prefix) in [
@@ -391,6 +429,9 @@ impl Theme {
             ("templates/metaobject", "metaobject/"),
         ] {
             for file in self.files.list(directory).iter() {
+                if template_json::is_contextual(file) {
+                    continue;
+                }
                 if let Some(name) = file
                     .strip_suffix(".json")
                     .or_else(|| file.strip_suffix(".liquid"))

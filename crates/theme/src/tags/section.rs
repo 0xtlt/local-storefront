@@ -129,7 +129,6 @@ pub fn render_group(ctx: &Context, name: &str) -> Result<String> {
     let path = format!("sections/{name}.json");
     let group = state
         .site
-        .theme
         .template_json(&path)
         .map_err(|error| Error::standard(error.to_string()))?
         .ok_or_else(|| Error::standard(format!("Could not find asset {path}")))?;

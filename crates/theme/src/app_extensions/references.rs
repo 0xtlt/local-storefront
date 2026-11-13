@@ -146,8 +146,13 @@ fn place_of(theme: &Theme, file: &str) -> Option<(String, bool)> {
     }
     if name.starts_with("sections/") {
         let json = theme.json(file).ok().flatten()?;
-        let kind = json.get("type").and_then(Json::as_str)?;
-        return Some((kind.to_string(), true));
+        let type_of = |json: &Json| json.get("type").and_then(Json::as_str).map(str::to_string);
+        // A contextual section group (`header-group.context.ca.json`) is of its parent's type.
+        let kind = type_of(&json).or_else(|| {
+            let parent = json.get("parent").and_then(Json::as_str)?;
+            type_of(&*theme.json(&format!("sections/{parent}")).ok().flatten()?)
+        })?;
+        return Some((kind, true));
     }
     None
 }

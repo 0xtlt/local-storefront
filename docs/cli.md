@@ -699,7 +699,11 @@ Shopify refuses on upload:
 - as a warning, a file of `assets/` that `asset_url` names and the theme does not have
   (`missing_asset`);
 - as a warning, a trailing comma or an unknown escape (`\“`) in theme JSON or a
-  `{% schema %}` (`lenient_json`): Shopify reads the file, other JSON tools may not.
+  `{% schema %}` (`lenient_json`): Shopify reads the file, other JSON tools may not;
+- as a warning, a contextual template or section group (`index.context.europe.json`) that
+  applies nowhere: no `parent`, or one that is not the file its name adapts
+  (`contextual_parent`), or a `context` that is neither a market nor B2B
+  (`contextual_context`). Its sections and blocks are checked as a template's.
 
 Only names written as literals are checked. It reads `layout/`, `templates/`, `sections/`,
 `blocks/`, `snippets/`, and the `liquid` settings of the JSON templates, section groups and
@@ -800,6 +804,8 @@ counts the others.
 | `block_outside_template` | `{% block %}` outside `layout/` and `templates/` (with `--preview liquid-july-26`). |
 | `invalid_json` | A JSON file that does not parse, even as Shopify reads it (comments, trailing commas and unknown escapes allowed), or that starts with a UTF-8 byte order mark, which Shopify refuses. |
 | `lenient_json` | A warning: a trailing comma, or an escape JSON does not have (`\“`), in a JSON file of the theme or a `{% schema %}`. Shopify reads the file and uses its values (an unknown escape keeps its character); strict JSON parsers refuse it. |
+| `contextual_parent` | A warning: a contextual template or section group (`index.context.europe.json`) without a `parent`, or whose `parent` is not the file of `templates/` or `sections/` its name adapts (`index.json`). Its overrides apply to nothing. |
+| `contextual_context` | A warning: a contextual file whose `context` is not `{"market": "<handle>"}` or `{"b2b": true}`, the two contexts Shopify documents. Its overrides apply to nobody. |
 | `invalid_schema` | A `{% schema %}` Shopify refuses: JSON that does not parse, a setting without a required key (`id`, `label`, `options` of a `select`, `min`, `max` and `default` of a `range`), a `default` its setting does not take. A section or a block whose schema does not parse loses the defaults of its settings. |
 | `unknown_setting_type` | A setting of a schema whose `type` Shopify does not have. The `hint` gives the closest one. |
 | `duplicate_setting_id` | Two settings of one schema with the same `id`. |

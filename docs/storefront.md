@@ -125,6 +125,11 @@ and `PUT /__lsf/session`:
   for a country served there, in a language the country's market offers. Of a `return_to` that
   names a host (`https://other.example/x`, `//other.example/x`), only the path is kept, on the
   local server's host, as Shopify keeps it on the shop's domain.
+- **The theme follows the market**: a contextual template or section group
+  (`templates/index.context.europe.json`, `sections/header-group.context.europe.json`, with
+  `"context": {"market": "europe"}`) adapts the page on the subfolders of its market, as on
+  Shopify; `/` and the other markets get the parent file. One with `"context": {"b2b": true}`
+  adapts it for a [B2B customer](#b2b). See [compatibility](compatibility.md#theme-architecture).
 - **The currency follows the country**: prices, the cart (`cart.currency`, `/cart.js`), the money
   filters and the checkout are in the country's currency, at its market's rate or fixed prices
   (see [localization](data-format.md#localization)), and `Shopify.currency` gives the currency
