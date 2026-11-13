@@ -32,6 +32,12 @@ pub enum Resource {
     Policy(String),
     Password,
     GiftCard(usize),
+    /// A variant a section is rendered for (`/variants/<id>?section_id=`), with no product and
+    /// no template: `product_variant` alone.
+    Variant {
+        product: usize,
+        variant: usize,
+    },
     /// Why: what the URL asks for and the store does not have.
     NotFound(String),
 }

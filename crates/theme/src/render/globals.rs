@@ -165,7 +165,8 @@ impl Globals {
             },
             // Only where a section is rendered for a variant (`/variants/<id>?section_id=`).
             "product_variant" => match (&page.resource, page.product_variant) {
-                (Resource::Product { product, .. }, Some(variant)) => {
+                (Resource::Product { product, .. }, Some(variant))
+                | (Resource::Variant { product, .. }, Some(variant)) => {
                     VariantDrop::value(site, *product, variant)
                 }
                 _ => return None,

@@ -1286,6 +1286,71 @@ fn more_than_five_sections_answer_400_and_render_nothing() {
 }
 
 #[test]
+fn a_section_rendered_for_a_variant_has_no_product_and_no_template() {
+    // https://shopify.dev/docs/storefronts/themes/delivery-fulfillment/pickup-availability:
+    // "You can't access the Liquid product object in the pickup availability section". A store
+    // gives `product_variant` alone: `template.name` empty, `request.page_type` `variants`,
+    // no `product` and no `variant`, and `request.path` without its trailing slash (issue #134).
+    let fixture = theme_of(
+        "variant-section",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "sections/probe.liquid",
+                "<p>template=[{{ template.name }}] page_type=[{{ request.page_type }}] \
+                 path=[{{ request.path }}] product=[{{ product.handle }}] \
+                 product_variant=[{{ product_variant.id }}] variant=[{{ variant.id }}] \
+                 title=[{{ product_variant.product.title }}]</p>",
+            ),
+            ("templates/index.json", r#"{ "sections": {}, "order": [] }"#),
+            (
+                "templates/product.json",
+                r#"{ "sections": {}, "order": [] }"#,
+            ),
+        ],
+    );
+    let product = &fixture.store.products[0];
+    let variant = product.variants.last().unwrap().id;
+    let expected = format!(
+        "<p>template=[] page_type=[variants] path=[/variants/{variant}] product=[] \
+         product_variant=[{variant}] variant=[] title=[{}]</p>",
+        product.title
+    );
+    for path in [
+        format!("/variants/{variant}?section_id=probe"),
+        format!("/variants/{variant}/?section_id=probe"),
+    ] {
+        let rendered = fixture.render_with(
+            request(&path),
+            Session::initial(&fixture.store),
+            &Target::Section("probe".to_string()),
+        );
+        assert_eq!(rendered.status, 200, "{path}");
+        assert_eq!(rendered.template, "", "{path}");
+        assert!(
+            rendered.body.contains(&expected),
+            "{path}: {}",
+            rendered.body
+        );
+    }
+    let bundle = fixture.render_with(
+        request(&format!("/variants/{variant}?sections=probe")),
+        Session::initial(&fixture.store),
+        &Target::Sections(vec!["probe".to_string()]),
+    );
+    let json: serde_json::Value = serde_json::from_str(&bundle.body).unwrap();
+    assert!(
+        json["probe"].as_str().unwrap().contains(&expected),
+        "{}",
+        bundle.body
+    );
+}
+
+#[test]
 fn unknown_urls_render_the_404_template() {
     let fixture = fixture();
     for path in [
