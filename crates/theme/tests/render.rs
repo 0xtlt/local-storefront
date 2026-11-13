@@ -878,6 +878,46 @@ fn image_url_raises_on_what_is_not_an_image() {
 }
 
 #[test]
+fn a_cart_line_of_a_product_without_an_image_has_a_featured_image_of_nulls() {
+    // Issue #151: Shopify gives the line of a product without an image a `featured_image`
+    // whose fields are null, in `/cart.js` and in Liquid `item | json`; `image` stays null.
+    let overlay = serde_json::json!({"products": [
+        {"title": "Tee", "options": ["Size"], "price": 2000,
+         "variants": [{"options": ["S"], "inventory_quantity": 50}]}
+    ]});
+    let (store, diagnostics) =
+        load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let tee = store.product_by_handle("tee").expect("tee").variants[0].id;
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let mut session = Session::initial(&fixture.store);
+    session.cart_lines = vec![CartLine {
+        variant_id: tee,
+        quantity: 1,
+        properties: Default::default(),
+        selling_plan: None,
+    }];
+    let output = fixture.liquid(
+        "/cart",
+        session,
+        "{{ cart | json }}\n{% for item in cart.items %}{{ item | json }}{% endfor %}",
+    );
+    let (cart, item) = output.split_once('\n').expect("two lines");
+    let cart: serde_json::Value = serde_json::from_str(cart).expect("the cart's JSON");
+    let item: serde_json::Value = serde_json::from_str(item).expect("the line's JSON");
+    let nulls = serde_json::json!({
+        "aspect_ratio": null, "alt": null, "height": null, "url": null, "width": null
+    });
+    for line in [&cart["items"][0], &item] {
+        assert_eq!(line["featured_image"], nulls, "{line}");
+        assert_eq!(line["image"], serde_json::Value::Null);
+    }
+}
+
+#[test]
 fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
     let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
     assert!(diagnostics.is_empty(), "{diagnostics}");

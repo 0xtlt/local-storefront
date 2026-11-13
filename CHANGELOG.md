@@ -120,6 +120,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `complementary`; `404` `Product not found` for an id that is not a product of the online store
   (unknown, a draft, not published). It answered `200` with no products, and echoed a wrong
   `intent`. A recommendations block whose request fails now takes its error path on lsf too.
+- **A cart line of a product without an image has a `featured_image` of nulls**, no longer
+  `null`, as on Shopify: `{"aspect_ratio":null,"alt":null,"height":null,"url":null,"width":null}`
+  in `/cart.js`, `/cart/add.js` and `{{ item | json }}`. A test of the cart's JSON that expects
+  `"featured_image": null` needs the object; `image` is still `null`.
 
 ### Fixed
 
@@ -343,6 +347,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   counts), as `collection.filters` does, and `filter.v.*` and `filter.p.*` narrow the results.
   A filter leaves out the pages and articles, as Shopify does. `search.filters` was always empty
   and the parameters were ignored, so a filter sidebar on the search page rendered nothing.
+- **`item.featured_image.url` of an image-less product reads `null` in the cart's JSON**, where
+  it threw a `TypeError` on lsf: the line's `featured_image` is an object of nulls, as Shopify
+  sends it.
 
 #### The checkout of an app
 

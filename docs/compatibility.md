@@ -130,7 +130,8 @@ option values (with swatches), media (images,
 videos, external videos, 3D models), image presentation and focal points, collection filters
 (with swatches) and sort options, links, addresses, orders and line items (a cart line has the
 `index` shopify.dev leaves out: its 0-based position, which Horizon posts plus 1 as the `line` of
-`/cart/change.js`; `/cart.js` has no such field), comments, metafields of every type (a
+`/cart/change.js`; `/cart.js` has no such field; in the cart's JSON, the line of a product
+without an image has a `featured_image` whose fields are `null`, as on Shopify), comments, metafields of every type (a
 value written as the Admin API returns it is read as its type (`"true"` is `true`), the
 deprecated `string`, `integer` and `json_string` give their value directly, a
 `date` or a `date_time` is the string it is stored as, a
