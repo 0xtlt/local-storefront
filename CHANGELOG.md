@@ -239,6 +239,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   input, output and instruction limits grow in proportion to the lines of a cart of more than
   200, as Shopify's dynamic limits do. Such a run passed `lsf app check`; it now fails it, and
   its output is ignored, as a failed run's is.
+- **A UI extension needs the `network_access` capability to `fetch` a server out of the shop**,
+  as on Shopify. A checkout or customer account extension without it that calls its backend
+  (another origin than lsf's) now gets a rejected `fetch` (a `TypeError` that names the
+  capability) and a warning in the console, where the call went through. Add
+  `network_access = true` to `[extensions.capabilities]`, as the extension needs on a store.
 
 ### Fixed
 

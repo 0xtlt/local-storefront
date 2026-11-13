@@ -3,15 +3,15 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checkoutState, init, sandboxWindow, settle } from './harness.mjs';
+import { checkoutState, init, plain, sandboxWindow, settle } from './harness.mjs';
 
 const SANDBOX = ['sandbox-api.js', 'sandbox-components.js', 'sandbox.js'];
 const TARGET = 'purchase.checkout.block.render';
 const url = (handle) => `http://localhost/__lsf/extensions/${handle}/${handle}.js`;
 
-async function boot(handle, source) {
+async function boot(handle, source, ext) {
   const win = sandboxWindow({ scripts: SANDBOX, bundles: { [url(handle)]: source } });
-  win.receive(init({ handle, target: TARGET }));
+  win.receive(init({ handle, target: TARGET, ext }));
   for (let i = 0; i < 4; i++) await settle();
   return win;
 }
@@ -90,4 +90,28 @@ test('the frame is in the language the extension renders in', async () => {
   // buyer's.
   assert.equal(await frame('fr', {}, 'en'), 'en');
   assert.equal(await frame('fr', {}, 'fr'), 'fr');
+});
+
+test('without network_access, a fetch out of the shop rejects and says why; with it, it is sent', async () => {
+  const source = `shopify.extend(${JSON.stringify(TARGET)}, async () => {
+    globalThis.results = [];
+    for (const target of ['http://127.0.0.1:9664/data', '/apps/proxy/data', new URL('http://localhost/x')]) {
+      try {
+        const response = await fetch(target);
+        results.push('answered ' + response.status);
+      } catch (error) {
+        results.push(error.name + ': ' + error.message);
+      }
+    }
+  });`;
+  const closed = await boot('closed', source, { capabilities: { api_access: true } });
+  const [external, ...shop] = plain(closed.run('results'));
+  assert.match(external, /^TypeError: fetch\(http:\/\/127\.0\.0\.1:9664\/data\) needs the network_access capability/);
+  assert.deepEqual(shop, ['answered 200', 'answered 200'], 'the shop itself (an app proxy, the Storefront API) is not external');
+  assert.deepEqual(closed.fetched, ['/apps/proxy/data', 'http://localhost/x']);
+  assert.match(closed.posts('log')[0].args[0], /needs the network_access capability/);
+
+  const open = await boot('open', source, { capabilities: { network_access: true } });
+  assert.deepEqual(plain(open.run('results')), ['answered 200', 'answered 200', 'answered 200']);
+  assert.deepEqual(open.posts('log'), []);
 });

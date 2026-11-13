@@ -114,17 +114,28 @@ export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, cust
       this.text = parts.join('');
     }
   }
-  const URL = {
-    createObjectURL: (blob) => {
+  class URL extends globalThis.URL {
+    static createObjectURL(blob) {
       const url = `blob:null/${blobs.size + 1}`;
       blobs.set(url, blob.text);
       return url;
-    },
-    revokeObjectURL: (url) => blobs.delete(url),
+    }
+
+    static revokeObjectURL(url) {
+      blobs.delete(url);
+    }
+  }
+  // What the extension fetched: every request reaches the network here.
+  const fetched = [];
+  const fetch = async (input) => {
+    fetched.push(String(input));
+    return { ok: true, status: 200 };
   };
   const context = vm.createContext({
     Blob,
     URL,
+    fetch,
+    location: { href: 'http://localhost/__lsf/checkout/assets/sandbox.html' },
     document,
     parent,
     console,
@@ -198,6 +209,7 @@ export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, cust
     context,
     document,
     posted,
+    fetched,
     /** Plays an event of the window (`error`, `unhandledrejection`). */
     fire(type, event) {
       for (const listener of listeners.get(type) ?? []) listener(event);

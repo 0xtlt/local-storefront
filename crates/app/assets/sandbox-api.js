@@ -279,6 +279,32 @@
     return names;
   }
 
+  /**
+   * The `fetch` of an extension. Without the `network_access` capability, a request out of the
+   * shop (an `http:` or `https:` URL of another origin than `origin`, the page's) rejects with a
+   * `TypeError`, as a failed `fetch` does, and `warn` says why: on Shopify, "If you're using
+   * `fetch` to get data external to Shopify, then you need the `network_access` capability".
+   */
+  function guardFetch(fetch, capabilities, origin, warn) {
+    if (capabilities.indexOf('network_access') !== -1) return fetch;
+    return function (input, options) {
+      const text = input && typeof input === 'object' && 'url' in input ? input.url : String(input);
+      let url = null;
+      try {
+        url = new URL(text, origin);
+      } catch {
+        // Not a URL: `fetch` rejects it itself.
+      }
+      if (url && (url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== origin) {
+        const message = 'fetch(' + url.href + ') needs the network_access capability: add `network_access = true` to ' +
+          '[extensions.capabilities] of shopify.extension.toml, and allow network access for the app, as Shopify requires.';
+        warn(message);
+        return Promise.reject(new TypeError(message));
+      }
+      return fetch(input, options);
+    };
+  }
+
   // --- i18n ------------------------------------------------------------------------------
 
   const LOCALE_KEY = /^[a-z]{2,3}([-_][A-Za-z0-9]+)?$/;
@@ -797,4 +823,5 @@
   Sandbox.createRuntime = createRuntime;
   Sandbox.createSignalClass = createSignalClass;
   Sandbox.capabilityNames = capabilityNames;
+  Sandbox.guardFetch = guardFetch;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
