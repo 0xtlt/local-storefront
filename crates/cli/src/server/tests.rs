@@ -778,6 +778,73 @@ fn json_endpoints() {
 }
 
 #[test]
+fn suggestions_have_shopifys_featured_image_variants_and_published_at() {
+    // https://shopify.dev/docs/api/ajax/reference/predictive-search: the product object has
+    // `featured_image` and `variants`, the collection object `featured_image` and
+    // `published_at`. https://github.com/0xtlt/local-storefront/issues/153
+    let state = server();
+    let session = "suggest-images";
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {
+            "products": [{
+                "id": 100, "title": "Quokka", "options": ["Size"], "price": 2000,
+                "images": [{"src": "products/tee.png", "alt": "Quokka", "width": 200, "height": 100}],
+                "variants": [
+                    {"id": 101, "options": ["S"], "inventory_quantity": 50},
+                    {"id": 102, "options": ["M"], "inventory_quantity": 50}
+                ]
+            }, {"id": 300, "title": "Plain quokka", "price": 1000}],
+            "collections": [
+                {
+                    "title": "Quokkas", "handle": "quokkas", "published_at": "2026-09-22T12:38:15Z",
+                    "image": {"src": "products/tee.png", "alt": "Quokkas", "width": 200, "height": 200},
+                    "products": ["quokka"]
+                },
+                {"title": "Quokka archive", "handle": "quokka-archive", "products": ["quokka"]}
+            ]
+        }}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let body = body_json(&get(
+        &state,
+        "/search/suggest.json?q=quokka&resources[type]=product,collection",
+        session,
+    ));
+    let results = &body["resources"]["results"];
+    let product = &results["products"][0];
+    assert_eq!(product["handle"], "quokka");
+    let image = &product["featured_image"];
+    assert_eq!(image["alt"], "Quokka");
+    assert_eq!(image["width"], 200);
+    assert_eq!(image["height"], 100);
+    assert_eq!(image["aspect_ratio"], 2.0);
+    assert_eq!(image["url"], product["image"]);
+    assert!(image["url"].as_str().unwrap().contains("products/tee.png"));
+    assert_eq!(product["variants"], json!([]));
+    // A product without an image has the object too, all `null`.
+    let null_image =
+        json!({"alt": null, "aspect_ratio": null, "height": null, "url": null, "width": null});
+    let plain = &results["products"][1];
+    assert_eq!(plain["handle"], "plain-quokka");
+    assert_eq!(plain["featured_image"], null_image);
+
+    let collection = &results["collections"][0];
+    assert_eq!(collection["handle"], "quokkas");
+    assert_eq!(collection["published_at"], "2026-09-22T12:38:15.000Z");
+    assert_eq!(collection["featured_image"]["alt"], "Quokkas");
+    assert_eq!(collection["featured_image"]["width"], 200);
+    assert_eq!(collection["featured_image"]["aspect_ratio"], 1.0);
+    // Its own image only: not the image of its first product, as Liquid's `featured_image`.
+    let archive = &results["collections"][1];
+    assert_eq!(archive["handle"], "quokka-archive");
+    assert_eq!(archive["featured_image"], null_image);
+    assert!(archive["published_at"].as_str().unwrap().ends_with(".000Z"));
+}
+
+#[test]
 fn a_submitted_form_shows_its_outcome_once() {
     let state = server();
     let mut submit = request(
