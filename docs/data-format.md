@@ -107,7 +107,10 @@ all, and a running server serves them at `/__lsf/schema/<kind>`.
 
 - **Unknown fields are errors.** A typo never silently does nothing.
 - **Ids and handles are optional.** A handle is derived from the title (`"Blue Shirt"` →
-  `blue-shirt`), or from the file name for one-entity files. Ids are derived from handles. Both
+  `blue-shirt`), or from the file name for one-entity files, by the rules of Shopify's
+  `handleize`: lowercase, a hyphen for each run of spaces and punctuation, Latin accents folded,
+  a straight apostrophe removed (`"Women's Tops"` → `womens-tops`), underscores and the letters
+  of other scripts kept (`"日本語 Tee"` → `日本語-tee`). Ids are derived from handles. Both
   are stable across runs and machines, so URLs and ids can be hard-coded in tests. Set `id`
   explicitly only to reproduce a specific Shopify id.
 - **Money** is an integer number of cents (`1999`) or a decimal string (`"19.99"`). A JSON

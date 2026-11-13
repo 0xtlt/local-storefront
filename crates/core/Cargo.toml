@@ -17,3 +17,5 @@ jsonschema = { version = "0.59", default-features = false }
 # The size of the images of the data's `files/`, read from their headers. lsf-theme, which
 # encodes images, enables the rest of `image`.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+# What `handleize` turns into a hyphen: the punctuation of every script.
+unicode-general-category = "1.1"

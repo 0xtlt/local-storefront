@@ -101,6 +101,10 @@ with another currency, Shopify's format of that currency, which `shop.money_form
 pluralization and interpolation, `date` with locale formats, `json`, `structured_data`,
 `payment_type_svg_tag`, `placeholder_svg_tag`, `font_face`, `color_*`, `metafield_tag`,
 `default_pagination`, `link_to_*`, `highlight`, `time_tag`.
+`handleize` (and its alias `handle`) gives what a store gives: Latin accents folded, a straight
+apostrophe removed (`Women's Tops` → `womens-tops`), a curly one a hyphen, and underscores, the
+letters of other scripts, emoji and ligatures kept (`A_B` → `a_b`, `日本語` → `日本語`). The
+handles lsf derives from titles and file names follow the same rules.
 
 ## Objects
 

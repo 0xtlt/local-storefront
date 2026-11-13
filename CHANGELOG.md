@@ -36,6 +36,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `product`. Code that read `description`, `type`, `tags` as an array or prices in cents from it
   reads `body_html`, `product_type`, `tags` as one comma-separated string and prices as decimal
   strings (`"20.00"`), as it must on Shopify. `/products/<handle>.js` does not change.
+- **Handles follow Shopify's `handleize`.** A straight apostrophe is removed, underscores and the
+  letters of other scripts are kept: `Women's Tee` → `womens-tee` (was `women-s-tee`),
+  `summer_tee.json` → `summer_tee` (was `summer-tee`), `日本語 Tee` → `日本語-tee` (was `tee`).
+  This changes the handle, the URL and the id lsf derives for an entity of the store data whose
+  title or file name has one of these and that has no `handle` of its own, and the handles the
+  Admin API makes from titles. Give such an entity its old `handle` to keep its URL.
 
 ### Fixed
 
@@ -112,6 +118,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `position`, `option1` to `option3`, `grams`, `image_id`, `price_currency` and decimal prices),
   `options` and `images` as objects with ids, and `image`. An app or a theme script that reads it
   works locally as it will on Shopify.
+- **`handleize` and `handle` give what a store gives.** `Women's T-Shirts & Tops` →
+  `womens-t-shirts-tops`, `A_B` → `a_b`, `Ελληνικά Русский 日本語` →
+  `ελληνικά-русский-日本語`, `😀 smile 😀` → `😀-smile-😀`, `Straße Œuvre ﬁne` →
+  `strasse-oeuvre-ﬁne`. Ids, anchors, tag and filter URLs, and collections looked up by a
+  handleized product type, now match the store's.
 
 #### The checkout of an app
 

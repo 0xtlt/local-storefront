@@ -2022,6 +2022,40 @@ mod tests {
     }
 
     #[test]
+    fn handles_are_made_by_shopifys_rules_and_the_shop_domain_stays_a_domain() {
+        // A handle derived from a title or a file name follows `handleize`, as Shopify derives
+        // a resource's handle from its title: https://shopify.dev/docs/api/liquid/basics#handles
+        // https://github.com/0xtlt/local-storefront/issues/85
+        let directory = std::env::temp_dir().join(format!("lsf-handles-{}", std::process::id()));
+        std::fs::create_dir_all(directory.join("products")).expect("directory");
+        std::fs::write(
+            directory.join("store.json"),
+            r#"{"shop": {"name": "Joe's Café 日本"}, "products": [
+                {"title": "Women's Tee", "price": 100},
+                {"title": "日本語 Tee", "price": 100},
+                {"title": "Explicit", "handle": "a_b", "price": 100}
+            ]}"#,
+        )
+        .expect("store");
+        std::fs::write(
+            directory.join("products/summer_tee.json"),
+            r#"{"title": "Summer Tee", "price": 100}"#,
+        )
+        .expect("product");
+        let (store, diagnostics) = load(
+            &DataSource::Directory(directory.clone()),
+            &LoadOptions::default(),
+        );
+        std::fs::remove_dir_all(&directory).ok();
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        for handle in ["womens-tee", "日本語-tee", "a_b", "summer_tee"] {
+            assert!(store.product_index(handle).is_some(), "{handle}");
+        }
+        // A domain name holds ASCII letters, digits and hyphens only.
+        assert_eq!(store.shop.permanent_domain, "joes-cafe.myshopify.com");
+    }
+
+    #[test]
     fn a_store_without_customers_has_a_default_one() {
         let directory =
             std::env::temp_dir().join(format!("lsf-no-customers-{}", std::process::id()));
