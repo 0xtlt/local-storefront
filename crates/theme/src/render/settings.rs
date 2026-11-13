@@ -27,6 +27,9 @@ struct Dynamic<'a> {
     parent: &'a Context,
     vars: &'a [(&'a str, Value)],
     ctx: Option<Context>,
+    /// The `color_scheme_group` of the settings being resolved, when they have one: the theme
+    /// settings, whose `color_scheme` settings cannot read `settings.color_schemes` yet.
+    schemes: Option<Value>,
 }
 
 impl Dynamic<'_> {
@@ -179,6 +182,51 @@ impl Object for ColorScheme {
 
     fn render(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.id)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// A `color_scheme_group` setting (`settings.color_schemes`): its schemes in a `for` loop, and
+/// one of them by id, `settings.color_schemes['scheme-1']`.
+pub struct ColorSchemeGroup(Arc<Vec<Value>>);
+
+impl ColorSchemeGroup {
+    fn value(schemes: Vec<Value>) -> Value {
+        Value::object(ColorSchemeGroup(Arc::new(schemes)))
+    }
+}
+
+impl Object for ColorSchemeGroup {
+    fn type_name(&self) -> &str {
+        "color_scheme_group"
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        self.0
+            .iter()
+            .find(|scheme| scheme.get("id").as_str() == Some(key))
+            .cloned()
+    }
+
+    fn index(&self, index: i64) -> Option<Value> {
+        let len = self.0.len() as i64;
+        let index = if index < 0 { index + len } else { index };
+        (index >= 0 && index < len).then(|| self.0[index as usize].clone())
+    }
+
+    fn items(&self) -> Option<Arc<Vec<Value>>> {
+        Some(self.0.clone())
+    }
+
+    fn render(&self) -> Cow<'_, str> {
+        Cow::Owned(self.0.iter().map(|scheme| scheme.to_str()).collect())
+    }
+
+    fn to_json(&self) -> Json {
+        Json::Array(self.0.iter().map(Value::to_json).collect())
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -376,10 +424,12 @@ fn convert(
         "color_scheme" => match handle_of(&value) {
             Some(id) => {
                 // The schemes live in the theme settings, under the color_scheme_group setting.
-                let schemes = dynamic
-                    .parent
-                    .find_variable("settings")
-                    .get("color_schemes");
+                let schemes = dynamic.schemes.clone().unwrap_or_else(|| {
+                    dynamic
+                        .parent
+                        .find_variable("settings")
+                        .get("color_schemes")
+                });
                 schemes
                     .items()
                     .and_then(|items| {
@@ -398,7 +448,7 @@ fn convert(
             None => value,
         },
         "color_scheme_group" => match &value {
-            Value::Hash(schemes) => Value::array(
+            Value::Hash(schemes) => ColorSchemeGroup::value(
                 schemes
                     .iter()
                     .map(|(id, scheme)| {
@@ -459,9 +509,28 @@ pub fn resolve_translated(
         parent: ctx,
         vars,
         ctx: None,
+        schemes: None,
     };
+    // The color schemes first, for the `color_scheme` settings beside them, whatever their order.
+    let group = defs
+        .iter()
+        .find(|def| def.kind == "color_scheme_group")
+        .map(|def| {
+            let value = values
+                .get(&def.id)
+                .or(def.default.as_ref())
+                .map_or(Value::Nil, Value::from);
+            (def.id.as_str(), convert(state, &mut dynamic, def, value))
+        });
+    dynamic.schemes = group.as_ref().map(|(_, schemes)| schemes.clone());
     let mut out = Hash::with_capacity(defs.len());
     for def in defs {
+        if let Some((id, schemes)) = &group
+            && def.id == *id
+        {
+            out.insert(def.id.clone(), schemes.clone());
+            continue;
+        }
         let raw: Option<&Json> = values.get(&def.id).or(def.default.as_ref());
         let value = match raw {
             None | Some(Json::Null) => Value::Nil,

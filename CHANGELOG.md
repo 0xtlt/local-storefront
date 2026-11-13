@@ -3,6 +3,18 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Fixed
+
+#### Themes and the storefront
+
+- **A `color_scheme` theme setting gives its colors.** `settings.scheme.settings.background` and
+  `settings.scheme.settings.text.rgb` were empty for a `color_scheme` setting of
+  `config/settings_schema.json`; they now give the colors of the selected scheme, as a section's
+  `color_scheme` setting already did. `settings.color_schemes['scheme-1']` gives one scheme by
+  id, as on Shopify; a `for` loop over `settings.color_schemes` is unchanged.
+
 ## 0.3.0-rc.5 - 2026-11-13
 
 Fifth release candidate of 0.3.0. The errors of `/cart/change.js` read as a store's.
