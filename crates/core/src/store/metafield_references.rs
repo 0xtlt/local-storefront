@@ -143,6 +143,55 @@ impl Store {
         }
     }
 
+    /// The GID of what a reference of type `kind` names, as Shopify stores the value: a GID as
+    /// it is written, else the GID of the entity the store data's key names (a product that is
+    /// not on the storefront too). `None` for a reference that names nothing, and for the types
+    /// lsf does not resolve.
+    pub fn reference_gid(&self, kind: &str, value: &Json) -> Option<String> {
+        let gid_kind = gid_type(kind)?;
+        if let Some(gid) = value.as_str().filter(|text| text.starts_with("gid://")) {
+            return Some(gid.to_string());
+        }
+        let id = match self.metafield_reference(kind, value) {
+            Some(Referenced::Product(index)) => self.products[index].id,
+            Some(Referenced::Variant(product, variant)) => {
+                self.products[product].variants[variant].id
+            }
+            Some(Referenced::Collection(index)) => self.collections[index].id,
+            Some(Referenced::Page(index)) => self.pages[index].id,
+            Some(Referenced::Article(blog, article)) => self.blogs[blog].articles[article].id,
+            Some(Referenced::Metaobject(index)) => self.metaobjects[index].id(),
+            None if kind == "product_reference" => {
+                let handle = value.as_str()?;
+                self.unlisted_products
+                    .iter()
+                    .find(|product| product.handle == handle)?
+                    .id
+            }
+            None => return None,
+        };
+        Some(format!("gid://shopify/{gid_kind}/{id}"))
+    }
+
+    /// The value of a metafield as the text Shopify stores, which a Function's input and
+    /// `appMetafields` read: a reference as the GID of what it names, a list of references as a
+    /// JSON list of GIDs ([`Store::reference_gid`]), anything else as written (a string as it
+    /// is, another value as JSON). A reference that names nothing stays as written.
+    pub fn stored_metafield_value(&self, kind: &str, value: &Json) -> String {
+        let gid = |item: &Json| self.reference_gid(kind.trim_start_matches("list."), item);
+        match value {
+            Json::Array(items) if kind.starts_with("list.") => Json::Array(
+                items
+                    .iter()
+                    .map(|item| gid(item).map_or_else(|| item.clone(), Json::String))
+                    .collect(),
+            )
+            .to_string(),
+            Json::String(text) => gid(value).unwrap_or_else(|| text.clone()),
+            other => gid(other).unwrap_or_else(|| other.to_string()),
+        }
+    }
+
     /// Whether a `product_reference` names a product that is not on the storefront: it reads
     /// `nil` in Liquid, as on Shopify, and is no mistake of the data.
     pub fn names_unlisted_product(&self, value: &Json) -> bool {

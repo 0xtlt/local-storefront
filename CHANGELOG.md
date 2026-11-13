@@ -477,6 +477,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's
   currency at `1.0`. An `expect` on totals now reads the amounts the page shows. Expectations
   written in the shop's currency for such a scenario need the market's amounts.
+- **A Function reads a reference metafield as the GID Shopify stores**, whichever form the store
+  data writes it in: a `variant_reference` written `"WIDGET"` reads
+  `gid://shopify/ProductVariant/<id>`, a `list.product_reference` written `["widget"]` reads
+  `["gid://shopify/Product/<id>"]`, in a metafield and in a metaobject's `field(key:)`, and so
+  does a checkout UI extension's `appMetafields`. They read the short form as written, so a
+  Function that compared it with a line's `merchandise.id` matched nothing.
 
 #### The Admin API, for the backend of an app
 

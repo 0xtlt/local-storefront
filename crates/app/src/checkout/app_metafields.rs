@@ -118,7 +118,7 @@ pub fn app_metafields(
                 continue;
             }
             let Some((type_name, value)) =
-                store_metafield(metafields, &declaration.namespace, &declaration.key)
+                store_metafield(store, metafields, &declaration.namespace, &declaration.key)
             else {
                 continue;
             };
