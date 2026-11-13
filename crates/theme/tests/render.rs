@@ -1602,6 +1602,149 @@ fn metafield_values_are_the_objects_shopify_gives() {
     );
 }
 
+/// A product with a list of products and a list of metaobjects, the products it names, and a
+/// type of three FAQ entries.
+fn reference_lists_data() -> serde_json::Value {
+    serde_json::json!({
+        "products": [
+            { "title": "Widget", "price": "10.00", "metafields": { "custom": {
+                "related": { "type": "list.product_reference", "value": ["alpha", "beta", "gamma"] },
+                "faqs": { "type": "list.metaobject_reference", "value": ["faq/one", "faq/two", "faq/three"] },
+                "places": { "type": "list.single_line_text_field", "value": ["Ottawa", "Vancouver"] }
+            } } },
+            { "title": "Alpha", "price": "10.00" },
+            { "title": "Beta", "price": "10.00" },
+            { "title": "Gamma", "price": "10.00" }
+        ],
+        "metaobjects": { "faq": [
+            { "handle": "one", "fields": { "question": "How long does shipping take?" } },
+            { "handle": "two", "fields": { "question": "Can I return an item?" } },
+            { "handle": "three", "fields": { "question": "Do you ship to Belgium?" } }
+        ] }
+    })
+}
+
+#[test]
+fn reference_lists_and_product_lists_are_list_drops() {
+    // https://shopify.dev/docs/api/liquid/objects/metafield#metafield-determining-the-length-of-a-list-metafield:
+    // a list of a reference type has `count`; the lists of other types "are rendered as
+    // arrays", and only those are read by index. A `product_list` setting has `.count` too
+    // (https://shopify.dev/docs/storefronts/themes/architecture/settings/input-settings#product_list).
+    // On Shopify, `.first`, `.last` and `[n]` of a list drop give nothing: the `first` and
+    // `last` filters and `for` reach its items.
+    let picks = "{%- assign l = section.settings.products -%}\
+                 <p>[{{ l.first.title }}]|[{{ l[1].title }}]|[{{ l.last.title }}]|[{{ l.count }}]|\
+                 [{{ l.size }}]|[{{ l | first | map: 'title' }}]|[{{ l | last | map: 'title' }}]|\
+                 [{% for p in l limit: 1 %}{{ p.title }}{% endfor %}]|[{{ l }}]</p>\
+                 {% schema %}{\"name\": \"Picks\", \"tag\": null, \"settings\": \
+                 [{\"type\": \"product_list\", \"id\": \"products\", \"label\": \"Products\"}]}{% endschema %}";
+    let fixture = theme_with_data(
+        "reference-lists",
+        &reference_lists_data(),
+        &[
+            (
+                "layout/theme.liquid",
+                "<body>{{ content_for_layout }}</body>",
+            ),
+            (
+                "templates/index.json",
+                r#"{ "sections": {
+                    "set": { "type": "picks", "settings": { "products": ["alpha", "beta", "gamma"] } },
+                    "unset": { "type": "picks", "settings": {} }
+                }, "order": ["set", "unset"] }"#,
+            ),
+            ("sections/picks.liquid", picks),
+        ],
+    );
+    let render =
+        |source: &str| fixture.liquid("/products/widget", Session::initial(&fixture.store), source);
+    assert_eq!(
+        render(
+            "{%- assign r = product.metafields.custom.related.value -%}\
+             [{{ r.first.handle }}]|[{{ r[1].handle }}]|[{{ r.last.handle }}]|[{{ r.count }}]|\
+             [{{ r.size }}]|[{% assign x = r | first %}{{ x.handle }}]|[{{ r | last | map: 'handle' }}]|\
+             [{% for p in r %}{{ p.handle }},{% endfor %}]|[{{ r }}]"
+        ),
+        "[]|[]|[]|[3]|[3]|[alpha]|[gamma]|[alpha,beta,gamma,]|[ProductListDrop]"
+    );
+    assert_eq!(
+        render(
+            "{%- assign q = product.metafields.custom.faqs.value -%}\
+             [{{ q.first.question }}]|[{{ q[0].question }}]|[{{ q.last.question }}]|[{{ q.count }}]|\
+             [{{ q.size }}]|[{{ q | first | map: 'question' }}]|[{{ q }}]"
+        ),
+        "[]|[]|[]|[3]|[3]|[How long does shipping take?]|[MetaobjectListDrop]"
+    );
+    assert_eq!(
+        render(
+            "{%- assign v = metaobjects.faq.values -%}\
+             [{{ v.first.question }}]|[{{ v[0].question }}]|[{{ v.count }}]|[{{ v.size }}]|\
+             [{% for e in v %}{{ e.system.handle }},{% endfor %}]"
+        ),
+        "[]|[]|[3]|[3]|[one,two,three,]"
+    );
+    // A list of a type that is not a reference stays an array, as on Shopify.
+    assert_eq!(
+        render(
+            "{%- assign t = product.metafields.custom.places.value -%}\
+             {{ t.first }}|{{ t[1] }}|{{ t.last }}|{{ t.size }}|[{{ t.count }}]"
+        ),
+        "Ottawa|Vancouver|Vancouver|2|[]"
+    );
+    // A `product_list` setting, set and unset: `.count` is 0 when nothing is selected.
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    let lines: Vec<&str> = rendered
+        .body
+        .split("<p>")
+        .skip(1)
+        .map(|line| line.split("</p>").next().unwrap())
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "[]|[]|[]|[3]|[3]|[Alpha]|[Gamma]|[Alpha]|[ProductListDrop]",
+            "[]|[]|[]|[0]|[0]|[]|[]|[]|[ProductListDrop]",
+        ]
+    );
+}
+
+#[test]
+fn a_product_list_setting_takes_the_products_of_a_list_metafield() {
+    // A `product_list` setting connected to a `list.product_reference` metafield in the theme
+    // editor (a dynamic source) holds the metafield's products, in its order, as on Shopify.
+    let fixture = theme_with_data(
+        "product-list-dynamic-source",
+        &reference_lists_data(),
+        &[
+            (
+                "layout/theme.liquid",
+                "<body>{{ content_for_layout }}</body>",
+            ),
+            (
+                "templates/product.json",
+                r#"{ "sections": { "r": { "type": "related", "settings": {
+                    "plist": "{{ product.metafields.custom.related.value }}"
+                } } }, "order": ["r"] }"#,
+            ),
+            (
+                "sections/related.liquid",
+                "<p>{{ section.settings.plist.size }}|{{ section.settings.plist.count }}|\
+                 {% for p in section.settings.plist %}{{ p.handle }},{% endfor %}</p>\
+                 {% schema %}{\"name\": \"Related\", \"tag\": null, \"settings\": \
+                 [{\"type\": \"product_list\", \"id\": \"plist\", \"label\": \"Products\"}]}{% endschema %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/products/widget");
+    assert_clean(&rendered);
+    assert!(
+        rendered.body.contains("<p>3|3|alpha,beta,gamma,</p>"),
+        "{}",
+        rendered.body
+    );
+}
+
 #[test]
 fn a_metafield_without_value_compares_filters_and_sorts_as_its_value() {
     // On Shopify, a metafield of a text, number, boolean or date type used without `.value`
