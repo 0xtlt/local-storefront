@@ -1451,6 +1451,18 @@ checked). There is no `iss` and no `sid`. The page asks lsf for the token
 (`POST /__lsf/extensions/<handle>/session-token`, [control API](control-api.md#apps-checkout-and-admin-api))
 and hands it to the extension: the secret never reaches the browser.
 
+### Network calls of a UI extension
+
+A checkout or customer account UI extension calls its backend with `fetch` only when its
+`shopify.extension.toml` has `network_access = true` in `[extensions.capabilities]`, as Shopify
+requires ([capabilities](https://shopify.dev/docs/apps/build/checkout/capabilities#network-access):
+"If you're using `fetch` to get data external to Shopify, then you need the `network_access`
+capability"). Without it, a `fetch` of an `http:` or `https:` URL of another origin than lsf's
+rejects with a `TypeError` that names the capability, and the browser's console says the same.
+A URL of lsf's own origin, the shop's (a relative URL, an [app proxy](admin.md#app-proxy)), is
+sent: whether Shopify asks for the capability there is not documented. On Shopify, the app must
+also be allowed network access in the Partner Dashboard; lsf does not check that.
+
 ## Run a Function without a server
 
 ```bash

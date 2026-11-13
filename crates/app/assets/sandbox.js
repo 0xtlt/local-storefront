@@ -99,6 +99,8 @@
     document.documentElement.setAttribute('data-variant', init.variant || 'standard');
     runtime = Sandbox.createRuntime({ post, init });
     global.shopify = runtime.shopify;
+    global.fetch = Sandbox.guardFetch(global.fetch, Sandbox.capabilityNames(init.ext.capabilities),
+      new URL(global.location.href).origin, (message) => post({ type: 'log', level: 'warn', args: [message] }));
     // The frame is in the language the extension renders in, for a screen reader or a test.
     document.documentElement.lang = runtime.language;
     Sandbox.onOverlay = (open) => {
