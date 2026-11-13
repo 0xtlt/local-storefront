@@ -855,6 +855,10 @@ extension's `order.action.menu-item.render` opens its `order.action.render` in a
   …) and `appMetafields`, with the order's own metafields (`owner_type = "ORDER"`, see
   `shopify.appMetafields` below), the line, shipment, return, location and order targets their
   `target`, `fulfillmentId`, `returnId`, `locationId` and `orderId`.
+- **A missing translation**: `shopify.i18n.translate('nope')` of a key no locale file of the
+  extension has gives `MISSING KEY for locale "en": "nope"`, and the console has
+  `ExtensionUsageError: translate(): MISSING KEY for locale "en": "nope"`, as Shopify's customer
+  account does. A checkout extension gets the key.
 - **Navigation**: `shopify:customer-account/orders`, `…/orders/<id>` and `…/profile` lead to the
   pages; `extension://<handle>` (or `extension:<handle>/<path>`) to the full page of another
   extension; `extension://<route>` and `/<route>`, on a full page, to a route of its own. The page

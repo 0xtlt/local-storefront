@@ -244,6 +244,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   (another origin than lsf's) now gets a rejected `fetch` (a `TypeError` that names the
   capability) and a warning in the console, where the call went through. Add
   `network_access = true` to `[extensions.capabilities]`, as the extension needs on a store.
+- **In the customer account, `shopify.i18n.translate()` of a missing key gives Shopify's
+  `MISSING KEY` text**, `MISSING KEY for locale "en": "nope"`, and logs
+  `ExtensionUsageError: translate(): MISSING KEY for locale "en": "nope"`, as a store does. It gave
+  the key, which often looks right. A test that read the key from a customer account extension
+  needs the key in the extension's locale files. Checkout extensions still get the key.
 
 ### Fixed
 

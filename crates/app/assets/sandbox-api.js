@@ -350,7 +350,8 @@
     return node;
   }
 
-  function createI18n(locale, currency, translations, defaultLocale) {
+  /** `missing(key)`: what `translate` gives for a key no dictionary has. */
+  function createI18n(locale, currency, translations, defaultLocale, missing) {
     const dictionaries = pickStrings(translations, locale, defaultLocale);
     const tag = String(locale || 'en').replace('_', '-');
     // Plural rules are the ones of the language a string is in, not the buyer's: a French string
@@ -388,7 +389,7 @@
           const category = typeof count === 'number' ? pluralCategory(language, count) : 'other';
           value = value[category] !== undefined ? value[category] : value.other;
         }
-        if (typeof value !== 'string') return key;
+        if (typeof value !== 'string') return missing(key);
         // As Shopify's: the text around each placeholder, and each replacement, a string unless
         // it is an object (an element of the extension's JSX). Only strings: one string. Else the
         // pieces, which the extension renders as children.
@@ -473,6 +474,7 @@
     const locale = languageOf(state);
     const currency = (state.cost && state.cost.currencyCode) || (state.shop && state.shop.currencyCode) || 'USD';
     const capabilities = capabilityNames(ext.capabilities);
+    const customerAccount = target.indexOf('customer-account.') === 0;
     const api = {};
     const registered = new Map();
 
@@ -483,7 +485,16 @@
     signalProperty(api.extension, 'capabilities', () => capabilities);
     signalProperty(api.extension, 'rendered', () => true);
     signalProperty(api, 'settings', () => ext.settings || {});
-    api.i18n = createI18n(locale, currency, ext.translations, ext.defaultLocale);
+    // A key no locale file has is the key in the checkout. The customer account shows Shopify's
+    // text instead, and says so in the console.
+    const missingKey = customerAccount
+      ? (key) => {
+        const text = 'MISSING KEY for locale "' + locale + '": "' + key + '"';
+        post({ type: 'log', level: 'error', args: ['ExtensionUsageError: translate(): ' + text] });
+        return text;
+      }
+      : (key) => key;
+    api.i18n = createI18n(locale, currency, ext.translations, ext.defaultLocale, missingKey);
     const extensionLanguage = (pickStrings(ext.translations, locale, ext.defaultLocale)[0] || {}).language;
     api.shop = {
       id: (state.shop && state.shop.id) || 'gid://shopify/Shop/1',
@@ -528,7 +539,7 @@
 
     const interceptors = [];
     let requests = [];
-    if (target.indexOf('customer-account.') === 0) {
+    if (customerAccount) {
       Sandbox.customerAccountApi({ api, init, signalProperty, call, post, languageOf, getCtx: () => ctx });
     } else {
       checkoutApi();
