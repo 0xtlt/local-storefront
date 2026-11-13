@@ -685,6 +685,12 @@ Parses every Liquid file of the theme and reports what would not render on Shopi
 Shopify refuses on upload:
 
 - syntax errors, unknown filters, and what Shopify's strict parser rejects;
+- a tag where Shopify's parser refuses it (`liquid_syntax`): `{% sections %}` in a section,
+  `{% schema %}` in a snippet, twice, empty or inside another tag, a theme block without
+  `{% schema %}`, two `{% javascript %}` or two `{% stylesheet %}` in one file,
+  `{% content_for 'blocks' %}` twice in a section or in a snippet, a `{% content_for %}` that is
+  not `'blocks'` or `'block'`, a `{% content_for 'block' %}` without its `id` or with a `type`
+  that is not a string;
 - the `{% schema %}` of a section or a theme block that Shopify refuses: JSON that does not
   parse, a setting type Shopify does not have, a setting without its `id` or `label`, two
   settings with one id, a `select` or `radio` whose `default` is not one of its `options`, a
@@ -803,7 +809,7 @@ counts the others.
 |---|---|
 | `strict_liquid_rejected` | Markup Shopify's strict parser rejects. |
 | `strict_liquid_reinterpreted` | Markup Shopify's strict parser reads differently from today. |
-| `liquid_syntax` | A file that does not parse at all. |
+| `liquid_syntax` | A file that does not parse at all, or that Shopify's parser refuses for where a tag is: `{% sections %}` outside a layout (in a section), `{% schema %}` in a snippet, more than once, empty or inside another tag, a theme block without `{% schema %}`, `{% javascript %}` or `{% stylesheet %}` more than once in a section, a block or a snippet, `{% content_for 'blocks' %}` twice in a section or in a snippet, a `{% content_for %}` other than `'blocks'` and `'block'`, a `{% content_for 'block' %}` without `id`, without `type` or with a `type` that is a variable. Shopify refuses the file on upload, and every template that places a section refused so. |
 | `unknown_filter` | A filter local-storefront does not know. Either a typo: Shopify skips an unknown filter, and the value comes out unchanged. A filter of Shopify one or two letters away, with the same letters, or a name of another template language (`uppercase`) is in the `hint`. Or a filter of Shopify that local-storefront lacks: [report it](https://github.com/0xtlt/local-storefront/issues). |
 | `block_outside_template` | `{% block %}` outside `layout/` and `templates/` (with `--preview liquid-july-26`). |
 | `invalid_json` | A JSON file that does not parse, even as Shopify reads it (comments, trailing commas and unknown escapes allowed), or that starts with a UTF-8 byte order mark, which Shopify refuses. |

@@ -7,6 +7,14 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 ### Breaking changes
 
+- **`lsf check` reports the tags Shopify's parser refuses for where they are** (`liquid_syntax`,
+  which fails the check): `{% sections %}` in a section, `{% schema %}` in a snippet, twice,
+  empty or inside another tag, a theme block without `{% schema %}`, two `{% javascript %}` or
+  `{% stylesheet %}` tags in one file, `{% content_for 'blocks' %}` twice in a section or in a
+  snippet, `{% content_for 'foo' %}`, and a `{% content_for 'block' %}` without `id`, without
+  `type` or with a variable `type`. Shopify refuses such a file on upload, and every template
+  that places the section. A theme that checked clean with one of these now fails `check`:
+  move the tag where Shopify takes it.
 - **`closest.<resource>` is the nearest resource setting, even an empty one.** A theme block
   whose own `product` setting is unset no longer gets the page's product as `closest.product`:
   it gets none, as on Shopify. Give the setting a value, or `{{ closest.product }}` as its
