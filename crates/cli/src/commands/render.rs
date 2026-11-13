@@ -274,11 +274,18 @@ pub fn run(
             ExitCode::SUCCESS
         });
     }
-    // `/robots.txt` is a template too, with rules of its own when the theme has none, and so
-    // are the agent-discovery files.
     let site = app
         .renderer
         .site(store.clone(), request.clone(), session.clone());
+    // A URL redirect of the store data: the `301` `serve` answers, and no page.
+    if target == Target::Page {
+        if let Some(location) = lsf_theme::render::routes::redirect(&site) {
+            eprintln!("status 301 · to {location}");
+            return Ok(ExitCode::SUCCESS);
+        }
+    }
+    // `/robots.txt` is a template too, with rules of its own when the theme has none, and so
+    // are the agent-discovery files.
     let rendered = if request.path == "/robots.txt" {
         app.renderer.render_robots(&site)
     } else if let Some(rendered) = app.renderer.render_agents(&site) {

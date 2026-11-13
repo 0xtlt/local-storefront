@@ -1280,3 +1280,25 @@ fn uninstalling_the_app_hides_its_ui_extensions_until_it_is_installed_again() {
             .contains("data-banner=\"uninstalled\"")
     );
 }
+
+#[test]
+fn a_url_redirect_the_backend_creates_sends_its_path_to_its_target() {
+    let state = admin_server();
+    assert_eq!(get(&state, "/old-mug", "sync").status, 404);
+    let created = mutate(
+        &state,
+        "mutation($redirect: UrlRedirectInput!) { urlRedirectCreate(urlRedirect: $redirect) { urlRedirect { id } userErrors { field message } } }",
+        json!({"redirect": {"path": "/old-mug", "target": "/products/ceramic-mug"}}),
+    );
+    let moved = get(&state, "/old-mug", "sync");
+    assert_eq!(moved.status, 301);
+    assert_eq!(header(&moved, "location"), Some("/products/ceramic-mug"));
+
+    let id = created["urlRedirect"]["id"].as_str().unwrap();
+    mutate(
+        &state,
+        "mutation($id: ID!) { urlRedirectDelete(id: $id) { deletedUrlRedirectId userErrors { field message } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(get(&state, "/old-mug", "sync").status, 404);
+}

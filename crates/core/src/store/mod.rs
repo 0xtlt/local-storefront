@@ -708,6 +708,24 @@ impl Customer {
     }
 }
 
+/// A URL redirect: a visit to `path` that finds nothing goes to `target`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Redirect {
+    /// With a leading `/`.
+    pub path: String,
+    pub target: String,
+}
+
+/// A path as a URL redirect keeps it: trimmed, with a leading `/`, as the Admin API keeps it.
+pub fn redirect_path(path: &str) -> String {
+    let path = path.trim();
+    if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct GiftCard {
     pub id: u64,
@@ -1208,6 +1226,8 @@ pub struct Store {
     pub customers: Vec<Customer>,
     pub companies: Vec<Company>,
     pub gift_cards: Vec<GiftCard>,
+    /// The URL redirects, by their path: [`Store::redirect`].
+    pub redirects: Vec<Redirect>,
     pub locations: Vec<Location>,
     pub selling_plan_groups: Vec<SellingPlanGroup>,
     pub metaobjects: Vec<Metaobject>,
@@ -1741,6 +1761,14 @@ impl Store {
             self.metaobject_url_handle(&entry.kind),
             entry.handle
         )
+    }
+
+    /// The URL redirect of a path, which matches it whatever its case, as on Shopify.
+    /// <https://help.shopify.com/en/manual/online-store/menus-and-links/url-redirect>
+    pub fn redirect(&self, path: &str) -> Option<&Redirect> {
+        self.redirects
+            .iter()
+            .find(|redirect| redirect.path.eq_ignore_ascii_case(path))
     }
 
     pub fn metaobject(&self, kind: &str, handle: &str) -> Option<&Metaobject> {

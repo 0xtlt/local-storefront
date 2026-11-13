@@ -59,6 +59,7 @@ pub struct MergedInput {
     pub customers: Vec<Sourced<model::CustomerInput>>,
     pub companies: Vec<Sourced<model::CompanyInput>>,
     pub gift_cards: Vec<Sourced<model::GiftCardInput>>,
+    pub redirects: Vec<Sourced<model::RedirectInput>>,
     pub swatches: IndexMap<String, Sourced<model::SwatchInput>>,
     pub locations: Vec<Sourced<model::LocationInput>>,
     pub selling_plan_groups: Vec<Sourced<model::SellingPlanGroupInput>>,
@@ -522,6 +523,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         customers: Vec::new(),
         companies: Vec::new(),
         gift_cards: Vec::new(),
+        redirects: Vec::new(),
         locations,
         selling_plan_groups: Vec::new(),
         metaobjects: Vec::new(),
@@ -574,6 +576,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
     build_companies(&mut builder, &mut store, &input.companies);
     build_customers(&mut builder, &mut store, &input.customers);
     build_gift_cards(&mut builder, &mut store, &input.gift_cards);
+    build_redirects(&mut builder, &mut store, &input.redirects);
     build_localization(&mut builder, &mut store, input.localization.as_ref());
     for (kind, entry) in &input.metaobjects {
         let fields: IndexMap<String, Metafield> = entry
@@ -3032,6 +3035,51 @@ fn build_customers(
             company,
             company_locations,
             company_contact,
+        });
+    }
+}
+
+/// The URL redirects, as the Admin API takes them: a path that is not blank and that no other
+/// redirect has (whatever its case), and a target that is not blank nor the path.
+fn build_redirects(
+    builder: &mut Builder<'_>,
+    store: &mut Store,
+    inputs: &[Sourced<model::RedirectInput>],
+) {
+    for Sourced {
+        value: input,
+        origin,
+    } in inputs
+    {
+        let path = super::redirect_path(&input.path);
+        let target = input.target.trim();
+        if path == "/" {
+            builder.error(
+                "invalid_value",
+                &origin.child("path"),
+                "the path of a redirect can't be blank".to_string(),
+            );
+            continue;
+        }
+        if target.is_empty() || target == path {
+            builder.error(
+                "invalid_value",
+                &origin.child("target"),
+                format!("the redirect of \"{path}\" needs a target other than its path"),
+            );
+            continue;
+        }
+        if store.redirect(&path).is_some() {
+            builder.error(
+                "duplicate_redirect",
+                &origin.child("path"),
+                format!("another redirect already has the path \"{path}\""),
+            );
+            continue;
+        }
+        store.redirects.push(Redirect {
+            path,
+            target: target.to_string(),
         });
     }
 }

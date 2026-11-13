@@ -572,6 +572,15 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `shopify://metaobjects/info/about` in a `url` setting and the menus of the Admin API;
   `/pages/info/about` is not found. A type without one is still at `/pages/<type>/<handle>`.
 
+- **URL redirects.** `redirects` in the store data lists the store's redirects (`path`,
+  `target`), as Online Store > Navigation > URL redirects makes them. A path that finds nothing
+  answers a `301` to its target, as on Shopify, where lsf rendered the theme's 404: the path
+  matches whatever its case, the query is carried to the target, and a path of the store keeps
+  the language of the request (`/fr/old-tee.html` → `/fr/products/tee`). A path that leads to a
+  page is not redirected. `render` prints `status 301 · to <target>`. With `--app`, they are
+  the Admin API's `urlRedirects`, and what the backend creates, changes or deletes (with
+  `urlRedirectCreate`, `redirectNewHandle` or an import) applies to the storefront.
+
 #### The Admin API, for the backend of an app
 
 - **An order placed with a cart transform bundle lists its components**, as on Shopify: a line

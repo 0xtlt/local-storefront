@@ -1173,7 +1173,7 @@ Discount API (`shopifyFunctions` example). Not verified, chosen by analogy: the 
 | `MetaobjectDefinition` | `stable_id("metaobject_definition", type)` |
 | `Publication` (Online Store) | `stable_id("publication", "online-store")` |
 | `SellingPlanGroup` | `stable_id("selling_plan_group", lower-case name)` (lsf-core's id is a hexadecimal string, Liquid's) |
-| `Domain` | `stable_id("domain", host)`; `ShopPolicy`: `stable_id("shop_policy", handle)`; `Menu`: `stable_id("menu", handle)` |
+| `Domain` | `stable_id("domain", host)`; `ShopPolicy`: `stable_id("shop_policy", handle)`; `Menu`: `stable_id("menu", handle)`; `UrlRedirect`: `stable_id("url_redirect", lower-case path)` |
 | `CompanyContactRole` | `stable_id("company_contact_role", "<company id>/location-admin" \| "ordering-only")`; assignment: `stable_id("company_contact_role_assignment", "<customer id>/<location id>")` |
 | `DeliveryProfile` (general), its `DeliveryLocationGroup`, `DeliveryZone`, `DeliveryCountry`, `DeliveryMethodDefinition`, `DeliveryRateDefinition` | `stable_id("delivery_profile", "general")`; `stable_id("delivery_location_group", "general")`, `stable_id("delivery_zone" \| "delivery_country", "general/rest-of-world")`, `stable_id("delivery_method_definition" \| "delivery_rate_definition", "general/<rate handle>")` |
 | inline objects with an id | `MailingAddress/<lsf-core address id>?model_name=CustomerAddress` (address book) or `Address` (order); `ImageSource`/`CollectionImage`/`ArticleImage` + lsf-core's image id; `MenuItem`: `stable_id("menu_item", "<menu>/<i>/<j>…")`; `MarketRegionCountry`: `stable_id("market_region", code)`; others `stable_id(<snake type>, …)` |
@@ -2486,6 +2486,7 @@ the changes. `None` when nothing the store data expresses changed.
 | `companies` | `Company` (name, external id, dates), its locations (name, external id, shipping address, tax registration, language, dates, orders count, total spent, metafields), its metafields |
 | `pages`, `blogs` | `Page` (title, handle, body, template suffix, dates); `Blog` (title, handle, comment policy, template suffix) with its published `Article`s (title, handle, author, body, summary, image, tags, template suffix, dates, published comments); their metafields. An unpublished page or article leaves the storefront. |
 | `menus` | `Menu` (title, items): an item names its resource by its key when the resource is on the storefront, its URL otherwise |
+| `redirects` | `UrlRedirect` (path, target), those `redirectNewHandle` and the imports make included |
 | `locations` | `Location` (name, address, coordinates, pickup and its time), its metafields. A deactivated location is removed. |
 | `gift_cards` | the cards of the data: balance, initial value, currency, expiry, enabled, customer, recipient, message |
 | `metaobjects` | `Metaobject` (type, handle, fields, translations, template suffix): its translations are those of its `translations/<GID>` record for no market, into a published locale, of its translatable fields. A locale published or unpublished projects again every metaobject that has translations. A draft entry is removed. An app's own type is `$app:<type>`, as its namespaces are; lsf-core finds it by that name and by `app--<any id>--<type>`, the one a theme uses. |

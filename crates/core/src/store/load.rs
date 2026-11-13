@@ -5,10 +5,10 @@
 //! ```text
 //! shopify-local/
 //!   *.json            any number of files, each holding any of: shop, products, collections,
-//!                     pages, blogs, menus, customers, companies, gift_cards, locations,
-//!                     selling_plan_groups, swatches, metaobjects, metaobject_definitions,
-//!                     localization, files, session, checkout, now, theme_settings, app.
-//!                     They are merged.
+//!                     pages, blogs, menus, customers, companies, gift_cards, redirects,
+//!                     locations, selling_plan_groups, swatches, metaobjects,
+//!                     metaobject_definitions, localization, files, session, checkout, now,
+//!                     theme_settings, app. They are merged.
 //!   products/*.json   one product per file (or an array); the file name is the default handle
 //!   collections/*.json, pages/*.json, blogs/*.json, customers/*.json, menus/*.json
 //!   checkouts/*.json  checkout scenarios, one per file
@@ -474,7 +474,7 @@ fn salvage_store(
     json: &Json,
     problems: &[crate::diagnostics::Diagnostic],
 ) -> Option<(model::StoreInput, Skipped)> {
-    const LISTS: [&str; 9] = [
+    const LISTS: [&str; 10] = [
         "products",
         "collections",
         "pages",
@@ -482,6 +482,7 @@ fn salvage_store(
         "customers",
         "companies",
         "gift_cards",
+        "redirects",
         "locations",
         "selling_plan_groups",
     ];
@@ -728,6 +729,15 @@ fn merge_store_file(
             )),
         });
     }
+    for (index, value) in input.redirects.into_iter().enumerate() {
+        merged.redirects.push(Sourced {
+            value,
+            origin: origin(format!(
+                "/redirects/{}",
+                skipped.original("redirects", index)
+            )),
+        });
+    }
     for (index, value) in input.locations.into_iter().enumerate() {
         merged.locations.push(Sourced {
             value,
@@ -883,6 +893,8 @@ pub struct Removals {
     pub companies: Vec<String>,
     /// Codes, in any case.
     pub gift_cards: Vec<String>,
+    /// Paths, in any case.
+    pub redirects: Vec<String>,
     /// Names, in any case.
     pub locations: Vec<String>,
     /// Names, in any case.
@@ -985,6 +997,10 @@ fn apply_removals(merged: &mut MergedInput, removed: &Removals) {
     merged
         .gift_cards
         .retain(|card| !gift_cards.contains(&card.value.code.to_lowercase()));
+    let redirects = listed_any_case(&removed.redirects);
+    merged.redirects.retain(|redirect| {
+        !redirects.contains(&super::redirect_path(&redirect.value.path).to_lowercase())
+    });
     let locations = listed_any_case(&removed.locations);
     merged
         .locations
@@ -1066,6 +1082,7 @@ fn apply_overlay(
     upsert(&mut merged.customers, input.customers, name, "customers");
     upsert(&mut merged.companies, input.companies, name, "companies");
     upsert(&mut merged.gift_cards, input.gift_cards, name, "gift_cards");
+    upsert(&mut merged.redirects, input.redirects, name, "redirects");
     upsert(&mut merged.locations, input.locations, name, "locations");
     upsert(
         &mut merged.selling_plan_groups,
@@ -1215,6 +1232,9 @@ upserted!(model::CompanyInput, "company", |company| Cow::Owned(
 ));
 upserted!(model::GiftCardInput, |card| Cow::Owned(
     card.code.to_uppercase()
+));
+upserted!(model::RedirectInput, |redirect| Cow::Owned(
+    super::redirect_path(&redirect.path).to_lowercase()
 ));
 upserted!(model::LocationInput, "location", |location| Cow::Owned(
     location.name.to_lowercase()
@@ -2173,6 +2193,37 @@ mod tests {
                 "missing {expected:?} in:\n{report}"
             );
         }
+    }
+
+    #[test]
+    fn url_redirects_are_checked_as_the_admin_api_checks_them() {
+        let (store, diagnostics) = inline(serde_json::json!({
+            "redirects": [
+                {"path": "old-tee.html", "target": "/products/tee"},
+                {"path": "/OLD-TEE.html", "target": "/collections/all"},
+                {"path": "/same", "target": "/same"},
+                {"path": " ", "target": "/"}
+            ]
+        }));
+        let report = diagnostics.to_string();
+        for expected in [
+            "another redirect already has the path \"/OLD-TEE.html\"",
+            "the redirect of \"/same\" needs a target other than its path",
+            "the path of a redirect can't be blank",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
+        // A `/` is added in front of a path without one, and the path matches in any case.
+        assert_eq!(store.redirects.len(), 1);
+        assert_eq!(
+            store
+                .redirect("/Old-Tee.HTML")
+                .map(|redirect| redirect.target.as_str()),
+            Some("/products/tee")
+        );
     }
 
     #[test]

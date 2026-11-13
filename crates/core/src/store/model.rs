@@ -1556,6 +1556,17 @@ pub struct GiftCardRecipientInput {
     pub nickname: Option<String>,
 }
 
+/// A URL redirect: a visit to `path` that finds nothing is sent to `target` with a `301`.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RedirectInput {
+    /// The old path, `/old-tee.html`, matched whatever its case. A `/` is added in front of a
+    /// path without one, as the Admin API adds it.
+    pub path: String,
+    /// Where it leads: a path of the store (`/products/tee`) or a URL.
+    pub target: String,
+}
+
 /// An issued gift card, shown by `templates/gift_card.liquid` at the URL the `routes` command lists
 /// (`/gift_cards/<shop id>/<token>`).
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -2166,6 +2177,10 @@ pub struct StoreInput {
     /// Issued gift cards, each with its own page.
     #[serde(default)]
     pub gift_cards: Vec<GiftCardInput>,
+    /// URL redirects: an old path of the store that leads to a page of it, as Online Store >
+    /// Navigation > URL redirects and the Admin API's `urlRedirectCreate` make them.
+    #[serde(default)]
+    pub redirects: Vec<RedirectInput>,
     /// Metaobject entries by type.
     #[serde(default)]
     pub metaobjects: IndexMap<String, Vec<MetaobjectInput>>,

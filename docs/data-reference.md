@@ -22,6 +22,7 @@ data directory is one of these, and they are merged, so you can split the data a
 | `customers` | array of [Customer](#customer) | Customers. They can also live one per file in `customers/`. |
 | `companies` | array of [Company](#company) | Companies that buy from the store (B2B). Customers join one with their `company`. |
 | `gift_cards` | array of [GiftCard](#giftcard) | Issued gift cards, each with its own page. |
+| `redirects` | array of [Redirect](#redirect) | URL redirects: an old path of the store that leads to a page of it, as Online Store > Navigation > URL redirects and the Admin API's `urlRedirectCreate` make them. |
 | `metaobjects` | map of array of [Metaobject](#metaobject) | Metaobject entries by type. |
 | `metaobject_definitions` | map of [MetaobjectDefinition](#metaobjectdefinition) | The definitions of metaobject types, by type: what a type sets for all its entries. |
 | `localization` | [Localization](#localization) | The countries and languages of the store. At most one data file may define it. |
@@ -698,6 +699,15 @@ Who a gift card was sent to.
 | `name` | string |  |
 | `email` | string |  |
 | `nickname` | string |  |
+
+## Redirect
+
+A URL redirect: a visit to `path` that finds nothing is sent to `target` with a `301`.
+
+| Field | Type | Description |
+|---|---|---|
+| `path` | string | **Required.** The old path, `/old-tee.html`, matched whatever its case. A `/` is added in front of a path without one, as the Admin API adds it. |
+| `target` | string | **Required.** Where it leads: a path of the store (`/products/tee`) or a URL. |
 
 ## Metaobject
 
