@@ -882,6 +882,14 @@ metaobject fields that reference the entry (`namespace` is the metaobject's type
 creates the redirect, `metafields` inputs are checked as `metafieldsSet` checks them. Published
 pages and articles, menus, and active metaobjects are written to the store the theme renders.
 
+**Customer account pages.** `customerAccountPages` and `customerAccountPage(id:)` list the pages
+of the customer account, as Shopify does with new customer accounts: the native ones
+(`CustomerAccountNativePage` `orders`, `profile` and `settings`, with their `pageType`), then a
+`CustomerAccountAppExtensionPage` for each extension of the app with a
+`customer-account.page.render` target, titled with the extension's `name`. Its `handle` and
+`appExtensionUuid` are one UUID lsf makes from the app and the extension's handle: the `resourceId`
+a `CUSTOMER_ACCOUNT_PAGE` menu item names is the page's `id`.
+
 **Files.** `fileCreate` (up to 250, from a URL or a staged upload), `fileUpdate` (alt, filename,
 content, the products a file is a medium of), `fileDelete`; `files` searched by name and alt,
 sorted by `FILENAME`. A file is `READY` as soon as it is created: lsf has nothing to process, so
