@@ -5273,6 +5273,42 @@ fn a_page_says_which_of_lsfs_default_menus_it_renders() {
 }
 
 #[test]
+fn a_static_block_type_that_differs_by_case_renders_its_file() {
+    // Shopify renders `blocks/text.liquid` for `type: 'TEXT'`; lsf finds it on every file
+    // system, not only on those that ignore case.
+    let fixture = theme_of(
+        "block-type-case",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.json",
+                r#"{ "sections": { "main": { "type": "holder" } }, "order": ["main"] }"#,
+            ),
+            (
+                "sections/holder.liquid",
+                "{% content_for 'block', type: 'TEXT', id: 't' %}\
+                 {% schema %}{\"name\": \"Holder\", \"settings\": []}{% endschema %}",
+            ),
+            (
+                "blocks/text.liquid",
+                "<p>text block {{ block.type }}</p>{% schema %}{\"name\": \"Text\", \"settings\": []}{% endschema %}",
+            ),
+        ],
+    );
+    let page = fixture.page("/");
+    assert_clean(&page);
+    assert!(
+        page.body.contains("<p>text block text</p>"),
+        "{}",
+        page.body
+    );
+}
+
+#[test]
 fn a_block_rendered_again_gets_a_numbered_id() {
     // On Shopify, the second render of a block on a page has the id of the first with `-1`,
     // the third with `-2`, and so on: Horizon's product card, a static block rendered once

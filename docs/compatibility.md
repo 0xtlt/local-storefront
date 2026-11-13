@@ -203,7 +203,9 @@ data, in the 38 languages lsf names; a page in another language has the English 
   of their schema), section groups (`{% sections %}`), section and block settings with
   defaults from the schema, `disabled` sections and blocks.
 - Theme blocks (`blocks/*.liquid`), nested blocks, static blocks, `{% content_for 'blocks' %}`
-  and `{% content_for 'block' %}`, `closest.<resource>`.
+  and `{% content_for 'block' %}`, `closest.<resource>`. The `type` of
+  `{% content_for 'block' %}` finds its file whatever its case, as on Shopify: `type: 'TEXT'`
+  renders `blocks/text.liquid`, on every file system.
 - `closest.product`, `closest.collection`, `closest.article`, `closest.blog` and `closest.page`
   are, as on Shopify, the setting of that type of the block being rendered, else of its parent
   blocks, else of the section, else the resource of the template. The nearest setting counts

@@ -15,6 +15,13 @@ pub struct Missing {
     pub hint: Option<String>,
 }
 
+impl Missing {
+    /// Whether it renders on Shopify all the same: a warning, not a problem.
+    pub fn is_warning(&self) -> bool {
+        self.code == "block_type_case"
+    }
+}
+
 /// Tags whose body is not Liquid.
 const RAW_TAGS: [&str; 6] = [
     "schema",
@@ -295,17 +302,32 @@ pub fn in_liquid(theme: &Theme, source: &str, locale: Option<&Json>) -> Vec<Miss
                     .find(|(name, _)| name.trim() == "type")
                     .and_then(|(_, value)| leading_literal(value.trim()))
                     .map(|(kind, _)| kind);
-                if let Some(kind) = kind
-                    && !blocks.iter().any(|block| block == kind)
-                {
-                    missing.push(Missing {
+                let other_case = |kind: &str| {
+                    blocks
+                        .iter()
+                        .find(|block| block.eq_ignore_ascii_case(kind))
+                        .cloned()
+                };
+                match kind {
+                    Some(kind) if blocks.iter().any(|block| block == kind) => {}
+                    // Shopify finds the file whatever the case of the type.
+                    Some(kind) if let Some(file) = other_case(kind) => missing.push(Missing {
+                        code: "block_type_case",
+                        line: statement.line,
+                        message: format!(
+                            "{{% content_for 'block', type: '{kind}' %}} renders blocks/{file}.liquid, whose name differs by case: Shopify finds it, the type is clearer as the file is named"
+                        ),
+                        hint: Some(format!("write type: '{file}'")),
+                    }),
+                    Some(kind) => missing.push(Missing {
                         code: "missing_block",
                         line: statement.line,
                         message: format!(
                             "{{% content_for 'block', type: '{kind}' %}} renders blocks/{kind}.liquid, which the theme does not have"
                         ),
                         hint: did_you_mean(kind, &blocks),
-                    });
+                    }),
+                    None => {}
                 }
             }
             _ => {}

@@ -1022,6 +1022,17 @@ fn check_theme(
                 tally.report(diagnostic);
             }
             for missing in references::in_liquid(&theme, &source, locale.as_deref()) {
+                if missing.is_warning() {
+                    let mut diagnostic = Diagnostic::new(
+                        "warning",
+                        missing.code,
+                        Location::file(&path, Some(missing.line)),
+                        missing.message,
+                    );
+                    diagnostic.hint = missing.hint;
+                    tally.report(diagnostic);
+                    continue;
+                }
                 tally.problem_with_hint(
                     missing.code,
                     Location::file(&path, Some(missing.line)),
@@ -1254,6 +1265,57 @@ mod tests {
             "{report:#}"
         );
         assert_eq!(report["problems"], 4);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_block_type_that_differs_by_case_is_a_warning_not_a_missing_block() {
+        // Shopify renders blocks/text.liquid for `type: 'TEXT'` (#197).
+        let root = std::env::temp_dir().join(format!("lsf-check-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write("layout/theme.liquid", "{{ content_for_layout }}");
+        write(
+            "sections/holder.liquid",
+            "{% content_for 'block', type: 'TEXT', id: 't' %}\n{% content_for 'block', type: 'texte', id: 'u' %}\n{% schema %}\n{ \"name\": \"Holder\", \"settings\": [] }\n{% endschema %}",
+        );
+        write(
+            "blocks/text.liquid",
+            "<p>text block</p>{% schema %}{ \"name\": \"Text\", \"settings\": [] }{% endschema %}",
+        );
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(&str, &str, u64, &str)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["severity"].as_str().unwrap(),
+                    d["code"].as_str().unwrap(),
+                    d["line"].as_u64().unwrap_or(0),
+                    d["hint"].as_str().unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("warning", "block_type_case", 1, "write type: 'text'"),
+                ("error", "missing_block", 2, "did you mean \"text\"?"),
+            ],
+            "{report:#}"
+        );
+        assert_eq!(report["problems"], 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 
