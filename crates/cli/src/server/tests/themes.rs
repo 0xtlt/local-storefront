@@ -1,7 +1,6 @@
-//! What the storefront serves of the themes, script tags and mobile apps the backend changes
-//! through the Admin API: the theme directory with the Admin API's files on top (never written
-//! to), another theme once published, the script tags `content_for_header` loads, the
-//! association files of the shop's mobile apps.
+//! What the storefront serves of the themes and mobile apps the backend changes through the
+//! Admin API: the theme directory with the Admin API's files on top (never written to), another
+//! theme once published, the association files of the shop's mobile apps.
 
 use std::path::Path;
 
@@ -124,60 +123,6 @@ fn a_published_theme_is_served_instead_of_the_directory_until_the_local_one_is_p
 }
 
 #[test]
-fn script_tags_are_loaded_by_the_storefront_once_created() {
-    let state = admin_server();
-    assert!(!text(&get(&state, "/", "visitor")).contains("asyncLoad"));
-    let created = mutate(
-        &state,
-        "mutation { scriptTagCreate(input: {src: \"https://js.example.org/bar.js\", displayScope: ONLINE_STORE}) { scriptTag { id } userErrors { message } } }",
-        json!({}),
-    );
-    let id = created["data"]["scriptTagCreate"]["scriptTag"]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let home = text(&get(&state, "/", "visitor"));
-    assert!(home.contains("function asyncLoad()"), "{home}");
-    assert!(
-        home.contains(r#"https:\/\/js.example.org\/bar.js?shop="#),
-        "{home}"
-    );
-    mutate(
-        &state,
-        "mutation($id: ID!) { scriptTagDelete(id: $id) { deletedScriptTagId userErrors { message } } }",
-        json!({"id": id}),
-    );
-    assert!(!text(&get(&state, "/", "visitor")).contains("asyncLoad"));
-}
-
-/// Uninstalling the app removes its script tags, as Shopify does: the storefront stops loading
-/// them at once, and a reinstall does not bring them back (the app creates them again).
-#[test]
-fn uninstalling_the_app_removes_its_script_tags_from_the_storefront() {
-    let state = admin_server();
-    mutate(
-        &state,
-        "mutation { scriptTagCreate(input: {src: \"https://js.example.org/bar.js\", displayScope: ONLINE_STORE}) { scriptTag { id } userErrors { message } } }",
-        json!({}),
-    );
-    assert!(text(&get(&state, "/", "visitor")).contains("asyncLoad"));
-
-    let uninstalled = admin_request(&state, "POST", "/__lsf/admin/uninstall", "{}");
-    assert_eq!(uninstalled.status, 200, "{}", text(&uninstalled));
-    let answer = body_json(&uninstalled);
-    assert_eq!(answer["removedScriptTags"], 1, "{answer}");
-    assert_eq!(answer["removedWebPixels"], 0, "{answer}");
-    let home = text(&get(&state, "/", "visitor"));
-    assert!(!home.contains("asyncLoad"), "{home}");
-
-    let installed = admin_request(&state, "POST", "/__lsf/admin/install", "{}");
-    assert_eq!(installed.status, 200, "{}", text(&installed));
-    assert!(!text(&get(&state, "/", "visitor")).contains("asyncLoad"));
-    let tags = admin_query(&state, "{ scriptTags(first: 5) { nodes { id } } }");
-    assert_eq!(tags["data"]["scriptTags"]["nodes"], json!([]), "{tags}");
-}
-
-#[test]
 fn the_storefront_serves_the_association_files_of_the_shops_mobile_apps() {
     let state = admin_server();
     assert_eq!(
@@ -199,8 +144,8 @@ fn the_storefront_serves_the_association_files_of_the_shops_mobile_apps() {
 }
 
 /// A reload of the store data (`--watch`, `POST /__lsf/reload`) reseeds the shops, which drops
-/// the Admin API's files and script tags: the storefront kept serving them, while the Admin API
-/// reported the directory.
+/// the Admin API's files: the storefront kept serving them, while the Admin API reported the
+/// directory.
 #[test]
 fn a_reload_of_the_store_data_serves_the_directory_again() {
     let state = admin_server();
@@ -212,32 +157,24 @@ fn a_reload_of_the_store_data_serves_the_directory_again() {
             {"filename": "sections/admin-banner.liquid", "body": {"type": "TEXT", "value": "<p>Written by the Admin API</p>"}},
         ]}),
     );
-    mutate(
-        &state,
-        "mutation { scriptTagCreate(input: {src: \"https://js.example.org/bar.js\", displayScope: ONLINE_STORE}) { scriptTag { id } userErrors { message } } }",
-        json!({}),
-    );
     let home = text(&get(&state, "/", "visitor"));
     assert!(home.contains("Written by the Admin API"), "{home}");
-    assert!(home.contains("asyncLoad"));
 
     state.reload();
 
     let home = text(&get(&state, "/", "visitor"));
     assert!(home.contains("Stored title"), "{home}");
     assert!(!home.contains("Written by the Admin API"), "{home}");
-    assert!(!home.contains("asyncLoad"), "{home}");
     // As the Admin API reports it.
     let answer = admin_query(
         &state,
-        "{ theme(id: \"gid://shopify/OnlineStoreTheme/1\") { files(filenames: [\"sections/admin-banner.liquid\"], first: 1) { nodes { filename } } } scriptTags(first: 5) { nodes { id } } }",
+        "{ theme(id: \"gid://shopify/OnlineStoreTheme/1\") { files(filenames: [\"sections/admin-banner.liquid\"], first: 1) { nodes { filename } } } }",
     );
     assert_eq!(
         answer["data"]["theme"]["files"]["nodes"],
         json!([]),
         "{answer}"
     );
-    assert_eq!(answer["data"]["scriptTags"]["nodes"], json!([]), "{answer}");
 }
 
 /// The `Shopify.theme` line of a page: what `content_for_header` says of the theme served.

@@ -611,6 +611,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   nothing is deleted, and a variant's `metafields` still delete none of its others.
   **Breaking**: a backfill that sends `productSet` part of a product's metafields now deletes the
   others locally, as it does on a store. Send them all, or write them with `metafieldsSet`.
+- **`scriptTagCreate` and `scriptTagUpdate` answer a user error and change nothing**, on every
+  API version, as Shopify does since October 1, 2026, where lsf created the script tag and
+  `content_for_header` loaded it. `scriptTags` and `scriptTagDelete` keep working.
+  **Breaking**: an app that installs a script tag now fails locally as it does on every store.
+  Replace it with an app embed block of a theme app extension, or a web pixel.
 
 #### The command line
 

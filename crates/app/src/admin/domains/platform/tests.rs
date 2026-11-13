@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 use super::access::{AuthEffect, effects};
-use crate::admin::domains::storefront::tests::{run, shop, topics};
+use crate::admin::domains::storefront::tests::{existing_script_tag, run, shop, topics};
 use crate::admin::state::ShopState;
 
 /// Grants the installation scopes beyond its required ones, as an approval of optional scopes
@@ -516,8 +516,8 @@ fn the_queries_of_the_platform_answer_every_main_field_without_a_default() {
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../theme/tests/fixtures/theme");
     crate::admin::domains::themes::attach(&mut shop, &root);
+    existing_script_tag(&mut shop, "https://js.example.org/a.js");
     for mutation in [
-        "mutation { scriptTagCreate(input: {src: \"https://js.example.org/a.js\"}) { userErrors { message } } }",
         "mutation { webPixelCreate(webPixel: {settings: {accountID: \"1\"}}) { userErrors { message } } }",
         "mutation { serverPixelCreate { userErrors { message } } }",
         "mutation { storefrontAccessTokenCreate(input: {title: \"t\"}) { userErrors { message } } }",

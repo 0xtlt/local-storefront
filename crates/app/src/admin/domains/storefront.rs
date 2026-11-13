@@ -3,10 +3,15 @@
 //!
 //! - **Script tags** (`scriptTagCreate`, `scriptTagUpdate`, `scriptTagDelete`; `scriptTag`,
 //!   `scriptTags(src:, query:)`): `ScriptTag` records (`src`, `displayScope`, `cache`, dates).
-//!   One with the `ONLINE_STORE` or `ALL` scope is loaded by the storefront's
-//!   `content_for_header` as Shopify loads it: the server reads [`storefront_scripts`] of its
-//!   default shop and gives them to the theme (`lsf_core::theme::Theme::set_script_tags`), once
-//!   per change, as store sync builds the store.
+//!   `scriptTagCreate` and `scriptTagUpdate` answer a user error and change nothing, on every
+//!   API version, as Shopify does since October 1, 2026 ("Starting October 1, 2026, the
+//!   `scriptTagCreate` and `scriptTagUpdate` mutations will return an user error […] The
+//!   deprecation applies to all API versions", shopify.dev's changelog); the query and
+//!   `scriptTagDelete` keep working. One that exists with the `ONLINE_STORE` or `ALL` scope is
+//!   loaded by the storefront's `content_for_header` as Shopify loads it until March 1, 2027:
+//!   the server reads [`storefront_scripts`] of its default shop and gives them to the theme
+//!   (`lsf_core::theme::Theme::set_script_tags`), once per change, as store sync builds the
+//!   store.
 //! - **Web pixel** (`webPixelCreate`, `webPixelUpdate`, `webPixelDelete`; `webPixel`): one per
 //!   app, as shopify.dev says ("Activate a web pixel extension by creating a web pixel record on
 //!   the store"). Its `settings` are checked against the `[settings]` of the app's web pixel
@@ -29,23 +34,23 @@
 //!   nothing; they are listed with their scopes.
 //!
 //! Shopify has no webhook topic for any of these in 2026-10: their changes are emitted under
-//! topics no subscription can name (`script_tags/create`, `web_pixels/update`, …), which tell
+//! topics no subscription can name (`script_tags/delete`, `web_pixels/update`, …), which tell
 //! the server the shop changed.
 //!
-//! Where shopify.dev documents no message, the wording is Rails' (`Src can't be blank`,
-//! `Title can't be blank`), the error the REST resources of the same records answered.
+//! Where shopify.dev documents no message, the wording is Rails' (`Title can't be blank`), the
+//! error the REST resources of the same records answered; the refusal of a script tag's is lsf's.
 
 use serde_json::{Map, Value, json};
 
 use crate::admin::graphql::{FieldContext, FieldError, Output};
 use crate::admin::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::admin::state::value::str_field_or_empty as text;
-use crate::admin::state::{Record, ShopState, value};
+use crate::admin::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {
     registry
-        .mutation("scriptTagCreate", script_tag_create)
-        .mutation("scriptTagUpdate", script_tag_update)
+        .mutation("scriptTagCreate", script_tag_refused)
+        .mutation("scriptTagUpdate", script_tag_refused)
         .mutation("scriptTagDelete", script_tag_delete)
         .query("scriptTags", script_tags)
         .default_text("ScriptTag", |_r, record| {
@@ -87,99 +92,13 @@ pub fn storefront_scripts(state: &ShopState) -> Vec<String> {
         .collect()
 }
 
-/// Whether `src` is a URL a browser loads a script from.
-fn is_script_url(src: &str) -> bool {
-    let rest = src
-        .strip_prefix("https://")
-        .or_else(|| src.strip_prefix("http://"));
-    rest.is_some_and(|rest| {
-        let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
-        !host.is_empty() && !rest.contains(char::is_whitespace)
-    })
-}
-
-/// The checks of a `ScriptTagInput`: `(src, displayScope, cache)`, the record's values for what
-/// the input leaves out (an update).
-fn check_script_tag(
-    input: &Map<String, Value>,
-    before: Option<&Record>,
-    errors: &mut Vec<UserError>,
-) -> (String, String, bool) {
-    let src = match input.get("src").and_then(Value::as_str) {
-        Some(src) => src.trim().to_string(),
-        None => before.map_or_else(String::new, |record| text(record, "src").to_string()),
-    };
-    if src.is_empty() {
-        errors.push(UserError::new(&["input", "src"], "Src can't be blank"));
-    } else if !is_script_url(&src) {
-        errors.push(UserError::new(&["input", "src"], "Src is invalid"));
-    }
-    let scope = match input.get("displayScope").and_then(Value::as_str) {
-        // "`ORDER_STATUS` is deprecated and unavailable as a mutation input" (the schema).
-        Some("ORDER_STATUS") => {
-            errors.push(UserError::new(
-                &["input", "displayScope"],
-                "Display scope ORDER_STATUS is unavailable as a mutation input",
-            ));
-            "ORDER_STATUS".to_string()
-        }
-        Some(scope) => scope.to_string(),
-        // REST's default was `all`, which GraphQL deprecates for `ONLINE_STORE`.
-        None => before.map_or_else(
-            || "ONLINE_STORE".to_string(),
-            |record| text(record, "displayScope").to_string(),
-        ),
-    };
-    let cache = input
-        .get("cache")
-        .and_then(Value::as_bool)
-        .or_else(|| before.and_then(|record| record.get("cache")?.as_bool()))
-        .unwrap_or(false);
-    (src, scope, cache)
-}
-
-fn script_tag_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = ctx.arg_object_or_default("input");
-    let mut errors = Vec::new();
-    let (src, scope, cache) = check_script_tag(&input, None, &mut errors);
-    if !errors.is_empty() {
-        return Ok(payload(json!({"scriptTag": null}), &errors));
-    }
-    let state = m.state_mut();
-    let now = state.timestamp();
-    let id = state.insert(value::object(json!({
-        "__typename": "ScriptTag",
-        "src": src,
-        "displayScope": scope,
-        "cache": cache,
-        "createdAt": now,
-        "updatedAt": now,
-    })));
-    state.emit("script_tags/create", &id);
-    Ok(payload(json!({"scriptTag": id}), &[]))
-}
-
-fn script_tag_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let Some(record) = m.state().get_of(&id, "ScriptTag") else {
-        let error = UserError::new(&["id"], "Script tag does not exist");
-        return Ok(payload(json!({"scriptTag": null}), &[error]));
-    };
-    let input = ctx.arg_object_or_default("input");
-    let mut errors = Vec::new();
-    let (src, scope, cache) = check_script_tag(&input, Some(record), &mut errors);
-    if !errors.is_empty() {
-        return Ok(payload(json!({"scriptTag": null}), &errors));
-    }
-    let state = m.state_mut();
-    if let Some(tag) = state.get_mut(&id) {
-        tag.insert("src".into(), json!(src));
-        tag.insert("displayScope".into(), json!(scope));
-        tag.insert("cache".into(), json!(cache));
-    }
-    state.touch(&id);
-    state.emit("script_tags/update", &id);
-    Ok(payload(json!({"scriptTag": id}), &[]))
+/// `scriptTagCreate` and `scriptTagUpdate`: refused, whatever the input.
+fn script_tag_refused(_m: &mut Mutation<'_>, _ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
+    let error = UserError::new(
+        &[],
+        "Script tags can no longer be created or updated: use an app embed block or a web pixel",
+    );
+    Ok(payload(json!({"scriptTag": null}), &[error]))
 }
 
 fn script_tag_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
