@@ -910,13 +910,14 @@ fn check(name: &str, result: &CheckoutResult) {
             assert!(result.runs.is_empty(), "{:?}", ran(result));
         }
         "fn-broken-big-input" => {
+            // Shopify refuses its input query: too long, and too costly.
             let run = the_run(result, "broken-big-input", "cart.validations.generate.run");
-            assert!(run.error.is_none(), "{:?}", run.error);
-            let input = &run.input;
-            assert_eq!(input["cart"]["buyerIdentity"]["customer"]["vip"], true);
-            assert_eq!(input["cart"]["lines"][0]["engraving"]["value"], "Ada");
-            assert_eq!(input["shop"]["sale"]["jsonValue"]["label"], "Weekend sale");
-            assert!(input.to_string().len() > 3000);
+            let error = run.error.as_deref().unwrap();
+            assert!(
+                error.contains("the query is 3148 bytes without its comments")
+                    && error.contains("Query has complexity of 100"),
+                "{error}"
+            );
         }
         "fn-broken-fetch-timeout" => {
             assert_eq!(result.runs.len(), 1, "the .run target does not run");

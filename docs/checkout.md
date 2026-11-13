@@ -149,6 +149,21 @@ payment customizations, cart and checkout validations) at 2026-10 and 2027-01: t
 the Functions with. Fulfillment constraints, order routing and pickup generators are not among
 them. After changing `api_version`, write it again.
 
+Before each run, the input query is checked against that schema (a field it lacks fails the run)
+and against Shopify's
+[input query limits](https://shopify.dev/docs/api/functions/latest#input-query-limits), which
+Shopify checks when it deploys the Function:
+
+- 3,000 bytes at most, comments left out;
+- 100 elements at most in a list, given to an argument or as the value of a variable;
+- a calculated cost of 30 at most, with Shopify's message past it
+  (`Query has complexity of 33, which exceeds max complexity of 30`). `__typename`, the fields
+  of a `Metafield`, a `HasTagResponse` or a `CollectionMembership` cost 0; the `metaobject` root
+  field and any other leaf 1; a field that returns a `Metafield`, `field(key:)` of a
+  `Metaobject`, `hasAnyTag`, `hasTags`, `inAnyCollection` and `inCollections` 3. Each selection
+  counts once (two aliases are two). Where an object can be of several types (`merchandise`),
+  the costliest type counts: Shopify's table does not say, and this is how GraphQL Ruby counts.
+
 ### Rust Functions
 
 `cargo build` writes a module that calls the Function Wasm API of the host by name
@@ -428,12 +443,12 @@ prefix of its URL (`/fr/` links to `/fr/checkout`; `/__lsf/checkouts?locale=fr` 
 The home page runs the Functions of every scenario that opens, as its checkout would when it
 opens (what `lsf app function run --scenario` does), and lists each Function target that fails, with
 the error and the scenarios it fails in: a trap or a panic, more than 11 million instructions,
-an output that does not fit the schema of its API version, a `.fetch` request out of Shopify's
-limits. A target that fails in several ways is listed once per error, each with its own
-scenarios and logs. The scenario and the Function get an error status. A failure is a problem
-to fix even when the checkout goes on: Shopify ignores the output of a failed run and blocks the
-order only for a validation or a cart transform that blocks on failure ([network
-access](#network-access)).
+an input query over [Shopify's limits](#the-schema-of-a-function), an output that does not fit
+the schema of its API version, a `.fetch` request out of Shopify's limits. A target that fails in
+several ways is listed once per error, each with its own scenarios and logs. The scenario and the
+Function get an error status. A failure is a problem to fix even when the checkout goes on:
+Shopify ignores the output of a failed run and blocks the order only for a validation or a cart
+transform that blocks on failure ([network access](#network-access)).
 
 lsf stops a run at 110 million instructions, ten times Shopify's limit: an endless loop fails in
 a moment (`exceeded Shopify's limit of 11,000,000 instructions: stopped at 110,000,000`), and a

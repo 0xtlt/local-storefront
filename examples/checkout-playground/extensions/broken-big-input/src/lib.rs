@@ -3,8 +3,9 @@
 //! properties, variant and product with metafields. It reads its input as plain JSON (no typegen)
 //! and logs how big it is, and never refuses anything.
 //!
-//! What it shows: a big input in the Functions dialog, with what the store data and the scenario
-//! put in it. Not broken: an edge case for the dialog and for `lsf app function run`.
+//! What it shows: an input query over Shopify's input query limits (3,148 bytes, a cost of 100,
+//! where Shopify takes 3,000 and 30): Shopify would not deploy it, and its run fails before the
+//! module starts, with the limits it is over.
 
 use shopify_function::prelude::*;
 use shopify_function::scalars::JsonValue;

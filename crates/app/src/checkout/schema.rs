@@ -7,6 +7,9 @@
 //!   no unknown field, no missing required field, the right scalars, `@oneOf` objects with
 //!   exactly one field.
 //!
+//! [`Schema::check_limits`] checks an input query against Shopify's input query limits
+//! ([`limits`]).
+//!
 //! The schemas are in `crates/app/schemas/functions`, one file per API and per release that changed it
 //! (see [`crate::config::version`]).
 
@@ -655,5 +658,6 @@ fn const_value(value: &q::Value<'_, String>) -> Value {
     }
 }
 
+mod limits;
 #[cfg(test)]
 mod tests;
