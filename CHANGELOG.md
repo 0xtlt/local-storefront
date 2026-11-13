@@ -94,6 +94,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   no longer prefixed a second time (`/fr/fr`). A picked resource (`shopify://…`), the home page
   (`/`) and the schema's `default` (`/collections`, `/collections/all`) keep the prefix. A theme
   test that expected `/fr/pages/contact` from a typed path needs `/pages/contact`.
+- **`country_option_tags` and `all_country_option_tags` start with a `---` option**, as on
+  Shopify: `<option value="---" data-provinces="[]">---</option>`. A theme test that compares
+  their first option, or counts them, sees one more.
 
 ### Fixed
 
@@ -287,6 +290,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `{{ product.metafields.custom | json }}` the values of the namespace, as on Shopify, no longer
   `null`. Themes that hand metaobjects to JavaScript get them locally. The text of rich text is
   HTML-escaped in its JSON, as on Shopify (`Care &amp; use`).
+- **Every country has its name and its continent.** The 237 countries Shopify lists have the
+  English name Shopify gives them (`Andorra`, `Kenya`, `Qatar`, `Uruguay`, where lsf printed
+  `AD`, `KE`, `QA`, `UY` for all but 63 of them), their currency, and the continent
+  `country.continent` gives (`Europe`, `North America`, `Central America`...), which was empty.
+  `all_country_option_tags` lists all 237, by name, where it listed the 63. The data is
+  Shopify's own address data (Shopify/worldwide), as the provinces already were. Bulgaria pays
+  in euros by default, as it has since 2026.
 
 #### The checkout of an app
 

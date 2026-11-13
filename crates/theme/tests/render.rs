@@ -1365,12 +1365,12 @@ fn unknown_urls_render_the_404_template() {
         assert!(rendered.body.contains("<h1>Not here</h1>"), "{path}");
         assert!(rendered.body.contains("data-page-type=\"404\""), "{path}");
     }
-    // The countries of the store, as the options of a selector, each with its provinces as
-    // pairs of their name and the name to show.
+    // The countries of the store, as the options of a selector after Shopify's `---`, each with
+    // its provinces as pairs of their name and the name to show.
     let body = fixture.page("/nope").body;
     assert!(
         body.contains(
-            "<select><option value=\"United States\" data-provinces=\"[[&quot;Alabama&quot;,&quot;Alabama&quot;],[&quot;Alaska&quot;,&quot;Alaska&quot;],"
+            "<select><option value=\"---\" data-provinces=\"[]\">---</option>\n<option value=\"United States\" data-provinces=\"[[&quot;Alabama&quot;,&quot;Alabama&quot;],[&quot;Alaska&quot;,&quot;Alaska&quot;],"
         ),
         "{body}"
     );
@@ -1403,7 +1403,8 @@ fn country_selectors_list_the_provinces_the_store_ships_to() {
     let session = Session::initial(&fixture.store);
     assert_eq!(
         fixture.liquid("/", session.clone(), "{{ country_option_tags }}"),
-        "<option value=\"United States\" data-provinces=\"[[&quot;District of Columbia&quot;,&quot;Washington DC&quot;],[&quot;Oregon&quot;,&quot;Oregon&quot;],[&quot;Washington&quot;,&quot;Washington&quot;]]\">United States</option>\n\
+        "<option value=\"---\" data-provinces=\"[]\">---</option>\n\
+         <option value=\"United States\" data-provinces=\"[[&quot;District of Columbia&quot;,&quot;Washington DC&quot;],[&quot;Oregon&quot;,&quot;Oregon&quot;],[&quot;Washington&quot;,&quot;Washington&quot;]]\">United States</option>\n\
          <option value=\"Japan\" data-provinces=\"[[&quot;Tōkyō&quot;,&quot;Tokyo&quot;]]\">Japan</option>\n\
          <option value=\"France\" data-provinces=\"[]\">France</option>"
     );
@@ -1426,6 +1427,60 @@ fn country_selectors_list_the_provinces_the_store_ships_to() {
     );
     assert!(
         all.contains("<option value=\"United Kingdom\" data-provinces=\"[[&quot;British Forces&quot;,&quot;British Forces&quot;],[&quot;England&quot;,&quot;England&quot;],"),
+        "{all}"
+    );
+}
+
+#[test]
+fn every_country_has_its_name_and_continent_and_a_selector_lists_them_all() {
+    let overlay = serde_json::json!({"localization": {"countries": [
+        {"iso_code": "US"}, {"iso_code": "AD"}, {"iso_code": "AL"}, {"iso_code": "KE"},
+        {"iso_code": "MA"}, {"iso_code": "QA"}, {"iso_code": "UY"}, {"iso_code": "FR"},
+        {"iso_code": "BE"}, {"iso_code": "CA"}
+    ]}});
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let session = Session::initial(&fixture.store);
+    assert_eq!(
+        fixture.liquid(
+            "/",
+            session.clone(),
+            "{% for c in localization.available_countries %}{{ c.iso_code }}={{ c.name }}/{{ c.continent }};{% endfor %}"
+        ),
+        "US=United States/North America;AD=Andorra/Europe;AL=Albania/Europe;KE=Kenya/Africa;\
+         MA=Morocco/Africa;QA=Qatar/Asia;UY=Uruguay/South America;FR=France/Europe;\
+         BE=Belgium/Europe;CA=Canada/North America;"
+    );
+    // Shopify's 237 countries and its `---`: 238 options, so 239 parts.
+    assert_eq!(
+        fixture.liquid(
+            "/",
+            session.clone(),
+            "{{ all_country_option_tags | split: '<option' | size }}"
+        ),
+        "239"
+    );
+    // By name, accents aside, after the `---`.
+    let all = fixture.liquid("/", session, "{{ all_country_option_tags }}");
+    assert!(
+        all.starts_with(
+            "<option value=\"---\" data-provinces=\"[]\">---</option>\n\
+             <option value=\"Afghanistan\" data-provinces=\"[]\">Afghanistan</option>\n\
+             <option value=\"Åland Islands\" data-provinces=\"[]\">Åland Islands</option>\n\
+             <option value=\"Albania\" data-provinces=\"[]\">Albania</option>\n"
+        ),
+        "{all}"
+    );
+    assert!(
+        all.ends_with("<option value=\"Zimbabwe\" data-provinces=\"[]\">Zimbabwe</option>"),
         "{all}"
     );
 }

@@ -765,7 +765,9 @@ store has none: `npx local-storefront app init` writes a set.
 
 The first language is the primary one, served at `/`. The others are served under
 `/<iso_code>/` (`/fr/products/blue-shirt`) and use the theme's `locales/<iso_code>.json`.
-Names of countries default to built-in values. Without `countries`, the store
+A country's `name` defaults to the English name Shopify gives it, and `country.continent` is
+the continent Shopify puts it in, for each of the 237 countries Shopify lists (from Shopify's
+address data); `all_country_option_tags` lists them all. Without `countries`, the store
 sells in one country: the shop's (`shop.address.country_code`), or `US`. The localization form
 (`{% form 'localization' %}`) switches the session's country and language. A visitor who
 selected no country is in the shop's (`shop.address.country_code`), the one of its primary

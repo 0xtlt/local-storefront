@@ -7,6 +7,10 @@ and `territories.yml`, which worldwide derives from the Unicode CLDR. It provide
 Shopify lists in `country_option_tags` and `all_country_option_tags` (`data-provinces`) and in its
 address forms.
 
+`src/store/countries.rs` is generated from the same commit by `tools/worldwide/countries.rb`: the
+countries of `data/regions/` (their currency and continent, `group_name`) and their English names
+from `data/cldr/locales/en/territories.yml`.
+
 Shopify/worldwide is distributed under the MIT license:
 
 Copyright 2023-present, Shopify Inc.

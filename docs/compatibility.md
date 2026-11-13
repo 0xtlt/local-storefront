@@ -154,7 +154,8 @@ Shopify: `.count` and `.size` give its length, `.first`, `.last` and `[n]` give 
 as on Shopify, a loop over it or over `metaobjects.<type>.values` outside `paginate` gets its
 first 50 items, and `paginate` gives up to 250 a page, with a page parameter of the list's own,
 `page_` and 8 hexadecimal digits (`paginate.page_param`), not `page`),
-metaobjects, countries, languages (with `direction`, from the script of the language),
+metaobjects, countries (the 237 Shopify lists, each with Shopify's English name and its
+`continent`), languages (with `direction`, from the script of the language),
 currencies, markets (`localization.market` and `country.market` are the market of the country,
 with its handle, its id and its metafields), fonts, colors, color schemes, quantity rules and quantity price breaks,
 unit prices, selling plan groups, selling plans and their allocations, store availabilities and
