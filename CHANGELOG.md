@@ -42,6 +42,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   This changes the handle, the URL and the id lsf derives for an entity of the store data whose
   title or file name has one of these and that has no `handle` of its own, and the handles the
   Admin API makes from titles. Give such an entity its old `handle` to keep its URL.
+- **`/cart/add.js` answers `422` for an unknown variant**, no longer `404`, as the Ajax Cart API
+  reference shows: `{"status":422,"message":"Cart Error","description":"Cannot find variant"}`.
+  A theme test that expects `404` from `add.js` needs `422`.
 
 ### Fixed
 
@@ -136,6 +139,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `name` (`<title> - <variant>`, the title alone for a product without options), `offers` and
   `sku`. It is the item of the product's `hasVariant`. JSON-LD of the selected variant can be
   checked locally.
+- **A `/cart/add.js` of several `items` with one refused adds none of them.** A sold-out item or
+  an unknown variant among them answers `422` and leaves the cart as it was, as a store does: a
+  bundle that meets a sold-out pick no longer leaves the items before it in the cart.
+- **`/cart/add.js` with an unknown variant id answers `422`**, with `Cannot find variant`, as
+  Shopify does. `Shopify.actions.updateCart` still reports it on the line's `merchandiseId`.
 
 #### The checkout of an app
 
