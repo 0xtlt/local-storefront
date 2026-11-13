@@ -626,7 +626,8 @@ test('an extension that blocks the buyer stops the payment', async () => {
   await page.checkout.actions.pay();
   assert.equal(page.requests.some((request) => request.url.endsWith('/complete')), false);
   assert.deepEqual(page.location.assigned, []);
-  assert.match(page.text('[data-banner="blocked"]'), /The gift message is empty\.Write a message for the recipient\./);
+  // The buyer reads the errors; the reason is not for them (Shopify keeps it for its debugging).
+  assert.equal(page.text('[data-banner="blocked"]'), 'Write a message for the recipient.');
   assert.equal(page.checkout.ui.busy, false);
 
   gift.iframe.contentWindow.postMessage = (message) => {
@@ -636,6 +637,31 @@ test('an extension that blocks the buyer stops the payment', async () => {
   await page.checkout.actions.pay();
   assert.equal(page.location.assigned.length, 1, 'allowed, it pays');
   assert.equal(page.query('[data-banner="blocked"]'), null);
+});
+
+test('a block with only a reason stops the payment and shows the buyer nothing, as on Shopify', async () => {
+  const page = app();
+  await fillIn(page);
+  const frames = connect(page);
+  const gift = frames.find((frame) => frame.target === 'purchase.checkout.block.render');
+  say(page, gift, { type: 'ready' });
+  say(page, gift, { type: 'interceptors', count: 1 });
+  gift.iframe.contentWindow.postMessage = (message) => {
+    gift.iframe.contentWindow.posted.push(message);
+    if (message.type === 'intercept') {
+      queueMicrotask(() => say(page, gift, { type: 'intercepted', id: message.id, results: [{ behavior: 'block', reason: 'INTERNAL REASON NOT FOR BUYERS' }] }));
+    }
+  };
+  await page.checkout.actions.pay();
+  assert.equal(page.requests.some((request) => request.url.endsWith('/complete')), false, 'the order is not placed');
+  assert.deepEqual(page.location.assigned, []);
+  assert.equal(page.query('[data-banner="blocked"]'), null);
+  assert.doesNotMatch(page.root.textContent, /INTERNAL REASON/, 'nowhere on the page');
+  // The developer finds it in the Functions dialog.
+  page.query('.lsf-fn-badge').click();
+  page.query('[data-view="overview"]').click();
+  assert.match(page.text('[data-test="intercept-blocks"]'), /INTERNAL REASON NOT FOR BUYERS/);
+  assert.match(page.text('[data-test="intercept-blocks"]'), /the buyer sees no message/);
 });
 
 test('the thank-you page runs the thank-you extensions, not the checkout ones', () => {

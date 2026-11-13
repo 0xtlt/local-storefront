@@ -198,9 +198,12 @@ test('errors of the checkout go to their field or to a banner', () => {
   assert.match(text(findAll(tree, (node) => node.props['data-banner'] === 'errors')[0]), /Order too large/);
 });
 
-test('extensions that block the buyer are heard', () => {
-  const tree = page(checkoutState(), { block: { reason: 'The gift message is empty.', errors: [{ message: 'Write a message.' }] } });
-  assert.match(text(findAll(tree, (node) => node.props['data-banner'] === 'blocked')[0]), /The gift message is empty\.Write a message\./);
+test('extensions that block the buyer are heard: their errors, never their reason', () => {
+  const blocks = [{ handle: 'gift', reason: 'The gift message is empty.', errors: [{ message: 'Write a message.' }] }];
+  const tree = page(checkoutState(), { block: { blocks, errors: blocks[0].errors } });
+  assert.equal(text(findAll(tree, (node) => node.props['data-banner'] === 'blocked')[0]), 'Write a message.');
+  const silent = page(checkoutState(), { block: { blocks: [{ handle: 'gift', reason: 'Internal', errors: [] }], errors: [] } });
+  assert.equal(findAll(silent, (node) => node.props['data-banner'] === 'blocked').length, 0, 'no errors, no banner');
 });
 
 test('asks for a slot at each target, with an instance for each line', () => {

@@ -146,6 +146,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`/search/suggest` and `/recommendations/products` without `section_id` answer `422`**, as
   HTML, no longer `400` as text: `Invalid parameter error: Missing section_id param` for
   predictive search, an empty body for recommendations, as a store does.
+- **The `reason` of a `buyerJourney.intercept` block is no longer shown to the buyer**, as on
+  Shopify, which keeps it for its own debugging. The page shows the block's `errors` alone; a
+  block with no `errors` stops the payment with no message, as on a store, so an extension that
+  relied on `reason` now leaves the buyer stuck here too: show why in its UI, or pass `errors`.
+  A browser test that read the reason on the page reads the Overview of the Functions dialog,
+  which lists each block with its `reason`.
 
 ### Fixed
 
