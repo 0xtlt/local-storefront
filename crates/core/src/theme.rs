@@ -69,6 +69,34 @@ pub fn resolve_in(root: &Path, relative: &str) -> Option<PathBuf> {
     (!escapes).then(|| root.join(relative))
 }
 
+/// Whether a theme file is Liquid or JSON: text that Shopify CLI uploads as UTF-8, a byte that
+/// is not UTF-8 becoming U+FFFD.
+fn is_theme_text(relative: &str) -> bool {
+    relative.ends_with(".liquid") || relative.ends_with(".json")
+}
+
+/// The text of the file at `path`. A Liquid or JSON file that is not UTF-8 (a Latin-1 `é`) is
+/// read as Shopify stores it: each byte that is not UTF-8 is U+FFFD. Other files are text only
+/// when they are UTF-8.
+fn read_text(path: &Path, relative: &str) -> Option<Arc<str>> {
+    let bytes = std::fs::read(path).ok()?;
+    match String::from_utf8(bytes) {
+        Ok(text) => Some(Arc::from(text)),
+        Err(error) if is_theme_text(relative) => Some(Arc::from(
+            String::from_utf8_lossy(error.as_bytes()).as_ref(),
+        )),
+        Err(_) => None,
+    }
+}
+
+/// The line of the first byte of `bytes` that is not UTF-8, `None` when they are UTF-8: a
+/// theme file that was saved in another encoding.
+pub fn first_non_utf8_line(bytes: &[u8]) -> Option<usize> {
+    let error = std::str::from_utf8(bytes).err()?;
+    let valid = &bytes[..error.valid_up_to()];
+    Some(valid.iter().filter(|byte| **byte == b'\n').count() + 1)
+}
+
 /// Files that are served in place of those of the directory, or on top of them: what the
 /// Admin API wrote into the theme the storefront serves (`themeFilesUpsert` on the local
 /// theme), or the whole of another theme it published. The directory is never written to.
@@ -309,7 +337,7 @@ impl ThemeFiles {
             return entry.content.clone();
         }
         let content: Option<Arc<str>> = match modified {
-            Some(_) => std::fs::read_to_string(&path).ok().map(Arc::from),
+            Some(_) => read_text(&path, relative),
             None => None,
         };
         cache.insert(
@@ -470,6 +498,27 @@ mod tests {
         ] {
             assert_eq!(resolve_in(root, escaping), None, "{escaping:?}");
         }
+    }
+
+    #[test]
+    fn a_liquid_or_json_file_that_is_not_utf8_is_read_as_shopify_stores_it() {
+        // Latin-1 `é` (0xE9): Shopify CLI uploads it as U+FFFD, and the page shows `caf�`.
+        let root = std::env::temp_dir().join(format!("lsf-latin1-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("snippets")).unwrap();
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        std::fs::write(root.join("snippets/latin.liquid"), b"<i>caf\xe9</i>\n").unwrap();
+        std::fs::write(root.join("assets/image.png"), b"\x89PNG\xff").unwrap();
+        let files = ThemeFiles::new(root.clone(), Revalidate::Never);
+        assert_eq!(
+            files.read("snippets/latin.liquid").as_deref(),
+            Some("<i>caf\u{FFFD}</i>\n")
+        );
+        // A file that is not Liquid or JSON is not text.
+        assert_eq!(files.read("assets/image.png"), None);
+        assert_eq!(first_non_utf8_line(b"a\nb\ncaf\xe9"), Some(3));
+        assert_eq!(first_non_utf8_line("café".as_bytes()), None);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

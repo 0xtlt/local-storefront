@@ -781,6 +781,26 @@ fn check_liquid_settings(
     }
 }
 
+/// A warning for a file that is not UTF-8 (saved as Latin-1 or Windows-1252): Shopify takes
+/// it, and each byte that is not UTF-8 shows as U+FFFD, as lsf reads it.
+fn report_encoding(theme: &Theme, path: &str, tally: &mut Tally) {
+    let Some(line) = theme
+        .files()
+        .bytes(path)
+        .and_then(|bytes| lsf_core::theme::first_non_utf8_line(&bytes))
+    else {
+        return;
+    };
+    let mut diagnostic = Diagnostic::new(
+        "warning",
+        "not_utf8",
+        Location::file(path, Some(line)),
+        "the file is not UTF-8: Shopify takes it, and each byte that is not UTF-8 shows as \u{FFFD} (`caf\u{FFFD}` for a Latin-1 `café`)".to_string(),
+    );
+    diagnostic.hint = Some("save the file as UTF-8".to_string());
+    tally.report(diagnostic);
+}
+
 /// The JSON report of `--format json`.
 /// A contextual template or section group (`index.context.europe.json`): a warning when lsf
 /// applies it nowhere, because its `parent` is not a file of the theme or its `context` is not
@@ -956,6 +976,7 @@ fn check_theme(
             }
             files += 1;
             let path = format!("{directory}/{name}");
+            report_encoding(&theme, &path, &mut tally);
             let source = theme.files().read(&path).unwrap_or_default();
             let findings = findings_of(&env, &theme, &source);
             let (fixed_source, wrote) = rewrite(
@@ -1069,6 +1090,7 @@ fn check_theme(
             }
             files += 1;
             let path = format!("{directory}/{name}");
+            report_encoding(&theme, &path, &mut tally);
             if let Err(error) = theme.json(&path) {
                 let message = match error {
                     lsf_core::Error::Json { message, .. } => message,
@@ -1316,6 +1338,71 @@ mod tests {
             "{report:#}"
         );
         assert_eq!(report["problems"], 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_file_that_is_not_utf8_is_a_warning_and_is_read_as_shopify_stores_it() {
+        // #176: a section, a snippet and a JSON template saved in Latin-1 (`é` is 0xE9).
+        let root = std::env::temp_dir().join(format!("lsf-check-latin1-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &[u8]| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write(
+            "layout/theme.liquid",
+            b"<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>\n",
+        );
+        write(
+            "sections/latin.liquid",
+            b"<p>section: caf\xe9</p>\n{% schema %}\n{ \"name\": \"Latin\", \"settings\": [] }\n{% endschema %}\n",
+        );
+        write(
+            "sections/uses-snippet.liquid",
+            b"<p>{% render 'latin' %}</p>\n{% schema %}\n{ \"name\": \"Uses snippet\", \"settings\": [] }\n{% endschema %}\n",
+        );
+        write("snippets/latin.liquid", b"<i>snippet: caf\xe9</i>\n");
+        write(
+            "templates/index.json",
+            b"{ \"sections\": { \"a\": { \"type\": \"latin\" }, \"b\": { \"type\": \"uses-snippet\" } }, \"order\": [\"a\", \"b\"] }\n",
+        );
+        write(
+            "templates/list-collections.json",
+            b"{ \"sections\": { \"a\": { \"type\": \"uses-snippet\" } },\n\"order\": [\"a\"], \"wrapper\": \"div.caf\xe9\" }\n",
+        );
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(&str, &str, &str, u64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["severity"].as_str().unwrap(),
+                    d["code"].as_str().unwrap(),
+                    d["file"].as_str().unwrap(),
+                    d["line"].as_u64().unwrap_or(0),
+                )
+            })
+            .collect();
+        // The section and the snippet are found: nothing is missing.
+        assert_eq!(
+            found,
+            [
+                ("warning", "not_utf8", "sections/latin.liquid", 1),
+                ("warning", "not_utf8", "snippets/latin.liquid", 1),
+                ("warning", "not_utf8", "templates/list-collections.json", 2),
+            ],
+            "{report:#}"
+        );
+        assert_eq!(report["problems"], 0);
         let _ = std::fs::remove_dir_all(&root);
     }
 

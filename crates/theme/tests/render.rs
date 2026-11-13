@@ -4294,6 +4294,51 @@ fn theme_of(name: &str, previews: &[lsf_theme::Preview], files: &[(&str, &str)])
 }
 
 #[test]
+fn a_file_that_is_not_utf8_renders_as_shopify_stores_it() {
+    // #176: Shopify takes a section, a snippet or a JSON template saved in Latin-1, and each
+    // byte that is not UTF-8 shows as U+FFFD. lsf treated such a file as missing.
+    let fixture = theme_of(
+        "latin1",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "sections/uses-snippet.liquid",
+                "<p>{% render 'latin' %}</p>{% schema %}{ \"name\": \"Uses snippet\", \"settings\": [] }{% endschema %}",
+            ),
+        ],
+    );
+    let directory = std::env::temp_dir().join(format!("lsf-latin1-{}", std::process::id()));
+    let write = |path: &str, content: &[u8]| std::fs::write(directory.join(path), content).unwrap();
+    std::fs::create_dir_all(directory.join("snippets")).unwrap();
+    std::fs::create_dir_all(directory.join("templates")).unwrap();
+    write(
+        "sections/latin.liquid",
+        b"<p>section: caf\xe9</p>{% schema %}{ \"name\": \"Latin\", \"settings\": [] }{% endschema %}",
+    );
+    write("snippets/latin.liquid", b"<i>snippet: caf\xe9</i>");
+    write(
+        "templates/index.json",
+        b"{ \"sections\": { \"a\": { \"type\": \"latin\" }, \"b\": { \"type\": \"uses-snippet\" } }, \"order\": [\"a\", \"b\"], \"wrapper\": \"div.caf\xe9\" }",
+    );
+    let page = fixture.page("/");
+    assert_clean(&page);
+    assert!(
+        page.body.contains("<p>section: caf\u{FFFD}</p>"),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body.contains("<p><i>snippet: caf\u{FFFD}</i></p>"),
+        "{}",
+        page.body
+    );
+}
+
+#[test]
 fn a_template_composes_its_page_from_blocks() {
     let fixture = theme_of(
         "block-tag",

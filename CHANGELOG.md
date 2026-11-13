@@ -409,6 +409,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `<word>`, and a `type` the store does not know is ignored: with no type it knows, the search
   covers them all, as on Shopify.
 
+- **A Liquid or JSON file that is not UTF-8 renders as on Shopify.** A section, a snippet or a
+  JSON template saved in Latin-1 or Windows-1252 (`é` as the byte `0xE9`) was treated as
+  missing: `is not a valid section type`, `Could not find asset`, or no template at all. It is
+  now read as Shopify CLI uploads it, each byte that is not UTF-8 becoming `�`, so the page
+  shows `caf�`, as a store does.
+
 #### The checkout of an app
 
 - **`lsf app check` and `lsf app function run --scenario` price a scenario as its served
@@ -477,6 +483,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   only by case as missing**, since Shopify renders `blocks/text.liquid` for `type: 'TEXT'`.
   It is a `block_type_case` warning, with the type as the file is named in its `hint`, and the
   render finds the file on every file system, no longer only on those that ignore case.
+- **`lsf check` warns about a theme file that is not UTF-8** (`not_utf8`, at the line of its
+  first such byte), where it said nothing and `lsf render` reported the file as missing.
+  Shopify takes the file; the warning does not count as a problem.
 - **`lsf profile --points` counts the products of a collection a storefront fetches**, no
   longer every product of the collection: the page of a `{% paginate %}` (4 with `by 4`), else
   at most 50, and for a `for` loop over `collection.products` with a `limit` below 50 outside
