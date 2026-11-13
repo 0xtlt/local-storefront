@@ -4,7 +4,7 @@ use lsf_core::util::handleize;
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 
-use super::{html_attributes, site};
+use super::{html_attributes, shopify_text, site};
 use crate::drops::collection::CollectionDrop;
 use crate::render::page::Resource;
 use crate::render::state::RenderState;
@@ -232,10 +232,20 @@ fn link_to_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value>
     tag_link(input, ctx, vec![tag], &base, title)
 }
 
+/// The title of a link that adds or removes a tag: Shopify's `shopify.notices.tags.*` string
+/// for products or for articles.
+fn tag_title(ctx: &Context, action: &str, noun: &str, tag: &str) -> Result<String> {
+    Ok(shopify_text(
+        site(ctx)?,
+        &format!("shopify.notices.tags.{action}_{noun}"),
+        &[("tag".to_string(), Value::from(tag))],
+    ))
+}
+
 fn link_to_add_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let (base, mut tags, noun) = tag_scope(ctx)?;
     let tag = args.at(0).to_str().into_owned();
-    let title = format!("Narrow selection to {noun} matching tag {tag}");
+    let title = tag_title(ctx, "add", noun, &tag)?;
     if !tags
         .iter()
         .any(|existing| handleize(existing) == handleize(&tag))
@@ -246,10 +256,11 @@ fn link_to_add_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Va
 }
 
 fn link_to_remove_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
-    let (base, mut tags, _) = tag_scope(ctx)?;
+    let (base, mut tags, noun) = tag_scope(ctx)?;
     let tag = args.at(0).to_str().into_owned();
+    let title = tag_title(ctx, "remove", noun, &tag)?;
     tags.retain(|existing| handleize(existing) != handleize(&tag));
-    tag_link(input, ctx, tags, &base, format!("Remove tag {tag}"))
+    tag_link(input, ctx, tags, &base, title)
 }
 
 fn highlight_active_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {

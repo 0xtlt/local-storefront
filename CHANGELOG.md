@@ -603,6 +603,16 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **A cart request whose `sections_url` does not start with `/` answers `400`**,
   `{"errors":"sections_url must be a relative path"}`, as Shopify's Ajax Cart API documents; the
   cart still changes. lsf rendered the sections against that page.
+- **Shopify's own strings follow the theme's overrides of their keys**, as on Shopify: a
+  `shopify.*` key in a locale file (`shopify.collections.sorting.manual` in `locales/fr.json`)
+  now names the sort options of collections and of the search page, the values of the
+  availability filter, the titles of `link_to_add_tag` and `link_to_remove_tag` and the search
+  page's `page_title` on its route (still HTML-escaped: `Search: 2 results found for
+  &quot;widget&quot;`); lsf always printed them in English. Shopify publishes its
+  defaults in English only, so a key the theme does not override stays English
+  ([compatibility](docs/compatibility.md#known-differences)).
+- **A blog's tag links have Shopify's words for articles** (`Narrow search to articles also
+  having tag Linen`), no longer those for products.
 
 #### The checkout of an app
 

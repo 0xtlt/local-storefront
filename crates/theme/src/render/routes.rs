@@ -8,6 +8,7 @@ use super::globals::meta_description;
 use super::page::{Page, Resource};
 use crate::drops::collection::CollectionScope;
 use crate::drops::request::TemplateName;
+use crate::filters::shopify_text;
 use crate::site::Site;
 use crate::theme::Theme;
 
@@ -422,8 +423,8 @@ pub fn resolve(site: &Site) -> Page {
         }
         ["search"] => {
             let mut page = Page::new("search", Resource::Search);
-            // With terms, `page_title` counts the results (`render::globals`).
-            page.title = "Search".to_string();
+            // With terms, `page_title` counts the results: see `Globals::page_title`.
+            page.title = shopify_text(site, "shopify.page_titles.search", &[]);
             page.canonical_path = match request.param("q").filter(|query| !query.is_empty()) {
                 Some(query) => format!("/search?q={}", encode_component(query)),
                 None => "/search".to_string(),
