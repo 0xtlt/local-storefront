@@ -2,7 +2,7 @@
 
 use lsf_core::store::reference;
 use lsf_liquid::filters::escape_html;
-use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
+use lsf_liquid::{Context, Environment, Error, FilterArgs, Result, Value};
 
 use super::{html_attributes, site};
 use crate::drops::shop::AddressDrop;
@@ -74,6 +74,41 @@ fn preload_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value>
     )))
 }
 
+/// The names `placeholder_svg_tag` accepts: "Accepts the following placeholder names"
+/// (https://shopify.dev/docs/api/liquid/filters/placeholder_svg_tag). Any other is an error.
+const PLACEHOLDER_NAMES: [&str; 30] = [
+    "product-1",
+    "product-2",
+    "product-3",
+    "product-4",
+    "product-5",
+    "product-6",
+    "collection-1",
+    "collection-2",
+    "collection-3",
+    "collection-4",
+    "collection-5",
+    "collection-6",
+    "lifestyle-1",
+    "lifestyle-2",
+    "image",
+    "product-apparel-1",
+    "product-apparel-2",
+    "product-apparel-3",
+    "product-apparel-4",
+    "collection-apparel-1",
+    "collection-apparel-2",
+    "collection-apparel-3",
+    "collection-apparel-4",
+    "hero-apparel-1",
+    "hero-apparel-2",
+    "hero-apparel-3",
+    "blog-apparel-1",
+    "blog-apparel-2",
+    "blog-apparel-3",
+    "detailed-apparel-1",
+];
+
 /// Shopify's own illustrations, for the placeholder names whose artwork is published under
 /// a free license (see `data/NOTICE.md`). Each file is the complete `<svg>` element.
 const ILLUSTRATIONS: [(&str, &str); 3] = [
@@ -122,6 +157,9 @@ fn placeholder_artwork(name: &str) -> (&'static str, &'static str) {
 /// `placeholder_svg_tag`: the `<svg>` of a placeholder illustration.
 fn placeholder_svg_tag(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> {
     let name = input.to_str();
+    if !PLACEHOLDER_NAMES.contains(&name.as_ref()) {
+        return Err(Error::argument(format!("Unknown SVG placeholder '{name}'")));
+    }
     let class = args
         .get(0)
         .map(|class| format!(" class=\"{}\"", escape_html(&class.to_str())))

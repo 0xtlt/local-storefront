@@ -2834,6 +2834,46 @@ fn a_variant_has_structured_data() {
 }
 
 #[test]
+fn structured_data_leaves_out_an_empty_sku_and_image() {
+    // #190: Shopify writes a one-variant product's SKU in its `Product`, before `url`, and
+    // leaves out a variant's `sku` when it is empty and its `image` when it has none.
+    let fixture = fixture_with_data(&serde_json::json!({"products": [
+        { "title": "Plain", "price": 500, "variants": [{ "sku": "PLAIN-1" }] },
+        { "title": "Bare", "price": 500 },
+        {
+            "title": "Tee",
+            "price": 1000,
+            "options": ["Size"],
+            "variants": [{ "options": ["S"], "sku": "TEE-S" }, { "options": ["M"], "sku": "" }]
+        }
+    ]}));
+    let render = |path: &str| {
+        let output = fixture.liquid(
+            path,
+            Session::initial(&fixture.store),
+            "{{ product | structured_data }}",
+        );
+        serde_json::from_str::<serde_json::Value>(&output).expect(&output)
+    };
+    let keys = |value: &serde_json::Value| -> Vec<String> {
+        value.as_object().unwrap().keys().cloned().collect()
+    };
+    let plain = render("/products/plain");
+    assert_eq!(plain["sku"], "PLAIN-1");
+    assert_eq!(keys(&plain)[8..], ["offers", "sku", "url"]);
+    assert!(render("/products/bare").get("sku").is_none());
+    let tee = render("/products/tee");
+    assert_eq!(
+        keys(&tee["hasVariant"][0]),
+        ["@id", "@type", "name", "offers", "sku"]
+    );
+    assert_eq!(
+        keys(&tee["hasVariant"][1]),
+        ["@id", "@type", "name", "offers"]
+    );
+}
+
+#[test]
 fn an_apps_own_metaobject_type_is_found_by_either_name() {
     // The store data writes an app's own type `$app:author`. A theme names it with the app's id
     // (its real one, which lsf does not know), an app's extension with `$app`: both find the
@@ -5956,6 +5996,181 @@ fn options_by_name_finds_an_option_in_any_case() {
          {% for pair in product.options_by_name %}[{{ pair[0] }}={{ pair[1].values | join: ',' }}]{% endfor %}",
     );
     assert_eq!(output, "[Color][Color][2][Color][][1][Color=Red,Blue]");
+}
+
+#[test]
+fn a_tag_page_counts_the_whole_collection_in_all_products_count() {
+    // #190: https://shopify.dev/docs/api/liquid/objects/collection#collection-all_products_count,
+    // "This includes products that have been filtered out of the current view".
+    let fixture = fixture_with_data(&serde_json::json!({
+        "products": [
+            { "title": "Widget", "price": 1000, "tags": ["Premium", "Snow"] },
+            { "title": "Gadget", "price": 2000, "tags": ["Snow"] },
+            { "title": "Gizmo", "price": 3000, "tags": ["Premium"] }
+        ],
+        "collections": [{ "handle": "things", "title": "Things", "products": ["widget", "gadget", "gizmo"] }]
+    }));
+    let counts = |path: &str| {
+        fixture.liquid(
+            path,
+            Session::initial(&fixture.store),
+            "[{{ collection.all_products_count }}|{{ collection.products_count }}]",
+        )
+    };
+    assert_eq!(counts("/collections/things"), "[3|3]");
+    assert_eq!(counts("/collections/things/snow"), "[3|2]");
+}
+
+#[test]
+fn an_external_video_has_the_video_s_aspect_ratio() {
+    // #190: Shopify gives a YouTube video `aspect_ratio` 1.77, and its 480 x 360 thumbnail
+    // 1.3333333333333333.
+    let fixture = fixture_with_data(&serde_json::json!({"products": [{
+        "title": "Clip",
+        "price": 500,
+        "media": [{
+            "media_type": "external_video", "host": "youtube", "external_id": "dQw4w9WgXcQ",
+            "preview_image": { "src": "poster.jpg", "width": 480, "height": 360 }
+        }]
+    }]}));
+    let output = fixture.liquid(
+        "/products/clip",
+        Session::initial(&fixture.store),
+        "{% for m in product.media %}{{ m.aspect_ratio }}|{{ m.preview_image.aspect_ratio }}{% endfor %}",
+    );
+    assert_eq!(output, "1.77|1.3333333333333333");
+}
+
+#[test]
+fn image_url_checks_its_arguments_as_shopify_does() {
+    // #190: https://shopify.dev/docs/api/liquid/filters/image_url. A width over 5760 is 5760,
+    // one under 1 Shopify's error; `pad_color` is `hex3` or `hex6`; `format: 'jpg'` of a JPEG
+    // converts nothing ("png to jpg, png to pjpg, jpg to pjpg"), and is left out.
+    let fixture = fixture_with_data(&serde_json::json!({"products": [
+        { "title": "Widget", "price": 1000, "images": [{ "src": "widget.jpg", "width": 1600, "height": 1600 }] },
+        { "title": "Sticker", "price": 1000, "images": [{ "src": "sticker.png", "width": 1600, "height": 1600 }] }
+    ]}));
+    let render = |path: &str, arguments: &str| {
+        let site = fixture.renderer.site(
+            fixture.store.clone(),
+            request(path),
+            Session::initial(&fixture.store),
+        );
+        let page = lsf_theme::render::routes::resolve(&site);
+        let source = format!("{{{{ product.featured_image | image_url: {arguments} }}}}");
+        let (output, _) = fixture
+            .renderer
+            .render_liquid(&site, page, &source, &[])
+            .expect("the template parses");
+        // The query without `v=`, the file's version.
+        match output.split_once('?') {
+            Some((base, query)) => {
+                let query: Vec<&str> = query
+                    .split('&')
+                    .filter(|pair| !pair.starts_with("v="))
+                    .collect();
+                format!("{}?{}", base.rsplit('/').next().unwrap(), query.join("&"))
+            }
+            None => output,
+        }
+    };
+    let widget = |arguments: &str| render("/products/widget", arguments);
+    assert_eq!(widget("width: 6000"), "widget.jpg?width=5760");
+    assert_eq!(
+        widget("width: 0"),
+        "Liquid error (line 1): Width must be between 1 and 5760"
+    );
+    assert_eq!(
+        widget("height: -2"),
+        "Liquid error (line 1): Height must be between 1 and 5760"
+    );
+    assert_eq!(
+        widget("width: 300, height: 100, pad_color: '#ff0000'"),
+        "Liquid error (line 1): Color padding must be between 000000 and ffffff"
+    );
+    assert_eq!(
+        widget("width: 300, height: 100, pad_color: 'FF0000'"),
+        "widget.jpg?height=100&pad_color=FF0000&width=300"
+    );
+    assert_eq!(widget("width: 300, format: 'jpg'"), "widget.jpg?width=300");
+    assert_eq!(
+        widget("width: 300, format: 'pjpg'"),
+        "widget.jpg?format=pjpg&width=300"
+    );
+    assert_eq!(
+        render("/products/sticker", "width: 300, format: 'jpg'"),
+        "sticker.png?format=jpg&width=300"
+    );
+}
+
+#[test]
+fn placeholder_svg_tag_refuses_a_name_shopify_does_not_have() {
+    // #190: https://shopify.dev/docs/api/liquid/filters/placeholder_svg_tag "Accepts the
+    // following placeholder names"; Shopify renders `Unknown SVG placeholder 'nope'` for others.
+    let fixture = fixture();
+    let site = fixture.renderer.site(
+        fixture.store.clone(),
+        request("/"),
+        Session::initial(&fixture.store),
+    );
+    let page = lsf_theme::render::routes::resolve(&site);
+    let (output, errors) = fixture
+        .renderer
+        .render_liquid(
+            &site,
+            page,
+            "[{{ 'nope' | placeholder_svg_tag }}][{{ '' | placeholder_svg_tag }}]\
+             [{{ 'detailed-apparel-1' | placeholder_svg_tag | slice: 0, 4 }}]",
+            &[],
+        )
+        .expect("the template parses");
+    assert_eq!(
+        output,
+        "[Liquid error (line 1): Unknown SVG placeholder 'nope']\
+         [Liquid error (line 1): Unknown SVG placeholder '']\
+         [<svg]"
+    );
+    assert_eq!(errors.len(), 2);
+}
+
+#[test]
+fn the_title_of_a_search_counts_its_results() {
+    // #190: Shopify's `page_title` of `/search?q=snowboard` is
+    // `Search: 14 results found for &quot;snowboard&quot;`.
+    let fixture = fixture_with_data(&serde_json::json!({"products": [
+        { "title": "Quoted Widget", "price": 1000 },
+        { "title": "Quoted Gadget", "price": 1000 }
+    ]}));
+    let title =
+        |path: &str| fixture.liquid(path, Session::initial(&fixture.store), "{{ page_title }}");
+    assert_eq!(
+        title("/search?q=quoted"),
+        "Search: 2 results found for &quot;quoted&quot;"
+    );
+    assert_eq!(
+        title("/search?q=gadget"),
+        "Search: 1 result found for &quot;gadget&quot;"
+    );
+    assert_eq!(title("/search"), "Search");
+}
+
+#[test]
+fn collection_sort_options_has_most_relevant() {
+    // #190: the nine options of https://shopify.dev/docs/api/liquid/objects/collection#collection-sort_options,
+    // `most-relevant` second.
+    let fixture = fixture();
+    let output = fixture.liquid(
+        "/collections/all",
+        Session::initial(&fixture.store),
+        "{% for o in collection.sort_options %}{{ o.value }}={{ o.name }};{% endfor %}",
+    );
+    assert_eq!(
+        output,
+        "manual=Featured;most-relevant=Most relevant;best-selling=Best selling;\
+         title-ascending=Alphabetically, A-Z;title-descending=Alphabetically, Z-A;\
+         price-ascending=Price, low to high;price-descending=Price, high to low;\
+         created-ascending=Date, old to new;created-descending=Date, new to old;"
+    );
 }
 
 #[test]

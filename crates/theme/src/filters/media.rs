@@ -18,7 +18,7 @@ use crate::site::Site;
 /// The widths Shopify puts in a default `srcset`.
 const DEFAULT_SRCSET_WIDTHS: [u32; 4] = [352, 832, 1200, 1920];
 
-/// The largest dimension the image CDN accepts.
+/// The largest dimension the image CDN gives: a larger `width` or `height` is this one.
 const MAX_DIMENSION: i64 = 5760;
 
 /// The result of `image_url`: prints as the URL, and remembers the image it came from so that
@@ -119,19 +119,36 @@ fn pixels(value: &Value) -> Result<i64> {
 /// The parameters of `image_url` that are numbers of pixels besides `width` and `height`.
 const REGION_PARAMETERS: [&str; 4] = ["crop_left", "crop_top", "crop_width", "crop_height"];
 
+/// `width` or `height`: less than 1 is Shopify's error (`Width must be between 1 and 5760`),
+/// more than [`MAX_DIMENSION`] is that maximum, as Shopify was seen to clamp it.
 fn dimension(args: &FilterArgs, name: &str) -> Result<Option<u32>> {
     match args.named(name) {
         None | Some(Value::Nil) => Ok(None),
         Some(value) => {
             let size = pixels(value)?;
-            if !(1..=MAX_DIMENSION).contains(&size) {
+            if size < 1 {
+                let label = name[..1].to_uppercase() + &name[1..];
                 return Err(Error::argument(format!(
-                    "{name} must be between 1 and {MAX_DIMENSION}"
+                    "{label} must be between 1 and {MAX_DIMENSION}"
                 )));
             }
-            Ok(Some(size as u32))
+            Ok(Some(size.min(MAX_DIMENSION) as u32))
         }
     }
+}
+
+/// Whether a `pad_color` is one Shopify takes: `hex3` or `hex6`, without `#`
+/// (https://shopify.dev/docs/api/liquid/filters/image_url#image_url-pad_color).
+fn is_pad_color(color: &str) -> bool {
+    matches!(color.len(), 3 | 6) && color.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Whether a `format` asks for no conversion: `jpg` of a JPEG, which Shopify leaves out of the
+/// URL. It converts only "`png` to `jpg`, `png` to `pjpg`, `jpg` to `pjpg`"
+/// (https://shopify.dev/docs/api/liquid/filters/image_url#image_url-format).
+fn is_own_format(image: &Image, format: &str) -> bool {
+    let src = image.src.to_ascii_lowercase();
+    format.eq_ignore_ascii_case("jpg") && (src.ends_with(".jpg") || src.ends_with(".jpeg"))
 }
 
 /// Whether a string given to `image_url` is a URL of another site than the shop's CDN.
@@ -164,6 +181,15 @@ fn image_url(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
         } else {
             value.to_str().into_owned()
         };
+        match key.as_str() {
+            "pad_color" if !is_pad_color(&text) => {
+                return Err(Error::argument(
+                    "Color padding must be between 000000 and ffffff",
+                ));
+            }
+            "format" if is_own_format(&image, &text) => continue,
+            _ => {}
+        }
         params.push((key.clone(), urls::encode_component(&text)));
     }
     // With a width and a height, Shopify crops to that box from the center unless told

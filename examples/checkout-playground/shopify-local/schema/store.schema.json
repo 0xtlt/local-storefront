@@ -1551,7 +1551,7 @@
           "default": null
         },
         "aspect_ratio": {
-          "description": "Width divided by height. Defaults to the preview image's ratio, or 16:9.",
+          "description": "Width divided by height. Defaults to `1.77` for an external video, as Shopify gives a\nYouTube video, and otherwise to the preview image's ratio, or 16:9.",
           "type": [
             "number",
             "null"

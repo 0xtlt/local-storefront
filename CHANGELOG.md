@@ -70,6 +70,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `{% if linklists[section.settings.menu] %}` and `{% if section.settings.product %}` with a
   deleted product now take the branch a store takes, the truthy one. Test the lookup with
   `== empty` or `== blank`, as Shopify's docs advise.
+- **`placeholder_svg_tag` refuses a name Shopify does not list, and `image_url` a `pad_color`
+  with `#`**, as on Shopify: `{{ 'nope' | placeholder_svg_tag }}` renders
+  `Unknown SVG placeholder 'nope'`, and `pad_color: '#ff0000'` renders
+  `Color padding must be between 000000 and ffffff`, where lsf drew a picture and padded. Use
+  a name of [Shopify's list](https://shopify.dev/docs/api/liquid/filters/placeholder_svg_tag)
+  and a color without `#` (`'ff0000'`).
 - **`.first`, `.last` and `[n]` give nothing on reference lists, `product_list` settings and
   `metaobjects.<type>.values`**, as on Shopify, where they are list drops. A theme that reads
   `related.value.first` shows a blank on a store, and now on lsf too: use
@@ -434,6 +440,17 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `image_url: width: 300, height: 200` gives `?crop=center&height=200&v=…&width=300`, and the
   server crops the image to that box, where lsf fitted it inside. `crop: nil` and `pad_color`
   still leave `crop` out, as on Shopify.
+- **`collection.all_products_count` counts the whole collection on a tag page**, where it
+  counted the tagged products, and `collection.sort_options` has `most-relevant` ("Most
+  relevant"), second of nine, as on Shopify.
+- **`image_url` takes a `width` or a `height` over 5760 as 5760**, where it raised, names `Width`
+  and `Height` with a capital in its error, and leaves out `format: 'jpg'` of a JPEG, which
+  converts nothing, as Shopify does. An external video's `aspect_ratio` is `1.77`, the video's,
+  as on Shopify, no longer its thumbnail's (4:3).
+- **`page_title` of a search counts its results and escapes the quotes**:
+  `Search: 2 results found for &quot;widget&quot;`, as on Shopify.
+- **`structured_data` of a product writes the SKU Shopify writes**: a one-variant product's,
+  and no `sku` or `image` for a variant that has none, where lsf wrote `""` and `null`.
 - **`image_tag` builds the `srcset`, `width` and `height` Shopify builds.** The width given to
   `image_url` is the last entry of the default `srcset` (`width: 400` gives `352w, 400w`, where
   lsf gave `352w`); the entries of `widths:` above that width are dropped; no entry left, no

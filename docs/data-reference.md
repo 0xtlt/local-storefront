@@ -387,7 +387,7 @@ A video, an external (YouTube/Vimeo) video or a 3D model.
 | `duration` | integer | `video`: length in milliseconds. |
 | `host` | [VideoHost](#videohost) | `external_video`: `youtube` or `vimeo`. |
 | `external_id` | string | `external_video`: the id of the video on the host, e.g. `dQw4w9WgXcQ`. |
-| `aspect_ratio` | number | Width divided by height. Defaults to the preview image's ratio, or 16:9. |
+| `aspect_ratio` | number | Width divided by height. Defaults to `1.77` for an external video, as Shopify gives a YouTube video, and otherwise to the preview image's ratio, or 16:9. |
 
 ## MediaType
 

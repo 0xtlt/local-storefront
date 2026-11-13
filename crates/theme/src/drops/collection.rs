@@ -15,9 +15,12 @@ use super::{Memo, PaginatedList, SiteRef, hash, strings, time_value};
 use crate::render::cost;
 use crate::site::Request;
 
-/// The sort orders offered on collection pages: `(value, label)`.
-pub const SORT_OPTIONS: [(&str, &str); 8] = [
+/// The sort orders offered on collection pages: `(value, label)`, the nine of Shopify's
+/// `collection.sort_options` (https://shopify.dev/docs/api/liquid/objects/collection).
+/// `?sort_by=most-relevant` keeps the collection's own order.
+pub const SORT_OPTIONS: [(&str, &str); 9] = [
     ("manual", "Featured"),
+    ("most-relevant", "Most relevant"),
     ("best-selling", "Best selling"),
     ("title-ascending", "Alphabetically, A-Z"),
     ("title-descending", "Alphabetically, Z-A"),
@@ -202,15 +205,21 @@ impl CollectionDrop {
 
     /// The collection's products before storefront filters: scoped by tags, vendor or type.
     fn base_products(&self) -> Vec<usize> {
+        self.scoped_products(true)
+    }
+
+    /// The collection's products of the page's vendor or type, and of its tags with `by_tags`.
+    fn scoped_products(&self, by_tags: bool) -> Vec<usize> {
         let products = &self.site.store.products;
         let mut indexes = self.collection().products.clone();
         if let Some(scope) = &self.scope {
             indexes.retain(|&index| {
                 let product = &products[index];
-                scope
-                    .tags
-                    .iter()
-                    .all(|tag| product.tags.iter().any(|t| handleize(t) == handleize(tag)))
+                (!by_tags
+                    || scope
+                        .tags
+                        .iter()
+                        .all(|tag| product.tags.iter().any(|t| handleize(t) == handleize(tag))))
                     && scope
                         .vendor
                         .as_ref()
@@ -569,7 +578,9 @@ impl Object for CollectionDrop {
                 })
             }),
             "products_count" => Value::from(self.product_indexes().len()),
-            "all_products_count" => Value::from(self.base_products().len()),
+            // "This includes products that have been filtered out of the current view": a tag
+            // page counts the whole collection, as on Shopify.
+            "all_products_count" => Value::from(self.scoped_products(false).len()),
             "all_tags" => self.unique(&self.collection().products, |product| product.tags.clone()),
             "tags" => self.unique(&self.product_indexes(), |product| product.tags.clone()),
             "all_types" => self.unique(&self.collection().products, |product| {

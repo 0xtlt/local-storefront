@@ -1546,10 +1546,11 @@ fn build_media(
                     .unwrap_or_else(|| stable_id("media", &format!("{handle}/{position}"))),
                 position: position + 1,
                 alt: detail.alt.clone().unwrap_or_default(),
-                aspect_ratio: detail
-                    .aspect_ratio
-                    .or(preview.as_ref().map(Image::aspect_ratio))
-                    .unwrap_or(16.0 / 9.0),
+                aspect_ratio: detail.aspect_ratio.unwrap_or_else(|| match &kind {
+                    // The video's ratio, not its thumbnail's.
+                    MediaKind::ExternalVideo { .. } => EXTERNAL_VIDEO_ASPECT_RATIO,
+                    _ => preview.as_ref().map_or(16.0 / 9.0, Image::aspect_ratio),
+                }),
                 preview,
                 kind,
             }
@@ -1757,6 +1758,10 @@ fn build_collections(
         }
     }
 }
+
+/// The `aspect_ratio` of an external video the data gives none: what Shopify gives a
+/// YouTube video (whose thumbnail is 4:3).
+const EXTERNAL_VIDEO_ASPECT_RATIO: f64 = 1.77;
 
 /// How many products a product recommends when the data does not say which.
 const RECOMMENDATIONS: usize = 10;

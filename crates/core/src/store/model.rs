@@ -162,7 +162,8 @@ pub struct MediaDetail {
     /// `external_video`: the id of the video on the host, e.g. `dQw4w9WgXcQ`.
     #[serde(default)]
     pub external_id: Option<String>,
-    /// Width divided by height. Defaults to the preview image's ratio, or 16:9.
+    /// Width divided by height. Defaults to `1.77` for an external video, as Shopify gives a
+    /// YouTube video, and otherwise to the preview image's ratio, or 16:9.
     #[serde(default)]
     pub aspect_ratio: Option<f64>,
 }
