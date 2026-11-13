@@ -5959,6 +5959,51 @@ fn options_by_name_finds_an_option_in_any_case() {
 }
 
 #[test]
+fn canonical_url_keeps_the_tags_and_the_query() {
+    // #113: on Shopify a tag page is its own canonical, and the search, vendor and type pages
+    // keep their `q`, the vendor's lower-cased. Sorting is left out.
+    let fixture = fixture_with_data(&serde_json::json!({
+        "products": [
+            { "title": "Widget", "vendor": "Acme Labs", "type": "Snowboard", "price": 1000, "tags": ["Premium", "Snow"] },
+            { "title": "Gadget", "price": 2000, "tags": ["Snow"] }
+        ],
+        "collections": [{ "handle": "things", "title": "Things", "products": ["widget", "gadget"] }]
+    }));
+    // The query as the server decodes it: `request` does not.
+    let canonical = |path: &str| {
+        fixture.liquid(
+            path,
+            Session::initial(&fixture.store),
+            "{{ canonical_url }}",
+        )
+    };
+    let origin = "http://shop.test";
+    for (path, expected) in [
+        ("/collections/things/snow", "/collections/things/snow"),
+        (
+            "/collections/things/premium+snow",
+            "/collections/things/premium+snow",
+        ),
+        (
+            "/collections/things?sort_by=price-ascending",
+            "/collections/things",
+        ),
+        (
+            "/collections/vendors?q=Acme Labs",
+            "/collections/vendors?q=acme+labs",
+        ),
+        (
+            "/collections/types?q=Snowboard",
+            "/collections/types?q=snowboard",
+        ),
+        ("/search?q=widget", "/search?q=widget"),
+        ("/search", "/search"),
+    ] {
+        assert_eq!(canonical(path), format!("{origin}{expected}"), "{path}");
+    }
+}
+
+#[test]
 fn current_tags_holds_the_tags_as_the_products_write_them() {
     // #115: on `/collections/<handle>/<tag>`, Shopify's `current_tags` holds the tags as they
     // are written on the products (`Snow`), so that the test of

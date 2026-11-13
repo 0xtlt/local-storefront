@@ -319,6 +319,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   or in a class, a URL or a data attribute) gives the handle of what it names, and its `.size`
   is the length of that handle, as on Shopify. Its properties, its `json` and its comparisons
   are the resource's, as before.
+- **`canonical_url` keeps the tags and the search.** A tag page is its own canonical
+  (`/collections/things/premium+snow`), and the search, vendor and type pages keep their `q`
+  (`/search?q=widget`, `/collections/vendors?q=acme+labs`, lower-cased), as on Shopify, where
+  lsf gave the bare collection URL and `/search`.
 - **An unset setting is what Shopify gives.** A `select` or a `radio` with no value and no
   `default` is its first option, a `text_alignment` is `left`, and the text and color settings
   are `""`, where lsf gave nil for all of them: `text-{{ section.settings.align }}` is

@@ -1,9 +1,8 @@
 //! Maps a URL to the template that renders it and the resource it is about.
 
-use lsf_core::store::Store;
+use lsf_core::store::{Metafields, Store};
+use lsf_core::urls::encode_component;
 use lsf_core::util::handleize;
-
-use lsf_core::store::Metafields;
 
 use super::globals::meta_description;
 use super::page::{Page, Resource};
@@ -61,6 +60,26 @@ fn set_listing(page: &mut Page, metafields: &Metafields, title: &str, html: &str
     };
     page.title = tag("title_tag").unwrap_or(title).to_string();
     page.description = meta_description(tag("description_tag").unwrap_or(html));
+}
+
+/// The canonical path of a collection page, as Shopify writes it: a tag page is its own
+/// (`/collections/things/premium+snow`), a vendor or type page keeps its `q`, lower-cased
+/// (`/collections/vendors?q=snowboard+vendor`). Sorting and filters are left out.
+fn collection_canonical_path(handle: &str, scope: &CollectionScope) -> String {
+    let mut path = format!("/collections/{handle}");
+    if !scope.tags.is_empty() {
+        let tags: Vec<String> = scope.tags.iter().map(|tag| handleize(tag)).collect();
+        path = format!("{path}/{}", tags.join("+"));
+    }
+    if let Some(query) = scope
+        .vendor
+        .as_ref()
+        .or(scope.product_type.as_ref())
+        .filter(|query| !query.is_empty())
+    {
+        path = format!("{path}?q={}", encode_component(&query.to_lowercase()));
+    }
+    path
 }
 
 /// Applies an alternate template (`?view=` or the resource's `template_suffix`) when the theme
@@ -290,7 +309,7 @@ pub fn resolve(site: &Site) -> Page {
             if let Some(title) = scope.vendor.as_ref().or(scope.product_type.as_ref()) {
                 page.title = title.clone();
             }
-            page.canonical_path = format!("/collections/{handle}");
+            page.canonical_path = collection_canonical_path(handle, &scope);
             page.handle = Some(data.handle.clone());
             page
         }
@@ -403,7 +422,10 @@ pub fn resolve(site: &Site) -> Page {
                 Some(query) => format!("Search: results found for \"{query}\""),
                 None => "Search".to_string(),
             };
-            page.canonical_path = "/search".to_string();
+            page.canonical_path = match request.param("q").filter(|query| !query.is_empty()) {
+                Some(query) => format!("/search?q={}", encode_component(query)),
+                None => "/search".to_string(),
+            };
             page
         }
         ["policies", handle] => {
