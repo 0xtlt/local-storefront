@@ -118,6 +118,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   print `0`, no longer nothing. A `product`, `collection`, `page`, `blog`, `article` or
   `link_list` setting whose handle no longer exists is truthy, `== blank` and `== nil`, and
   prints the handle.
+- **A resource setting prints its handle, no longer `ProductDrop`.** A `product`, `collection`,
+  `page`, `blog`, `article` or `link_list` setting printed as is (`{{ section.settings.product }}`,
+  or in a class, a URL or a data attribute) gives the handle of what it names, and its `.size`
+  is the length of that handle, as on Shopify. Its properties, its `json` and its comparisons
+  are the resource's, as before.
 - **Reference lists, `product_list` settings and `.values` have `.count`.** The value of a
   `list.product_reference` or `list.metaobject_reference` metafield, a `product_list` setting
   and `metaobjects.<type>.values` give their length with `.count` (0 for an unset

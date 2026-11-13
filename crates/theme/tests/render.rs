@@ -3042,6 +3042,93 @@ fn money_metafields_are_in_the_currency_of_the_visitors_market() {
 }
 
 #[test]
+fn a_resource_setting_prints_its_handle() {
+    // https://shopify.dev/docs/storefronts/themes/architecture/settings/input-settings#product:
+    // "outputting the setting directly will return the object's handle". `size` is the length of
+    // that handle, as on a store (issue #131); the setting is still the resource otherwise.
+    let store = fixture().store;
+    let blog = &store.blogs[0];
+    let settings = [
+        // The same product as the lookup by its handle, with the same JSON.
+        (
+            "product",
+            store.products[0].handle.clone(),
+            "{% assign p = all_products[x.handle] %}{% assign a = x | json %}\
+             {% assign b = p | json %}{% if a == b and x == p %} same{% endif %}",
+        ),
+        ("collection", store.collections[0].handle.clone(), ""),
+        ("page", store.pages[0].handle.clone(), ""),
+        ("blog", blog.handle.clone(), ""),
+        (
+            "article",
+            format!("{}/{}", blog.handle, blog.articles[0].handle),
+            "",
+        ),
+        ("link_list", store.menus[0].handle.clone(), ""),
+    ];
+    let sections: serde_json::Map<String, serde_json::Value> = settings
+        .iter()
+        .map(|(kind, handle, _)| {
+            (
+                (*kind).to_string(),
+                serde_json::json!({ "type": kind, "settings": { "x": handle } }),
+            )
+        })
+        .collect();
+    let template = serde_json::json!({
+        "sections": sections,
+        "order": settings.iter().map(|(kind, _, _)| *kind).collect::<Vec<_>>(),
+    })
+    .to_string();
+    let sources: Vec<(String, String)> = settings
+        .iter()
+        .map(|(kind, _, extra)| {
+            (
+                format!("sections/{kind}.liquid"),
+                format!(
+                    "{{% assign x = section.settings.x %}}<p>[{{{{ x }}}}|{{{{ x.size }}}}|\
+                     {{{{ x | size }}}}|{{{{ x | append: '' }}}}] \
+                     {{% if x == blank %}}blank{{% else %}}set{{% endif %}} \
+                     {{% if x.title != blank %}}titled{{% endif %}}{extra}</p>\
+                     {{% schema %}}{{\"name\": \"S\", \"tag\": null, \"settings\": \
+                     [{{\"type\": \"{kind}\", \"id\": \"x\", \"label\": \"X\"}}]}}{{% endschema %}}"
+                ),
+            )
+        })
+        .collect();
+    let mut files: Vec<(&str, &str)> = vec![
+        (
+            "layout/theme.liquid",
+            "<body>{{ content_for_layout }}</body>",
+        ),
+        ("templates/index.json", &template),
+    ];
+    files.extend(
+        sources
+            .iter()
+            .map(|(path, source)| (path.as_str(), source.as_str())),
+    );
+    let fixture = theme_of("live-resource-settings", &[], &files);
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    let lines: Vec<&str> = rendered
+        .body
+        .split("<p>")
+        .skip(1)
+        .map(|line| line.split("</p>").next().unwrap())
+        .collect();
+    let expected: Vec<String> = settings
+        .iter()
+        .map(|(kind, handle, _)| {
+            let size = handle.chars().count();
+            let same = if *kind == "product" { " same" } else { "" };
+            format!("[{handle}|{size}|{size}|{handle}] set titled{same}")
+        })
+        .collect();
+    assert_eq!(lines, expected);
+}
+
+#[test]
 fn a_rating_has_strings_as_on_shopify() {
     // The rating of the Admin API's `jsonValue`, the same with numbers, and the Admin API's
     // `value` (the JSON text) pasted as is.

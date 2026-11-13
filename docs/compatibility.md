@@ -231,8 +231,10 @@ locations, companies, company locations and company addresses.
   `url`, `liquid`, `checkbox`, `number` and `range`; the other types are passed as written.
   A `metaobject` setting holds the entry's handle, `<type>.<handle>`, `<type>/<handle>` or
   `gid://shopify/Metaobject/<id>`. A `product`, `collection`, `page`, `blog`, `article` or
-  `link_list` setting whose handle names nothing is truthy, `== blank`, `== empty` and `== nil`,
-  and prints its handle, as on Shopify. Dynamic sources are evaluated (`{{ product.title }}`,
+  `link_list` setting prints the handle of what it names (`blog/article` for an article), and
+  its `.size` is the length of that handle, as on Shopify; its properties, `json` and
+  comparisons are the resource's. One whose handle names nothing is truthy, `== blank`,
+  `== empty` and `== nil`, and prints its handle, as on Shopify. Dynamic sources are evaluated (`{{ product.title }}`,
   `{{ closest.product.metafields.custom.x }}`). A `product_list` setting is a list drop, as
   `metaobjects.<type>.values` is: `.count` gives its length (0 when nothing is selected), and
   `.first`, `.last` and `[n]` give nothing. Fed by a `list.product_reference` metafield
