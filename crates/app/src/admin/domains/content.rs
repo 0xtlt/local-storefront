@@ -231,6 +231,14 @@ pub fn seed_shop(seed: &mut Seed) {
         } else {
             "REQUIRED"
         },
+        // lsf's customer account is Shopify's new customer accounts; classic ones are not
+        // simulated (`docs/compatibility.md`).
+        "customerAccountsV2": {
+            "customerAccountsVersion": "NEW_CUSTOMER_ACCOUNTS",
+            "loginLinksVisibleOnStorefrontAndCheckout": shop.customer_accounts_enabled,
+            "loginRequiredAtCheckout": shop.customer_accounts_enabled && !shop.customer_accounts_optional,
+            "url": seed.url("/account"),
+        },
         "plan": {
             "partnerDevelopment": true,
             "publicDisplayName": "Development",
@@ -1177,7 +1185,7 @@ pub fn attach_definition(state: &mut ShopState, metafield: &str) -> Option<Strin
             "capabilities": {
                 "adminFilterable": {"eligible": true, "enabled": false, "status": "NOT_FILTERABLE"},
                 "analyticsQueryable": {"eligible": true, "enabled": false},
-                "cartToOrderCopyable": {"eligible": true, "enabled": false},
+                "cartToOrderCopyable": {"eligible": owner_type == "ORDER", "enabled": false},
                 "smartCollectionCondition": {"eligible": true, "enabled": false},
                 "uniqueValues": {"eligible": true, "enabled": false},
             },

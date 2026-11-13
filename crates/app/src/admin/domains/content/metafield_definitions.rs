@@ -31,6 +31,11 @@
 //! unpin), `metafield_definitions/delete`. Deleting the metafields with their definition changes
 //! their owners, as `metafieldsDelete` does.
 //!
+//! - `cartToOrderCopyable`: "Only order metafield definitions are eligible to have this capability
+//!   enabled" (the reference of `MetafieldCapabilityCartToOrderCopyable`): `eligible` is `false`
+//!   on any other owner type, and enabling it there is `INVALID_CAPABILITY` (the code's
+//!   description is the message; Shopify's own is not published).
+//!
 //! Not simulated: `constraints` (definitions of a product category), `access` beyond keeping
 //! what is given, the effects of `capabilities` (kept as given) but `cartToOrderCopyable` of an
 //! ORDER definition (`orders::copy_cart_metafields`), the asynchronous `validationJob` (the
@@ -110,6 +115,7 @@ pub fn seed_declared_definitions(seed: &mut Seed) {
             "capabilities": capabilities_of(
                 Some(&json!({"cartToOrderCopyable": {"enabled": declared.cart_to_order_copyable}})),
                 None,
+                "ORDER",
             ),
             "constraints": null,
             "standardTemplate": null,
@@ -469,9 +475,9 @@ pub(super) fn access_of(input: Option<&Value>, app_owned: bool, before: Option<&
     })
 }
 
-/// `capabilities` of a definition: what the input enables, kept (lsf does not simulate their
-/// effects).
-fn capabilities_of(input: Option<&Value>, before: Option<&Value>) -> Value {
+/// `capabilities` of a definition of `owner_type`: what the input enables, kept (lsf does not
+/// simulate their effects), and whether the owner type is eligible.
+fn capabilities_of(input: Option<&Value>, before: Option<&Value>, owner_type: &str) -> Value {
     let enabled = |name: &str| {
         input
             .and_then(|capabilities| capabilities.get(name))
@@ -493,10 +499,32 @@ fn capabilities_of(input: Option<&Value>, before: Option<&Value>) -> Value {
             "status": if filterable { "FILTERABLE" } else { "NOT_FILTERABLE" },
         },
         "analyticsQueryable": {"eligible": true, "enabled": enabled("analyticsQueryable")},
-        "cartToOrderCopyable": {"eligible": true, "enabled": enabled("cartToOrderCopyable")},
+        "cartToOrderCopyable": {
+            "eligible": owner_type == "ORDER",
+            "enabled": owner_type == "ORDER" && enabled("cartToOrderCopyable"),
+        },
         "smartCollectionCondition": {"eligible": true, "enabled": enabled("smartCollectionCondition")},
         "uniqueValues": {"eligible": true, "enabled": enabled("uniqueValues")},
     })
+}
+
+/// `cartToOrderCopyable` enabled on a definition of another owner type than `ORDER`.
+fn check_capabilities(input: &Map<String, Value>, owner_type: &str, errors: &mut Vec<UserError>) {
+    let enabled = input
+        .get("capabilities")
+        .and_then(|capabilities| capabilities.get("cartToOrderCopyable"))
+        .and_then(|capability| capability.get("enabled"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    if enabled && owner_type != "ORDER" {
+        errors.push(
+            UserError::new(
+                &["definition", "capabilities", "cartToOrderCopyable"],
+                "The metafield definition capability is invalid.",
+            )
+            .code("INVALID_CAPABILITY"),
+        );
+    }
 }
 
 /// The pinned definitions of an owner type, by position.
@@ -669,6 +697,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         &mut errors,
     );
     check_admin_access(&input, app_owned, &mut errors);
+    check_capabilities(&input, &owner_type, &mut errors);
     if !errors.is_empty() {
         return Ok(payload(json!({"createdDefinition": null}), &errors));
     }
@@ -746,7 +775,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
             .or_else(|| input.get("useAsCollectionCondition").and_then(Value::as_bool))
             .unwrap_or(false),
         "access": access_of(input.get("access"), app_owned, None),
-        "capabilities": capabilities_of(input.get("capabilities"), None),
+        "capabilities": capabilities_of(input.get("capabilities"), None, &owner_type),
         "constraints": null,
         "standardTemplate": null,
         "metafields": [],
@@ -821,6 +850,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         )
     });
     check_admin_access(&input, app_owned, &mut errors);
+    check_capabilities(&input, &owner_type, &mut errors);
     let pin = input.get("pin").and_then(Value::as_bool);
     let is_pinned = record
         .get("pinnedPosition")
@@ -862,8 +892,11 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
             definition.insert("access".into(), access);
         }
         if input.contains_key("capabilities") {
-            let capabilities =
-                capabilities_of(input.get("capabilities"), definition.get("capabilities"));
+            let capabilities = capabilities_of(
+                input.get("capabilities"),
+                definition.get("capabilities"),
+                &owner_type,
+            );
             let condition = capabilities
                 .pointer("/smartCollectionCondition/enabled")
                 .cloned()

@@ -457,6 +457,19 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   The other fields of the query are answered. A GID of the right type that names nothing is
   still `null` without an error. Code that only reads `data` sees no change; code that fails on
   any `errors` now fails locally as it does on a store.
+- **`cartToOrderCopyable` is for order metafield definitions only**, as Shopify's reference
+  says: on another owner type it is `eligible: false`, and `metafieldDefinitionCreate` or
+  `metafieldDefinitionUpdate` that enables it answers an `INVALID_CAPABILITY` user error and
+  changes nothing, where lsf created the definition.
+- **`shop.customerAccountsV2.customerAccountsVersion` is `NEW_CUSTOMER_ACCOUNTS`**, the
+  accounts lsf simulates, no longer a defaulted `CLASSIC`; `loginRequiredAtCheckout` and
+  `loginLinksVisibleOnStorefrontAndCheckout` follow the store data's customer account setting,
+  and `customer_account_settings/update` says `new_customer_accounts`. An app that branches on
+  the version now takes the branch of new accounts.
+- **`POST /__lsf/webhooks/trigger` and `lsf app webhook trigger` send a cancelled order for
+  `orders/cancelled`**: the first cancelled order of the shop, else the first order with
+  `cancelled_at` set to now and `cancel_reason` `customer`, where they sent the first order,
+  not cancelled.
 
 #### The command line
 
