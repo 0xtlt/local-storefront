@@ -57,6 +57,13 @@ pub trait Object: Send + Sync + 'static {
         None
     }
 
+    /// The items a loop reads when it stops before item `to` (its `offset` plus its `limit`).
+    /// They are [`Object::items`], of which the loop takes its slice; an object whose items
+    /// are fetched as they are read can fetch fewer, as long as the first `to` are there.
+    fn items_until(&self, _to: usize) -> Option<Arc<Vec<Value>>> {
+        self.items()
+    }
+
     /// The number of items, when the object is a collection.
     fn size(&self) -> Option<usize> {
         self.items().map(|items| items.len())

@@ -548,12 +548,11 @@ impl Object for CollectionDrop {
                 }
             }
             "products" => self.memo.get("products", || {
-                PaginatedList::value(
-                    self.product_indexes()
-                        .into_iter()
-                        .map(|index| ProductDrop::value(site, index))
-                        .collect(),
-                )
+                let indexes = self.product_indexes();
+                let site = site.clone();
+                PaginatedList::fetched(indexes.len(), move |at| {
+                    ProductDrop::value(&site, indexes[at])
+                })
             }),
             "products_count" => Value::from(self.product_indexes().len()),
             "all_products_count" => Value::from(self.base_products().len()),

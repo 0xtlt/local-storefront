@@ -168,6 +168,11 @@ has the points of 50 metafields.
   tags. Read the counts first: they are facts. The points only weigh them.
 - What is loaded counts once per page, however many times the templates read it. A product in
   a loop counts once per product.
+- `collection.products` counts the products a storefront fetches, not the whole collection:
+  the page of a `{% paginate %}`, else the first 50, and outside `paginate` only as many as the
+  `limit` (plus `offset`) of a `for` loop below 50, as Shopify's guide
+  [Limit how many items a Liquid array fetches](https://shopify.dev/docs/storefronts/themes/best-practices/performance/limit-product-queries-with-pagination)
+  describes.
 - A metafield that does not exist counts too: the store looks for it all the same.
 - Points are the same at every render and on every machine, so a test can compare them.
 

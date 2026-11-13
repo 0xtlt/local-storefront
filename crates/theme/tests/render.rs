@@ -1656,10 +1656,10 @@ fn a_profile_counts_what_a_page_loads() {
         loaded(&profile("/products/ceramic-mug")),
         of(&[("product", 1), ("variant", 3)])
     );
-    // A collection page: the collection and the products of the page.
+    // A collection page: the collection and the products of the page, 3 of its 8.
     assert_eq!(
         loaded(&profile("/collections/all")),
-        of(&[("product", 8), ("collection", 1)])
+        of(&[("product", 3), ("collection", 1)])
     );
     assert_eq!(loaded(&profile("/pages/about")), of(&[("page", 1)]));
 
@@ -1696,6 +1696,107 @@ fn a_profile_counts_what_a_page_loads() {
     let cheaper = profile_with("/", &options);
     assert_eq!(cheaper.points, 2);
     assert_eq!(charged(&cheaper), charged(&home));
+}
+
+#[test]
+fn a_profile_counts_the_products_of_a_collection_a_page_fetches() {
+    // #129. Shopify fetches the page of a `paginate`, at most 50 products otherwise, and for
+    // `collection.products` the `limit` of a loop below 50 outside `paginate`:
+    // https://shopify.dev/docs/storefronts/themes/best-practices/performance/limit-product-queries-with-pagination
+    let products: Vec<serde_json::Value> = (1..=60)
+        .map(|n| serde_json::json!({"title": format!("P{n}"), "handle": format!("p{n}"), "price": "1.00"}))
+        .collect();
+    let overlay = serde_json::json!({ "products": products });
+    let products_of = |name: &str, loop_markup: &str| -> (u64, usize) {
+        let fixture = theme_with_data(
+            name,
+            &overlay,
+            &[
+                (
+                    "layout/theme.liquid",
+                    "<html><body>{{ content_for_layout }}</body></html>",
+                ),
+                ("templates/index.liquid", loop_markup),
+            ],
+        );
+        let site = fixture.renderer.site(
+            fixture.store.clone(),
+            request("/"),
+            Session::initial(&fixture.store),
+        );
+        let page = lsf_theme::render::routes::resolve(&site);
+        let (rendered, profile) =
+            fixture
+                .renderer
+                .profile_page(&site, page, &Target::Page, &ProfileOptions::default());
+        assert_clean(&rendered);
+        let products = charged(&profile)
+            .into_iter()
+            .find(|(kind, _)| *kind == "product")
+            .map_or(0, |(_, count)| count);
+        (products, rendered.body.matches("<p>").count())
+    };
+    let each = "<p>{{ p.title }}</p>";
+    // The issue's repro: a page of 4.
+    assert_eq!(
+        products_of(
+            "profile-paginate",
+            &format!(
+                "{{% paginate collections.all.products by 4 %}}{{% for p in collections.all.products %}}{each}{{% endfor %}}{{% endpaginate %}}"
+            )
+        ),
+        (4, 4)
+    );
+    // Without `paginate`: at most 50, whatever the size of the collection.
+    assert_eq!(
+        products_of(
+            "profile-bare",
+            &format!("{{% for p in collections.all.products %}}{each}{{% endfor %}}")
+        ),
+        (50, 50)
+    );
+    // A `limit` below 50 fetches what the loop shows, with an `offset` too.
+    assert_eq!(
+        products_of(
+            "profile-limit",
+            &format!("{{% for p in collections.all.products limit: 4 %}}{each}{{% endfor %}}")
+        ),
+        (4, 4)
+    );
+    assert_eq!(
+        products_of(
+            "profile-offset",
+            &format!(
+                "{{% for p in collections.all.products limit: 4 offset: 2 %}}{each}{{% endfor %}}"
+            )
+        ),
+        (6, 4)
+    );
+    assert_eq!(
+        products_of(
+            "profile-paginate-limit",
+            &format!(
+                "{{% paginate collections.all.products by 4 %}}{{% for p in collections.all.products limit: 4 %}}{each}{{% endfor %}}{{% endpaginate %}}"
+            )
+        ),
+        (4, 4)
+    );
+    // A `limit` past 50 is still 50.
+    assert_eq!(
+        products_of(
+            "profile-limit-60",
+            &format!("{{% for p in collections.all.products limit: 60 %}}{each}{{% endfor %}}")
+        ),
+        (50, 50)
+    );
+    // Reading the list otherwise than in a loop fetches the page.
+    assert_eq!(
+        products_of(
+            "profile-first",
+            "<p>{{ collections.all.products.first.title }}</p>"
+        ),
+        (50, 1)
+    );
 }
 
 #[test]

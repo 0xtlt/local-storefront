@@ -22,7 +22,7 @@ pub mod search;
 pub mod selling_plan;
 pub mod shop;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::{DateTime, Utc};
 use lsf_liquid::time::Time;
@@ -161,7 +161,10 @@ pub const DEFAULT_PAGE_LIMIT: usize = 50;
 ///
 /// Outside `paginate` it yields at most [`DEFAULT_PAGE_LIMIT`] items, like Shopify.
 pub struct PaginatedList {
-    all: Arc<Vec<Value>>,
+    all: Vec<OnceLock<Value>>,
+    /// Makes an item of a list made with [`PaginatedList::fetched`] the first time a page reads
+    /// it.
+    make: Option<Box<dyn Fn(usize) -> Value + Send + Sync>>,
     window: Mutex<Option<(usize, usize)>>,
     /// The type of one of Shopify's list drops, when the list is one: see
     /// [`PaginatedList::list_drop`].
@@ -171,7 +174,22 @@ pub struct PaginatedList {
 impl PaginatedList {
     pub fn value(items: Vec<Value>) -> Value {
         Value::object(PaginatedList {
-            all: Arc::new(items),
+            all: items.into_iter().map(OnceLock::from).collect(),
+            make: None,
+            window: Mutex::new(None),
+            list: None,
+        })
+    }
+
+    /// A list of `len` items that a storefront fetches as a page reads them, `make` making
+    /// item `index`: what loading an item charges a profile is charged for the items read only.
+    /// Shopify fetches the page of a `paginate`, else at most [`DEFAULT_PAGE_LIMIT`], and for
+    /// `collection.products` the `limit` of a `for` loop below that, outside `paginate`
+    /// (shopify.dev, "Limit how many items a Liquid array fetches").
+    pub fn fetched(len: usize, make: impl Fn(usize) -> Value + Send + Sync + 'static) -> Value {
+        Value::object(PaginatedList {
+            all: (0..len).map(|_| OnceLock::new()).collect(),
+            make: Some(Box::new(make)),
             window: Mutex::new(None),
             list: None,
         })
@@ -187,7 +205,8 @@ impl PaginatedList {
     /// a list of a reference type has `count`; the others "are rendered as arrays".
     pub fn list_drop(kind: &'static str, items: Vec<Value>) -> Value {
         Value::object(PaginatedList {
-            all: Arc::new(items),
+            all: items.into_iter().map(OnceLock::from).collect(),
+            make: None,
             window: Mutex::new(None),
             list: Some(kind),
         })
@@ -201,6 +220,29 @@ impl PaginatedList {
     /// Restricts the list to `size` items starting at `offset`, or lifts the restriction.
     pub fn set_window(&self, window: Option<(usize, usize)>) {
         *self.window.lock().expect("window poisoned") = window;
+    }
+
+    fn window(&self) -> Option<(usize, usize)> {
+        *self.window.lock().expect("window poisoned")
+    }
+
+    /// Items `start..end`, made when they were not.
+    fn range(&self, start: usize, end: usize) -> Arc<Vec<Value>> {
+        let end = end.min(self.all.len());
+        let start = start.min(end);
+        Arc::new(
+            self.all[start..end]
+                .iter()
+                .enumerate()
+                .map(|(at, item)| {
+                    item.get_or_init(|| match &self.make {
+                        Some(make) => make(start + at),
+                        None => Value::Nil,
+                    })
+                    .clone()
+                })
+                .collect(),
+        )
     }
 }
 
@@ -224,17 +266,16 @@ impl lsf_liquid::Object for PaginatedList {
         } else {
             DEFAULT_PAGE_LIMIT
         };
-        let (offset, size) = self
-            .window
-            .lock()
-            .expect("window poisoned")
-            .unwrap_or((0, all));
-        if offset == 0 && size >= self.all.len() {
-            return Some(self.all.clone());
+        let (offset, size) = self.window().unwrap_or((0, all));
+        Some(self.range(offset, offset.saturating_add(size)))
+    }
+
+    /// A `for` loop with a `limit`, outside `paginate`, fetches only the items it reaches.
+    fn items_until(&self, to: usize) -> Option<Arc<Vec<Value>>> {
+        match self.window() {
+            None if self.make.is_some() && to < DEFAULT_PAGE_LIMIT => Some(self.range(0, to)),
+            _ => self.items(),
         }
-        let start = offset.min(self.all.len());
-        let end = (offset + size).min(self.all.len());
-        Some(Arc::new(self.all[start..end].to_vec()))
     }
 
     fn index(&self, index: i64) -> Option<Value> {

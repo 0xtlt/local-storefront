@@ -114,10 +114,16 @@ pub fn collection_items(collection: &Value, from: i64, to: Option<i64>) -> Vec<V
         // A string is a single item, and `offset`/`limit` do not apply to it.
         Value::Str(s) if s.is_empty() => Vec::new(),
         Value::Str(_) => vec![collection.clone()],
-        Value::Object(object) => match object.items() {
-            Some(items) => slice(items.iter().cloned(), from, to),
-            None => Vec::new(),
-        },
+        Value::Object(object) => {
+            let items = match to {
+                Some(to) => object.items_until(to.max(0) as usize),
+                None => object.items(),
+            };
+            match items {
+                Some(items) => slice(items.iter().cloned(), from, to),
+                None => Vec::new(),
+            }
+        }
         _ => Vec::new(),
     }
 }

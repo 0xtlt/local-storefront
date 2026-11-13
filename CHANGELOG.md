@@ -145,6 +145,14 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   currency at `1.0`. An `expect` on totals now reads the amounts the page shows. Expectations
   written in the shop's currency for such a scenario need the market's amounts.
 
+#### The command line
+
+- **`lsf profile --points` counts the products of a collection a storefront fetches**, no
+  longer every product of the collection: the page of a `{% paginate %}` (4 with `by 4`), else
+  at most 50, and for a `for` loop over `collection.products` with a `limit` below 50 outside
+  `paginate`, that many, as Shopify's performance guide describes. A small paginated block on a
+  large collection is no longer the costliest row of a page, and a `limit: 8` costs 8 products.
+
 ## 0.3.0-rc.5 - 2026-11-13
 
 Fifth release candidate of 0.3.0. The errors of `/cart/change.js` read as a store's.

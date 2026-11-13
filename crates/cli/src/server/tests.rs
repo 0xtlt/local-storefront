@@ -3435,10 +3435,11 @@ fn a_profile_is_also_read_in_points() {
     );
     let total: u64 = first.split(' ').rev().nth(1).unwrap().parse().unwrap();
     assert!(report.contains("\nCostliest on their own:\n"), "{report}");
-    assert_eq!(row(&report, "product"), [800, 8, 100]);
+    // The products of the page: the fixture shows 3 of the 8 of the collection.
+    assert_eq!(row(&report, "product"), [300, 3, 100]);
     assert_eq!(row(&report, "collection"), [100, 1, 100]);
     let liquid = row(&report, "liquid");
-    assert_eq!(liquid[0] + 900, total, "{report}");
+    assert_eq!(liquid[0] + 400, total, "{report}");
     // The tree is in points too: the render as a whole first.
     let tree = report.split("   total      own  calls\n").nth(1).unwrap();
     assert!(
@@ -3459,10 +3460,10 @@ fn a_profile_is_also_read_in_points() {
     let cheap = text(&profile(
         "?path=/collections/all&points=1&runs=1&cost=product=5,liquid=0",
     ));
-    assert_eq!(row(&cheap, "product"), [40, 8, 5]);
+    assert_eq!(row(&cheap, "product"), [15, 3, 5]);
     assert_eq!(row(&cheap, "liquid"), [0, liquid[1], 0]);
     assert!(
-        cheap.starts_with("/collections/all \u{b7} template collection \u{b7} 140 points\n"),
+        cheap.starts_with("/collections/all \u{b7} template collection \u{b7} 115 points\n"),
         "{cheap}"
     );
     let wrong = profile("?path=/&points=1&cost=products=5");
