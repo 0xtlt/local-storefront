@@ -779,8 +779,10 @@ too, and an address gets the name of its province from its code, or the code fro
 { "iso_code": "US", "provinces": ["CA", "OR", "WA"] }
 ```
 
-`markets` groups countries the way Shopify's markets do. The checkout Functions read the
-market of the buyer (`localization.market`) and of an address (`MailingAddress.market`):
+`markets` groups countries the way Shopify's markets do. The theme reads the market of the
+visitor's country (`localization.market`) and of each country (`country.market`), with its
+`handle`, its `id` and its `metafields`; the checkout Functions read the market of the buyer
+(`localization.market`) and of an address (`MailingAddress.market`):
 
 ```json
 {
@@ -799,7 +801,9 @@ market of the buyer (`localization.market`) and of an address (`MailingAddress.m
 }
 ```
 
-A country in no market is a market of its own, named after the country (`france`, `united-states`).
+A country in no market is a market of its own, named after the country (`france`, `united-states`),
+without metafields. A market has the same id in Liquid, in the Functions and in the Admin API
+(`gid://shopify/Market/<id>`).
 An address in a country the store does not sell to has no market.
 
 A market's `languages` are the languages its countries are offered, as on Shopify:

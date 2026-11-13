@@ -134,7 +134,8 @@ the value of a `list.product_reference` or `list.metaobject_reference` is a list
 Shopify: `.count` and `.size` give its length, `.first`, `.last` and `[n]` give nothing, and the
 `first` and `last` filters, `for` and `paginate` reach its items; the other lists are arrays),
 metaobjects, countries, languages (with `direction`, from the script of the language),
-currencies, markets, fonts, colors, color schemes, quantity rules and quantity price breaks,
+currencies, markets (`localization.market` and `country.market` are the market of the country,
+with its handle, its id and its metafields), fonts, colors, color schemes, quantity rules and quantity price breaks,
 unit prices, selling plan groups, selling plans and their allocations, store availabilities and
 locations, companies, company locations and company addresses.
 

@@ -843,6 +843,23 @@ pub struct Market {
     pub prices: HashMap<u64, FixedPrice>,
 }
 
+/// The market a country is sold in ([`Store::market_for`]).
+#[derive(Clone, Debug)]
+pub struct CountryMarket<'s> {
+    /// The number of its GID: `gid://shopify/Market/<id>`.
+    pub id: u64,
+    pub handle: String,
+    /// The market of the data, when the country is in one: `None` for a market of its own.
+    pub declared: Option<&'s Market>,
+}
+
+impl CountryMarket<'_> {
+    /// `gid://shopify/Market/<id>`.
+    pub fn gid(&self) -> String {
+        format!("gid://shopify/Market/{}", self.id)
+    }
+}
+
 /// A fixed price of a market's price list, in cents of its currency.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FixedPrice {
@@ -1639,6 +1656,26 @@ impl Store {
                 .iter()
                 .any(|country| country.eq_ignore_ascii_case(iso_code))
         })
+    }
+
+    /// The market that sells to a country, as Shopify names it: the one the data groups it in,
+    /// else a market of its own, named after the country (`france`). The storefront
+    /// (`localization.market`, `country.market`), the Functions and the checkout UI extensions
+    /// read the same, and its `id` is the one of the Admin API (`gid://shopify/Market/<id>`).
+    pub fn market_for(&self, iso_code: &str) -> CountryMarket<'_> {
+        let declared = self.market_of(iso_code);
+        let code = iso_code.to_ascii_uppercase();
+        let id = crate::util::stable_id("market", declared.map_or(&code, |m| m.handle.as_str()));
+        let handle = match (declared, self.country(&code)) {
+            (Some(market), _) => market.handle.clone(),
+            (None, Some(country)) => crate::util::handleize(&country.name),
+            (None, None) => code.to_ascii_lowercase(),
+        };
+        CountryMarket {
+            id,
+            handle,
+            declared,
+        }
     }
 
     /// The languages a country is offered (`country.available_languages`): those of its market,

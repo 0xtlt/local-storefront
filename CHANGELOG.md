@@ -23,6 +23,8 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `related.value.first` shows a blank on a store, and now on lsf too: use
   `{% assign x = related.value | first %}` or a `for` loop. `list.single_line_text_field` and the
   other lists that are not references stay arrays.
+- **`localization.market` and `country.market` are no longer `primary` with id `1`.** They are
+  the market of the country, so theme tests that expect `primary` need the market's handle.
 
 ### Fixed
 
@@ -69,6 +71,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `"{{ product.metafields.custom.related.value }}"` as its value in a JSON template, a
   "related products" section shows the metafield's products, in their order, no longer
   nothing.
+- **`localization.market` is the market of the visitor's country**, as on Shopify: under
+  `/en-be/`, the market of Belgium, with its `handle`, its `metafields` and the `id` the Admin
+  API and the Functions give it. `country.market` in `localization.available_countries` is each
+  country's own market. A country in no market is a market of its own, named after the country
+  (`france`), as at the checkout.
 
 ## 0.3.0-rc.5 - 2026-11-13
 

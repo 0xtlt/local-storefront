@@ -144,17 +144,8 @@ pub fn buyer_country(store: &lsf_core::Store, session: &lsf_core::Session) -> St
 /// one of its own, named after the country. The Functions and the checkout UI extensions read
 /// the same.
 pub fn market_of(store: &lsf_core::Store, code: &str) -> (String, String) {
-    let declared = store.market_of(code);
-    let id = format!(
-        "gid://shopify/Market/{}",
-        lsf_core::util::stable_id("market", declared.map_or(code, |m| m.handle.as_str()))
-    );
-    let handle = match (declared, store.country(code)) {
-        (Some(market), _) => market.handle.clone(),
-        (None, Some(country)) => lsf_core::util::handleize(&country.name),
-        (None, None) => code.to_ascii_lowercase(),
-    };
-    (id, handle)
+    let market = store.market_for(code);
+    (market.gid(), market.handle)
 }
 
 /// Runs `query` (the Function's input query) against the checkout, with `variables` from

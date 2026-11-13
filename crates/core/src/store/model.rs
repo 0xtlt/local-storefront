@@ -1360,12 +1360,13 @@ pub struct LocalizationInput {
     pub markets: Vec<MarketInput>,
 }
 
-/// A market: the countries the store sells to as one, as checkout Functions see it in
-/// `localization.market` and `MailingAddress.market`.
+/// A market: the countries the store sells to as one, as the theme sees it in
+/// `localization.market` and `country.market`, and checkout Functions in `localization.market`
+/// and `MailingAddress.market`.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MarketInput {
-    /// What Functions call the market: `"europe"`.
+    /// What the theme and the Functions call the market (its `handle`): `"europe"`.
     pub handle: String,
     /// The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`.
     pub countries: Vec<String>,

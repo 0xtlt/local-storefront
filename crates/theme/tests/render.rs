@@ -432,6 +432,95 @@ fn a_page_under_a_market_subfolder_links_under_it() {
     }
 }
 
+/// The demo store selling to the United States and, in euros under `/en-be/`, to Belgium, with
+/// `rate` and `metafields` on the market of Belgium (`extra` is merged into it).
+fn european_fixture(extra: serde_json::Value) -> Fixture {
+    let mut europe = serde_json::json!({"handle": "europe", "countries": ["BE"], "currency": "EUR",
+        "rate": "0.9", "subfolder_suffix": "be", "metafields": {"custom": {"tier": "silver"}}});
+    if let (Some(europe), serde_json::Value::Object(extra)) = (europe.as_object_mut(), extra) {
+        europe.extend(extra);
+    }
+    let overlay = serde_json::json!({"localization": {
+        "countries": [{"iso_code": "US"}, {"iso_code": "BE"}],
+        "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+        "markets": [{"handle": "us", "countries": ["US"]}, europe]
+    }});
+    let options = LoadOptions {
+        theme_locales: vec!["en".to_string(), "fr".to_string()],
+        ..LoadOptions::default()
+    };
+    let (store, diagnostics) =
+        lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    }
+}
+
+/// A request for `path` under `/en-be/`, the subfolders of the market `europe`.
+fn under_en_be(path: &str) -> Request {
+    let mut under = request(path);
+    under.root = "/en-be".to_string();
+    under.market = Some("europe".to_string());
+    under
+}
+
+#[test]
+fn localization_market_is_the_market_of_the_visitors_country() {
+    let fixture = european_fixture(serde_json::json!({}));
+    let source = "{{ localization.market.handle }}|{{ localization.market.id }}|\
+        {{ localization.market.metafields.custom.tier }}|{{ localization.country.iso_code }}|\
+        {% for c in localization.available_countries %}{{ c.iso_code }}:{{ c.market.handle }};{% endfor %}";
+    let us = lsf_core::util::stable_id("market", "us");
+    let europe = lsf_core::util::stable_id("market", "europe");
+    let session = Session::initial(&fixture.store);
+    // At `/`, the market of the United States; each country names its own market.
+    assert_eq!(
+        fixture.liquid("/", session.clone(), source),
+        format!("us|{us}||US|US:us;BE:europe;")
+    );
+    // Under `/en-be/`, the market of Belgium, with its metafields.
+    assert_eq!(
+        fixture.liquid_for(under_en_be("/"), session, source),
+        format!("europe|{europe}|silver|BE|US:us;BE:europe;")
+    );
+    // Its id is the one of the Admin API and of the Functions.
+    assert_eq!(
+        fixture.store.market_for("BE").gid(),
+        format!("gid://shopify/Market/{europe}")
+    );
+}
+
+#[test]
+fn a_country_in_no_market_is_a_market_of_its_own() {
+    let overlay = serde_json::json!({"localization": {
+        "countries": [{"iso_code": "US"}, {"iso_code": "FR"}]
+    }});
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let mut session = Session::initial(&fixture.store);
+    session.country = Some("FR".to_string());
+    // Named after the country, as the checkout and the Admin API name it, with no metafields.
+    assert_eq!(
+        fixture.liquid(
+            "/",
+            session,
+            "{{ localization.market.handle }}|{{ localization.market.id }}|\
+             {{ localization.market.metafields.custom.tier }}"
+        ),
+        format!("france|{}|", lsf_core::util::stable_id("market", "FR"))
+    );
+}
+
 #[test]
 fn prices_are_in_the_currency_of_the_visitors_market() {
     let overlay = serde_json::json!({"localization": {

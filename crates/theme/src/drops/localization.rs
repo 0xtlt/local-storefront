@@ -4,8 +4,9 @@ use std::any::Any;
 
 use lsf_liquid::{Object, Value};
 
-use lsf_core::store::{Country, Language, reference};
+use lsf_core::store::{Country, Language, Metafields, reference};
 
+use super::metafield::MetafieldsDrop;
 use super::{SiteRef, hash};
 
 pub fn currency_value(code: &str) -> Value {
@@ -64,7 +65,7 @@ pub fn country_value(site: &SiteRef, country: &Country) -> Value {
             "available_languages",
             available_languages(site, &country.iso_code),
         ),
-        ("market", market_value()),
+        ("market", market_value(site, &country.iso_code)),
     ])
 }
 
@@ -81,11 +82,18 @@ fn available_languages(site: &SiteRef, iso_code: &str) -> Value {
     )
 }
 
-fn market_value() -> Value {
+/// The market that sells to a country ([`lsf_core::Store::market_for`]): its handle, the id the
+/// Admin API gives it, and its metafields, as Shopify's `market` object has them.
+fn market_value(site: &SiteRef, iso_code: &str) -> Value {
+    let market = site.store.market_for(iso_code);
+    let metafields = match market.declared {
+        Some(declared) => MetafieldsDrop::value(site, &declared.metafields),
+        None => MetafieldsDrop::value(site, &Metafields::default()),
+    };
     hash([
-        ("id", Value::Int(1)),
-        ("handle", Value::str("primary")),
-        ("metafields", Value::Nil),
+        ("id", Value::Int(market.id as i64)),
+        ("handle", Value::from(market.handle)),
+        ("metafields", metafields),
     ])
 }
 
@@ -113,7 +121,9 @@ impl Object for LocalizationDrop {
             "available_languages" => available_languages(site, &site.country().iso_code),
             "country" => country_value(site, site.country()),
             "language" => language_value(site, site.language()),
-            "market" => market_value(),
+            // The market of the visitor's country, as Shopify's "the market that applies to
+            // the buyer's country".
+            "market" => market_value(site, &site.country().iso_code),
             _ => return None,
         })
     }
