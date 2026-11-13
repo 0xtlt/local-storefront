@@ -36,16 +36,16 @@ export function stateForExtensions(state) {
 const sessionTokenUrl = (ext) => `/__lsf/extensions/${encodeURIComponent(ext.handle)}/session-token`;
 
 /**
- * The session token `shopify.sessionToken.get()` gives `ext`: lsf signs it with the client
- * secret, which stays on the server, as Shopify signs it for the shop, the app and the customer
- * logged in. The page asks for it (same origin) and hands it to the frame, which has an opaque
- * origin and could not.
+ * The session token `shopify.sessionToken.get()` gives `ext` at `target`: lsf signs it with the
+ * client secret, which stays on the server, as Shopify signs it for the shop, the app and the
+ * customer logged in. The page asks for it (same origin) and hands it to the frame, which has an
+ * opaque origin and could not.
  */
-export async function sessionToken(window, ext) {
+export async function sessionToken(window, ext, target) {
   const response = await window.fetch(sessionTokenUrl(ext), {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
-    body: '{}',
+    body: JSON.stringify({ target }),
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || typeof body.token !== 'string') {
@@ -373,7 +373,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
         onStorage(instance, data);
         break;
       case 'sessionToken':
-        sessionToken(window, instance.ext).then(
+        sessionToken(window, instance.ext, instance.target).then(
           (token) => post(instance, { type: 'result', id: data.id, result: token }),
           (error) => post(instance, { type: 'result', id: data.id, error: String(error?.message ?? error) }),
         );

@@ -113,10 +113,14 @@ pub const EXTENSION_LIFETIME: i64 = 300;
 /// <https://shopify.dev/docs/api/customer-account-ui-extensions/latest/target-apis/platform-apis/session-token-api>,
 /// in its order: `dest` the shop's domain, bare (`store-name.myshopify.com`, where the token of
 /// the admin has `https://`), `aud`, `exp` five minutes after `iat`, `nbf`, `iat`, `jti` a UUID,
-/// and `sub` the customer's GID, present only when a customer is logged in. There is no `iss`
-/// and no `sid`, as in the example.
+/// and `sub` the customer's GID, present only when a customer is logged in. There is no `sid`,
+/// as in the example. `iss` is there only in the token of a customer account extension
+/// ([`ExtensionClaims::of_customer_account`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtensionClaims {
+    /// The issuer of a customer account extension's token: `https://my-shop.myshopify.com/checkouts`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iss: Option<String>,
     /// The shop: `my-shop.myshopify.com`.
     pub dest: String,
     /// The client id of the app.
@@ -146,6 +150,7 @@ impl ExtensionClaims {
         jti: String,
     ) -> ExtensionClaims {
         ExtensionClaims {
+            iss: None,
             dest: host_of(shop).to_string(),
             aud: client_id.to_string(),
             exp: now + EXTENSION_LIFETIME,
@@ -153,6 +158,16 @@ impl ExtensionClaims {
             iat: now,
             jti,
             sub: customer.map(|id| format!("gid://shopify/Customer/{id}")),
+        }
+    }
+
+    /// The claims of a customer account extension's token, with `iss` the shop's `/checkouts`
+    /// URL first, as Shopify's tokens of these extensions have it (shopify.dev's example does not
+    /// show it).
+    pub fn of_customer_account(self) -> ExtensionClaims {
+        ExtensionClaims {
+            iss: Some(format!("https://{}/checkouts", self.dest)),
+            ..self
         }
     }
 }
@@ -463,6 +478,22 @@ mod tests {
         let anonymous = ExtensionClaims::new(SHOP, "client-id", None, 1_000, "j".into());
         let json = serde_json::to_value(&anonymous).unwrap();
         assert!(json.get("sub").is_none());
+
+        // A customer account extension's: `iss` first, the shop's `/checkouts` URL.
+        let account = ExtensionClaims::new(SHOP, "client-id", Some(7), 1_000, "j".into())
+            .of_customer_account();
+        let json = serde_json::to_value(&account).unwrap();
+        let keys: Vec<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            ["iss", "dest", "aud", "exp", "nbf", "iat", "jti", "sub"]
+        );
+        assert_eq!(json["iss"], "https://my-shop.myshopify.com/checkouts");
     }
 
     #[test]

@@ -1452,7 +1452,9 @@ extensions:
 has `https://`): the `permanent_domain` of the store data, the default shop of the Admin API.
 `aud` is the client id, the token lives five minutes, `jti` is a new UUID each time, and `sub`
 is there only when a customer is logged in (whether the app may read customer data is not
-checked). There is no `iss` and no `sid`. The page asks lsf for the token
+checked). There is no `sid`. A customer account extension's token has `iss` too, first,
+`https://<dest>/checkouts`, as Shopify's tokens of these extensions have it, although the example
+does not show it; a checkout extension's has none. The page asks lsf for the token
 (`POST /__lsf/extensions/<handle>/session-token`, [control API](control-api.md#apps-checkout-and-admin-api))
 and hands it to the extension: the secret never reaches the browser.
 
