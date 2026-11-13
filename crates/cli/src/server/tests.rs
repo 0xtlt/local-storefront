@@ -11551,6 +11551,137 @@ fn placing_the_order_completes_the_checkout() {
     assert_eq!(answer["data"]["abandonedCheckoutsCount"]["count"], 0);
 }
 
+/// A copy of the fixture app whose payment customization answers
+/// `{"operations": [{"orderReviewAdd": {"reason": "manual review"}}]}` whatever its input: a
+/// Function written by hand in the text format of Wasm.
+fn app_with_an_order_review(name: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lsf-checkout-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let output = r#"{"operations":[{"orderReviewAdd":{"reason":"manual review"}}]}"#;
+    let module = format!(
+        r#"(module
+  (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (data (i32.const 100) "{text}")
+  (func (export "run")
+    (i32.store (i32.const 16) (i32.const 100))
+    (i32.store (i32.const 20) (i32.const {length}))
+    (drop (call $fd_write (i32.const 1) (i32.const 16) (i32.const 1) (i32.const 24)))))
+"#,
+        text = output.replace('"', "\\\""),
+        length = output.len(),
+    );
+    std::fs::write(
+        root.join("extensions/payment-rules/dist/function.wasm"),
+        module,
+    )
+    .unwrap();
+    root
+}
+
+/// `orderReviewAdd`: "When your Function returns this operation, the checkout will be submitted
+/// as a draft, requiring merchant review and approval to finalize the order", for B2B checkouts
+/// only (shopify.dev, Payment Customization API; "review requirements aren't applicable to D2C
+/// checkouts").
+#[test]
+fn a_b2b_checkout_a_payment_customization_reviews_is_a_draft_order_not_an_order() {
+    let root = app_with_an_order_review("order-review");
+    let state = checkout_server_with(root, &[], false, None, Some(Default::default()));
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "read_orders"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let admin = state.admin.as_ref().unwrap();
+    let count = |kind: &str| {
+        admin
+            .api
+            .with_default_shop(|shop| shop.all(kind).count())
+            .unwrap()
+    };
+    let (orders, drafts) = (count("Order"), count("DraftOrder"));
+
+    // A B2B buyer: the checkout is submitted as a draft.
+    let session = "co-review-b2b";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "customer": "alex.morgan@example.com",
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]},
+            "data": owned(&["payment-rules"]),
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let path = header(&get(&state, "/checkout", session), "location")
+        .expect("a location")
+        .to_string();
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        body_json(&reply)["reviews"],
+        json!([{"function": "payment-rules", "reason": "manual review"}])
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let answer = body_json(&reply);
+    assert!(answer.get("order").is_none(), "no order: {answer}");
+    let draft = answer["draftOrder"]["id"].as_str().expect("a draft order");
+    assert!(draft.starts_with("gid://shopify/DraftOrder/"), "{answer}");
+    assert_eq!(count("Order"), orders, "no order is placed");
+    assert_eq!(count("DraftOrder"), drafts + 1);
+    let recorded = admin
+        .api
+        .with_default_shop(|shop| shop.get(draft).cloned())
+        .unwrap()
+        .expect("the draft is the Admin API's");
+    assert_eq!(recorded["status"], "OPEN", "{recorded:?}");
+    assert_eq!(recorded["email"], "buyer@example.com", "{recorded:?}");
+    assert_eq!(
+        recorded["lineItems"].as_array().map(Vec::len),
+        Some(1),
+        "{recorded:?}"
+    );
+    assert!(
+        recorded["purchasingEntity"].to_string().contains("Company"),
+        "the buyer's company orders it: {recorded:?}"
+    );
+    let thanks = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(thanks["status"], "completed");
+    assert_eq!(thanks["draftOrder"]["id"], draft);
+    assert!(thanks.get("order").is_none(), "{thanks}");
+
+    // A guest (D2C): the operation adds no review, and the order is placed.
+    let session = "co-review-d2c";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]},
+            "data": owned(&["payment-rules"]),
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let path = header(&get(&state, "/checkout", session), "location")
+        .expect("a location")
+        .to_string();
+    let reply = operations(&state, &path, session, buyer_details());
+    assert!(
+        body_json(&reply).get("reviews").is_none(),
+        "{}",
+        text(&reply)
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert!(body_json(&reply)["order"]["id"].is_string());
+    assert_eq!(count("Order"), orders + 1);
+}
+
 /// A body over the limit was read as an empty one: a 40 MB `PUT` to a staged upload target
 /// answered `200` and stored nothing. The target takes it now, and a body over a limit is `413`.
 #[tokio::test(flavor = "multi_thread")]

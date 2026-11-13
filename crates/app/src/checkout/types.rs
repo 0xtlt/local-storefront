@@ -334,6 +334,11 @@ pub struct CheckoutResult {
     /// failed runs of a Function whose owner blocks on failure
     /// ([`CheckoutConfig::block_on_failure`]). Any other failed run is in [`Self::runs`] only.
     pub errors: Vec<CheckoutError>,
+    /// The review requirements the payment customizations added (`orderReviewAdd`), on a B2B
+    /// checkout only: the checkout is then submitted as a draft order for the merchant's review,
+    /// not placed as an order. Empty otherwise.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reviews: Vec<OrderReview>,
     pub cost: Cost,
     /// Every Function run, in order, for the debug panel and `lsf app function run`.
     pub runs: Vec<FunctionRun>,
@@ -641,6 +646,16 @@ pub struct PaymentMethod {
     /// [`CheckoutResult::express_methods`], and a Function that runs after sees it with the
     /// placements that are left.
     pub placements: Vec<PaymentPlacement>,
+}
+
+/// A review requirement a payment customization added to a B2B checkout (`orderReviewAdd`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderReview {
+    /// The handle of the Function that added it.
+    pub function: String,
+    /// "The reason for the review requirement presented to the merchant."
+    pub reason: String,
 }
 
 /// A Function that did not run because the shop has no enabled owner of it.

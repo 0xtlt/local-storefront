@@ -798,6 +798,9 @@ function addressLines(address, countries) {
 function thankYouPage(ctx) {
   const { state, slot, actions } = ctx;
   const order = state.order ?? {};
+  // A checkout a payment customization submitted for review (`orderReviewAdd`) made a draft
+  // order, not an order. The wording is lsf's: shopify.dev does not show Shopify's.
+  const draft = state.draftOrder;
   const name = state.shippingAddress?.firstName || state.buyer?.customer?.firstName;
   const selected = (state.deliveryGroups ?? []).flatMap((group) => group.options.filter((option) => option.handle === group.selected));
   const method = (state.paymentMethods ?? []).find((entry) => entry.handle === state.selectedPayment);
@@ -813,9 +816,12 @@ function thankYouPage(ctx) {
       slot('purchase.thank-you.announcement.render', { key: 'announcement' }),
       h('div', { class: 'lsf-confirmation' }, icon('check'),
         h('div', null,
-          h('p', { class: 'lsf-muted', 'data-test': 'confirmation' }, `Confirmation ${order.number ?? '#1001'}`),
+          h('p', { class: 'lsf-muted', 'data-test': 'confirmation' }, draft ? `Draft order ${draft.name}` : `Confirmation ${order.number ?? '#1001'}`),
           h('h1', null, name ? `Thank you, ${name}!` : 'Thank you!'))),
       slot('purchase.thank-you.header.render-after', { key: 'header' }),
+      draft ? h('section', { class: 'lsf-section lsf-confirmed', 'data-test': 'review' },
+        h('h2', null, 'Your order was submitted for review'),
+        h('p', null, 'The merchant reviews it before it is confirmed.')) :
       h('section', { class: 'lsf-section lsf-confirmed' },
         h('h2', null, 'Your order is confirmed'),
         h('p', null, `You will receive a confirmation email at ${state.buyer?.email ?? 'your email address'}.`),
@@ -1079,6 +1085,10 @@ function functionsOverview(ctx) {
       h('ul', null, ctx.ui.block.blocks.map((block) => h('li', { key: block.handle, class: focused(block.handle) },
         h('strong', null, block.handle), block.reason ? ` reason: ${block.reason}` : ' (no reason)',
         block.errors.length === 0 && h('span', { class: 'lsf-muted' }, ' · no errors: the buyer sees no message'))))),
+    // `orderReviewAdd` of a payment customization, on a B2B checkout: the order is submitted as a
+    // draft for the merchant's review.
+    (state.reviews ?? []).length > 0 && h('div', { 'data-test': 'order-reviews' }, h('h4', null, 'Submitted as a draft for review'),
+      h('ul', null, state.reviews.map((review) => h('li', { class: focused(review.function) }, review.reason, h('code', null, review.function))))),
     (state.skippedDiscounts ?? []).length > 0 && h('div', { 'data-test': 'skipped-discounts' }, h('h4', null, 'Discounts not applied'),
       h('ul', null, state.skippedDiscounts.map((skipped) => h('li', null, h('strong', null, skipped.title), skipped.code && h('code', null, skipped.code), ` ${skipped.reason}`, h('code', null, skipped.function))))),
     thrown.length > 0 && h('div', { 'data-test': 'extension-errors' }, h('h4', null, 'Errors of the checkout UI extensions'),

@@ -110,6 +110,8 @@ fn state_json(
     let customer = identity.customer.and_then(|id| store.customer_by_id(id));
     let placed = state
         .with_session(session_id, |entry| entry.checkout.completed.clone())
+        // A checkout submitted for review is a draft order, not an order of the account.
+        .filter(|order| order.get("draftOrder").is_none())
         .filter(|order| belongs_to(order, customer));
     let mut orders: Vec<Json> = placed.into_iter().map(placed_order_json).collect();
     // The most recent first, as Shopify lists them; the one placed here is the latest.

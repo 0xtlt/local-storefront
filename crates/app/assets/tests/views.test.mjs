@@ -296,6 +296,14 @@ test('the pay button of the Shop skin charges what is due today', () => {
   assert.match(text(byClass(page(preorder()), 'lsf-summary-toggle')[0]), /€73\.00/, 'the summary shows the order total');
 });
 
+test('a checkout submitted for review shows its draft order, not a confirmed order', () => {
+  const done = withCurrency({ ...after({ type: 'email', value: 'a@b.c' }, { type: 'shippingAddress', address: { ...ADDRESS, firstName: 'Ada' } }, { type: 'paymentMethod', handle: 'card' }), status: 'completed', draftOrder: { id: 'gid://shopify/DraftOrder/1', name: '#D1' }, reviews: [{ function: 'review-all', reason: 'manual review' }] });
+  const tree = page(done);
+  assert.equal(text(byClass(tree, 'lsf-muted').find((node) => node.props['data-test'] === 'confirmation')), 'Draft order #D1');
+  assert.match(text(findAll(tree, (node) => node.props['data-test'] === 'review')[0]), /submitted for review/);
+  assert.doesNotMatch(text(tree), /Your order is confirmed/);
+});
+
 test('the thank-you page shows the balance the order still owes', () => {
   const eur = (amount) => ({ amount, currencyCode: 'EUR' });
   const done = withCurrency({ ...preorder(), status: 'completed', selectedPayment: 'card', order: { id: 'gid://shopify/Order/1', number: '#1001', totalReceived: eur(44), totalOutstanding: eur(29) } });

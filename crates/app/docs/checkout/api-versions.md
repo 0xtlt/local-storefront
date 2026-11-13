@@ -129,7 +129,8 @@ and the three legacy discount APIs have no `fetch` target.
   rule of 2027-01: see `ui-api-versions.md`), but their API, the `shopify` global of the extension
   host (`crates/app/assets`), has one code path: the two versions have the same surface.
 - The `Customer.createdAt` and delivery option metafield answers are placeholders.
-- `orderReviewAdd` and `paymentTermsSet` (payment) are accepted and not applied.
+- `paymentTermsSet` (payment) is accepted and not applied. `orderReviewAdd` submits a B2B checkout
+  as a draft order for review (`CheckoutResult::reviews`), and adds nothing on a D2C one.
 - No real "version-only" field exists between the two releases, so the proof of "a field missing in
   one version is rejected" is a pair of small schemas in `schema/tests.rs`, and the rejection of fields
   no supported version has (`tests/function_versions.rs`).

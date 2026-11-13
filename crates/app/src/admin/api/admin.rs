@@ -935,6 +935,32 @@ impl AdminApi {
         })
     }
 
+    /// Records a checkout that a payment customization submitted for review (`orderReviewAdd`,
+    /// on a B2B checkout) as a draft order of the default shop, as Shopify does: "the checkout
+    /// will be submitted as a draft, requiring merchant review and approval to finalize the
+    /// order" (Payment Customization Function API). It is `draftOrderCreate` with
+    /// [`orders::review_draft_input`], so the backend gets `draft_orders/create`, and no order
+    /// is made. The draft's GID and name (`#D1`); `None` when the shop refuses it.
+    pub fn record_review_draft(&self, placed: &orders::PlacedOrder) -> Option<(String, String)> {
+        const CREATE: &str = "mutation($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id name } userErrors { field message } } }";
+        let version = self.versions.primary();
+        self.change_shop(&self.default_shop(), |state| {
+            let input = orders::review_draft_input(state, placed);
+            let variables = json!({ "input": input });
+            let variables = variables.as_object().expect("an object");
+            // Shopify's own change, not the app's: every scope.
+            let mut resolver = ShopResolver::new(state, self.registry).with_version(version);
+            let prepared = graphql::prepare(version.schema(), CREATE, None, variables).ok()?;
+            let executed = prepared.execute(&mut resolver);
+            let draft = &executed.data["draftOrderCreate"]["draftOrder"];
+            Some((
+                draft["id"].as_str()?.to_string(),
+                draft["name"].as_str()?.to_string(),
+            ))
+        })
+        .flatten()
+    }
+
     /// Seeds every shop again from new store data (the data changed on disk). The webhook
     /// subscriptions the backend made stay: they are the app's setup of the shop, not data.
     pub fn reseed(&self, store: &Store) -> Reseeded {
