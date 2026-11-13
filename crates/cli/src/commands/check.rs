@@ -1023,7 +1023,12 @@ fn check_theme(
                 );
             }
             if matches!(directory, "sections" | "blocks") {
-                for problem in schema_names.problems(&source) {
+                let of = if directory == "blocks" {
+                    lsf_theme::theme::schema_check::SchemaOf::Block
+                } else {
+                    lsf_theme::theme::schema_check::SchemaOf::Section
+                };
+                for problem in schema_names.problems(&source, of) {
                     tally.problem_with_hint(
                         problem.code,
                         Location::file(&path, Some(problem.line)),
@@ -1492,6 +1497,74 @@ mod tests {
                 .contains("Unknown tag 'sections'"),
             "{report:#}"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn schema_attributes_shopify_refuses_are_problems() {
+        // #182: a 26-character name, theme blocks with a block of the section, a theme block
+        // with `max_blocks`.
+        let root =
+            std::env::temp_dir().join(format!("lsf-check-attributes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &str, content: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        };
+        write(
+            "layout/theme.liquid",
+            "{{ content_for_header }}{{ content_for_layout }}",
+        );
+        write(
+            "sections/long-name.liquid",
+            "<p>long name</p>\n{% schema %}\n{ \"name\": \"Abcdefghijklmnopqrstuvwxyz\", \"settings\": [] }\n{% endschema %}",
+        );
+        write(
+            "sections/mixed-blocks.liquid",
+            "{% content_for \"blocks\" %}\n{% schema %}\n{ \"name\": \"Mixed blocks\", \"blocks\": [ { \"type\": \"@theme\" }, { \"type\": \"local\", \"name\": \"Local\" } ] }\n{% endschema %}",
+        );
+        write(
+            "sections/holder.liquid",
+            "{% content_for 'blocks' %}{% schema %}{ \"name\": \"Holder\", \"blocks\": [{ \"type\": \"@theme\" }] }{% endschema %}",
+        );
+        write(
+            "blocks/item.liquid",
+            "<p>item</p>\n{% schema %}\n{ \"name\": \"Item\", \"max_blocks\": 3, \"settings\": [] }\n{% endschema %}",
+        );
+        write(
+            "templates/index.json",
+            r#"{"sections": {"a": {"type": "long-name"}, "b": {"type": "mixed-blocks"}, "c": {"type": "holder", "blocks": {"i": {"type": "item"}}, "block_order": ["i"]}}, "order": ["a", "b", "c"]}"#,
+        );
+        let args = Args {
+            fix: false,
+            format: Format::Json,
+            app: None,
+        };
+        let (files, tally) = check_theme(&root, &[], &args).unwrap();
+        let report = json_report(files, &tally);
+        let found: Vec<(&str, &str, u64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["code"].as_str().unwrap(),
+                    d["file"].as_str().unwrap(),
+                    d["line"].as_u64().unwrap_or(0),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("invalid_schema", "sections/long-name.liquid", 3),
+                ("invalid_schema", "sections/mixed-blocks.liquid", 3),
+                ("invalid_schema", "blocks/item.liquid", 3),
+            ],
+            "{report:#}"
+        );
+        assert_eq!(report["problems"], 3, "{report:#}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
