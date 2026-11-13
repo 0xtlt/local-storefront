@@ -164,6 +164,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   is red, and `lsf app check` and `lsf app function run` still fail on it. A scenario whose
   `expect.errors` listed `` Function `x` failed: … `` now gets no such error, unless the Function
   blocks on failure.
+- **A payment customization's `orderReviewAdd` submits a B2B checkout for review**, as on
+  Shopify, where it was accepted and ignored. On a B2B checkout, `complete` places no order: the
+  Admin API gets a draft order (`draft_orders/create`, not `orders/create`), the answer and the
+  thank-you page have `draftOrder` instead of `order`, and the state lists the requirement in
+  `reviews`. A test that read an order from such a checkout reads the draft. On a D2C checkout
+  the operation still adds nothing, as Shopify documents.
 
 ### Fixed
 

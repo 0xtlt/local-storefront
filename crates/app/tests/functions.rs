@@ -2178,6 +2178,45 @@ fn answer_on(
     )
 }
 
+#[test]
+fn order_review_add_submits_a_b2b_checkout_for_review_and_is_no_operation_for_d2c() {
+    // "When your Function returns this operation, the checkout will be submitted as a draft,
+    // requiring merchant review and approval to finalize the order", B2B only (shopify.dev,
+    // Payment Customization API).
+    let output = json!({"operations": [{"orderReviewAdd": {"reason": "manual review"}}]});
+    let b2b = answer_on(
+        "payment-rules",
+        "run",
+        0,
+        output.clone(),
+        |_, store| {
+            let buyer = store
+                .customers
+                .iter()
+                .find(|customer| customer.email == "alex.morgan@example.com")
+                .expect("the demo's B2B buyer");
+            assert!(buyer.company.is_some());
+            let id = buyer.id;
+            let mut session = session(store, &CART);
+            session.customer_id = Some(id);
+            session
+        },
+        |_| {},
+    );
+    assert!(b2b.errors.is_empty(), "{:?}", b2b.errors);
+    assert_eq!(
+        b2b.reviews,
+        [lsf_app::checkout::OrderReview {
+            function: "payment-rules".into(),
+            reason: "manual review".into()
+        }]
+    );
+    // A guest is not a B2B buyer: the operation adds no review requirement.
+    let d2c = answer("payment-rules", "run", 0, output, |_| {});
+    assert!(d2c.errors.is_empty(), "{:?}", d2c.errors);
+    assert!(d2c.reviews.is_empty(), "{:?}", d2c.reviews);
+}
+
 fn transform(operation: serde_json::Value) -> lsf_app::checkout::CheckoutResult {
     answer(
         "bundle-transform",

@@ -991,6 +991,97 @@ pub struct PlacedOrder<'a> {
     pub metafields: &'a [crate::checkout::Metafield],
 }
 
+/// The `DraftOrderInput` of a checkout a payment customization submitted for review
+/// (`orderReviewAdd`): its lines, its buyer (the company location they order for, else the
+/// customer), its email, phone, shipping address, note, attributes and the delivery option
+/// chosen. The draft takes the shop's prices of the variants: the discounts the checkout's
+/// Functions applied are not on it.
+pub fn review_draft_input(state: &ShopState, placed: &PlacedOrder) -> Value {
+    let result = placed.result;
+    let money = |cents: i64| format!("{}.{:02}", cents / 100, (cents % 100).abs());
+    let line_items: Vec<Value> = result
+        .lines
+        .iter()
+        .map(|line| {
+            json!({
+                "variantId": gid("ProductVariant", line.variant_id),
+                "quantity": line.quantity,
+                "customAttributes": line.attributes.iter().map(|attribute| json!({"key": attribute.key, "value": attribute.value})).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let mut input = json!({
+        "lineItems": line_items,
+        "customAttributes": placed.attributes.iter().map(|(key, value)| json!({"key": key, "value": value})).collect::<Vec<_>>(),
+    });
+    let fields = input.as_object_mut().expect("an object");
+    if let Some(email) = placed.email {
+        fields.insert("email".into(), json!(email));
+    }
+    if let Some(phone) = placed.phone {
+        fields.insert("phone".into(), json!(phone));
+    }
+    if let Some(note) = placed.note {
+        fields.insert("note".into(), json!(note));
+    }
+    if let Some(address) = placed.shipping_address {
+        fields.insert(
+            "shippingAddress".into(),
+            json!({
+                "firstName": address.first_name, "lastName": address.last_name,
+                "company": address.company, "address1": address.address1,
+                "address2": address.address2, "city": address.city,
+                "countryCode": address.country_code, "provinceCode": address.province_code,
+                "zip": address.zip, "phone": address.phone,
+            }),
+        );
+    }
+    let selected = result.delivery_groups.iter().find_map(|group| {
+        let handle = group.selected.as_ref()?;
+        group.options.iter().find(|option| &option.handle == handle)
+    });
+    if let Some(option) = selected {
+        fields.insert(
+            "shippingLine".into(),
+            json!({
+                "title": option.title,
+                "priceWithCurrency": {"amount": money(option.cost), "currencyCode": state.currency()},
+            }),
+        );
+    }
+    let customer = placed
+        .customer_id
+        .map(|id| gid("Customer", id))
+        .filter(|customer| state.contains(customer));
+    let location = placed
+        .company_location_id
+        .map(|id| gid("CompanyLocation", id))
+        .filter(|location| state.contains(location));
+    let company = location
+        .as_deref()
+        .and_then(|location| state.get(location))
+        .and_then(|record| record.get("company"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let contact = placed
+        .customer_id
+        .map(|id| gid("CompanyContact", id))
+        .filter(|contact| state.contains(contact));
+    match (company, location, contact, customer) {
+        (Some(company), Some(location), Some(contact), _) => {
+            fields.insert(
+                "purchasingEntity".into(),
+                json!({"purchasingCompany": {"companyId": company, "companyLocationId": location, "companyContactId": contact}}),
+            );
+        }
+        (_, _, _, Some(customer)) => {
+            fields.insert("purchasingEntity".into(), json!({"customerId": customer}));
+        }
+        _ => {}
+    }
+    input
+}
+
 /// What the shop recorded of an order placed in the local checkout: its GID and its number,
 /// which the checkout shows on its thank-you page.
 #[derive(Clone, Debug, PartialEq, Eq)]

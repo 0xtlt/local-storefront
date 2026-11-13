@@ -964,6 +964,30 @@ Shopify's help center says is that the deposit due at checkout shows in the orde
 that the remaining payment is collected later. How discounts, shipping and tax split between
 today and later, and the labels, are not documented: those above are this checkout's choices.
 
+## Orders submitted for review
+
+A payment customization that answers `orderReviewAdd` on a B2B checkout (the buyer is a customer
+of a company in the store data, the `purchasingCompany` of the Function input) submits the
+checkout as a draft for the merchant's review, as on Shopify: "the checkout will be submitted as
+a draft, requiring merchant review and approval to finalize the order" (Payment Customization
+API).
+
+- The state lists each requirement in `reviews` (`function`, `reason`), and the Overview of the
+  Functions dialog shows them.
+- `complete` places no order. The Admin API gets a draft order (`draftOrderCreate`, so the
+  backend receives `draft_orders/create`, not `orders/create`) with the cart's lines, the buyer
+  and their company location, the email, phone, shipping address, note, attributes and delivery
+  option. The answer has `draftOrder` (`id`, `name`) instead of `order`, and so does the state
+  of the thank-you page. Without the Admin API, the draft is only in the session.
+- On a D2C checkout (a guest, or a customer with no company), the operation adds no review
+  requirement and the order is placed: "review requirements aren't applicable to D2C checkouts".
+
+Shopify does not document what the buyer sees, so the thank-you page's "Your order was
+submitted for review" is lsf's wording. The draft takes the shop's prices of the variants: the
+discounts the Functions applied are not on it. Nor is the Plus plan modelled: Shopify makes the
+operation "only available for B2B purchases on stores with the Plus plan", and lsf applies it on
+every store.
+
 ## What runs
 
 Every time the page changes something, the Functions run again, in the order Shopify runs
@@ -1702,3 +1726,5 @@ store before a release:
 - **Instruction counts near the 11 million limit**: lsf does not run `wasm-opt`, so a Rust
   Function costs 0.25 to 0.5% more here ([Rust Functions](#rust-functions)).
 - **Payments**, Shop Pay and express checkout.
+- **Orders submitted for review** (`orderReviewAdd`): what the buyer sees, the prices on the draft
+  and the Plus plan ([orders submitted for review](#orders-submitted-for-review)).

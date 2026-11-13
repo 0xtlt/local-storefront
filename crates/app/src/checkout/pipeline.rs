@@ -36,8 +36,8 @@ use crate::checkout::{
     CheckoutState, CodeDiscountConfig, CodeDiscountEffect, CodeDiscountItems, CodeDiscountValue,
     Cost, DeliveryGroup, DeliveryOption, DiscountAllocation, DiscountClass, DiscountCodeStatus,
     DiscountConfig, DiscountDetails, DiscountTarget, DiscountValue, FunctionRun, IdleFunction,
-    KeyValue, LineSellingPlan, Metafield, MinimumRequirement, PaymentMethod, PaymentPlacement,
-    ResultLine, SelectedOption, SkippedDiscount, SourceLine, TargetSelection,
+    KeyValue, LineSellingPlan, Metafield, MinimumRequirement, OrderReview, PaymentMethod,
+    PaymentPlacement, ResultLine, SelectedOption, SkippedDiscount, SourceLine, TargetSelection,
 };
 use crate::config::version::ApiVersion;
 use crate::config::{
@@ -210,6 +210,7 @@ pub fn compute_with_options(
             })
             .collect(),
         errors: Vec::new(),
+        reviews: Vec::new(),
         runs: Vec::new(),
         idle,
         blind: None,
@@ -283,6 +284,8 @@ struct Pipeline<'a> {
     groups: Vec<DeliveryGroup>,
     payment_methods: Vec<PaymentMethod>,
     errors: Vec<CheckoutError>,
+    /// The review requirements of the payment customizations (`orderReviewAdd`), B2B only.
+    reviews: Vec<OrderReview>,
     runs: Vec<FunctionRun>,
     /// The Functions left out for want of an enabled owner.
     idle: Vec<IdleFunction>,
@@ -1969,8 +1972,9 @@ impl<'a> Pipeline<'a> {
     }
 
     /// An operation of `cart.payment-methods.transform.run`: `paymentMethodHide`,
-    /// `paymentMethodMove`, `paymentMethodRename`. Payment terms and order reviews
-    /// (`paymentTermsSet`, `orderReviewAdd`) have no place in the local checkout.
+    /// `paymentMethodMove`, `paymentMethodRename`, and `orderReviewAdd`, which submits a B2B
+    /// checkout as a draft for review ([`CheckoutResult::reviews`]). Payment terms
+    /// (`paymentTermsSet`) have no place in the local checkout.
     fn apply_payment_operation(&mut self, operation: &Value) -> Result<(), String> {
         let position = |methods: &[PaymentMethod], id: &str| {
             methods
@@ -2012,8 +2016,29 @@ impl<'a> Pipeline<'a> {
             if let Some(at) = position(&self.payment_methods, id) {
                 self.payment_methods[at].name = name.to_string();
             }
+        } else if let Some(op) = operation.get("orderReviewAdd") {
+            // "You can apply a review requirement only to B2B checkouts" (shopify.dev, review
+            // requirements): on a D2C checkout the operation adds none.
+            if self.is_b2b() {
+                let function = self
+                    .runs
+                    .last()
+                    .map(|run| run.handle.clone())
+                    .unwrap_or_default();
+                let reason = str_field(op, "reason").unwrap_or_default().to_string();
+                self.reviews.push(OrderReview { function, reason });
+            }
         }
         Ok(())
+    }
+
+    /// Whether the buyer orders for a company: a customer of the data with a company, as the
+    /// `purchasingCompany` of the Function input says.
+    fn is_b2b(&self) -> bool {
+        self.session
+            .customer_id
+            .and_then(|id| self.store.customer_by_id(id))
+            .is_some_and(|customer| customer.company.is_some())
     }
 
     fn validations(&mut self) {
@@ -2149,6 +2174,7 @@ impl<'a> Pipeline<'a> {
                 .filter(|method| method.placements.contains(&PaymentPlacement::PaymentMethod))
                 .collect(),
             errors: self.errors,
+            reviews: self.reviews,
             cost: Cost {
                 subtotal,
                 discounts,

@@ -1842,7 +1842,11 @@ fn redirect_to_thanks(state: &ServerState, incoming: &Incoming, id: &str, token:
     let root = request_root(state, id, incoming);
     let mut answer = json!({"redirect": format!("{}/thank-you", checkout_path(&root, token))});
     if let Some(order) = state.with_session(id, |entry| entry.checkout.placed_order.clone()) {
-        answer["order"] = order;
+        // A checkout submitted for review made a draft order, not an order.
+        match order.get("draftOrder") {
+            Some(draft) => answer["draftOrder"] = draft.clone(),
+            None => answer["order"] = order,
+        }
     }
     Reply::json(200, &answer).cached(cache::PRIVATE)
 }
@@ -1945,6 +1949,43 @@ pub(super) fn place_order(
             note: entry.session.cart_note.clone(),
             attributes: super::admin::pairs(&entry.session.cart_attributes),
         };
+        // A payment customization required a review (`orderReviewAdd`, B2B only): Shopify
+        // submits the checkout "as a draft, requiring merchant review and approval to finalize
+        // the order". The Admin API gets a draft order, and no order is placed.
+        if !computed.result.reviews.is_empty() {
+            let (draft_id, draft_name) = record_review_in_admin(
+                state,
+                &computed.result,
+                &computed.checkout,
+                &own,
+                processed_at,
+            )
+            .unwrap_or_else(|| {
+                let number = entry.checkout.placed + 1;
+                (
+                    format!("gid://shopify/DraftOrder/{number}"),
+                    format!("#D{number}"),
+                )
+            });
+            let draft = json!({"id": draft_id, "name": draft_name});
+            entry.checkout.placed_order = Some(json!({ "draftOrder": draft }));
+            order["status"] = json!("completed");
+            order["draftOrder"] = json!({
+                "id": draft_id,
+                "name": draft_name,
+                "processedAt": placed_at,
+            });
+            entry.checkout.completed = Some(order.take());
+            entry.checkout.placed += 1;
+            entry.checkout.state = CheckoutState {
+                scenario: entry.checkout.state.scenario.clone(),
+                ..CheckoutState::default()
+            };
+            entry.session.cart_lines.clear();
+            entry.session.cart_note.clear();
+            entry.session.cart_attributes.clear();
+            return true;
+        }
         let number = last + entry.checkout.placed + 1;
         // Recorded while the cart is taken, so that the page links to the order the Admin API
         // keeps. The Admin API never takes a session's lock: holding this one while it records
@@ -2073,6 +2114,36 @@ fn record_in_admin(
         .record_order(&lsf_app::admin::domains::orders::PlacedOrder {
             id: None,
             number: Some(number),
+            processed_at,
+            result,
+            customer_id: placed.customer_id,
+            company_location_id: placed.company_location,
+            email: checkout.email.as_deref(),
+            phone: checkout.phone.as_deref(),
+            shipping_address: checkout.shipping_address.as_ref(),
+            note: Some(placed.note.as_str()).filter(|note| !note.is_empty()),
+            attributes: &placed.attributes,
+            payment: payment_name(checkout, result),
+            metafields: &checkout.metafields,
+        })
+}
+
+/// Records a checkout submitted for review (`orderReviewAdd`) as a draft order of the default
+/// shop of the Admin API, which delivers `draft_orders/create` to the backend of the app. Its
+/// GID and name; `None` without the Admin API.
+fn record_review_in_admin(
+    state: &ServerState,
+    result: &lsf_app::checkout::CheckoutResult,
+    checkout: &CheckoutState,
+    placed: &Placed,
+    processed_at: chrono::DateTime<chrono::Utc>,
+) -> Option<(String, String)> {
+    let admin = state.admin.as_ref()?;
+    admin
+        .api
+        .record_review_draft(&lsf_app::admin::domains::orders::PlacedOrder {
+            id: None,
+            number: None,
             processed_at,
             result,
             customer_id: placed.customer_id,
