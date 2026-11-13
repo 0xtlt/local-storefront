@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use lsf_core::{Session, Store};
 use lsf_theme::drops::collection::CollectionDrop;
-use lsf_theme::drops::product::ProductDrop;
+use lsf_theme::drops::product::{ProductDrop, storefront_json};
 use lsf_theme::drops::search::{predictive_search_value, recommendations_value};
 use lsf_theme::render::page::{Page, Resource};
 use lsf_theme::render::{Rendered, Target, seo};
@@ -535,13 +535,13 @@ fn product_json(visit: &Visit<'_>, name: &str) -> Reply {
     let Some(index) = site.store.product_index(handle) else {
         return Reply::json(404, &json!({"status": 404, "error": "Not Found"}));
     };
-    let product = ProductDrop::value(&site, index).to_json();
+    // `.json` is not `.js` wrapped: it has a format of its own.
     Reply::json(
         200,
         &if wrapped {
-            json!({ "product": product })
+            json!({ "product": storefront_json(&site, index) })
         } else {
-            product
+            ProductDrop::value(&site, index).to_json()
         },
     )
 }

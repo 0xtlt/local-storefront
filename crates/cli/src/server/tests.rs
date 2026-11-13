@@ -513,6 +513,111 @@ fn product_json_holds_250_variants_at_most() {
 }
 
 #[test]
+fn product_json_has_shopifys_json_format_not_the_js_one() {
+    // `/products/<handle>.json` is not `.js` wrapped in `product`: it has the product resource's
+    // fields, https://shopify.dev/docs/api/admin-rest/latest/resources/product, with the keys a
+    // development store gives. https://github.com/0xtlt/local-storefront/issues/86
+    let state = server();
+    let session = "tee";
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"products": [{
+            "id": 100, "title": "Tee", "description": "<p>A plain tee.</p>", "vendor": "Repro",
+            "type": "Shirts", "tags": ["cotton", "summer"], "options": ["Size"], "price": 2000,
+            "compare_at_price": "25.50",
+            "variants": [
+                {"id": 101, "options": ["S"], "inventory_quantity": 50, "sku": "TEE-S"},
+                {"id": 102, "options": ["M"], "inventory_quantity": 50}
+            ]
+        }]}}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let reply = get(&state, "/products/tee.json", session);
+    assert_eq!(reply.status, 200);
+    let body = body_json(&reply);
+    let product = &body["product"];
+    let keys = |value: &Json| {
+        value
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    assert_eq!(
+        keys(product),
+        "id,title,body_html,vendor,product_type,created_at,handle,updated_at,published_at,\
+         template_suffix,published_scope,tags,variants,options,images,image"
+    );
+    assert_eq!(
+        keys(&product["variants"][0]),
+        "id,product_id,title,price,sku,position,compare_at_price,fulfillment_service,\
+         inventory_management,option1,option2,option3,created_at,updated_at,taxable,barcode,\
+         grams,image_id,weight,weight_unit,requires_shipping,quantity_rule,price_currency,\
+         compare_at_price_currency,quantity_price_breaks"
+    );
+    assert_eq!(product["id"], 100);
+    assert_eq!(product["body_html"], "<p>A plain tee.</p>");
+    assert_eq!(product["product_type"], "Shirts");
+    assert_eq!(product["tags"], "cotton, summer");
+    let variant = &product["variants"][0];
+    assert_eq!(variant["id"], 101);
+    assert_eq!(variant["product_id"], 100);
+    assert_eq!(variant["price"], "20.00");
+    assert_eq!(variant["compare_at_price"], "25.50");
+    assert_eq!(variant["price_currency"], "USD");
+    assert_eq!(variant["sku"], "TEE-S");
+    assert_eq!(variant["position"], 1);
+    assert_eq!(variant["option1"], "S");
+    assert_eq!(variant["option2"], Json::Null);
+    assert_eq!(variant["inventory_management"], "shopify");
+    assert_eq!(product["variants"][1]["position"], 2);
+    let option = &product["options"][0];
+    assert_eq!(keys(option), "id,product_id,name,position,values");
+    assert_eq!(option["name"], "Size");
+    assert_eq!(option["position"], 1);
+    assert_eq!(option["values"], json!(["S", "M"]));
+    assert!(option["id"].as_u64().is_some());
+    assert_eq!(product["images"], json!([]));
+    assert_eq!(product["image"], Json::Null);
+
+    // `.js` keeps the Ajax API's format.
+    let js = body_json(&get(&state, "/products/tee.js", session));
+    assert_eq!(js["description"], "<p>A plain tee.</p>");
+    assert_eq!(js["type"], "Shirts");
+    assert_eq!(js["tags"], json!(["cotton", "summer"]));
+    assert_eq!(js["price"], 2000);
+    assert_eq!(js["variants"][0]["price"], 2000);
+    assert_eq!(get(&state, "/products/nope.json", session).status, 404);
+}
+
+#[test]
+fn product_json_images_have_ids_and_the_variants_they_show() {
+    let state = server();
+    let product = &body_json(&get(&state, "/products/ceramic-mug.json", "images"))["product"];
+    let js = body_json(&get(&state, "/products/ceramic-mug.js", "images"));
+    let images = product["images"].as_array().unwrap();
+    assert_eq!(images.len(), js["images"].as_array().unwrap().len());
+    assert!(!images.is_empty());
+    assert_eq!(product["image"], images[0]);
+    assert_eq!(
+        images[0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(","),
+        "id,product_id,position,created_at,updated_at,alt,width,height,src,variant_ids"
+    );
+    assert_eq!(images[0]["src"], js["images"][0]);
+    assert_eq!(images[0]["product_id"], js["id"]);
+}
+
+#[test]
 fn json_endpoints() {
     let state = server();
     let product = body_json(&get(&state, "/products/ceramic-mug.js", "json"));

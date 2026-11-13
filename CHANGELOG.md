@@ -32,6 +32,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`product.variants` and the product JSON stop at 250 variants**, as on Shopify. A theme or a
   test that reads variant 251 or later from `product.variants`, `/products/<handle>.js`, `.json`,
   `/products.json` or `{{ product | json }}` no longer finds it: it would not on Shopify either.
+- **`/products/<handle>.json` has Shopify's `.json` format**, no longer the `.js` body wrapped in
+  `product`. Code that read `description`, `type`, `tags` as an array or prices in cents from it
+  reads `body_html`, `product_type`, `tags` as one comma-separated string and prices as decimal
+  strings (`"20.00"`), as it must on Shopify. `/products/<handle>.js` does not change.
 
 ### Fixed
 
@@ -102,6 +106,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `for` loop over it give the first 250, the Ajax API's product JSON holds 250, and
   `product.variants_count` is still the total. A variant picker that misses variants past 250 on
   Shopify misses them locally too.
+- **`/products/<handle>.json` answers what a store answers.** `{"product": …}` with `id`,
+  `title`, `body_html`, `vendor`, `product_type`, `created_at`, `handle`, `updated_at`,
+  `published_at`, `template_suffix`, `published_scope`, `tags`, `variants` (with `product_id`,
+  `position`, `option1` to `option3`, `grams`, `image_id`, `price_currency` and decimal prices),
+  `options` and `images` as objects with ids, and `image`. An app or a theme script that reads it
+  works locally as it will on Shopify.
 
 #### The checkout of an app
 

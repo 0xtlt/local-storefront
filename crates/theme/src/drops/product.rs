@@ -446,6 +446,125 @@ pub fn iso(site: &SiteRef, time: chrono::DateTime<chrono::Utc>) -> String {
         .to_string()
 }
 
+/// An image of a product as the product JSON has it (a variant's `featured_image`, the `images`
+/// of `/products/<handle>.json`): the media at `media_index`, when it is an image.
+fn product_image_json(site: &SiteRef, product: &Product, media_index: usize) -> Option<Json> {
+    let media = product.media.get(media_index)?;
+    let image = media.preview.as_ref()?;
+    Some(json!({
+        "id": image.id,
+        "product_id": product.id,
+        "position": media.position,
+        "created_at": iso(site, product.created_at),
+        "updated_at": iso(site, product.updated_at),
+        "alt": if image.alt.is_empty() { Json::Null } else { json!(image.alt) },
+        "width": image.width,
+        "height": image.height,
+        "src": image_base_url(site, image),
+        "variant_ids": product
+            .variants
+            .iter()
+            .filter(|variant| variant.media_index == Some(media_index))
+            .map(|variant| variant.id)
+            .collect::<Vec<_>>(),
+    }))
+}
+
+/// The product as `/products/<handle>.json` gives it, a format other than the Ajax API's of
+/// `.js`: the fields of the product resource of the REST Admin API that a storefront shows.
+/// `body_html` and `product_type` for `description` and `type`, `tags` as one string, prices as
+/// decimal strings, `options` and `images` as objects with ids, and `image`, the first image.
+/// https://shopify.dev/docs/api/admin-rest/latest/resources/product
+pub fn storefront_json(site: &SiteRef, index: usize) -> Json {
+    let product = &site.store.products[index];
+    let decimal = |cents: i64| format!("{}.{:02}", cents / 100, cents % 100);
+    let currency = site.currency();
+    let images: Vec<Json> = product
+        .media
+        .iter()
+        .enumerate()
+        .filter(|(_, media)| matches!(media.kind, MediaKind::Image))
+        .filter_map(|(media_index, _)| product_image_json(site, product, media_index))
+        .collect();
+    let variants: Vec<Json> = product
+        .variants
+        .iter()
+        .take(MAX_VARIANTS)
+        .enumerate()
+        .map(|(position, variant)| {
+            let option = |position: usize| variant.options.get(position).map_or(Json::Null, |value| json!(value));
+            json!({
+                "id": variant.id,
+                "product_id": product.id,
+                "title": variant.title,
+                "price": decimal(variant.price),
+                "sku": variant.sku,
+                "position": position + 1,
+                "compare_at_price": variant.compare_at_price.map(decimal),
+                "fulfillment_service": "manual",
+                "inventory_management": if variant.inventory_tracked { json!("shopify") } else { Json::Null },
+                "option1": option(0),
+                "option2": option(1),
+                "option3": option(2),
+                "created_at": iso(site, product.created_at),
+                "updated_at": iso(site, product.updated_at),
+                "taxable": variant.taxable,
+                "barcode": if variant.barcode.is_empty() { Json::Null } else { json!(variant.barcode) },
+                "grams": variant.weight,
+                "image_id": variant
+                    .media_index
+                    .and_then(|index| product.media.get(index))
+                    .and_then(|media| media.preview.as_ref())
+                    .map(|image| image.id),
+                "weight": lsf_core::store::weight_in_unit(variant.weight, &variant.weight_unit),
+                "weight_unit": variant.weight_unit,
+                "requires_shipping": variant.requires_shipping,
+                "quantity_rule": {
+                    "min": variant.quantity_rule.min,
+                    "max": variant.quantity_rule.max,
+                    "increment": variant.quantity_rule.increment,
+                },
+                "price_currency": currency,
+                "compare_at_price_currency": currency,
+                "quantity_price_breaks": variant
+                    .quantity_price_breaks
+                    .iter()
+                    .map(|(minimum, price)| json!({"minimum_quantity": minimum, "price": decimal(*price)}))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let image = images.first().cloned().unwrap_or(Json::Null);
+    json!({
+        "id": product.id,
+        "title": product.title,
+        "body_html": product.description,
+        "vendor": product.vendor,
+        "product_type": product.product_type,
+        "created_at": iso(site, product.created_at),
+        "handle": product.handle,
+        "updated_at": iso(site, product.updated_at),
+        "published_at": iso(site, product.published_at),
+        "template_suffix": product.template_suffix,
+        "published_scope": "web",
+        "tags": product.tags.join(", "),
+        "variants": variants,
+        "options": product
+            .options
+            .iter()
+            .map(|option| json!({
+                "id": stable_id("product_option", &format!("{}/{}", product.id, option.name)),
+                "product_id": product.id,
+                "name": option.name,
+                "position": option.position,
+                "values": option.values,
+            }))
+            .collect::<Vec<_>>(),
+        "images": images,
+        "image": image,
+    })
+}
+
 pub fn variant_json(site: &SiteRef, product_index: usize, variant_index: usize) -> Json {
     let product = &site.store.products[product_index];
     let variant = &product.variants[variant_index];
@@ -460,27 +579,10 @@ pub fn variant_json(site: &SiteRef, product_index: usize, variant_index: usize) 
     let image = variant
         .media_index
         .and_then(|index| product.media.get(index));
-    let featured_image =
-        match image.and_then(|media| media.preview.as_ref().map(|image| (media, image))) {
-            Some((media, image)) => json!({
-                "id": image.id,
-                "product_id": product.id,
-                "position": media.position,
-                "created_at": iso(site, product.created_at),
-                "updated_at": iso(site, product.updated_at),
-                "alt": if image.alt.is_empty() { Json::Null } else { json!(image.alt) },
-                "width": image.width,
-                "height": image.height,
-                "src": image_base_url(site, image),
-                "variant_ids": product
-                    .variants
-                    .iter()
-                    .filter(|other| other.media_index == variant.media_index)
-                    .map(|other| other.id)
-                    .collect::<Vec<_>>(),
-            }),
-            None => Json::Null,
-        };
+    let featured_image = variant
+        .media_index
+        .and_then(|index| product_image_json(site, product, index))
+        .unwrap_or(Json::Null);
     let mut out = json!({
         "id": variant.id,
         "title": variant.title,
