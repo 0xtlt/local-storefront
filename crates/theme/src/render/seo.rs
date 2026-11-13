@@ -1,5 +1,5 @@
 //! What a storefront tells crawlers: `robots.txt`, rendered from `templates/robots.txt.liquid`
-//! when the theme has one, and the sitemaps Shopify generates from the store.
+//! when the theme has one, and the sitemaps and blog feeds Shopify generates from the store.
 
 use std::any::Any;
 use std::borrow::Cow;
@@ -494,5 +494,71 @@ pub fn sitemap(site: &Site, kind: &str) -> Option<String> {
         out.push_str("  </url>\n");
     }
     out.push_str("</urlset>\n");
+    Some(out)
+}
+
+/// `/blogs/<handle>.atom`: the Atom feed Shopify generates for each blog, its articles newest
+/// first, or nothing for a blog the store does not have. Its links are in the language of the
+/// request.
+/// <https://help.shopify.com/en/manual/online-store/blogs/publishing-blogs>
+pub fn blog_feed(site: &Site, handle: &str) -> Option<String> {
+    let store = &site.store;
+    let blog = &store.blogs[store.blog_index(handle)?];
+    let url = |path: &str| format!("{}{}", site.request.origin(), site.request.localized(path));
+    let time = |at: DateTime<Utc>| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let blog_path = format!("/blogs/{}", blog.handle);
+    let mut articles: Vec<_> = blog.articles.iter().collect();
+    articles.sort_by_key(|article| std::cmp::Reverse(article.published_at));
+    let updated = articles
+        .iter()
+        .map(|article| article.updated_at)
+        .max()
+        .map_or_else(String::new, |at| {
+            format!("  <updated>{}</updated>\n", time(at))
+        });
+    let mut out = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <feed xml:lang=\"{}\" xmlns=\"http://www.w3.org/2005/Atom\">\n  \
+         <id>{}</id>\n  \
+         <link rel=\"alternate\" type=\"text/html\" href=\"{}\"/>\n  \
+         <link rel=\"self\" type=\"application/atom+xml\" href=\"{}\"/>\n  \
+         <title>{} - {}</title>\n{updated}  \
+         <author>\n    <name>{}</name>\n  </author>\n",
+        escape_html(&site.request.locale),
+        url(&blog_path),
+        url(&blog_path),
+        url(&format!("{blog_path}.atom")),
+        escape_html(&store.shop.name),
+        escape_html(&blog.title),
+        escape_html(&store.shop.name),
+    );
+    for article in articles {
+        let link = url(&format!("{blog_path}/{}", article.handle));
+        out.push_str(&format!(
+            "  <entry>\n    <id>{link}</id>\n    \
+             <published>{}</published>\n    <updated>{}</updated>\n    \
+             <link rel=\"alternate\" type=\"text/html\" href=\"{link}\"/>\n    \
+             <title>{}</title>\n    <author>\n      <name>{}</name>\n    </author>\n",
+            time(article.published_at),
+            time(article.updated_at),
+            escape_html(&article.title),
+            escape_html(&article.author),
+        ));
+        for tag in &article.tags {
+            out.push_str(&format!("    <category term=\"{}\"/>\n", escape_html(tag)));
+        }
+        out.push_str(&format!(
+            "    <content type=\"html\">{}</content>\n",
+            escape_html(&article.content)
+        ));
+        if !article.excerpt.is_empty() {
+            out.push_str(&format!(
+                "    <summary type=\"html\">{}</summary>\n",
+                escape_html(&article.excerpt)
+            ));
+        }
+        out.push_str("  </entry>\n");
+    }
+    out.push_str("</feed>\n");
     Some(out)
 }
