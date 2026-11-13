@@ -115,3 +115,19 @@ test('without network_access, a fetch out of the shop rejects and says why; with
   assert.deepEqual(plain(open.run('results')), ['answered 200', 'answered 200', 'answered 200']);
   assert.deepEqual(open.posts('log'), []);
 });
+
+test('in a customer account extension, the global navigation is shopify.navigation, and navigates', async () => {
+  const target = 'customer-account.profile.block.render';
+  const source = `shopify.extend(${JSON.stringify(target)}, () => {
+    globalThis.same = navigation === shopify.navigation;
+    navigation.navigate('shopify:customer-account/orders');
+  });`;
+  const win = sandboxWindow({ scripts: ['sandbox-api.js', 'sandbox-account-api.js', 'sandbox-components.js', 'sandbox.js'], bundles: { [url('nav')]: source } });
+  // The browser's Navigation API of the frame, which the extension must not get.
+  win.context.navigation = { navigate() {} };
+  win.receive(init({ handle: 'nav', target }));
+  for (let i = 0; i < 4; i++) await settle();
+  assert.deepEqual(win.posts('error'), []);
+  assert.equal(win.run('same'), true);
+  assert.deepEqual(win.posts('navigate'), [{ lsf: true, type: 'navigate', url: 'shopify:customer-account/orders' }]);
+});

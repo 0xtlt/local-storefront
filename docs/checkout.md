@@ -848,7 +848,8 @@ extension's `order.action.menu-item.render` opens its `order.action.render` in a
 - **The `shopify` global** of a customer account target has what every target has (`i18n`,
   `storage`, `sessionToken`, `settings`, `localization`, `extension`, `analytics`, and `version`,
   the extension's `api_version`), and:
-  `authenticatedAccount` (`customer`, `purchasingCompany`); `navigation`; `toast.show`, which shows
+  `authenticatedAccount` (`customer`, `purchasingCompany`); `navigation`, which is the global
+  `navigation` too, as in Shopify's examples; `toast.show`, which shows
   a toast at the bottom of the page; `intents.invoke`, which answers `closed`. The order status
   targets and the full page of an order have the Order Status API (`order`, `lines`, `cost`,
   `shippingAddress`, `billingAddress`, `buyerIdentity`, `discountCodes`, `authenticationState`,
