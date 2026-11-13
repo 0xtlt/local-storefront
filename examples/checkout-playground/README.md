@@ -91,7 +91,7 @@ them.
 | `broken-missing-build` | validation | 2027-01 | no `dist/function.wasm` | `fn-broken-missing-build` |
 | `broken-unknown-target` | validation | 2026-10 | a target no API has | `fn-broken-unknown-target` |
 | `broken-api-version` | payment customization | 2025-07 | `api_version` 2025-07, not supported | `fn-broken-api-version` |
-| `broken-big-input` | validation | 2027-01 | an input query that asks for a lot | `fn-broken-big-input` |
+| `broken-big-input` | validation | 2027-01 | an input query over Shopify's limits (3,000 bytes, a cost of 30) | `fn-broken-big-input` |
 | `broken-fetch-timeout` | validation | 2026-10 | a request out of the limits: the `.fetch` fails | `fn-broken-fetch-timeout` |
 | `listed-fulfillment-constraints` | fulfillment constraints | 2026-10 | fulfillment constraints: listed, not run | `fn-listed` |
 | `listed-order-routing` | order routing | 2027-01 | order routing: listed, not run | `fn-listed` |
@@ -99,8 +99,8 @@ them.
 | `listed-local-pickup` | local pickup generator | 2026-10 | local pickup: listed, not run | `fn-listed` |
 
 - `broken-*` are edge cases: failures (a trap, too many instructions, a bad output, no build, an
-  unsupported version, a request out of the limits) and cases that work but stress the checkout
-  (logs, a huge output, a big input, an unknown target next to a known one).
+  unsupported version, a request out of the limits, an input query over the limits) and cases
+  that work but stress the checkout (logs, a huge output, an unknown target next to a known one).
 - `listed-*` are the Function APIs the local checkout lists and does not run. lsf has no schema for
   them, so they are written without the typegen.
 - The legacy `purchase.*` targets are there for every API that has one: they still run, and the

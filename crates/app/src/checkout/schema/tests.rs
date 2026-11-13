@@ -587,3 +587,113 @@ fn the_defaults_of_arguments_are_listed() {
         [("ids", json!([]))]
     );
 }
+
+fn limits(api: FunctionApi, text: &str, variables: serde_json::Value) -> Result<(), String> {
+    let document = graphql_parser::parse_query::<String>(text).unwrap();
+    let serde_json::Value::Object(variables) = variables else {
+        panic!("variables are an object")
+    };
+    latest(api).check_limits(text, &document, &variables)
+}
+
+#[test]
+fn the_cost_of_a_query_follows_shopifys_table() {
+    // The example of Shopify's reference, "Input query cost example": a cost of 8.
+    let example = r#"query RunInput($customerTag: String! = "VIP") {
+      cart {
+        lines { id quantity }
+        buyerIdentity { customer { hasTags(tags: [$customerTag]) { hasTag } } }
+      }
+      discount { metafield(namespace: "$app:example", key: "function-configuration") { jsonValue } }
+    }"#;
+    let over = |aliases: &str| {
+        format!(
+            "{{ cart {{ lines {{ merchandise {{ __typename ... on ProductVariant {{ product {{ {aliases} }} }} }} }} }} }}"
+        )
+    };
+    let tags = |count: usize| {
+        (0..count)
+            .map(|i| format!("t{i}: hasAnyTag(tags: [\"x{i}\"])"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    assert_eq!(limits(FunctionApi::Discount, example, json!({})), Ok(()));
+    // 10 selections of `hasAnyTag` cost 30, the whole budget; an 11th is over it.
+    let validation = FunctionApi::CartCheckoutValidation;
+    assert_eq!(limits(validation, &over(&tags(10)), json!({})), Ok(()));
+    assert_eq!(
+        limits(validation, &over(&tags(11)), json!({})).unwrap_err(),
+        "Query has complexity of 33, which exceeds max complexity of 30"
+    );
+    // The same selection twice is counted once; a fragment adds the fields of its type.
+    let twice = r#"{ cart { lines { id id ...L } } } fragment L on CartLine { id quantity }"#;
+    let document = graphql_parser::parse_query::<String>(twice).unwrap();
+    let schema = latest(validation);
+    assert_eq!(super::limits::cost(schema, &document), 2);
+}
+
+#[test]
+fn a_query_over_3000_bytes_without_its_comments_is_refused() {
+    let validation = FunctionApi::CartCheckoutValidation;
+    let typenames = |count: usize| {
+        (0..count)
+            .map(|i| format!("a{i:03}: __typename"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let long = format!(
+        "query Input {{ cart {{ lines {{ id }} }} {} }}",
+        typenames(220)
+    );
+    assert_eq!(
+        limits(validation, &long, json!({})).unwrap_err(),
+        format!(
+            "the query is {} bytes without its comments, over the limit of 3000",
+            long.len()
+        )
+    );
+    // Comments do not count, `#` in a string is not one.
+    let commented = format!(
+        "# {}\nquery Input {{ cart {{ attribute(key: \"#{}\") {{ value }} }} }}",
+        "x".repeat(4000),
+        "y".repeat(2900)
+    );
+    assert_eq!(limits(validation, &commented, json!({})), Ok(()));
+    let in_string = format!(
+        "query Input {{ cart {{ attribute(key: \"#{}\") {{ value }} }} }}",
+        "y".repeat(3000)
+    );
+    assert!(limits(validation, &in_string, json!({})).is_err());
+}
+
+#[test]
+fn a_list_of_more_than_100_elements_is_refused_in_an_argument_or_a_variable() {
+    let validation = FunctionApi::CartCheckoutValidation;
+    let list = |count: usize| {
+        (0..count)
+            .map(|i| format!("\"t{i}\""))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let query = |count: usize| {
+        format!(
+            "{{ cart {{ lines {{ merchandise {{ ... on ProductVariant {{ product {{ hasAnyTag(tags: [{}]) }} }} }} }} }} }}",
+            list(count)
+        )
+    };
+    assert_eq!(limits(validation, &query(100), json!({})), Ok(()));
+    assert_eq!(
+        limits(validation, &query(101), json!({})).unwrap_err(),
+        "the argument `tags` of `hasAnyTag` has 101 elements, over the limit of 100 for a list"
+    );
+    let with_variable = "query Input($tags: [String!]!) { cart { lines { merchandise { ... on ProductVariant { product { hasAnyTag(tags: $tags) } } } } } }";
+    let tags: Vec<String> = (0..101).map(|i| format!("t{i}")).collect();
+    assert_eq!(
+        limits(validation, with_variable, json!({ "tags": tags })).unwrap_err(),
+        "the variable `$tags` has 101 elements, over the limit of 100 for a list"
+    );
+    assert_eq!(
+        limits(validation, with_variable, json!({ "tags": tags[..100] })),
+        Ok(())
+    );
+}

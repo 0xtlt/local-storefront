@@ -225,6 +225,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **A metafield whose value is over 10,000 bytes reads `null` in a Function's input**, as
   Shopify returns none. lsf gave the whole value, so a Function that kept a large configuration
   in a metafield worked here and lost it on a store.
+- **A Function whose input query is over Shopify's input query limits fails to run**, as Shopify
+  refuses it: a query of more than 3,000 bytes without its comments, a list of more than 100
+  elements given to an argument or a variable, or a calculated cost over 30
+  (`Query has complexity of 33, which exceeds max complexity of 30`, from Shopify's table:
+  `hasAnyTag` 3, a `metafield` 3, another leaf 1...). The run fails as any failed run does, and
+  `lsf app check` fails on it; such a query ran on lsf and passed, and could not be deployed. Lower its cost as Shopify's reference advises: one
+  metafield that holds a JSON object, each costly field selected once.
 
 ### Fixed
 

@@ -1,7 +1,7 @@
 {
   "$schema": "../schema/checkout-scenario.schema.json",
-  "title": "Edge case: a big input",
-  "description": "broken-big-input asks for most of what a validation can read: the buyer and their tags, the company, localization, shop metafields, cost, delivery and every line with its product. Open its run in the Functions dialog.",
+  "title": "Edge case: an input query over Shopify's limits",
+  "description": "broken-big-input asks for most of what a validation can read: the buyer and their tags, the company, localization, shop metafields, cost, delivery and every line with its product. That is 3,148 bytes and a cost of 100, over Shopify's input query limits (3,000 bytes, a cost of 30): Shopify would not deploy it, and its run fails before it starts. Open it in the Functions dialog.",
   "session": {
     "customer": "jane.doe@example.com",
     "cart": {

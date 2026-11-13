@@ -157,15 +157,17 @@ pub fn market_of(store: &lsf_core::Store, code: &str) -> (String, String) {
 pub fn build(query: &str, variables: Option<&Json>, ctx: &InputContext) -> Result<Json, String> {
     let document = graphql_parser::parse_query::<String>(query)
         .map_err(|error| format!("input query: invalid GraphQL: {error}"))?;
-    ctx.version
-        .schema(ctx.api)
-        .validate_query(&document)
-        .map_err(|message| {
-            format!(
-                "input query: not valid in API version {} ({} Function API): {message}",
-                ctx.version, ctx.api
-            )
-        })?;
+    let schema = ctx.version.schema(ctx.api);
+    schema.validate_query(&document).map_err(|message| {
+        format!(
+            "input query: not valid in API version {} ({} Function API): {message}",
+            ctx.version, ctx.api
+        )
+    })?;
+    let variables = variable_values(variables)?;
+    schema
+        .check_limits(query, &document, variables)
+        .map_err(|message| format!("input query: over Shopify's input query limits: {message}"))?;
     execute(&document, variables, ctx)
 }
 
@@ -262,24 +264,27 @@ fn build_unchecked(
 ) -> Result<Json, String> {
     let document = graphql_parser::parse_query::<String>(query)
         .map_err(|error| format!("input query: invalid GraphQL: {error}"))?;
-    execute(&document, variables, ctx)
+    execute(&document, variable_values(variables)?, ctx)
+}
+
+/// The values of the variables of a query: the top-level keys of a JSON object.
+fn variable_values(variables: Option<&Json>) -> Result<&serde_json::Map<String, Json>, String> {
+    static EMPTY: std::sync::LazyLock<serde_json::Map<String, Json>> =
+        std::sync::LazyLock::new(serde_json::Map::new);
+    match variables {
+        None | Some(Json::Null) => Ok(&EMPTY),
+        Some(Json::Object(map)) => Ok(map),
+        Some(other) => Err(format!(
+            "input query: the variables must be a JSON object, got {other}"
+        )),
+    }
 }
 
 fn execute<'q>(
     document: &'q graphql_parser::query::Document<'q, String>,
-    variables: Option<&Json>,
+    variables: &serde_json::Map<String, Json>,
     ctx: &InputContext,
 ) -> Result<Json, String> {
-    let empty = serde_json::Map::new();
-    let variables = match variables {
-        None | Some(Json::Null) => &empty,
-        Some(Json::Object(map)) => map,
-        Some(other) => {
-            return Err(format!(
-                "input query: the variables must be a JSON object, got {other}"
-            ));
-        }
-    };
     exec::execute(&graph::FunctionInput::new(ctx), document, variables)
         .map_err(|message| format!("input query: {message}"))
 }
