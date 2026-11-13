@@ -68,7 +68,7 @@ fn text_of(
             None => value.get("url").to_str().into_owned(),
         },
         "rich_text_field" => rich_text_plain(raw),
-        _ => compact(value),
+        _ => compact(&value.to_liquid_value()),
     }
 }
 

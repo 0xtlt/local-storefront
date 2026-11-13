@@ -145,7 +145,9 @@ as its value in `if`, `==`, `>`, the math and date filters, `size`, and `sort`, 
 `sum`, as on Shopify; `metafield_tag` and `metafield_text` print what Shopify prints, nothing
 for a list other than `list.single_line_text_field` and `list.metaobject_reference`, and a
 Liquid error for `metafield_tag` of a metaobject without `field:`, and `metafield_text`
-HTML-escapes text, as `metafield_tag` does;
+HTML-escapes text, as `metafield_tag` does; `json` refuses a metafield, as on Shopify
+(`.value | json` gives its value), and gives a metaobject entry and a namespace as the values
+of their fields by key, a `number_decimal` as a string;
 the value of a `list.product_reference` or `list.metaobject_reference` is a list drop, as on
 Shopify: `.count` and `.size` give its length, `.first`, `.last` and `[n]` give nothing, and the
 `first` and `last` filters, `for` and `paginate` reach its items; the other lists are arrays;

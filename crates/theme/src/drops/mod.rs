@@ -98,6 +98,11 @@ pub struct EmptyDrop {
     setting: Option<String>,
 }
 
+/// What `| json` gives for a drop Shopify does not serialise.
+pub(crate) fn json_not_allowed() -> serde_json::Value {
+    serde_json::json!({ "error": "json not allowed for this object" })
+}
+
 impl EmptyDrop {
     pub const COLLECTION: &'static [&'static str] = &["products"];
     pub const BLOG: &'static [&'static str] = &["articles"];
@@ -145,7 +150,7 @@ impl lsf_liquid::Object for EmptyDrop {
     fn to_json(&self) -> serde_json::Value {
         match self.setting {
             Some(_) => serde_json::Value::Null,
-            None => serde_json::json!({ "error": "json not allowed for this object" }),
+            None => json_not_allowed(),
         }
     }
 
