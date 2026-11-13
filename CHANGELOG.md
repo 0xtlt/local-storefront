@@ -504,6 +504,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`shopify.version` is the extension's API version** (`"2026-10"`), no longer `"lsf"`, in
   checkout and customer account UI extensions, as Shopify's Version API gives it. A gate such as
   `shopify.version >= '2026-04'` now compares versions, and a URL built from it names one.
+- **The global `navigation` of a customer account extension is `shopify.navigation`**, as on
+  Shopify, whose examples call `navigation.navigate('extension://orders')`. It was the browser's
+  Navigation API of the extension's frame, so `navigation.navigate(…)` did nothing.
 - **`lsf app check` and `lsf app function run --scenario` price a scenario as its served
   checkout does.** A buyer in a market with its own currency gets the cart in that currency and
   the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's

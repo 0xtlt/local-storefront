@@ -101,6 +101,11 @@
     global.shopify = runtime.shopify;
     global.fetch = Sandbox.guardFetch(global.fetch, Sandbox.capabilityNames(init.ext.capabilities),
       new URL(global.location.href).origin, (message) => post({ type: 'log', level: 'warn', args: [message] }));
+    // In a customer account extension, the global `navigation` is `shopify.navigation`, as on
+    // Shopify, where Shopify's examples call it: not the browser's Navigation API of this frame.
+    if (runtime.shopify.navigation) {
+      Object.defineProperty(global, 'navigation', { value: runtime.shopify.navigation, configurable: true, writable: true });
+    }
     // The frame is in the language the extension renders in, for a screen reader or a test.
     document.documentElement.lang = runtime.language;
     Sandbox.onOverlay = (open) => {
