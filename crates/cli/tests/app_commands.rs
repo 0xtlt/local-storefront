@@ -944,7 +944,7 @@ type = "function"
 
 /// One Function that fails in three ways in three scenarios: each error is printed with its
 /// scenario and its logs, not the first one for all three. The endless loop stops at the
-/// instruction cap, in a moment, not after 10 s.
+/// instruction cap, not at the timeout of 10 s.
 #[test]
 fn app_check_says_each_way_a_function_fails() {
     let app = app_with_a_validation(
@@ -956,7 +956,6 @@ fn app_check_says_each_way_a_function_fails() {
         &[1, 2, 3],
     );
     let check = ["app", "check", "--build", "--extension", "boom"];
-    let started = std::time::Instant::now();
     let output = lsf(&app.0, &check);
     let said = text(&output);
     assert_eq!(output.status.code(), Some(1), "{said}");
@@ -978,12 +977,9 @@ fn app_check_says_each_way_a_function_fails() {
         "{said}"
     );
     assert!(said.contains("3 failures"), "{said}");
-    // The build, three runs and one loop to the cap: far from the 10 s of the timeout.
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(8),
-        "{:?}",
-        started.elapsed()
-    );
+    // The cap stopped the loop, not the timeout, which says so in its own words. Not a measure
+    // of the time: a busy machine takes seconds to build and run this, the cap or not.
+    assert!(!said.contains("was stopped"), "{said}");
 
     let output = lsf(&app.0, &[&check[..], &["--format", "json"]].concat());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)
