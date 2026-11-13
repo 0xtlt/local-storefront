@@ -164,6 +164,75 @@ fn collection_page_paginates_sorts_and_filters() {
 }
 
 #[test]
+fn urls_built_from_the_request_lead_to_the_page_not_to_a_section_alone() {
+    // A section fetched alone (`?section_id=`, `?sections=`) builds the same links as the page:
+    // Shopify leaves those parameters out, puts `page` first and sorts the others by name.
+    // `part.url` is "the current page URL path with the pagination parameter for the current
+    // part appended": https://shopify.dev/docs/api/liquid/objects/part
+    // https://github.com/0xtlt/local-storefront/issues/81
+    let fixture = fixture();
+    let render =
+        |path: &str, source: &str| fixture.liquid(path, Session::initial(&fixture.store), source);
+    let probe = "{% paginate collection.products by 1 %}next: {{ paginate.next.url }}\n\
+                 previous: {{ paginate.previous.url }}{% endpaginate %}";
+
+    assert_eq!(
+        render("/collections/all?section_id=probe", probe),
+        "next: /collections/all?page=2\nprevious: "
+    );
+    assert_eq!(
+        render("/collections/all?sections=probe&page=2", probe),
+        "next: /collections/all?page=3\nprevious: /collections/all?page=1"
+    );
+    assert_eq!(
+        render(
+            "/collections/all?section_id=probe&page=2&sort_by=title-ascending",
+            "{% paginate collection.products by 1 %}{{ paginate.previous.url }} \
+             {{ paginate.parts.first.url }} {{ paginate | default_pagination }}{% endpaginate %}"
+        )
+        .split("</span>")
+        .next()
+        .unwrap(),
+        "/collections/all?page=1&sort_by=title-ascending \
+         /collections/all?page=1&sort_by=title-ascending \
+         <span class=\"prev\"><a href=\"/collections/all?page=1&amp;sort_by=title-ascending\" \
+         title=\"\">&laquo; Previous</a>"
+    );
+    assert_eq!(
+        render(
+            "/search?q=a&section_id=probe&page=2",
+            "{% paginate search.results by 1 %}{{ paginate.next.url }}{% endpaginate %}"
+        ),
+        "/search?page=3&q=a"
+    );
+
+    // A filter value's URLs, without the page either.
+    let filters = "{% for v in collection.filters.first.values %}{{ v.url_to_add }} \
+                   {{ v.url_to_remove }}\n{% endfor %}{{ collection.filters.first.url_to_remove }}";
+    assert_eq!(
+        render(
+            "/collections/all?section_id=filters&sort_by=price-descending&page=2",
+            filters
+        ),
+        "/collections/all?filter.v.availability=1&sort_by=price-descending \
+         /collections/all?sort_by=price-descending\n\
+         /collections/all?filter.v.availability=0&sort_by=price-descending \
+         /collections/all?sort_by=price-descending\n\
+         /collections/all?sort_by=price-descending"
+    );
+    // The price range's, with every other parameter sorted by name.
+    assert_eq!(
+        render(
+            "/collections/all?sections=filters&sort_by=title-ascending&filter.v.price.gte=10\
+             &filter.v.availability=1",
+            "{% for f in collection.filters %}{% if f.type == 'price_range' %}\
+             {{ f.url_to_remove }}{% endif %}{% endfor %}"
+        ),
+        "/collections/all?filter.v.availability=1&sort_by=title-ascending"
+    );
+}
+
+#[test]
 fn search_results_follow_sort_by() {
     // `sort_by` takes `relevance`, `price-ascending` or `price-descending`. Under a price sort the
     // non-product results (pages, articles) go to the end of the results, and `paginate` slices

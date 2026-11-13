@@ -1,6 +1,5 @@
 //! `{% paginate collection.products by 12 %}`.
 
-use lsf_core::urls::encode_component;
 use lsf_liquid::lexer::{MarkupParser, TokenKind};
 use lsf_liquid::number::to_integer;
 use lsf_liquid::strict2::{self, Issue, Style};
@@ -20,16 +19,14 @@ struct Paginate {
     body: BlockBody,
 }
 
-/// The URL of another page of the current listing: the current URL with `page` replaced.
+/// The URL of another page of the current listing: the page's URL with `page` replaced, first,
+/// and without the parameters of a section rendered alone, as Shopify writes it
+/// (`/collections/all?page=2&sort_by=price-ascending`).
 pub fn paginate_url(request: &Request, page: usize) -> String {
-    let mut pairs: Vec<String> = request
-        .query
-        .iter()
-        .filter(|(key, _)| key != "page")
-        .map(|(key, value)| format!("{}={}", encode_component(key), encode_component(value)))
-        .collect();
-    pairs.push(format!("page={page}"));
-    format!("{}?{}", request.localized(&request.path), pairs.join("&"))
+    request.page_url(
+        Some(page),
+        request.page_query().filter(|(key, _)| *key != "page"),
+    )
 }
 
 fn part(title: Value, url: Option<String>) -> Value {

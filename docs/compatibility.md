@@ -199,6 +199,11 @@ locations, companies, company locations and company addresses.
   changed) and scroll; scripts inside a region do not run again.
 - Both tags are a developer preview on Shopify ("Liquid July '26"), on development stores that
   turn it on, and may still change.
+- The URLs Liquid builds from the request (`paginate.previous.url`, `paginate.next.url`,
+  `paginate.parts[].url`, `default_pagination`, a filter's and a filter value's `url_to_add` and
+  `url_to_remove`) lead to the page, also in a section rendered alone: `section_id` and
+  `sections` are left out, and the parameters are written as Shopify writes them, `page` first,
+  the others sorted by name (`/collections/all?page=2&sort_by=price-ascending`).
 - Settings resolved to the objects Liquid expects: `image_picker`, `video`, `video_url`,
   `product`, `collection`, `page`, `blog`, `article`, `metaobject`, `product_list`,
   `collection_list`, `metaobject_list`, `link_list`, `color`, `color_palette`, `color_scheme`, `color_scheme_group`, `font_picker`,

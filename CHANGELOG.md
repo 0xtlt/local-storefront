@@ -25,6 +25,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   other lists that are not references stay arrays.
 - **`localization.market` and `country.market` are no longer `primary` with id `1`.** They are
   the market of the country, so theme tests that expect `primary` need the market's handle.
+- **`paginate` and filter URLs put `page` first and sort the other parameters by name**, as
+  Shopify does: `/collections/all?page=2&sort_by=price-ascending`, no longer
+  `?sort_by=price-ascending&page=2`. Theme tests that compare these URLs as text need the new
+  order.
 
 ### Fixed
 
@@ -86,6 +90,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `| money_with_currency`, `.value` (cents), `.value.currency`, `metafield_tag` and
   `metafield_text` give `€7,20 EUR` for 8.00 USD at `0.9`, as on Shopify. One written in another
   currency keeps it.
+- **A section rendered alone links to the page, not to itself.** With `?section_id=` or
+  `?sections=`, `paginate.next.url`, `paginate.previous.url`, `paginate.parts[].url`,
+  `default_pagination` and the `url_to_add` and `url_to_remove` of filters leave those
+  parameters out, as Shopify does: infinite scroll, Ajax pagination and Ajax filters fetch the
+  next page, not a bare section, and a script that adds its own `section_id` no longer sends two.
 
 #### The checkout of an app
 

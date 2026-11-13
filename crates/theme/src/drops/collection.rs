@@ -4,7 +4,6 @@ use std::any::Any;
 use std::collections::BTreeMap;
 
 use lsf_core::store::{Collection, Product, SortOrder, Swatch};
-use lsf_core::urls::encode_component;
 use lsf_core::util::handleize;
 use lsf_liquid::{Object, Value};
 use serde_json::{Value as Json, json};
@@ -266,42 +265,26 @@ impl CollectionDrop {
         } else {
             Vec::new()
         };
-        let page = site.request.localized(&site.request.path);
-        // The query without a given filter parameter (or one of its values), keeping the rest.
+        let request = &site.request;
+        // The page's URL without a given filter parameter (or one of its values), keeping the
+        // rest but the page, as Shopify writes it (`Request::page_url`).
         let query_without = |name: &str, value: Option<&str>| -> String {
-            let pairs: Vec<String> = site
-                .request
-                .query
-                .iter()
-                .filter(|(key, existing)| {
-                    key != "page" && !(key == name && value.is_none_or(|value| value == existing))
-                })
-                .map(|(key, value)| {
-                    format!("{}={}", encode_component(key), encode_component(value))
-                })
-                .collect();
-            if pairs.is_empty() {
-                page.clone()
-            } else {
-                format!("{page}?{}", pairs.join("&"))
-            }
+            request.page_url(
+                None,
+                request.page_query().filter(|(key, existing)| {
+                    *key != "page"
+                        && !(*key == name && value.is_none_or(|value| value == *existing))
+                }),
+            )
         };
         let query_with = |name: &str, value: &str| -> String {
-            let mut pairs: Vec<String> = site
-                .request
-                .query
-                .iter()
-                .filter(|(key, _)| key != "page")
-                .map(|(key, value)| {
-                    format!("{}={}", encode_component(key), encode_component(value))
-                })
-                .collect();
-            pairs.push(format!(
-                "{}={}",
-                encode_component(name),
-                encode_component(value)
-            ));
-            format!("{page}?{}", pairs.join("&"))
+            request.page_url(
+                None,
+                request
+                    .page_query()
+                    .filter(|(key, _)| *key != "page")
+                    .chain([(name, value)]),
+            )
         };
         // Counts are computed with every other filter applied, as Shopify's facets are.
         let count_with =
@@ -411,22 +394,14 @@ impl CollectionDrop {
             ("inactive_values", Value::array(Vec::new())),
             (
                 "url_to_remove",
-                Value::from({
-                    let pairs: Vec<String> = site
-                        .request
-                        .query
-                        .iter()
-                        .filter(|(key, _)| key != "page" && !key.starts_with("filter.v.price."))
-                        .map(|(key, value)| {
-                            format!("{}={}", encode_component(key), encode_component(value))
-                        })
-                        .collect();
-                    if pairs.is_empty() {
-                        page.clone()
-                    } else {
-                        format!("{page}?{}", pairs.join("&"))
-                    }
-                }),
+                Value::from(
+                    request.page_url(
+                        None,
+                        request.page_query().filter(|(key, _)| {
+                            *key != "page" && !key.starts_with("filter.v.price.")
+                        }),
+                    ),
+                ),
             ),
         ]));
 
