@@ -177,6 +177,9 @@ locations, companies, company locations and company addresses.
   A `metaobject` setting holds the entry's handle, `<type>.<handle>`, `<type>/<handle>` or
   `gid://shopify/Metaobject/<id>`. Dynamic sources are evaluated (`{{ product.title }}`,
   `{{ closest.product.metafields.custom.x }}`).
+  A `color_scheme` setting, of a section, a block or the theme, gives the scheme's colors under
+  `settings` (`section.settings.scheme.settings.background`), and `settings.color_schemes` gives
+  its schemes in a `for` loop and one of them by id (`settings.color_schemes['scheme-1']`).
 - Locales: storefront translations and schema translations, pluralization rules by language,
   the fallback to the default locale, Shopify's built-in translations. The translated content
   of metaobjects, from the store data, on the routes of their language

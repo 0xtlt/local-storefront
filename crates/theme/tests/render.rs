@@ -2789,3 +2789,72 @@ fn a_block_rendered_again_gets_a_numbered_id() {
         [(card.as_str(), 3), (price.as_str(), 3), (intro.as_str(), 2)]
     );
 }
+
+#[test]
+fn a_color_scheme_gives_its_colors_through_the_setting_and_by_id() {
+    let fixture = theme_of(
+        "color-scheme-settings",
+        &[],
+        &[
+            (
+                "config/settings_schema.json",
+                r##"[
+                  { "name": "theme_info" },
+                  { "name": "Colors", "settings": [
+                    { "type": "color_scheme", "id": "scheme", "label": "Scheme", "default": "scheme-1" },
+                    { "type": "color_scheme_group", "id": "color_schemes",
+                      "definition": [
+                        { "type": "color", "id": "background", "label": "Background", "default": "#FFFFFF" },
+                        { "type": "color", "id": "text", "label": "Text", "default": "#121212" }
+                      ],
+                      "role": { "text": "text", "background": { "solid": "background", "gradient": "background" } } }
+                  ] }
+                ]"##,
+            ),
+            (
+                "config/settings_data.json",
+                r##"{ "current": {
+                  "scheme": "scheme-2",
+                  "color_schemes": {
+                    "scheme-1": { "settings": { "background": "#FFFFFF", "text": "#121212" } },
+                    "scheme-2": { "settings": { "background": "#334FB4", "text": "#FFFFFF" } }
+                  }
+                } }"##,
+            ),
+            ("layout/theme.liquid", "{{ content_for_layout }}"),
+            (
+                "templates/index.liquid",
+                "id=[{{ settings.scheme.id }}]\n\
+                 background=[{{ settings.scheme.settings.background }}]\n\
+                 text-rgb=[{{ settings.scheme.settings.text.rgb }}]\n\
+                 by-key=[{{ settings.color_schemes['scheme-1'].settings.text }}]\n\
+                 by-name=[{{ settings.color_schemes.scheme-2.id }}]\n\
+                 count=[{{ settings.color_schemes.size }} {{ settings.color_schemes.first.id }} {{ settings.color_schemes[1].id }}]\n\
+                 loop=[{% for s in settings.color_schemes %}{{ s.id }}:{{ s.settings.background }};{% endfor %}]\n\
+                 {% section 'scheme' %}",
+            ),
+            (
+                "sections/scheme.liquid",
+                "section=[{{ section.settings.scheme }} {{ section.settings.scheme.settings.text }}]\
+                 {% schema %}{\"name\": \"Scheme\", \"settings\": [{\"type\": \"color_scheme\", \
+                 \"id\": \"scheme\", \"label\": \"Scheme\", \"default\": \"scheme-1\"}]}{% endschema %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    let body = rendered.body.split("<script").next().unwrap();
+    assert!(
+        body.starts_with(
+            "id=[scheme-2]\n\
+             background=[#334fb4]\n\
+             text-rgb=[255 255 255]\n\
+             by-key=[#121212]\n\
+             by-name=[scheme-2]\n\
+             count=[2 scheme-1 scheme-2]\n\
+             loop=[scheme-1:#ffffff;scheme-2:#334fb4;]\n"
+        ),
+        "{body}"
+    );
+    assert!(body.contains("section=[scheme-1 #121212]"), "{body}");
+}
