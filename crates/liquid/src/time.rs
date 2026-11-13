@@ -98,9 +98,9 @@ pub fn to_time(input: &Value, ctx: &Context) -> Option<DateTime<Tz>> {
     match input {
         Value::Object(object) => match input.downcast::<Time>() {
             Some(time) => Some(time.0.with_timezone(&tz)),
-            // A drop that stands for a time, as a `date` metafield does.
+            // A drop that stands for a time or for the text of one, as a `date` metafield does.
             None => match object.to_value() {
-                Some(time @ Value::Object(_)) => to_time(&time, ctx),
+                Some(time @ (Value::Object(_) | Value::Str(_))) => to_time(&time, ctx),
                 _ => None,
             },
         },

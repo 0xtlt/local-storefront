@@ -133,6 +133,7 @@ videos, external videos, 3D models), image presentation and focal points, collec
 `/cart/change.js`; `/cart.js` has no such field), comments, metafields of every type (a
 value written as the Admin API returns it is read as its type (`"true"` is `true`), the
 deprecated `string`, `integer` and `json_string` give their value directly, a
+`date` or a `date_time` is the string it is stored as, a
 `color` is a color, a measurement has `type`, `value` and `unit`, a `money` prints as cents,
 has the `currency` it is written in, and the money filters and `metafield_text` format it in
 that currency; in a market with another currency, a `money` in the shop's currency is
