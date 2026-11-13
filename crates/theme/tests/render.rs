@@ -630,6 +630,37 @@ fn image_tag_lists_the_width_of_image_url_and_is_the_size_it_asks_for() {
 }
 
 #[test]
+fn a_preloaded_image_tag_loads_eagerly() {
+    // Issue #119: on Shopify, `image_tag: preload: true` writes `loading="eager"`, even over
+    // `loading: 'lazy'`; Dawn 15's logo (`preload: true`, no `loading`) renders so on Shopify's
+    // demo store. `loading` comes right after `width` and `height`, whatever the order of the
+    // arguments, as in https://shopify.dev/docs/api/liquid/filters/image_tag.
+    let fixture = fixture();
+    let tag = |arguments: &str| {
+        let output = fixture.liquid(
+            "/products/organic-cotton-t-shirt",
+            Session::initial(&fixture.store),
+            &format!(
+                "{{{{ product.featured_image | image_url: width: 400 | image_tag: {arguments} }}}}"
+            ),
+        );
+        // What follows the size: `loading` and the attributes after it.
+        output
+            .split_once(" height=")
+            .and_then(|(_, rest)| rest.split_once(' ').map(|(_, rest)| rest.to_string()))
+            .unwrap_or_default()
+    };
+    assert_eq!(tag("preload: true"), "loading=\"eager\">");
+    assert_eq!(tag("preload: true, loading: 'lazy'"), "loading=\"eager\">");
+    assert_eq!(
+        tag("class: 'card', loading: 'lazy'"),
+        "loading=\"lazy\" class=\"card\">"
+    );
+    assert_eq!(tag("preload: false, class: 'card'"), "class=\"card\">");
+    assert_eq!(tag("loading: nil, class: 'card'"), "class=\"card\">");
+}
+
+#[test]
 fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
     let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
     assert!(diagnostics.is_empty(), "{diagnostics}");

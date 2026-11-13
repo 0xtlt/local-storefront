@@ -329,10 +329,33 @@ fn image_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
         }
     }
 
+    // `loading` comes right after the size, whatever the order of the arguments, as on
+    // Shopify. A preloaded image is loaded at once, whatever `loading` says; without one,
+    // images in sections further down the page are lazy-loaded.
+    let preload = args.named("preload").is_some_and(Value::is_truthy);
+    let loading = if preload {
+        Some(Cow::Borrowed("eager"))
+    } else {
+        match args.named("loading") {
+            Some(loading) if !loading.is_nil() => Some(loading.to_str()),
+            Some(_) => None,
+            None => {
+                let below_the_fold = matches!(
+                    ctx.find_variable("section").get("index"),
+                    Value::Int(index) if index > 3
+                );
+                below_the_fold.then_some(Cow::Borrowed("lazy"))
+            }
+        }
+    };
+    if let Some(loading) = loading {
+        html.push_str(&format!(" loading=\"{}\"", escape_html(&loading)));
+    }
+
     html.push_str(&html_attributes(
         &args.named,
         &[
-            "width", "height", "alt", "srcset", "widths", "preload", "style",
+            "width", "height", "alt", "srcset", "widths", "preload", "style", "loading",
         ],
     ));
 
@@ -347,7 +370,6 @@ fn image_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
         html.push_str(&format!(" style=\"{}\"", escape_html(&style)));
     }
 
-    let preload = args.named("preload").is_some_and(Value::is_truthy);
     if preload {
         // The browser preloads the size it is going to show.
         let sizes = args.named("sizes").map(|sizes| sizes.to_str().into_owned());
@@ -359,13 +381,6 @@ fn image_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
             parameters.push(("imagesizes", Some(sizes.as_str())));
         }
         RenderState::of(ctx)?.add_preload(&url.url, &parameters);
-    } else if args.named("loading").is_none() {
-        // Images in sections further down the page are lazy-loaded by default.
-        let below_the_fold =
-            matches!(ctx.find_variable("section").get("index"), Value::Int(index) if index > 3);
-        if below_the_fold {
-            html.push_str(" loading=\"lazy\"");
-        }
     }
     html.push('>');
     Ok(Value::from(html))

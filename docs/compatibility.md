@@ -354,8 +354,9 @@ of a second for a product image as AVIF. It is then kept in memory until the fil
 ## Preloading
 
 `stylesheet_tag: preload: true`, `image_tag: preload: true` and `preload_tag` ask the
-browser to load a file before it finds it in the page. As on Shopify, the tag itself does
-not change: the page is answered with one `Link` header, written as Shopify writes it.
+browser to load a file before it finds it in the page. As on Shopify, the page is answered
+with one `Link` header, written as Shopify writes it, and the tag itself does not change, except
+that `image_tag` writes `loading="eager"`, whatever its `loading` argument.
 
 ```
 Link: <//shop/cdn/shop/t/1/assets/base.css?v=1>; as="style"; rel="preload", <//shop/cdn/shop/files/hero.jpg?v=1&width=1600>; as="image"; rel="preload"; imagesrcset="//shop/cdn/shop/files/hero.jpg?v=1&width=800 800w, ..."; imagesizes="100vw"
