@@ -173,6 +173,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's
   currency at `1.0`. An `expect` on totals now reads the amounts the page shows. Expectations
   written in the shop's currency for such a scenario need the market's amounts.
+- **`image_tag` builds the `srcset`, `width` and `height` Shopify builds.** The width given to
+  `image_url` is the last entry of the default `srcset` (`width: 400` gives `352w, 400w`, where
+  lsf gave `352w`); the entries of `widths:` above that width are dropped; no entry left, no
+  `srcset`. `width` and `height` are the size `image_url` asks for, even beyond the file's:
+  `width: 3000` on a 1600 px wide image gives `width="3000"`, where lsf gave `1600`.
 
 #### The command line
 
