@@ -75,6 +75,41 @@ impl Request {
         }
     }
 
+    /// The parameters of the request that the URLs Liquid builds from it keep: all but those
+    /// that render a section alone (`section_id`, `sections`), since those URLs lead to the page.
+    pub fn page_query(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.query
+            .iter()
+            .filter(|(key, _)| !matches!(key.as_str(), "section_id" | "sections" | "sections[]"))
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+    }
+
+    /// A URL of the current page with these parameters, written as Shopify writes those of
+    /// `paginate` and of filters: `page` first when there is one, then the others sorted by
+    /// name, each name's values in their order (`/collections/all?page=2&sort_by=price-ascending`).
+    pub fn page_url<'a>(
+        &self,
+        page: Option<usize>,
+        params: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> String {
+        use lsf_core::urls::encode_component;
+        let mut params: Vec<(&str, &str)> = params.into_iter().collect();
+        params.sort_by_key(|(key, _)| *key);
+        let pairs: Vec<String> = page
+            .map(|page| format!("page={page}"))
+            .into_iter()
+            .chain(params.iter().map(|(key, value)| {
+                format!("{}={}", encode_component(key), encode_component(value))
+            }))
+            .collect();
+        let path = self.localized(&self.path);
+        if pairs.is_empty() {
+            path
+        } else {
+            format!("{path}?{}", pairs.join("&"))
+        }
+    }
+
     /// The path and query as requested, e.g. `/fr/search?q=mug`.
     pub fn path_with_query(&self) -> String {
         let path = self.localized(&self.path);
