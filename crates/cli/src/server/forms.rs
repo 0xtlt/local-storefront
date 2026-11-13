@@ -173,9 +173,29 @@ fn own_path(return_to: &str) -> String {
     }
 }
 
+/// `POST /localization`: switches the visitor's country and language, and redirects to the
+/// page on the web presence of the country. The country picked goes in the `localization`
+/// cookie, as Shopify keeps it ("Used to localize the cart to the correct country").
 pub fn localization(visit: &Visit<'_>) -> Reply {
     let params = visit.incoming.all_params();
-    let text = |key: &str| super::params::text(&params, key).filter(|value| !value.is_empty());
+    let picked = super::params::text(&params, "country_code")
+        .and_then(|code| visit.store.country(&code))
+        .map(|country| country.iso_code.to_uppercase());
+    let reply = localization_redirect(visit, &params);
+    match picked {
+        Some(code) => reply.header(
+            "set-cookie",
+            format!(
+                "{}={code}; Path=/; SameSite=Lax",
+                super::LOCALIZATION_COOKIE
+            ),
+        ),
+        None => reply,
+    }
+}
+
+fn localization_redirect(visit: &Visit<'_>, params: &Json) -> Reply {
+    let text = |key: &str| super::params::text(params, key).filter(|value| !value.is_empty());
     if let Some(country) = text("country_code")
         && visit.store.country(&country).is_some()
     {

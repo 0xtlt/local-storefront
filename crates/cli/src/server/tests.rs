@@ -1058,6 +1058,88 @@ fn the_localization_form_stays_on_the_storefronts_host() {
 }
 
 #[test]
+fn a_country_switch_sets_the_localization_and_cart_currency_cookies() {
+    // Shopify: `POST /localization` with `country_code=BE` and `return_to=/cart` answers a `302`
+    // to `/en-be/cart` and sets the `localization` cookie; pages and Ajax answers set
+    // `cart_currency`, the currency of the cart they show.
+    let state = server();
+    let session = "cookies";
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"localization": {
+            "countries": [{"iso_code": "CA"}, {"iso_code": "BE"}],
+            "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+            "markets": [{"handle": "belgium", "countries": ["BE"], "currency": "EUR", "rate": "0.9", "subfolder_suffix": "be"}]
+        }}}),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let named = |reply: &Reply, name: &str| {
+        cookies(reply)
+            .into_iter()
+            .find(|cookie| cookie.starts_with(&format!("{name}=")))
+    };
+    // Browsing without a cart sets no `cart_currency`.
+    assert_eq!(
+        named(&get(&state, "/en-be", session), "cart_currency"),
+        None
+    );
+    let added = post(
+        &state,
+        "/cart/add.js",
+        json!({"id": variant_id(&state, "TOTE-NAT")}),
+        session,
+    );
+    let shop = body_json(&get(&state, "/cart.js", session))["currency"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        named(&added, "cart_currency"),
+        Some(format!("cart_currency={shop}; Path=/; SameSite=Lax"))
+    );
+
+    let switched = post(
+        &state,
+        "/localization",
+        json!({"country_code": "BE", "return_to": "/cart"}),
+        session,
+    );
+    assert_eq!(switched.status, 302);
+    assert_eq!(header(&switched, "location"), Some("/en-be/cart"));
+    assert_eq!(
+        named(&switched, "localization").as_deref(),
+        Some("localization=BE; Path=/; SameSite=Lax")
+    );
+    // The redirect leaves `cart_currency` to the page it leads to.
+    assert_eq!(named(&switched, "cart_currency"), None);
+    let page = get(&state, "/en-be/cart", session);
+    assert_eq!(page.status, 200);
+    assert_eq!(
+        named(&page, "cart_currency").as_deref(),
+        Some("cart_currency=EUR; Path=/; SameSite=Lax")
+    );
+    let cart = get(&state, "/en-be/cart.js", session);
+    assert_eq!(body_json(&cart)["currency"], "EUR");
+    assert_eq!(body_json(&cart)["item_count"], 1);
+    assert_ne!(shop, "EUR");
+    assert_eq!(
+        named(&cart, "cart_currency").as_deref(),
+        Some("cart_currency=EUR; Path=/; SameSite=Lax")
+    );
+
+    // A country the store does not sell to sets no cookie.
+    let unknown = post(
+        &state,
+        "/localization",
+        json!({"country_code": "JP", "return_to": "/en-be/cart"}),
+        session,
+    );
+    assert_eq!(named(&unknown, "localization"), None);
+}
+
+#[test]
 fn a_market_subfolder_serves_the_languages_of_its_market() {
     let state = server();
     let session = "subfolder-languages";
@@ -1323,18 +1405,20 @@ fn the_cart_cookie_appears_with_the_cart() {
         .expect("the cart cookie");
     assert!(cart.ends_with("; Path=/; SameSite=Lax"), "{cart}");
     // The cookie holds the token `/cart.js` reports, and scripts must be able to read it.
-    let token = body_json(&get(&state, "/cart.js", "cookie"))["token"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let shown = body_json(&get(&state, "/cart.js", "cookie"));
+    let token = shown["token"].as_str().unwrap().to_string();
     assert_eq!(cart, format!("cart={token}; Path=/; SameSite=Lax"));
     assert!(!cart.contains("HttpOnly"));
 
-    // A browser that already has it is not sent it again.
+    // A browser that already has it is not sent it again, nor `cart_currency`.
     let mut again = request("GET", "/cart.js", json!({}), "cookie");
-    again
-        .headers
-        .insert("cookie".to_string(), format!("cart={token}"));
+    again.headers.insert(
+        "cookie".to_string(),
+        format!(
+            "cart={token}; cart_currency={}",
+            shown["currency"].as_str().unwrap()
+        ),
+    );
     assert!(cookies(&state.dispatch(&again)).is_empty());
 
     // Two visitors have two carts.

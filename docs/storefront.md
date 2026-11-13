@@ -129,6 +129,12 @@ and `PUT /__lsf/session`:
   filters and the checkout are in the country's currency, at its market's rate or fixed prices
   (see [localization](data-format.md#localization)), and `Shopify.currency` gives the currency
   and the rate (`{"active":"EUR","rate":"0.92"}`).
+- **Cookies, as Shopify sets them**: the localization form puts the country picked in the
+  `localization` cookie (`localization=BE`), and every page and Ajax answer of a visitor who has
+  a cart puts the currency of that answer in `cart_currency` (`cart_currency=EUR` under
+  `/en-be/`), for scripts that read them. The currency of a page still comes from its URL: a
+  script that fetches `/cart.js` rather than `Shopify.routes.root + 'cart.js'` gets the cart of
+  `/`, as Shopify's docs warn that a hard-coded `/cart` is answered in the domain's defaults.
 
 ## Theme app extensions
 
