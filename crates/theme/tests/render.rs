@@ -340,6 +340,81 @@ fn search_results_follow_sort_by() {
 }
 
 #[test]
+fn storefront_filters_narrow_search_results() {
+    // "Storefront filtering ... allows merchants to easily create filters for filtering
+    // collection and search results pages", and "If you apply filters on the search results
+    // page, then all non-product results are filtered out."
+    // https://shopify.dev/docs/storefronts/themes/navigation-search/filtering/storefront-filtering
+    // https://github.com/0xtlt/local-storefront/issues/158
+    let fixture = fixture();
+    let render =
+        |path: &str, source: &str| fixture.liquid(path, Session::initial(&fixture.store), source);
+    let filters = |object: &str| {
+        format!(
+            "{{% for f in {object}.filters %}}{{{{ f.param_name }}}}|{{{{ f.type }}}}|\
+             {{{{ f.range_max }}}}|{{% for v in f.values %}}{{{{ v.value }}}}({{{{ v.count }}}}\
+             {{% if v.active %}}, active{{% endif %}}){{% endfor %}}; {{% endfor %}}"
+        )
+    };
+    // `q=a` finds the 8 products of `/collections/all`: the search has the same filters.
+    let all = "{{ search.results_count }}";
+    assert_eq!(render("/search?q=a&type=product", all), "8");
+    for query in [
+        "",
+        "&filter.v.availability=1",
+        "&filter.v.availability=0",
+        "&filter.v.price.lte=25",
+        "&filter.v.price.gte=25&filter.v.availability=1",
+    ] {
+        let collection = render(
+            &format!("/collections/all?x=1{query}"),
+            &format!(
+                "{}#{{{{ collection.products_count }}}}",
+                filters("collection")
+            ),
+        );
+        let search = render(
+            &format!("/search?q=a&type=product{query}"),
+            &format!("{}#{{{{ search.results_count }}}}", filters("search")),
+        );
+        assert!(
+            collection.starts_with("filter.v.availability|list|"),
+            "{collection}"
+        );
+        assert_eq!(search, collection, "{query}");
+    }
+    assert_eq!(
+        render("/search?q=a&type=product&filter.v.availability=0", all),
+        "2"
+    );
+
+    // A filter leaves out the pages, which have no availability nor price.
+    let kinds = "{% for r in search.results %}{{ r.object_type }} {% endfor %}";
+    assert!(render("/search?q=a&type=page,product", kinds).contains("page "));
+    let filtered = render(
+        "/search?q=a&type=page,product&filter.v.availability=1",
+        kinds,
+    );
+    assert!(!filtered.contains("page"), "{filtered}");
+    assert_eq!(filtered.matches("product ").count(), 7, "{filtered}");
+    // A filter's links stay on the search page, with its query.
+    assert_eq!(
+        render(
+            "/search?q=a&type=product&filter.v.availability=1",
+            "{{ search.filters[0].values[0].url_to_remove }} {{ search.filters[0].values[1].url_to_add }}"
+        ),
+        "/search?q=a&type=product \
+         /search?filter.v.availability=1&filter.v.availability=0&q=a&type=product"
+    );
+
+    // Without products found, there is nothing to filter.
+    let names = "{% for f in search.filters %}{{ f.param_name }} {% endfor %}";
+    assert_eq!(render("/search?q=zzzz", names), "");
+    assert_eq!(render("/search?q=a&type=page", names), "");
+    assert_eq!(render("/search", names), "");
+}
+
+#[test]
 fn handleize_follows_a_shopify_store() {
     // The issue's probe, with what a development store rendered (2026-11-12):
     // https://github.com/0xtlt/local-storefront/issues/85
