@@ -3,6 +3,26 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## 0.3.0-rc.5 - 2026-11-13
+
+Fifth release candidate of 0.3.0. The errors of `/cart/change.js` read as a store's.
+
+### Breaking changes
+
+What to change when you upgrade from 0.3.0-rc.4.
+
+- **The `message` of a `/cart/change.js` error is its `description`**, no longer `Cart Error`.
+  Theme tests that expect `Cart Error` from `change.js` need the description instead. `add.js`
+  and `update.js` keep `Cart Error`.
+
+### Fixed
+
+#### Themes and the storefront
+
+- **`/cart/change.js` capped at the stock counts what the line holds.** A line of 1 asked for 5
+  with 2 in stock answers "Only 2 items were added to your cart due to availability.", as a
+  store does, no longer "Only 1 item". `add.js` still counts the units it added.
+
 ## 0.3.0-rc.4 - 2026-11-12
 
 Fourth release candidate of 0.3.0. It fixes the code discounts of 0.3.0-rc.3: their uses, their
