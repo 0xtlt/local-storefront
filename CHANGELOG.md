@@ -307,6 +307,14 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `Belgien`, `Schweiz`), where lsf gave the English names on every page. The names are those
   of Shopify's address data (Shopify/worldwide, from the Unicode CLDR) in the 38 languages lsf
   names. A country with a `name` in the store data keeps it.
+- **Contextual templates and section groups apply to their market and to B2B buyers.** A
+  `templates/index.context.europe.json` or `sections/header-group.context.europe.json` with
+  `"context": {"market": "europe"}` and its `"parent"` now adapts the page on the market's
+  subfolders (`/en-be/`, `/fr-be/`), where lsf always rendered the parent: its settings,
+  `disabled`, added sections and blocks and its `order` go on the parent, as Shopify applies
+  them. `/` and the other markets keep the parent. `"context": {"b2b": true}` applies to a
+  customer who buys for a company (`customer.b2b?`). The Section Rendering API renders the same
+  sections as the page.
 
 #### The checkout of an app
 
@@ -323,6 +331,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   at most 50, and for a `for` loop over `collection.products` with a `limit` below 50 outside
   `paginate`, that many, as Shopify's performance guide describes. A small paginated block on a
   large collection is no longer the costliest row of a page, and a `limit: 8` costs 8 products.
+- **`lsf check` warns about a contextual file that applies nowhere**: one without a `parent`, or
+  whose `parent` is not the file its name adapts (`contextual_parent`), or whose `context` is not
+  a market or `b2b` (`contextual_context`).
 
 ## 0.3.0-rc.5 - 2026-11-13
 

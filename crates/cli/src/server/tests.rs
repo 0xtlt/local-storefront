@@ -13,6 +13,7 @@ use super::{Incoming, SESSION_HEADER, ServeOptions, ServerState};
 use crate::app::App;
 
 mod app_blocks;
+mod contextual;
 mod dev_pages;
 mod edited_assets;
 mod parts;

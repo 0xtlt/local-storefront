@@ -171,6 +171,18 @@ data, in the 38 languages lsf names; a page in another language has the English 
 
 - JSON templates and Liquid templates, alternate templates (`?view=`, `template_suffix`),
   layouts (`{% layout %}`, `"layout"` in JSON templates, `layout none`).
+- Contextual templates and section groups (`templates/index.context.<context>.json`,
+  `sections/header-group.context.<context>.json`), as the theme editor writes them when a
+  merchant adapts a page for a market or for B2B: a file whose `parent` is the template or the
+  group, with `"context": {"market": "<handle>"}`, applies to the visitors of that market (the
+  handle of `localization.market`: on its subfolders, `/en-be/` and `/fr-be/`), and one with
+  `"context": {"b2b": true}` to a customer who buys for a company (`customer.b2b?`); everyone
+  else gets the parent. Its overrides go on the parent one by one: a section's or a block's
+  settings, `disabled`, a section or a block it adds with its `type`, and `order` or
+  `block_order`, which replace the parent's. A section or a block the parent no longer has
+  stays out. When a market's file and a B2B one both apply, the B2B one's overrides win: lsf's
+  choice, Shopify's documentation does not say. A contextual file is not a template of its
+  own: `?view=context.europe` does not name it.
 - Theme JSON read as Shopify reads it: JSON templates, section groups, locales,
   `config/settings_schema.json`, `config/settings_data.json` and `{% schema %}` may have
   comments, trailing commas and unknown escapes (`\“` is `“`). A file that starts with a UTF-8

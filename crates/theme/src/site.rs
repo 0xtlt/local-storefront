@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use lsf_core::session::Session;
 use lsf_core::store::Store;
 
-use crate::theme::{Theme, Translations};
+use crate::theme::{BuyerContext, TemplateJson, Theme, Translations};
 
 /// The request being rendered.
 #[derive(Clone, Debug)]
@@ -249,6 +249,27 @@ impl Site {
             .market
             .as_deref()
             .and_then(|handle| self.store.market_named(handle))
+    }
+
+    /// Who the page is for, which picks the contextual templates and section groups: the
+    /// visitor's market (`localization.market`, the market of their country: the market of
+    /// the subfolders the page is under, `/en-be/`) and whether they buy for a company
+    /// (`customer.b2b?`).
+    pub fn buyer_context(&self) -> BuyerContext {
+        BuyerContext {
+            market: Some(self.store.market_for(&self.country().iso_code).handle),
+            b2b: self.customer().is_some_and(|customer| {
+                customer
+                    .current_location(self.session.company_location, &self.store)
+                    .is_some()
+            }),
+        }
+    }
+
+    /// A JSON template or a section group of the theme as the visitor sees it: with the
+    /// overrides of its contextual files for their market or for B2B buyers.
+    pub fn template_json(&self, path: &str) -> lsf_core::Result<Option<TemplateJson>> {
+        self.theme.template_json_for(path, &self.buyer_context())
     }
 
     /// The prefix of a language's URLs on the web presence of the page: `/fr`, or `/fr-ca`
