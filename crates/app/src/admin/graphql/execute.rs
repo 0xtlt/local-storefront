@@ -376,12 +376,12 @@ impl<'c, 'a> Executor<'c, 'a> {
                     self.complete(resolver, parent, def, nodes, item, item_output, shape);
                 self.path.pop();
                 let (value, item_cost) = completed?;
-                cost = if shape.sum_items {
-                    cost + item_cost
-                } else {
-                    cost.max(item_cost)
-                };
+                cost = cost.max(item_cost);
                 values.push(value);
+            }
+            // The nodes of a connection: the costliest one, times the factor of how many came.
+            if shape.sum_items {
+                cost = cost.saturating_mul(cost::connection_factor(values.len() as u64));
             }
             return Ok((Value::Array(values), cost));
         }

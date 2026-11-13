@@ -296,12 +296,14 @@ async function runChecks({ lsf, appUrl, token, lsfLog }) {
   await check("errors", "errors: MAX_COST_EXCEEDED and THROTTLED", async () => {
     const shop = await newShop("throttle");
     const client = createAdminApiClient({ storeDomain: shop.shop, apiVersion: "2026-10", accessToken: shop.token, customFetchApi: lsfFetch(lsf) });
-    const tooBig = await client.request(`query { products(first: 250) { nodes { variants(first: 3) { nodes { id } } } } }`);
+    const tooBig = await client.request(`query { products(first: 250) { nodes { variants(first: 250) { nodes { metafields(first: 250) { nodes { id } } } } } } }`);
     const maxCost = tooBig.errors?.graphQLErrors?.[0]?.extensions?.code;
     assert(maxCost === "MAX_COST_EXCEEDED", "not MAX_COST_EXCEEDED", tooBig.errors);
-    // A query that asks for 998 points and costs what the demo store returns: the bucket takes
-    // the requested cost, then gives back the rest. It runs out once less than 998 is left.
-    const heavy = `query { products(first: 166) { nodes { variants(first: 3) { nodes { id } } } } }`;
+    // A query that asks for 998 points (6 × 156 + 62: a connection costs 2 plus a node times
+    // floor(2 ln first)) and costs what the demo store returns: the bucket takes the requested
+    // cost, then gives back the rest. It runs out once less than 998 is left.
+    const wide = `products(first: 250) { nodes { variants(first: 250) { nodes { id } } } }`;
+    const heavy = `query { ${[1, 2, 3, 4, 5, 6].map((n) => `a${n}: ${wide}`).join(" ")} b: products(first: 25) { nodes { variants(first: 50) { nodes { id } } } } }`;
     let sent = 0;
     let throttled;
     while (!throttled && sent < 5000) {

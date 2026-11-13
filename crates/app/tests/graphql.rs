@@ -229,13 +229,14 @@ fn pages_a_connection() {
             "pageInfo": {"hasNextPage": true},
         }})
     );
-    // 2 + 2 × 1: the edges and the page info are free.
-    assert_eq!(answer["extensions"]["cost"]["requestedQueryCost"], 4);
-    assert_eq!(answer["extensions"]["cost"]["actualQueryCost"], 4);
-    // Asked for 10, given 3: the actual cost is what was returned.
+    // 2 + 1 × floor(2 ln 2): the edges and the page info are free.
+    assert_eq!(answer["extensions"]["cost"]["requestedQueryCost"], 3);
+    assert_eq!(answer["extensions"]["cost"]["actualQueryCost"], 3);
+    // Asked for 10 (2 + floor(2 ln 10)), given 3 (2 + floor(2 ln 3)): the actual cost is what
+    // was returned.
     let answer = query("{ products(first: 10) { nodes { id } } }");
-    assert_eq!(answer["extensions"]["cost"]["requestedQueryCost"], 12);
-    assert_eq!(answer["extensions"]["cost"]["actualQueryCost"], 5);
+    assert_eq!(answer["extensions"]["cost"]["requestedQueryCost"], 6);
+    assert_eq!(answer["extensions"]["cost"]["actualQueryCost"], 4);
 }
 
 #[test]
@@ -247,16 +248,16 @@ fn shopify_documented_costs() {
     // Shopify's engineering post: a shop's scalars cost the shop's 1 point.
     let answer = query("{ shop { id name email currencyCode } }");
     assert_eq!(answer["extensions"]["cost"]["requestedQueryCost"], 1);
-    // A connection of five costs 2 + 5.
+    // A connection of five costs 2 + floor(2 ln 5).
     let answer = query("{ products(first: 5) { edges { cursor node { id } } } }");
-    assert_eq!(answer["extensions"]["cost"]["requestedQueryCost"], 7);
+    assert_eq!(answer["extensions"]["cost"]["requestedQueryCost"], 2 + 3);
     // Nested connections multiply.
     let answer = query(
         "{ products(first: 10) { edges { node { variants(first: 5) { edges { node { id } } } } } } }",
     );
     assert_eq!(
         answer["extensions"]["cost"]["requestedQueryCost"],
-        2 + 10 * (1 + 2 + 5)
+        2 + 4 * (1 + 2 + 3)
     );
     // A mutation costs 10, plus what its payload selects.
     let mut toy = Toy::new();
@@ -273,12 +274,46 @@ fn shopify_documented_costs() {
     );
     assert_eq!(
         answer["extensions"]["cost"]["requestedQueryCost"],
-        1 + 2 + 3
+        1 + 2 + 2
     );
     assert_eq!(answer["extensions"]["cost"]["actualQueryCost"], 1);
     // Introspection is free.
     let answer = query("{ __schema { queryType { name } } __typename }");
     assert_eq!(answer["extensions"]["cost"]["requestedQueryCost"], 0);
+}
+
+/// The requested costs a store gives (issue #169, a development store on 2026-11-12, and
+/// Shopify's answers on community.shopify.dev): a connection costs 2 plus what one node costs
+/// times floor(2 ln(size)), no longer 2 plus `first` times it.
+#[test]
+fn connections_cost_what_a_store_charges() {
+    let requested = |document: &str| {
+        let prepared = graphql::prepare(admin(), document, None, &serde_json::Map::new())
+            .unwrap_or_else(|errors| panic!("{document}: {errors:#?}"));
+        prepared.requested_cost()
+    };
+    let flat = "products(first: 20) { nodes { handle } }";
+    let definitions = "{ metafieldDefinitions(first: 250, ownerType: PRODUCT) { pageInfo { hasNextPage endCursor } nodes { id namespace key name description ownerType type { name } validations { name value } access { admin storefront customerAccount } capabilities { adminFilterable { enabled } smartCollectionCondition { enabled } uniqueValues { enabled } } pinnedPosition standardTemplate { id } metafieldsCount } } }";
+    let aliases: String = (0..18).map(|n| format!("a{n}: {flat} ")).collect();
+    let cases = [
+        // Each issue's document: lsf asked 5302, 22 and 2252.
+        (
+            "{ products(first: 100) { nodes { id variants(first: 50) { nodes { id } } } } }".to_string(),
+            92,
+        ),
+        (format!("{{ {flat} }}"), 7),
+        (definitions.to_string(), 101),
+        (format!("{{ {aliases}}}"), 126),
+        // Shopify's staff on the forum.
+        ("{ products(first: 100) { nodes { id } } }".to_string(), 11),
+        (
+            "{ product(id: \"gid://shopify/Product/1\") { variants(first: 250) { nodes { inventoryItem { id tracked } } } } }".to_string(),
+            25,
+        ),
+    ];
+    for (document, cost) in cases {
+        assert_eq!(requested(&document), cost, "{document}");
+    }
 }
 
 #[test]
@@ -556,9 +591,9 @@ fn refuses_fragments_nested_too_deeply() {
 #[test]
 fn refuses_a_query_over_the_single_query_limit() {
     let answer = query(
-        "{ products(first: 250) { edges { node { variants(first: 250) { edges { node { id } } } } } } }",
+        "{ products(first: 250) { nodes { variants(first: 250) { nodes { metafields(first: 250) { nodes { id } } } } } } }",
     );
-    let requested = 2 + 250 * (1 + 2 + 250);
+    let requested = 2 + 11 * (1 + 2 + 11 * (1 + 2 + 11));
     assert_eq!(
         answer,
         json!({
@@ -588,13 +623,13 @@ fn throttles_a_shop_whose_bucket_is_empty() {
         throttle: &throttle,
         key: &key,
     });
-    let request = Request::new("{ products(first: 5) { nodes { id } } }");
+    let request = Request::new("{ products(first: 20) { nodes { id } } }");
     let mut toy = Toy::new();
-    // 7 requested, 5 actual: 10 - 7 + 2.
+    // 7 requested, 4 actual (3 products): 10 - 7 + 3.
     let answer = graphql::run(admin(), &mut toy, &request, bucket).to_json();
     assert_eq!(
         answer["extensions"]["cost"]["throttleStatus"]["currentlyAvailable"],
-        5
+        6
     );
     let answer = graphql::run(admin(), &mut toy, &request, bucket).to_json();
     assert_eq!(
@@ -604,7 +639,7 @@ fn throttles_a_shop_whose_bucket_is_empty() {
             "extensions": {"cost": {
                 "requestedQueryCost": 7,
                 "actualQueryCost": null,
-                "throttleStatus": {"maximumAvailable": 10.0, "currentlyAvailable": 5, "restoreRate": 1.0}
+                "throttleStatus": {"maximumAvailable": 10.0, "currentlyAvailable": 6, "restoreRate": 1.0}
             }}
         })
     );
@@ -613,7 +648,7 @@ fn throttles_a_shop_whose_bucket_is_empty() {
     assert!(answer.get("errors").is_none());
     assert_eq!(
         answer["extensions"]["cost"]["throttleStatus"]["currentlyAvailable"],
-        2
+        4
     );
 }
 
@@ -671,7 +706,7 @@ fn the_queries_of_shopifys_app_template_validate() {
               }
             }"#,
             json!({"product": {"title": "Red Snowboard"}}),
-            10 + 1 + 2 + 10,
+            10 + 1 + 2 + 4,
         ),
         (
             r#"mutation shopifyReactRouterTemplateUpdateVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {

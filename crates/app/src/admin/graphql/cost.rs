@@ -1,22 +1,31 @@
 //! The calculated query cost of the Admin API, as shopify.dev documents it ("GraphQL Admin
-//! API rate limits", read in 2026-10, with the older versions of the page on the Web Archive and
+//! API rate limits", read in 2026-11, with the older versions of the page on the Web Archive and
 //! Shopify's engineering post "Rate Limiting GraphQL APIs by Calculating Query Complexity"):
 //!
 //! - a scalar or an enum costs 0, an object 1, a mutation 10 (plus what its payload selects);
-//! - a connection costs 2 plus `first` (or `last`) times the cost of one of its nodes: the edges
-//!   and `cursor` are free, and so is `pageInfo`. `products(first: 1) { edges { node { title } } }`
-//!   costs 3, the example of shopify.dev;
+//! - a connection costs 2 plus what one of its nodes costs times a factor of its size: the edges
+//!   and `cursor` are free, and so is `pageInfo`. The page "sizes it by `first` and `last`"
+//!   without the formula. Since the Winter '24 Edition it grows with the logarithm of the size,
+//!   no longer linearly; a Shopify engineer gave the formula on the developer forum
+//!   (community.shopify.dev, "How to calculate GraphQL cost estimates", 2025):
+//!   `cost = 2; cost += children_cost * (2 * Math.log([2, sizing].max)).floor if sizing > 0`.
+//!   `products(first: 1) { edges { node { title } } }` costs 3, the example of shopify.dev,
+//!   `products(first: 100) { nodes { id } }` 11, Shopify's answer on the same forum, and
+//!   `products(first: 20) { nodes { handle } }` 7, as a store answers;
 //! - an interface or a union costs the most of what its possible types select;
 //! - a list that is not a connection costs what one of its items costs.
 //!
 //! The **requested** cost is computed from the query and the variables before it runs; the
-//! **actual** cost, by the executor, from what was returned: the nodes a connection really has,
-//! nothing for an object that is `null`. Introspection and `__typename` are free. A query whose
-//! requested cost is over [`MAX_COST`] does not run: [`max_cost_exceeded`] is Shopify's error.
+//! **actual** cost, by the executor, from what was returned: a connection's factor is that of
+//! the nodes it really has, times what its costliest node cost, and an object that is `null`
+//! costs nothing. Introspection and `__typename` are free. A query whose requested cost is over
+//! [`MAX_COST`] does not run: [`max_cost_exceeded`] is Shopify's error.
 //!
 //! What shopify.dev does not say, and lsf chooses: a connection given neither `first` nor `last`
-//! costs 2 (Shopify refuses it as it runs); given both, the larger one counts. Shopify "reserves
-//! the right to set manual costs on fields": lsf knows none of them.
+//! costs 2 (Shopify refuses it as it runs); given both, the larger one counts. The actual cost
+//! of a connection uses the requested formula on what it returned (Shopify computes it "based
+//! on the query results" without saying how). Shopify "reserves the right to set manual costs
+//! on fields": lsf knows none of them.
 
 use serde_json::{Value, json};
 
@@ -37,8 +46,9 @@ pub(crate) struct Shape {
     /// What each object it returns costs by itself: 1, 2 for a connection, 0 for the edges and
     /// the page info of a connection.
     pub per_object: u64,
-    /// Whether the items of a list add up (the `edges` and `nodes` of a connection), or the list
-    /// costs what its costliest item does.
+    /// Whether the items of a list are the nodes of a connection (its `edges` and `nodes`),
+    /// which cost what the costliest one does times [`connection_factor`] of their number, or
+    /// the list costs what its costliest item does.
     pub sum_items: bool,
     /// Whether what the objects select is free (`pageInfo`).
     pub free_children: bool,
@@ -87,6 +97,17 @@ pub(crate) fn shape(schema: &Schema, parent: &str, def: &FieldDef, mutation_root
     object(1, false)
 }
 
+/// What the cost of one node of a connection is multiplied by, for a connection of `size`
+/// nodes: `floor(2 × ln(max(2, size)))`, 0 for none. 1 for 1 or 2 nodes, 5 for 20, 9 for 100,
+/// 11 for 250.
+pub(crate) fn connection_factor(size: u64) -> u64 {
+    if size == 0 {
+        return 0;
+    }
+    // At most 2 × ln(2^64) ≈ 88.7: exact as a float, and floored.
+    (2.0 * (size.max(2) as f64).ln()).floor() as u64
+}
+
 /// The requested cost of an operation.
 pub(crate) fn requested(context: &Context<'_>, operation: &Operation<'_>) -> u64 {
     walk(context, operation, None)
@@ -95,25 +116,24 @@ pub(crate) fn requested(context: &Context<'_>, operation: &Operation<'_>) -> u64
 /// The fields of an operation's requested cost, as Shopify lists them in `extensions.cost
 /// .fields` for a request with `Shopify-GraphQL-Cost-Debug: 1` (shopify.dev, "GraphQL Admin API
 /// rate limits", "Query cost debugging"): each field's `path` (its response keys), its
-/// `definedCost` (what one of its objects costs by itself), its `requestedTotalCost` (what it
-/// adds to the query, its children and the page sizes above it included) and its
+/// `definedCost` (what one of its objects costs by itself, `null` for a connection, whose cost
+/// is its size's), its `requestedTotalCost` (what it adds to its parent: for the `edges` and
+/// `nodes` of a connection, what one of them costs, as Shopify lists it) and its
 /// `requestedChildrenCost` (what its children add, `null` for a scalar), the children before
 /// their field. An interface or a union lists what its costliest possible type selects.
 pub(crate) fn requested_fields(context: &Context<'_>, operation: &Operation<'_>) -> Vec<Value> {
     let mut report = Report {
         path: Vec::new(),
-        multiplier: 1,
         fields: Vec::new(),
     };
     walk(context, operation, Some(&mut report));
     report.fields
 }
 
-/// What [`requested_fields`] collects as the cost is computed: where the walk is, how many
-/// times the objects there are counted, and the fields so far.
+/// What [`requested_fields`] collects as the cost is computed: where the walk is, and the
+/// fields so far.
 struct Report {
     path: Vec<String>,
-    multiplier: u64,
     fields: Vec<Value>,
 }
 
@@ -197,8 +217,8 @@ fn object<'a>(
     total
 }
 
-/// The requested cost of a field of an object. `items` is the size of the connection the
-/// object is, which its `edges` and `nodes` are multiplied by.
+/// The requested cost of a field of an object. `items` is the [`connection_factor`] of the
+/// connection the object is, which its `edges` and `nodes` are multiplied by.
 fn field<'a>(
     context: &Context<'a>,
     parent: &TypeDef,
@@ -217,21 +237,21 @@ fn field<'a>(
         return 0;
     };
     let shape = shape(schema, &parent.name, def, mutation_root);
-    // Where the report is: this field's path, and how often its objects are counted.
-    let outer = report.as_deref_mut().map(|report| {
+    // Where the report is: this field's path, and where its children start.
+    let first_child = report.as_deref_mut().map(|report| {
         report.path.push(node.response_key().to_string());
-        let outer = (report.multiplier, report.fields.len());
-        if shape.sum_items {
-            report.multiplier = report.multiplier.saturating_mul(items);
-        }
-        outer
+        report.fields.len()
     });
     let leaf = schema.get(def.ty.named()).is_none_or(TypeDef::is_leaf);
-    let cost = match schema.get(def.ty.named()).filter(|ty| !ty.is_leaf()) {
-        None => shape.fixed,
+    let connection = schema
+        .get(def.ty.named())
+        .is_some_and(|ty| !ty.is_leaf() && schema.is_connection(&ty.name));
+    // What one of its objects costs, and what it adds to its parent.
+    let (one, cost) = match schema.get(def.ty.named()).filter(|ty| !ty.is_leaf()) {
+        None => (shape.fixed, shape.fixed),
         Some(ty) => {
-            let size = if schema.is_connection(&ty.name) {
-                page_size(context, def, node)
+            let size = if connection {
+                connection_factor(page_size(context, def, node))
             } else {
                 1
             };
@@ -251,10 +271,15 @@ fn field<'a>(
                 )
             };
             let one = shape.per_object + children;
-            shape.fixed + if shape.sum_items { one * items } else { one }
+            let total = if shape.sum_items {
+                one.saturating_mul(items)
+            } else {
+                one
+            };
+            (shape.fixed + one, shape.fixed + total)
         }
     };
-    if let (Some(report), Some((multiplier, first_child))) = (report, outer) {
+    if let (Some(report), Some(first_child)) = (report, first_child) {
         let children: Option<u64> = (!leaf).then(|| {
             report.fields[first_child..]
                 .iter()
@@ -266,14 +291,14 @@ fn field<'a>(
                 .filter_map(|entry| entry["requestedTotalCost"].as_u64())
                 .sum()
         });
+        let defined = (!connection).then_some(shape.fixed + shape.per_object);
         report.fields.push(json!({
             "path": report.path,
-            "definedCost": shape.fixed + shape.per_object,
-            "requestedTotalCost": cost.saturating_mul(multiplier),
+            "definedCost": defined,
+            "requestedTotalCost": one,
             "requestedChildrenCost": children,
         }));
         report.path.pop();
-        report.multiplier = multiplier;
     }
     cost
 }
