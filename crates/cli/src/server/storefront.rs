@@ -795,7 +795,52 @@ fn suggest_json(visit: &Visit<'_>) -> Reply {
     )
 }
 
+/// What Shopify answers instead of recommendations: `422` for a `product_id` that is missing or
+/// not a number and for an `intent` it does not take, `404` for an id that is not a product of
+/// the online store (none, a draft, one not published there).
+/// https://shopify.dev/docs/api/ajax/reference/product-recommendations
+fn recommendations_error(visit: &Visit<'_>) -> Option<Reply> {
+    let error = |status: u16, message: &str, description: String| {
+        Some(Reply::json(
+            status,
+            &json!({"status": status, "message": message, "description": description}),
+        ))
+    };
+    let invalid = |description: String| error(422, "Invalid parameter error", description);
+    let Some(id) = visit
+        .incoming
+        .query_param("product_id")
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    else {
+        return invalid("A product_id value is missing".to_string());
+    };
+    let Ok(number) = id.parse::<i64>() else {
+        return invalid(format!("product_id must be a number but received: {id}"));
+    };
+    if let Some(intent) = visit.incoming.query_param("intent")
+        && !intent.is_empty()
+        && !["related", "complementary"].contains(&intent)
+    {
+        return invalid("The intent parameter must be one of related, complementary".to_string());
+    }
+    let listed = u64::try_from(number)
+        .ok()
+        .and_then(|id| visit.store.product_index_by_id(id));
+    match listed {
+        Some(_) => None,
+        None => error(
+            404,
+            "Product not found",
+            format!("No product with id {number} is published in the online store"),
+        ),
+    }
+}
+
 fn recommendations_json(visit: &Visit<'_>) -> Reply {
+    if let Some(reply) = recommendations_error(visit) {
+        return reply;
+    }
     let site = visit.site();
     let recommendations = recommendations_value(&site);
     let products: Vec<Json> = recommendations

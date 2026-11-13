@@ -979,6 +979,95 @@ fn suggest_json_answers_422_to_invalid_parameters() {
 }
 
 #[test]
+fn recommendations_json_answers_shopifys_errors() {
+    // https://shopify.dev/docs/api/ajax/reference/product-recommendations, "Error responses".
+    // https://github.com/0xtlt/local-storefront/issues/157
+    let state = server();
+    let session = "recommendation-errors";
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"products": [
+            {
+                "id": 100, "title": "Tee", "options": ["Size"], "price": 2000,
+                "variants": [
+                    {"id": 101, "options": ["S"], "inventory_quantity": 50},
+                    {"id": 102, "options": ["M"], "inventory_quantity": 50}
+                ],
+                "recommendations": ["widget"]
+            },
+            {"id": 300, "title": "Widget", "price": 1000},
+            {"id": 400, "title": "Hidden", "price": 1000, "published": false},
+            {"id": 500, "title": "Draft", "price": 1000, "status": "draft"}
+        ]}}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let error = |path: &str, status: u16| {
+        let reply = get(&state, path, session);
+        assert_eq!(reply.status, status, "{path}: {}", text(&reply));
+        let body = body_json(&reply);
+        assert_eq!(body["status"], status, "{path}");
+        assert!(body.get("products").is_none(), "{path}");
+        (
+            body["message"].as_str().unwrap().to_string(),
+            body["description"].as_str().unwrap().to_string(),
+        )
+    };
+    let invalid = |description: &str| {
+        (
+            "Invalid parameter error".to_string(),
+            description.to_string(),
+        )
+    };
+    let missing = invalid("A product_id value is missing");
+    assert_eq!(
+        error("/recommendations/products.json?intent=related", 422),
+        missing
+    );
+    assert_eq!(
+        error("/recommendations/products.json?product_id=", 422),
+        missing
+    );
+    assert_eq!(
+        error("/recommendations/products.json?product_id=abc", 422),
+        invalid("product_id must be a number but received: abc")
+    );
+    assert_eq!(
+        error(
+            "/recommendations/products.json?product_id=100&intent=foo",
+            422
+        ),
+        invalid("The intent parameter must be one of related, complementary")
+    );
+    for id in [999, 400, 500] {
+        assert_eq!(
+            error(
+                &format!("/recommendations/products.json?product_id={id}"),
+                404
+            ),
+            (
+                "Product not found".to_string(),
+                format!("No product with id {id} is published in the online store")
+            ),
+            "{id}"
+        );
+    }
+
+    // A product of the online store is answered, and so are limits out of range.
+    for path in [
+        "/recommendations/products.json?product_id=100",
+        "/recommendations/products.json?product_id=100&intent=related&limit=0",
+        "/recommendations/products.json?product_id=100&intent=complementary&limit=11",
+    ] {
+        let reply = get(&state, path, session);
+        assert_eq!(reply.status, 200, "{path}: {}", text(&reply));
+        let body = body_json(&reply);
+        assert_eq!(body["products"][0]["handle"], "widget", "{path}");
+    }
+}
+
+#[test]
 fn a_submitted_form_shows_its_outcome_once() {
     let state = server();
     let mut submit = request(

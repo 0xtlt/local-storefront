@@ -114,6 +114,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `{"status":422,"message":"Invalid parameter error","description":…}` and no `resources`. It
   answered `200`. A limit out of range is still brought between 1 and 10. Code that requests
   suggestions for an empty input must not read `resources` from the answer.
+- **`/recommendations/products.json` answers Shopify's errors**, as the Product
+  Recommendations API reference lists them: `422` `Invalid parameter error` for a missing
+  `product_id`, one that is not a number, and an `intent` other than `related` or
+  `complementary`; `404` `Product not found` for an id that is not a product of the online store
+  (unknown, a draft, not published). It answered `200` with no products, and echoed a wrong
+  `intent`. A recommendations block whose request fails now takes its error path on lsf too.
 
 ### Fixed
 
