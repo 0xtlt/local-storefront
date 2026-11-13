@@ -124,6 +124,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `null`, as on Shopify: `{"aspect_ratio":null,"alt":null,"height":null,"url":null,"width":null}`
   in `/cart.js`, `/cart/add.js` and `{{ item | json }}`. A test of the cart's JSON that expects
   `"featured_image": null` needs the object; `image` is still `null`.
+- **Liquid `item.properties` of a cart line is a list of pairs, without `.size`**, as on Shopify.
+  `{{ item.properties | json }}` gives `[["Engraving","Hi"],["_hidden","x"]]` (`[]` for none),
+  no longer an object, and `{{ item.properties.size }}` prints nothing, so
+  `{% if item.properties.size > 0 %}` is false, as on a store. A loop, `item.properties.Engraving`,
+  `{{ item.properties | size }}` and `item.properties == empty` (shopify.dev's test) are
+  unchanged. `/cart.js` keeps `properties` as an object.
 
 ### Fixed
 
