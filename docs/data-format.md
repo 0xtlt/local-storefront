@@ -241,7 +241,8 @@ Define a collection with the handle `all` only to change its title or order.
 Storefront filtering (`collection.filters`, `?filter.v.availability=1`,
 `?filter.v.price.gte=10`, `?filter.p.vendor=...`, `?filter.v.option.color=...`), sorting
 (`?sort_by=`) and tag URLs (`/collections/<handle>/<tag>`) work from this data without any
-extra configuration.
+extra configuration. On a tag URL, `current_tags` holds the tags as the collection's products
+write them (`/collections/things/premium+snow` gives `Premium` and `Snow`), as on Shopify.
 
 ## Selling plans
 

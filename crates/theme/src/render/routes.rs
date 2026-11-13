@@ -1,5 +1,8 @@
 //! Maps a URL to the template that renders it and the resource it is about.
 
+use lsf_core::store::Store;
+use lsf_core::util::handleize;
+
 use lsf_core::store::Metafields;
 
 use super::globals::meta_description;
@@ -30,6 +33,18 @@ fn metaobject_template(kind: &str) -> TemplateName {
 /// is for. https://shopify.dev/docs/storefronts/themes/architecture/templates/metaobject
 pub fn has_metaobject_page(theme: &Theme, kind: &str) -> bool {
     template_exists(theme, &metaobject_template(kind))
+}
+
+/// The tag a `/collections/<handle>/<tag>` URL names, as the collection's products write it
+/// (`snow` is `Snow`), which `current_tags` holds on Shopify; the URL's own when none has it.
+fn tag_as_written(store: &Store, collection: usize, tag: &str) -> String {
+    let handle = handleize(tag);
+    store.collections[collection]
+        .products
+        .iter()
+        .flat_map(|&product| &store.products[product].tags)
+        .find(|written| handleize(written) == handle)
+        .map_or_else(|| tag.to_string(), String::clone)
 }
 
 /// Sets the page's title and description to those of the resource's search engine listing,
@@ -238,12 +253,16 @@ pub fn resolve(site: &Site) -> Page {
                     (store.collection_index("all"), scope)
                 }
                 _ => {
-                    let tags = match segments.get(2) {
-                        Some(tags) => tags.split('+').map(str::to_string).collect(),
-                        None => Vec::new(),
+                    let collection = store.collection_index(handle);
+                    let tags = match (collection, segments.get(2)) {
+                        (Some(collection), Some(tags)) => tags
+                            .split('+')
+                            .map(|tag| tag_as_written(store, collection, tag))
+                            .collect(),
+                        _ => Vec::new(),
                     };
                     (
-                        store.collection_index(handle),
+                        collection,
                         CollectionScope {
                             tags,
                             ..CollectionScope::default()
