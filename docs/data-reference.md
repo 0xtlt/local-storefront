@@ -48,7 +48,7 @@ General store information (the `shop` object). Every field has a sensible defaul
 | `domain` | string | The primary domain, without scheme. Defaults to the host the server is reached on. |
 | `permanent_domain` | string | The `*.myshopify.com` domain. Defaults to a value derived from the name. |
 | `currency` | string | ISO 4217 code of the store currency. Defaults to `USD`. |
-| `money_format` | string | How `money` formats amounts, e.g. `"${{amount}}"` or `"{{amount_with_comma_separator}} €"`. Defaults to the usual format of the currency. |
+| `money_format` | string | How `money` formats amounts, e.g. `"${{amount}}"` or `"{{amount_with_comma_separator}} €"`. Defaults to the usual format of the currency. Only for the store currency: a market in another currency has Shopify's format of that currency. |
 | `money_with_currency_format` | string | How `money_with_currency` formats amounts, e.g. `"${{amount}} USD"`. |
 | `timezone` | string | IANA time zone used to display dates, e.g. `"Europe/Paris"`. Defaults to `UTC`. |
 | `address` | [Address](#address) |  |
