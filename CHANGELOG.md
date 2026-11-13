@@ -24,6 +24,15 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   of `span`, a `class` with `"` or `<`, and `enabled_on` or `disabled_on` that Shopify does not
   take. Shopify refuses such a section and every template that places it; a theme that checked
   clean with one of these now fails `check`.
+- **`lsf check` reports the `config/settings_schema.json` and `config/settings_data.json` that
+  Shopify refuses on upload**, which fail the check: a `settings_schema.json` that is not a
+  list, a group without a `name`, an incomplete `theme_info`, a setting a section schema would
+  refuse (an unknown type, no `id`), one id in two groups, a `color_scheme_group` whose `role`
+  lacks a role or names no definition, a `color_palette` of more than 20 colors or with alpha,
+  more than 21 color schemes, and a `settings_data.json` whose `current` names no preset
+  (`invalid_settings_data`). Shopify keeps the previous version of such a file, so every
+  `settings.*` value stays on the old schema; lsf rendered with the new one. A theme that
+  checked clean with one of these now fails `check`.
 - **`closest.<resource>` is the nearest resource setting, even an empty one.** A theme block
   whose own `product` setting is unset no longer gets the page's product as `closest.product`:
   it gets none, as on Shopify. Give the setting a value, or `{{ closest.product }}` as its

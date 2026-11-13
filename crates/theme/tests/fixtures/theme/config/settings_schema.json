@@ -1,5 +1,5 @@
 [
-  { "name": "theme_info", "theme_name": "Fixture", "theme_version": "1.0.0" },
+  { "name": "theme_info", "theme_name": "Fixture", "theme_version": "1.0.0", "theme_author": "local-storefront", "theme_documentation_url": "https://example.com", "theme_support_url": "https://example.com" },
   {
     "name": "Colors",
     "settings": [

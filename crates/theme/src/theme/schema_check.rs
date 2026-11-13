@@ -339,6 +339,16 @@ fn check_settings(parsed: &Parsed, list: &Json, pointer: &str, out: &mut Vec<Sch
                     );
                 }
             }
+            "color_scheme_group" => {
+                for message in scheme_roles(item) {
+                    problem("invalid_schema", format!("{name}: {message}"), None);
+                }
+            }
+            "color_palette" => {
+                for message in palette(default) {
+                    problem("invalid_schema", format!("{name}: {message}"), None);
+                }
+            }
             "checkbox" if default.is_some_and(|default| !default.is_boolean()) => problem(
                 "invalid_schema",
                 format!("the default of {name} (a checkbox) is not true or false"),
@@ -352,6 +362,92 @@ fn check_settings(parsed: &Parsed, list: &Json, pointer: &str, out: &mut Vec<Sch
             _ => {}
         }
     }
+}
+
+/// The roles of a color scheme preview, each a definition of the scheme; those that may be a
+/// gradient too (`{"solid": …, "gradient": …}`) are marked.
+const SCHEME_ROLES: [(&str, bool); 10] = [
+    ("background", true),
+    ("text", false),
+    ("primary_button", true),
+    ("on_primary_button", false),
+    ("primary_button_border", false),
+    ("secondary_button", true),
+    ("on_secondary_button", false),
+    ("secondary_button_border", false),
+    ("links", false),
+    ("icons", false),
+];
+
+/// What Shopify refuses in the `role` of a `color_scheme_group`: a role it requires that is
+/// missing, a role that names no id of the `definition`.
+fn scheme_roles(item: &Json) -> Vec<String> {
+    let Some(role) = item.get("role").and_then(Json::as_object) else {
+        return Vec::new();
+    };
+    let ids: Vec<&str> = item
+        .get("definition")
+        .and_then(Json::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|definition| definition.get("id").and_then(Json::as_str))
+        .collect();
+    let mut out = Vec::new();
+    for (key, gradient) in SCHEME_ROLES {
+        let Some(value) = role.get(key) else {
+            out.push(format!("its `role` has no `{key}`, which Shopify requires"));
+            continue;
+        };
+        let named: Vec<&Json> = match value.as_object() {
+            Some(object) if gradient => object.values().collect(),
+            _ => vec![value],
+        };
+        for id in named {
+            if id.as_str().is_none_or(|id| !ids.contains(&id)) {
+                out.push(format!(
+                    "`role.{key}` is {id}, which is not the id of a definition of the scheme"
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// The most colors a `color_palette` holds, and the fewest.
+const PALETTE_COLORS: std::ops::RangeInclusive<usize> = 2..=20;
+
+/// What Shopify refuses in the `default` of a `color_palette`: fewer than 2 colors or more than
+/// 20, a key that is not a name, a color that is not hex without alpha.
+fn palette(default: Option<&Json>) -> Vec<String> {
+    let Some(colors) = default.and_then(Json::as_object) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    if !PALETTE_COLORS.contains(&colors.len()) {
+        out.push(format!(
+            "its `default` has {} colors: a palette has from 2 to 20",
+            colors.len()
+        ));
+    }
+    for (key, color) in colors {
+        let name = key.starts_with(|c: char| c.is_ascii_alphabetic())
+            && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !name {
+            out.push(format!(
+                "the color \"{key}\" is not named with a letter, then letters, digits or `_`"
+            ));
+        }
+        let hex = color.as_str().and_then(|color| color.strip_prefix('#'));
+        let valid = hex.is_some_and(|hex| {
+            matches!(hex.len(), 3 | 6) && hex.chars().all(|c| c.is_ascii_hexdigit())
+        });
+        if !valid {
+            out.push(format!(
+                "the color \"{key}\" is {color}: a palette color is hex without alpha (`#FFF`, `#FF4416`)"
+            ));
+        }
+    }
+    out
 }
 
 /// Whether a block entry of a schema is a local block: one with a `name`, defined in the file
@@ -427,6 +523,196 @@ pub fn check(source: &str) -> Vec<SchemaProblem> {
     }
     out.sort_by_key(|problem| problem.line);
     out
+}
+
+/// A theme JSON file, parsed as Shopify reads it, with the lines of its values. `None` when it
+/// does not parse: `lsf check` reports that as `invalid_json`.
+fn parse_file(source: &str) -> Option<Parsed> {
+    let text = lsf_core::json::theme_json(source).0;
+    let json = serde_json::from_str::<Json>(&text).ok()?;
+    Some(Parsed {
+        lines: lsf_core::json::value_lines(&text),
+        json,
+        first_line: 1,
+    })
+}
+
+/// The attributes of the `theme_info` of `config/settings_schema.json` that Shopify requires.
+const THEME_INFO: [&str; 4] = [
+    "theme_name",
+    "theme_author",
+    "theme_version",
+    "theme_documentation_url",
+];
+
+/// The most color schemes a theme has.
+const MOST_COLOR_SCHEMES: usize = 21;
+
+/// What Shopify refuses on upload in `config/settings_schema.json`, whose source is `source`:
+/// a file that is not a list, a group without a `name`, a `theme_info` without the attributes
+/// it requires, the settings a section schema refuses, two settings with one id in the whole
+/// file, more color schemes in `settings_data` (its `current` and its presets) than Shopify
+/// takes. A refused file keeps its previous version on the store.
+pub fn check_settings_schema(source: &str, data: Option<&Json>) -> Vec<SchemaProblem> {
+    let Some(parsed) = parse_file(source) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let problem = |pointer: &str, code: &'static str, message: String| SchemaProblem {
+        code,
+        line: parsed.line(pointer),
+        message,
+        hint: None,
+    };
+    let Some(groups) = parsed.json.as_array() else {
+        out.push(problem(
+            "",
+            "invalid_schema",
+            "the file is not a list of setting groups: Shopify refuses it (\"Schema must be an array\")".to_string(),
+        ));
+        return out;
+    };
+    let mut ids: Vec<(&str, usize)> = Vec::new();
+    let mut scheme_groups: Vec<(&str, String)> = Vec::new();
+    for (index, group) in groups.iter().enumerate() {
+        let at = format!("/{index}");
+        let Some(name) = group.get("name").and_then(Json::as_str) else {
+            out.push(problem(
+                &at,
+                "invalid_schema",
+                format!(
+                    "group {} has no `name`: Shopify refuses the file",
+                    index + 1
+                ),
+            ));
+            continue;
+        };
+        if name == "theme_info" {
+            for key in THEME_INFO {
+                match group.get(key) {
+                    Some(Json::String(_)) => {}
+                    Some(_) => out.push(problem(
+                        &format!("{at}/{key}"),
+                        "invalid_schema",
+                        format!(
+                            "the `{key}` of `theme_info` is not a string: Shopify refuses the file"
+                        ),
+                    )),
+                    None => out.push(problem(
+                        &at,
+                        "invalid_schema",
+                        format!("`theme_info` has no `{key}`: Shopify refuses the file"),
+                    )),
+                }
+            }
+            match (
+                group.get("theme_support_email").is_some(),
+                group.get("theme_support_url").is_some(),
+            ) {
+                (true, true) => out.push(problem(
+                    &format!("{at}/theme_support_url"),
+                    "invalid_schema",
+                    "`theme_info` has both `theme_support_email` and `theme_support_url`: Shopify takes one of them".to_string(),
+                )),
+                (false, false) => out.push(problem(
+                    &at,
+                    "invalid_schema",
+                    "`theme_info` has neither `theme_support_email` nor `theme_support_url`: Shopify refuses the file".to_string(),
+                )),
+                _ => {}
+            }
+            continue;
+        }
+        let Some(settings) = group.get("settings") else {
+            continue;
+        };
+        check_settings(&parsed, settings, &format!("{at}/settings"), &mut out);
+        for (position, setting) in settings.as_array().into_iter().flatten().enumerate() {
+            let Some(id) = setting.get("id").and_then(Json::as_str) else {
+                continue;
+            };
+            // Two in one group are reported with the group's settings.
+            if ids
+                .iter()
+                .any(|(seen, group)| *seen == id && *group != index)
+            {
+                out.push(problem(
+                    &format!("{at}/settings/{position}"),
+                    "duplicate_setting_id",
+                    format!(
+                        "two settings have the id \"{id}\": Shopify refuses the file, and `settings.{id}` is the value of only one"
+                    ),
+                ));
+            }
+            ids.push((id, index));
+            if setting.get("type").and_then(Json::as_str) == Some("color_scheme_group") {
+                scheme_groups.push((id, format!("{at}/settings/{position}")));
+            }
+        }
+    }
+    // The color schemes are in `settings_data.json`: in `current`, and in each preset.
+    if let Some(data) = data {
+        let mut stored: Vec<&Json> = data.get("current").into_iter().collect();
+        stored.extend(
+            data.get("presets")
+                .and_then(Json::as_object)
+                .into_iter()
+                .flat_map(|presets| presets.values()),
+        );
+        for (id, pointer) in &scheme_groups {
+            let most = stored
+                .iter()
+                .filter_map(|values| values.get(*id).and_then(Json::as_object))
+                .map(serde_json::Map::len)
+                .max()
+                .unwrap_or(0);
+            if most > MOST_COLOR_SCHEMES {
+                out.push(problem(
+                    pointer,
+                    "invalid_schema",
+                    format!(
+                        "config/settings_data.json has {most} color schemes in `{id}`: Shopify refuses more than {MOST_COLOR_SCHEMES}"
+                    ),
+                ));
+            }
+        }
+    }
+    out.sort_by_key(|problem| problem.line);
+    out
+}
+
+/// What Shopify refuses on upload in `config/settings_data.json`: a `current` that names a
+/// preset the file does not have.
+pub fn check_settings_data(source: &str) -> Vec<SchemaProblem> {
+    let Some(parsed) = parse_file(source) else {
+        return Vec::new();
+    };
+    let Some(current) = parsed.json.get("current").and_then(Json::as_str) else {
+        return Vec::new();
+    };
+    let presets: Vec<&String> = parsed
+        .json
+        .get("presets")
+        .and_then(Json::as_object)
+        .map(|presets| presets.keys().collect())
+        .unwrap_or_default();
+    if presets.iter().any(|preset| *preset == current) {
+        return Vec::new();
+    }
+    vec![SchemaProblem {
+        code: "invalid_settings_data",
+        line: parsed.line("/current"),
+        message: format!(
+            "`current` is \"{current}\", which is not a preset ({}): Shopify refuses the file",
+            presets
+                .iter()
+                .map(|preset| format!("\"{preset}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        hint: lsf_core::util::closest_match(current, presets.iter().map(|preset| preset.as_str()))
+            .map(|close| format!("did you mean \"{close}\"?")),
+    }]
 }
 
 /// Whether a schema is a section's or a theme block's: they take different attributes.
@@ -1018,6 +1304,154 @@ mod tests {
         assert_eq!(
             problems[9].hint.as_deref(),
             Some("did you mean \"image_picker\"?")
+        );
+    }
+
+    const THEME_INFO_OK: &str = r#"{ "name": "theme_info", "theme_name": "Probe", "theme_version": "1.0.0", "theme_author": "me", "theme_documentation_url": "https://example.com", "theme_support_url": "https://example.com" }"#;
+
+    fn settings_schema(groups: &[&str], data: Option<Json>) -> Vec<(&'static str, usize, String)> {
+        let source = format!("[\n{}\n]", groups.join(",\n"));
+        check_settings_schema(&source, data.as_ref())
+            .into_iter()
+            .map(|problem| (problem.code, problem.line, problem.message))
+            .collect()
+    }
+
+    #[test]
+    fn a_settings_schema_shopify_refuses_is_reported() {
+        // #183: an id taken in two groups, a group without a name.
+        let found = settings_schema(
+            &[
+                THEME_INFO_OK,
+                r#"{ "name": "One", "settings": [ { "type": "text", "id": "label", "label": "Label", "default": "one" } ] }"#,
+                r#"{ "name": "Two", "settings": [ { "type": "text", "id": "label", "label": "Label again", "default": "two" } ] }"#,
+                r#"{ "settings": [ { "type": "checkbox", "id": "flag", "label": "Flag", "default": true } ] }"#,
+            ],
+            None,
+        );
+        let summary: Vec<(&str, usize)> =
+            found.iter().map(|(code, line, _)| (*code, *line)).collect();
+        assert_eq!(
+            summary,
+            [("duplicate_setting_id", 4), ("invalid_schema", 5)],
+            "{found:#?}"
+        );
+        // The other rules, one group each.
+        let one = |group: &str| settings_schema(&[group], None);
+        let cases = [
+            (
+                r#"{ "name": "theme_info", "theme_name": "P" }"#,
+                "has no `theme_author`",
+            ),
+            (
+                r#"{ "name": "theme_info", "theme_name": "P", "theme_version": 1, "theme_author": "a", "theme_documentation_url": "u", "theme_support_url": "u" }"#,
+                "the `theme_version` of `theme_info` is not a string",
+            ),
+            (
+                r#"{ "name": "theme_info", "theme_name": "P", "theme_version": "1", "theme_author": "a", "theme_documentation_url": "u", "theme_support_url": "u", "theme_support_email": "e" }"#,
+                "has both `theme_support_email` and `theme_support_url`",
+            ),
+            (
+                r#"{ "name": "G", "settings": [ { "type": "textbox", "id": "x", "label": "X" } ] }"#,
+                "is of type \"textbox\"",
+            ),
+            (
+                r#"{ "name": "G", "settings": [ { "type": "color_scheme_group", "id": "s", "definition": [] } ] }"#,
+                "has no `role`",
+            ),
+            (
+                r##"{ "name": "G", "settings": [ { "type": "color_palette", "id": "p", "default": { "a": "#000", "b": "#FFF", "c3": "#FF000080" } } ] }"##,
+                "the color \"c3\" is \"#FF000080\"",
+            ),
+        ];
+        for (group, expected) in cases {
+            let found = one(group);
+            assert!(
+                found
+                    .iter()
+                    .any(|(_, _, message)| message.contains(expected)),
+                "{group}: {found:#?}"
+            );
+        }
+        // A palette of 21 colors.
+        let colors: Vec<String> = (0..21).map(|n| format!("\"c{n}\": \"#000000\"")).collect();
+        let palette = format!(
+            r#"{{ "name": "G", "settings": [ {{ "type": "color_palette", "id": "p", "default": {{ {} }} }} ] }}"#,
+            colors.join(", ")
+        );
+        assert!(
+            one(&palette)
+                .iter()
+                .any(|(_, _, message)| message.contains("has 21 colors")),
+            "{:#?}",
+            one(&palette)
+        );
+        // A scheme group whose roles lack `icons`, or name what the definition does not have.
+        let definition = r##"[ { "type": "color", "id": "bg", "label": "B", "default": "#FFF" }, { "type": "color", "id": "fg", "label": "F", "default": "#000" } ]"##;
+        let roles = |icons: &str| {
+            format!(
+                r#"{{ "name": "G", "settings": [ {{ "type": "color_scheme_group", "id": "color_schemes", "definition": {definition}, "role": {{ "background": {{ "solid": "bg", "gradient": "bg" }}, "text": "nope", "primary_button": "fg", "on_primary_button": "bg", "primary_button_border": "fg", "secondary_button": "bg", "on_secondary_button": "fg", "secondary_button_border": "fg", "links": "fg"{icons} }} }} ] }}"#
+            )
+        };
+        let messages: Vec<String> = one(&roles("")).into_iter().map(|found| found.2).collect();
+        assert_eq!(messages.len(), 2, "{messages:#?}");
+        assert!(messages[0].contains("has no `icons`") || messages[1].contains("has no `icons`"));
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("`role.text` is \"nope\""))
+        );
+        // 22 color schemes in settings_data.json.
+        let schemes: serde_json::Map<String, Json> = (0..22)
+            .map(|n| (format!("scheme-{n}"), serde_json::json!({"settings": {}})))
+            .collect();
+        let data = serde_json::json!({"current": {"color_schemes": schemes}, "presets": {}});
+        let found = settings_schema(
+            &[&roles(r#", "icons": "fg""#).replace("\"nope\"", "\"fg\"")],
+            Some(data),
+        );
+        assert_eq!(found.len(), 1, "{found:#?}");
+        assert!(found[0].2.contains("22 color schemes"), "{found:#?}");
+        // An object, not a list.
+        assert_eq!(
+            check_settings_schema(r#"{ "name": "G" }"#, None)[0].code,
+            "invalid_schema"
+        );
+    }
+
+    #[test]
+    fn a_settings_schema_shopify_takes_is_not_reported() {
+        // No theme_info, a version with words, a support email.
+        assert!(settings_schema(&[r#"{ "name": "G", "settings": [] }"#], None).is_empty());
+        assert!(
+            settings_schema(
+                &[r#"{ "name": "theme_info", "theme_name": "P", "theme_version": "1.0.0-beta three", "theme_author": "a", "theme_documentation_url": "u", "theme_support_email": "e@x.com" }"#],
+                None
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn settings_data_whose_current_names_no_preset_is_refused() {
+        let found = check_settings_data(
+            "{\n  \"current\": \"Nope\",\n  \"presets\": { \"Default\": { \"label\": \"preset\" } }\n}",
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].code, "invalid_settings_data");
+        assert_eq!(found[0].line, 2);
+        assert!(
+            found[0].message.contains("\"Nope\""),
+            "{}",
+            found[0].message
+        );
+        // A preset that is there, or values in `current`.
+        assert!(
+            check_settings_data(r#"{"current": "Default", "presets": {"Default": {}}}"#).is_empty()
+        );
+        assert!(
+            check_settings_data(r#"{"current": {"label": 1, "unknown": [true]}, "presets": {}}"#)
+                .is_empty()
         );
     }
 
