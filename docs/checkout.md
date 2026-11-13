@@ -840,6 +840,10 @@ extension's `order.action.menu-item.render` opens its `order.action.render` in a
   `?locale=`. Extensions get it as `shopify.localization.language` and translate with it. lsf's
   `/fr/account` prefix names one too, for the page it is on. The words of the page stay English
   (`lang="en"`), as on the checkout ([language](#language)).
+- **The header** has the links of the menu `customer-account-main-menu` of the store data (its
+  `title` and `url`, the first level), as Shopify's header has the items of that menu, where a
+  merchant adds links and the full pages of extensions (`/account/pages/<handle>`). Without the
+  menu, Shopify's default items: Orders and Profile.
 - **Logged out**, the page lists the customers of the store data to log in as
   ([log in as a customer](#log-in-as-a-customer)); the avatar in the header switches customer or
   logs out.

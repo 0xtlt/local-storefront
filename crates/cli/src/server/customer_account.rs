@@ -248,6 +248,12 @@ fn state_json(
                 .map(|country| json!({"code": country.iso_code, "name": country.name}))
                 .collect::<Vec<_>>(),
         },
+        // The links of the header: those of the account's menu when the store data has it.
+        "menu": store.menus.iter()
+            .find(|menu| menu.handle == "customer-account-main-menu" && !menu.supplied_by_lsf)
+            .map(|menu| menu.links.iter()
+                .map(|link| json!({"title": link.title, "url": link.url}))
+                .collect::<Vec<_>>()),
         "customer": customer.map(|customer| customer_json(&store, customer)),
         "buyer": {
             "customer": customer.map(checkout::customer_json),

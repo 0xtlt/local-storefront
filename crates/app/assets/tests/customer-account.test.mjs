@@ -121,6 +121,25 @@ test('the profile: the targets of the customer, and those of each location of a 
   assert.ok(!render(accountState({ page: 'profile' })).targets.includes('customer-account.profile.company-details.render-after'));
 });
 
+test('the header has the items of the menu customer-account-main-menu, else Orders and Profile', () => {
+  const nav = (state) => findAll(render(state).tree, (node) => node.props.class?.startsWith('lsf-ca-nav-link'))
+    .map((node) => [text(node), node.props.href, node.props['aria-current']]);
+  assert.deepEqual(nav(accountState()), [['Orders', '/account', 'page'], ['Profile', '/account/profile', null]]);
+  const menu = [
+    { title: 'Orders', url: '/account/orders' },
+    { title: 'Profile', url: '/account/profile' },
+    { title: 'Shop', url: '/collections/all' },
+    { title: 'My loyalty', url: '/account/pages/loyalty' },
+  ];
+  assert.deepEqual(nav(accountState({ menu })), [
+    ['Orders', '/account/orders', 'page'],
+    ['Profile', '/account/profile', null],
+    ['Shop', '/collections/all', null],
+    ['My loyalty', '/account/pages/loyalty', null],
+  ]);
+  assert.deepEqual(nav(accountState({ menu, page: 'profile' })).map(([, , current]) => current), [null, 'page', null, null]);
+});
+
 test('a full page is the page of its extension, for an order or not', () => {
   const page = render(accountState({ page: 'page', extensionPage: { handle: 'loyalty', path: '/rewards' } }));
   assert.deepEqual(page.asked[0], ['customer-account.page.render', { key: 'page:loyalty:/rewards', handle: 'loyalty', path: '/rewards', orderId: undefined, order: null }]);

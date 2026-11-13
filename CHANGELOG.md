@@ -526,6 +526,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   and one `CustomerAccountAppExtensionPage` per `customer-account.page.render` extension of the
   app, with its `name` as `title`. A script that looks up the `resourceId` of a
   `CUSTOMER_ACCOUNT_PAGE` menu item finds it locally. `customerAccountPage(id:)` reads one.
+- **The customer account's header has the links of the menu `customer-account-main-menu`**, as
+  on Shopify, when the store data has the menu: a link to the shop or to an extension's full page
+  added there is in the header. It always showed Orders and Profile, which stay the links of an
+  account without the menu.
 - **`lsf app check` and `lsf app function run --scenario` price a scenario as its served
   checkout does.** A buyer in a market with its own currency gets the cart in that currency and
   the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's
