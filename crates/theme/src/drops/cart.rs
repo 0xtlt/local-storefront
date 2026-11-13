@@ -1,6 +1,8 @@
 //! `cart` and `line_item`, computed from the session's cart lines.
 
 use std::any::Any;
+use std::borrow::Cow;
+use std::sync::Arc;
 
 use indexmap::IndexMap;
 use lsf_core::cart::{ResolvedLine, resolve_line};
@@ -29,6 +31,54 @@ fn properties_value(properties: &IndexMap<String, String>) -> Value {
         .map(|(key, value)| (key.clone(), Value::from(value)))
         .collect();
     Value::hash(map)
+}
+
+/// `line_item.properties` as Shopify's Liquid has it: a `for` loop and `| json` give
+/// `[name, value]` pairs, `properties.name` and `properties['name']` a value, and `| size` the
+/// number of properties, but `.size` is nil: a theme that tests `item.properties.size > 0`
+/// never shows its properties on a store, and the docs test `item.properties == empty`.
+/// https://shopify.dev/docs/storefronts/themes/architecture/templates/cart#display-line-item-properties
+struct LineItemProperties(IndexMap<String, String>);
+
+impl Object for LineItemProperties {
+    fn type_name(&self) -> &str {
+        "line_item_properties"
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        match self.0.get(key) {
+            Some(value) => Some(Value::from(value)),
+            // `.first` is the first pair, as on a hash; anything else, `.size` included, is nil.
+            None if key == "first" => None,
+            None => Some(Value::Nil),
+        }
+    }
+
+    fn items(&self) -> Option<Arc<Vec<Value>>> {
+        Some(Arc::new(
+            self.0
+                .iter()
+                .map(|(key, value)| Value::array(vec![Value::from(key), Value::from(value)]))
+                .collect(),
+        ))
+    }
+
+    fn render(&self) -> Cow<'_, str> {
+        Cow::Owned(properties_value(&self.0).to_str().into_owned())
+    }
+
+    fn to_json(&self) -> Json {
+        Json::Array(
+            self.0
+                .iter()
+                .map(|(key, value)| json!([key, value]))
+                .collect(),
+        )
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 pub fn line_json(site: &SiteRef, line: &ResolvedLine<'_>) -> Json {
@@ -291,7 +341,7 @@ impl Object for LineItemDrop {
                 lsf_core::urls::encode_component(&line.key())
             )),
             "image" => ImageDrop::optional(site, line.image()),
-            "properties" => properties_value(&line.line.properties),
+            "properties" => Value::object(LineItemProperties(line.line.properties.clone())),
             "options_with_values" => Value::array(
                 line.product
                     .options

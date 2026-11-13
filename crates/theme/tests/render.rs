@@ -918,6 +918,68 @@ fn a_cart_line_of_a_product_without_an_image_has_a_featured_image_of_nulls() {
 }
 
 #[test]
+fn line_item_properties_are_pairs_without_a_size() {
+    // Issue #152: on Shopify `item.properties | json` is a list of `[name, value]` pairs and
+    // `item.properties.size` prints nothing. A loop, a lookup by name, `| size` and
+    // `== empty` (the test shopify.dev's cart template uses) read the properties.
+    let fixture = fixture();
+    let tote = fixture
+        .store
+        .product_by_handle("canvas-tote-bag")
+        .expect("the tote");
+    let mug = fixture
+        .store
+        .product_by_handle("ceramic-mug")
+        .expect("the mug");
+    let mut session = Session::initial(&fixture.store);
+    session.cart_lines = vec![
+        CartLine {
+            variant_id: tote.variants[0].id,
+            quantity: 1,
+            properties: [("Engraving", "Hi"), ("_hidden", "x")]
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .into_iter()
+                .collect(),
+            selling_plan: None,
+        },
+        CartLine {
+            variant_id: mug.variants[0].id,
+            quantity: 1,
+            properties: Default::default(),
+            selling_plan: None,
+        },
+    ];
+    let output = fixture.liquid(
+        "/cart",
+        session,
+        "{%- for item in cart.items %}\n\
+         json:{{ item.properties | json }}\n\
+         size:{{ item.properties.size }}\n\
+         positive:{% if item.properties.size > 0 %}yes{% else %}no{% endif %}\n\
+         filter:{{ item.properties | size }} empty:{% if item.properties == empty %}yes{% else %}no{% endif %}\n\
+         loop:{% for p in item.properties %}[{{ p.first }}={{ p.last }}]{% endfor %} \
+         by name:{{ item.properties.Engraving }}{{ item.properties['_hidden'] }}\n\
+         {%- endfor %}",
+    );
+    let lines: Vec<&str> = output.lines().filter(|line| !line.is_empty()).collect();
+    assert_eq!(
+        lines,
+        [
+            r#"json:[["Engraving","Hi"],["_hidden","x"]]"#,
+            "size:",
+            "positive:no",
+            "filter:2 empty:no",
+            "loop:[Engraving=Hi][_hidden=x] by name:Hix",
+            "json:[]",
+            "size:",
+            "positive:no",
+            "filter:0 empty:yes",
+            "loop: by name:",
+        ]
+    );
+}
+
+#[test]
 fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
     let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
     assert!(diagnostics.is_empty(), "{diagnostics}");
