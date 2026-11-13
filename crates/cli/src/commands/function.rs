@@ -987,6 +987,7 @@ fn compute(
         }
     }
     print_diagnostics(&diagnostics);
+    let store = std::sync::Arc::new(store);
     // A scenario with errors is reported, and refused when it is the one asked for; the others
     // do not matter to this run.
     if diagnostics
@@ -1077,6 +1078,9 @@ fn compute(
         Step::Completion => BuyerJourneyStep::Completion,
     };
 
+    // Priced as the served checkout prices it: in the currency of the buyer's country, at its
+    // market's rate (`presentmentCurrencyRate`) or fixed prices, the shipping rates too.
+    let store = checkout::presented_for_checkout(&store, &session, &state);
     let mut config = checkout::config_for(&store, scenario.map(|scenario| scenario.name.as_str()));
     // The Functions named on the command line run, whether or not the shop has an owner of
     // them, as `shopify app function run` runs one: without them, the checkout's. Each one the
@@ -1746,6 +1750,36 @@ mod tests {
             export: None,
             save_input: None,
         }
+    }
+
+    #[test]
+    fn a_scenario_runs_in_the_currency_of_its_market_as_the_served_checkout_does() {
+        // A buyer in France, whose market pays in euros at 0.5: a tee of 32.00 USD is 16.00 EUR.
+        let france = r#"{
+            "session": {"country": "FR", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}},
+            "entered": {"shipping_address": {"first_name": "A", "last_name": "B", "address1": "1 rue X",
+                "city": "Paris", "country_code": "FR", "zip": "75001"}},
+            "checkout": {"discounts": [{"function": "volume-discount", "title": "Probe"}]},
+            "extensions": ["volume-discount"]
+        }"#;
+        let root = scenario_root("market", &[("france.json", france)]);
+        let data = root.join("data");
+        checkout::sell_to_france_in_euros_at_half(&data);
+
+        let Ran { result, .. } =
+            compute(&root, Some(&data), &[], &run_args(&[], Some("france"))).unwrap();
+        std::fs::remove_dir_all(&root).ok();
+        assert_eq!(result.cost.currency_code, "EUR");
+        assert_eq!(result.cost.subtotal, 1600);
+        // The Function read the cart in euros.
+        let run = &result.runs[0];
+        assert_eq!(run.handle, "volume-discount");
+        assert_eq!(
+            run.input["cart"]["lines"][0]["cost"]["subtotalAmount"]["amount"],
+            serde_json::json!("16.0"),
+            "{}",
+            run.input
+        );
     }
 
     #[test]

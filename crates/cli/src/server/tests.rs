@@ -8002,6 +8002,40 @@ fn the_scenarios_of_the_playground_get_what_they_expect() {
     assert!(report.unmet.is_empty(), "{:#?}", report.unmet);
 }
 
+/// `lsf app check` runs the Functions of a scenario in the currency of its buyer's market, as
+/// the served checkout of the scenario does: the `expect` of the euro subtotal holds in both.
+#[test]
+fn app_check_prices_a_scenario_as_its_served_checkout_does() {
+    let france = r#"{
+        "session": {"country": "FR", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}},
+        "entered": {"shipping_address": {"first_name": "A", "last_name": "B", "address1": "1 rue X",
+            "city": "Paris", "country_code": "FR", "zip": "75001"}},
+        "checkout": {"discounts": [{"function": "volume-discount", "title": "Probe"}]},
+        "extensions": ["volume-discount"],
+        "expect": {"totals": {"subtotal": "16.00"}}
+    }"#;
+    let data = ScenarioData::new("market-currency", &[("france.json", france)]);
+    crate::checkout::sell_to_france_in_euros_at_half(&data.0);
+    let state = data.server(&[], true);
+
+    // The served checkout: a tee of 32.00 USD is 16.00 EUR.
+    let reply = get(&state, "/checkout?scenario=france", "viewer");
+    let id = session_cookie(&reply);
+    let location = header(&reply, "location").unwrap().to_string();
+    let served = body_json(&get(&state, &format!("{location}.json"), &id));
+    assert_eq!(served["cost"]["currencyCode"], "EUR", "{}", served["cost"]);
+    assert_eq!(served["cost"]["subtotal"]["amount"], 16.0);
+
+    // `lsf app check`: the same.
+    let app = lsf_app::config::load(&fixture_app()).unwrap();
+    let store = state.loaded().store.clone();
+    let report =
+        super::home_check::run_with_expectations(&state, &app, &store, Duration::from_secs(60));
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(report.expectations, 1);
+    assert!(report.unmet.is_empty(), "{:#?}", report.unmet);
+}
+
 #[test]
 fn scenarios_whose_names_differ_only_by_what_an_id_cannot_hold_have_ids_of_their_own() {
     let cart = r#"{"session": {"cart": {"items": [{"variant": "NOPE"}]}}}"#;

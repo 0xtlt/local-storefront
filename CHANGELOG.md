@@ -87,6 +87,14 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `metafield_text` give `€7,20 EUR` for 8.00 USD at `0.9`, as on Shopify. One written in another
   currency keeps it.
 
+#### The checkout of an app
+
+- **`lsf app check` and `lsf app function run --scenario` price a scenario as its served
+  checkout does.** A buyer in a market with its own currency gets the cart in that currency and
+  the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's
+  currency at `1.0`. An `expect` on totals now reads the amounts the page shows. Expectations
+  written in the shop's currency for such a scenario need the market's amounts.
+
 ## 0.3.0-rc.5 - 2026-11-13
 
 Fifth release candidate of 0.3.0. The errors of `/cart/change.js` read as a store's.
