@@ -497,6 +497,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `["gid://shopify/Product/<id>"]`, in a metafield and in a metaobject's `field(key:)`, and so
   does a checkout UI extension's `appMetafields`. They read the short form as written, so a
   Function that compared it with a line's `merchandise.id` matched nothing.
+- **The order summary of the checkout hides the private properties of a line**, those whose name
+  starts with `_`, as Shopify hides them from the buyer at checkout. The Functions, the
+  extensions' `shopify.lines` and the order still have them.
 
 #### The Admin API, for the backend of an app
 
@@ -561,6 +564,14 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`lsf check` warns about a theme file that is not UTF-8** (`not_utf8`, at the line of its
   first such byte), where it said nothing and `lsf render` reported the file as missing.
   Shopify takes the file; the warning does not count as a problem.
+- **`lsf app init` no longer writes a value for each setting of a checkout UI extension**
+  (`false`, `0`, `""`): a new install on Shopify reads them undefined until the merchant sets
+  them, and the scenarios now test that. It says which extensions read no settings, and where
+  to give them (`checkout.extensions.<handle>.settings`). A file it wrote before is kept.
+- **`app function run --save-input` says why it cannot pick a run** when one Function ran for
+  the same target once per owner (two discounts that use it): `--format json` has the input of
+  each, in `runs[i].input`. It asked to name the Function and its target, which the command
+  already did.
 - **`lsf profile --points` counts the products of a collection a storefront fetches**, no
   longer every product of the collection: the page of a `{% paginate %}` (4 with `by 4`), else
   at most 50, and for a `for` loop over `collection.products` with a `limit` below 50 outside

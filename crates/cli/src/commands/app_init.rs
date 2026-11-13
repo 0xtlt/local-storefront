@@ -324,41 +324,19 @@ fn function_settings(
         .collect()
 }
 
-/// The settings of the UI extensions of the app that declare some
-/// (`[[extensions.settings.fields]]`) and that the store data gives none: a value of each
-/// field's type (its first choice, `false`, `0`, `""`), to fill in. `checkout.extensions` to
-/// write, by handle.
-fn extension_settings(store: &Store, app: &ShopifyApp) -> Vec<(String, Json)> {
+/// The UI extensions of the app that declare settings (`[[extensions.settings.fields]]`) and
+/// that the store data gives none: they read every setting undefined, as a new install does on
+/// Shopify until the merchant fills them in.
+fn unset_extension_settings<'a>(store: &Store, app: &'a ShopifyApp) -> Vec<&'a str> {
     app.ui_extensions
         .iter()
         .filter(|extension| !store.checkout.extensions.contains_key(&extension.handle))
-        .filter_map(|extension| {
-            let fields = extension.settings["fields"].as_array()?;
-            let mut values = serde_json::Map::new();
-            for field in fields {
-                let Some(key) = field["key"].as_str() else {
-                    continue;
-                };
-                let first_choice = field["validations"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .find(|validation| validation["name"] == "choices")
-                    .and_then(|validation| match &validation["value"] {
-                        Json::String(text) => serde_json::from_str::<Vec<Json>>(text).ok(),
-                        Json::Array(items) => Some(items.clone()),
-                        _ => None,
-                    })
-                    .and_then(|choices| choices.into_iter().next());
-                let value = first_choice.unwrap_or_else(|| match field["type"].as_str() {
-                    Some("boolean") => json!(false),
-                    Some("number_integer" | "number_decimal") => json!(0),
-                    _ => json!(""),
-                });
-                values.insert(key.to_string(), value);
-            }
-            (!values.is_empty()).then(|| (extension.handle.clone(), json!({"settings": values})))
+        .filter(|extension| {
+            extension.settings["fields"]
+                .as_array()
+                .is_some_and(|fields| !fields.is_empty())
         })
+        .map(|extension| extension.handle.as_str())
         .collect()
 }
 
@@ -895,8 +873,17 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
     if let Some(app) = &shopify_app {
         let discounts = Kinds::of(app).discount;
         let settings = function_settings(&store, app_store.as_ref(), app, &discounts);
-        let extensions = extension_settings(&store, app);
-        write_settings(&directory, &settings, &extensions)?;
+        write_settings(&directory, &settings)?;
+        let unset = unset_extension_settings(&store, app);
+        if !unset.is_empty() {
+            eprintln!(
+                "  settings: {} {} no settings, as a new install on Shopify reads them undefined \
+                 until the merchant sets them: give them in `checkout.extensions.<handle>.settings` \
+                 to test them",
+                unset.join(", "),
+                if unset.len() == 1 { "reads" } else { "read" }
+            );
+        }
     }
     let target = match &shopify_app {
         Some(app) => {
@@ -997,15 +984,10 @@ fn checkout_file(directory: &Path) -> Option<String> {
 
 /// Writes the settings of the Functions the store data has none for in [`SETTINGS_FILE`], or
 /// says what to add when another file has the `checkout` section.
-fn write_settings(
-    directory: &Path,
-    settings: &[(String, Json, Source)],
-    extensions: &[(String, Json)],
-) -> Result<(), String> {
-    if settings.is_empty() && extensions.is_empty() {
+fn write_settings(directory: &Path, settings: &[(String, Json, Source)]) -> Result<(), String> {
+    if settings.is_empty() {
         return Ok(());
     }
-    let extension_values: serde_json::Map<String, Json> = extensions.iter().cloned().collect();
     let functions: serde_json::Map<String, Json> = settings
         .iter()
         .map(|(handle, value, _)| (handle.clone(), value.clone()))
@@ -1031,21 +1013,6 @@ fn write_settings(
             empty.join(", ")
         ));
     }
-    if !extensions.is_empty() {
-        let handles: Vec<&str> = extensions
-            .iter()
-            .map(|(handle, _)| handle.as_str())
-            .collect();
-        said.push(format!(
-            "the UI {} {}, a value of the type of each field it declares: fill them in",
-            if handles.len() == 1 {
-                "extension"
-            } else {
-                "extensions"
-            },
-            handles.join(", ")
-        ));
-    }
     let said = said.join("; ");
     // A file written before keeps what the developer filled in: only what it lacks is added.
     let path = directory.join(SETTINGS_FILE);
@@ -1066,14 +1033,6 @@ fn write_settings(
                 known[handle]["metafields"][name] = metafield.clone();
             }
         }
-        if !extension_values.is_empty() {
-            if !file["checkout"]["extensions"].is_object() {
-                file["checkout"]["extensions"] = json!({});
-            }
-            for (handle, value) in &extension_values {
-                file["checkout"]["extensions"][handle] = value.clone();
-            }
-        }
         let mut text = serde_json::to_string_pretty(&file).map_err(|error| error.to_string())?;
         text.push('\n');
         std::fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -1081,29 +1040,16 @@ fn write_settings(
         return Ok(());
     }
     if let Some(file) = checkout_file(directory) {
-        let mut section = serde_json::Map::new();
-        if !functions.is_empty() {
-            section.insert("functions".to_string(), json!(functions));
-        }
-        if !extension_values.is_empty() {
-            section.insert("extensions".to_string(), json!(extension_values));
-        }
-        let snippet = serde_json::to_string_pretty(&json!(section)).unwrap_or_default();
+        let snippet =
+            serde_json::to_string_pretty(&json!({"functions": functions})).unwrap_or_default();
         eprintln!(
             "  settings: {said}. {file} has the `checkout` section: add them to it:\n{snippet}"
         );
         return Ok(());
     }
-    let mut checkout = serde_json::Map::new();
-    if !functions.is_empty() {
-        checkout.insert("functions".to_string(), json!(functions));
-    }
-    if !extension_values.is_empty() {
-        checkout.insert("extensions".to_string(), json!(extension_values));
-    }
     let mut text = serde_json::to_string_pretty(&json!({
         "$schema": "./schema/store.schema.json",
-        "checkout": checkout,
+        "checkout": {"functions": functions},
     }))
     .map_err(|error| error.to_string())?;
     text.push('\n');
@@ -1495,47 +1441,20 @@ type = "function"
         Some(serde_json::from_str::<Json>(&text).unwrap()["checkout"]["functions"].clone())
     }
 
-    /// A UI extension that declares settings gets a value of each field's type, to fill in, as
-    /// a Function gets its variables: the store data then validates without a warning.
+    /// A UI extension that declares settings gets none: it reads them undefined, as a new
+    /// install does on Shopify until the merchant sets them.
     #[test]
-    fn the_ui_extensions_get_a_stub_of_their_settings() {
+    fn the_ui_extensions_are_left_without_settings_as_a_new_install() {
         let root = root("ui-settings");
         init_in(&root, Some(fixture_app()), false).unwrap();
-        let text = std::fs::read_to_string(root.join("data/app-settings.json")).unwrap();
-        let file: Json = serde_json::from_str(&text).unwrap();
-        assert_eq!(
-            file["checkout"]["extensions"]["gift-message"],
-            json!({"settings": {"max_length": 0}}),
-            "{file}"
-        );
-        assert_eq!(
-            file["checkout"]["extensions"]["order-notice"]["settings"]["code"],
-            json!(""),
-            "{file}"
-        );
+        // The Functions of the fixture read no settings: nothing to write.
+        assert!(!root.join("data/app-settings.json").exists());
         let (store, diagnostics) = load(
             &DataSource::Directory(root.join("data")),
             &LoadOptions::default(),
         );
         assert!(diagnostics.is_empty(), "{diagnostics}");
-        let app = lsf_app::config::load(&fixture_app()).unwrap();
-        let problems: Vec<String> = crate::checkout::settings_problems(&app, &store)
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        assert!(problems.is_empty(), "{problems:?}");
-        // Filled in, they are kept.
-        let filled = text.replace("\"max_length\": 0", "\"max_length\": 80");
-        std::fs::write(root.join("data/app-settings.json"), filled).unwrap();
-        init_in(&root, Some(fixture_app()), false).unwrap();
-        let file: Json = serde_json::from_str(
-            &std::fs::read_to_string(root.join("data/app-settings.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            file["checkout"]["extensions"]["gift-message"]["settings"]["max_length"], 80,
-            "{file}"
-        );
+        assert!(store.checkout.extensions.is_empty());
         std::fs::remove_dir_all(&root).ok();
     }
 
