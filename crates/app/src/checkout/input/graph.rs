@@ -238,9 +238,12 @@ impl<'c> Graph for FunctionInput<'c> {
                 .string("namespace")?
                 .unwrap_or_else(|| "$app".to_string());
             let key = args.required_string("key")?;
+            // "Metafields with values exceeding 10,000 bytes in size will not be returned."
             return Ok(Some(match source.find(&namespace, &key) {
-                Some((kind, value)) => Resolved::Object(Node::Metafield(kind, value)),
-                None => Resolved::Null,
+                Some((kind, value)) if value.len() <= METAFIELD_VALUE_LIMIT => {
+                    Resolved::Object(Node::Metafield(kind, value))
+                }
+                _ => Resolved::Null,
             }));
         }
         Ok(match node {
@@ -1289,6 +1292,10 @@ fn address_field<'c>(address: &Address, name: &str) -> Option<Resolved<Node<'c>>
         _ => return None,
     })
 }
+
+/// The size of the value of a metafield a Function reads, at most: over it, Shopify gives
+/// `null` ("Input query limits" of the Function APIs reference).
+const METAFIELD_VALUE_LIMIT: usize = 10_000;
 
 /// Where metafields are read from: the store's, or the ones the pipeline hands over.
 enum Source<'c> {

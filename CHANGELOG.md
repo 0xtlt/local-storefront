@@ -222,6 +222,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   thank-you page have `draftOrder` instead of `order`, and the state lists the requirement in
   `reviews`. A test that read an order from such a checkout reads the draft. On a D2C checkout
   the operation still adds nothing, as Shopify documents.
+- **A metafield whose value is over 10,000 bytes reads `null` in a Function's input**, as
+  Shopify returns none. lsf gave the whole value, so a Function that kept a large configuration
+  in a metafield worked here and lost it on a store.
 
 ### Fixed
 
