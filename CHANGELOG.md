@@ -76,6 +76,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   API and the Functions give it. `country.market` in `localization.available_countries` is each
   country's own market. A country in no market is a market of its own, named after the country
   (`france`), as at the checkout.
+- **`shop.money_format` and `shop.money_with_currency_format` are in the market's currency.** A
+  visitor in a market with another currency gets Shopify's format of that currency
+  (`€{{amount_with_comma_separator}}` and `€{{amount_with_comma_separator}} EUR` for EUR), the
+  one the money filters already used, so the scripts a theme hands `shop.money_format` print the
+  right symbol. `shop.currency` stays the store's.
 
 ## 0.3.0-rc.5 - 2026-11-13
 

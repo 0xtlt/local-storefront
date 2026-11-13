@@ -22,7 +22,8 @@ fn cents(input: &Value) -> Option<i64> {
 }
 
 /// The formats an amount is printed with, without and with its currency: the shop's, or
-/// Shopify's defaults for the currency of a money metafield written in another one.
+/// Shopify's defaults for another currency (a market's, or that of a money metafield written
+/// in another one), which the shop's settings do not change.
 pub fn money_formats(shop: &Shop, currency: Option<&str>) -> (String, String) {
     match currency.filter(|code| !code.eq_ignore_ascii_case(&shop.currency)) {
         Some(code) => reference::currency(code).map_or_else(

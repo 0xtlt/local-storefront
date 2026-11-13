@@ -549,17 +549,20 @@ fn prices_are_in_the_currency_of_the_visitors_market() {
     let source = "{{ product.price | money }}|{{ product.price | money_with_currency }}|\
         {{ cart.total_price | money }}|{{ cart.currency.iso_code }}|\
         {{ localization.country.currency.iso_code }}|{{ shop.currency }}|\
-        {{ shop.enabled_currencies | map: 'iso_code' | join: ',' }}";
+        {{ shop.enabled_currencies | map: 'iso_code' | join: ',' }}|\
+        {{ shop.money_format }}|{{ shop.money_with_currency_format }}";
     // In the shop's currency, as before.
     assert_eq!(
         fixture.liquid("/products/organic-cotton-t-shirt", session.clone(), source),
-        "$32.00|$32.00 USD|$48.00|USD|USD|USD|USD,EUR"
+        "$32.00|$32.00 USD|$48.00|USD|USD|USD|USD,EUR|${{amount}}|${{amount}} USD"
     );
-    // In France, in euros: at the market's rate, or at its fixed price (the tote bag).
+    // In France, in euros: at the market's rate, or at its fixed price (the tote bag). The
+    // money formats are those of the euro, `shop.currency` stays the shop's.
     session.country = Some("FR".to_string());
     assert_eq!(
         fixture.liquid("/products/organic-cotton-t-shirt", session.clone(), source),
-        "€28,80|€28,80 EUR|€40,00|EUR|EUR|USD|USD,EUR"
+        "€28,80|€28,80 EUR|€40,00|EUR|EUR|USD|USD,EUR|\
+         €{{amount_with_comma_separator}}|€{{amount_with_comma_separator}} EUR"
     );
     // Shopify's scripts say it, with the rate.
     let page = fixture
@@ -569,6 +572,48 @@ fn prices_are_in_the_currency_of_the_visitors_market() {
         page.contains("Shopify.currency = {\"active\":\"EUR\",\"rate\":\"0.9\"};"),
         "{page}"
     );
+}
+
+#[test]
+fn shop_money_formats_are_those_of_the_markets_currency() {
+    // The issue's store: USD, and a market in EUR served under `/en-be/`.
+    let overlay = serde_json::json!({"localization": {
+        "countries": [{"iso_code": "US"}, {"iso_code": "BE"}],
+        "languages": [{"iso_code": "en"}, {"iso_code": "fr"}],
+        "markets": [{"handle": "us", "countries": ["US"]},
+            {"handle": "europe", "countries": ["BE"], "currency": "EUR", "rate": "0.9",
+             "subfolder_suffix": "be"}]
+    }});
+    let options = LoadOptions {
+        theme_locales: vec!["en".to_string(), "fr".to_string()],
+        ..LoadOptions::default()
+    };
+    let (store, diagnostics) =
+        lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let source = "{{ shop.money_format }}|{{ shop.money_with_currency_format }}|\
+        {{ 1000 | money }}|{{ shop.currency }}|{{ shop.money_format | json }}";
+    let session = Session::initial(&fixture.store);
+    assert_eq!(
+        fixture.liquid("/", session.clone(), source),
+        "${{amount}}|${{amount}} USD|$10.00|USD|\"${{amount}}\""
+    );
+    for (locale, root) in [("en", "/en-be"), ("fr", "/fr-be")] {
+        let mut under = request("/");
+        under.locale = locale.to_string();
+        under.root = root.to_string();
+        under.market = Some("europe".to_string());
+        assert_eq!(
+            fixture.liquid_for(under, session.clone(), source),
+            "€{{amount_with_comma_separator}}|€{{amount_with_comma_separator}} EUR|€10,00|USD|\
+             \"€{{amount_with_comma_separator}}\"",
+            "{root}"
+        );
+    }
 }
 
 #[test]

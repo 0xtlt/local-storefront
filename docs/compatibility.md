@@ -95,7 +95,9 @@ font, media, HTML, URL, cart, customer, metafield and translation filters.
 `applicable_disclosures` keeps every disclosure, as Shopify does when it cannot tell the
 buyer's country. Among them
 `image_url` and `image_tag` (with `srcset`, `sizes`, `preload`, focal points), the legacy
-`img_url` family, `money` and its variants with every `money_format` placeholder, `t` with
+`img_url` family, `money` and its variants with every `money_format` placeholder (in a market
+with another currency, Shopify's format of that currency, which `shop.money_format` and
+`shop.money_with_currency_format` give too), `t` with
 pluralization and interpolation, `date` with locale formats, `json`, `structured_data`,
 `payment_type_svg_tag`, `placeholder_svg_tag`, `font_face`, `color_*`, `metafield_tag`,
 `default_pagination`, `link_to_*`, `highlight`, `time_tag`.

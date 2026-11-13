@@ -1263,7 +1263,8 @@ pub struct ShopInput {
     #[serde(default)]
     pub currency: Option<String>,
     /// How `money` formats amounts, e.g. `"${{amount}}"` or `"{{amount_with_comma_separator}} €"`.
-    /// Defaults to the usual format of the currency.
+    /// Defaults to the usual format of the currency. Only for the store currency: a market in
+    /// another currency has Shopify's format of that currency.
     #[serde(default)]
     pub money_format: Option<String>,
     /// How `money_with_currency` formats amounts, e.g. `"${{amount}} USD"`.

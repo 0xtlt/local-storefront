@@ -9,6 +9,7 @@ use super::localization::{currency_value, language_value};
 use super::media::ImageDrop;
 use super::metafield::MetafieldsDrop;
 use super::{Memo, SiteRef, hash, strings};
+use crate::filters::money::money_formats;
 
 pub struct ShopDrop {
     pub site: SiteRef,
@@ -190,8 +191,13 @@ impl Object for ShopDrop {
             "domain" => Value::from(shop.domain.as_ref().unwrap_or(&site.request.host)),
             "permanent_domain" => Value::from(&shop.permanent_domain),
             "currency" => Value::from(&shop.currency),
-            "money_format" => Value::from(&shop.money_format),
-            "money_with_currency_format" => Value::from(&shop.money_with_currency_format),
+            // The formats of the currency prices are in: the shop's settings in its own, and
+            // Shopify's format of a market's currency, which those settings do not change
+            // (https://help.shopify.com/manual/payments/currency-formatting).
+            "money_format" => Value::from(money_formats(shop, Some(site.currency())).0),
+            "money_with_currency_format" => {
+                Value::from(money_formats(shop, Some(site.currency())).1)
+            }
             "address" => AddressDrop::value(site, &shop.address, false),
             "metafields" => self.memo.get("metafields", || {
                 MetafieldsDrop::value(site, &shop.metafields)

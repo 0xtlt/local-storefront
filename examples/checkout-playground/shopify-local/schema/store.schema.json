@@ -262,7 +262,7 @@
           "default": null
         },
         "money_format": {
-          "description": "How `money` formats amounts, e.g. `\"${{amount}}\"` or `\"{{amount_with_comma_separator}} €\"`.\nDefaults to the usual format of the currency.",
+          "description": "How `money` formats amounts, e.g. `\"${{amount}}\"` or `\"{{amount_with_comma_separator}} €\"`.\nDefaults to the usual format of the currency. Only for the store currency: a market in\nanother currency has Shopify's format of that currency.",
           "type": [
             "string",
             "null"

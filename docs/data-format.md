@@ -452,6 +452,9 @@ Every field of `shop` is optional.
 ```
 
 - `money_format` and `money_with_currency_format` default to the usual format of the currency.
+  They format the store currency only: a visitor in a market with another currency gets
+  Shopify's format of that currency, in the money filters and in `shop.money_format`, as on
+  Shopify.
 - `timezone` is the zone dates are displayed in by the `date` filter.
 - `password` is the password the `/password` page accepts. It is `password` when you do not
   set it. The storefront is never locked: the page is always there, and nothing leads to it.
@@ -837,8 +840,9 @@ product handle for each of its variants; a value a price, or `{"price", "compare
 A country pays in its own `currency`, else in its market's, else in the store's. A visitor in it
 sees every price in that currency, rounded to its minor unit (to whole yen for JPY): products,
 variants, compare-at and unit prices, selling plans, the cart, `/cart.js`, the checkout and its
-shipping rates. `cart.currency`, `localization.country.currency` and the money filters follow;
-`shop.currency` stays the store's, and `shop.enabled_currencies` lists every currency of the
+shipping rates. `cart.currency`, `localization.country.currency`, the money filters,
+`shop.money_format` and `shop.money_with_currency_format` follow (`€{{amount_with_comma_separator}}`
+for EUR); `shop.currency` stays the store's, and `shop.enabled_currencies` lists every currency of the
 countries. Gift cards keep their own currency, and orders of the data are priced as their
 variants are.
 
