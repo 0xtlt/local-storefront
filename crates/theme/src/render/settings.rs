@@ -236,6 +236,85 @@ impl Object for ColorSchemeGroup {
     }
 }
 
+/// The value of a `product`, `collection`, `page`, `blog`, `article` or `link_list` setting that
+/// names a resource: the resource itself, which prints its handle, as Shopify's does for the
+/// themes that still read the handle a setting held before it held the object. `size` is the
+/// length of that handle. Everything else is the resource's: its properties, its `json`, its
+/// comparisons, and the drop a filter or a tag downcasts it to.
+struct ResourceSetting {
+    resource: Arc<dyn Object>,
+    handle: String,
+}
+
+impl ResourceSetting {
+    fn value(resource: Value) -> Value {
+        let Value::Object(object) = &resource else {
+            return resource;
+        };
+        let handle = object
+            .get("handle")
+            .map(|handle| handle.to_str().into_owned());
+        match handle {
+            Some(handle) => Value::object(ResourceSetting {
+                resource: object.clone(),
+                handle,
+            }),
+            None => resource,
+        }
+    }
+}
+
+impl Object for ResourceSetting {
+    fn type_name(&self) -> &str {
+        self.resource.type_name()
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        self.resource.get(key)
+    }
+
+    fn index(&self, index: i64) -> Option<Value> {
+        self.resource.index(index)
+    }
+
+    fn items(&self) -> Option<Arc<Vec<Value>>> {
+        self.resource.items()
+    }
+
+    fn items_until(&self, to: usize) -> Option<Arc<Vec<Value>>> {
+        self.resource.items_until(to)
+    }
+
+    fn size(&self) -> Option<usize> {
+        Some(self.handle.chars().count())
+    }
+
+    fn to_value(&self) -> Option<Value> {
+        self.resource.to_value()
+    }
+
+    fn render(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.handle)
+    }
+
+    fn to_json(&self) -> Json {
+        self.resource.to_json()
+    }
+
+    fn identity(&self) -> Option<String> {
+        self.resource.identity()
+    }
+
+    fn equals(&self, other: &Value) -> Option<bool> {
+        self.resource.equals(other)
+    }
+
+    /// The resource's own drop, so that `downcast::<ProductDrop>()` finds it.
+    fn as_any(&self) -> &dyn Any {
+        self.resource.as_any()
+    }
+}
+
 fn color_value(value: &Value) -> Value {
     match value {
         Value::Str(text) if text.trim().is_empty() => Value::Nil,
@@ -314,7 +393,7 @@ fn convert(
         "product" => match handle_of(&value) {
             Some(handle) => store.product_index(handle).map_or_else(
                 || EmptyDrop::setting(EmptyDrop::NONE, handle),
-                |index| ProductDrop::value(site, index),
+                |index| ResourceSetting::value(ProductDrop::value(site, index)),
             ),
             None if is_object => value,
             None => Value::Nil,
@@ -322,7 +401,7 @@ fn convert(
         "collection" => match handle_of(&value) {
             Some(handle) => store.collection_index(handle).map_or_else(
                 || EmptyDrop::setting(EmptyDrop::COLLECTION, handle),
-                |index| CollectionDrop::value(site, index),
+                |index| ResourceSetting::value(CollectionDrop::value(site, index)),
             ),
             None if is_object => value,
             None => Value::Nil,
@@ -330,7 +409,7 @@ fn convert(
         "page" => match handle_of(&value) {
             Some(handle) => store.page_index(handle).map_or_else(
                 || EmptyDrop::setting(EmptyDrop::NONE, handle),
-                |index| PageDrop::value(site, index),
+                |index| ResourceSetting::value(PageDrop::value(site, index)),
             ),
             None if is_object => value,
             None => Value::Nil,
@@ -338,7 +417,7 @@ fn convert(
         "blog" => match handle_of(&value) {
             Some(handle) => store.blog_index(handle).map_or_else(
                 || EmptyDrop::setting(EmptyDrop::BLOG, handle),
-                |index| BlogDrop::value(site, index),
+                |index| ResourceSetting::value(BlogDrop::value(site, index)),
             ),
             None if is_object => value,
             None => Value::Nil,
@@ -348,11 +427,11 @@ fn convert(
                 .split_once('/')
                 .and_then(|(blog, article)| {
                     let blog_index = store.blog_index(blog)?;
-                    Some(ArticleDrop::value(
+                    Some(ResourceSetting::value(ArticleDrop::value(
                         site,
                         blog_index,
                         store.article_index(blog_index, article)?,
-                    ))
+                    )))
                 })
                 .unwrap_or_else(|| EmptyDrop::setting(EmptyDrop::NONE, path)),
             None if is_object => value,
@@ -421,7 +500,7 @@ fn convert(
         "link_list" => match handle_of(&value) {
             Some(handle) => store.menu(handle).map_or_else(
                 || EmptyDrop::setting(EmptyDrop::LINK_LIST, handle),
-                |menu| LinkListDrop::value(site, menu),
+                |menu| ResourceSetting::value(LinkListDrop::value(site, menu)),
             ),
             None if is_object => value,
             None => Value::Nil,
