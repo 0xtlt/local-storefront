@@ -2307,6 +2307,63 @@ fn a_metafield_without_value_compares_filters_and_sorts_as_its_value() {
 }
 
 #[test]
+fn metafield_values_as_the_admin_api_returns_them_render_as_their_type() {
+    // https://shopify.dev/docs/apps/build/metafields/list-of-data-types: the value of a
+    // metafield "is always entered and stored as a string". The Admin API returns `"true"`,
+    // `"42"`, units as enums (`KILOGRAMS`), and still has the deprecated types `string`,
+    // `integer` and `json_string`.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "probe": [{
+                "handle": "f",
+                "fields": {
+                    "on": { "type": "boolean", "value": "true" },
+                    "off": { "type": "boolean", "value": "false" },
+                    "n": { "type": "number_integer", "value": "42" },
+                    "mass": { "type": "weight", "value": "{\"value\":2.25,\"unit\":\"KILOGRAMS\"}" },
+                    "legacy": { "type": "string", "value": "legacy" },
+                    "count": { "type": "integer", "value": "7" },
+                    "data": { "type": "json_string", "value": "{\"a\":[1,2]}" }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render = |source: &str| {
+        fixture.liquid(
+            "/",
+            Session::initial(&fixture.store),
+            &format!("{{%- assign f = metaobjects.probe.f -%}}{source}"),
+        )
+    };
+    assert_eq!(
+        render(
+            "{% if f.on.value %}on{% else %}off{% endif %}|{% if f.off.value %}on{% else %}off{% endif %}|\
+             {% if f.on %}on{% else %}off{% endif %}|{{ f.n.value | plus: 1 }}|{{ f.mass.value.value }}|\
+             {{ f.legacy.value }}|{{ f.legacy.type }}"
+        ),
+        "on|off|on|43|2.25|legacy|string"
+    );
+    // The deprecated types give their value directly, a number for `integer` and the JSON of
+    // a `json_string`.
+    assert_eq!(
+        render(
+            "{{ f.count | plus: 1 }}|{{ f.count.value | plus: 1 }}|{{ f.data.value.a | join: ',' }}"
+        ),
+        "8|8|1,2"
+    );
+}
+
+#[test]
 fn a_handle_that_names_nothing_is_the_empty_object() {
     // https://shopify.dev/docs/api/liquid/basics#empty: "An `empty` object is returned if you
     // try to access an object that is defined, but has no value", truthy, so that themes

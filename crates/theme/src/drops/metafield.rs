@@ -178,6 +178,8 @@ impl MetafieldDrop {
                 | "url"
                 | "id"
                 | "number_integer"
+                | "string"
+                | "integer"
                 | "number_decimal"
                 | "boolean"
                 | "date"
@@ -351,7 +353,7 @@ fn presented_money(site: &SiteRef, cents: i64, currency: String) -> MoneyDrop {
 fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
     let text = || value.as_str().unwrap_or_default();
     match kind {
-        "number_integer" => value
+        "number_integer" | "integer" => value
             .as_i64()
             .map_or_else(|| Value::from(value), Value::Int),
         "number_decimal" => match value {
@@ -360,7 +362,10 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
                 .map_or_else(|_| Value::from(value), Value::Float),
             other => Value::from(other),
         },
-        "boolean" => Value::Bool(value.as_bool().unwrap_or(false)),
+        // A value `validate` refuses is shown as it is written, not as `false`.
+        "boolean" => value
+            .as_bool()
+            .map_or_else(|| Value::from(value), Value::Bool),
         "date" | "date_time" => Time::parse_iso(text(), site.store.shop.timezone)
             .map(Value::object)
             .or_else(|| {

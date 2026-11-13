@@ -78,6 +78,11 @@ const TYPES: [&str; 27] = [
 /// The types that have no list: one value only.
 const SINGLE_ONLY: [&str; 5] = ["boolean", "json", "language", "money", "rich_text_field"];
 
+/// The deprecated types, which the Admin API still creates and Liquid still renders: they
+/// "return the metafield value directly" (https://shopify.dev/docs/api/liquid/objects/metafield).
+/// They have no list, and "did you mean" hints never suggest them.
+pub const DEPRECATED: [&str; 3] = ["integer", "json_string", "string"];
+
 /// Whether a type is a measurement (`weight`, `dimension`, …).
 pub fn is_measurement(kind: &str) -> bool {
     MEASUREMENTS.contains(&kind)
@@ -156,13 +161,13 @@ pub fn all_types() -> Vec<String> {
     all
 }
 
-/// Whether `kind` is a type of Shopify.
+/// Whether `kind` is a type of Shopify, a [`DEPRECATED`] one included.
 pub fn is_known(kind: &str) -> bool {
     match kind.strip_prefix("list.") {
         Some(item) => {
             (TYPES.contains(&item) || is_measurement(item)) && !SINGLE_ONLY.contains(&item)
         }
-        None => TYPES.contains(&kind) || is_measurement(kind),
+        None => TYPES.contains(&kind) || is_measurement(kind) || DEPRECATED.contains(&kind),
     }
 }
 
@@ -195,9 +200,17 @@ fn is_object_kind(kind: &str) -> bool {
 
 /// The value as the store keeps it, from what the data writes.
 ///
-/// - The JSON text of an object or a list, which is what the Admin API's `value` is
-///   (`"{\"scale_min\":\"1.0\",...}"`), is that object or list, so that a value can be pasted
-///   from the API as is. A `json` metafield is left alone: a string is a value of it.
+/// The Admin API's `value` is always a string: Shopify's values are "always entered and stored
+/// as a string" (https://shopify.dev/docs/apps/build/metafields/list-of-data-types). So that a
+/// value can be pasted from the API as is:
+///
+/// - The JSON text of an object or a list (`"{\"scale_min\":\"1.0\",...}"`) is that object or
+///   list. A `json` metafield is left alone: a string is a value of it. A `json_string` is the
+///   JSON its text holds.
+/// - A `boolean` written `"true"` or `"false"` is that boolean, and a `number_integer` (or an
+///   `integer`) written `"42"` is that number, in a list too (`["10", "20"]`).
+/// - A unit of a `weight`, `dimension` or `volume` is in lower case: the API's `KILOGRAMS` is
+///   `kilograms`.
 /// - The parts of a rating are strings, as Shopify keeps them and as its Liquid gives them
 ///   (`"5.0"`): a number is written as it is in the data (`5` is `"5"`, `4.5` is `"4.5"`).
 ///
@@ -205,23 +218,54 @@ fn is_object_kind(kind: &str) -> bool {
 pub fn normalize(kind: &str, value: &Json) -> Json {
     let item = kind.strip_prefix("list.");
     let parsed = match value {
-        Json::String(text) if item.is_some() || is_object_kind(kind) => {
+        Json::String(text) if item.is_some() || is_object_kind(kind) || kind == "json_string" => {
             serde_json::from_str::<Json>(text.trim())
                 .ok()
                 .filter(|parsed| match item {
                     Some(_) => parsed.is_array(),
-                    None => parsed.is_object(),
+                    None => kind == "json_string" || parsed.is_object(),
                 })
         }
         _ => None,
     };
     let mut value = parsed.unwrap_or_else(|| value.clone());
     match (item, &mut value) {
-        (Some("rating"), Json::Array(items)) => items.iter_mut().for_each(rating_strings),
-        (None, _) if kind == "rating" => rating_strings(&mut value),
-        _ => {}
+        (Some(item), Json::Array(items)) => {
+            items.iter_mut().for_each(|one| normalize_one(item, one))
+        }
+        (Some(_), _) => {}
+        (None, value) => normalize_one(kind, value),
     }
     value
+}
+
+/// [`normalize`] for one value, not a list.
+fn normalize_one(kind: &str, value: &mut Json) {
+    let text = value.as_str().map(str::trim);
+    match kind {
+        "boolean" => match text {
+            Some("true") => *value = Json::Bool(true),
+            Some("false") => *value = Json::Bool(false),
+            _ => {}
+        },
+        "number_integer" | "integer" => {
+            if let Some(number) = text.and_then(|text| text.parse::<i64>().ok()) {
+                *value = Json::from(number);
+            }
+        }
+        "rating" => rating_strings(value),
+        kind => {
+            let Some(units) = units(kind) else {
+                return;
+            };
+            if let Some(Json::String(unit)) = value.get_mut("unit") {
+                let lower = unit.to_ascii_lowercase();
+                if units.contains(&lower.as_str()) {
+                    *unit = lower;
+                }
+            }
+        }
+    }
 }
 
 /// Writes the numbers of a rating as strings, keeping the order of its fields.
@@ -266,9 +310,15 @@ pub fn check(kind: &str, value: &Json) -> (Vec<Problem>, Vec<Reference>) {
     let mut references = Vec::new();
     if !is_known(kind) {
         let all = all_types();
-        let hint = match crate::util::closest_match(kind, all.iter().map(String::as_str)) {
-            Some(close) => format!("did you mean \"{close}\"?"),
-            None => "use a type of Shopify: single_line_text_field, number_integer, boolean, \
+        let single = kind
+            .strip_prefix("list.")
+            .filter(|item| SINGLE_ONLY.contains(item) || DEPRECATED.contains(item));
+        let hint = match (single, crate::util::closest_match(kind, all.iter().map(String::as_str))) {
+            (Some(item), _) => {
+                format!("Shopify has no list of {item}: use a json metafield for several values")
+            }
+            (None, Some(close)) => format!("did you mean \"{close}\"?"),
+            (None, None) => "use a type of Shopify: single_line_text_field, number_integer, boolean, \
                      product_reference, list.product_reference, ... (data-format.md#metafields-and-metaobjects)"
                 .to_string(),
         };
@@ -350,7 +400,7 @@ fn describe(value: &Json) -> String {
 /// A value of the type, as the data writes it.
 fn example(kind: &str) -> &'static str {
     match kind {
-        "number_integer" => "2",
+        "number_integer" | "integer" => "2",
         "number_decimal" => "\"2.5\"",
         "boolean" => "true",
         "date" => "\"2025-05-01\"",
@@ -370,8 +420,17 @@ fn example(kind: &str) -> &'static str {
         "article_reference" => "\"news/first-post\"",
         "file_reference" => "\"lookbook.jpg\"",
         "rich_text_field" => "{\"type\": \"root\", \"children\": [...]}",
-        "json" => "{...}",
+        "json" | "json_string" => "{...}",
         _ => "\"text\"",
+    }
+}
+
+/// "a" or "an", before the name of a type.
+fn article(kind: &str) -> &'static str {
+    if kind.starts_with(['a', 'e', 'i', 'o', 'u']) {
+        "an"
+    } else {
+        "a"
     }
 }
 
@@ -396,12 +455,12 @@ fn check_one(
             pointer: pointer.to_string(),
             code: "invalid_metafield",
             message,
-            hint: format!("a {kind} is written {}", example(kind)),
+            hint: format!("{} {kind} is written {}", article(kind), example(kind)),
         });
     };
     let text = value.as_str();
     match kind {
-        "single_line_text_field" | "multi_line_text_field" | "id" => {
+        "single_line_text_field" | "multi_line_text_field" | "id" | "string" => {
             if text.is_none() {
                 wrong(format!("a {kind} is a string, not {}", describe(value)));
             } else if kind == "single_line_text_field" && text.is_some_and(|t| t.contains('\n')) {
@@ -413,10 +472,11 @@ fn check_one(
                 });
             }
         }
-        "number_integer" => {
+        "number_integer" | "integer" => {
             if !(value.is_i64() || value.is_u64()) {
                 wrong(format!(
-                    "a number_integer is a whole number, not {}",
+                    "{} {kind} is a whole number, not {}",
+                    article(kind),
                     describe(value)
                 ));
             }
@@ -507,7 +567,7 @@ fn check_one(
                 )),
             }
         }
-        "json" => {}
+        "json" | "json_string" => {}
         "rich_text_field" => {
             if value.get("type").and_then(Json::as_str) != Some("root") {
                 wrong(format!(
@@ -678,7 +738,7 @@ mod tests {
         );
         assert!(problems("number_decimal", json!("2.5")).is_empty());
         assert!(!problems("number_decimal", json!("2,5")).is_empty());
-        assert!(!problems("boolean", json!("true")).is_empty());
+        assert!(!problems("boolean", json!("yes")).is_empty());
         assert!(problems("date", json!("2025-05-01")).is_empty());
         assert!(!problems("date", json!("May 1, 2025")).is_empty());
         assert!(problems("date_time", json!("2025-05-01T10:00:00Z")).is_empty());
@@ -711,8 +771,8 @@ mod tests {
         assert!(problems("temperature", json!({"value": 20, "unit": "c"})).is_empty());
         assert!(problems("json", json!([1, {"a": null}])).is_empty());
         assert_eq!(
-            problems("list.number_integer", json!([1, "2"])),
-            ["/value/1 a number_integer is a whole number, not a string (\"2\")"]
+            problems("list.number_integer", json!([1, "two"])),
+            ["/value/1 a number_integer is a whole number, not a string (\"two\")"]
         );
         assert!(!problems("list.product_reference", json!("a")).is_empty());
     }
@@ -825,12 +885,85 @@ mod tests {
     }
 
     #[test]
+    fn values_as_the_admin_api_returns_them_are_taken() {
+        // Values are "always entered and stored as a string": the Admin API's `value`.
+        for (kind, text, value) in [
+            ("boolean", json!("true"), json!(true)),
+            ("boolean", json!("false"), json!(false)),
+            ("number_integer", json!("42"), json!(42)),
+            ("number_integer", json!("-7"), json!(-7)),
+            ("list.number_integer", json!(["10", "20"]), json!([10, 20])),
+            (
+                "list.number_integer",
+                json!("[\"10\",\"20\"]"),
+                json!([10, 20]),
+            ),
+            (
+                "weight",
+                json!("{\"value\":2.25,\"unit\":\"KILOGRAMS\"}"),
+                json!({"value": 2.25, "unit": "kilograms"}),
+            ),
+            (
+                "list.volume",
+                json!([{"value": 1, "unit": "US_GALLONS"}]),
+                json!([{"value": 1, "unit": "us_gallons"}]),
+            ),
+            (
+                "dimension",
+                json!({"value": 1.5, "unit": "CM"}),
+                json!({"value": 1.5, "unit": "cm"}),
+            ),
+        ] {
+            assert_eq!(normalize(kind, &text), value, "{kind} {text}");
+            assert!(problems(kind, text.clone()).is_empty(), "{kind} {text}");
+        }
+        assert_eq!(
+            problems("boolean", json!("TRUE")),
+            ["/value a boolean is true or false, not a string (\"TRUE\")"]
+        );
+        assert_eq!(
+            problems("number_integer", json!("4.5")),
+            ["/value a number_integer is a whole number, not a string (\"4.5\")"]
+        );
+        assert_eq!(
+            problems("weight", json!({"value": 2, "unit": "KILOGRAM"})),
+            ["/value/unit \"KILOGRAM\" is not a unit of weight"]
+        );
+    }
+
+    #[test]
+    fn the_deprecated_types_are_types() {
+        assert!(problems("string", json!("legacy")).is_empty());
+        assert!(problems("string", json!("two\nlines")).is_empty());
+        assert!(problems("integer", json!("42")).is_empty());
+        assert_eq!(normalize("integer", &json!("42")), json!(42));
+        assert_eq!(
+            problems("integer", json!("forty")),
+            ["/value an integer is a whole number, not a string (\"forty\")"]
+        );
+        assert_eq!(
+            normalize("json_string", &json!("{\"a\":[1]}")),
+            json!({"a": [1]})
+        );
+        assert!(problems("json_string", json!("not json")).is_empty());
+        // They have no list, and hints never suggest them.
+        assert!(!is_known("list.string"));
+        assert!(!all_types().contains(&"string".to_string()));
+    }
+
+    #[test]
     fn an_unknown_type_is_named_with_the_closest_one() {
         let (problems, _) = check("number_interger", &json!(2));
         assert_eq!(problems[0].code, "unknown_metafield_type");
         assert_eq!(problems[0].hint, "did you mean \"number_integer\"?");
         assert!(is_known("list.weight"));
         assert!(!is_known("list.boolean"));
+        // Shopify's list of data types gives `boolean` no list version.
+        let (problems, _) = check("list.boolean", &json!([true, false]));
+        assert_eq!(
+            problems[0].hint,
+            "Shopify has no list of boolean: use a json metafield for several values"
+        );
     }
 
     #[test]
