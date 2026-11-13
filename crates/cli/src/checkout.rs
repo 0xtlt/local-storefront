@@ -185,6 +185,10 @@ pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
         if function.built() {
             let sources = sources.after_build(crate::freshness::sources(&app.root, function));
             crate::freshness::record(&app.root, &function.handle, &function.wasm_path, &sources);
+            if let Some(problem) = lsf_app::checkout::runner::oversized_module(&function.wasm_path)
+            {
+                eprintln!("warning: {}: {problem}", function.handle);
+            }
         }
     }
     Ok(())

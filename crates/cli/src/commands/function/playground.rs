@@ -878,7 +878,11 @@ fn check(name: &str, result: &CheckoutResult) {
                 "broken-huge-output",
                 "cart.delivery-options.transform.run",
             );
-            assert!(run.error.is_none(), "{:?}", run.error);
+            // Over Shopify's 40 kB: the run fails and its output is ignored.
+            assert_eq!(
+                run.error.as_deref(),
+                Some("the output is 198,909 bytes: Shopify ignores an output over 40,000")
+            );
             assert_eq!(
                 run.output.as_ref().unwrap()["operations"]
                     .as_array()
@@ -886,7 +890,7 @@ fn check(name: &str, result: &CheckoutResult) {
                     .len(),
                 2000
             );
-            assert_eq!(options(result)[0].1, "Standard, renamed 2000 times");
+            assert_eq!(options(result)[0].1, "Standard");
         }
         "fn-broken-missing-build" => {
             let run = the_run(

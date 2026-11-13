@@ -19,8 +19,53 @@ use indexmap::IndexMap;
 use serde_json::Value;
 use wasmtime::{Engine, Module};
 
-/// Shopify stops a Function after 11 million Wasm instructions.
+/// Shopify stops a Function after 11 million Wasm instructions, for a cart of up to 200 lines
+/// ([`Limits::for_lines`]).
 pub const INSTRUCTIONS_LIMIT: u64 = 11_000_000;
+
+/// The size of the input Shopify gives a Function of a cart of up to 200 lines, at most:
+/// 128 kB.
+pub const INPUT_LIMIT: u64 = 128_000;
+
+/// The size of the output Shopify takes from a Function of a cart of up to 200 lines, at most:
+/// 40 kB.
+pub const OUTPUT_LIMIT: u64 = 40_000;
+
+/// The linear memory a run may grow to, all its memories together (the module's, and the
+/// memory of a JavaScript Function's Javy provider): 10 MiB.
+pub const MEMORY_LIMIT: usize = 10 * 1024 * 1024;
+
+/// The size of a compiled Function Shopify deploys, at most: 256 KiB.
+pub const MODULE_SIZE_LIMIT: u64 = 256 * 1024;
+
+/// Shopify's limits of a run that scale with the cart ("Dynamic limits" of the Function APIs
+/// reference): those of a cart of up to 200 lines, and in proportion to its lines above.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    pub instructions: u64,
+    /// Bytes of the input, as JSON.
+    pub input: u64,
+    /// Bytes of the output, as JSON.
+    pub output: u64,
+}
+
+impl Limits {
+    pub fn for_lines(lines: usize) -> Limits {
+        let lines = lines as u64;
+        let scaled = |limit: u64| {
+            if lines <= 200 {
+                limit
+            } else {
+                limit * lines / 200
+            }
+        };
+        Limits {
+            instructions: scaled(INSTRUCTIONS_LIMIT),
+            input: scaled(INPUT_LIMIT),
+            output: scaled(OUTPUT_LIMIT),
+        }
+    }
+}
 
 /// lsf stops a Function after this many instructions, ten times Shopify's limit: an endless loop
 /// stops in a fraction of a second, and a Function past the limit by less than that has its exact
@@ -245,6 +290,13 @@ impl Runner {
             error: None,
             instructions: result.instructions,
         };
+        if let Some(asked) = result.memory_refused {
+            // The grow that would pass the limit trapped: the trap says nothing more.
+            let (logs, _) = split_failure(&result.logs);
+            execution.logs = logs;
+            execution.error = Some(past_the_memory(asked));
+            return execution;
+        }
         if result.instructions >= self.cap {
             // Out of fuel: the trap says nothing the count does not.
             let (logs, _) = split_failure(&result.logs);
@@ -378,8 +430,30 @@ fn past_the_cap(cap: u64) -> String {
     )
 }
 
+/// Why Shopify would not deploy the module at `wasm`: it is over [`MODULE_SIZE_LIMIT`].
+/// `None` for a module within it, or none.
+pub fn oversized_module(wasm: &Path) -> Option<String> {
+    let size = std::fs::metadata(wasm).ok()?.len();
+    (size > MODULE_SIZE_LIMIT).then(|| {
+        format!(
+            "the module is {} bytes: Shopify does not deploy a Function over {} bytes (256 KiB)",
+            thousands(size),
+            thousands(MODULE_SIZE_LIMIT)
+        )
+    })
+}
+
+/// Why a run whose memory would have grown to `asked` bytes failed.
+fn past_the_memory(asked: usize) -> String {
+    format!(
+        "exceeded Shopify's limit of {} bytes of linear memory: it asked for {}",
+        thousands(MEMORY_LIMIT as u64),
+        thousands(asked as u64)
+    )
+}
+
 /// `11000000` as `11,000,000`.
-fn thousands(n: u64) -> String {
+pub(crate) fn thousands(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, digit) in digits.chars().enumerate() {

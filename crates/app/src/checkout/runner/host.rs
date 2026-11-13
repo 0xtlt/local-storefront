@@ -41,6 +41,11 @@ pub(super) struct Run {
     pub success: bool,
     /// The output, or why it does not parse.
     pub output: Result<Value, String>,
+    /// The size the memories would have grown to when a grow past [`MEMORY_LIMIT`] stopped
+    /// the run.
+    ///
+    /// [`MEMORY_LIMIT`]: super::MEMORY_LIMIT
+    pub memory_refused: Option<usize>,
 }
 
 /// When a run is stopped. The engine is every run's: its epoch moves for all of them (a watchdog
@@ -144,7 +149,7 @@ pub(super) fn run(
         engine,
         Context {
             wasi,
-            limiter: MemoryLimiter,
+            limiter: MemoryLimiter::default(),
         },
     );
     store.limiter(|s| &mut s.limiter);
@@ -210,6 +215,7 @@ pub(super) fn run(
         None => Err(error),
     });
     let instructions = fuel.saturating_sub(store.get_fuel().unwrap_or_default());
+    let memory_refused = store.data().limiter.refused;
 
     let (output, mut logs) = match io {
         Io::Memory(instance) => {
@@ -261,6 +267,7 @@ pub(super) fn run(
         logs: String::from_utf8_lossy(&logs).into(),
         success: result.is_ok(),
         output,
+        memory_refused,
     })
 }
 
@@ -278,15 +285,32 @@ struct Context {
     limiter: MemoryLimiter,
 }
 
-struct MemoryLimiter;
+/// Shopify's limit on the linear memory of a run, all its memories together: a grow past it
+/// traps, as the run then fails on Shopify.
+#[derive(Default)]
+struct MemoryLimiter {
+    /// The bytes of every memory of the run.
+    total: usize,
+    /// What a grow that was refused asked for, all memories together.
+    refused: Option<usize>,
+}
 
 impl ResourceLimiter for MemoryLimiter {
     fn memory_growing(
         &mut self,
-        _current: usize,
-        _desired: usize,
+        current: usize,
+        desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
+        let total = self.total - current.min(self.total) + desired;
+        if total > super::MEMORY_LIMIT {
+            self.refused = Some(total);
+            return Err(wasmtime::Error::msg(format!(
+                "the linear memory would grow to {total} bytes, past Shopify's limit of {}",
+                super::MEMORY_LIMIT
+            )));
+        }
+        self.total = total;
         Ok(true)
     }
 
