@@ -48,6 +48,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`/cart/add.js` answers `422` for an unknown variant**, no longer `404`, as the Ajax Cart API
   reference shows: `{"status":422,"message":"Cart Error","description":"Cannot find variant"}`.
   A theme test that expects `404` from `add.js` needs `422`.
+- **`image_url` raises `invalid url input` on what is not an image**, as on Shopify: nil, a
+  product, a variant or a cart line without an image, an empty string, a URL of another site.
+  lsf printed an empty string (or a URL that led nowhere), so an unguarded `image_url` passed on
+  lsf and showed a Liquid error on the store; `render --strict` now fails on it. **`image_tag`
+  raises `image_url must define width or height`** when `image_url` has neither. Guard the
+  image (`{% if product.featured_image %}`) and give `image_url` a width.
 
 ### Fixed
 
@@ -165,27 +171,6 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   and `.value.unit` the unit Shopify's Liquid gives: `kg`, `cm`, … for `kilograms`,
   `centimeters`, …, and `mL`, `cL` and `gal` for `ml`, `cl` and `us_gal`. `metafield_tag` and
   `metafield_text` show these units too.
-
-#### The checkout of an app
-
-- **`lsf app check` and `lsf app function run --scenario` price a scenario as its served
-  checkout does.** A buyer in a market with its own currency gets the cart in that currency and
-  the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's
-  currency at `1.0`. An `expect` on totals now reads the amounts the page shows. Expectations
-  written in the shop's currency for such a scenario need the market's amounts.
-- **`image_tag` builds the `srcset`, `width` and `height` Shopify builds.** The width given to
-  `image_url` is the last entry of the default `srcset` (`width: 400` gives `352w, 400w`, where
-  lsf gave `352w`); the entries of `widths:` above that width are dropped; no entry left, no
-  `srcset`. `width` and `height` are the size `image_url` asks for, even beyond the file's:
-  `width: 3000` on a 1600 px wide image gives `width="3000"`, where lsf gave `1600`.
-
-#### The command line
-
-- **`lsf profile --points` counts the products of a collection a storefront fetches**, no
-  longer every product of the collection: the page of a `{% paginate %}` (4 with `by 4`), else
-  at most 50, and for a `for` loop over `collection.products` with a `limit` below 50 outside
-  `paginate`, that many, as Shopify's performance guide describes. A small paginated block on a
-  large collection is no longer the costliest row of a page, and a `limit: 8` costs 8 products.
 - **An image of `files/` named by its path has the size of its file.** An `image_picker` setting
   (`shopify://shop_images/hero.jpg`), `images['hero.jpg']` and a file metafield now read the
   width and height of `files/hero.jpg`, as product images do: a 2048 x 2560 file gives
@@ -200,9 +185,32 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `image_url: width: 300, height: 200` gives `?crop=center&height=200&v=…&width=300`, and the
   server crops the image to that box, where lsf fitted it inside. `crop: nil` and `pad_color`
   still leave `crop` out, as on Shopify.
+- **`image_tag` builds the `srcset`, `width` and `height` Shopify builds.** The width given to
+  `image_url` is the last entry of the default `srcset` (`width: 400` gives `352w, 400w`, where
+  lsf gave `352w`); the entries of `widths:` above that width are dropped; no entry left, no
+  `srcset`. `width` and `height` are the size `image_url` asks for, even beyond the file's:
+  `width: 3000` on a 1600 px wide image gives `width="3000"`, where lsf gave `1600`.
 - **`image_tag: preload: true` writes `loading="eager"`**, as on Shopify, even with
   `loading: 'lazy'`: a preloaded hero image was lazy on lsf. `loading` now comes right after
   `width` and `height`, wherever the theme passes it, as Shopify writes it.
+- **`image_url` raises on what is not an image, and `image_tag` without a size**, as Shopify
+  does: see Breaking changes.
+
+#### The checkout of an app
+
+- **`lsf app check` and `lsf app function run --scenario` price a scenario as its served
+  checkout does.** A buyer in a market with its own currency gets the cart in that currency and
+  the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's
+  currency at `1.0`. An `expect` on totals now reads the amounts the page shows. Expectations
+  written in the shop's currency for such a scenario need the market's amounts.
+
+#### The command line
+
+- **`lsf profile --points` counts the products of a collection a storefront fetches**, no
+  longer every product of the collection: the page of a `{% paginate %}` (4 with `by 4`), else
+  at most 50, and for a `for` loop over `collection.products` with a `limit` below 50 outside
+  `paginate`, that many, as Shopify's performance guide describes. A small paginated block on a
+  large collection is no longer the costliest row of a page, and a `limit: 8` costs 8 products.
 
 ## 0.3.0-rc.5 - 2026-11-13
 
