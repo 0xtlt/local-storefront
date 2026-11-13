@@ -77,6 +77,28 @@ impl PartialLoader for ThemePartials {
 /// The frame of a profile that holds every other: the render as a whole.
 pub const PROFILE_ROOT: &str = "render";
 
+/// The most sections one request of the Section Rendering API renders, `?sections=` or the
+/// `sections` of a cart request: "Requesting more than five sections returns 400 Bad Request
+/// and renders nothing" (shopify.dev, use the Section Rendering API).
+pub const MAX_SECTIONS: usize = 5;
+
+/// The number of sections `ids` ask for: a section asked for twice is rendered once, and
+/// counts once.
+pub fn distinct_sections(ids: &[String]) -> usize {
+    let mut distinct: Vec<&str> = Vec::with_capacity(ids.len());
+    for id in ids {
+        if !distinct.contains(&id.as_str()) {
+            distinct.push(id);
+        }
+    }
+    distinct.len()
+}
+
+/// Whether `ids` ask for more sections than [`MAX_SECTIONS`].
+pub fn too_many_sections(ids: &[String]) -> bool {
+    distinct_sections(ids) > MAX_SECTIONS
+}
+
 /// How a page is profiled.
 #[derive(Clone, Debug, Default)]
 pub struct ProfileOptions {
@@ -452,6 +474,14 @@ impl Renderer {
                     (404, "text/html; charset=utf-8", String::new())
                 }
             },
+            Target::Sections(ids) if too_many_sections(ids) => {
+                state.notice(format!(
+                    "{} sections asked for: the Section Rendering API renders {MAX_SECTIONS} at \
+                     most, and answers 400 with nothing to more",
+                    distinct_sections(ids)
+                ));
+                (400, "text/html; charset=utf-8", String::new())
+            }
             Target::Sections(ids) => {
                 // A section asked for twice is rendered once, as on Shopify: one key, its
                 // blocks numbered from their first render.
