@@ -330,10 +330,14 @@ pub fn resolve(site: &Site) -> Page {
             page
         }
         // The page of a metaobject entry, at the URL handle of its type, with
-        // `templates/metaobject/<type>.json`.
+        // `templates/metaobject/<type>.json`. Both handles match in any case (`/pages/FAQ/ONE`),
+        // as Shopify finds them.
         ["pages", url_handle, handle] => {
             let Some(index) = store.metaobjects.iter().position(|entry| {
-                store.metaobject_url_handle(&entry.kind) == *url_handle && entry.handle == *handle
+                store
+                    .metaobject_url_handle(&entry.kind)
+                    .eq_ignore_ascii_case(url_handle)
+                    && entry.handle.eq_ignore_ascii_case(handle)
             }) else {
                 return not_found(format!(
                     "no metaobject \"{handle}\" of a type whose URL handle is \"{url_handle}\" in the store data"

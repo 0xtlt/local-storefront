@@ -6,7 +6,6 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use lsf_core::color::Color;
 use lsf_core::store::metafield_references::Referenced;
 use lsf_core::store::{Image, Media, MediaKind, MediaSource, Metafield, Metafields, Metaobject};
 use lsf_core::util::stable_id;
@@ -441,7 +440,7 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
             }
             other => Value::from(other),
         },
-        "color" => Color::parse(text()).map_or_else(|| Value::from(value), ColorDrop::value),
+        "color" => ColorDrop::parse(text()).unwrap_or_else(|| Value::from(value)),
         // Strings, as Shopify gives them: `{"rating": "4.5", "scale_max": "5.0", "scale_min":
         // "0.0"}` in its Liquid reference. `(1..rating.scale_max)` takes the string "5.0"; it
         // raises "invalid integer" on the number 5.0, here as on Shopify.
@@ -889,6 +888,13 @@ impl Object for MetaobjectDrop {
     }
 }
 
+/// Whether an entry is the one a storefront names by type, and by handle with `handle`: in any
+/// case (`metaobjects.FAQ['ONE']`, `/pages/faq/ONE`), as Shopify finds it.
+pub fn is_named(entry: &Metaobject, kind: &str, handle: Option<&str>) -> bool {
+    (entry.is_of(kind) || entry.kind.eq_ignore_ascii_case(kind))
+        && handle.is_none_or(|handle| entry.handle.eq_ignore_ascii_case(handle))
+}
+
 /// The global `metaobjects`: `metaobjects.<type>.<handle>` and `metaobjects.<type>.values`.
 pub struct MetaobjectsDrop {
     pub site: SiteRef,
@@ -909,7 +915,7 @@ impl Object for MetaobjectsDrop {
             .store
             .metaobjects
             .iter()
-            .any(|entry| entry.is_of(key))
+            .any(|entry| is_named(entry, key, None))
             .then(|| {
                 Value::object(MetaobjectTypeDrop {
                     site: self.site.clone(),
@@ -934,7 +940,7 @@ impl Object for MetaobjectTypeDrop {
                 .store
                 .metaobjects
                 .iter()
-                .filter(|entry| entry.is_of(&self.kind))
+                .filter(|entry| is_named(entry, &self.kind, None))
         };
         match key {
             "values" => Some(PaginatedList::paged_list_drop(
@@ -947,7 +953,7 @@ impl Object for MetaobjectTypeDrop {
             )),
             "values_count" => Some(Value::from(entries().count())),
             handle => entries()
-                .find(|entry| entry.handle == handle)
+                .find(|entry| entry.handle.eq_ignore_ascii_case(handle))
                 .map(|entry| MetaobjectDrop::value(&self.site, entry)),
         }
     }

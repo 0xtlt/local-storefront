@@ -9,7 +9,7 @@ use crate::drops::color::ColorDrop;
 
 fn parse(input: &Value) -> Option<Color> {
     match input.downcast::<ColorDrop>() {
-        Some(drop) => Some(drop.0),
+        Some(drop) => Some(drop.color),
         None => Color::parse(&input.to_str()),
     }
 }

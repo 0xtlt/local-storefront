@@ -8,11 +8,25 @@ use lsf_liquid::number::float_to_s;
 use lsf_liquid::{Object, Value};
 
 /// The `color` object, as returned by color settings.
-pub struct ColorDrop(pub Color);
+pub struct ColorDrop {
+    pub color: Color,
+    /// What it prints: the color in the notation it was written in.
+    printed: String,
+}
 
 impl ColorDrop {
-    pub fn value(color: Color) -> Value {
-        Value::object(ColorDrop(color))
+    /// The color a setting, a metafield or a swatch stores, or `None` when `text` is not one.
+    /// It prints as stored when that is the color Shopify prints in another case
+    /// (`#FF00aa`): Shopify keeps the case it was given.
+    pub fn parse(text: &str) -> Option<Value> {
+        let color = Color::parse(text)?;
+        let formatted = color.format();
+        let printed = if text.trim().eq_ignore_ascii_case(&formatted) {
+            text.trim().to_string()
+        } else {
+            formatted
+        };
+        Some(Value::object(ColorDrop { color, printed }))
     }
 }
 
@@ -22,7 +36,7 @@ impl Object for ColorDrop {
     }
 
     fn get(&self, key: &str) -> Option<Value> {
-        let color = &self.0;
+        let color = &self.color;
         let (r, g, b) = color.channels();
         let (hue, saturation, lightness) = color.hsl();
         Some(match key {
@@ -47,11 +61,11 @@ impl Object for ColorDrop {
 
     /// A color prints, compares and feeds filters as its CSS string.
     fn to_value(&self) -> Option<Value> {
-        Some(Value::from(self.0.format()))
+        Some(Value::from(&self.printed))
     }
 
     fn render(&self) -> Cow<'_, str> {
-        Cow::Owned(self.0.format())
+        Cow::Borrowed(&self.printed)
     }
 
     fn as_any(&self) -> &dyn Any {

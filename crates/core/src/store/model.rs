@@ -1320,6 +1320,13 @@ pub struct ShopInput {
     pub metafields: Metafields,
 }
 
+impl ShopInput {
+    /// The shop's currency code, upper-cased: `USD` when the data gives none.
+    pub fn currency(&self) -> String {
+        self.currency.as_deref().unwrap_or("USD").to_uppercase()
+    }
+}
+
 /// A country the store sells to.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

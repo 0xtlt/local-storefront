@@ -2974,7 +2974,21 @@ fn metafield_values_are_the_objects_shopify_gives() {
         &LoadOptions::default(),
         Some(&overlay),
     );
-    assert!(diagnostics.is_empty(), "{diagnostics}");
+    // Shopify refuses a money in another currency than the shop's (#195): an error of the
+    // data, which still renders.
+    let codes: Vec<(&str, &str)> = diagnostics
+        .items
+        .iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.path.as_str()))
+        .collect();
+    assert_eq!(
+        codes,
+        [(
+            "invalid_metafield",
+            "/metaobjects/spec/0/fields/price_eur/value/currency_code"
+        )],
+        "{diagnostics}"
+    );
     let fixture = Fixture {
         store: Arc::new(store),
         ..fixture()
@@ -5763,12 +5777,12 @@ fn a_color_scheme_gives_its_colors_through_the_setting_and_by_id() {
     assert!(
         body.starts_with(
             "id=[scheme-2]\n\
-             background=[#334fb4]\n\
+             background=[#334FB4]\n\
              text-rgb=[255 255 255]\n\
              by-key=[#121212]\n\
              by-name=[scheme-2]\n\
              count=[2 scheme-1 scheme-2]\n\
-             loop=[scheme-1:#ffffff;scheme-2:#334fb4;]\n"
+             loop=[scheme-1:#FFFFFF;scheme-2:#334FB4;]\n"
         ),
         "{body}"
     );
@@ -5996,6 +6010,66 @@ fn options_by_name_finds_an_option_in_any_case() {
          {% for pair in product.options_by_name %}[{{ pair[0] }}={{ pair[1].values | join: ',' }}]{% endfor %}",
     );
     assert_eq!(output, "[Color][Color][2][Color][][1][Color=Red,Blue]");
+}
+
+#[test]
+fn a_color_metafield_prints_as_it_is_stored() {
+    // #195: Shopify keeps the case of a stored color, in a metafield as in a setting.
+    let fixture = fixture_with_data(&serde_json::json!({"products": [{
+        "title": "Tint",
+        "price": 1000,
+        "metafields": { "custom": {
+            "tint": { "type": "color", "value": "#FF00aa" },
+            "tints": { "type": "list.color", "value": ["#ff0000", "#00FF00"] }
+        } }
+    }]}));
+    let output = fixture.liquid(
+        "/products/tint",
+        Session::initial(&fixture.store),
+        "{% assign m = product.metafields.custom.tint %}{{ m.value }}|{{ product.metafields.custom.tints.value | join: ',' }}|\
+         {{ m | metafield_tag }}|{{ m.value | json }}|{% if m.value == '#FF00aa' %}equal{% endif %}|\
+         {{ m.value.red }}|{{ m.value | color_to_rgb }}",
+    );
+    assert_eq!(
+        output,
+        "#FF00aa|#ff0000,#00FF00|<span class=\"metafield-color\">#FF00aa</span>|\"#FF00aa\"|equal|\
+         255|rgb(255, 0, 170)"
+    );
+}
+
+#[test]
+fn a_metaobject_is_found_in_any_case() {
+    // #195: Shopify finds an entry whatever the case of its type or handle, in Liquid and in
+    // its page's URL, whose `system.url` and canonical URL are in lower case.
+    let fixture = theme_with_data(
+        "metaobject-case",
+        &serde_json::json!({
+            "metaobjects": { "faq": [{ "handle": "one", "fields": { "question": "How long?" } }] }
+        }),
+        &[
+            (
+                "layout/theme.liquid",
+                "{{ content_for_layout }}|{{ canonical_url }}",
+            ),
+            (
+                "templates/metaobject/faq.liquid",
+                "{{ metaobject.question }}|{{ metaobject.system.url }}",
+            ),
+        ],
+    );
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "[{{ metaobjects.faq['ONE'].question }}]|[{{ metaobjects.FAQ.one.question }}]|\
+         [{{ metaobjects.Faq.values.size }}]",
+    );
+    assert_eq!(output, "[How long?]|[How long?]|[1]");
+    let page = fixture.page("/pages/FAQ/ONE");
+    assert_eq!(page.status, 200);
+    assert_eq!(
+        page.body,
+        "How long?|/pages/faq/one|http://shop.test/pages/faq/one"
+    );
 }
 
 #[test]

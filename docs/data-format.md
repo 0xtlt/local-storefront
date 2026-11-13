@@ -1039,7 +1039,11 @@ A typed value is checked against its type, as Shopify checks it. `{"type": "numb
 forms (`kg`, `cm`, `ml`). In Liquid a measurement prints its value and unit as a store does
 (`1.5 cm`, `500 mL`), and `.unit` is the unit Shopify's Liquid gives (`kg` for `kilograms`, `mL`
 for `ml`). A
-`language` is a locale code (`fr`, `pt-BR`). A type Shopify does not have is an
+`language` is a locale code (`fr`, `pt-BR`). As on Shopify, a `color` is a hex code of six
+digits (`#f4f1ea`, not `#fff`), a `single_line_text_field` is not blank, a `number_integer` is
+between -9007199254740991 and 9007199254740991, a `money` is in the shop's currency, a `list.`
+holds at most 128 values, and a `rich_text_field` has only roots, paragraphs, headings, lists,
+list items, links and text. A type Shopify does not have is an
 `unknown_metafield_type`. A reference that names nothing of the data is an
 `unknown_reference` ([reference values](#reference-values)).
 
@@ -1060,11 +1064,13 @@ Metaobjects are listed by type:
 ```
 
 and read with `{{ metaobjects.designer.sam.name }}` or
-`{% for d in metaobjects.designer.values %}`.
+`{% for d in metaobjects.designer.values %}`. As on Shopify, a type and a handle are found in
+any case: `metaobjects.DESIGNER['SAM']` is the same entry.
 
 A type whose theme has `templates/metaobject/<type>.json` (or `.liquid`) is a type with web
-pages on Shopify: each entry is served at `/pages/<url handle>/<handle>`, the template sees it
-as `metaobject`, and `metaobject.system.url` is that URL. The URL handle is set on the type's
+pages on Shopify: each entry is served at `/pages/<url handle>/<handle>` (in any case:
+`/pages/designer/SAM` too), the template sees it as `metaobject`, and `metaobject.system.url` is
+that URL. The URL handle is set on the type's
 definition, Shopify's `urlHandle` of its online store capability; it is the type unless
 `metaobject_definitions` gives another one:
 

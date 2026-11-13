@@ -169,9 +169,11 @@ without an image has a `featured_image` whose fields are `null`, as on Shopify; 
 value written as the Admin API returns it is read as its type (`"true"` is `true`), the
 deprecated `string`, `integer` and `json_string` give their value directly, a
 `date` or a `date_time` is the string it is stored as, a
-`color` is a color, a measurement has `type`, a decimal `value` and the `unit` Liquid gives
+`color` is a color that prints as it is stored (`#FF00aa`, as are `color` settings and the colors
+of a color scheme), a measurement has `type`, a decimal `value` and the `unit` Liquid gives
 (`kg`, `cm`, `mL`) and prints both (`1.5 cm`), a `rating` prints its rating, a `money` prints as cents,
-has the `currency` it is written in, and the money filters and `metafield_text` format it in
+has the `currency` it is written in (a currency other than the shop's is a `validate` error,
+as Shopify refuses it), and the money filters and `metafield_text` format it in
 that currency; in a market with another currency, a `money` in the shop's currency is
 converted at the market's rate, as prices are, a reference is a GID or the key the data gives the entity
 ([reference values](data-format.md#reference-values)), a `file_reference` is an image, a video or a file by its extension;
