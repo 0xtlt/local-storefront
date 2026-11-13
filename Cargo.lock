@@ -2391,6 +2391,7 @@ version = "0.3.0-rc.5"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "icu_normalizer",
  "image",
  "indexmap 2.14.2",
  "jsonschema",

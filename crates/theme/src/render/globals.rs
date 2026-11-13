@@ -144,14 +144,14 @@ impl Globals {
                     (country.name.as_str(), provinces.collect())
                 })))
             }
-            // Every country, with every province.
+            // Every country Shopify lists, by name, with every province.
             "all_country_option_tags" => {
-                let reference = &lsf_core::store::reference::country_names();
-                Value::from(country_options(reference.iter().map(|name| {
-                    let code = lsf_core::store::reference::country_code_from_name(name);
-                    let provinces = lsf_core::store::reference::provinces(code.unwrap_or_default());
+                let codes = lsf_core::store::reference::country_codes();
+                Value::from(country_options(codes.into_iter().filter_map(|code| {
+                    let name = lsf_core::store::reference::country_name(code)?;
+                    let provinces = lsf_core::store::reference::provinces(code);
                     let pairs = provinces.iter().map(|(_, name, label)| [*name, *label]);
-                    (*name, pairs.collect())
+                    Some((name, pairs.collect()))
                 })))
             }
             "additional_checkout_buttons" => Value::Bool(false),
@@ -230,9 +230,11 @@ impl Globals {
 }
 
 /// The `<option>` of each country, by name, with its provinces in `data-provinces`: a JSON
-/// list of pairs, the name a form sends (`address[province]`) and the name to show.
+/// list of pairs, the name a form sends (`address[province]`) and the name to show. Shopify
+/// puts a `---` option, which names no country, before them.
 fn country_options<'a>(countries: impl Iterator<Item = (&'a str, Vec<[&'a str; 2]>)>) -> String {
-    countries
+    std::iter::once(("---", Vec::new()))
+        .chain(countries)
         .map(|(name, pairs)| {
             let provinces = serde_json::to_string(&pairs).unwrap_or_else(|_| "[]".to_string());
             let name = escape_html(name);

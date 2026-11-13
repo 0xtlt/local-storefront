@@ -60,7 +60,10 @@ pub fn country_value(site: &SiteRef, country: &Country) -> Value {
         ("unit_system", Value::from(&country.unit_system)),
         ("currency", currency_value(&country.currency)),
         ("popular?", Value::Bool(country.popular)),
-        ("continent", Value::Nil),
+        (
+            "continent",
+            reference::country_continent(&country.iso_code).map_or(Value::Nil, Value::str),
+        ),
         (
             "available_languages",
             available_languages(site, &country.iso_code),

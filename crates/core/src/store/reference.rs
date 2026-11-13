@@ -1,7 +1,11 @@
 //! Reference data: currencies, countries and languages.
 //!
-//! Only used to fill in defaults (a country's name, a currency's symbol, a money format), so
-//! the tables cover the common cases and fall back gracefully for the rest.
+//! Only used to fill in defaults (a country's name, a currency's symbol, a money format). The
+//! countries are every one Shopify lists; the other tables cover the common cases and fall back
+//! gracefully for the rest.
+
+use super::collate;
+use super::countries::{COUNTRIES, CountryData};
 
 pub struct Currency {
     pub code: &'static str,
@@ -355,73 +359,6 @@ pub fn default_money_with_currency_format(code: &str) -> String {
     )
 }
 
-/// `(ISO code, English name, currency)`.
-const COUNTRIES: &[(&str, &str, &str)] = &[
-    ("AE", "United Arab Emirates", "AED"),
-    ("AF", "Afghanistan", "AFN"),
-    ("AR", "Argentina", "ARS"),
-    ("AT", "Austria", "EUR"),
-    ("AU", "Australia", "AUD"),
-    ("BE", "Belgium", "EUR"),
-    ("BG", "Bulgaria", "BGN"),
-    ("BR", "Brazil", "BRL"),
-    ("CA", "Canada", "CAD"),
-    ("CH", "Switzerland", "CHF"),
-    ("CL", "Chile", "CLP"),
-    ("CN", "China", "CNY"),
-    ("CO", "Colombia", "COP"),
-    ("CY", "Cyprus", "EUR"),
-    ("CZ", "Czechia", "CZK"),
-    ("DE", "Germany", "EUR"),
-    ("DK", "Denmark", "DKK"),
-    ("EE", "Estonia", "EUR"),
-    ("EG", "Egypt", "EGP"),
-    ("ES", "Spain", "EUR"),
-    ("FI", "Finland", "EUR"),
-    ("FR", "France", "EUR"),
-    ("GB", "United Kingdom", "GBP"),
-    ("GR", "Greece", "EUR"),
-    ("HK", "Hong Kong SAR", "HKD"),
-    ("HR", "Croatia", "EUR"),
-    ("HU", "Hungary", "HUF"),
-    ("ID", "Indonesia", "IDR"),
-    ("IE", "Ireland", "EUR"),
-    ("IL", "Israel", "ILS"),
-    ("IN", "India", "INR"),
-    ("IS", "Iceland", "ISK"),
-    ("IT", "Italy", "EUR"),
-    ("JP", "Japan", "JPY"),
-    ("KR", "South Korea", "KRW"),
-    ("LT", "Lithuania", "EUR"),
-    ("LU", "Luxembourg", "EUR"),
-    ("LV", "Latvia", "EUR"),
-    ("MA", "Morocco", "MAD"),
-    ("MC", "Monaco", "EUR"),
-    ("MT", "Malta", "EUR"),
-    ("MX", "Mexico", "MXN"),
-    ("MY", "Malaysia", "MYR"),
-    ("NL", "Netherlands", "EUR"),
-    ("NO", "Norway", "NOK"),
-    ("NZ", "New Zealand", "NZD"),
-    ("PH", "Philippines", "PHP"),
-    ("PL", "Poland", "PLN"),
-    ("PT", "Portugal", "EUR"),
-    ("RO", "Romania", "RON"),
-    ("RU", "Russia", "RUB"),
-    ("SA", "Saudi Arabia", "SAR"),
-    ("SE", "Sweden", "SEK"),
-    ("SG", "Singapore", "SGD"),
-    ("SI", "Slovenia", "EUR"),
-    ("SK", "Slovakia", "EUR"),
-    ("TH", "Thailand", "THB"),
-    ("TR", "Türkiye", "TRY"),
-    ("TW", "Taiwan", "TWD"),
-    ("UA", "Ukraine", "UAH"),
-    ("US", "United States", "USD"),
-    ("VN", "Vietnam", "VND"),
-    ("ZA", "South Africa", "ZAR"),
-];
-
 /// The officially assigned codes of ISO 3166-1 alpha-2, in alphabetical order.
 const ISO_COUNTRY_CODES: [&str; 249] = [
     "AD", "AE", "AF", "AG", "AI", "AL", "AM", "AO", "AQ", "AR", "AS", "AT", "AU", "AW", "AX", "AZ",
@@ -452,32 +389,50 @@ pub fn is_country_code(code: &str) -> bool {
     ISO_COUNTRY_CODES.binary_search(&code).is_ok() || SHOPIFY_COUNTRY_CODES.contains(&code)
 }
 
-/// The English names of every country known here, in alphabetical order.
-pub fn country_names() -> Vec<&'static str> {
-    let mut names: Vec<&str> = COUNTRIES.iter().map(|(_, name, _)| *name).collect();
-    names.sort_unstable();
-    names
+/// Every country Shopify lists, by ISO code, in the order Shopify lists them: by English name,
+/// accents aside (`Åland Islands` comes after `Afghanistan`).
+pub fn country_codes() -> Vec<&'static str> {
+    let mut countries: Vec<&CountryData> = COUNTRIES.iter().collect();
+    countries.sort_by_cached_key(|(_, name, _, _)| collate::sort_key(name));
+    countries.into_iter().map(|(code, _, _, _)| *code).collect()
 }
 
-pub fn country_name(code: &str) -> Option<&'static str> {
+/// The English names of every country Shopify lists, in the order of [`country_codes`].
+pub fn country_names() -> Vec<&'static str> {
+    country_codes()
+        .into_iter()
+        .filter_map(country_name)
+        .collect()
+}
+
+fn country(code: &str) -> Option<&'static CountryData> {
+    let code = code.to_ascii_uppercase();
     COUNTRIES
-        .iter()
-        .find(|(iso, _, _)| iso.eq_ignore_ascii_case(code))
-        .map(|(_, name, _)| *name)
+        .binary_search_by(|(iso, _, _, _)| (*iso).cmp(code.as_str()))
+        .ok()
+        .map(|index| &COUNTRIES[index])
+}
+
+/// The English name Shopify gives a country: `Côte d’Ivoire`, `Hong Kong SAR`.
+pub fn country_name(code: &str) -> Option<&'static str> {
+    country(code).map(|(_, name, _, _)| *name)
 }
 
 pub fn country_currency(code: &str) -> Option<&'static str> {
-    COUNTRIES
-        .iter()
-        .find(|(iso, _, _)| iso.eq_ignore_ascii_case(code))
-        .map(|(_, _, currency)| *currency)
+    country(code).map(|(_, _, currency, _)| *currency)
+}
+
+/// The continent of a country, as Liquid's `country.continent` gives it: `Africa`, `Asia`,
+/// `Central America`, `Europe`, `North America`, `Oceania` or `South America`.
+pub fn country_continent(code: &str) -> Option<&'static str> {
+    country(code).map(|(_, _, _, continent)| *continent)
 }
 
 pub fn country_code_from_name(name: &str) -> Option<&'static str> {
     COUNTRIES
         .iter()
-        .find(|(_, country, _)| country.eq_ignore_ascii_case(name))
-        .map(|(iso, _, _)| *iso)
+        .find(|(_, country, _, _)| country.eq_ignore_ascii_case(name))
+        .map(|(iso, _, _, _)| *iso)
 }
 
 /// The provinces of a country, as `(code, name, label)` sorted by name, as Shopify lists them:
@@ -616,10 +571,64 @@ mod tests {
         for code in ["ZZ", "XX", "AA", "QM", "EU", "UK", "fr", "FRA", ""] {
             assert!(!is_country_code(code), "{code}");
         }
-        // Every country this file names is one.
-        for (code, _, _) in COUNTRIES {
+        // Every country Shopify lists is one.
+        for (code, _, _, _) in COUNTRIES {
             assert!(is_country_code(code), "{code}");
         }
+    }
+
+    #[test]
+    fn every_country_shopify_lists_has_a_name_a_currency_and_a_continent() {
+        assert!(COUNTRIES.is_sorted_by_key(|(code, _, _, _)| *code));
+        assert_eq!(COUNTRIES.len(), 237);
+        assert_eq!(country_codes().len(), 237);
+        for (code, name) in [
+            ("AD", "Andorra"),
+            ("AL", "Albania"),
+            ("KE", "Kenya"),
+            ("QA", "Qatar"),
+            ("uy", "Uruguay"),
+            ("HK", "Hong Kong SAR"),
+            ("TR", "Türkiye"),
+            ("XK", "Kosovo"),
+        ] {
+            assert_eq!(country_name(code), Some(name), "{code}");
+        }
+        assert_eq!(country_code_from_name("kenya"), Some("KE"));
+        assert_eq!(country_currency("KE"), Some("KES"));
+        assert_eq!(country_continent("BE"), Some("Europe"));
+        assert_eq!(country_continent("CA"), Some("North America"));
+        assert_eq!(country_continent("US"), Some("North America"));
+        assert_eq!(country_continent("MX"), Some("North America"));
+        assert_eq!(country_continent("GT"), Some("Central America"));
+        assert_eq!(country_continent("BR"), Some("South America"));
+        assert_eq!(country_continent("JP"), Some("Asia"));
+        assert_eq!(country_continent("NZ"), Some("Oceania"));
+        // Countries Shopify does not sell to, and codes that are none.
+        for code in ["CU", "IR", "KP", "SY", "BV", "HM", "ZZ", ""] {
+            assert_eq!(country_name(code), None, "{code}");
+        }
+        // The documented continents only.
+        for (_, _, _, continent) in COUNTRIES {
+            assert!(
+                [
+                    "Africa",
+                    "Asia",
+                    "Central America",
+                    "Europe",
+                    "North America",
+                    "Oceania",
+                    "South America"
+                ]
+                .contains(&continent),
+                "{continent}"
+            );
+        }
+        // By name, accents aside.
+        assert_eq!(
+            &country_names()[..3],
+            ["Afghanistan", "Åland Islands", "Albania"]
+        );
     }
 
     #[test]

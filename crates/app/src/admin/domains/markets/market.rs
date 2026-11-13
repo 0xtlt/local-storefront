@@ -366,9 +366,8 @@ fn known_region(state: &ShopState, id: &str) -> Option<Value> {
         .find(|region| region.get("id").and_then(Value::as_str) == Some(id))
         .cloned()
         .or_else(|| {
-            lsf_core::store::reference::country_names()
-                .iter()
-                .filter_map(|name| lsf_core::store::reference::country_code_from_name(name))
+            lsf_core::store::reference::country_codes()
+                .into_iter()
                 .find(|code| region_gid(code) == id)
                 .map(|code| region(state, code))
         })

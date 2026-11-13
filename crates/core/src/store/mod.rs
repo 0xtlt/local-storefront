@@ -2,6 +2,8 @@
 //! into a form that is cheap to query while rendering.
 
 pub mod build;
+mod collate;
+mod countries;
 mod date;
 pub mod demo;
 pub mod docs;
