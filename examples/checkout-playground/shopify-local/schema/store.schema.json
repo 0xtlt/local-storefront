@@ -2979,11 +2979,11 @@
       ]
     },
     "MarketInput": {
-      "description": "A market: the countries the store sells to as one, as checkout Functions see it in\n`localization.market` and `MailingAddress.market`.",
+      "description": "A market: the countries the store sells to as one, as the theme sees it in\n`localization.market` and `country.market`, and checkout Functions in `localization.market`\nand `MailingAddress.market`.",
       "type": "object",
       "properties": {
         "handle": {
-          "description": "What Functions call the market: `\"europe\"`.",
+          "description": "What the theme and the Functions call the market (its `handle`): `\"europe\"`.",
           "type": "string"
         },
         "countries": {

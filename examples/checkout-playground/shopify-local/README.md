@@ -779,8 +779,10 @@ too, and an address gets the name of its province from its code, or the code fro
 { "iso_code": "US", "provinces": ["CA", "OR", "WA"] }
 ```
 
-`markets` groups countries the way Shopify's markets do. The checkout Functions read the
-market of the buyer (`localization.market`) and of an address (`MailingAddress.market`):
+`markets` groups countries the way Shopify's markets do. The theme reads the market of the
+visitor's country (`localization.market`) and of each country (`country.market`), with its
+`handle`, its `id` and its `metafields`; the checkout Functions read the market of the buyer
+(`localization.market`) and of an address (`MailingAddress.market`):
 
 ```json
 {
@@ -799,7 +801,9 @@ market of the buyer (`localization.market`) and of an address (`MailingAddress.m
 }
 ```
 
-A country in no market is a market of its own, named after the country (`france`, `united-states`).
+A country in no market is a market of its own, named after the country (`france`, `united-states`),
+without metafields. A market has the same id in Liquid, in the Functions and in the Admin API
+(`gid://shopify/Market/<id>`).
 An address in a country the store does not sell to has no market.
 
 A market's `languages` are the languages its countries are offered, as on Shopify:
@@ -1903,12 +1907,13 @@ A language the store is published in.
 
 ### Market
 
-A market: the countries the store sells to as one, as checkout Functions see it in
-`localization.market` and `MailingAddress.market`.
+A market: the countries the store sells to as one, as the theme sees it in
+`localization.market` and `country.market`, and checkout Functions in `localization.market`
+and `MailingAddress.market`.
 
 | Field | Type | Description |
 |---|---|---|
-| `handle` | string | **Required.** What Functions call the market: `"europe"`. |
+| `handle` | string | **Required.** What the theme and the Functions call the market (its `handle`): `"europe"`. |
 | `countries` | array of string | **Required.** The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`. |
 | `languages` | array of string | The languages its countries are offered (`country.available_languages`, in this order), by ISO code, which are in `localization.languages`. The first is the market's default language: a visitor who switches to one of its countries in a language it does not offer gets it. Defaults to every language of the store. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
