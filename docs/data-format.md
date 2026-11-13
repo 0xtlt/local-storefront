@@ -840,7 +840,8 @@ product handle for each of its variants; a value a price, or `{"price", "compare
 A country pays in its own `currency`, else in its market's, else in the store's. A visitor in it
 sees every price in that currency, rounded to its minor unit (to whole yen for JPY): products,
 variants, compare-at and unit prices, selling plans, the cart, `/cart.js`, the checkout and its
-shipping rates. `cart.currency`, `localization.country.currency`, the money filters,
+shipping rates, and the `money` metafields written in the store currency.
+`cart.currency`, `localization.country.currency`, the money filters,
 `shop.money_format` and `shop.money_with_currency_format` follow (`€{{amount_with_comma_separator}}`
 for EUR); `shop.currency` stays the store's, and `shop.enabled_currencies` lists every currency of the
 countries. Gift cards keep their own currency, and orders of the data are priced as their

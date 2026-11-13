@@ -81,6 +81,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   (`€{{amount_with_comma_separator}}` and `€{{amount_with_comma_separator}} EUR` for EUR), the
   one the money filters already used, so the scripts a theme hands `shop.money_format` print the
   right symbol. `shop.currency` stays the store's.
+- **Money metafields are in the market's currency.** In a market with another currency and a
+  `rate`, a `money` metafield in the store currency is converted as prices are: `| money`,
+  `| money_with_currency`, `.value` (cents), `.value.currency`, `metafield_tag` and
+  `metafield_text` give `€7,20 EUR` for 8.00 USD at `0.9`, as on Shopify. One written in another
+  currency keeps it.
 
 ## 0.3.0-rc.5 - 2026-11-13
 

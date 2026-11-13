@@ -333,6 +333,21 @@ impl Object for MoneyDrop {
     }
 }
 
+/// A money value as the visitor sees it: in the currency prices are in, at the market's rate,
+/// when it is in the shop's currency, as Shopify gives a `money` "in the customer's local
+/// (presentment) currency". An amount in another currency has no rate to convert it with.
+fn presented_money(site: &SiteRef, cents: i64, currency: String) -> MoneyDrop {
+    match &site.store.presentment {
+        Some(presentment) if currency.eq_ignore_ascii_case(&site.store.shop.currency) => {
+            MoneyDrop {
+                cents: presentment.rate.convert(cents, &presentment.currency),
+                currency: presentment.currency.clone(),
+            }
+        }
+        _ => MoneyDrop { cents, currency },
+    }
+}
+
 fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
     let text = || value.as_str().unwrap_or_default();
     match kind {
@@ -377,7 +392,7 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
                     .and_then(Json::as_str)
                     .filter(|code| !code.is_empty())
                     .map_or_else(|| site.store.shop.currency.clone(), str::to_uppercase);
-                Value::object(MoneyDrop { cents, currency })
+                Value::object(presented_money(site, cents, currency))
             }
             other => Value::from(other),
         },
