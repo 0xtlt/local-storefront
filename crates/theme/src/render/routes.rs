@@ -91,7 +91,7 @@ pub fn resolve(site: &Site) -> Page {
             page
         }
         ["products", handle] | ["collections", _, "products", handle] => {
-            let Some(product) = store.product_index(handle) else {
+            let Some(product) = store.product_index_for_url(handle) else {
                 return not_found(format!("no product with the handle \"{handle}\""));
             };
             let collection = match segments.as_slice() {

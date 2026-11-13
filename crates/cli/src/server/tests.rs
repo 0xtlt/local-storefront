@@ -1130,6 +1130,103 @@ fn recommendations_json_answers_shopifys_errors() {
 }
 
 #[test]
+fn cart_update_with_an_unknown_variant_changes_nothing() {
+    // #189, item 1: "If a variant ID is provided that either doesn't exist or isn't available in
+    // the online store channel", update.js answers "Cannot find variant", with a `404` in the
+    // reference. https://shopify.dev/docs/api/ajax/reference/cart#post-locale-cart-update-js
+    let state = server();
+    let session = "update-unknown";
+    let mug = variant_id(&state, "MUG-OAT");
+    assert_eq!(
+        post(&state, "/cart/add.js", json!({"id": mug}), session).status,
+        200
+    );
+    let unknown = post(
+        &state,
+        "/cart/update.js",
+        json!({"updates": {"999": 1, mug.to_string(): 3}, "note": "kept out"}),
+        session,
+    );
+    assert_eq!(unknown.status, 404, "{}", text(&unknown));
+    assert_eq!(
+        body_json(&unknown),
+        json!({"status": 404, "message": "Cart Error", "description": "Cannot find variant"})
+    );
+    let cart = body_json(&get(&state, "/cart.js", session));
+    assert_eq!(cart["item_count"], 1);
+    assert_eq!(cart["note"], Json::Null);
+
+    // A line's key, a variant in the cart and a variant that exists still update.
+    let key = cart["items"][0]["key"].as_str().unwrap().to_string();
+    let tote = variant_id(&state, "TOTE-NAT");
+    let updated = post(
+        &state,
+        "/cart/update.js",
+        json!({"updates": {key: 2, tote.to_string(): 1}}),
+        session,
+    );
+    assert_eq!(updated.status, 200, "{}", text(&updated));
+    assert_eq!(body_json(&updated)["item_count"], 3);
+
+    // The cart page's form, which wants a page back, leaves the unknown variant out.
+    let mut form = request(
+        "POST",
+        "/cart/update",
+        json!({"updates": {"999": 1}}),
+        session,
+    );
+    form.headers.remove("accept");
+    form.headers.remove("content-type");
+    assert_eq!(state.dispatch(&form).status, 302);
+    let state_cart = body_json(&get(&state, "/__lsf/session", session));
+    assert_eq!(state_cart["cart"]["items"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn storefront_routes_answer_as_a_store_does() {
+    // #189, items 2, 3 and 7.
+    let state = server();
+    let session = "routes";
+
+    // 2. The products of a collection that does not exist: an empty list.
+    let nope = get(&state, "/collections/nope/products.json", session);
+    assert_eq!(nope.status, 200);
+    assert_eq!(body_json(&nope), json!({"products": []}));
+
+    // 3. A product's URL in any case; a collection's keeps its case.
+    for path in ["/products/CERAMIC-MUG", "/products/Ceramic-Mug"] {
+        assert_eq!(get(&state, path, session).status, 200, "{path}");
+    }
+    for path in ["/products/CERAMIC-MUG.js", "/products/Ceramic-Mug.js"] {
+        let reply = get(&state, path, session);
+        assert_eq!(reply.status, 200, "{path}");
+        assert_eq!(body_json(&reply)["handle"], "ceramic-mug");
+    }
+    assert_eq!(get(&state, "/collections/ALL", session).status, 404);
+
+    // 7. The HTML of predictive search and recommendations needs a section: `422`.
+    let suggest = get(&state, "/search/suggest?q=mug", session);
+    assert_eq!(suggest.status, 422);
+    assert!(
+        header(&suggest, "content-type").is_some_and(|kind| kind.starts_with("text/html")),
+        "{:?}",
+        header(&suggest, "content-type")
+    );
+    assert_eq!(
+        text(&suggest),
+        "Invalid parameter error: Missing section_id param"
+    );
+    let mug = body_json(&get(&state, "/products/ceramic-mug.js", session))["id"].clone();
+    let recommendations = get(
+        &state,
+        &format!("/recommendations/products?product_id={mug}"),
+        session,
+    );
+    assert_eq!(recommendations.status, 422);
+    assert_eq!(text(&recommendations), "");
+}
+
+#[test]
 fn a_submitted_form_shows_its_outcome_once() {
     let state = server();
     let mut submit = request(

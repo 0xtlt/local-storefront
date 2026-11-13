@@ -505,8 +505,10 @@ fn apply_updates(visit: &Visit<'_>, params: &Json) {
                         }
                         // Updating a variant that is not in the cart adds it.
                         None => {
-                            if let Some(variant_id) =
-                                id.parse::<u64>().ok().filter(|_| quantity > 0)
+                            if let Some(variant_id) = id
+                                .parse::<u64>()
+                                .ok()
+                                .filter(|id| quantity > 0 && visit.store.variant(*id).is_some())
                             {
                                 session.cart_lines.push(CartLine {
                                     variant_id,
@@ -525,8 +527,28 @@ fn apply_updates(visit: &Visit<'_>, params: &Json) {
     });
 }
 
+/// Whether `updates` names, by its id, a variant that does not exist (and is no line of the cart).
+fn updates_an_unknown_variant(visit: &Visit<'_>, params: &Json) -> bool {
+    let Some(Json::Object(updates)) = params.get("updates") else {
+        return false;
+    };
+    let lines = visit.session().cart_lines;
+    updates.keys().any(|id| {
+        !lines.iter().any(|line| line_key(line) == *id)
+            && id
+                .parse::<u64>()
+                .is_ok_and(|id| visit.store.variant(id).is_none())
+    })
+}
+
 pub fn update(visit: &Visit<'_>) -> Reply {
     let params = visit.incoming.all_params();
+    // The cart does not change. The Ajax Cart API reference gives this error a `404`, for
+    // `update.js` (a store was seen to answer `422`, as for `add.js`).
+    // https://shopify.dev/docs/api/ajax/reference/cart#post-locale-cart-update-js
+    if wants_json(visit) && updates_an_unknown_variant(visit, &params) {
+        return error(404, "Cannot find variant");
+    }
     apply_updates(visit, &params);
     cart_reply(visit, &params)
 }

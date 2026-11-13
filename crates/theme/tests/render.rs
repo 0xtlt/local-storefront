@@ -1009,6 +1009,56 @@ fn private_cart_attributes_are_not_in_liquid() {
 }
 
 #[test]
+fn search_excludes_terms_matches_title_words_and_ignores_unknown_types() {
+    // #189, items 4 to 6. "Supported modifiers are - with no following whitespace, or NOT
+    // followed by whitespace": https://shopify.dev/docs/api/usage/search-syntax
+    let overlay = serde_json::json!({"products": [
+        {"title": "The Complete Snowboard", "price": 2000},
+        {"title": "Blue snowboard", "price": 2000},
+        {"title": "Snowboard", "price": 2000}
+    ]});
+    let (store, diagnostics) =
+        load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let search = |query: &str| {
+        fixture.liquid(
+            &format!("/search?{query}"),
+            Session::initial(&fixture.store),
+            "{{ search.results_count }}:{% for r in search.results %}{{ r.handle }} {% endfor %}\
+             [{{ search.types | join: ',' }}]",
+        )
+    };
+    let all = "3:the-complete-snowboard blue-snowboard snowboard [product,article,page]";
+    assert_eq!(search("q=snowboard"), all);
+    // 4. An excluded term removes the products it matches.
+    let not_blue = "2:the-complete-snowboard snowboard [product,article,page]";
+    assert_eq!(search("q=snowboard -blue"), not_blue);
+    assert_eq!(search("q=snowboard NOT blue"), not_blue);
+    assert_eq!(search("q=-blue snowboard"), not_blue);
+    assert_eq!(
+        search("q=snowboard -title:complete"),
+        "2:blue-snowboard snowboard [product,article,page]"
+    );
+    // 5. `title:` finds a word of the title, in any case.
+    assert_eq!(
+        search("q=title:complete"),
+        "1:the-complete-snowboard [product,article,page]"
+    );
+    assert_eq!(search("q=title:Snowboard"), all);
+    assert_eq!(search("q=title:snow"), "0:[product,article,page]");
+    // 6. A type the store does not know is ignored.
+    assert_eq!(search("q=snowboard&type=bogus"), all);
+    assert_eq!(
+        search("q=snowboard&type=product,bogus"),
+        "3:the-complete-snowboard blue-snowboard snowboard [product]"
+    );
+}
+
+#[test]
 fn a_shop_in_a_country_the_store_does_not_sell_to_opens_in_the_first_country() {
     let (mut store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
     assert!(diagnostics.is_empty(), "{diagnostics}");

@@ -35,39 +35,74 @@ fn strip_tags(html: &str) -> String {
     out
 }
 
-/// One alternative of a query: free-text terms and `field:value` conditions that must all hold.
+/// Free-text terms and `field:value` conditions, all lowercase.
 #[derive(Default)]
-struct Clause {
+struct Conditions {
     terms: Vec<String>,
-    /// `(field, value)`, both lowercase.
+    /// `(field, value)`.
     fields: Vec<(String, String)>,
 }
 
+impl Conditions {
+    fn is_empty(&self) -> bool {
+        self.terms.is_empty() && self.fields.is_empty()
+    }
+}
+
+/// One alternative of a query: what must all hold, and what must not (`-blue`, `NOT blue`).
+#[derive(Default)]
+struct Clause {
+    required: Conditions,
+    excluded: Conditions,
+}
+
 /// Parses a search query: clauses separated by `OR`, each made of terms and `field:value`
-/// conditions (`id:123`, `tag:sale`, `vendor:acme`). A trailing `*` marks a prefix.
+/// conditions (`id:123`, `tag:sale`, `vendor:acme`). A trailing `*` marks a prefix. A term or a
+/// condition after `-` (no space) or `NOT` (and a space) excludes what it matches: "Supported
+/// modifiers are - with no following whitespace, or NOT followed by whitespace."
+/// https://shopify.dev/docs/api/usage/search-syntax
 fn clauses(query: &str) -> Vec<Clause> {
     let mut out = vec![Clause::default()];
+    let mut negate = false;
     for word in query.split_whitespace() {
-        if word == "OR" {
-            out.push(Clause::default());
-            continue;
+        match word {
+            "OR" => {
+                out.push(Clause::default());
+                negate = false;
+                continue;
+            }
+            "AND" => continue,
+            "NOT" => {
+                negate = true;
+                continue;
+            }
+            _ => {}
         }
-        if word == "AND" {
-            continue;
-        }
+        let (excluded, word) = match word.strip_prefix('-') {
+            Some(rest) if !rest.is_empty() => (true, rest),
+            _ => (std::mem::take(&mut negate), word),
+        };
+        negate = false;
         let word = word.trim_end_matches('*').trim_matches('"').to_lowercase();
         if word.is_empty() {
             continue;
         }
         let clause = out.last_mut().expect("at least one clause");
+        let conditions = if excluded {
+            &mut clause.excluded
+        } else {
+            &mut clause.required
+        };
         match word.split_once(':') {
             Some((field, value)) if !field.is_empty() && !value.is_empty() => {
-                clause.fields.push((field.to_string(), value.to_string()));
+                conditions
+                    .fields
+                    .push((field.to_string(), value.to_string()));
             }
-            _ => clause.terms.push(word),
+            _ => conditions.terms.push(word),
         }
     }
-    out.retain(|clause| !clause.terms.is_empty() || !clause.fields.is_empty());
+    out.retain(|clause| !clause.required.is_empty() || !clause.excluded.is_empty());
     out
 }
 
@@ -77,16 +112,31 @@ struct Document {
     fields: Vec<(&'static str, String)>,
 }
 
+/// Whether a field's value matches what a query asks for. A `title` matches a word of it, as a
+/// store finds "The Complete Snowboard" with `title:complete`; the other fields match whole.
+fn field_matches(field: &str, candidate: &str, value: &str) -> bool {
+    let candidate = candidate.to_lowercase();
+    candidate == value
+        || (field == "title"
+            && candidate
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|word| word == value))
+}
+
 fn matches(clauses: &[Clause], document: &Document) -> bool {
     let text = document.text.to_lowercase();
+    let term = |term: &String| text.contains(term.as_str());
+    let field = |(field, value): &(String, String)| {
+        document
+            .fields
+            .iter()
+            .any(|(name, candidate)| name == field && field_matches(field, candidate, value))
+    };
     clauses.iter().any(|clause| {
-        clause.terms.iter().all(|term| text.contains(term.as_str()))
-            && clause.fields.iter().all(|(field, value)| {
-                document
-                    .fields
-                    .iter()
-                    .any(|(name, candidate)| name == field && candidate.to_lowercase() == *value)
-            })
+        clause.required.terms.iter().all(term)
+            && clause.required.fields.iter().all(field)
+            && !clause.excluded.terms.iter().any(term)
+            && !clause.excluded.fields.iter().any(field)
     })
 }
 
@@ -328,10 +378,12 @@ fn type_names(types: &[SearchType]) -> Value {
 /// The `search` object of the search page.
 pub fn search_value(site: &SiteRef) -> Value {
     let query = site.request.param("q").unwrap_or_default().to_string();
-    let types = parse_types(
-        site.request.param("type"),
-        &[SearchType::Product, SearchType::Article, SearchType::Page],
-    );
+    let default = [SearchType::Product, SearchType::Article, SearchType::Page];
+    // A store ignores the types it does not know: with none it knows, it searches them all.
+    let types = match parse_types(site.request.param("type"), &default) {
+        types if types.is_empty() => default.to_vec(),
+        types => types,
+    };
     let performed = site.request.param("q").is_some();
     let order = sort_order(site);
     // Under a price sort the non-product results go to the end of the list, in their own order.
