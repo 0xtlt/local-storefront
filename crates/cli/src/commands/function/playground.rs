@@ -4,8 +4,9 @@
 //!
 //! No network is needed. `discount-network` and `validation-network` call the mock server of
 //! the playground (`node tools/fake-api.mjs`, `http://localhost:8787`). The tests never depend
-//! on what listens there: they run on a copy of the store data whose URLs lead to a port nothing
-//! listens on (the requests answer 502), and to a server of their own for the answers.
+//! on what listens there: they run on a copy of the store data whose URLs lead to a port that
+//! closes every connection (the requests answer 502), and to a server of their own for the
+//! answers.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -76,17 +77,27 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
+/// A base URL whose connections close at once, unanswered: a request there fails as one to a
+/// server that is down (`502 Bad Gateway (Connection Failed)`). The port stays bound while the
+/// tests run, so the server another test starts cannot be given it and answer instead.
+fn closed_base() -> &'static str {
+    static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    BASE.get_or_init(|| {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                drop(stream);
+            }
+        });
+        base
+    })
+}
+
 thread_local! {
     /// The store data the tests run on, one copy per test (each runs on a thread of its own,
-    /// which removes it when it ends): the network Functions call a port nothing listens on.
-    static DATA: DataCopy = {
-        let port = TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        data_calling(&format!("http://127.0.0.1:{port}"))
-    };
+    /// which removes it when it ends): the network Functions call [`closed_base`].
+    static DATA: DataCopy = data_calling(closed_base());
 }
 
 /// A server of the test that answers as the mock server does: 12% off, and the slate mug out of
