@@ -9897,6 +9897,36 @@ fn the_customer_account_shows_the_orders_of_the_customer_logged_in() {
     std::fs::remove_dir_all(&app).ok();
 }
 
+/// Shopify's customer account has no language in its path: `?locale=` names it, and the session
+/// keeps it for the next pages, until another `?locale=`.
+#[test]
+fn the_customer_account_takes_its_language_from_locale_and_keeps_it() {
+    let app = app_with_account("locale");
+    let state = checkout_server_of(app.clone(), &[], true);
+    let language = |path: &str| {
+        let json = account_state(&get(&state, path, "ca-locale"));
+        let iso = json["localization"]["language"]["isoCode"].clone();
+        (
+            iso.as_str().unwrap().to_string(),
+            json["root"].as_str().unwrap().to_string(),
+        )
+    };
+    let at = |iso: &str, root: &str| (iso.to_string(), root.to_string());
+    assert_eq!(language("/account/profile"), at("en", "/account"));
+    assert_eq!(language("/account/profile?locale=fr"), at("fr", "/account"));
+    assert_eq!(language("/account"), at("fr", "/account"), "kept");
+    assert_eq!(
+        language("/account?locale=xx"),
+        at("fr", "/account"),
+        "not a language of the shop"
+    );
+    assert_eq!(language("/account?locale=en"), at("en", "/account"));
+    assert_eq!(language("/account/profile"), at("en", "/account"));
+    // lsf's locale prefix names one too, for its page.
+    assert_eq!(language("/fr/account"), at("fr", "/fr/account"));
+    std::fs::remove_dir_all(&app).ok();
+}
+
 /// Uninstalling the app removes its customer account UI extensions, as Shopify removes an
 /// uninstalled app's extensions: the pages load none and say why, its full page is not there,
 /// and a reinstall brings them back.

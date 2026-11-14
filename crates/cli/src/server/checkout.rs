@@ -48,6 +48,8 @@ pub struct CheckoutSession {
     /// Who the checkout was last prepared for: when the session has another customer, what the
     /// checkout holds of the one before gives way (see `checkout_account::prepare`).
     pub prepared: Option<Identity>,
+    /// The language the customer account was last asked for with `?locale=`, which it keeps.
+    pub account_locale: Option<String>,
 }
 
 /// What a request read of the session: everything `compute` runs the Functions on. A completion

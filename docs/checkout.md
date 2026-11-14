@@ -835,6 +835,11 @@ data. The home page links to it ("Customer account").
 extension's `order.action.menu-item.render` opens its `order.action.render` in a dialog, which
 `shopify.close()` closes; a menu item with an `href` leads there instead.
 
+- **The language**: as on Shopify, whose account has no language in its path, `?locale=fr` names
+  it (`/account/profile?locale=fr`), and the session keeps it for the next pages until another
+  `?locale=`. Extensions get it as `shopify.localization.language` and translate with it. lsf's
+  `/fr/account` prefix names one too, for the page it is on. The words of the page stay English
+  (`lang="en"`), as on the checkout ([language](#language)).
 - **Logged out**, the page lists the customers of the store data to log in as
   ([log in as a customer](#log-in-as-a-customer)); the avatar in the header switches customer or
   logs out.
