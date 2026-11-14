@@ -249,6 +249,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `ExtensionUsageError: translate(): MISSING KEY for locale "en": "nope"`, as a store does. It gave
   the key, which often looks right. A test that read the key from a customer account extension
   needs the key in the extension's locale files. Checkout extensions still get the key.
+- **A `t:` key saved as a setting's value is printed as it is**, as on Shopify, which
+  translates the attributes of a schema only. A JSON template, a section group or
+  `config/settings_data.json` that saves `"text": "t:sections.heading.default"` now shows
+  `t:sections.heading.default`, where lsf showed the translation: a value left over from a
+  preset shows the raw key on a store too. A schema `default` of `t:…` is still translated.
 
 ### Fixed
 

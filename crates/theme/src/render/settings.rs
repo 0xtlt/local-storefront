@@ -670,12 +670,16 @@ pub fn resolve_translated(
             out.insert(def.id.clone(), schemes.clone());
             continue;
         }
-        let raw: Option<&Json> = values.get(&def.id).or(def.default.as_ref());
+        let saved = values.get(&def.id);
+        let raw: Option<&Json> = saved.or(def.default.as_ref());
         let value = match raw {
             None | Some(Json::Null) => unset(def),
             Some(Json::String(text)) => {
-                if let Some(key) = text.strip_prefix("t:") {
-                    // A translated default from the schema locale file.
+                // A `t:` default of the schema is read from the schema locale files. Shopify
+                // translates the attributes of a schema only: a `t:` value saved in a template,
+                // a section group or the theme settings is text, printed as it is.
+                // https://shopify.dev/docs/storefronts/themes/architecture/locales/schema-locale-files
+                if let Some(key) = text.strip_prefix("t:").filter(|_| saved.is_none()) {
                     schema_translations
                         .lookup(key)
                         .and_then(Json::as_str)

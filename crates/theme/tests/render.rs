@@ -5836,3 +5836,40 @@ fn options_by_name_finds_an_option_in_any_case() {
     );
     assert_eq!(output, "[Color][Color][2][Color][][1][Color=Red,Blue]");
 }
+
+#[test]
+fn a_t_key_saved_as_a_setting_value_is_printed_as_it_is() {
+    // https://shopify.dev/docs/storefronts/themes/architecture/locales/schema-locale-files:
+    // `t:` translates the attributes of a schema, a `default` among them. A value saved in a
+    // JSON template is no schema attribute: Shopify prints it as it is.
+    let fixture = theme_of(
+        "saved-t-key",
+        &[],
+        &[
+            ("layout/theme.liquid", "{{ content_for_layout }}"),
+            (
+                "sections/heading.liquid",
+                "<p>{{ section.settings.text }}|{{ section.settings.fallback }}</p>\
+                 {% schema %}{\"name\": \"Heading\", \"settings\": [\
+                 {\"type\": \"text\", \"id\": \"text\", \"label\": \"Text\"},\
+                 {\"type\": \"text\", \"id\": \"fallback\", \"label\": \"Fallback\", \"default\": \"t:sections.heading.default\"}\
+                 ]}{% endschema %}",
+            ),
+            (
+                "templates/index.json",
+                r#"{"sections": {"main": {"type": "heading", "settings": {"text": "t:sections.heading.default"}}}, "order": ["main"]}"#,
+            ),
+            (
+                "locales/en.default.schema.json",
+                r#"{"sections": {"heading": {"default": "Hello"}}}"#,
+            ),
+        ],
+    );
+    let page = fixture.page("/");
+    assert!(
+        page.body
+            .contains("<p>t:sections.heading.default|Hello</p>"),
+        "{}",
+        page.body
+    );
+}
