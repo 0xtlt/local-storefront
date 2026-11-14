@@ -43,7 +43,7 @@ pub struct LineComponent {
 
 /// A component of the fixed bundle of a cart line: its variant, how many of it the line holds,
 /// and the part of the line's price it carries.
-pub struct LineComponent<'a> {
+pub struct BundleComponent<'a> {
     pub product_index: usize,
     pub variant_index: usize,
     pub product: &'a Product,
@@ -58,7 +58,7 @@ impl<'a> ResolvedLine<'a> {
     /// price algorithm", which Shopify does not detail: lsf weighs each component by its price
     /// times its quantity, in whole cents, the remainder on the last one.
     /// <https://shopify.dev/docs/apps/build/product-merchandising/bundles/start-building>
-    pub fn components(&self, store: &'a Store) -> Vec<LineComponent<'a>> {
+    pub fn components(&self, store: &'a Store) -> Vec<BundleComponent<'a>> {
         let found: Vec<(usize, usize, i64)> = self
             .variant
             .components
@@ -89,7 +89,7 @@ impl<'a> ResolvedLine<'a> {
                     (i128::from(line_price) * weight(component) / total_weight) as i64
                 };
                 allocated += share;
-                LineComponent {
+                BundleComponent {
                     product_index: product,
                     variant_index: variant,
                     product: &store.products[product],
