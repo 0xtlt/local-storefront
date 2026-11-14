@@ -594,6 +594,15 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   warning. lsf rendered nothing and said nothing.
 - **`url_escape` encodes `#` and keeps `[` and `]`**, as Shopify does (Ruby's `URI` escape): a
   `#` in a value cut the URL at a fragment.
+- **The Section Rendering API reads its parameters as Shopify does**: `sections` wins over
+  `section_id` (lsf answered the HTML of `section_id`), an empty `?sections=` answers `{}` (lsf
+  answered the page), and its ids are taken as written, so `?sections=a,%20b` gives `" b": null`
+  where lsf trimmed it and rendered `b`. `lsf render` reads them the same way.
+- **A disabled section asked for by `section_id` renders nothing**, `200` with an empty body, as
+  on Shopify; lsf rendered it. A disabled section in `sections` is an empty string.
+- **A cart request whose `sections_url` does not start with `/` answers `400`**,
+  `{"errors":"sections_url must be a relative path"}`, as Shopify's Ajax Cart API documents; the
+  cart still changes. lsf rendered the sections against that page.
 
 #### The checkout of an app
 

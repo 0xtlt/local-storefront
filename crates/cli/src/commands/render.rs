@@ -185,21 +185,7 @@ fn target(args: &Args, request: &Request) -> Target {
     if let Some(id) = &args.section_id {
         return Target::Section(id.clone());
     }
-    if let Some((_, id)) = request.query.iter().find(|(key, _)| key == "section_id") {
-        return Target::Section(id.clone());
-    }
-    let ids: Vec<String> = request
-        .query
-        .iter()
-        .filter(|(key, _)| key == "sections" || key == "sections[]")
-        .flat_map(|(_, value)| value.split(',').map(str::trim).map(str::to_string))
-        .filter(|id| !id.is_empty())
-        .collect();
-    if ids.is_empty() {
-        Target::Page
-    } else {
-        Target::Sections(ids)
-    }
+    Target::of_query(&request.query)
 }
 
 pub fn run(

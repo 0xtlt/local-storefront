@@ -120,6 +120,31 @@ pub enum Target {
     Sections(Vec<String>),
 }
 
+impl Target {
+    /// What the Section Rendering API parameters of a query ask for, as Shopify reads them:
+    /// `sections` (a comma-separated list, or `sections[]`) wins over `section_id`, an empty
+    /// one asks for no section (`{}`), and its ids are taken as written, spaces included.
+    pub fn of_query(query: &[(String, String)]) -> Target {
+        let mut sections = query
+            .iter()
+            .filter(|(key, _)| key == "sections" || key == "sections[]")
+            .peekable();
+        if sections.peek().is_some() {
+            return Target::Sections(
+                sections
+                    .flat_map(|(_, list)| list.split(','))
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+            );
+        }
+        match query.iter().find(|(key, _)| key == "section_id") {
+            Some((_, id)) => Target::Section(id.clone()),
+            None => Target::Page,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Rendered {
     pub status: u16,
@@ -738,6 +763,11 @@ impl Renderer {
     ) -> Option<String> {
         let name = page.template.full();
         let render = |placement: Placement<'_>, instance: &SectionInstance| -> String {
+            // A disabled section is there, and renders nothing: Shopify answers `200` with an
+            // empty body.
+            if instance.disabled {
+                return String::new();
+            }
             match render_section(ctx, &placement, instance) {
                 Ok(html) => html,
                 Err(error) => ctx.handle_error(error, 1),

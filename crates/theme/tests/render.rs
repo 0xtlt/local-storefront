@@ -1777,6 +1777,53 @@ fn cart_lines_know_their_index() {
 }
 
 #[test]
+fn a_disabled_section_asked_for_by_id_renders_nothing() {
+    // Issue #196: Shopify answers `200` with an empty body for a disabled section of a
+    // template or of a section group.
+    let fixture = theme_of(
+        "disabled-section",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{% sections 'footer-group' %}{{ content_for_layout }}</body></html>",
+            ),
+            ("sections/text.liquid", "<p>{{ section.id }}</p>"),
+            (
+                "templates/index.json",
+                r#"{ "sections": { "on": { "type": "text" }, "off": { "type": "text", "disabled": true } }, "order": ["on", "off"] }"#,
+            ),
+            (
+                "sections/footer-group.json",
+                r#"{ "type": "footer", "name": "Footer", "sections": { "kept": { "type": "text" }, "gone": { "type": "text", "disabled": true } }, "order": ["kept", "gone"] }"#,
+            ),
+        ],
+    );
+    let page = fixture.page("/");
+    let id = |key: &str| {
+        page.body
+            .split("id=\"shopify-section-")
+            .find_map(|rest| rest.split('"').next().filter(|id| id.ends_with(key)))
+            .expect("the id of the section")
+            .to_string()
+    };
+    let render = |id: String| {
+        fixture.render_with(
+            request("/"),
+            Session::initial(&fixture.store),
+            &Target::Section(id),
+        )
+    };
+    for disabled in [
+        id("__on").replace("__on", "__off"),
+        id("__kept").replace("__kept", "__gone"),
+    ] {
+        let rendered = render(disabled);
+        assert_eq!((rendered.status, rendered.body.as_str()), (200, ""));
+    }
+}
+
+#[test]
 fn section_rendering_api() {
     let fixture = fixture();
     let page = fixture.page("/");

@@ -398,31 +398,6 @@ fn browsing_context_suggestions(visit: &Visit<'_>) -> Reply {
     )
 }
 
-/// The render target the Section Rendering API parameters ask for.
-fn target(incoming: &Incoming) -> Target {
-    if let Some(id) = incoming.query_param("section_id") {
-        return Target::Section(id.to_string());
-    }
-    let ids: Vec<String> = incoming
-        .query
-        .iter()
-        .filter(|(key, _)| key == "sections" || key == "sections[]")
-        .flat_map(|(_, value)| {
-            value
-                .split(',')
-                .map(str::trim)
-                .filter(|id| !id.is_empty())
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    if ids.is_empty() {
-        Target::Page
-    } else {
-        Target::Sections(ids)
-    }
-}
-
 fn log_problems(state: &ServerState, rendered: &Rendered) {
     if state.options.quiet {
         return;
@@ -525,7 +500,7 @@ pub(super) fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target)
 }
 
 fn page(visit: &Visit<'_>) -> Reply {
-    let target = target(visit.incoming);
+    let target = Target::of_query(&visit.incoming.query);
     if target == Target::Page
         && let Some(location) = lsf_theme::render::routes::redirect(&visit.site())
     {
@@ -547,7 +522,7 @@ fn page(visit: &Visit<'_>) -> Reply {
 /// `/search/suggest` and `/recommendations/products` render a section against their own
 /// objects (`predictive_search`, `recommendations`) rather than a page.
 fn special_section(visit: &Visit<'_>, template: &str) -> Reply {
-    let target = target(visit.incoming);
+    let target = Target::of_query(&visit.incoming.query);
     // Without a section to render, a store answers `422` (an invalid parameter error), as HTML:
     // "Invalid parameter error: Missing section_id param" for predictive search, an empty body
     // for recommendations.
@@ -597,7 +572,7 @@ fn variant(visit: &Visit<'_>, id: &str) -> Reply {
         .and_then(|id| visit.store.variant(id))
         .map(|(product, _)| product);
     match product {
-        Some(product) if target(visit.incoming) == Target::Page => {
+        Some(product) if Target::of_query(&visit.incoming.query) == Target::Page => {
             Reply::redirect(&visit.localized(&format!("/products/{}?variant={id}", product.handle)))
         }
         _ => page(visit),
