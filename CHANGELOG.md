@@ -559,6 +559,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`date` and `time_tag` without a format print the locale's `default` format**, as
   `format: 'default'` does on Shopify (`Thursday, March 5, 2026 at 2:08 am -0500`). `date` was
   a Liquid error (`wrong number of arguments`), and `time_tag` printed `date_at_time`.
+- **`{% paginate … by %}` a nil value pages by 20**, as Shopify does: an unset section setting
+  or an undefined variable (`by section.settings.per_page`) was a Liquid error, `invalid
+  integer`, and the block did not render.
 
 #### The checkout of an app
 

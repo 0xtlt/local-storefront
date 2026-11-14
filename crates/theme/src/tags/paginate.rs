@@ -10,6 +10,9 @@ use crate::drops::lists::Lookup;
 use crate::render::state::RenderState;
 use crate::site::Request;
 
+/// The page size of `by` a nil value.
+const DEFAULT_PAGE_SIZE: usize = 20;
+
 struct Paginate {
     collection: Expr,
     /// The variable name when the collection is a plain variable, to substitute its page.
@@ -48,7 +51,11 @@ fn part(title: Value, url: Option<String>) -> Value {
 impl Tag for Paginate {
     fn render(&self, ctx: &mut Context, out: &mut String) -> Result<()> {
         let collection = self.collection.evaluate(ctx)?;
-        let page_size = to_integer(&self.page_size.evaluate(ctx)?)?.clamp(1, 250) as usize;
+        let page_size = match self.page_size.evaluate(ctx)? {
+            // An unset setting, an undefined variable: Shopify pages by 20.
+            Value::Nil => DEFAULT_PAGE_SIZE,
+            size => to_integer(&size)?.clamp(1, 250) as usize,
+        };
         let window_size = match &self.window_size {
             Some(expr) => to_integer(&expr.evaluate(ctx)?)?.max(1) as usize,
             None => 3,

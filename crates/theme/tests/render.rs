@@ -201,6 +201,25 @@ fn collection_page_paginates_sorts_and_filters() {
 }
 
 #[test]
+fn paginate_by_nil_pages_by_20() {
+    // Issue #101: an unset setting or an undefined variable pages by 20 on Shopify; the other
+    // sizes are clamped to 1 to 250.
+    let fixture = fixture();
+    let page_size = |by: &str| {
+        fixture.liquid(
+            "/collections/all",
+            Session::initial(&fixture.store),
+            &format!("{{% paginate collection.products by {by} %}}{{{{ paginate.page_size }}}}{{% endpaginate %}}"),
+        )
+    };
+    assert_eq!(page_size("section.settings.per_page"), "20");
+    assert_eq!(page_size("nothing_here"), "20");
+    assert_eq!(page_size("0"), "1");
+    assert_eq!(page_size("1000"), "250");
+    assert_eq!(page_size("'4'"), "4");
+}
+
+#[test]
 fn urls_built_from_the_request_lead_to_the_page_not_to_a_section_alone() {
     // A section fetched alone (`?section_id=`, `?sections=`) builds the same links as the page:
     // Shopify leaves those parameters out, puts `page` first and sorts the others by name.
