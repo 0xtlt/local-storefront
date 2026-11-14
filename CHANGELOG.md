@@ -298,6 +298,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   a `date` printed `2026-03-05 00:00:00 -0500` and a `date_time` was moved to the shop's time
   zone. The `date` filter formats them as before, and the `datetime` of `metafield_tag` is the
   stored value, as Shopify's reference shows.
+- **`current_tags` holds the tags as the products write them.** On
+  `/collections/<handle>/premium+snow`, `current_tags` is `Premium` and `Snow`, as on Shopify,
+  where lsf gave the URL's `premium` and `snow`: the tag filter of Shopify's guide,
+  `{% if current_tags contains tag %}` over `collection.all_tags`, now marks the active tags.
 - **A handle lookup that finds nothing is Shopify's `empty` object, no longer nil.**
   `collections['x']`, `all_products['x']`, `pages['x']`, `blogs['x']`, `linklists['x']` and
   `product.metafields.<namespace it lacks>` are truthy and `== empty`, and

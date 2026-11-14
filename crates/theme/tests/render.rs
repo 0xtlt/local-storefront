@@ -5959,6 +5959,38 @@ fn options_by_name_finds_an_option_in_any_case() {
 }
 
 #[test]
+fn current_tags_holds_the_tags_as_the_products_write_them() {
+    // #115: on `/collections/<handle>/<tag>`, Shopify's `current_tags` holds the tags as they
+    // are written on the products (`Snow`), so that the test of
+    // https://shopify.dev/docs/storefronts/themes/navigation-search/filtering/tag-filtering,
+    // `current_tags contains tag` over `collection.all_tags`, finds the active ones.
+    let fixture = fixture_with_data(&serde_json::json!({
+        "products": [
+            { "title": "Widget", "price": 1000, "tags": ["Premium", "Snow"] },
+            { "title": "Gadget", "price": 2000, "tags": ["Snow"] },
+            { "title": "Gizmo", "price": 3000, "tags": ["Premium"] }
+        ],
+        "collections": [{ "handle": "things", "title": "Things", "products": ["widget", "gadget", "gizmo"] }]
+    }));
+    let tags = |path: &str| {
+        fixture.liquid(
+            path,
+            Session::initial(&fixture.store),
+            "[{{ current_tags | join: ',' }}]\
+             [{% for t in collection.all_tags %}{% if current_tags contains t %}{{ t }};{% endif %}{% endfor %}]\
+             [{{ collection.products.size }}]",
+        )
+    };
+    assert_eq!(tags("/collections/things/snow"), "[Snow][Snow;][2]");
+    assert_eq!(
+        tags("/collections/things/premium+snow"),
+        "[Premium,Snow][Premium;Snow;][1]"
+    );
+    // A tag no product has stays as the URL writes it.
+    assert_eq!(tags("/collections/things/nope"), "[nope][][0]");
+}
+
+#[test]
 fn page_title_and_page_description_are_the_search_engine_listing() {
     // #100: Shopify keeps a resource's search engine listing in the metafields
     // `global.title_tag` and `global.description_tag`
