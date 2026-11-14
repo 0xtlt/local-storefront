@@ -81,6 +81,13 @@ pub fn serves(state: &ServerState) -> bool {
 /// A page of the customer account, for the segments after `account`; `None` for a path that is
 /// not one, which the storefront answers.
 pub fn route(state: &ServerState, incoming: &Incoming, segments: &[&str]) -> Option<Reply> {
+    // The storefront's `/account/addresses` (`routes.account_addresses_url`) is the profile,
+    // where the addresses are, as Shopify sends it with new customer accounts.
+    if segments == ["addresses"] {
+        let store = state.store_of(incoming);
+        let root = checkout::root_of(checkout::language_of(state, &store, incoming));
+        return Some(Reply::redirect(&format!("{root}/account/profile")));
+    }
     let page = Page::parse(segments)?;
     let (id, is_new) = state.session_id(incoming);
     let reply = match state_json(state, incoming, &id, &page) {

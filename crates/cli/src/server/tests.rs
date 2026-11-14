@@ -9883,6 +9883,10 @@ fn the_customer_account_shows_the_orders_of_the_customer_logged_in() {
     assert_eq!(get(&state, "/account/orders/12", "ca").status, 404);
     let profile = account_state(&get(&state, "/account/profile", "ca"));
     assert_eq!(profile["page"], "profile");
+    // The storefront's link to the addresses leads to the profile, where they are.
+    let addresses = get(&state, "/account/addresses", "ca");
+    assert_eq!(addresses.status, 302);
+    assert_eq!(header(&addresses, "location"), Some("/account/profile"));
     assert!(
         !profile["customer"]["addresses"]
             .as_array()
