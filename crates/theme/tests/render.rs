@@ -201,6 +201,71 @@ fn collection_page_paginates_sorts_and_filters() {
 }
 
 #[test]
+fn liquid_core_reads_as_a_storefront_does() {
+    // Issue #192, as a development store renders each piece of Liquid.
+    let fixture = fixture();
+    let render = |path: &str, source: &str| {
+        let site = fixture.renderer.site(
+            fixture.store.clone(),
+            request(path),
+            Session::initial(&fixture.store),
+        );
+        let page = lsf_theme::render::routes::resolve(&site);
+        let (output, errors) = fixture
+            .renderer
+            .render_liquid(&site, page, source, &[])
+            .expect("the template parses");
+        let errors: Vec<String> = errors.iter().map(ToString::to_string).collect();
+        (output, errors)
+    };
+    // 1. Day first, and a Unix timestamp with a fraction, in the shop's time zone.
+    assert_eq!(
+        render(
+            "/",
+            "{{ '03/01/2026' | date: '%F' }}|{{ '31/12/2026' | date: '%F' }}|\
+             {{ '12/31/2026' | date: '%F' }}|{{ 1772323200.9 | date: '%F %T' }}|\
+             {{ '1772323200.9' | date: '%F %T' }}"
+        )
+        .0,
+        "2026-01-03|2026-12-31|12/31/2026|2026-02-28 19:00:00|2026-02-28 19:00:00"
+    );
+    // 2. Nil is not paginateable, and the error names the expression.
+    let (output, errors) = render(
+        "/",
+        "[{% paginate nothing_here.products by 2 %}{{ paginate.pages }}{% endpaginate %}]",
+    );
+    assert_eq!(
+        output,
+        "[Liquid error (line 1): Array 'nothing_here.products' is not paginateable.]"
+    );
+    assert_eq!(errors.len(), 1);
+    // 3. Past the last page, the previous page is the last one.
+    assert_eq!(
+        render(
+            "/collections/all?page=99",
+            "{% paginate collection.products by 2 %}{{ paginate.pages }} \
+             {{ paginate.previous.url }}{% endpaginate %}"
+        )
+        .0,
+        "4 /collections/all?page=4"
+    );
+    // 4. A snippet's name in a variable is Shopify's syntax error, as a comment.
+    assert_eq!(
+        render("/", "{% assign name = 'card' %}[{% render name %}]").0,
+        "[<!-- Syntax error in tag 'render' - Template name must be a quoted string -->]"
+    );
+    // 6. `#` is encoded, the brackets are not.
+    assert_eq!(
+        render(
+            "/",
+            "{{ '#' | url_escape }}|{{ '[]' | url_escape }}|{{ '%\"<>|^`' | url_escape }}"
+        )
+        .0,
+        "%23|[]|%25%22%3C%3E%7C%5E%60"
+    );
+}
+
+#[test]
 fn paginate_by_nil_pages_by_20() {
     // Issue #101: an unset setting or an undefined variable pages by 20 on Shopify; the other
     // sizes are clamped to 1 to 250.

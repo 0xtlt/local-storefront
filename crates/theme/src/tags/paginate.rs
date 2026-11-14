@@ -15,8 +15,9 @@ const DEFAULT_PAGE_SIZE: usize = 20;
 
 struct Paginate {
     collection: Expr,
-    /// The variable name when the collection is a plain variable, to substitute its page.
-    variable: Option<String>,
+    /// The collection as the tag writes it: what an error names, and the variable whose page a
+    /// plain array is set to.
+    collection_markup: String,
     page_size: Expr,
     window_size: Option<Expr>,
     body: BlockBody,
@@ -82,7 +83,10 @@ impl Tag for Paginate {
             (Some(list), _) => list.total(),
             (None, Value::Array(items)) => items.len(),
             (None, Value::Nil) => {
-                return Err(Error::argument("Array '' is not paginateable."));
+                return Err(Error::argument(format!(
+                    "Array '{}' is not paginateable.",
+                    self.collection_markup
+                )));
             }
             (None, other) => other.items().map_or(0, |items| items.len()),
         };
@@ -121,11 +125,13 @@ impl Tag for Paginate {
         paginate.insert("page_param".to_string(), Value::from(param.as_str()));
         paginate.insert("parts".to_string(), Value::array(parts));
         if current_page > 1 {
+            // Past the last page, the previous page is the last one.
+            let previous = (current_page - 1).min(page_count);
             paginate.insert(
                 "previous".to_string(),
                 part(
                     Value::str("&laquo; Previous"),
-                    Some(paginate_url(request, current_page - 1)),
+                    Some(paginate_url(request, previous)),
                 ),
             );
         }
@@ -145,11 +151,13 @@ impl Tag for Paginate {
             Some(list) => list.set_window(Some((offset, page_size))),
             None => {
                 // A plain array: expose its current page under the same variable name.
-                if let (Some(name), Value::Array(items)) = (&self.variable, &collection) {
+                if let Value::Array(items) = &collection
+                    && !self.collection_markup.contains(['.', '['])
+                {
                     let end = (offset + page_size).min(items.len());
                     let page: Vec<Value> =
                         items.get(offset.min(end)..end).unwrap_or_default().to_vec();
-                    ctx.set(name.clone(), Value::array(page));
+                    ctx.set(self.collection_markup.clone(), Value::array(page));
                 }
             }
         }
@@ -223,10 +231,9 @@ pub(super) fn check(markup: &str, style: &Style) -> Option<Issue> {
 
 pub(super) fn parse(parser: &mut Parser<'_, '_>, token: &TagToken<'_>) -> Result<Box<dyn Tag>> {
     let markup = paginate_markup(MarkupParser::new(token.markup)?)?;
-    let is_plain_variable = !markup.collection_markup.contains(['.', '[']);
     Ok(Box::new(Paginate {
         collection: Expr::parse(&markup.collection_markup),
-        variable: is_plain_variable.then_some(markup.collection_markup),
+        collection_markup: markup.collection_markup,
         page_size: markup.page_size,
         window_size: markup.window_size,
         body: parser.parse_block("paginate")?,
