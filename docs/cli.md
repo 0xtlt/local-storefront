@@ -747,7 +747,7 @@ Shopify refuses on upload:
   key of the `t` filter that the default locale does not have (`missing_translation`), a `t:` key
   of a schema that the default schema locale does not have (`missing_schema_translation`);
 - as a warning, a file of `assets/` that `asset_url` names and the theme does not have
-  (`missing_asset`);
+  (`missing_asset`), and each Sass file of `assets/` (`sass_asset`), which lsf does not compile;
 - as a warning, a `{% content_for 'block', type: … %}` whose type differs from its file of
   `blocks/` only by case (`block_type_case`): Shopify renders the file;
 - as a warning, a trailing comma or an unknown escape (`\“`) in theme JSON or a
@@ -871,6 +871,7 @@ counts the others.
 | `missing_schema_translation` | A `t:` key of a schema that the default schema locale (`locales/en.default.schema.json`) does not have: the theme editor shows the key. |
 | `block_type_case` | A warning: `{% content_for 'block', type: 'TEXT' %}` and `blocks/text.liquid`. Shopify finds the file whatever the case of the type, and so does local-storefront; the `hint` gives the type as the file is named. |
 | `missing_asset` | A warning: `'x.js' \| asset_url` names a file `assets/` does not have (nor `assets/x.js.liquid`). The URL leads to nothing. |
+| `sass_asset` | A warning: a Sass file of `assets/` (`theme.scss.liquid`, `theme.scss`). Shopify compiles it to `theme.scss.css`; lsf does not support Sass, so that URL answers `404`. Shopify's theme requirements forbid Sass: write the stylesheet in CSS. |
 | `app_block` | With `--app`, an app block that renders nothing (an error), or a block of another app (a note). Without `--app`, a note. |
 | `fix_fallback` | A warning: what the code meant could not be written for this file, so only the fixes that keep the output were. |
 | `classic_customer_accounts` | A warning: the theme has `templates/customers`, the pages of classic customer accounts, which lsf never renders (`/account` stands for Shopify's new customer accounts). The theme is fine on Shopify. |

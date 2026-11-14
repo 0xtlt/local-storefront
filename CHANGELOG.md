@@ -634,6 +634,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   the same target once per owner (two discounts that use it): `--format json` has the input of
   each, in `runs[i].input`. It asked to name the Function and its target, which the command
   already did.
+- **lsf says it does not support a Sass asset**, where it answered a bare `404`. The
+  `.scss.css` URL of `assets/theme.scss.liquid` (or `theme.scss`) answers `404` with the reason,
+  in the terminal and in `X-LSF-Reason`; `render` prints it as a warning; `check` warns about
+  each Sass file of `assets/` (`sass_asset`) instead of calling its URL a missing asset. lsf
+  does not compile Sass: Shopify's theme requirements forbid `.scss` and `.scss.liquid` files,
+  so write the stylesheet in CSS.
 - **`lsf profile --points` counts the products of a collection a storefront fetches**, no
   longer every product of the collection: the page of a `{% paginate %}` (4 with `by 4`), else
   at most 50, and for a `for` loop over `collection.products` with a `limit` below 50 outside

@@ -464,6 +464,8 @@ pub fn missing_assets(theme: &Theme, source: &str) -> Vec<Missing> {
                 || name.contains("{{")
                 || name.contains('/')
                 || assets.iter().any(|asset| asset == name)
+                // A Sass file has a warning of its own (`sass_asset`).
+                || theme.sass_source(name).is_some()
             {
                 continue;
             }

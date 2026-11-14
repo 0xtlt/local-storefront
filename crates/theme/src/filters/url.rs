@@ -29,7 +29,12 @@ fn asset_url_of(ctx: &Context, name: &str) -> Result<String> {
     let site = site(ctx)?;
     Ok(match crate::app_extensions::render::extension_of(ctx) {
         Some(extension) => urls::extension_asset_url(site, &extension, name),
-        None => urls::asset_url(site, name),
+        None => {
+            if let Some(source) = site.theme.sass_source(name) {
+                ctx.warn(crate::theme::sass_unsupported(&source));
+            }
+            urls::asset_url(site, name)
+        }
     })
 }
 
