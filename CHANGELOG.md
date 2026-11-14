@@ -580,6 +580,20 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   (`{"key"=>"deep value"}`, HTML-escaped unless the key ends in `_html`): a key that names a
   group, and plural forms without `count`, which printed the `other` form with an empty count.
   A key with a leading dot (`.plain`) is read as `plain`, where lsf looked up `en..plain`.
+- **`date` and `time_tag` read a date as a storefront does**: a slash date day first
+  (`03/01/2026` is January 3, `31/12/2026` December 31, and `12/31/2026` no date), as Ruby reads
+  it, and a Unix timestamp with a fraction (`1772323200.9`, or as a text), which lsf printed as
+  it was.
+- **`{% paginate %}` of nil names the expression** in its error,
+  `Array 'nothing_here.products' is not paginateable.`, where lsf named an empty array.
+- **Past the last page, `paginate.previous` is the last page** (and so is the "Previous" link of
+  `default_pagination`), as on Shopify; it was the page before the one asked for, past the end
+  too.
+- **`{% render name %}` with a snippet's name in a variable prints Shopify's syntax error** in its
+  place, `<!-- Syntax error in tag 'render' - Template name must be a quoted string -->`, with a
+  warning. lsf rendered nothing and said nothing.
+- **`url_escape` encodes `#` and keeps `[` and `]`**, as Shopify does (Ruby's `URI` escape): a
+  `#` in a value cut the URL at a fragment.
 
 #### The checkout of an app
 

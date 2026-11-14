@@ -5,7 +5,7 @@ use std::sync::Arc;
 use lsf_core::money::format_money;
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::number::float_to_s;
-use lsf_liquid::time::{strftime, to_time};
+use lsf_liquid::time::{Tz, strftime, timestamp_time, to_time};
 use lsf_liquid::{Context, Environment, Error, FilterArgs, Result, Value};
 use serde_json::Value as Json;
 
@@ -171,6 +171,24 @@ pub(super) fn date_pattern(site: &Site, name: &str) -> Option<String> {
         .or_else(|| named_format(name).map(str::to_string))
 }
 
+/// The time `date` and `time_tag` read: what Liquid reads, and a Unix timestamp with a fraction
+/// (`1772323200.9`, or as a text), which a storefront reads and the reference gem leaves as it
+/// is.
+fn storefront_time(input: &Value, ctx: &Context) -> Option<chrono::DateTime<Tz>> {
+    let decimal = |text: &str| {
+        text.split_once('.').is_some_and(|(whole, fraction)| {
+            [whole, fraction]
+                .iter()
+                .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        })
+    };
+    match input {
+        Value::Float(seconds) => timestamp_time(*seconds, ctx),
+        Value::Str(text) if decimal(text) => timestamp_time(text.parse().ok()?, ctx),
+        _ => to_time(input, ctx),
+    }
+}
+
 /// `date` and `time_tag` without a format print the locale's `default` format, as
 /// `format: 'default'` does.
 const DEFAULT_FORMAT: &str = "default";
@@ -190,7 +208,7 @@ fn date(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     if pattern.is_empty() {
         return Ok(input.clone());
     }
-    match to_time(input, ctx) {
+    match storefront_time(input, ctx) {
         Some(time) => strftime(&time, &pattern)
             .map(Value::from)
             .map_err(Error::argument),
@@ -199,7 +217,7 @@ fn date(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
 }
 
 fn time_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
-    let Some(time) = to_time(input, ctx) else {
+    let Some(time) = storefront_time(input, ctx) else {
         return Ok(input.clone());
     };
     let pattern = match (args.named("format"), args.get(0)) {

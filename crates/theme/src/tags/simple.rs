@@ -136,7 +136,8 @@ pub(super) fn check_layout(markup: &str, style: &strict2::Style) -> Option<Issue
 
 /// `{% render block %}`: Shopify's form for rendering an app block held in a variable, a block
 /// of `section.blocks` whose type is `@app`. It renders the block of the app served with
-/// `--app`; any other block renders nothing.
+/// `--app`; any other block renders nothing, and what is not a block (a snippet's name in a
+/// variable) Shopify's syntax error, as a comment.
 struct RenderObject {
     object: Expr,
 }
@@ -145,6 +146,10 @@ impl Tag for RenderObject {
     fn render(&self, ctx: &mut Context, out: &mut String) -> Result<()> {
         let object = self.object.evaluate(ctx)?;
         let Some(block) = object.downcast::<BlockDrop>() else {
+            const NOT_QUOTED: &str =
+                "Syntax error in tag 'render' - Template name must be a quoted string";
+            ctx.warn(NOT_QUOTED.to_string());
+            out.push_str(&format!("<!-- {NOT_QUOTED} -->"));
             return Ok(());
         };
         let Some(app) = &block.app else {

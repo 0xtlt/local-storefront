@@ -65,6 +65,9 @@ Shopify.
 With `--preview liquid-july-26`: `block` and `partial`. Without it they are unknown tags, as
 on a live store.
 
+`{% render name %}`, where `name` holds a snippet's name rather than a block, prints Shopify's
+error in its place, `<!-- Syntax error in tag 'render' - Template name must be a quoted string -->`.
+
 ### The render budget
 
 A render that does not end (nested `{% for i in (1..1000000000) %}`, in a file of the theme or
@@ -104,6 +107,9 @@ pluralization and interpolation, `date` with locale formats (the `default` one w
 given, as for `time_tag`), `json`, `structured_data`,
 `payment_type_svg_tag`, `placeholder_svg_tag`, `font_face`, `color_*`, `metafield_tag`,
 `default_pagination`, `link_to_*`, `highlight`, `time_tag`.
+`date` and `time_tag` read a date as a storefront does: the day first (`03/01/2026` is January
+3), and a Unix timestamp with a fraction (`1772323200.9`). `url_escape` encodes what Ruby's
+`URI` escapes, `#` included, and keeps `[` and `]`.
 `handleize` (and its alias `handle`) gives what a store gives: Latin accents folded, a straight
 apostrophe removed (`Women's Tops` → `womens-tops`), a curly one a hyphen, and underscores, the
 letters of other scripts, emoji and ligatures kept (`A_B` → `a_b`, `日本語` → `日本語`). The
@@ -288,7 +294,8 @@ data, in the 38 languages lsf names; a page in another language has the English 
   `paginate.parts[].url`, `default_pagination`, a filter's and a filter value's `url_to_add` and
   `url_to_remove`) lead to the page, also in a section rendered alone: `section_id` and
   `sections` are left out, and the parameters are written as Shopify writes them, `page` first,
-  the others sorted by name (`/collections/all?page=2&sort_by=price-ascending`). A list of
+  the others sorted by name (`/collections/all?page=2&sort_by=price-ascending`). Past the last
+  page, `paginate.previous` is the last page. A list of
   references and `metaobjects.<type>.values` are paged with a parameter of their own
   (`/products/widget?page_1a2b3c4d=2`), as on Shopify; its digits are lsf's own, a hash of
   where the list is, not those of a store: build page links from `paginate.page_param`.

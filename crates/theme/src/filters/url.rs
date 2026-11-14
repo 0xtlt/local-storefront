@@ -291,29 +291,33 @@ fn customer_register_link(input: &Value, _args: &FilterArgs, ctx: &Context) -> R
     customer_link(input, ctx, "/account/register", "customer_register_link")
 }
 
-/// Escapes what is not allowed in a URL, keeping its reserved characters.
-fn escape_url(input: &str, keep_ampersand: bool) -> String {
+/// Percent-encodes every byte but letters, digits and `kept`.
+fn escape_url(input: &str, kept: &[u8]) -> String {
     let mut out = String::with_capacity(input.len());
     for byte in input.bytes() {
-        match byte {
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' => out.push(byte as char),
-            b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')' | b';' | b'/' | b'?'
-            | b':' | b'@' | b'=' | b'+' | b'$' | b',' | b'#' => {
-                out.push(byte as char);
-            }
-            b'&' if keep_ampersand => out.push('&'),
-            other => out.push_str(&format!("%{other:02X}")),
+        if byte.is_ascii_alphanumeric() || kept.contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
         }
     }
     out
 }
 
+/// What Ruby's `URI::DEFAULT_PARSER.escape` keeps, as Shopify's `url_escape` does: `#` is
+/// encoded, `[` and `]` are not.
 fn url_escape(input: &Value, _args: &FilterArgs, _ctx: &Context) -> Result<Value> {
-    Ok(Value::from(escape_url(&input.to_str(), true)))
+    Ok(Value::from(escape_url(
+        &input.to_str(),
+        b"-_.!~*'();/?:@&=+$,[]",
+    )))
 }
 
 fn url_param_escape(input: &Value, _args: &FilterArgs, _ctx: &Context) -> Result<Value> {
-    Ok(Value::from(escape_url(&input.to_str(), false)))
+    Ok(Value::from(escape_url(
+        &input.to_str(),
+        b"-_.!~*'();/?:@=+$,#",
+    )))
 }
 
 pub(super) fn register(env: &mut Environment) {

@@ -11,7 +11,7 @@ use chrono::{
     DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset,
     TimeZone, Timelike, Utc,
 };
-use chrono_tz::Tz;
+pub use chrono_tz::Tz;
 
 use crate::context::Context;
 use crate::value::{Object, Value};
@@ -120,6 +120,13 @@ pub fn to_time(input: &Value, ctx: &Context) -> Option<DateTime<Tz>> {
         }
         _ => None,
     }
+}
+
+/// The time of a Unix timestamp with a fraction (`1772323200.9`), in the context's time zone.
+pub fn timestamp_time(seconds: f64, ctx: &Context) -> Option<DateTime<Tz>> {
+    let whole = seconds.floor();
+    let nanos = ((seconds - whole) * 1e9).round().min(999_999_999.0) as u32;
+    ctx.time_zone().timestamp_opt(whole as i64, nanos).single()
 }
 
 const MONTHS: [&str; 12] = [
@@ -318,7 +325,8 @@ fn extract_date(text: &str, today: NaiveDate) -> Option<NaiveDate> {
         .split(|c: char| c.is_whitespace() || c == ',')
         .filter(|token| !token.is_empty())
         .collect();
-    // Numeric forms: yyyy-mm-dd, yyyy/mm/dd, mm/dd/yyyy, dd-mm-yyyy, dd.mm.yyyy.
+    // Numeric forms: yyyy-mm-dd, yyyy/mm/dd, and the day first as Ruby reads them: dd/mm/yyyy,
+    // dd-mm-yyyy, dd.mm.yyyy (`12/31/2026` is no date).
     for token in &tokens {
         for separator in ['-', '/', '.'] {
             let parts: Vec<&str> = token.split(separator).collect();
@@ -335,8 +343,6 @@ fn extract_date(text: &str, today: NaiveDate) -> Option<NaiveDate> {
             }
             let (year, month, day) = if parts[0].len() == 4 {
                 (numbers[0], numbers[1], numbers[2])
-            } else if parts[2].len() == 4 && separator == '/' {
-                (numbers[2], numbers[0], numbers[1])
             } else if parts[2].len() == 4 {
                 (numbers[2], numbers[1], numbers[0])
             } else {
@@ -664,6 +670,15 @@ mod tests {
             "2024-01-15T10:00:00+00:00"
         );
         assert_eq!(at("10:30").to_rfc3339(), "2024-06-01T10:30:00+00:00");
+    }
+
+    #[test]
+    fn reads_a_slash_date_day_first_as_ruby_does() {
+        // Issue #192: `Time.parse("03/01/2026")` is January 3, and `12/31/2026` no date.
+        assert_eq!(at("03/01/2026").to_rfc3339(), "2026-01-03T00:00:00+00:00");
+        assert_eq!(at("31/12/2026").to_rfc3339(), "2026-12-31T00:00:00+00:00");
+        let now = Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap();
+        assert_eq!(parse_time("12/31/2026", Tz::UTC, now), None);
     }
 
     #[test]
