@@ -17,6 +17,7 @@
 use serde_json::{Value, json};
 
 use super::admin::origin_of;
+use super::embedded::{admin_query_for, with_admin_viewer, with_query};
 use super::{AdminApi, HttpRequest, HttpResponse, escape_html};
 use crate::admin::domains::app::{billing, bulk, uploads};
 
@@ -77,7 +78,7 @@ fn charges(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse {
             if request.query_param("format") == Some("json") {
                 return HttpResponse::json(200, &charge.to_json());
             }
-            HttpResponse::html(200, charge_page(&shop, &charge))
+            HttpResponse::html(200, charge_page(request, &shop, &charge))
         }
         ("POST", "approve" | "decline") => {
             let decision = if action == "approve" {
@@ -99,9 +100,10 @@ fn charges(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse {
                     status: 303,
                     headers: vec![(
                         "location".into(),
+                        // Back to the admin: for the staff member who decided, in their language.
                         local_admin_url(&redirect)
                             .or_else(|| app_admin_url(api, &redirect, &shop))
-                            .unwrap_or(redirect),
+                            .map_or(redirect, |local| with_admin_viewer(&local, request)),
                     )],
                     body: Vec::new(),
                 },
@@ -257,7 +259,7 @@ fn app_admin_url(api: &AdminApi, url: &str, shop: &str) -> Option<String> {
 /// The confirmation page of a charge, in the look of lsf's pages. Shopify's is a page of the
 /// admin, never inside the app's frame: a backend that redirected its frame here (the frame's
 /// proxy points `https://<shop>/admin/charges/…` at lsf) sees the page take the whole window.
-fn charge_page(shop: &str, charge: &billing::Charge) -> String {
+fn charge_page(request: &HttpRequest, shop: &str, charge: &billing::Charge) -> String {
     let what = match (charge.kind, charge.pending_capped_amount.is_some()) {
         ("AppPurchaseOneTime", _) => "Approve a one-time charge",
         (_, true) => "Approve a new usage limit",
@@ -298,11 +300,10 @@ fn charge_page(shop: &str, charge: &billing::Charge) -> String {
     }
     if charge.decidable() {
         let action = |name: &str| {
-            format!(
-                "/__lsf/admin/charges/{}/{name}?shop={}",
-                charge.number,
-                escape_html(shop)
-            )
+            escape_html(&with_query(
+                &format!("/__lsf/admin/charges/{}/{name}", charge.number),
+                &admin_query_for(request, shop),
+            ))
         };
         body.push_str(&format!(
             "<div class=\"actions\"><form method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"shop\" value=\"{}\"><button type=\"submit\">Decline</button></form>\
@@ -319,7 +320,10 @@ fn charge_page(shop: &str, charge: &billing::Charge) -> String {
         body.push_str(&format!(
             "<p>This charge is <span class=\"status\">{}</span>: there is nothing to decide.</p><p><a href=\"{}\">Back to the app</a></p>",
             escape_html(&charge.status.to_ascii_lowercase()),
-            escape_html(&local_admin_url(&charge.return_url).unwrap_or_else(|| charge.return_url.clone()))
+            escape_html(&local_admin_url(&charge.return_url).map_or_else(
+                || charge.return_url.clone(),
+                |local| with_admin_viewer(&local, request)
+            ))
         ));
     }
     body.push_str("</div></main>");

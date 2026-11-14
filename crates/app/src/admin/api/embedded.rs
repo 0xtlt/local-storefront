@@ -173,6 +173,47 @@ pub(super) fn admin_query(request: &HttpRequest) -> Vec<(String, String)> {
         .collect()
 }
 
+/// [`admin_query`] for `shop`: the shop first, then the user and the locale the request named.
+/// What a page of the admin that the merchant leaves for another one (a form, a redirect) keeps:
+/// on Shopify the user and the locale are the staff member's, and a step of a flow changes
+/// neither.
+pub(super) fn admin_query_for(request: &HttpRequest, shop: &str) -> Vec<(String, String)> {
+    let mut params = vec![("shop".to_string(), shop.to_string())];
+    params.extend(
+        admin_query(request)
+            .into_iter()
+            .filter(|(name, _)| name != "shop"),
+    );
+    params
+}
+
+/// `url`, a page of lsf's admin, with the user and the locale the request named, which replace
+/// those of `url`; before its fragment.
+pub(super) fn with_admin_viewer(url: &str, request: &HttpRequest) -> String {
+    let viewer: Vec<(String, String)> = admin_query(request)
+        .into_iter()
+        .filter(|(name, _)| name != "shop")
+        .collect();
+    if viewer.is_empty() {
+        return url.to_string();
+    }
+    let (rest, fragment) = url
+        .split_once('#')
+        .map_or((url, None), |(rest, fragment)| (rest, Some(fragment)));
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let mut params: Vec<(String, String)> = form_urlencoded::parse(query.as_bytes())
+        .into_owned()
+        .filter(|(name, _)| !viewer.iter().any(|(kept, _)| kept == name))
+        .collect();
+    params.extend(viewer);
+    let mut target = with_query(path, &params);
+    if let Some(fragment) = fragment {
+        target.push('#');
+        target.push_str(fragment);
+    }
+    target
+}
+
 pub(super) fn with_query(path: &str, params: &[(String, String)]) -> String {
     if params.is_empty() {
         return path.to_string();
@@ -203,7 +244,7 @@ fn page(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse {
                 crate::admin::domains::app::billing::confirmed_charge(charge).unwrap_or_default();
             HttpResponse::redirect(&with_query(
                 &format!("/__lsf/admin/charges/{number}"),
-                &[("shop".to_string(), viewer.shop.clone())],
+                &admin_query_for(request, &viewer.shop),
             ))
         }
         ["charges", app, "pricing_plans", rest @ ..] => {

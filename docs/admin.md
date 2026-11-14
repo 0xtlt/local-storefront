@@ -1199,8 +1199,9 @@ as on Shopify:
 - `app_subscriptions/update` is delivered for each (`plan_handle` in the payload);
 - the browser goes to the plan's welcome link with `charge_id` (the subscription's number) and
   `plan_handle`: a path is the app's page in lsf's admin
-  (`/admin/apps/<handle>/welcome?shop=…&charge_id=3&plan_handle=pro`), a full URL gets `shop`
-  too.
+  (`/admin/apps/<handle>/welcome?shop=…&charge_id=3&plan_handle=pro`), for the same staff member
+  in the same language (the admin's `user` and `locale`, kept from the plan's page); a full URL
+  gets `shop` too.
 
 While plans are declared, `appSubscriptionCreate` and `appPurchaseOneTimeCreate` answer the user
 error Shopify gives an app on managed pricing: "Managed Pricing Apps cannot use the Billing API

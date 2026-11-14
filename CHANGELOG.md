@@ -3,6 +3,21 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Fixed
+
+#### The embedded admin and billing
+
+- **Approving a plan or a charge keeps the admin's user and locale.** The approval form of a
+  pricing plan (`/admin/charges/<app>/pricing_plans/<plan>`) named the shop alone, so its
+  welcome link launched the app for user 1 in the shop's primary locale, whoever approved it.
+  The form, and the redirect to a welcome link in the admin, now keep `user` and `locale` as
+  the admin's other links do: the app opens with the same staff member's session token and in
+  their language, as on Shopify, where the locale is the staff member's. A charge's
+  confirmation page, its approve and decline forms and the return to the app in the admin keep
+  them too.
+
 ## 0.3.0-rc.6 - 2026-11-14
 
 Sixth release candidate of 0.3.0. It fixes about 130 differences from Shopify reported by an

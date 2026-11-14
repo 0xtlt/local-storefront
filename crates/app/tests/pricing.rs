@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use lsf_app::admin::api::{AdminApi, AdminOptions, HttpRequest, HttpResponse, ThrottleSetting};
+use lsf_app::admin::auth::session_token;
 use lsf_app::admin::domains::app::pricing::{self, Billing, Pricing, SelectError};
 use lsf_app::admin::graphql::{self, Request};
 use lsf_app::admin::resolve::{Registry, ShopResolver};
@@ -816,6 +817,73 @@ fn the_merchant_chooses_and_changes_plans_on_the_page_and_the_backend_hears_of_i
         created["data"]["appSubscriptionCreate"]["userErrors"],
         json!([])
     );
+}
+
+/// The staff member approves the plan from a German admin as user 2: the welcome link is
+/// launched for them, in German, not for the account owner in the shop's locale (#308).
+#[test]
+fn the_approval_keeps_the_admins_user_and_locale_to_the_welcome_link() {
+    let api = api();
+    let shop = api.default_shop();
+    let set = send(
+        &api,
+        "PUT",
+        "/__lsf/admin/pricing-plans",
+        &[],
+        plans_json().to_string().as_bytes(),
+    );
+    assert_eq!(set.status, 200, "{}", text(&set));
+
+    let confirm = text(&get(&api, &format!("{PAGE}/pro?locale=de&user=2")));
+    let action = format!("/__lsf/admin/pricing-plans/pro/select?shop={shop}&locale=de&user=2");
+    assert!(
+        confirm.contains(&format!("action=\"{}\"", action.replace('&', "&amp;"))),
+        "{confirm}"
+    );
+    let approved = send(
+        &api,
+        "POST",
+        &action,
+        &[("content-type", "application/x-www-form-urlencoded")],
+        format!("shop={shop}").as_bytes(),
+    );
+    assert_eq!(approved.status, 303);
+    let welcome = location(&approved).to_string();
+    assert_eq!(
+        welcome,
+        format!(
+            "http://{HOST}/admin/apps/admin-fixtures/app/welcome?shop={shop}&charge_id=1&plan_handle=pro&locale=de&user=2"
+        )
+    );
+
+    // The launch at the welcome link: German, a session token of user 2.
+    let html = text(&get(
+        &api,
+        welcome.trim_start_matches(&format!("http://{HOST}")),
+    ));
+    let start = html.find("class=\"lsf-frame\"").expect("the app's frame");
+    let src = start + html[start..].find("src=\"").unwrap() + 5;
+    let src = html[src..src + html[src..].find('"').unwrap()].replace("&amp;", "&");
+    let params: HashMap<String, String> = form_urlencoded::parse(
+        src.split_once('?')
+            .map_or("", |(_, query)| query)
+            .as_bytes(),
+    )
+    .into_owned()
+    .collect();
+    assert_eq!(
+        params.get("locale").map(String::as_str),
+        Some("de"),
+        "{src}"
+    );
+    let claims = session_token::verify(
+        &params["id_token"],
+        SECRET,
+        "11111111111111111111111111111111",
+        chrono::Utc::now().timestamp(),
+    )
+    .unwrap();
+    assert_eq!(claims.sub, "2");
 }
 
 #[test]
