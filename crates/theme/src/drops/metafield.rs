@@ -952,6 +952,13 @@ impl Object for MetaobjectTypeDrop {
         }
     }
 
+    fn lookup(&self, key: &str) -> lsf_liquid::Result<Option<Value>> {
+        if !matches!(key, "values" | "values_count") {
+            self.site.count_handle_lookup(&self.kind, key)?;
+        }
+        Ok(self.get(key))
+    }
+
     fn to_json(&self) -> Json {
         json_not_allowed()
     }

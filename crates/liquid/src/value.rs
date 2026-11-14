@@ -47,6 +47,12 @@ pub trait Object: Send + Sync + 'static {
         None
     }
 
+    /// Resolves a property in a template (`object.key`, `object[key]`), where the lookup may
+    /// raise a Liquid error, as a Ruby drop's method may. [`Object::get`] by default.
+    fn lookup(&self, key: &str) -> crate::Result<Option<Value>> {
+        Ok(self.get(key))
+    }
+
     /// Resolves an integer index, for array-like objects.
     fn index(&self, _index: i64) -> Option<Value> {
         None

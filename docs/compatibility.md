@@ -130,6 +130,12 @@ A loop over `collections` (and `| size`, `{% paginate collections %}`) gives the
 collections, without the catch-all `all`, which `collections.all` still finds, as on Shopify.
 `collections.size`, `.first` and `.last` are those of that list.
 
+A page render looks up at most 20 unique handles in `all_products`, and 20 in each metaobject
+type (`metaobjects.<type>[handle]`), handles that name nothing included, as on Shopify. The
+lookup of a 21st handle, and every later lookup in that list, renders
+`Liquid error (…): Exceeded maximum number of unique handles for all_products.` (or `for <type>.`)
+in place of the entry.
+
 A cart attribute whose name starts with `__` is private, as on Shopify: `cart.attributes`,
 `cart | json`, `/cart.js` and the answers of the cart endpoints leave it out, and the checkout
 and the order keep it. One `_` is not private, nor are line item properties.

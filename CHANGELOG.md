@@ -75,6 +75,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `related.value.first` shows a blank on a store, and now on lsf too: use
   `{% assign x = related.value | first %}` or a `for` loop. `list.single_line_text_field` and the
   other lists that are not references stay arrays.
+- **A page looks up at most 20 unique handles in `all_products`, and 20 in each metaobject
+  type**, handles that name nothing included, as on Shopify. The 21st, and every later lookup
+  in that list, renders `Exceeded maximum number of unique handles for all_products.` (or
+  `for <type>.`) in place of the entry. A page that worked with more handles now shows the
+  errors a store shows: loop over a collection, or over `metaobjects.<type>.values`, instead.
 - **`localization.market` and `country.market` are no longer `primary` with id `1`.** They are
   the market of the country, so theme tests that expect `primary` need the market's handle.
 - **`paginate` and filter URLs put `page` first and sort the other parameters by name**, as

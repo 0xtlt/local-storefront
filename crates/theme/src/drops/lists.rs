@@ -153,6 +153,13 @@ impl Object for Lookup {
         self.cached(key)
     }
 
+    fn lookup(&self, key: &str) -> lsf_liquid::Result<Option<Value>> {
+        if self.kind == Kind::AllProducts {
+            self.site.count_handle_lookup("all_products", key)?;
+        }
+        Ok(self.get(key))
+    }
+
     fn items(&self) -> Option<Arc<Vec<Value>>> {
         self.list()?.items()
     }
