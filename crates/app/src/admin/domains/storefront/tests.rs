@@ -41,50 +41,57 @@ pub(crate) fn topics(shop: &mut ShopState) -> Vec<String> {
         .collect()
 }
 
-const CREATE_TAG: &str = "mutation($input: ScriptTagInput!) {
-    scriptTagCreate(input: $input) {
-        scriptTag { id src displayScope cache createdAt updatedAt legacyResourceId }
-        userErrors { field message }
-    }
-}";
+/// A script tag the app created before October 1, 2026, when Shopify still let it: `src`, shown
+/// on the online store. Its GID.
+pub(crate) fn existing_script_tag(shop: &mut ShopState, src: &str) -> String {
+    let now = shop.timestamp();
+    shop.insert(crate::admin::state::value::object(json!({
+        "__typename": "ScriptTag",
+        "src": src,
+        "displayScope": "ONLINE_STORE",
+        "cache": false,
+        "createdAt": now,
+        "updatedAt": now,
+    })))
+}
 
+/// Shopify refuses `scriptTagCreate` and `scriptTagUpdate` since October 1, 2026, on every API
+/// version: a user error, and nothing changes.
 #[test]
-fn script_tags_are_created_listed_updated_and_deleted() {
+fn script_tags_can_no_longer_be_created_or_updated() {
     let mut shop = shop();
+    let tag = existing_script_tag(&mut shop, "https://js.example.org/bar.js");
+    let before = shop.get(&tag).cloned();
+    let refused = json!({"scriptTag": null, "userErrors": [{
+        "field": null,
+        "message": "Script tags can no longer be created or updated: use an app embed block or a web pixel",
+    }]});
     let created = run(
         &mut shop,
-        CREATE_TAG,
-        json!({"input": {"src": "https://js.example.org/bar.js", "displayScope": "ONLINE_STORE", "cache": true}}),
+        "mutation { scriptTagCreate(input: {src: \"https://js.example.org/new.js\", displayScope: ONLINE_STORE}) { scriptTag { id } userErrors { field message } } }",
+        json!({}),
     );
-    let tag = &created["data"]["scriptTagCreate"]["scriptTag"];
-    assert_eq!(
-        created["data"]["scriptTagCreate"]["userErrors"],
-        json!([]),
-        "{created}"
-    );
-    assert_eq!(tag["src"], "https://js.example.org/bar.js");
-    assert_eq!(tag["cache"], true);
-    let id = tag["id"].as_str().unwrap().to_string();
-    assert!(id.starts_with("gid://shopify/ScriptTag/"));
-    assert_eq!(topics(&mut shop), ["script_tags/create"]);
-    assert_eq!(
-        super::storefront_scripts(&shop),
-        ["https://js.example.org/bar.js"]
-    );
-
-    // An order status script is not the storefront's; `src:` filters the list.
-    let other = run(
+    assert_eq!(created["data"]["scriptTagCreate"], refused, "{created}");
+    let updated = run(
         &mut shop,
-        CREATE_TAG,
-        json!({"input": {"src": "https://js.example.org/other.js"}}),
+        "mutation($id: ID!) { scriptTagUpdate(id: $id, input: {src: \"https://js.example.org/updated.js\"}) { scriptTag { id } userErrors { field message } } }",
+        json!({"id": tag}),
     );
-    assert_eq!(
-        other["data"]["scriptTagCreate"]["scriptTag"]["displayScope"], "ONLINE_STORE",
-        "the default scope"
-    );
+    assert_eq!(updated["data"]["scriptTagUpdate"], refused, "{updated}");
+    assert_eq!(shop.count("ScriptTag"), 1);
+    assert_eq!(shop.get(&tag).cloned(), before);
+    assert!(topics(&mut shop).is_empty());
+}
+
+/// The script tags that exist are still listed, loaded by the storefront and deleted.
+#[test]
+fn existing_script_tags_are_listed_loaded_and_deleted() {
+    let mut shop = shop();
+    let bar = existing_script_tag(&mut shop, "https://js.example.org/bar.js");
+    existing_script_tag(&mut shop, "https://js.example.org/other.js");
     let listed = run(
         &mut shop,
-        "{ all: scriptTags(first: 5) { nodes { src } } one: scriptTags(first: 5, src: \"https://js.example.org/other.js\") { nodes { src } } searched: scriptTags(first: 5, query: \"src:https://js.example.org/bar.js\") { nodes { src } } }",
+        "{ all: scriptTags(first: 5) { nodes { src } } one: scriptTags(first: 5, src: \"https://js.example.org/other.js\") { nodes { src } } }",
         json!({}),
     );
     assert_eq!(listed["data"]["all"]["nodes"].as_array().unwrap().len(), 2);
@@ -92,54 +99,26 @@ fn script_tags_are_created_listed_updated_and_deleted() {
         listed["data"]["one"]["nodes"],
         json!([{"src": "https://js.example.org/other.js"}])
     );
-    assert!(listed.get("extensions").is_none(), "{listed}");
-
-    let updated = run(
-        &mut shop,
-        "mutation($id: ID!) { scriptTagUpdate(id: $id, input: {src: \"https://js.example.org/updated.js\"}) { scriptTag { src cache displayScope } userErrors { message } } }",
-        json!({"id": id}),
-    );
     assert_eq!(
-        updated["data"]["scriptTagUpdate"]["scriptTag"],
-        json!({"src": "https://js.example.org/updated.js", "cache": false, "displayScope": "ONLINE_STORE"}),
-        "the scope left out stays; `cache` has the schema's default, false"
+        super::storefront_scripts(&shop),
+        [
+            "https://js.example.org/bar.js",
+            "https://js.example.org/other.js"
+        ]
     );
     let deleted = run(
         &mut shop,
         "mutation($id: ID!) { scriptTagDelete(id: $id) { deletedScriptTagId userErrors { message } } }",
-        json!({"id": id}),
+        json!({"id": bar}),
     );
     assert_eq!(
         deleted["data"]["scriptTagDelete"]["deletedScriptTagId"],
-        json!(id)
+        json!(bar)
     );
     assert_eq!(
         super::storefront_scripts(&shop),
         ["https://js.example.org/other.js"]
     );
-}
-
-#[test]
-fn a_script_tag_without_a_valid_source_changes_nothing() {
-    let mut shop = shop();
-    for (input, message) in [
-        (
-            json!({"displayScope": "ONLINE_STORE"}),
-            "Src can't be blank",
-        ),
-        (json!({"src": "ftp://example.org/x.js"}), "Src is invalid"),
-        (
-            json!({"src": "https://example.org/x.js", "displayScope": "ORDER_STATUS"}),
-            "Display scope ORDER_STATUS is unavailable as a mutation input",
-        ),
-    ] {
-        let answer = run(&mut shop, CREATE_TAG, json!({"input": input}));
-        let payload = &answer["data"]["scriptTagCreate"];
-        assert_eq!(payload["scriptTag"], Value::Null, "{answer}");
-        assert_eq!(payload["userErrors"][0]["message"], message);
-    }
-    assert_eq!(shop.count("ScriptTag"), 0);
-    assert!(topics(&mut shop).is_empty());
     let missing = run(
         &mut shop,
         "mutation { scriptTagDelete(id: \"gid://shopify/ScriptTag/999\") { deletedScriptTagId userErrors { field message } } }",
@@ -370,18 +349,13 @@ fn storefront_access_tokens_have_the_apps_unauthenticated_scopes() {
 }
 
 /// Uninstalling the app removes its script tags, which the storefront then stops loading, and its
-/// web pixel, as Shopify does; a reinstalled app creates them again. No webhook: the app's
-/// subscriptions go with it.
+/// web pixel, as Shopify does; a reinstalled app creates its web pixel again (no script tag: Shopify
+/// refuses them since October 1, 2026). No webhook: the app's subscriptions go with it.
 #[test]
 fn uninstalling_the_app_removes_its_script_tags_and_its_web_pixel() {
     let mut shop = shop();
     for src in ["https://js.example.org/a.js", "https://js.example.org/b.js"] {
-        let created = run(&mut shop, CREATE_TAG, json!({"input": {"src": src}}));
-        assert_eq!(
-            created["data"]["scriptTagCreate"]["userErrors"],
-            json!([]),
-            "{created}"
-        );
+        existing_script_tag(&mut shop, src);
     }
     let pixel = run(
         &mut shop,

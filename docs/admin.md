@@ -726,7 +726,7 @@ app blocks are files of the theme, which lsf leaves as they are:
 | Customer account UI extensions | Placed in the same checkout and accounts editor | The customer account loads none; an extension's full page (`/account/pages/<handle>`) answers `404` with the reason | They render again |
 | Theme app extensions (app blocks, app embeds) | "Blocks associated with the apps are automatically and entirely removed from online store themes" ([UX guidelines](https://shopify.dev/docs/apps/build/online-store/theme-app-extensions/ux)); app embeds are off after an install until the merchant turns them on | They still render: they are the theme's files (and `app.embeds` of the store data), which lsf never writes ([theme app extensions](storefront.md#theme-app-extensions)) | Nothing changes |
 | Web pixel | Removed with the app; a reinstalled app calls `webPixelCreate` again | The uninstall deletes the `WebPixel` record (`removedWebPixels`); the storefront runs no web pixel anyway | The app creates it again |
-| Script tags | "When an app is uninstalled from a shop, all of the script tags that it created are automatically removed" ([`ScriptTag`](https://shopify.dev/docs/api/admin-graphql/2026-10/objects/ScriptTag)) | The uninstall deletes them (`removedScriptTags`): `content_for_header` stops loading them at once | The app creates them again |
+| Script tags | "When an app is uninstalled from a shop, all of the script tags that it created are automatically removed" ([`ScriptTag`](https://shopify.dev/docs/api/admin-graphql/2026-10/objects/ScriptTag)) | The uninstall deletes them (`removedScriptTags`); no app can create one since October 1, 2026 ([admin reference](admin-reference.md#themes-script-tags-redirects-in-bulk-and-policies)) | None: `scriptTagCreate` is refused |
 | Admin UI extensions, admin links | Admin links are deleted ([`appUninstall`](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/appUninstall)) | lsf's admin renders neither | - |
 | App proxy | A store gets it with the app: a change of `prefix` or `subpath` applies "only to new installations" (on a dev store, "uninstall and reinstall the app", [About app proxies](https://shopify.dev/docs/apps/build/online-store/app-proxies)), so the uninstall removes it and the storefront answers the path with its `404` page | `/<prefix>/<subpath>` is the theme's `404` page (with `X-LSF-Reason`), and nothing reaches the backend ([App proxy](#app-proxy)) | Forwarded again, on the path of `shopify.app.toml` |
 
@@ -1663,7 +1663,6 @@ What the backend changes through the Admin API is what the storefront and the
 - a theme file it writes to the main theme (`themeFilesUpsert`, `themeFilesCopy`,
   `themeFilesDelete`) is served on top of the theme directory, which is never written to; a theme
   it publishes is served instead of the directory;
-- a script tag it creates (`scriptTagCreate`, `ONLINE_STORE`) is loaded by `content_for_header`;
 - a mobile app it declares (`mobilePlatformApplicationCreate`) is in
   `/.well-known/assetlinks.json` or `/.well-known/apple-app-site-association`;
 - the open pages reload, with `--live-reload`.
@@ -1686,7 +1685,7 @@ sync").
 - **The files do not change.** lsf builds the store from the files with the Admin API's changes on
   top; nothing is written to disk. `DELETE /__lsf/admin` (and the store data edited, unless
   `--static`, or `POST /__lsf/reload`) puts the storefront back to the files, and the theme back
-  to the directory, without the files and script tags the Admin API added. A checkout scenario
+  to the directory, without the files the Admin API added. A checkout scenario
   added or edited (`checkouts/`) is not store data: lsf reads the scenarios again and keeps what
   the Admin API changed ([when the data changes on disk](cli.md#when-the-data-changes-on-disk)).
 - **A session with its own data** (`PUT /__lsf/session` with `data`) sees its data on top of the

@@ -1294,12 +1294,16 @@ parameter needs no stub: give it a staged upload of lsf
 (`PUT /__lsf/admin/uploads/<shop>/<key>`, then
 `http://127.0.0.1:9292/__lsf/admin/uploads/<shop>/<key>`), which is read from the shop.
 
-**Script tags.** `scriptTagCreate`, `scriptTagUpdate`, `scriptTagDelete`; `scriptTag`,
-`scriptTags(src:, query:)`. A script tag shown on the online store (`ONLINE_STORE`, or the
-deprecated `ALL`) is loaded by the storefront's `content_for_header` as Shopify loads it, once
-the page has loaded, with `shop=<domain>` added to its URL. `cache` is kept (lsf serves the
-script from its `src` either way). Uninstalling the app deletes its script tags, as Shopify does,
-and the storefront stops loading them ([uninstall](admin.md#tokens)).
+**Script tags.** `scriptTagCreate` and `scriptTagUpdate` answer a user error (`field: null`,
+"Script tags can no longer be created or updated: use an app embed block or a web pixel", lsf's
+wording) and change nothing, on every API version, as Shopify does since October 1, 2026
+([changelog](https://shopify.dev/changelog/posts/online-store-script-tags-deprecation):
+"The deprecation applies to all API versions, including older ones"). Replace a script tag with
+an app embed block of a theme app extension, or a web pixel
+([storefront script tags](https://shopify.dev/docs/apps/build/online-store/script-tag-deprecation/storefront)).
+`scriptTag`, `scriptTags(src:, query:)` and `scriptTagDelete` keep working. Since no app can
+create one, lsf's shops have no script tag: `content_for_header` loads none. Uninstalling the app
+deletes its script tags, as Shopify does ([uninstall](admin.md#tokens)).
 
 **Pixels.** `webPixelCreate`, `webPixelUpdate`, `webPixelDelete`, `webPixel`: one per app, its
 `settings` checked against the `[settings]` of the app's web pixel extension

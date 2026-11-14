@@ -144,9 +144,8 @@ impl Theme {
         })
     }
 
-    /// The `src` of the script tags the storefront loads, in order: what the apps of the shop
-    /// created through the Admin API (`scriptTagCreate`), which `content_for_header` loads as
-    /// Shopify loads them.
+    /// The `src` of the script tags the storefront loads, in order: those of the shop's apps in
+    /// the Admin API, which `content_for_header` loads as Shopify loads them.
     pub fn set_script_tags(&self, srcs: Vec<String>) {
         if let Ok(mut tags) = self.script_tags.write() {
             *tags = srcs.into();
