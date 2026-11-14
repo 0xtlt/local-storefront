@@ -23,9 +23,15 @@
 //!   locations where the variant is already stocked").
 //! - `collections` is the complete list of the custom collections the product is in. `files`
 //!   (each a `FileSetInput`) is the complete list of its media: those named by `id` stay, those
-//!   with an `originalSource` are created. `metafields` are set (created or changed); lsf does not
-//!   remove the product's other metafields (the guide documents the replacement for options and
-//!   variants only).
+//!   with an `originalSource` are created. `metafields` is the complete list of the product's
+//!   metafields: those it names are set (created or changed), the others are deleted, with a
+//!   definition or not ("For list fields: Creates new entries, updates existing entries, and
+//!   deletes existing entries that aren't included in the mutation's input. Common examples of
+//!   list fields include `collections`, `metafields`, and `variants`"). The `customId` of the
+//!   identifier is in the input too, so its metafield stays; another app's reserved metafields,
+//!   which the app can neither read nor write, stay. Left out, the metafields stay as they are. A
+//!   variant's `metafields` are set, and its other metafields stay: the reference names the
+//!   product's list.
 //! - `synchronous: false` answers a `ProductSetOperation` instead of the product (Shopify's is
 //!   `CREATED` then runs in the background); lsf's is `COMPLETE` at once, with its `product`.
 //! - Events: `products/create` or `products/update`, and the inventory events of the variants
@@ -37,6 +43,7 @@ use serde_json::{Map, Value, json};
 use super::records::{self, item_of, objects, text};
 use super::variants::{self, Choice, ProductOption, Reader};
 use super::{gids, media, product_changed, products};
+use crate::admin::domains::content::metafields;
 use crate::admin::graphql::{FieldContext, FieldError};
 use crate::admin::resolve::{Mutation, Registry, UserError, coded, payload};
 use crate::admin::state::{ShopState, value};
@@ -439,7 +446,14 @@ fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             .collect();
         products::join_collections(state, &product, &collections, &leave);
     }
-    records::set_metafields(state, &product, "PRODUCT", &metafields);
+    let set = records::set_metafields(state, &product, "PRODUCT", &metafields);
+    if let Some(Value::Array(_)) = input.get("metafields") {
+        let kept: Vec<String> = set
+            .into_iter()
+            .chain(custom_id_metafield(state, ctx, &product))
+            .collect();
+        remove_unlisted_metafields(state, &product, &kept);
+    }
     product_changed(state, &product);
     records::after_inventory_change(state, std::slice::from_ref(&product), &before);
     if !created {
@@ -523,6 +537,39 @@ fn target(
         handle: None,
         custom_id: None,
     })
+}
+
+/// The product's metafield of the identifier's `customId`, which the input names that way.
+fn custom_id_metafield(state: &ShopState, ctx: &FieldContext<'_>, product: &str) -> Option<String> {
+    let custom = ctx.arg_object("identifier")?.get("customId")?;
+    let namespace = custom.get("namespace").and_then(Value::as_str);
+    let key = custom.get("key").and_then(Value::as_str)?;
+    metafields::find(
+        state,
+        product,
+        &metafields::stored_namespace(state, namespace),
+        key,
+    )
+}
+
+/// Deletes the product's metafields that are not `kept`, but those of another app's reserved
+/// namespaces: `metafields` is a list field of `productSet`.
+fn remove_unlisted_metafields(state: &mut ShopState, product: &str, kept: &[String]) {
+    let unlisted: Vec<String> = state
+        .get(product)
+        .map(|record| gids(record.get("metafields")))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|metafield| !kept.contains(metafield))
+        .filter(|metafield| {
+            state.get(metafield).is_some_and(|record| {
+                !metafields::other_apps(state, text(record, "namespace").unwrap_or_default())
+            })
+        })
+        .collect();
+    for metafield in &unlisted {
+        metafields::remove(state, metafield);
+    }
 }
 
 /// A new product without options or variants yet: `productSet` gives them.

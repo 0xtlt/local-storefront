@@ -845,6 +845,78 @@ fn product_set_creates_and_replaces_options_and_variants() {
     assert!(shop.events().is_empty());
 }
 
+/// `metafields` is a list field of `productSet`: the product's metafields it does not name are
+/// deleted, a defined one too, and another app's stay; left out, they all stay.
+#[test]
+fn product_set_metafields_replace_the_product_s_metafields() {
+    let mut shop = demo();
+    let mug = product(&shop, "ceramic-mug");
+    let set = run_with(
+        &mut shop,
+        r#"mutation($m: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $m) { metafields { id } userErrors { message } } }"#,
+        json!({"m": [
+            {"ownerId": mug, "namespace": "demo", "key": "material", "type": "single_line_text_field", "value": "wool"},
+            {"ownerId": mug, "namespace": "demo", "key": "note", "type": "single_line_text_field", "value": "old"},
+            {"ownerId": mug, "namespace": "demo", "key": "secret", "type": "single_line_text_field", "value": "s"},
+        ]}),
+    );
+    let secret = ok(&set, "metafieldsSet")["metafields"][2]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // Another app's reserved metafield, which this app can neither read nor write.
+    shop.get_mut(&secret)
+        .unwrap()
+        .insert("namespace".into(), json!("app--999"));
+    let defined = run(
+        &mut shop,
+        r#"mutation { metafieldDefinitionCreate(definition: {name: "Material", namespace: "demo", key: "material", ownerType: PRODUCT, type: "single_line_text_field"}) { userErrors { message } } }"#,
+    );
+    ok(&defined, "metafieldDefinitionCreate");
+    const SET: &str = r#"mutation($identifier: ProductSetIdentifiers!, $input: ProductSetInput!) { productSet(identifier: $identifier, input: $input) {
+        product { metafields(first: 20) { nodes { namespace key value } } } userErrors { field message code } } }"#;
+    let keys = |answer: &Value| {
+        ok(answer, "productSet")["product"]["metafields"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| {
+                format!(
+                    "{}.{}={}",
+                    node["namespace"].as_str().unwrap(),
+                    node["key"].as_str().unwrap(),
+                    node["value"].as_str().unwrap()
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let left_out = run_with(
+        &mut shop,
+        SET,
+        json!({"identifier": {"id": mug}, "input": {"title": "Ceramic mug"}}),
+    );
+    assert!(keys(&left_out).contains(&"demo.material=wool".to_string()));
+
+    // The issue's: only `note` named, so only `note` is left, but another app's.
+    let replaced = run_with(
+        &mut shop,
+        SET,
+        json!({"identifier": {"id": mug}, "input": {"metafields": [
+            {"namespace": "demo", "key": "note", "type": "single_line_text_field", "value": "new"},
+        ]}}),
+    );
+    assert_eq!(keys(&replaced), ["demo.note=new", "app--999.secret=s"]);
+
+    // The identifier's `customId` is in the input too: its metafield stays.
+    let emptied = run_with(
+        &mut shop,
+        SET,
+        json!({"identifier": {"customId": {"namespace": "demo", "key": "note", "value": "new"}}, "input": {"metafields": []}}),
+    );
+    assert_eq!(keys(&emptied), ["demo.note=new", "app--999.secret=s"]);
+}
+
 #[test]
 fn product_duplicate_copies_options_variants_and_metafields() {
     let mut shop = demo();

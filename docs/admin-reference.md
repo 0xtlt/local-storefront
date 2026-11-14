@@ -144,6 +144,14 @@ How they behave, as shopify.dev documents it:
   (see "Metafields, metaobjects and content"): the type and the value, a definition's type and
   validations, `$app` and another app's namespaces. The errors are the mutation's, at the path of
   the input (`["metafields", "0", "value"]`; `productSet`'s with the code `INVALID_METAFIELD`).
+- **`productSet` replaces its list fields**: `collections` (the custom ones), `files`,
+  `productOptions`, `variants` and `metafields` are each the product's complete list, as the
+  [reference](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/productSet) says
+  ("deletes existing entries that aren't included in the mutation's input"). A metafield of the
+  product that `metafields` does not name is deleted, with a definition or not. The metafield of
+  the identifier's `customId` stays, and so do another app's reserved metafields *(lsf's
+  choice)*. A list left out of the input stays as it is. A variant's `metafields` are set, and
+  its other metafields stay.
 - **Derived values follow**: price ranges, `totalInventory`, `hasOnlyDefaultVariant`,
   `featuredMedia`, a variant's `title`, `displayName`, `position` and `inventoryQuantity`, an
   option value's `hasVariants`, a variant's `availableForSale` after an inventory change.
