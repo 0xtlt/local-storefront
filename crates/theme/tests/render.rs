@@ -752,6 +752,74 @@ fn t_has_no_default_prints_a_group_of_keys_and_reads_a_key_as_ruby_does() {
 }
 
 #[test]
+fn shopify_strings_are_the_themes_when_it_overrides_them() {
+    // Issue #112: a `shopify.*` key in a locale file overrides Shopify's own string
+    // (https://shopify.dev/docs/storefronts/themes/architecture/locales/storefront-locale-files#override-shopify-provided-translations).
+    // Shopify's defaults are published in English only: without an override, they are English.
+    let fixture = theme_of(
+        "shopify-strings",
+        &[],
+        &[
+            ("layout/theme.liquid", "{{ content_for_layout }}"),
+            (
+                "locales/fr.json",
+                r#"{ "shopify": {
+                    "collections": { "sorting": { "manual": "En vedette" } },
+                    "search": { "sorting": { "relevance": "Pertinence" } },
+                    "filters": { "availability": { "value": { "in_stock": "En stock" } } },
+                    "notices": { "tags": { "remove_products": "Supprimer la balise {{ tag }}" } },
+                    "page_titles": { "search_results": {
+                        "one": "Recherche : {{ count }} résultat trouvé pour « {{ terms }} »",
+                        "other": "Recherche : {{ count }} résultats trouvés pour « {{ terms }} »" } } } }"#,
+            ),
+        ],
+    );
+    let render = |locale: &str, path: &str, source: &str| {
+        let mut request = request(path);
+        request.locale = locale.to_string();
+        fixture.liquid_for(request, Session::initial(&fixture.store), source)
+    };
+    let collection = "{{ collection.sort_options.first.name }}|{{ collection.sort_options[1].name }}|\
+                      {% for v in collection.filters.first.values %}{{ v.label }},{% endfor %}|\
+                      {{ 'Snow' | link_to_remove_tag: 'Snow' }}";
+    assert_eq!(
+        render("fr", "/collections/all", collection),
+        "En vedette|Most relevant|En stock,Out of stock,|\
+         <a href=\"/collections/all\" title=\"Supprimer la balise Snow\">Snow</a>"
+    );
+    assert_eq!(
+        render("en", "/collections/all", collection),
+        "Featured|Most relevant|In stock,Out of stock,|\
+         <a href=\"/collections/all\" title=\"Remove tag Snow\">Snow</a>"
+    );
+    let search = "{{ page_title }}|{{ search.sort_options.first.name }}";
+    assert_eq!(
+        render("fr", "/search?q=a", search),
+        "Recherche : 14 résultats trouvés pour « a »|Pertinence"
+    );
+    // Shopify's English title counts the results too, its quotes escaped as a store prints them.
+    assert_eq!(
+        render("en", "/search?q=a", search),
+        "Search: 14 results found for &quot;a&quot;|Relevance"
+    );
+    assert_eq!(
+        render("en", "/search?q=beanie&type=product", "{{ page_title }}"),
+        "Search: 1 result found for &quot;beanie&quot;"
+    );
+    assert_eq!(render("en", "/search", "{{ page_title }}"), "Search");
+    // A blog's tag links have Shopify's words for articles.
+    assert_eq!(
+        render(
+            "en",
+            "/blogs/journal",
+            "{{ 'Linen' | link_to_add_tag: 'Linen' }}"
+        ),
+        "<a href=\"/blogs/journal/tagged/linen\" \
+         title=\"Narrow search to articles also having tag Linen\">Linen</a>"
+    );
+}
+
+#[test]
 fn a_visitor_who_selected_no_country_is_in_the_shops_country() {
     // The demo shop is in Ottawa, and the United States come first in its countries: the
     // storefront opens in Canada, the country the checkout opens in.

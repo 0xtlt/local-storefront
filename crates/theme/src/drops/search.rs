@@ -140,12 +140,13 @@ fn matches(clauses: &[Clause], document: &Document) -> bool {
     })
 }
 
-/// The sort orders of the search page: `(value, label)`. `relevance` is the default.
+/// The sort orders of the search page: `(value, key of its name)`, the key under
+/// `shopify.search.sorting`. `relevance` is the default.
 /// https://shopify.dev/docs/storefronts/themes/navigation-search/search
 const SORT_OPTIONS: [(&str, &str); 3] = [
-    ("relevance", "Relevance"),
-    ("price-ascending", "Price, low to high"),
-    ("price-descending", "Price, high to low"),
+    ("relevance", "relevance"),
+    ("price-ascending", "price_ascending"),
+    ("price-descending", "price_descending"),
 ];
 
 /// The order requested by `sort_by`: only the price orders reorder products, anything else
@@ -436,7 +437,10 @@ pub fn search_value(site: &SiteRef) -> Value {
         ("results", PaginatedList::value(results)),
         ("types", type_names(&types)),
         ("filters", filters),
-        ("sort_options", options_value(&SORT_OPTIONS)),
+        (
+            "sort_options",
+            options_value(site, "shopify.search.sorting", &SORT_OPTIONS),
+        ),
         ("sort_by", Value::str(applied_sort_by(order))),
         ("default_sort_by", Value::str("relevance")),
     ])

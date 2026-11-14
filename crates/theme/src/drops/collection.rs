@@ -12,22 +12,24 @@ use super::media::ImageDrop;
 use super::metafield::MetafieldsDrop;
 use super::product::{ProductDrop, swatch_value};
 use super::{Memo, PaginatedList, SiteRef, hash, strings, time_value};
+use crate::filters::shopify_text;
 use crate::render::cost;
 use crate::site::Request;
 
-/// The sort orders offered on collection pages: `(value, label)`, the nine of Shopify's
-/// `collection.sort_options` (https://shopify.dev/docs/api/liquid/objects/collection).
-/// `?sort_by=most-relevant` keeps the collection's own order.
+/// The sort orders offered on collection pages: `(value, key of its name)`, the nine of
+/// Shopify's `collection.sort_options` (https://shopify.dev/docs/api/liquid/objects/collection),
+/// the key under `shopify.collections.sorting`. `?sort_by=most-relevant` keeps the collection's
+/// own order.
 pub const SORT_OPTIONS: [(&str, &str); 9] = [
-    ("manual", "Featured"),
-    ("most-relevant", "Most relevant"),
-    ("best-selling", "Best selling"),
-    ("title-ascending", "Alphabetically, A-Z"),
-    ("title-descending", "Alphabetically, Z-A"),
-    ("price-ascending", "Price, low to high"),
-    ("price-descending", "Price, high to low"),
-    ("created-ascending", "Date, old to new"),
-    ("created-descending", "Date, new to old"),
+    ("manual", "manual"),
+    ("most-relevant", "most_relevant"),
+    ("best-selling", "best_selling"),
+    ("title-ascending", "az"),
+    ("title-descending", "za"),
+    ("price-ascending", "price_ascending"),
+    ("price-descending", "price_descending"),
+    ("created-ascending", "date_ascending"),
+    ("created-descending", "date_descending"),
 ];
 
 pub fn sort_products(products: &[Product], indexes: &mut [usize], order: SortOrder) {
@@ -369,12 +371,12 @@ pub(crate) fn storefront_filters(
         vec![
             (
                 "1".to_string(),
-                "In stock".to_string(),
+                shopify_text(site, "shopify.filters.availability.value.in_stock", &[]),
                 Criterion::Availability(true),
             ),
             (
                 "0".to_string(),
-                "Out of stock".to_string(),
+                shopify_text(site, "shopify.filters.availability.value.out_of_stock", &[]),
                 Criterion::Availability(false),
             ),
         ],
@@ -518,16 +520,20 @@ pub fn collection_url(site: &SiteRef, collection: &Collection) -> String {
         .localized(&format!("/collections/{}", collection.handle))
 }
 
-pub fn sort_options() -> Value {
-    options_value(&SORT_OPTIONS)
+pub fn sort_options(site: &SiteRef) -> Value {
+    options_value(site, "shopify.collections.sorting", &SORT_OPTIONS)
 }
 
-/// A list of `sort_option` objects from `(value, label)` pairs.
-pub fn options_value(options: &[(&str, &str)]) -> Value {
+/// A list of `sort_option` objects from `(value, key of its name)` pairs, the keys under
+/// `group`: Shopify's names, or the theme's in its locale files.
+pub fn options_value(site: &SiteRef, group: &str, options: &[(&str, &str)]) -> Value {
     Value::array(
         options
             .iter()
-            .map(|(value, name)| hash([("name", Value::str(name)), ("value", Value::str(value))]))
+            .map(|(value, key)| {
+                let name = shopify_text(site, &format!("{group}.{key}"), &[]);
+                hash([("name", Value::from(name)), ("value", Value::str(value))])
+            })
             .collect(),
     )
 }
@@ -599,7 +605,7 @@ impl Object for CollectionDrop {
                 .as_ref()
                 .and_then(|scope| scope.product_type.clone())
                 .map_or(Value::Nil, Value::from),
-            "sort_options" => sort_options(),
+            "sort_options" => sort_options(site),
             "sort_by" => self
                 .scope
                 .as_ref()

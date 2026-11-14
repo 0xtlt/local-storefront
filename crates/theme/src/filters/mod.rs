@@ -18,7 +18,7 @@ use crate::render::state::RenderState;
 use crate::site::Site;
 
 pub use html::payment_icon_svg as html_payment_icon;
-pub use i18n::translate;
+pub use i18n::{shopify_text, translate};
 pub use misc::to_script_safe_json as misc_json;
 
 pub fn register(env: &mut Environment) {

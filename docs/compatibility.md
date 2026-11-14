@@ -335,7 +335,12 @@ data, in the 38 languages lsf names; a page in another language has the English 
   key that names a group of keys, print as a Ruby hash (`{"one"=>"…", "other"=>"…"}`). Without
   arguments, `{{ name }}` placeholders are printed as they are; with arguments that lack one,
   the text is Shopify's `I18n Error: Missing interpolation value "name" for "…"`. There is no
-  `default:` argument. The translated content
+  `default:` argument. The strings Shopify
+  gives a theme (the names of `sort_options`, the values of the availability filter, the titles
+  of `link_to_add_tag` and `link_to_remove_tag`, the search page's `page_title`) are the
+  theme's when its locale file overrides their `shopify.*` key, else Shopify's English ones; the
+  search page's `page_title` is HTML-escaped either way (`Search: 2 results found for
+  &quot;shirt&quot;`), as a store prints it. The translated content
   of metaobjects, from the store data, on the routes of their language
   ([data format](data-format.md#translations-of-metaobjects)); not yet that of products,
   collections, pages or articles.
@@ -633,6 +638,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Legacy `img_url` | `img_url` of nil, or of a product or a variant without an image, is empty. Shopify gives the URL of its "no image" GIF, a file of `/cdn/shopifycloud/` that lsf does not have. |
 | Fonts | Shopify's font library is not bundled. `font_face` and `font_url` generate the same markup and URLs; the files are blank unless provided in `files/fonts/`. |
 | Shopify's shared assets | Requests under `/cdn/shopifycloud/` (payment buttons, model viewer UI, ...) get an empty file of the right type. The files of `shopify_asset_url` are served from the binary: `vendor/qrcode.js` is the qrcode.js library (MIT), as on Shopify; `shopify_common.js` has our own `Shopify.formatMoney`, `Shopify.resizeImage` and `Shopify.CountryProvinceSelector` (the province selector of an address form, filled from `data-provinces`); `option_selection.js`, `api.jquery.js`, `customer_area.js` and `currencies.js` only log a warning to the console, and `customer.css` is empty, because Shopify's code is proprietary; `gift-card/card.svg` is a drawing of our own, of the size of Shopify's, and `gift-card/add-to-apple-wallet.svg` a placeholder drawing. Any other name is a 404, logged by the server. |
+| Shopify's translations | Shopify publishes the English text of its own strings only: in another language, sort option names, filter values, tag link titles, the search page's title and `{{ 'shopify.…' \| t }}` are in English unless the theme's locale file overrides their key, where a store has Shopify's translation. The labels of the availability and price filters (`Availability`, `Price`) and the named formats of `date` and `time_tag` are always in English. |
 | Theme editor | `request.design_mode` is always `false`, `Shopify.designMode` is not set, and `block.shopify_attributes` is empty. |
 | Measurement units | `.unit` of a `weight` or a `dimension` is its short unit (`kg`, `cm`), and of a `volume` in milliliters, centiliters or US gallons `mL`, `cL` or `gal`, as a store gives them. The other volume units, and the units of the other measurement types, are given as the data writes them: how a store writes them is not confirmed. |
 | Integers | 64-bit. Liquid on Shopify uses arbitrary-precision integers. |

@@ -23,6 +23,7 @@ use crate::drops::request::{RequestDrop, RoutesDrop, TemplateDrop};
 use crate::drops::search::{predictive_search_value, recommendations_value, search_value};
 use crate::drops::shop::{ShopDrop, policy_value};
 use crate::drops::{hash, strings};
+use crate::filters::shopify_text;
 use crate::site::Site;
 
 pub struct Globals {
@@ -47,6 +48,33 @@ impl Globals {
             .lock()
             .expect("globals poisoned")
             .insert(name.to_string(), value);
+    }
+
+    /// `page_title`, and on a search with terms Shopify's
+    /// `Search: 3 results found for &quot;shirt&quot;`, in the theme's words when it overrides
+    /// them, HTML-escaped as a store prints it.
+    fn page_title(&self) -> String {
+        let terms = self
+            .site
+            .request
+            .param("q")
+            .filter(|terms| !terms.is_empty());
+        match (&self.page.resource, terms) {
+            (Resource::Search, Some(terms)) => {
+                let count = self
+                    .get("search")
+                    .map_or(Value::Nil, |search| search.get("results_count"));
+                escape_html(&shopify_text(
+                    &self.site,
+                    "shopify.page_titles.search_results",
+                    &[
+                        ("count".to_string(), count),
+                        ("terms".to_string(), Value::from(terms)),
+                    ],
+                ))
+            }
+            _ => self.page.title.clone(),
+        }
     }
 
     fn theme_value(&self) -> Value {
@@ -104,15 +132,7 @@ impl Globals {
                 site.request.origin(),
                 site.request.localized(&page.canonical_path)
             )),
-            "page_title" => match (&page.resource, site.request.param("q")) {
-                (Resource::Search, Some(terms)) if !terms.is_empty() => {
-                    let count = self.get("search").map_or(0, |search| {
-                        search.get("results_count").as_i64().unwrap_or(0)
-                    });
-                    Value::from(search_title(count, terms))
-                }
-                _ => Value::from(&page.title),
-            },
+            "page_title" => Value::from(self.page_title()),
             "page_description" => {
                 if page.description.is_empty() {
                     Value::Nil
@@ -235,13 +255,6 @@ impl Globals {
             _ => return None,
         })
     }
-}
-
-/// The title of a search page, as Shopify writes it: `Search: 14 results found for
-/// &quot;snowboard&quot;`, escaped.
-fn search_title(count: i64, terms: &str) -> String {
-    let results = if count == 1 { "result" } else { "results" };
-    escape_html(&format!("Search: {count} {results} found for \"{terms}\""))
 }
 
 /// The `<option>` of each country, by name, with its provinces in `data-provinces`: a JSON

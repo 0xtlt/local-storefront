@@ -52,6 +52,16 @@ fn count(named: &[(String, Value)]) -> Option<&Value> {
         .filter(|count| !count.is_nil())
 }
 
+/// A `count` as CLDR's plural rules read it. Not a number, a text (`'1'`) included: `None`, and
+/// Shopify takes `other`.
+fn operands(count: &Value) -> Option<Operands> {
+    match count {
+        Value::Int(count) => Some(Operands::from(*count)),
+        Value::Float(count) => Operands::parse(&float_to_s(*count)),
+        _ => None,
+    }
+}
+
 /// The plural form of `count`: `zero` for 0 when there is one, in every language, else the
 /// CLDR category of the locale, else `other`. `None` when the form is missing.
 fn plural_form<'a>(
@@ -59,13 +69,7 @@ fn plural_form<'a>(
     locale: &str,
     count: &Value,
 ) -> Option<&'a str> {
-    let operands = match count {
-        Value::Int(count) => Some(Operands::from(*count)),
-        Value::Float(count) => Operands::parse(&float_to_s(*count)),
-        // Not a number, a text (`'1'`) included: Shopify takes `other`.
-        _ => None,
-    };
-    let key = match operands {
+    let key = match operands(count) {
         Some(operands) if operands.n == 0.0 && forms.contains_key("zero") => "zero",
         Some(operands) => plural_category(locale, &operands),
         None => "other",
@@ -103,14 +107,26 @@ pub fn translate(site: &Site, key: &str, named: &[(String, Value)]) -> Option<St
     if let Some(text) = translate_in(site.translations(), key, named) {
         return Some(text);
     }
-    // Shopify's own keys use `%{name}` placeholders.
-    system_translation(key).map(|text| {
+    // Shopify's own keys use `%{name}` placeholders, and their plural forms are keys of their
+    // own, in English.
+    let plural = count(named)
+        .and_then(operands)
+        .map(|operands| format!("{key}.{}", plural_category("en", &operands)));
+    let text = system_translation(key).or_else(|| system_translation(plural.as_deref()?));
+    text.map(|text| {
         let mut text = text.to_string();
         for (name, value) in named {
             text = text.replace(&format!("%{{{name}}}"), &value.to_str());
         }
         text
     })
+}
+
+/// One of Shopify's own strings (`shopify.collections.sorting.manual`): the theme's override in
+/// its locale files, else Shopify's default, in English. Shopify does not publish its defaults
+/// in other languages.
+pub fn shopify_text(site: &Site, key: &str, named: &[(String, Value)]) -> String {
+    translate(site, key, named).unwrap_or_default()
 }
 
 fn t(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
