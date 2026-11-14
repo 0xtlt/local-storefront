@@ -507,6 +507,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **The global `navigation` of a customer account extension is `shopify.navigation`**, as on
   Shopify, whose examples call `navigation.navigate('extension://orders')`. It was the browser's
   Navigation API of the extension's frame, so `navigation.navigate(…)` did nothing.
+- **A customer account extension's session token has `iss`**, `https://<shop>.myshopify.com/checkouts`,
+  as Shopify's tokens of these extensions have it, before `dest`. A backend that reads `iss` to
+  tell them from the admin's tokens now gets it. A checkout extension's token is unchanged.
 - **`lsf app check` and `lsf app function run --scenario` price a scenario as its served
   checkout does.** A buyer in a market with its own currency gets the cart in that currency and
   the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's

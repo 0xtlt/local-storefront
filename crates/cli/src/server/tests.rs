@@ -6848,17 +6848,28 @@ fn a_discount_code_triggers_its_discount() {
     assert_eq!(json["discounts"][0]["code"], "WELCOME");
 }
 
-/// The session token `POST /__lsf/extensions/<handle>/session-token` gives the session, and its
-/// claims, checked as the backend checks them: with `secret` and the fixture app's client id.
+/// The session token `POST /__lsf/extensions/<handle>/session-token` gives the session for a
+/// checkout target, and its claims, checked as the backend checks them: with `secret` and the
+/// fixture app's client id.
 fn extension_token(
     state: &ServerState,
     session: &str,
     secret: &str,
 ) -> (Reply, lsf_app::admin::auth::session_token::ExtensionClaims) {
+    extension_token_at(state, session, secret, "purchase.checkout.block.render")
+}
+
+/// [`extension_token`] for `target`.
+fn extension_token_at(
+    state: &ServerState,
+    session: &str,
+    secret: &str,
+    target: &str,
+) -> (Reply, lsf_app::admin::auth::session_token::ExtensionClaims) {
     let reply = post(
         state,
         "/__lsf/extensions/gift-message/session-token",
-        json!({}),
+        json!({ "target": target }),
         session,
     );
     assert_eq!(reply.status, 200, "{}", text(&reply));
@@ -6935,6 +6946,17 @@ fn an_extension_gets_a_session_token_of_the_shop_signed_with_the_client_secret()
         Some(format!("gid://shopify/Customer/{}", customer.id).as_str())
     );
     assert_eq!(claims.dest, shop);
+    assert_eq!(claims.iss, None, "a checkout target's token has no `iss`");
+
+    // A customer account target's token has `iss`, the shop's `/checkouts` URL, as Shopify's.
+    let (_, account) = extension_token_at(
+        &state,
+        "st-customer",
+        "the-backend-secret",
+        "customer-account.profile.block.render",
+    );
+    assert_eq!(account.iss, Some(format!("https://{shop}/checkouts")));
+    assert_eq!(account.sub, claims.sub);
 
     // Only the extensions of the app, and only `POST`.
     let unknown = post(

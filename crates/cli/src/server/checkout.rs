@@ -2255,7 +2255,8 @@ fn asset(file: &str) -> Reply {
 /// The token Shopify signs for the extensions of the app ([`ExtensionClaims`]): for the shop
 /// (`dest`, the `permanent_domain` of the store data, the Admin API's default shop), the app
 /// (`aud`, its client id) and the customer logged in in the caller's session (`sub`), signed with
-/// HS256 and the client secret, so that the backend verifies it as it verifies Shopify's.
+/// HS256 and the client secret, so that the backend verifies it as it verifies Shopify's. The
+/// body names the `target` that asks: a customer account target's token has an `iss` too.
 ///
 /// The secret is the Admin API's (`--client-secret`, `SHOPIFY_API_SECRET`, the app's `.env`,
 /// else lsf's own); without the admin part, the same without `--client-secret`. It never
@@ -2293,6 +2294,10 @@ fn extension_session_token(state: &ServerState, incoming: &Incoming, handle: &st
         chrono::Utc::now().timestamp(),
         jti,
     );
+    let claims = match incoming.params["target"].as_str() {
+        Some(target) if target.starts_with("customer-account.") => claims.of_customer_account(),
+        _ => claims,
+    };
     let token = session_token::mint(&claims, &secret);
     Reply::json(
         200,

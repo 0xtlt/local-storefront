@@ -395,6 +395,7 @@ test('asks lsf for the session token, which it signs, and hands it to the frame'
   assert.equal(window.fetched.at(-1), '/__lsf/extensions/gift-message/session-token');
   assert.equal(window.asked.method, 'POST');
   assert.equal(window.asked.headers['content-type'], 'application/json');
+  assert.equal(window.asked.body, JSON.stringify({ target: BLOCK }), 'the target, whose surface the token depends on');
   assert.deepEqual(frame.iframe.contentWindow.posted.at(-1), { lsf: true, type: 'result', id: 5, result: 'signed.for.gift-message' });
 });
 
