@@ -427,7 +427,8 @@ and chooses the format the way Shopify's CDN was seen to in October 2026:
 - An image of which nothing is asked (no size, no crop) is the file itself, unless a lighter
   format can be sent.
 - `format: 'pjpg'` gives a JPEG to every client. `format: 'jpg'` and `format: 'png'` name the
-  format for the clients that read neither WebP nor AVIF. An image with transparency does
+  format for the clients that read neither WebP nor AVIF. `image_url` leaves out
+  `format: 'jpg'` of a JPEG, which converts nothing, as Shopify does. An image with transparency does
   not become a JPEG.
 - `quality` is the quality of every format. Without it, the qualities are the ones with
   which the files weigh about what Shopify's do: 85 for JPEG and AVIF, 90 for WebP.
@@ -609,7 +610,8 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Recommendations | Products of the same collections, or the product's explicit `recommendations`. |
 | Storefront filters | On collection pages and on the search page (`search.filters`), where a filter leaves out the pages and articles, as on Shopify. Availability, price, vendor, product type, tag and variant options, with the swatches of option values. Metafield filters are not generated. |
 | Missing files | A file of `files/` that the data names (`images['hero.jpg']`, an `image_picker` setting) is a placeholder image of that name when the file is missing, so that test data needs no image files: `image_url` gives its URL. On Shopify a file the shop does not have is nothing, and `image_url` raises `invalid url input`. `image_url` also reads any relative path (`'hero.jpg'`) as a file of `files/`, where Shopify takes the `src` of an image. |
-| Placeholder artwork | `image`, `collection-2` and `lifestyle-2` are Shopify's illustrations: the three that are published under a free license. For the other names, `placeholder_svg_tag` draws generic artwork of the right proportions. |
+| Placeholder artwork | `image`, `collection-2` and `lifestyle-2` are Shopify's illustrations: the three that are published under a free license. For the other names Shopify lists, `placeholder_svg_tag` draws generic artwork of the right proportions; a name it does not list is Shopify's error (`Unknown SVG placeholder 'nope'`). |
+| Legacy `img_url` | `img_url` of nil, or of a product or a variant without an image, is empty. Shopify gives the URL of its "no image" GIF, a file of `/cdn/shopifycloud/` that lsf does not have. |
 | Fonts | Shopify's font library is not bundled. `font_face` and `font_url` generate the same markup and URLs; the files are blank unless provided in `files/fonts/`. |
 | Shopify's shared assets | Requests under `/cdn/shopifycloud/` (payment buttons, model viewer UI, ...) get an empty file of the right type. The files of `shopify_asset_url` are served from the binary: `vendor/qrcode.js` is the qrcode.js library (MIT), as on Shopify; `shopify_common.js` has our own `Shopify.formatMoney`, `Shopify.resizeImage` and `Shopify.CountryProvinceSelector` (the province selector of an address form, filled from `data-provinces`); `option_selection.js`, `api.jquery.js`, `customer_area.js` and `currencies.js` only log a warning to the console, and `customer.css` is empty, because Shopify's code is proprietary; `gift-card/card.svg` is a drawing of our own, of the size of Shopify's, and `gift-card/add-to-apple-wallet.svg` a placeholder drawing. Any other name is a 404, logged by the server. |
 | Theme editor | `request.design_mode` is always `false`, `Shopify.designMode` is not set, and `block.shopify_attributes` is empty. |

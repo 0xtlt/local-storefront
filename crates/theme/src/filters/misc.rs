@@ -127,14 +127,30 @@ fn variant_product(site: &SiteRef, product: &lsf_core::store::Product, variant: 
     } else {
         format!("{} - {}", product.title, variant.title)
     };
-    json!({
+    let mut data = json!({
         "@id": format!("{url}?variant={}#variant", variant.id),
         "@type": "Product",
         "image": product_image(site, product),
         "name": name,
         "offers": variant_offer(site, &url, variant),
         "sku": variant.sku,
-    })
+    });
+    leave_out_empty(&mut data, &["image", "sku"]);
+    data
+}
+
+/// Leaves out the `keys` whose value is `null` or `""`, as Shopify leaves out a variant's
+/// `sku` when it has none, and its `image`.
+fn leave_out_empty(data: &mut Json, keys: &[&str]) {
+    let fields = data.as_object_mut().expect("structured data is an object");
+    for key in keys {
+        if fields
+            .get(*key)
+            .is_some_and(|value| value.is_null() || value.as_str() == Some(""))
+        {
+            fields.shift_remove(*key);
+        }
+    }
 }
 
 /// The image of a product in its structured data.
@@ -157,7 +173,8 @@ fn structured_data(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<V
         let url = drop.url();
         let image = product_image(site, product);
         let data = if product.variants.len() == 1 {
-            json!({
+            let variant = &product.variants[0];
+            let mut data = json!({
                 "@context": "http://schema.org/",
                 "@id": format!("{url}#product"),
                 "@type": "Product",
@@ -166,9 +183,12 @@ fn structured_data(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<V
                 "description": plain_text(&product.description),
                 "image": image,
                 "name": product.title,
-                "offers": variant_offer(site, &url, &product.variants[0]),
+                "offers": variant_offer(site, &url, variant),
+                "sku": variant.sku,
                 "url": format!("{origin}{url}"),
-            })
+            });
+            leave_out_empty(&mut data, &["sku"]);
+            data
         } else {
             json!({
                 "@context": "http://schema.org/",

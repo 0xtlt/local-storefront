@@ -418,10 +418,8 @@ pub fn resolve(site: &Site) -> Page {
         }
         ["search"] => {
             let mut page = Page::new("search", Resource::Search);
-            page.title = match request.param("q").filter(|query| !query.is_empty()) {
-                Some(query) => format!("Search: results found for \"{query}\""),
-                None => "Search".to_string(),
-            };
+            // With terms, `page_title` counts the results (`render::globals`).
+            page.title = "Search".to_string();
             page.canonical_path = match request.param("q").filter(|query| !query.is_empty()) {
                 Some(query) => format!("/search?q={}", encode_component(query)),
                 None => "/search".to_string(),
