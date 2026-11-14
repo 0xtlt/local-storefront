@@ -9927,6 +9927,42 @@ fn the_customer_account_takes_its_language_from_locale_and_keeps_it() {
     std::fs::remove_dir_all(&app).ok();
 }
 
+/// The header of the customer account has the links of the menu `customer-account-main-menu`
+/// when the store data has it, as Shopify's.
+#[test]
+fn the_customer_account_header_has_the_links_of_its_menu() {
+    let app = app_with_account("menu");
+    let state = checkout_server_of(app.clone(), &[], true);
+    let menu =
+        |session: &str| account_state(&get(&state, "/account/profile", session))["menu"].clone();
+    assert_eq!(
+        menu("ca-menu-none"),
+        Json::Null,
+        "Shopify's default links, which the page has"
+    );
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"menus": {"customer-account-main-menu": {
+            "title": "Customer account main menu",
+            "links": [
+                {"title": "Orders", "url": "/account/orders"},
+                {"title": "Shop", "url": "/collections/all"}
+            ]
+        }}}}),
+        "ca-menu",
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        menu("ca-menu"),
+        json!([
+            {"title": "Orders", "url": "/account/orders"},
+            {"title": "Shop", "url": "/collections/all"}
+        ])
+    );
+    std::fs::remove_dir_all(&app).ok();
+}
+
 /// Uninstalling the app removes its customer account UI extensions, as Shopify removes an
 /// uninstalled app's extensions: the pages load none and say why, its full page is not there,
 /// and a reinstall brings them back.

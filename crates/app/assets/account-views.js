@@ -68,17 +68,28 @@ const lines = (texts, none = null) =>
 
 // --- The frame of every page ---------------------------------------------------------------
 
+/**
+ * The links of the header: the items of the menu `customer-account-main-menu` when the store data
+ * has it (`state.menu`), as Shopify renders them, else its default items, Orders and Profile.
+ */
+function navigation(state) {
+  return state.menu ?? [{ title: 'Orders', url: state.root }, { title: 'Profile', url: `${state.root}/profile` }];
+}
+
 function header(ctx) {
   const { state, ui, actions } = ctx;
-  const here = state.page;
-  const link = (href, label, current) =>
-    h('a', { class: `lsf-ca-nav-link${current ? ' is-current' : ''}`, href, 'aria-current': current ? 'page' : null }, label);
+  const path = String(ctx.here ?? '').split('?')[0];
+  const ordersPage = state.page === 'orders' || state.page === 'order' || state.page === 'order-page';
+  const isCurrent = (url) => url === path || (ordersPage && (url === state.root || url === `${state.root}/orders`))
+    || (state.page === 'profile' && url === `${state.root}/profile`);
+  const link = ({ title, url }) => {
+    const current = isCurrent(url);
+    return h('a', { class: `lsf-ca-nav-link${current ? ' is-current' : ''}`, href: url, 'aria-current': current ? 'page' : null }, title);
+  };
   const customer = state.customer;
   return h('header', { class: 'lsf-ca-header' },
     h('a', { class: 'lsf-brand', href: state.shop?.storefrontUrl ?? '/' }, state.shop?.name ?? 'Shop'),
-    customer && h('nav', { class: 'lsf-ca-nav', 'aria-label': 'Account' },
-      link(state.root, 'Orders', here === 'orders' || here === 'order' || here === 'order-page'),
-      link(`${state.root}/profile`, 'Profile', here === 'profile')),
+    customer && h('nav', { class: 'lsf-ca-nav', 'aria-label': 'Account' }, navigation(state).map(link)),
     h('div', { class: 'lsf-ca-account' },
       customer
         ? h('button', {
