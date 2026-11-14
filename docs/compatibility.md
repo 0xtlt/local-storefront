@@ -146,7 +146,8 @@ and the order keep it. One `_` is not private, nor are line item properties.
 
 With their related types: variants (`product.variants` gives the first 250, as on Shopify, and
 `product.variants_count` all of them; so does the product JSON of the Ajax API), options and
-option values (with swatches), media (images,
+option values (with swatches; an option's `json` is its `name`, `position` and `values`, as on
+Shopify), media (images,
 videos, external videos, 3D models), image presentation and focal points, collection filters
 (with swatches) and sort options, links, addresses, orders and line items (a cart line has the
 `index` shopify.dev leaves out: its 0-based position, which Horizon posts plus 1 as the `line` of

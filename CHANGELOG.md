@@ -379,6 +379,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **`product.options_by_name` finds an option in any case**, as Shopify documents ("the name is
   case-insensitive"): `options_by_name['color']`, `['COLOR']` and `.color` find the option
   `Color`. Swatch and size-chart code that looks options up by a lower-case name works locally.
+- **`product.options_with_values | json` gives each option.** An option in `json` is
+  `{"name":"Color","position":1,"values":["Black","White"]}`, as on Shopify, where it was
+  `null`: variant pickers that hand the options to JavaScript get their names and values.
 - **`weight_with_unit` and `variant.weight_in_unit` print weights as Shopify does.** Grams are
   a whole number (`3 g`), and the other units a decimal number at the precision Shopify keeps:
   kilograms to 3 places, pounds to 2, ounces to 1, with its `.0` (`10.0 lb`, `4.536 kg`,
