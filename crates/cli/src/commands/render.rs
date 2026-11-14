@@ -274,10 +274,15 @@ pub fn run(
             ExitCode::SUCCESS
         });
     }
-    // `/robots.txt` is a template too, with rules of its own when the theme has none.
+    // `/robots.txt` is a template too, with rules of its own when the theme has none, and so
+    // are the agent-discovery files.
+    let site = app
+        .renderer
+        .site(store.clone(), request.clone(), session.clone());
     let rendered = if request.path == "/robots.txt" {
-        app.renderer
-            .render_robots(&app.renderer.site(store, request, session))
+        app.renderer.render_robots(&site)
+    } else if let Some(rendered) = app.renderer.render_agents(&site) {
+        rendered
     } else {
         app.renderer.render(store, request, session, &target)
     };

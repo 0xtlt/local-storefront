@@ -230,3 +230,72 @@ fn the_css_of_a_sass_asset_says_lsf_does_not_compile_sass() {
     );
     assert_eq!(text(&css), reason);
 }
+
+#[test]
+fn the_agent_files_render_their_templates_with_request_and_agents_only() {
+    let root = theme_dir(
+        "agents",
+        &[
+            LAYOUT,
+            ("templates/index.liquid", "home"),
+            (
+                "templates/agents.md.liquid",
+                "# {{ shop.name }}{{ agents.store_name }} at {{ agents.store_url }}\n\
+                 {{ agents.ucp_discovery_url }} {{ agents.mcp_endpoint_url }} \
+                 {{ agents.sitemap_url }} {{ agents.currency }} {{ request.host }}",
+            ),
+            ("templates/llms.txt.liquid", "llms {{ collections.size }}"),
+            (
+                "shopify-local/store.json",
+                r#"{"shop": {"name": "Repro", "currency": "EUR"},
+                    "localization": {"languages": [{"iso_code": "en"}, {"iso_code": "fr"}]}}"#,
+            ),
+        ],
+    );
+    let state = serve(&root, false);
+    let agents = get(&state, "/agents.md", "agents");
+    let llms = get(&state, "/llms.txt", "agents");
+    // No `llms-full.txt.liquid`: `/llms-full.txt` falls back to `agents.md.liquid`.
+    let full = get(&state, "/llms-full.txt", "agents");
+    let prefixed = get(&state, "/fr/llms.txt", "agents");
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(agents.status, 200, "{}", text(&agents));
+    assert_eq!(
+        header(&agents, "content-type"),
+        Some("text/markdown; charset=utf-8")
+    );
+    // `shop` is not in the context: it renders blank, as on Shopify.
+    assert_eq!(
+        text(&agents),
+        "# Repro at http://shop.test\n\
+         http://shop.test/.well-known/ucp http://shop.test/api/ucp/mcp \
+         http://shop.test/sitemap.xml EUR shop.test"
+    );
+    assert_eq!(
+        header(&llms, "content-type"),
+        Some("text/plain; charset=utf-8")
+    );
+    assert_eq!(text(&llms), "llms ");
+    assert_eq!(text(&full), text(&agents));
+    // These files are only served at the bare domain.
+    assert_eq!(prefixed.status, 404);
+    let reason = header(&prefixed, "x-lsf-not-found").unwrap_or_default();
+    assert!(reason.contains("at the bare domain only"), "{reason}");
+}
+
+#[test]
+fn an_agent_file_without_a_template_is_not_found_and_says_why() {
+    let root = theme_dir("no-agents", &[LAYOUT, ("templates/index.liquid", "home")]);
+    let state = serve(&root, false);
+    let llms = get(&state, "/llms.txt", "agents");
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(llms.status, 404);
+    let reason = header(&llms, "x-lsf-not-found").unwrap_or_default();
+    assert!(
+        reason.starts_with(
+            "the theme has no template for /llms.txt: Shopify serves an llms.txt of its own"
+        ),
+        "{reason}"
+    );
+}

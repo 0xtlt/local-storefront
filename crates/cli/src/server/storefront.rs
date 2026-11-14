@@ -344,6 +344,12 @@ fn route(visit: &Visit<'_>) -> Reply {
             let rendered = visit.state.app.renderer.render_robots(&visit.site());
             reply_from(visit, rendered, &Target::Section(String::new()))
         }
+        ["agents.md" | "llms.txt" | "llms-full.txt"] => {
+            match visit.state.app.renderer.render_agents(&visit.site()) {
+                Some(rendered) => reply_from(visit, rendered, &Target::Section(String::new())),
+                None => page(visit),
+            }
+        }
         ["sitemap.xml"] => Reply::new(
             200,
             "application/xml; charset=utf-8",

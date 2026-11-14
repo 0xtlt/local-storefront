@@ -917,6 +917,63 @@ impl Renderer {
         }
     }
 
+    /// Renders `/agents.md`, `/llms.txt` or `/llms-full.txt` from the first of its templates the
+    /// theme has (`templates/llms.txt.liquid`, then `templates/agents.md.liquid`), as plain
+    /// text without a layout, in the restricted context Shopify gives them: `request` and
+    /// `agents`, and no other global object. `None` for another path, for one under a locale
+    /// or market prefix (these files are only at the bare domain), and when the theme has none
+    /// of the templates: Shopify then serves a file of its own, which lsf does not have.
+    /// <https://shopify.dev/docs/storefronts/themes/architecture/templates/agents-md-liquid#content>
+    pub fn render_agents(&self, site: &Arc<Site>) -> Option<Rendered> {
+        let started = Instant::now();
+        if !site.request.root.is_empty() {
+            return None;
+        }
+        let path = site.request.path.trim_start_matches('/');
+        let (served, templates) = seo::AGENT_FILES.iter().find(|(file, _)| *file == path)?;
+        let (name, file) = templates.iter().find_map(|name| {
+            let file = self.theme.liquid(&format!("templates/{name}.liquid"));
+            file.transpose().map(|file| (*name, file))
+        })?;
+        let page = Page::new(name, Resource::Index);
+        let mut ctx = Context::builder(self.env.clone())
+            .register(Arc::new(RenderState::new(site.clone(), page.clone())))
+            .assign(
+                "request",
+                Value::object(crate::drops::request::RequestDrop {
+                    site: site.clone(),
+                    page_type: page.page_type.clone(),
+                }),
+            )
+            .assign("agents", seo::agents_value(site))
+            .time_zone(site.store.shop.timezone)
+            .build();
+        let body = match file {
+            Ok(template) => template.template.render(&mut ctx),
+            Err(error) => error.to_string(),
+        };
+        Some(Rendered {
+            status: 200,
+            content_type: if served.ends_with(".md") {
+                "text/markdown; charset=utf-8"
+            } else {
+                "text/plain; charset=utf-8"
+            },
+            body,
+            preloads: Vec::new(),
+            errors: ctx.errors(),
+            warnings: ctx.warnings(),
+            notices: Vec::new(),
+            default_menus: Vec::new(),
+            template: page.template.full(),
+            not_found: None,
+            timings: Timings {
+                total: started.elapsed(),
+                ..Timings::default()
+            },
+        })
+    }
+
     /// Renders a `.liquid` asset (`assets/theme.css.liquid`), which can read `settings`.
     pub fn render_asset(
         &self,
