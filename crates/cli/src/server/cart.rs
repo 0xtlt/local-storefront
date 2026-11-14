@@ -87,17 +87,28 @@ fn selling_plan(params: &Json) -> PlanParam {
     }
 }
 
-/// Adds the bundled sections the request asked for to a JSON response. More than five give
-/// `"sections": null` and render none, as on Shopify, and the cart still changes.
-fn with_sections(visit: &Visit<'_>, params: &Json, mut body: Json) -> Json {
+/// A JSON response, with the bundled sections the request asked for. More than five give
+/// `"sections": null` and render none, as on Shopify, and the cart still changes. A
+/// `sections_url` that does not start with `/` answers `400`, the cart changed all the same:
+/// "Passing invalid values for the sections or sections_url parameters, such as a sections_url
+/// that doesn't begin with /, causes the entire request to return an HTTP 400 Bad Request
+/// status. However, this doesn't mean that the rest of the request didn't succeed."
+/// <https://shopify.dev/docs/api/ajax/reference/cart#bundled-section-rendering>
+fn sections_reply(visit: &Visit<'_>, params: &Json, mut body: Json) -> Reply {
+    let url = text(params, "sections_url");
+    if url.as_ref().is_some_and(|url| !url.starts_with('/')) {
+        return Reply::json(
+            400,
+            &json!({"errors": "sections_url must be a relative path"}),
+        );
+    }
     let ids = section_ids(params.get("sections"));
     if lsf_theme::render::too_many_sections(&ids) {
         body["sections"] = Json::Null;
     } else if !ids.is_empty() {
-        let url = text(params, "sections_url");
         body["sections"] = visit.render_sections(&ids, url.as_deref());
     }
-    body
+    Reply::json(200, &body)
 }
 
 fn cart_reply(visit: &Visit<'_>, params: &Json) -> Reply {
@@ -105,16 +116,13 @@ fn cart_reply(visit: &Visit<'_>, params: &Json) -> Reply {
         let return_to = text(params, "return_to").unwrap_or_else(|| visit.localized("/cart"));
         return Reply::redirect(&return_to);
     }
-    Reply::json(200, &with_sections(visit, params, cart_json(&visit.site())))
+    sections_reply(visit, params, cart_json(&visit.site()))
 }
 
 /// `GET /cart.js`: the cart, with the sections the request asked for.
 pub fn show(visit: &Visit<'_>) -> Reply {
     let params = visit.incoming.all_params();
-    Reply::json(
-        200,
-        &with_sections(visit, &params, cart_json(&visit.site())),
-    )
+    sections_reply(visit, &params, cart_json(&visit.site()))
 }
 
 /// Why an item of `/cart/add.js` did not all go into the cart.
@@ -323,7 +331,7 @@ pub fn add(visit: &Visit<'_>) -> Reply {
     } else {
         added.into_iter().next().unwrap_or(Json::Null)
     };
-    Reply::json(200, &with_sections(visit, &params, body))
+    sections_reply(visit, &params, body)
 }
 
 /// The index of the cart line a `change` request targets: by 1-based `line`, by line key, or

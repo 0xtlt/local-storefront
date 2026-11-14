@@ -452,6 +452,53 @@ fn cart_responses_bundle_the_requested_sections() {
 }
 
 #[test]
+fn the_section_rendering_api_reads_its_parameters_as_shopify_does() {
+    // Issue #196: `sections` wins over `section_id`, an empty `sections` asks for none, and its
+    // ids are taken as written.
+    let state = server();
+    let both = get(&state, "/?sections=footer&section_id=nope", "sections");
+    assert_eq!(both.status, 200, "{}", text(&both));
+    let json = body_json(&both);
+    assert_eq!(json.as_object().unwrap().len(), 1, "{json}");
+    assert!(json["footer"].is_string(), "{json}");
+    assert_eq!(
+        body_json(&get(&state, "/?sections=", "sections")),
+        json!({})
+    );
+    let spaced = body_json(&get(&state, "/?sections=footer,%20footer", "sections"));
+    assert!(spaced["footer"].is_string(), "{spaced}");
+    assert!(spaced[" footer"].is_null(), "{spaced}");
+    assert!(
+        spaced.as_object().unwrap().contains_key(" footer"),
+        "{spaced}"
+    );
+}
+
+#[test]
+fn a_sections_url_that_is_not_a_path_answers_400() {
+    // "Passing invalid values for the sections or sections_url parameters, such as a
+    // sections_url that doesn't begin with /, causes the entire request to return an HTTP 400
+    // Bad Request status. However, this doesn't mean that the rest of the request didn't
+    // succeed." (https://shopify.dev/docs/api/ajax/reference/cart#bundled-section-rendering)
+    let state = server();
+    let reply = post(
+        &state,
+        "/cart/add.js",
+        json!({"id": variant_id(&state, "TOTE-NAT"), "sections": "footer", "sections_url": "products/tee"}),
+        "relative",
+    );
+    assert_eq!(reply.status, 400, "{}", text(&reply));
+    assert_eq!(
+        body_json(&reply),
+        json!({"errors": "sections_url must be a relative path"})
+    );
+    assert_eq!(
+        body_json(&get(&state, "/cart.js", "relative"))["item_count"],
+        1
+    );
+}
+
+#[test]
 fn more_than_five_sections_render_none() {
     // "Requesting more than five sections returns 400 Bad Request and renders nothing"
     // (https://shopify.dev/docs/storefronts/themes/best-practices/performance/use-section-rendering-api).
