@@ -23,6 +23,7 @@ data directory is one of these, and they are merged, so you can split the data a
 | `companies` | array of [Company](#company) | Companies that buy from the store (B2B). Customers join one with their `company`. |
 | `gift_cards` | array of [GiftCard](#giftcard) | Issued gift cards, each with its own page. |
 | `metaobjects` | map of array of [Metaobject](#metaobject) | Metaobject entries by type. |
+| `metaobject_definitions` | map of [MetaobjectDefinition](#metaobjectdefinition) | The definitions of metaobject types, by type: what a type sets for all its entries. |
 | `localization` | [Localization](#localization) | The countries and languages of the store. At most one data file may define it. |
 | `swatches` | map of [Swatch](#swatch) | The swatches of product option values, by the name of the value: `{"White": "#ffffff", "Floral": {"image": "swatches/floral.jpg"}}`. Every option value with one of these names gets the swatch, on products and in collection filters. |
 | `locations` | array of [Location](#location) | The places the store stocks products at, for store pickup. |
@@ -707,7 +708,15 @@ A metaobject entry (`metaobjects.<type>.<handle>`).
 | `handle` | string | **Required.** |
 | `fields` | map of [Metafield](#metafield) | Field values, with the same shorthand as metafields. |
 | `translations` | map of map of any JSON value | The entry in the store's other languages, by language (an `iso_code` of `localization.languages`) then field key: `{"fr": {"question": "Combien ?"}}`. A value is written as the field's (a string, a rich text object, a list), and only the fields Shopify translates take one: text, rich text, JSON, links, URLs, files, and the lists of single line texts, links, URLs and files. On `/fr/...` a field shows its French value, else its own. |
-| `template_suffix` | string | Selects `templates/metaobject/<type>.<suffix>.json` instead of `templates/metaobject/<type>.json` for the page of the entry, which is `/pages/<type>/<handle>`. |
+| `template_suffix` | string | Selects `templates/metaobject/<type>.<suffix>.json` instead of `templates/metaobject/<type>.json` for the page of the entry, which is `/pages/<url_handle>/<handle>` (`url_handle` of its definition, else its type). |
+
+## MetaobjectDefinition
+
+The definition of a metaobject type (`metaobject_definitions.<type>`).
+
+| Field | Type | Description |
+|---|---|---|
+| `url_handle` | string | The handle of the type's web pages, Shopify's `capabilities.onlineStore.data.urlHandle`: the entries are served at `/pages/<url_handle>/<handle>`. Defaults to the type. |
 
 ## Localization
 

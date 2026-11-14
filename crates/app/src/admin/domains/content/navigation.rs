@@ -92,7 +92,8 @@ fn item_url(state: &ShopState, kind: &str, resource: Option<&str>) -> Option<Str
         }
         "METAOBJECT" => {
             let record = record?;
-            format!("/pages/{}/{}", text(record, "type"), text(record, "handle"))
+            let url_handle = super::metaobjects::url_handle(state, text(record, "type"));
+            format!("/pages/{url_handle}/{}", text(record, "handle"))
         }
         _ => return None,
     })

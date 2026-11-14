@@ -1211,6 +1211,9 @@ pub struct Store {
     pub locations: Vec<Location>,
     pub selling_plan_groups: Vec<SellingPlanGroup>,
     pub metaobjects: Vec<Metaobject>,
+    /// The handle of the web pages of each metaobject type whose definition sets one
+    /// (`metaobject_definitions.<type>.url_handle`): [`Store::metaobject_url_handle`].
+    pub metaobject_url_handles: HashMap<String, String>,
     pub countries: Vec<Country>,
     /// The markets the data declares; a country in none of them is a market of its own.
     pub markets: Vec<Market>,
@@ -1722,6 +1725,24 @@ impl Store {
     }
 
     /// The entry of a type (an app's in either spelling: [`same_metaobject_type`]) and a handle.
+    /// The handle of the web pages of a metaobject type: its definition's `url_handle`, else
+    /// the type. Shopify serves the entries at `/pages/<url handle>/<handle>`.
+    /// <https://shopify.dev/docs/apps/build/metaobjects/use-metaobject-capabilities#online-store>
+    pub fn metaobject_url_handle<'a>(&'a self, kind: &'a str) -> &'a str {
+        self.metaobject_url_handles
+            .get(kind)
+            .map_or(kind, String::as_str)
+    }
+
+    /// The path of the web page of a metaobject entry: `/pages/<url handle>/<handle>`.
+    pub fn metaobject_path(&self, entry: &Metaobject) -> String {
+        format!(
+            "/pages/{}/{}",
+            self.metaobject_url_handle(&entry.kind),
+            entry.handle
+        )
+    }
+
     pub fn metaobject(&self, kind: &str, handle: &str) -> Option<&Metaobject> {
         self.metaobjects
             .iter()

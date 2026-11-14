@@ -473,6 +473,16 @@ fn the_rich_fixture_seeds_metafields_metaobjects_and_files() {
         ]
     );
     assert_eq!(definition["metaobjectsCount"], json!(2));
+    // Its web pages are at the URL handle of the data, else at the type.
+    assert_eq!(
+        definition["capabilities"]["onlineStore"]["data"]["urlHandle"],
+        json!("designers")
+    );
+    let faq_definition = record(&state, &content::metaobject_definition_gid("faq"));
+    assert_eq!(
+        faq_definition["capabilities"]["onlineStore"]["data"]["urlHandle"],
+        json!("faq")
+    );
     let faq = record(&state, &content::metaobject_gid("faq", "returns"));
     assert_eq!(faq["fields"][2]["references"].as_array().unwrap().len(), 2);
 

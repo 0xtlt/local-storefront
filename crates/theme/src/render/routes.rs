@@ -243,23 +243,23 @@ pub fn resolve(site: &Site) -> Page {
             page.handle = Some(data.handle.clone());
             page
         }
-        // The page of a metaobject entry, with `templates/metaobject/<type>.json`.
-        ["pages", kind, handle] => {
-            let Some(index) = store
-                .metaobjects
-                .iter()
-                .position(|entry| entry.kind == *kind && entry.handle == *handle)
-            else {
+        // The page of a metaobject entry, at the URL handle of its type, with
+        // `templates/metaobject/<type>.json`.
+        ["pages", url_handle, handle] => {
+            let Some(index) = store.metaobjects.iter().position(|entry| {
+                store.metaobject_url_handle(&entry.kind) == *url_handle && entry.handle == *handle
+            }) else {
                 return not_found(format!(
-                    "no metaobject \"{kind}/{handle}\" in the store data"
+                    "no metaobject \"{handle}\" of a type whose URL handle is \"{url_handle}\" in the store data"
                 ));
             };
+            let data = &store.metaobjects[index];
+            let kind = data.kind.as_str();
             if !has_metaobject_page(theme, kind) {
                 return not_found(format!(
                     "the theme has no templates/metaobject/{kind}.json or .liquid: the entries of \"{kind}\" have no page"
                 ));
             }
-            let data = &store.metaobjects[index];
             let mut page = Page::new("metaobject", Resource::Metaobject(index));
             page.template = with_suffix(
                 theme,
@@ -276,7 +276,7 @@ pub fn resolve(site: &Site) -> Page {
                 })
                 .filter(|title| !title.is_empty())
                 .unwrap_or_else(|| data.handle.clone());
-            page.canonical_path = format!("/pages/{kind}/{}", data.handle);
+            page.canonical_path = store.metaobject_path(data);
             page.handle = Some(data.handle.clone());
             page
         }

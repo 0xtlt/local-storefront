@@ -147,7 +147,7 @@ fn a_page_that_is_not_found_says_why() {
     );
     assert_eq!(
         reason("/pages/event/nope").as_deref(),
-        Some("no metaobject \"event/nope\" in the store data")
+        Some("no metaobject \"nope\" of a type whose URL handle is \"event\" in the store data")
     );
     // A URL can hold what a header cannot.
     assert_eq!(

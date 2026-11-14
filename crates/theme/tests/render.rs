@@ -4914,6 +4914,38 @@ fn the_entries_of_a_metaobject_type_have_pages() {
 }
 
 #[test]
+fn the_pages_of_a_metaobject_type_are_at_the_url_handle_of_its_definition() {
+    // https://shopify.dev/docs/apps/build/metaobjects/use-metaobject-capabilities: "The
+    // urlHandle is set to content resulting in the following URL for metaobject entries:
+    // /pages/content/{entry-handle}". The type's own name is no URL then.
+    let overlay = serde_json::json!({
+        "metaobject_definitions": { "info": { "url_handle": "infos" } },
+        "metaobjects": { "info": [{ "handle": "about", "fields": {} }] }
+    });
+    let fixture = theme_with_data(
+        "metaobject-url-handle",
+        &overlay,
+        &[
+            ("layout/theme.liquid", "{{ content_for_layout }}"),
+            (
+                "templates/metaobject/info.liquid",
+                "{{ metaobject.system.url }}|{{ request.path }}|{{ canonical_url }}",
+            ),
+        ],
+    );
+    let page = fixture.page("/pages/infos/about");
+    assert_eq!(
+        (page.status, page.template.as_str()),
+        (200, "metaobject/info")
+    );
+    assert_eq!(
+        page.body,
+        "/pages/infos/about|/pages/infos/about|http://shop.test/pages/infos/about"
+    );
+    assert_eq!(fixture.page("/pages/info/about").status, 404);
+}
+
+#[test]
 fn a_url_setting_entered_as_text_keeps_its_path_on_a_localized_route() {
     // https://shopify.dev/docs/api/liquid/objects/url: "URLs that point to store resources, the
     // home page, and the collection pages include the path prefix of the current locale",

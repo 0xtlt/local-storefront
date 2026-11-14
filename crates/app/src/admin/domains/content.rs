@@ -534,7 +534,10 @@ fn seed_metaobjects(seed: &mut Seed) {
             "capabilities": {
                 "publishable": {"enabled": true},
                 "translatable": {"enabled": translatable},
-                "onlineStore": {"enabled": true},
+                "onlineStore": {"enabled": true, "data": {
+                    "urlHandle": store.metaobject_url_handle(kind),
+                    "canCreateRedirects": false,
+                }},
             },
             "createdAt": created,
             "updatedAt": created,
