@@ -289,6 +289,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `{{ metaobjects.faq.values | sort: 'question' }}` give what a store gives, no longer `false`,
   `1`, the unformatted date or "cannot sort values of incompatible types". A reference, a list,
   a `json`, a `color`, a `money`, a `rating` or a measurement stays the metafield.
+- **`page_title` and `page_description` are the search engine listing.** A product, a
+  collection, a page, a blog or an article with the metafields `global.title_tag` and
+  `global.description_tag`, where Shopify keeps its SEO title and description, gives them as
+  `page_title` and `page_description`, as on Shopify, where lsf gave its title and description.
 - **`date` and `date_time` metafields print the stored string.** `{{ m.value }}`, `{{ m }}` and
   `{{ m.value | json }}` give `2026-03-05` and `2026-03-05T14:30:00+01:00`, as on Shopify, where
   a `date` printed `2026-03-05 00:00:00 -0500` and a `date_time` was moved to the shop's time
