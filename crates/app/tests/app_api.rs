@@ -352,6 +352,36 @@ fn the_billing_helpers_of_shopify_api_work_against_lsf() {
         confirmation.starts_with("/__lsf/admin/charges/"),
         "{confirmation}"
     );
+    // Opened by user 2 in a German admin: the charge page and its forms keep both (#308).
+    let as_staff = header(
+        &send(
+            &api,
+            "GET",
+            &format!(
+                "{}&locale=de&user=2",
+                data["confirmationUrl"].as_str().unwrap().replacen(
+                    &format!("https://{shop}"),
+                    "",
+                    1
+                )
+            ),
+            &[],
+            b"",
+        ),
+        "location",
+    )
+    .unwrap()
+    .to_string();
+    assert_eq!(as_staff, format!("{confirmation}&locale=de&user=2"));
+    let staff_page = send(&api, "GET", &as_staff, &[], b"");
+    let staff_html = String::from_utf8_lossy(&staff_page.body);
+    for decision in ["approve", "decline"] {
+        let action = as_staff.replacen('?', &format!("/{decision}?"), 1);
+        assert!(
+            staff_html.contains(&format!("action=\"{}\"", action.replace('&', "&amp;"))),
+            "{staff_html}"
+        );
+    }
     let id = data["appSubscription"]["id"].as_str().unwrap().to_string();
     let usage_line = data["appSubscription"]["lineItems"][1]["id"]
         .as_str()

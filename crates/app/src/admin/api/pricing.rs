@@ -22,7 +22,8 @@ use serde_json::{Value, json};
 use super::admin::origin_of;
 use super::app::shop_of;
 use super::embedded::{
-    Viewer, admin_config, admin_query, app_key, app_name, notice_page, render, with_query,
+    Viewer, admin_config, admin_query, admin_query_for, app_key, app_name, notice_page, render,
+    with_admin_viewer, with_query,
 };
 use super::{AdminApi, HttpRequest, HttpResponse, escape_html};
 use crate::admin::domains::app::pricing::{self, Plan, Pricing, SelectError};
@@ -302,7 +303,7 @@ fn confirm_page(
     }
     let action = with_query(
         &format!("{CONTROL}/{}/select", plan.handle),
-        &[("shop".to_string(), viewer.shop.clone())],
+        &admin_query_for(request, &viewer.shop),
     );
     main.push_str(&format!(
         "<form class=\"lsf-plan-actions\" method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"shop\" value=\"{}\">\
@@ -485,9 +486,19 @@ fn select(api: &AdminApi, request: &HttpRequest, handle: &str) -> HttpResponse {
         Some(Err(SelectError::Current)) => {
             HttpResponse::error(409, format!("{shop} is on the plan {handle} already"))
         }
+        // A welcome link in the admin is for the staff member who approved, in their language.
         Some(Ok((selected, _))) if from_page => HttpResponse {
             status: 303,
-            headers: vec![("location".into(), selected.redirect)],
+            headers: vec![(
+                "location".into(),
+                if selected.redirect.starts_with(&format!("{admin_app}/"))
+                    || selected.redirect.starts_with(&format!("{admin_app}?"))
+                {
+                    with_admin_viewer(&selected.redirect, request)
+                } else {
+                    selected.redirect
+                },
+            )],
             body: Vec::new(),
         },
         Some(Ok((selected, subscription))) => HttpResponse::json(
