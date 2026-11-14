@@ -566,6 +566,126 @@ fn translations_follow_the_locale() {
     assert!(rendered.body.contains("|0 article</footer>"));
 }
 
+/// Renders `source` with a theme of these locale files, in English and in French.
+fn translated(name: &str, locales: &[(&str, &str)], source: &str) -> (String, String) {
+    let mut files = vec![("layout/theme.liquid", "{{ content_for_layout }}")];
+    files.extend_from_slice(locales);
+    let fixture = theme_of(name, &[], &files);
+    let render = |locale: &str| {
+        let mut request = request("/");
+        request.locale = locale.to_string();
+        fixture.liquid_for(request, Session::initial(&fixture.store), source)
+    };
+    (render("en"), render("fr"))
+}
+
+#[test]
+fn t_keeps_its_placeholders_without_arguments_and_names_a_missing_one() {
+    // Issue #102: without arguments Shopify prints `{{ name }}` as it is, with others an error.
+    let locale = r#"{ "x": { "hello": "Hello {{ name }}", "two": "{{ a }} and {{ b }}",
+        "count": "count is {{ count }}", "hi_html": "<b>Hi</b> {{ name }}" } }"#;
+    let (output, _) = translated(
+        "t-placeholders",
+        &[("locales/en.default.json", locale)],
+        "{{ 'x.hello' | t }}|{{ 'x.hello' | t: other: 'x' }}|{{ 'x.hello' | t: name: 'Ann' }}|\
+         {{ 'x.hello' | t: name: nil }}|{{ 'x.two' | t: a: 1 }}|{{ 'x.hi_html' | t }}|\
+         {{ 'x.count' | t }}",
+    );
+    assert_eq!(
+        output.split('|').collect::<Vec<_>>(),
+        [
+            "Hello {{ name }}",
+            "I18n Error: Missing interpolation value &quot;name&quot; for &quot;Hello {{ name }}&quot;",
+            "Hello Ann",
+            "Hello ",
+            "I18n Error: Missing interpolation value &quot;b&quot; for &quot;{{ a }} and {{ b }}&quot;",
+            "<b>Hi</b> {{ name }}",
+            "count is {{ count }}",
+        ]
+    );
+}
+
+#[test]
+fn t_picks_the_plural_form_of_cldr_and_zero() {
+    // Issue #111: `zero` for 0 in every language, CLDR's category for decimals and millions,
+    // and no other form when the one of the count is missing.
+    let (en, fr) = translated(
+        "t-plurals",
+        &[
+            (
+                "locales/en.default.json",
+                r#"{ "x": {
+                    "items": { "zero": "no items", "one": "{{ count }} item", "other": "{{ count }} items" },
+                    "only_one": { "one": "{{ count }} only-one" },
+                    "things": { "one": "{{ count }} thing", "many": "{{ count }} things (many)", "other": "{{ count }} things" } } }"#,
+            ),
+            (
+                "locales/fr.json",
+                r#"{ "x": {
+                    "items": { "zero": "aucun article", "one": "{{ count }} article", "other": "{{ count }} articles" },
+                    "things": { "one": "{{ count }} chose", "many": "{{ count }} choses (many)", "other": "{{ count }} choses" } } }"#,
+            ),
+        ],
+        "{{ 'x.items' | t: count: 0 }}|{{ 'x.items' | t: count: 0.0 }}|{{ 'x.items' | t: count: '0' }}|\
+         {{ 'x.items' | t: count: 1.5 }}|{{ 'x.things' | t: count: 1000000 }}|{{ 'x.items' | t }}",
+    );
+    assert_eq!(
+        en.split('|').collect::<Vec<_>>(),
+        [
+            "no items",
+            "no items",
+            "0 items",
+            "1.5 items",
+            "1000000 things",
+            "{&quot;zero&quot;=&gt;&quot;no items&quot;, &quot;one&quot;=&gt;&quot;{{ count }} item&quot;, \
+             &quot;other&quot;=&gt;&quot;{{ count }} items&quot;}",
+        ]
+    );
+    assert_eq!(
+        fr.split('|').take(5).collect::<Vec<_>>(),
+        [
+            "aucun article",
+            "aucun article",
+            "0 articles",
+            "1.5 article",
+            "1000000 choses (many)"
+        ]
+    );
+    let (missing, _) = translated(
+        "t-plural-missing",
+        &[(
+            "locales/en.default.json",
+            r#"{ "x": { "only_one": { "one": "{{ count }} only-one" } } }"#,
+        )],
+        "{{ 'x.only_one' | t: count: 2 }}|{{ 'x.only_one' | t: count: 1 }}",
+    );
+    assert_eq!(missing, "Translation missing: en.x.only_one|1 only-one");
+}
+
+#[test]
+fn t_has_no_default_prints_a_group_of_keys_and_reads_a_key_as_ruby_does() {
+    // Issue #192, item 5: Shopify's `t` takes no `default:`, prints a group of keys as a Ruby
+    // hash, and reads `.plain` as `plain`.
+    let (output, _) = translated(
+        "t-keys",
+        &[(
+            "locales/en.default.json",
+            r#"{ "plain": "Plain", "x": { "nested": { "key": "deep value" } } }"#,
+        )],
+        "{{ 'x.nope' | t: default: 'DEF' }}|{{ 'x.nested' | t }}|{{ '.plain' | t }}|\
+         {{ '.nope' | t }}",
+    );
+    assert_eq!(
+        output.split('|').collect::<Vec<_>>(),
+        [
+            "Translation missing: en.x.nope",
+            "{&quot;key&quot;=&gt;&quot;deep value&quot;}",
+            "Plain",
+            "Translation missing: en.nope",
+        ]
+    );
+}
+
 #[test]
 fn a_visitor_who_selected_no_country_is_in_the_shops_country() {
     // The demo shop is in Ottawa, and the United States come first in its countries: the

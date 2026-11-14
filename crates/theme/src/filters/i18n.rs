@@ -1,5 +1,7 @@
 //! Translations (`t`), locale-aware dates and unit formatting.
 
+use std::sync::Arc;
+
 use lsf_core::money::format_money;
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::number::float_to_s;
@@ -9,11 +11,13 @@ use serde_json::Value as Json;
 
 use super::site;
 use crate::site::Site;
-use crate::theme::locales::{plural_category, system_translation};
+use crate::theme::locales::{Operands, Translations, plural_category, system_translation};
 
-/// Replaces `{{ name }}` placeholders with the given arguments.
+/// Replaces the `{{ name }}` placeholders of a translation with the arguments of `t`, as
+/// Shopify does: given no argument at all, `t` keeps them as they are, and a placeholder that
+/// has no argument makes the text Shopify's error.
 fn interpolate(template: &str, named: &[(String, Value)]) -> String {
-    if !template.contains("{{") {
+    if named.is_empty() || !template.contains("{{") {
         return template.to_string();
     }
     let mut out = String::with_capacity(template.len());
@@ -24,8 +28,13 @@ fn interpolate(template: &str, named: &[(String, Value)]) -> String {
         };
         out.push_str(&rest[..start]);
         let name = rest[start + 2..start + length].trim();
-        if let Some((_, value)) = named.iter().rev().find(|(key, _)| key == name) {
-            out.push_str(&value.to_str());
+        match named.iter().rev().find(|(key, _)| key == name) {
+            Some((_, value)) => out.push_str(&value.to_str()),
+            None => {
+                return format!(
+                    "I18n Error: Missing interpolation value \"{name}\" for \"{template}\""
+                );
+            }
         }
         rest = &rest[start + length + 2..];
     }
@@ -33,41 +42,66 @@ fn interpolate(template: &str, named: &[(String, Value)]) -> String {
     out
 }
 
-/// Picks the plural form of a translation node for a count.
-fn plural_form<'a>(node: &'a Json, locale: &str, count: Option<i64>) -> Option<&'a str> {
-    match node {
-        Json::String(text) => Some(text),
-        Json::Object(forms) => {
-            let category = plural_category(locale, count.unwrap_or(0));
-            forms
-                .get(category)
-                .or_else(|| forms.get("other"))
-                .or_else(|| forms.values().next())
-                .and_then(Json::as_str)
-        }
+/// The `count` argument of `t`, when it is given and not nil.
+fn count(named: &[(String, Value)]) -> Option<&Value> {
+    named
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "count")
+        .map(|(_, count)| count)
+        .filter(|count| !count.is_nil())
+}
+
+/// The plural form of `count`: `zero` for 0 when there is one, in every language, else the
+/// CLDR category of the locale, else `other`. `None` when the form is missing.
+fn plural_form<'a>(
+    forms: &'a serde_json::Map<String, Json>,
+    locale: &str,
+    count: &Value,
+) -> Option<&'a str> {
+    let operands = match count {
+        Value::Int(count) => Some(Operands::from(*count)),
+        Value::Float(count) => Operands::parse(&float_to_s(*count)),
+        // Not a number, a text (`'1'`) included: Shopify takes `other`.
         _ => None,
+    };
+    let key = match operands {
+        Some(operands) if operands.n == 0.0 && forms.contains_key("zero") => "zero",
+        Some(operands) => plural_category(locale, &operands),
+        None => "other",
+    };
+    forms
+        .get(key)
+        .or_else(|| forms.get("other"))
+        .and_then(Json::as_str)
+}
+
+/// What `t` prints for a key in the first of `locales` that has it: a text, the plural form of
+/// its `count`, or, for a group of keys (plural forms without a `count` too), the group as Ruby
+/// prints a hash (`{"one"=>"{{ count }} item", ...}`), as Shopify does. `None` when no locale
+/// has the key, or when the plural form of `count` is missing.
+fn translate_in(
+    locales: &[(String, Arc<Translations>)],
+    key: &str,
+    named: &[(String, Value)],
+) -> Option<String> {
+    let (locale, node) = locales
+        .iter()
+        .find_map(|(locale, translations)| translations.lookup(key).map(|node| (locale, node)))?;
+    match (node, count(named)) {
+        (Json::String(text), _) => Some(interpolate(text, named)),
+        (Json::Object(forms), Some(count)) => {
+            plural_form(forms, locale, count).map(|text| interpolate(text, named))
+        }
+        (group, _) => Some(Value::from(group).to_str().into_owned()),
     }
 }
 
 /// Looks a key up in the request's locale, then in the theme's default locale, then in
 /// Shopify's built-in translations. Returns the raw (unescaped) text.
 pub fn translate(site: &Site, key: &str, named: &[(String, Value)]) -> Option<String> {
-    let count = named
-        .iter()
-        .find(|(name, _)| name == "count")
-        .and_then(|(_, value)| match value {
-            Value::Int(count) => Some(*count),
-            Value::Float(count) => Some(*count as i64),
-            Value::Str(text) => text.parse().ok(),
-            _ => None,
-        });
-    for (candidate, translations) in site.translations() {
-        if let Some(text) = translations
-            .lookup(key)
-            .and_then(|node| plural_form(node, candidate, count))
-        {
-            return Some(interpolate(text, named));
-        }
+    if let Some(text) = translate_in(site.translations(), key, named) {
+        return Some(text);
     }
     // Shopify's own keys use `%{name}` placeholders.
     system_translation(key).map(|text| {
@@ -79,39 +113,23 @@ pub fn translate(site: &Site, key: &str, named: &[(String, Value)]) -> Option<St
     })
 }
 
-/// A key of `t` in the Liquid of a theme app extension: looked up in its own `locales/`, never
-/// in the theme's.
-fn translate_in_extension(
-    extension: &crate::app_extensions::Extension,
-    site: &Site,
-    key: &str,
-    named: &[(String, Value)],
-) -> Option<String> {
-    let count = named
-        .iter()
-        .find(|(name, _)| name == "count")
-        .and_then(|(_, value)| match value {
-            Value::Int(count) => Some(*count),
-            Value::Float(count) => Some(*count as i64),
-            Value::Str(text) => text.parse().ok(),
-            _ => None,
-        });
-    extension
-        .translations(&site.request.locale)
-        .iter()
-        .find_map(|(locale, translations)| {
-            translations
-                .lookup(key)
-                .and_then(|node| plural_form(node, locale, count))
-                .map(|text| interpolate(text, named))
-        })
-}
-
 fn t(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let site = site(ctx)?;
-    let key = input.to_str();
+    // As Ruby's I18n reads it: `.a..b` is `a.b`.
+    let key = input
+        .to_str()
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(".");
     let translated = match crate::app_extensions::render::extension_of(ctx) {
-        Some(extension) => translate_in_extension(&extension, site, &key, &args.named),
+        // A key of a theme app extension's Liquid: looked up in its own `locales/`, never in
+        // the theme's.
+        Some(extension) => translate_in(
+            &extension.translations(&site.request.locale),
+            &key,
+            &args.named,
+        ),
         None => translate(site, &key, &args.named),
     };
     match translated {
@@ -121,9 +139,6 @@ fn t(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
             Ok(Value::from(if is_html { text } else { escape_html(&text) }))
         }
         None => {
-            if let Some(default) = args.named("default") {
-                return Ok(default.clone());
-            }
             ctx.warn(format!("missing translation '{key}'"));
             Ok(Value::from(format!(
                 "Translation missing: {}.{key}",

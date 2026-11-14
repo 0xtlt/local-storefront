@@ -321,7 +321,14 @@ data, in the 38 languages lsf names; a page in another language has the English 
   `settings` (`section.settings.scheme.settings.background`), and `settings.color_schemes` gives
   its schemes in a `for` loop and one of them by id (`settings.color_schemes['scheme-1']`).
 - Locales: storefront translations and schema translations, pluralization rules by language,
-  the fallback to the default locale, Shopify's built-in translations. The translated content
+  the fallback to the default locale, Shopify's built-in translations. `t` reads a key as
+  Shopify does. With `count`, the `zero` form for 0 in every language, else the CLDR category of
+  the number (decimals and the `many` of a million included), else `other`; a missing form is
+  `Translation missing`, and a text count takes `other`. Without `count`, plural forms, and any
+  key that names a group of keys, print as a Ruby hash (`{"one"=>"…", "other"=>"…"}`). Without
+  arguments, `{{ name }}` placeholders are printed as they are; with arguments that lack one,
+  the text is Shopify's `I18n Error: Missing interpolation value "name" for "…"`. There is no
+  `default:` argument. The translated content
   of metaobjects, from the store data, on the routes of their language
   ([data format](data-format.md#translations-of-metaobjects)); not yet that of products,
   collections, pages or articles.
