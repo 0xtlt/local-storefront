@@ -9858,6 +9858,12 @@ fn the_customer_account_shows_the_orders_of_the_customer_logged_in() {
         "written as the checkout writes a line"
     );
     assert!(first["lines"][0]["variantId"].is_u64());
+    // An absolute URL, as Shopify's, where the checkout writes a path.
+    let image = first["lines"][0]["image"].as_str().unwrap();
+    assert!(
+        image.starts_with("http://shop.test/cdn/shop/files/"),
+        "{image}"
+    );
     assert_eq!(first["confirmationNumber"].as_str().unwrap().len(), 9);
     // A fulfilled order went out in one shipment of every line.
     assert_eq!(

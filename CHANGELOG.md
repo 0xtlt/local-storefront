@@ -510,6 +510,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 - **A customer account extension's session token has `iss`**, `https://<shop>.myshopify.com/checkouts`,
   as Shopify's tokens of these extensions have it, before `dest`. A backend that reads `iss` to
   tell them from the admin's tokens now gets it. A checkout extension's token is unchanged.
+- **On the order status page, the image of a line is an absolute URL**, as on Shopify:
+  `shopify.lines` of a customer account extension gives `http://127.0.0.1:9292/cdn/shop/files/…`
+  as `merchandise.image.url`, no longer a path, so `new URL(url)` and a backend that fetches it
+  work locally too.
 - **`lsf app check` and `lsf app function run --scenario` price a scenario as its served
   checkout does.** A buyer in a market with its own currency gets the cart in that currency and
   the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's
