@@ -413,6 +413,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `product.featured_image.alt`, `product.featured_media.alt`, `product.images[n].alt`, the `alt`
   of `image_tag` and `featured_image.alt` of a line in the cart's JSON gave an empty string. An
   image with alt text keeps it, and `media.preview_image.alt` stays empty, as on Shopify.
+- **`product.media | json` gives media objects.** `{{ product.media | json }}` and
+  `{{ product.featured_media | json }}` give each image as Shopify does (`id`, `alt`,
+  `position`, `preview_image`, `media_type`, `src`, `width`, `height`, `aspect_ratio`), as
+  `{{ product | json }}` already did, where they gave its URL. `product.images` and
+  `product.featured_image` stay URLs.
 - **`image_url` with a `width` and a `height` crops from the center**, as on Shopify:
   `image_url: width: 300, height: 200` gives `?crop=center&height=200&v=…&width=300`, and the
   server crops the image to that box, where lsf fitted it inside. `crop: nil` and `pad_color`

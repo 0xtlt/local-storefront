@@ -5959,6 +5959,39 @@ fn options_by_name_finds_an_option_in_any_case() {
 }
 
 #[test]
+fn a_product_media_in_json_is_the_media_object() {
+    // #99: `{{ product.media | json }}` and `{{ product.featured_media | json }}` give media
+    // objects, as in `{{ product | json }}` (https://shopify.dev/docs/api/liquid/filters/json),
+    // while `product.images` and `product.featured_image` stay URLs.
+    let fixture = fixture_with_data(&serde_json::json!({"products": [{
+        "title": "Media Tee",
+        "price": 1000,
+        "images": [{ "src": "products/tee.jpg", "alt": "Tee", "width": 800, "height": 400 }]
+    }]}));
+    let output = fixture.liquid(
+        "/products/media-tee",
+        Session::initial(&fixture.store),
+        "{{ product.media | json }}|{{ product.featured_media | json }}|\
+         {{ product.featured_image | json }}|{{ product.images | json }}|{{ product | json }}",
+    );
+    let parts: Vec<serde_json::Value> = output
+        .split('|')
+        .map(|part| serde_json::from_str(part).expect("json"))
+        .collect();
+    let media = &parts[0][0];
+    assert_eq!(media["media_type"], "image");
+    assert_eq!(media["alt"], "Tee");
+    assert_eq!(media["position"], 1);
+    assert_eq!(media["width"], 800);
+    assert_eq!(media["aspect_ratio"], 2.0);
+    assert_eq!(media["preview_image"]["src"], media["src"]);
+    assert_eq!(parts[1], *media);
+    assert_eq!(parts[4]["media"][0], *media);
+    assert_eq!(parts[2], media["src"]);
+    assert_eq!(parts[3][0], media["src"]);
+}
+
+#[test]
 fn an_option_in_json_is_its_name_position_and_values() {
     // #98: `{{ product.options_with_values | json }}` on a store gives each option as
     // `{"name","position","values"}`, its values as strings.
