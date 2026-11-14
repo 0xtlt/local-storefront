@@ -4,7 +4,6 @@
 use std::any::Any;
 use std::borrow::Cow;
 
-use lsf_core::color::Color;
 use lsf_core::store::{InventoryPolicy, Location, MediaKind, Product, Swatch, Variant};
 use lsf_core::util::stable_id;
 use lsf_liquid::{Object, Value};
@@ -132,8 +131,8 @@ pub fn swatch_value(site: &SiteRef, swatch: Option<&Swatch>) -> Value {
             swatch
                 .color
                 .as_deref()
-                .and_then(Color::parse)
-                .map_or(Value::Nil, ColorDrop::value),
+                .and_then(ColorDrop::parse)
+                .unwrap_or(Value::Nil),
         ),
         ("image", ImageDrop::optional(site, swatch.image.as_ref())),
     ])

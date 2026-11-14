@@ -8,6 +8,25 @@
 
 use serde_json::Value as Json;
 
+/// The most values a `list.` metafield holds: Shopify refuses more ("Value has more than 128
+/// elements").
+const MAX_LIST_VALUES: usize = 128;
+
+/// The largest `number_integer`: "A whole number in the range of +/-9,007,199,254,740,991".
+const MAX_INTEGER: u64 = 9_007_199_254_740_991;
+
+/// The nodes of a `rich_text_field`: "headings, lists, links, bold, and italics", in Shopify's
+/// structure of a root, paragraphs, headings, lists and their items, links and text.
+const RICH_TEXT_NODES: [&str; 7] = [
+    "root",
+    "paragraph",
+    "heading",
+    "list",
+    "list-item",
+    "link",
+    "text",
+];
+
 /// The measurements: a value and a unit.
 pub const MEASUREMENTS: [&str; 32] = [
     "antenna_gain",
@@ -303,9 +322,9 @@ pub struct Problem {
     pub hint: String,
 }
 
-/// Checks a value against its type, once [`normalize`]d. Answers what is wrong with it, and the
-/// references it makes.
-pub fn check(kind: &str, value: &Json) -> (Vec<Problem>, Vec<Reference>) {
+/// Checks a value against its type, once [`normalize`]d, in a shop whose currency is
+/// `shop_currency`. Answers what is wrong with it, and the references it makes.
+pub fn check(kind: &str, value: &Json, shop_currency: &str) -> (Vec<Problem>, Vec<Reference>) {
     let mut problems = Vec::new();
     let mut references = Vec::new();
     if !is_known(kind) {
@@ -337,12 +356,22 @@ pub fn check(kind: &str, value: &Json) -> (Vec<Problem>, Vec<Reference>) {
     }
     match kind.strip_prefix("list.") {
         Some(item) => match value {
+            Json::Array(items) if items.len() > MAX_LIST_VALUES => problems.push(Problem {
+                pointer: "/value".to_string(),
+                code: "invalid_metafield",
+                message: format!(
+                    "a {kind} has at most {MAX_LIST_VALUES} values, not {}",
+                    items.len()
+                ),
+                hint: "use a json metafield, or several metafields".to_string(),
+            }),
             Json::Array(items) => {
                 for (index, item_value) in items.iter().enumerate() {
                     check_one(
                         item,
                         item_value,
                         &format!("/value/{index}"),
+                        shop_currency,
                         &mut problems,
                         &mut references,
                     );
@@ -355,7 +384,14 @@ pub fn check(kind: &str, value: &Json) -> (Vec<Problem>, Vec<Reference>) {
                 hint: format!("write the values in a JSON array: [{}]", example(item)),
             }),
         },
-        None => check_one(kind, value, "/value", &mut problems, &mut references),
+        None => check_one(
+            kind,
+            value,
+            "/value",
+            shop_currency,
+            &mut problems,
+            &mut references,
+        ),
     }
     (problems, references)
 }
@@ -447,6 +483,7 @@ fn check_one(
     kind: &str,
     value: &Json,
     pointer: &str,
+    shop_currency: &str,
     problems: &mut Vec<Problem>,
     references: &mut Vec<Reference>,
 ) {
@@ -463,6 +500,9 @@ fn check_one(
         "single_line_text_field" | "multi_line_text_field" | "id" | "string" => {
             if text.is_none() {
                 wrong(format!("a {kind} is a string, not {}", describe(value)));
+            } else if kind == "single_line_text_field" && text.is_some_and(|t| t.trim().is_empty())
+            {
+                wrong("a single_line_text_field can't be blank".to_string());
             } else if kind == "single_line_text_field" && text.is_some_and(|t| t.contains('\n')) {
                 problems.push(Problem {
                     pointer: pointer.to_string(),
@@ -473,12 +513,21 @@ fn check_one(
             }
         }
         "number_integer" | "integer" => {
-            if !(value.is_i64() || value.is_u64()) {
-                wrong(format!(
+            let magnitude = value
+                .as_i64()
+                .map(i64::unsigned_abs)
+                .or_else(|| value.as_u64());
+            match magnitude {
+                None => wrong(format!(
                     "{} {kind} is a whole number, not {}",
                     article(kind),
                     describe(value)
-                ));
+                )),
+                Some(magnitude) if magnitude > MAX_INTEGER => wrong(format!(
+                    "{} {kind} is between -{MAX_INTEGER} and {MAX_INTEGER}, not {value}",
+                    article(kind),
+                )),
+                Some(_) => {}
             }
         }
         "number_decimal" => {
@@ -512,9 +561,15 @@ fn check_one(
                 ));
             }
         }
+        // "The hexadecimal code for a color": `#` and six digits, which Shopify keeps.
         "color" => {
-            if text.and_then(crate::color::Color::parse).is_none() {
-                wrong(format!("not a color: {}", describe(value)));
+            let hex = text.and_then(|text| text.strip_prefix('#'));
+            if !hex.is_some_and(|hex| hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                wrong(format!(
+                    "a color is a hex color code of six digits, not {}",
+                    describe(value)
+                ));
             }
         }
         "url" => {
@@ -540,18 +595,31 @@ fn check_one(
                 Json::Number(number) => number.as_f64().map(|n| (n * 100.0).round() as i64),
                 _ => None,
             });
-            // Without a currency, the shop's.
+            // Without a currency, the shop's: "a currency code that matches the store's
+            // currency".
             let currency = value.get("currency_code");
             let currency_ok = currency.is_none_or(|code| {
                 code.as_str().is_some_and(|code| {
                     code.len() == 3 && code.chars().all(|c| c.is_ascii_alphabetic())
                 })
             });
+            let foreign = currency
+                .and_then(Json::as_str)
+                .filter(|code| currency_ok && !code.eq_ignore_ascii_case(shop_currency));
             if amount.is_none() || !currency_ok {
                 wrong(format!(
                     "money is an \"amount\" and a \"currency_code\" (the shop's when left out), not {}",
                     describe(value)
                 ));
+            } else if let Some(code) = foreign {
+                problems.push(Problem {
+                    pointer: format!("{pointer}/currency_code"),
+                    code: "invalid_metafield",
+                    message: format!(
+                        "money is in the shop's currency, {shop_currency}, not {code}"
+                    ),
+                    hint: format!("write \"{shop_currency}\", or leave currency_code out"),
+                });
             }
         }
         "rating" => {
@@ -573,6 +641,11 @@ fn check_one(
                 wrong(format!(
                     "a rich_text_field is an object of type \"root\", not {}",
                     describe(value)
+                ));
+            } else if let Some(node) = foreign_rich_text_node(value) {
+                wrong(format!(
+                    "a rich_text_field has {} nodes, not \"{node}\"",
+                    RICH_TEXT_NODES.join(", ")
                 ));
             }
         }
@@ -646,6 +719,19 @@ fn check_one(
             }
         },
     }
+}
+
+/// The `type` of the first node of a rich text that Shopify's structure does not have (an
+/// `image`).
+fn foreign_rich_text_node(node: &Json) -> Option<String> {
+    let kind = node.get("type").and_then(Json::as_str).unwrap_or_default();
+    if !RICH_TEXT_NODES.contains(&kind) {
+        return Some(kind.to_string());
+    }
+    node.get("children")
+        .and_then(Json::as_array)?
+        .iter()
+        .find_map(foreign_rich_text_node)
 }
 
 /// Whether a `url` metafield takes this text: Shopify takes the schemes below, and lsf the
@@ -722,11 +808,59 @@ mod tests {
     }
 
     fn problems(kind: &str, value: Json) -> Vec<String> {
-        check(kind, &value)
+        check(kind, &value, "USD")
             .0
             .into_iter()
             .map(|problem| format!("{} {}", problem.pointer, problem.message))
             .collect()
+    }
+
+    #[test]
+    fn values_shopify_refuses_are_problems() {
+        // #195: what the Admin API refuses whatever the definition.
+        assert_eq!(
+            problems("number_integer", json!(9_007_199_254_740_993_u64)),
+            [
+                "/value a number_integer is between -9007199254740991 and 9007199254740991, not 9007199254740993"
+            ]
+        );
+        assert!(problems("number_integer", json!(-9_007_199_254_740_991_i64)).is_empty());
+        assert_eq!(
+            problems("color", json!("#fff")),
+            ["/value a color is a hex color code of six digits, not a string (\"#fff\")"]
+        );
+        assert!(problems("color", json!("#FF00aa")).is_empty());
+        assert_eq!(
+            problems("single_line_text_field", json!("")),
+            ["/value a single_line_text_field can't be blank"]
+        );
+        assert_eq!(
+            problems("money", json!({"amount": "5.00", "currency_code": "EUR"})),
+            ["/value/currency_code money is in the shop's currency, USD, not EUR"]
+        );
+        let many: Vec<String> = (0..=128).map(|n| format!("v{n}")).collect();
+        assert_eq!(
+            problems("list.single_line_text_field", json!(many)),
+            ["/value a list.single_line_text_field has at most 128 values, not 129"]
+        );
+        assert!(problems("list.single_line_text_field", json!(many[..128])).is_empty());
+        let rich = |node: Json| json!({"type": "root", "children": [{"type": "paragraph", "children": [node]}]});
+        assert!(
+            problems(
+                "rich_text_field",
+                rich(json!({"type": "text", "value": "a"}))
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            problems(
+                "rich_text_field",
+                rich(json!({"type": "image", "url": "https://example.com/a.png"}))
+            ),
+            [
+                "/value a rich_text_field has root, paragraph, heading, list, list-item, link, text nodes, not \"image\""
+            ]
+        );
     }
 
     #[test]
@@ -747,7 +881,7 @@ mod tests {
         assert!(problems("url", json!("https://example.com")).is_empty());
         assert!(problems("url", json!("/pages/about")).is_empty());
         assert!(!problems("url", json!("example.com")).is_empty());
-        assert!(problems("money", json!({"amount": "5.99", "currency_code": "EUR"})).is_empty());
+        assert!(problems("money", json!({"amount": "5.99", "currency_code": "usd"})).is_empty());
         assert!(!problems("money", json!("5.99")).is_empty());
         assert!(
             problems(
@@ -815,8 +949,8 @@ mod tests {
         for (kind, text, value) in [
             (
                 "money",
-                "{\"amount\":\"5.99\",\"currency_code\":\"CAD\"}",
-                json!({"amount": "5.99", "currency_code": "CAD"}),
+                "{\"amount\":\"5.99\",\"currency_code\":\"USD\"}",
+                json!({"amount": "5.99", "currency_code": "USD"}),
             ),
             (
                 "weight",
@@ -845,13 +979,17 @@ mod tests {
             json!("{\"a\":1}")
         );
         // The references of a list written as text are collected.
-        let (_, references) = check("list.product_reference", &json!("[\"a\", \"b\"]"));
+        let (_, references) = check("list.product_reference", &json!("[\"a\", \"b\"]"), "USD");
         assert_eq!(references.len(), 2);
     }
 
     #[test]
     fn json_text_that_does_not_parse_is_an_error_that_says_so() {
-        let (found, _) = check("rating", &json!("{\"scale_min\":\"1.0\",\"value\":}"));
+        let (found, _) = check(
+            "rating",
+            &json!("{\"scale_min\":\"1.0\",\"value\":}"),
+            "USD",
+        );
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].code, "invalid_metafield");
         assert_eq!(
@@ -953,13 +1091,13 @@ mod tests {
 
     #[test]
     fn an_unknown_type_is_named_with_the_closest_one() {
-        let (problems, _) = check("number_interger", &json!(2));
+        let (problems, _) = check("number_interger", &json!(2), "USD");
         assert_eq!(problems[0].code, "unknown_metafield_type");
         assert_eq!(problems[0].hint, "did you mean \"number_integer\"?");
         assert!(is_known("list.weight"));
         assert!(!is_known("list.boolean"));
         // Shopify's list of data types gives `boolean` no list version.
-        let (problems, _) = check("list.boolean", &json!([true, false]));
+        let (problems, _) = check("list.boolean", &json!([true, false]), "USD");
         assert_eq!(
             problems[0].hint,
             "Shopify has no list of boolean: use a json metafield for several values"
@@ -968,7 +1106,7 @@ mod tests {
 
     #[test]
     fn references_are_collected_with_their_place() {
-        let (problems, references) = check("list.product_reference", &json!(["a", "b"]));
+        let (problems, references) = check("list.product_reference", &json!(["a", "b"]), "USD");
         assert!(problems.is_empty());
         assert_eq!(references.len(), 2);
         assert_eq!(references[1].pointer, "/value/1");

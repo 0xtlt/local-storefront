@@ -119,6 +119,8 @@ struct Builder<'a> {
     options: &'a BuildOptions<'a>,
     diagnostics: Diagnostics,
     timezone: Tz,
+    /// The shop's currency, which a `money` metafield is in.
+    currency: String,
     files: IndexMap<String, FileMeta>,
     /// The handles of the products that are not on the storefront: what names one leaves it
     /// out without an error.
@@ -231,7 +233,8 @@ impl Builder<'_> {
         let MetafieldInput::Typed(typed) = field else {
             return;
         };
-        let (problems, references) = super::metafield_types::check(&typed.kind, &typed.value);
+        let (problems, references) =
+            super::metafield_types::check(&typed.kind, &typed.value, &self.currency);
         for problem in problems {
             let at = Origin::new(
                 origin.file.clone(),
@@ -254,7 +257,7 @@ impl Builder<'_> {
             let pointer = pointer.strip_prefix("/value").unwrap_or(pointer);
             Origin::new(origin.file.clone(), format!("{}{pointer}", origin.pointer))
         };
-        let (problems, references) = metafield_types::check(kind, value);
+        let (problems, references) = metafield_types::check(kind, value, &self.currency);
         let valid = problems.is_empty();
         for problem in problems {
             self.error(problem.code, &below(&problem.pointer), problem.message)
@@ -439,6 +442,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         options,
         diagnostics: Diagnostics::new(),
         timezone: Tz::UTC,
+        currency: shop_input.currency(),
         files: input
             .files
             .iter()
@@ -832,11 +836,7 @@ fn build_shop(builder: &mut Builder<'_>, input: &model::ShopInput, origin: &Orig
         .name
         .clone()
         .unwrap_or_else(|| "Local Store".to_string());
-    let currency = input
-        .currency
-        .clone()
-        .unwrap_or_else(|| "USD".to_string())
-        .to_uppercase();
+    let currency = input.currency();
     let policy_inputs = [
         ("privacy-policy", &input.policies.privacy_policy),
         ("refund-policy", &input.policies.refund_policy),

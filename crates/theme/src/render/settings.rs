@@ -6,7 +6,6 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use lsf_core::color::Color;
 use lsf_liquid::{Context, Hash, Object, Template, Value, Variable};
 use serde_json::{Map, Value as Json};
 
@@ -345,7 +344,7 @@ impl Object for ResourceSetting {
 fn color_value(value: &Value) -> Value {
     match value {
         Value::Str(text) if text.trim().is_empty() => Value::Nil,
-        Value::Str(text) => Color::parse(text).map_or_else(|| value.clone(), ColorDrop::value),
+        Value::Str(text) => ColorDrop::parse(text).unwrap_or_else(|| value.clone()),
         other => other.clone(),
     }
 }

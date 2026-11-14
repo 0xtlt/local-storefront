@@ -63,6 +63,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   whose own `product` setting is unset no longer gets the page's product as `closest.product`:
   it gets none, as on Shopify. Give the setting a value, or `{{ closest.product }}` as its
   default, to keep the product of what the block is in.
+- **`validate` refuses the metafield values Shopify refuses**: a `color` that is not a hex
+  code of six digits (`#fff`), a blank `single_line_text_field`, a `number_integer` beyond
+  ±9007199254740991, a `money` in another currency than the shop's, a `list.` of more than 128
+  values, and a `rich_text_field` with a node Shopify's rich text does not have (an `image`).
+  Each is an `invalid_metafield` error, where `validate` passed: write the value as a store
+  takes it.
 - **A metafield used without `.value` acts as its value**, as on Shopify. A `boolean` metafield
   that is `false` is falsy in `{% if product.metafields.custom.flag %}`, so a theme test that
   expected the branch of `true` now gets the other one.
@@ -299,6 +305,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   collection, a page, a blog or an article with the metafields `global.title_tag` and
   `global.description_tag`, where Shopify keeps its SEO title and description, gives them as
   `page_title` and `page_description`, as on Shopify, where lsf gave its title and description.
+- **A color prints as it is stored, and a metaobject is found in any case.** A `color`
+  setting, the colors of a color scheme and a `color` or `list.color` metafield stored as
+  `#FF00aa` print `#FF00aa`, compare equal to it and give it to `json` and `metafield_tag`, as on
+  Shopify, where lsf lower-cased them. `metaobjects.FAQ['ONE']` finds the entry `faq/one`, and
+  `/pages/faq/ONE` is its page, with its URL in lower case, as on Shopify.
 - **`date` and `date_time` metafields print the stored string.** `{{ m.value }}`, `{{ m }}` and
   `{{ m.value | json }}` give `2026-03-05` and `2026-03-05T14:30:00+01:00`, as on Shopify, where
   a `date` printed `2026-03-05 00:00:00 -0500` and a `date_time` was moved to the shop's time
