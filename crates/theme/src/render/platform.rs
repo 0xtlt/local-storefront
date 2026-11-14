@@ -22,6 +22,7 @@ use crate::urls;
 const LOAD_FEATURES: &str = include_str!("../../assets/platform/load-features.js");
 const STANDARD_ACTIONS: &str = include_str!("../../assets/platform/standard-actions.js");
 const PARTIAL_RENDERING: &str = include_str!("../../assets/platform/partial-rendering.js");
+const ACCOUNT: &str = include_str!("../../assets/platform/account.js");
 
 /// Shopify's global assets, by their name for `shopify_asset_url`, with the type they are
 /// served as.
@@ -85,6 +86,10 @@ pub const PLACEHOLDER_SVG: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" vie
 
 /// `https://cdn.shopify.com/storefront/standard-actions.js` on Shopify: a fixed URL.
 const STANDARD_ACTIONS_PATH: &str = "storefront/standard-actions.js";
+
+/// `https://cdn.shopify.com/storefront/web-components/account.js` on Shopify: the script of the
+/// `<shopify-account>` component, a fixed URL.
+const ACCOUNT_PATH: &str = "storefront/web-components/account.js";
 
 /// Where the feature loader is served from, under `/cdn/`: Shopify's path, with a hash of the
 /// content in the name as the real file has (`load_feature-1bd60354.js`). The URL changes
@@ -155,6 +160,11 @@ pub fn asset(path: &str) -> Option<PlatformAsset> {
     } else if path == STANDARD_ACTIONS_PATH {
         Some(PlatformAsset {
             content: STANDARD_ACTIONS,
+            versioned: false,
+        })
+    } else if path == ACCOUNT_PATH {
+        Some(PlatformAsset {
+            content: ACCOUNT,
             versioned: false,
         })
     } else {
@@ -632,13 +642,40 @@ pub fn body_end(site: &Site) -> String {
     )
 }
 
+/// What Shopify adds to a page that has the `<shopify-account>` component: the script of the
+/// component, and the customer it shows (`null` when nobody is logged in).
+/// <https://shopify.dev/docs/storefronts/themes/customer-engagement/account-component>
+fn account_component(site: &Site) -> String {
+    let customer = site.customer().map(|customer| {
+        json!({
+            "email": customer.email,
+            "firstName": customer.first_name,
+            "lastName": customer.last_name,
+        })
+    });
+    format!(
+        "<script src=\"{}/cdn/{ACCOUNT_PATH}\" type=\"module\" crossorigin fetchpriority=\"low\" async></script>\
+         <script id=\"shopify-customer-account-data\" type=\"application/json\">{}</script>",
+        urls::cdn_origin(site),
+        misc_json(&json!({
+            "customer": customer,
+            "shop": {"id": format!("gid://shopify/Shop/{}", site.store.shop.id)},
+        }))
+    )
+}
+
 /// Adds the markup of the platform to a rendered page that has a head and a body.
 pub fn decorate(site: &Site, page: &Page, mut html: String) -> String {
+    let account = html.contains("<shopify-account");
     if let Some(index) = html.find("</head>") {
         html.insert_str(index, &head_end(site, page));
     }
     if let Some(index) = html.rfind("</body>") {
-        html.insert_str(index, &body_end(site));
+        let mut end = body_end(site);
+        if account {
+            end.push_str(&account_component(site));
+        }
+        html.insert_str(index, &end);
     }
     html
 }

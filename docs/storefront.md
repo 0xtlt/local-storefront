@@ -55,6 +55,9 @@ logged in, their profile, and the pages where the app's customer account UI exte
 Logged out, it lists the customers of your data too. See
 [checkout](checkout.md#customer-account).
 
+A theme's `<shopify-account>` component, Shopify's account avatar, works too: it leads to this
+page, or to the sign-in page that leads here. Its account sheet is Shopify's and is not drawn.
+
 Classic customer accounts are not simulated: the theme's `templates/customers` are never
 rendered, and its login and register forms lead to `/account` too. See the
 [data guide](data-format.md#logging-in).

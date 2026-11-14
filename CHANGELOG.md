@@ -559,6 +559,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   on Shopify. A theme without these templates still gets a 404, which now says that Shopify
   serves a file of its own there.
 
+- **`<shopify-account>` works.** A page that has the element gets the component's script and
+  the `shopify-customer-account-data` block, as on Shopify, where lsf added neither and only the
+  fallback content showed. The script is lsf's: the avatar (the signed-out icon, its slot and
+  part, or the initial of the customer logged in) leads to the sign-in page or to `/account`;
+  the account sheet is not drawn.
+
 #### The Admin API, for the backend of an app
 
 - **An order placed with a cart transform bundle lists its components**, as on Shopify: a line

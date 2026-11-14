@@ -325,6 +325,7 @@ server:
 | `ShopifyAnalytics.meta` (`currency`, `page`, `product`), `trekkie` | before `</head>` | Same shape. Nothing is sent anywhere. |
 | `Shopify.analytics.publish` | before `</head>` | Calls are kept in `Shopify.analytics.replayQueue`, which a test can read. |
 | `Shopify.actions` (`getCart`, `updateCart`, `openCart`) | before `</body>` | The [standard storefront actions](https://shopify.dev/docs/api/storefront-events-and-actions), with `configure`, `isDefault`, the `shopify:cart:*` events and the default refresh of Horizon- and Dawn-style carts. They write to the local cart instead of the Storefront API. |
+| `<shopify-account>` | before `</body>`, on a page that has the element | The component's script, at the path of Shopify's (`/cdn/storefront/web-components/account.js`), and the `shopify-customer-account-data` block with the customer logged in (`email`, `firstName`, `lastName`) or `null`, and the shop's id. The script is lsf's: the avatar (the `signed-out-avatar` slot and part, the customer's initial once logged in) leads to the sign-in page (`sign-in-url`), which is `/account` locally, or to `/account`, as Shopify's does for a shop on legacy customer accounts. The account sheet and its menu are not drawn. |
 | `cart` cookie | cart endpoints | Set when something first goes into the cart, as on Shopify: `getCart` resolves with `cart: null` until then. |
 
 Left out, because they only talk to Shopify's own services: analytics collection (web pixels,
