@@ -3,9 +3,17 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
-## Unreleased
+## 0.3.0-rc.6 - 2026-11-14
+
+Sixth release candidate of 0.3.0. It fixes about 130 differences from Shopify reported by an
+audit of themes, the storefront, the checkout of an app, the Admin API and the command line,
+each checked against what Shopify does. `lsf check` and `lsf validate` now refuse what Shopify
+refuses on upload, and some Liquid objects, Ajax answers and Function limits read as a store's.
+Some themes, theme tests and store data need a change: see Breaking changes.
 
 ### Breaking changes
+
+What to change when you upgrade from 0.3.0-rc.5.
 
 - **`lsf check` reports the tags Shopify's parser refuses for where they are** (`liquid_syntax`,
   which fails the check): `{% sections %}` in a section, `{% schema %}` in a snippet, twice,
