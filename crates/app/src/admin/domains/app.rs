@@ -307,6 +307,54 @@ pub fn seed(seed: &mut Seed) {
             seed.insert(record);
         }
     }
+
+    seed_customer_account_pages(seed);
+}
+
+/// The native pages of the customer account: handle, title, `pageType`.
+const NATIVE_PAGES: [(&str, &str, &str); 3] = [
+    ("orders", "Orders", "NATIVE_ORDERS"),
+    ("profile", "Profile", "NATIVE_PROFILE"),
+    ("settings", "Settings", "NATIVE_SETTINGS"),
+];
+
+/// The pages of the customer account (`customerAccountPages`), as Shopify lists them: the native
+/// ones, then a `CustomerAccountAppExtensionPage` for each full page of an extension of the app
+/// (`customer-account.page.render`), titled with the extension's name and a UUID as its handle,
+/// which is what a `CUSTOMER_ACCOUNT_PAGE` menu item names by `resourceId`.
+fn seed_customer_account_pages(seed: &mut Seed) {
+    // Ids that follow each other, in the order the pages are listed (by `ID`).
+    let base = stable_id("customer_account_page", "pages");
+    for (position, (handle, title, page_type)) in (0..).zip(NATIVE_PAGES) {
+        seed.insert(json!({
+            "__typename": "CustomerAccountNativePage",
+            "id": gid("CustomerAccountNativePage", base + position),
+            "handle": handle,
+            "title": title,
+            "pageType": page_type,
+        }));
+    }
+    let Some(app) = seed.app else { return };
+    let client_id = client_id(Some(app));
+    let full_pages = app.ui_extensions.iter().filter(|extension| {
+        extension
+            .targets
+            .iter()
+            .any(|target| target.target == "customer-account.page.render")
+    });
+    for (position, extension) in (NATIVE_PAGES.len() as u64..).zip(full_pages) {
+        let uuid = value::uuid(&format!(
+            "customer_account_page/{client_id}/{}",
+            extension.handle
+        ));
+        seed.insert(json!({
+            "__typename": "CustomerAccountAppExtensionPage",
+            "id": gid("CustomerAccountAppExtensionPage", base + position),
+            "handle": uuid,
+            "appExtensionUuid": uuid,
+            "title": extension.name.clone().filter(|name| !name.is_empty()).unwrap_or_else(|| extension.handle.clone()),
+        }));
+    }
 }
 
 fn seed_discount(seed: &mut Seed, discount: &CheckoutDiscount, created: &str) {

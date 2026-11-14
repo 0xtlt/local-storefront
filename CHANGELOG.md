@@ -521,6 +521,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   language in its path: `/account/profile?locale=fr` gives its extensions French
   (`shopify.localization.language`, `shopify.i18n`), and the session keeps it for the next pages
   until another `?locale=`. lsf ignored the parameter.
+- **The Admin API's `customerAccountPages` lists the pages of the customer account**, as on
+  Shopify, where it answered an empty list: the native pages (`orders`, `profile`, `settings`)
+  and one `CustomerAccountAppExtensionPage` per `customer-account.page.render` extension of the
+  app, with its `name` as `title`. A script that looks up the `resourceId` of a
+  `CUSTOMER_ACCOUNT_PAGE` menu item finds it locally. `customerAccountPage(id:)` reads one.
 - **`lsf app check` and `lsf app function run --scenario` price a scenario as its served
   checkout does.** A buyer in a market with its own currency gets the cart in that currency and
   the market's `rate` as `presentmentCurrencyRate`, where both ran the Functions in the shop's

@@ -1808,3 +1808,81 @@ fn billing_cycles_follow_the_shops_clock() {
     assert_eq!(topics(&mut shop), Vec::<String>::new());
     assert_eq!(billing::renew(&mut shop), 0);
 }
+
+#[test]
+fn customer_account_pages_are_the_native_pages_and_the_full_pages_of_the_app() {
+    let store = support::fixture_store("rich");
+    let mut app = support::fixture_app();
+    let page = |handle: &str, name: Option<&str>, target: &str| lsf_app::config::UiExtension {
+        handle: handle.to_string(),
+        name: name.map(str::to_string),
+        dir: std::path::PathBuf::new(),
+        api_version: Some("2026-10".to_string()),
+        version: None,
+        targets: vec![lsf_app::config::UiTarget {
+            target: target.to_string(),
+            module: None,
+        }],
+        metafields: Vec::new(),
+        capabilities: Value::Null,
+        settings: Value::Null,
+        bundle: std::path::PathBuf::new(),
+    };
+    app.ui_extensions = vec![
+        page(
+            "loyalty",
+            Some("My loyalty"),
+            "customer-account.page.render",
+        ),
+        page(
+            "banner",
+            Some("Banner"),
+            "customer-account.profile.block.render",
+        ),
+    ];
+    let mut shop = ShopState::seeded(&store, Some(&app));
+    let answer = run(
+        &mut shop,
+        "{ customerAccountPages(first: 10) { nodes { __typename id handle title
+            ... on CustomerAccountNativePage { pageType }
+            ... on CustomerAccountAppExtensionPage { appExtensionUuid } } } }",
+        Value::Null,
+    );
+    let nodes = data(&answer, "customerAccountPages")["nodes"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let native: Vec<(&str, &str, &str)> = nodes
+        .iter()
+        .filter(|node| node["__typename"] == "CustomerAccountNativePage")
+        .map(|node| {
+            let text = |field: &str| node[field].as_str().unwrap();
+            (text("handle"), text("title"), text("pageType"))
+        })
+        .collect();
+    assert_eq!(
+        native,
+        [
+            ("orders", "Orders", "NATIVE_ORDERS"),
+            ("profile", "Profile", "NATIVE_PROFILE"),
+            ("settings", "Settings", "NATIVE_SETTINGS"),
+        ]
+    );
+    // One page per full page of the app, a block is none; its handle is a UUID.
+    let extension: Vec<&Value> = nodes
+        .iter()
+        .filter(|node| node["__typename"] == "CustomerAccountAppExtensionPage")
+        .collect();
+    assert_eq!(extension.len(), 1, "{nodes:?}");
+    assert_eq!(extension[0]["title"], "My loyalty");
+    let handle = extension[0]["handle"].as_str().unwrap();
+    assert_eq!(handle.len(), 36, "{handle}");
+    assert_eq!(extension[0]["appExtensionUuid"], handle);
+    // `customerAccountPage(id:)` reads one.
+    let one = run(
+        &mut shop,
+        "query($id: ID!) { customerAccountPage(id: $id) { title } }",
+        json!({"id": extension[0]["id"]}),
+    );
+    assert_eq!(data(&one, "customerAccountPage")["title"], "My loyalty");
+}
