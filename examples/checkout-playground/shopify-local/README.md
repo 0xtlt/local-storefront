@@ -437,6 +437,30 @@ that names it is truthy and `== blank` too, and prints its handle. Shopify docum
 `link_list` setting whose menu does not exist is `blank`. `lsf validate` warns about each menu
 the theme names that the data does not have (`missing_menu`).
 
+## URL redirects
+
+`redirects` lists the store's URL redirects, as Online Store > Navigation > URL redirects (or
+the Admin API's `urlRedirectCreate`) makes them: an old path, and where it leads.
+
+```json
+{
+  "redirects": [
+    { "path": "/old-tee.html", "target": "/products/tee" },
+    { "path": "/catalog", "target": "https://example.com/catalog" }
+  ]
+}
+```
+
+A visit to a path that finds nothing is answered with a `301` to its redirect's target, as
+Shopify does: the path matches whatever its case (`/OLD-TEE.HTML`), the query of the request is
+carried to the target (`/old-tee.html?page=2` → `/products/tee?page=2`), and a target that is a
+path of the store stays in the language and market of the request (`/fr/old-tee.html` →
+`/fr/products/tee`). A path that leads to a page is served, not redirected: a redirect only
+applies when the old path no longer exists. A `/` is added in front of a path without one, two
+redirects cannot have the same path (`duplicate_redirect`), and a target cannot be blank or the
+path. With `--app`, the redirects are the Admin API's `urlRedirects`, and those the backend
+creates, changes or deletes apply to the storefront.
+
 ## The shop
 
 Every field of `shop` is optional.
@@ -1176,7 +1200,7 @@ extensions:
 | `wrong_type` | A value of the wrong JSON type. |
 | `invalid_value`, `invalid_format` | A value outside what the field accepts, or not in its format. Money as a JSON float (`19.99`) is an `invalid_value`, and a string that is not an amount (`"19.999"`) an `invalid_format`; the hint says what the field takes. |
 | `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. `invalid_money` is a shipping rate below zero. |
-| `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
+| `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card`, `duplicate_redirect` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
 | `unknown_language` | A checkout scenario or a market names a language that is not in `localization.languages`, or a metaobject's `translations` do, or name the primary language. |
 | `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. A link of a menu is an `unknown_reference`, whatever it names (a product, a collection, a page, an article, a policy), and so is a reference of a metafield (in a form lsf does not read, its hint is the form to write: `use "faq/size"`), and a shipping rate or a payment method a scenario's `entered` names. |
@@ -1235,6 +1259,7 @@ data directory is one of these, and they are merged, so you can split the data a
 | `customers` | array of [Customer](#customer) | Customers. They can also live one per file in `customers/`. |
 | `companies` | array of [Company](#company) | Companies that buy from the store (B2B). Customers join one with their `company`. |
 | `gift_cards` | array of [GiftCard](#giftcard) | Issued gift cards, each with its own page. |
+| `redirects` | array of [Redirect](#redirect) | URL redirects: an old path of the store that leads to a page of it, as Online Store > Navigation > URL redirects and the Admin API's `urlRedirectCreate` make them. |
 | `metaobjects` | map of array of [Metaobject](#metaobject) | Metaobject entries by type. |
 | `metaobject_definitions` | map of [MetaobjectDefinition](#metaobjectdefinition) | The definitions of metaobject types, by type: what a type sets for all its entries. |
 | `localization` | [Localization](#localization) | The countries and languages of the store. At most one data file may define it. |
@@ -1911,6 +1936,15 @@ Who a gift card was sent to.
 | `name` | string |  |
 | `email` | string |  |
 | `nickname` | string |  |
+
+### Redirect
+
+A URL redirect: a visit to `path` that finds nothing is sent to `target` with a `301`.
+
+| Field | Type | Description |
+|---|---|---|
+| `path` | string | **Required.** The old path, `/old-tee.html`, matched whatever its case. A `/` is added in front of a path without one, as the Admin API adds it. |
+| `target` | string | **Required.** Where it leads: a path of the store (`/products/tee`) or a URL. |
 
 ### Metaobject
 

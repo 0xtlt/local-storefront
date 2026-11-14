@@ -70,6 +70,41 @@ fn missing_language(site: &Site, segment: &str) -> Option<String> {
         .find(|locale| locale.eq_ignore_ascii_case(segment))
 }
 
+/// Where a URL redirect of the store data sends the request, when nothing is at its path: its
+/// target, in the language and market of the request when it is a path of the store
+/// (`/fr/old-tee.html` → `/fr/products/tee`), with the query of the request. A redirect only
+/// applies to a path that no longer exists, as on Shopify.
+/// <https://help.shopify.com/en/manual/online-store/menus-and-links/url-redirect>
+pub fn redirect(site: &Site) -> Option<String> {
+    let redirect = site.store.redirect(&site.request.path)?;
+    if resolve(site).status != 404 {
+        return None;
+    }
+    let target = &redirect.target;
+    let mut location = if target.starts_with('/') && !target.starts_with("//") {
+        site.request.localized(target)
+    } else {
+        target.clone()
+    };
+    let query: Vec<String> = site
+        .request
+        .query
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "{}={}",
+                lsf_core::urls::encode_component(key),
+                lsf_core::urls::encode_component(value)
+            )
+        })
+        .collect();
+    if !query.is_empty() {
+        location.push(if location.contains('?') { '&' } else { '?' });
+        location.push_str(&query.join("&"));
+    }
+    Some(location)
+}
+
 /// Resolves the request's path. Unknown paths and missing resources give the 404 page.
 pub fn resolve(site: &Site) -> Page {
     let store = &site.store;

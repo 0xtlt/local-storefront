@@ -496,6 +496,11 @@ pub(super) fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target)
 
 fn page(visit: &Visit<'_>) -> Reply {
     let target = target(visit.incoming);
+    if target == Target::Page
+        && let Some(location) = lsf_theme::render::routes::redirect(&visit.site())
+    {
+        return Reply::moved(&location);
+    }
     let rendered = visit.state.app.renderer.render(
         visit.store.clone(),
         visit.request.clone(),

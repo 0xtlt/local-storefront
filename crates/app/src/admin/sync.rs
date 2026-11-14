@@ -77,12 +77,13 @@ pub fn overlay(state: &ShopState, store: &Store) -> Option<Overlay> {
 
 /// The types of the records that are an entity of the store data, written whole, which the
 /// other records belong to (a variant to its product, a metafield to its owner).
-const ENTITIES: [&str; 11] = [
+const ENTITIES: [&str; 12] = [
     "Product",
     "Collection",
     "Page",
     "Blog",
     "Menu",
+    "UrlRedirect",
     "Customer",
     "Company",
     "GiftCard",
@@ -297,6 +298,7 @@ enum Projected {
     Page(model::PageInput),
     Blog(model::BlogInput),
     Menu(String, model::MenuInput),
+    Redirect(model::RedirectInput),
     Customer(model::CustomerInput),
     Company(model::CompanyInput),
     GiftCard(model::GiftCardInput),
@@ -314,6 +316,7 @@ impl Projected {
             Projected::Page(page) => page.handle.clone().unwrap_or_default(),
             Projected::Blog(blog) => blog.handle.clone().unwrap_or_default(),
             Projected::Menu(handle, _) => handle.clone(),
+            Projected::Redirect(redirect) => redirect.path.to_lowercase(),
             Projected::Customer(customer) => customer.email.to_lowercase(),
             Projected::Company(company) => company.name.to_lowercase(),
             Projected::GiftCard(card) => card.code.to_uppercase(),
@@ -333,6 +336,7 @@ impl Projected {
             Projected::Page(value) => to(value),
             Projected::Blog(value) => to(value),
             Projected::Menu(handle, value) => json!([handle, to(value)]),
+            Projected::Redirect(value) => to(value),
             Projected::Customer(value) => to(value),
             Projected::Company(value) => to(value),
             Projected::GiftCard(value) => to(value),
@@ -380,6 +384,7 @@ impl Projected {
             Projected::Page(_) => &mut removals.pages,
             Projected::Blog(_) => &mut removals.blogs,
             Projected::Menu(..) => &mut removals.menus,
+            Projected::Redirect(_) => &mut removals.redirects,
             Projected::Customer(_) => &mut removals.customers,
             Projected::Company(_) => &mut removals.companies,
             Projected::GiftCard(_) => &mut removals.gift_cards,
@@ -401,6 +406,7 @@ impl Projected {
             Projected::Menu(handle, value) => {
                 input.menus.insert(handle, value);
             }
+            Projected::Redirect(value) => input.redirects.push(value),
             Projected::Customer(value) => input.customers.push(value),
             Projected::Company(value) => input.companies.push(value),
             Projected::GiftCard(value) => input.gift_cards.push(value),
@@ -776,6 +782,7 @@ impl<'s> Sync<'s> {
             "Menu" => self
                 .menu(view, key)
                 .map(|(handle, menu)| Projected::Menu(handle, menu)),
+            "UrlRedirect" => self.redirect(view, key).map(Projected::Redirect),
             "Customer" => self.customer(view, key).map(Projected::Customer),
             "Company" => self.company(view, key).map(Projected::Company),
             "GiftCard" => self.gift_card(view, key).map(Projected::GiftCard),
@@ -1410,6 +1417,14 @@ impl<'s> Sync<'s> {
             latitude: address.and_then(|address| address.get("latitude")?.as_f64()),
             longitude: address.and_then(|address| address.get("longitude")?.as_f64()),
             metafields: self.metafields(view, key),
+        })
+    }
+
+    fn redirect(&self, view: &View<'s>, key: &str) -> Option<model::RedirectInput> {
+        let record = view.get(key)?;
+        Some(model::RedirectInput {
+            path: text(record, "path")?.to_string(),
+            target: text(record, "target")?.to_string(),
         })
     }
 

@@ -64,6 +64,14 @@ pub fn menu_gid(handle: &str) -> String {
     gid("Menu", stable_id("menu", handle))
 }
 
+/// A URL redirect: stable for its path, whatever its case.
+pub fn url_redirect_gid(path: &str) -> String {
+    gid(
+        "UrlRedirect",
+        stable_id("url_redirect", &path.to_lowercase()),
+    )
+}
+
 /// A metaobject: stable for its type and handle, as the checkout's `Shop.metaobject` and
 /// lsf-core's `metaobject_by_reference` have it.
 pub fn metaobject_gid(kind: &str, handle: &str) -> String {
@@ -283,7 +291,7 @@ fn seed_policy(seed: &mut Seed, policy: &Policy, created: &str) -> String {
     }))
 }
 
-/// Pages, blogs, menus, metaobjects, markets and locales.
+/// Pages, blogs, menus, URL redirects, metaobjects, markets and locales.
 pub fn seed(seed: &mut Seed) {
     let store = seed.store;
     for page in &store.pages {
@@ -321,6 +329,15 @@ pub fn seed(seed: &mut Seed) {
             "title": menu.title,
             "isDefault": matches!(menu.handle.as_str(), "main-menu" | "footer"),
             "items": items,
+            "createdAt": Seed::epoch_string(),
+        }));
+    }
+    for redirect in &store.redirects {
+        seed.insert(json!({
+            "__typename": "UrlRedirect",
+            "id": url_redirect_gid(&redirect.path),
+            "path": redirect.path,
+            "target": redirect.target,
             "createdAt": Seed::epoch_string(),
         }));
     }

@@ -337,3 +337,47 @@ fn a_page_with_the_account_component_gets_its_script_and_its_customer() {
     assert_eq!(script.status, 200);
     assert!(text(&script).contains("customElements.define('shopify-account'"));
 }
+
+#[test]
+fn a_url_redirect_sends_a_path_that_finds_nothing_to_its_target() {
+    let root = theme_dir(
+        "redirects",
+        &[
+            LAYOUT,
+            ("templates/index.liquid", "home"),
+            ("templates/product.liquid", "{{ product.title }}"),
+            ("templates/404.liquid", "not found"),
+            (
+                "shopify-local/store.json",
+                r#"{"localization": {"languages": [{"iso_code": "en"}, {"iso_code": "fr"}]},
+                    "products": [{"handle": "tee", "title": "Tee", "price": "20.00"}],
+                    "redirects": [
+                      {"path": "/old-tee.html", "target": "/products/tee"},
+                      {"path": "products/tee", "target": "/collections/all"},
+                      {"path": "/away", "target": "https://example.com/elsewhere?from=lsf"}
+                    ]}"#,
+            ),
+        ],
+    );
+    let state = serve(&root, false);
+    let location = |path: &str| {
+        let reply = get(&state, path, "redirects");
+        (reply.status, header(&reply, "location").map(str::to_string))
+    };
+    let moved = |to: &str| (301, Some(to.to_string()));
+    // The query is carried, the case of the path does not matter, and a path of the store
+    // stays in the language of the request.
+    assert_eq!(location("/old-tee.html"), moved("/products/tee"));
+    assert_eq!(
+        location("/OLD-TEE.HTML?page=2&id_product=7"),
+        moved("/products/tee?page=2&id_product=7")
+    );
+    assert_eq!(location("/fr/old-tee.html"), moved("/fr/products/tee"));
+    assert_eq!(
+        location("/away?x=1"),
+        moved("https://example.com/elsewhere?from=lsf&x=1")
+    );
+    // A redirect only applies to a path that leads nowhere.
+    assert_eq!(location("/products/tee"), (200, None));
+    let _ = std::fs::remove_dir_all(root);
+}
