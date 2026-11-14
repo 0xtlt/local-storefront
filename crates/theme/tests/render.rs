@@ -3477,6 +3477,39 @@ fn a_handle_that_names_nothing_is_the_empty_object() {
 }
 
 #[test]
+fn the_collections_list_is_the_store_s_own_collections() {
+    // #96: a loop over `collections` (https://shopify.dev/docs/api/liquid/objects/collections)
+    // gives the store's collections without the catch-all `all`, which `collections.all` still
+    // finds; `.size` and `.first` are those of that list, as `| size` and `| first` are.
+    let fixture = fixture();
+    let own: Vec<&str> = fixture
+        .store
+        .collections
+        .iter()
+        .map(|collection| collection.handle.as_str())
+        .filter(|handle| *handle != "all")
+        .collect();
+    let rendered = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{{ collections.size }}|{{ collections | size }}|{{ collections.first.handle }}|\
+         {{ collections.last.handle }}|{% for c in collections %}{{ c.handle }},{% endfor %}|\
+         {% if collections contains collections.all %}listed{% endif %}|{{ collections.all.handle }}|\
+         {% paginate collections by 2 %}{{ paginate.items }}{% endpaginate %}",
+    );
+    assert_eq!(
+        rendered,
+        format!(
+            "{n}|{n}|{first}|{last}|{list},||all|{n}",
+            n = own.len(),
+            first = own[0],
+            last = own[own.len() - 1],
+            list = own.join(","),
+        )
+    );
+}
+
+#[test]
 fn a_resource_setting_whose_handle_names_nothing_is_truthy_and_blank() {
     // https://shopify.dev/docs/storefronts/themes/architecture/settings/input-settings#product:
     // `blank` if "the selection no longer exists", and outputting the setting "will return the
