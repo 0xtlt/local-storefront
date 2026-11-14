@@ -622,6 +622,17 @@ pub fn run(
     }
     let builds = state.builds.clone();
     let state = Arc::new(state);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        // Deeply nested snippets and blocks recurse: give the render threads room.
+        .thread_stack_size(16 * 1024 * 1024)
+        .build()
+        .map_err(|error| error.to_string())?;
+    // Caught from now on: a SIGTERM during the builds at start stops the server as well.
+    let stop = {
+        let _runtime = runtime.enter();
+        crate::server::interrupted()
+    };
     let watcher = match (&app_dir, args.watch) {
         (Some(dir), true) => {
             let changed = state.clone();
@@ -640,12 +651,6 @@ pub fn run(
         _ => None,
     };
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        // Deeply nested snippets and blocks recurse: give the render threads room.
-        .thread_stack_size(16 * 1024 * 1024)
-        .build()
-        .map_err(|error| error.to_string())?;
     let served = runtime.block_on(async move {
         // A port that was asked for is the one to listen on, or an error. The default one is a
         // convenience: when another server has it, the next free one does as well.
@@ -728,7 +733,7 @@ pub fn run(
         if args.watch {
             eprintln!("watch:  the Functions build again when their files change, and the pages reload (Ctrl-C to stop)");
         }
-        run_server(state, listener)
+        run_server(state, listener, stop)
             .await
             .map_err(|error| error.to_string())
     });

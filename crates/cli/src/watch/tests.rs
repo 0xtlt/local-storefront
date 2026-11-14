@@ -33,7 +33,9 @@ echo build >> "$ctl/count-$h"
 n=$(wc -l < "$ctl/count-$h" | tr -d ' ')
 : > "$ctl/running-$h-$n"
 ls "$ctl" | grep -c '^running-' >> "$ctl/concurrency"
-echo $$ > "$ctl/pid-$h"
+# Written whole, then named: a test that sees the file reads the pid.
+echo $$ > "$ctl/pid-$h.partial"
+mv "$ctl/pid-$h.partial" "$ctl/pid-$h"
 echo "compiling $h"
 mkdir -p dist
 if [ -f "$ctl/partial-$h" ]; then

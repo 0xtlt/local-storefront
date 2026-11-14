@@ -727,6 +727,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 #### The command line
 
+- **`lsf serve` and `lsf app dev` stop on `SIGTERM` or Ctrl-C while they start too**, during
+  the builds of `--watch --build` or right after `ready:`: they stop their builds and exit with
+  `0`, as once they run. The signal killed them, leaving the builds running.
 - **`lsf check` no longer reports a `{% content_for 'block' %}` type that differs from its file
   only by case as missing**, since Shopify renders `blocks/text.liquid` for `type: 'TEXT'`.
   It is a `block_type_case` warning, with the type as the file is named in its `hint`, and the
