@@ -3,7 +3,10 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
-## Unreleased
+## 0.3.0-rc.7 - 2026-11-14
+
+Seventh release candidate of 0.3.0. Approving a plan or a charge in the embedded admin keeps
+the admin's user and locale, as Shopify does.
 
 ### Fixed
 
