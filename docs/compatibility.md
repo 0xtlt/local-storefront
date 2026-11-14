@@ -143,6 +143,10 @@ A cart attribute whose name starts with `__` is private, as on Shopify: `cart.at
 `cart | json`, `/cart.js` and the answers of the cart endpoints leave it out, and the checkout
 and the order keep it. One `_` is not private, nor are line item properties.
 
+`canonical_url` is the page's URL as Shopify writes it: a tag page keeps its tags
+(`/collections/things/premium+snow`), the search page its `q`, and a vendor or type page its
+`q`, lower-cased (`/collections/vendors?q=acme+labs`); sorting and filters are left out.
+
 `/products/<handle>.js` is `{{ product | json }}` without `content`, with the product's `url`
 (under the language and market prefix of the request: `/fr-be/products/tee`) and each variant's
 `quantity_price_breaks` (`[]` when it has none), as on Shopify.
