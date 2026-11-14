@@ -350,6 +350,13 @@ fn route(visit: &Visit<'_>) -> Reply {
                 None => page(visit),
             }
         }
+        ["browsing_context_suggestions.json"] => browsing_context_suggestions(visit),
+        ["blogs", feed] if feed.ends_with(".atom") => {
+            match seo::blog_feed(&visit.site(), feed.trim_end_matches(".atom")) {
+                Some(xml) => Reply::new(200, "application/atom+xml; charset=utf-8", xml),
+                None => page(visit),
+            }
+        }
         ["sitemap.xml"] => Reply::new(
             200,
             "application/xml; charset=utf-8",
@@ -366,6 +373,29 @@ fn route(visit: &Visit<'_>) -> Reply {
         _ if method == "GET" || method == "HEAD" => page(visit),
         _ => Reply::text(404, "Not found"),
     }
+}
+
+/// `/browsing_context_suggestions.json`: the country Shopify detects from the visitor's IP
+/// address and browser, and the localizations it suggests, with the names in the page's
+/// language. lsf has no geolocation: the country detected is the visitor's, so nothing is
+/// suggested.
+/// <https://shopify.dev/docs/storefronts/themes/markets/localization-discovery>
+fn browsing_context_suggestions(visit: &Visit<'_>) -> Reply {
+    let site = visit.site();
+    let country = site.country();
+    let name =
+        lsf_theme::drops::localization::country_name(&site, &country.iso_code, &country.name);
+    Reply::json(
+        200,
+        &json!({
+            "detected_values": {
+                "country_name": name,
+                "country": {"handle": country.iso_code, "name": name},
+            },
+            "features": {},
+            "suggestions": [],
+        }),
+    )
 }
 
 /// The render target the Section Rendering API parameters ask for.

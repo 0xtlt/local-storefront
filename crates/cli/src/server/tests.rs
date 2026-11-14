@@ -2448,6 +2448,81 @@ fn the_password_page_works_and_locks_nothing() {
 }
 
 #[test]
+fn a_blog_has_an_atom_feed_of_its_articles() {
+    // https://help.shopify.com/en/manual/online-store/blogs/publishing-blogs: the feed of a blog
+    // is its URL with `.atom`.
+    let state = server();
+    let feed = get(&state, "/blogs/journal.atom", "feed");
+    assert_eq!(feed.status, 200);
+    assert_eq!(
+        header(&feed, "content-type"),
+        Some("application/atom+xml; charset=utf-8")
+    );
+    let xml = text(&feed);
+    assert!(
+        xml.starts_with(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xml:lang=\"en\" xmlns=\"http://www.w3.org/2005/Atom\">\n  \
+             <id>http://shop.test/blogs/journal</id>\n"
+        ),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<title>Local Supply Co. - Journal</title>"),
+        "{xml}"
+    );
+    // The articles, newest first, with their author and tags.
+    let first = xml
+        .find("<title>How to care for linen</title>")
+        .expect("an entry");
+    let last = xml
+        .find("<title>Five ways to carry a tote</title>")
+        .expect("an entry");
+    assert!(first < last, "{xml}");
+    assert!(
+        xml.contains("<link rel=\"alternate\" type=\"text/html\" href=\"http://shop.test/blogs/journal/how-to-care-for-linen\"/>"),
+        "{xml}"
+    );
+    assert!(xml.contains("<name>Maya Ortiz</name>"), "{xml}");
+    assert!(xml.contains("<category term=\"linen\"/>"), "{xml}");
+    assert_eq!(get(&state, "/blogs/nope.atom", "feed").status, 404);
+}
+
+#[test]
+fn browsing_context_suggestions_name_the_visitors_country_and_suggest_nothing() {
+    // https://shopify.dev/docs/storefronts/themes/markets/localization-discovery
+    let state = server();
+    for path in [
+        "/browsing_context_suggestions.json?country[enabled]=true&language[enabled]=true",
+        "/fr/browsing_context_suggestions.json",
+    ] {
+        let reply = get(&state, path, "suggestions");
+        assert_eq!(reply.status, 200, "{path}");
+        assert_eq!(
+            header(&reply, "content-type"),
+            Some("application/json; charset=utf-8")
+        );
+        let answer = body_json(&reply);
+        assert_eq!(answer["suggestions"], json!([]), "{answer}");
+        assert_eq!(answer["features"], json!({}), "{answer}");
+        assert_eq!(
+            answer["detected_values"]["country"]["handle"], "CA",
+            "{answer}"
+        );
+    }
+    // The visitor's country, named in the language of the page.
+    get(&state, "/fr?country=US", "suggestions-us");
+    let french = body_json(&get(
+        &state,
+        "/fr/browsing_context_suggestions.json",
+        "suggestions-us",
+    ));
+    assert_eq!(
+        french["detected_values"],
+        json!({"country_name": "États-Unis", "country": {"handle": "US", "name": "États-Unis"}})
+    );
+}
+
+#[test]
 fn robots_and_sitemaps_are_served() {
     let state = server();
     let robots = get(&state, "/robots.txt", "seo");

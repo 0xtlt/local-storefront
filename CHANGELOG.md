@@ -581,6 +581,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   the Admin API's `urlRedirects`, and what the backend creates, changes or deletes (with
   `urlRedirectCreate`, `redirectNewHandle` or an import) applies to the storefront.
 
+- **`/browsing_context_suggestions.json` and the Atom feed of a blog are served**, where they
+  were the theme's 404 page. The suggestions answer in the shape of Shopify's localization
+  discovery guide, under a locale prefix too: `detected_values` names the visitor's country in
+  the page's language, and `suggestions` is empty, since lsf has no geolocation.
+  `/blogs/<handle>.atom` is an Atom feed of the blog's articles, newest first.
+
 #### The Admin API, for the backend of an app
 
 - **An order placed with a cart transform bundle lists its components**, as on Shopify: a line
