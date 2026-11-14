@@ -607,6 +607,13 @@
           },
           "default": null
         },
+        "components": {
+          "description": "The variants this variant is made of, which makes it a fixed bundle, as\n`productVariantRelationshipBulkUpdate` makes one: each with the quantity one bundle\ntakes. The bundle's stock is the fewest bundles its tracked components make, and a cart\nline of it lists its components (`item_components`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VariantComponentInput"
+          }
+        },
         "metafields": {
           "type": "object",
           "additionalProperties": {
@@ -745,6 +752,40 @@
       "required": [
         "minimum_quantity",
         "price"
+      ]
+    },
+    "VariantComponentInput": {
+      "description": "A component of a fixed bundle: a variant, and how many of it one bundle takes.",
+      "type": "object",
+      "properties": {
+        "variant": {
+          "description": "A variant, by id or SKU, or a product handle (its first variant).",
+          "$ref": "#/$defs/VariantRef"
+        },
+        "quantity": {
+          "description": "Defaults to 1.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "variant"
+      ]
+    },
+    "VariantRef": {
+      "description": "A reference to a variant: its numeric id, its SKU, or a product handle (meaning that\nproduct's first variant).",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        {
+          "type": "string"
+        }
       ]
     },
     "MetafieldInput": {

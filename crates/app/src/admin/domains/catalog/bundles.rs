@@ -33,10 +33,10 @@
 //! - Events: `products/create` (`productBundleCreate`) or `products/update`, and the inventory
 //!   events of the variants made.
 //!
-//! The parent's own inventory item is not tracked: its quantity is its components'. A bundle
-//! reaches the storefront as a product (the store data has no components): it is available while
-//! its components are, and the local checkout sells it as one line, unless a cart transform
-//! Function expands it (see "Bundles" in `crates/app/docs/admin/design.md`).
+//! The parent's own inventory item is not tracked: its quantity is its components'. A variant's
+//! components are seeded from the `components` of the store data and synced back to it, so the
+//! storefront's cart lists them; the local checkout sells a bundle as one line, unless a cart
+//! transform Function expands it (see "Bundles" in `crates/app/docs/admin/design.md`).
 
 use serde_json::{Map, Value, json};
 

@@ -323,6 +323,9 @@ pub struct Variant {
     /// The locations that stock the variant, as `(index into the store's locations, whether
     /// it is in stock there)`.
     pub store_availabilities: Vec<(usize, bool)>,
+    /// The variants a fixed bundle is made of, as `(variant id, quantity per bundle)`: empty
+    /// for a variant that is no bundle.
+    pub components: Vec<(u64, u32)>,
     pub metafields: Metafields,
 }
 
@@ -1989,6 +1992,7 @@ mod tests {
             },
             quantity_price_breaks: Vec::new(),
             store_availabilities: Vec::new(),
+            components: Vec::new(),
             metafields: Metafields::new(),
         }
     }

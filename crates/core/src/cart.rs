@@ -41,7 +41,66 @@ pub struct LineComponent {
     pub line_price: i64,
 }
 
-impl ResolvedLine<'_> {
+/// A component of the fixed bundle of a cart line: its variant, how many of it the line holds,
+/// and the part of the line's price it carries.
+pub struct BundleComponent<'a> {
+    pub product_index: usize,
+    pub variant_index: usize,
+    pub product: &'a Product,
+    pub variant: &'a Variant,
+    pub quantity: i64,
+    pub line_price: i64,
+}
+
+impl<'a> ResolvedLine<'a> {
+    /// The components of the line's variant when it is a fixed bundle, each holding its quantity
+    /// per bundle times the line's. The line's price is allocated across them "using a weighted
+    /// price algorithm", which Shopify does not detail: lsf weighs each component by its price
+    /// times its quantity, in whole cents, the remainder on the last one.
+    /// <https://shopify.dev/docs/apps/build/product-merchandising/bundles/start-building>
+    pub fn components(&self, store: &'a Store) -> Vec<BundleComponent<'a>> {
+        let found: Vec<(usize, usize, i64)> = self
+            .variant
+            .components
+            .iter()
+            .filter_map(|(id, per_bundle)| {
+                let (product, variant) = store.variant_location(*id)?;
+                Some((product, variant, i64::from(*per_bundle)))
+            })
+            .collect();
+        let weight = |(product, variant, per_bundle): &(usize, usize, i64)| {
+            i128::from(store.products[*product].variants[*variant].price.max(0))
+                * i128::from(*per_bundle)
+        };
+        let total_weight: i128 = found.iter().map(weight).sum();
+        let line_price = self.line_price();
+        let mut allocated = 0;
+        let last = found.len().saturating_sub(1);
+        found
+            .iter()
+            .enumerate()
+            .map(|(position, component)| {
+                let (product, variant, per_bundle) = *component;
+                let share = if position == last {
+                    line_price - allocated
+                } else if total_weight == 0 {
+                    line_price / found.len() as i64
+                } else {
+                    (i128::from(line_price) * weight(component) / total_weight) as i64
+                };
+                allocated += share;
+                BundleComponent {
+                    product_index: product,
+                    variant_index: variant,
+                    product: &store.products[product],
+                    variant: &store.products[product].variants[variant],
+                    quantity: per_bundle * i64::from(self.line.quantity),
+                    line_price: share,
+                }
+            })
+            .collect()
+    }
+
     /// What the variant costs with the line's selling plan.
     pub fn allocation(&self) -> Option<Allocation> {
         self.selling_plan
@@ -122,13 +181,19 @@ impl ResolvedLine<'_> {
     /// The image of the line: the one of its variant when that is an image, the first one of
     /// its product otherwise.
     pub fn image(&self) -> Option<&'_ Image> {
-        self.variant
-            .media_index
-            .and_then(|index| self.product.media.get(index))
-            .filter(|media| matches!(media.kind, MediaKind::Image))
-            .and_then(|media| media.preview.as_ref())
-            .or_else(|| self.product.images().next())
+        variant_image(self.product, self.variant)
     }
+}
+
+/// The image of a variant on a cart line: its own when that is an image, the first one of its
+/// product otherwise.
+pub fn variant_image<'a>(product: &'a Product, variant: &Variant) -> Option<&'a Image> {
+    variant
+        .media_index
+        .and_then(|index| product.media.get(index))
+        .filter(|media| matches!(media.kind, MediaKind::Image))
+        .and_then(|media| media.preview.as_ref())
+        .or_else(|| product.images().next())
 }
 
 /// Resolves a cart line against the store. `None` when the variant no longer exists.
