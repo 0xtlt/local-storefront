@@ -3807,9 +3807,10 @@ fn measurement_and_rating_metafields_print_as_a_store_prints_them() {
     assert_eq!(
         render(
             "{{ f.vol.value.type }}|{{ f.stars.value.rating }}|{{ f.stars.value.scale_min }}|\
-             {{ f.stars.value.scale_max }}|{{ f.stars.value | json }}"
+             {{ f.stars.value.scale_max }}|{{ f.stars.value | json }}|{{ f.len.value | json }}"
         ),
-        r#"volume|3.5|0.0|10.0|{"rating":"3.5","scale_max":"10.0","scale_min":"0.0"}"#
+        // #315: `| json` refuses both, as a development store did.
+        r#"volume|3.5|0.0|10.0|{"error":"json not allowed for this object"}|{"error":"json not allowed for this object"}"#
     );
     assert_eq!(
         render("{{ f.vol | metafield_tag }}"),
@@ -4327,13 +4328,16 @@ fn a_rating_has_strings_as_on_shopify() {
     // Numbers are kept as they are written, as strings.
     assert_eq!(stars("numbers"), "[5] [\"5\"] [*****]");
     // The rating object of Shopify's Liquid reference: `rating`, `scale_max`, `scale_min`.
+    // `| json` refuses it, as a development store does (#315).
+    let fields = "{% assign r = metaobjects.spec.tent.FIELD.value %}\
+                  {{ r.rating }}|{{ r.scale_max }}|{{ r.scale_min }}|{{ r | json }}";
     assert_eq!(
-        render("{{ metaobjects.spec.tent.stars.value | json }}"),
-        r#"{"rating":"4.5","scale_max":"5.0","scale_min":"1.0"}"#
+        render(&fields.replace("FIELD", "stars")),
+        r#"4.5|5.0|1.0|{"error":"json not allowed for this object"}"#
     );
     assert_eq!(
-        render("{{ metaobjects.spec.tent.numbers.value | json }}"),
-        r#"{"rating":"4.5","scale_max":"5","scale_min":"1"}"#
+        render(&fields.replace("FIELD", "numbers")),
+        r#"4.5|5|1|{"error":"json not allowed for this object"}"#
     );
     // The metafield itself is refused, as on Shopify.
     assert_eq!(
