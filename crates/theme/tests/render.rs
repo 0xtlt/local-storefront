@@ -767,7 +767,8 @@ fn t_has_no_default_prints_a_group_of_keys_and_reads_a_key_as_ruby_does() {
 fn shopify_strings_are_the_themes_when_it_overrides_them() {
     // Issue #112: a `shopify.*` key in a locale file overrides Shopify's own string
     // (https://shopify.dev/docs/storefronts/themes/architecture/locales/storefront-locale-files#override-shopify-provided-translations).
-    // Shopify's defaults are published in English only: without an override, they are English.
+    // Without an override, a French page has the French strings read on a store (#313), the
+    // others in English, as Shopify publishes them.
     let fixture = theme_of(
         "shopify-strings",
         &[],
@@ -796,7 +797,7 @@ fn shopify_strings_are_the_themes_when_it_overrides_them() {
                       {{ 'Snow' | link_to_remove_tag: 'Snow' }}";
     assert_eq!(
         render("fr", "/collections/all", collection),
-        "En vedette|Most relevant|En stock,Out of stock,|\
+        "En vedette|Le plus pertinent|En stock,En rupture de stock,|\
          <a href=\"/collections/all\" title=\"Supprimer la balise Snow\">Snow</a>"
     );
     assert_eq!(
@@ -6836,4 +6837,44 @@ fn search_terms_are_html_escaped_and_escape_leaves_them_as_they_are() {
         liquid,
         format!("raw:{escaped} escape:{escaped} h:{escaped} size:36 other:&lt;i&gt;")
     );
+}
+
+#[test]
+fn a_french_page_has_shopifys_strings_as_a_french_store_gives_them() {
+    // #313 and #316: read on a development store with French published, with no override in
+    // the theme. What was not read stays in English.
+    let fixture = fixture();
+    let render = |locale: &str, path: &str, source: &str| {
+        let mut request = request(path);
+        request.locale = locale.to_string();
+        fixture.liquid_for(request, Session::initial(&fixture.store), source)
+    };
+    let collection = "{% for o in collection.sort_options limit: 4 %}{{ o.name }};{% endfor %}|\
+                      {% for f in collection.filters limit: 2 %}{{ f.label }}:{% for v in f.values %}{{ v.label }},{% endfor %};{% endfor %}";
+    assert_eq!(
+        render("fr", "/collections/all", collection),
+        "En vedette;Le plus pertinent;Meilleures ventes;Alphabetically, A-Z;|\
+         Disponibilité:En stock,En rupture de stock,;Prix:;"
+    );
+    let dates = "{% assign d = '2026-03-05T07:08:09Z' %}{{ d | date: format: 'abbreviated_date' }}|\
+                 {{ d | date: format: 'date_at_time' }}|{{ d | date: format: 'on_date' }}|\
+                 {{ d | date: format: 'basic' }}|{{ d | date: '%B' }}";
+    assert_eq!(
+        render("fr", "/", dates),
+        "5 mars 2026|5 mars 2026 à 02:08|le 5 mars 2026|05/03/2026|March"
+    );
+    assert_eq!(
+        render("en", "/", dates),
+        "Mar 5, 2026|March 5, 2026 at 2:08 am|on Mar 5, 2026|3/5/2026|March"
+    );
+    assert_eq!(
+        render("fr", "/search?q=beanie&type=product", "{{ page_title }}"),
+        "Recherche : 1 résultat trouvé pour « beanie »"
+    );
+    let localization = "{% for c in localization.available_countries %}{% if c.iso_code == 'US' %}\
+                        {{ c.continent }}{% endif %}{% endfor %}|{{ shop.privacy_policy.title }}";
+    let french = render("fr", "/", localization);
+    let english = render("en", "/", localization);
+    assert!(french.starts_with("Amérique du Nord|"), "{french}");
+    assert!(english.starts_with("North America|"), "{english}");
 }

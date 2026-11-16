@@ -79,7 +79,13 @@ pub fn country_value(site: &SiteRef, country: &Country) -> Value {
         ("popular?", Value::Bool(country.popular)),
         (
             "continent",
-            reference::country_continent(&country.iso_code).map_or(Value::Nil, Value::str),
+            reference::country_continent(&country.iso_code).map_or(Value::Nil, |continent| {
+                // `Amérique du Nord` on a French page, as a store gives it (#316).
+                let french = crate::theme::builtin_fr::applies(&site.request.locale)
+                    .then(|| crate::theme::builtin_fr::continent(continent))
+                    .flatten();
+                Value::str(french.unwrap_or(continent))
+            }),
         ),
         (
             "available_languages",

@@ -25,13 +25,24 @@ impl ShopDrop {
     }
 }
 
+/// The title of a policy: its default title in French on a French page, as a store gives it
+/// (`Politique de confidentialité`, #316), unless the data names it otherwise.
+fn policy_title<'p>(site: &SiteRef, policy: &'p Policy) -> &'p str {
+    let named_by_default = policy.title == lsf_core::store::reference::policy_title(&policy.handle);
+    crate::theme::builtin_fr::applies(&site.request.locale)
+        .then(|| crate::theme::builtin_fr::policy_title(&policy.handle))
+        .flatten()
+        .filter(|_| named_by_default)
+        .unwrap_or(&policy.title)
+}
+
 pub fn policy_value(site: &SiteRef, policy: &Policy) -> Value {
     hash([
         (
             "id",
             Value::Int(lsf_core::util::stable_id("policy", &policy.handle) as i64),
         ),
-        ("title", Value::from(&policy.title)),
+        ("title", Value::from(policy_title(site, policy))),
         ("body", Value::from(&policy.body)),
         ("handle", Value::from(&policy.handle)),
         (

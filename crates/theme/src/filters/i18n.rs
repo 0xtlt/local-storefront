@@ -11,6 +11,7 @@ use serde_json::Value as Json;
 
 use super::site;
 use crate::site::Site;
+use crate::theme::builtin_fr;
 use crate::theme::locales::{Operands, Translations, plural_category, system_translation};
 
 /// Replaces the `{{ name }}` placeholders of a translation with the arguments of `t`, as
@@ -109,10 +110,19 @@ pub fn translate(site: &Site, key: &str, named: &[(String, Value)]) -> Option<St
     }
     // Shopify's own keys use `%{name}` placeholders, and their plural forms are keys of their
     // own, in English.
-    let plural = count(named)
-        .and_then(operands)
-        .map(|operands| format!("{key}.{}", plural_category("en", &operands)));
-    let text = system_translation(key).or_else(|| system_translation(plural.as_deref()?));
+    // On a French page, the French strings read on a store, then the English ones.
+    let french = builtin_fr::applies(&site.request.locale);
+    let system = |key: &str| {
+        french
+            .then(|| builtin_fr::system_translation(key))
+            .flatten()
+            .or_else(|| system_translation(key))
+    };
+    let plural = count(named).and_then(operands).map(|operands| {
+        let language = if french { "fr" } else { "en" };
+        format!("{key}.{}", plural_category(language, &operands))
+    });
+    let text = system(key).or_else(|| system(plural.as_deref()?));
     text.map(|text| {
         let mut text = text.to_string();
         for (name, value) in named {
@@ -180,11 +190,46 @@ fn named_format(name: &str) -> Option<&'static str> {
     })
 }
 
+/// A pattern of `date: format: 'name'`, and whether it takes French month names.
+struct NamedPattern {
+    pattern: String,
+    french_months: bool,
+}
+
+impl NamedPattern {
+    /// The pattern, with the month names of `time` put in when they are French.
+    fn for_time(&self, time: &chrono::DateTime<Tz>) -> String {
+        if self.french_months {
+            builtin_fr::month_names(&self.pattern, chrono::Datelike::month(time))
+        } else {
+            self.pattern.clone()
+        }
+    }
+}
+
 /// The pattern for `date: format: 'name'`: a custom format from the locale file's
-/// `date_formats`, or one of Shopify's named formats.
-pub(super) fn date_pattern(site: &Site, name: &str) -> Option<String> {
-    translate(site, &format!("date_formats.{name}"), &[])
-        .or_else(|| named_format(name).map(str::to_string))
+/// `date_formats`, or one of Shopify's named formats, in French on a French page for those
+/// read on a store.
+fn date_pattern(site: &Site, name: &str) -> Option<NamedPattern> {
+    if let Some(pattern) = translate(site, &format!("date_formats.{name}"), &[]) {
+        return Some(NamedPattern {
+            pattern,
+            french_months: false,
+        });
+    }
+    let french = builtin_fr::applies(&site.request.locale)
+        .then(|| builtin_fr::named_format(name))
+        .flatten();
+    Some(match french {
+        Some(pattern) => NamedPattern {
+            pattern: pattern.to_string(),
+            french_months: true,
+        },
+        None => NamedPattern {
+            pattern: named_format(name)?.to_string(),
+            french_months: false,
+        },
+    })
 }
 
 /// The time `date` and `time_tag` read: what Liquid reads, and a Unix timestamp with a fraction
@@ -211,7 +256,10 @@ const DEFAULT_FORMAT: &str = "default";
 
 fn date(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let pattern = match (args.named("format"), args.get(0)) {
-        (None, Some(format)) => format.to_str().into_owned(),
+        (None, Some(format)) => NamedPattern {
+            pattern: format.to_str().into_owned(),
+            french_months: false,
+        },
         (name, _) => {
             let name = name.map_or(DEFAULT_FORMAT.into(), Value::to_str);
             date_pattern(site(ctx)?, &name).ok_or_else(|| {
@@ -221,11 +269,11 @@ fn date(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
             })?
         }
     };
-    if pattern.is_empty() {
+    if pattern.pattern.is_empty() {
         return Ok(input.clone());
     }
     match storefront_time(input, ctx) {
-        Some(time) => strftime(&time, &pattern)
+        Some(time) => strftime(&time, &pattern.for_time(&time))
             .map(Value::from)
             .map_err(Error::argument),
         None => Ok(input.clone()),
@@ -240,7 +288,10 @@ fn time_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
         (None, Some(format)) => format.to_str().into_owned(),
         (name, _) => {
             let name = name.map_or(DEFAULT_FORMAT.into(), Value::to_str);
-            date_pattern(site(ctx)?, &name).unwrap_or_else(|| "%B %-d, %Y".to_string())
+            date_pattern(site(ctx)?, &name).map_or_else(
+                || "%B %-d, %Y".to_string(),
+                |pattern| pattern.for_time(&time),
+            )
         }
     };
     let text = strftime(&time, &pattern).map_err(Error::argument)?;
