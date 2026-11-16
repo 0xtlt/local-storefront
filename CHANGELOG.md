@@ -44,13 +44,18 @@ Liquid playground renders on Shopify's demo store, in English and in French.
   refusing a sold-out item among others** gives the sold-out sentence as its `message` (#317).
 - **`'1/2/26' | date`** is year 1, February 26: `%Y` and `%G` pad the year to four digits
   (`0001-02-26`) (#320).
-- **The named date formats are Shopify's**: `month_day_year` is `March 05, 2026` and `long`
-  `March 5, 2026 14:08`.
+- **The named date formats are Shopify's**: `long` is `March 5, 2026 14:08`, and
+  `month_day_year`, like `month_and_year`, is not a format of Shopify's unless the theme
+  defines it.
 - **`metafield_tag` and `metafield_text` of a `date_time`** show the value's own hour (#314).
-- **A French page has Shopify's own strings in French**: the 263 keys of `shopify.*`
-  (sort names, filters, tag links, pagination, the search title, notices, errors), the named
-  date formats with French month and day names, `country.continent`, the default policy
-  titles, and the availability and price filter labels (#313, #316).
+- **A page in French, German, Spanish, Italian, Dutch, Brazilian Portuguese, Japanese,
+  Korean or Simplified Chinese has Shopify's own strings in its language**, as a store gives
+  them: the 263 keys of `shopify.*` (sort names, filters, tag links, pagination, the search
+  title, notices, errors), the named date formats with the language's month, day and AM/PM
+  names and patterns (`3. Februar 2026 um 14:08`, `2026년 2월 3일 오후 2:08`),
+  `country.continent`, the default policy titles, and the availability, price and product
+  type filter labels. Read on a development store with each language published; every date
+  pattern renders back the 199 dates it was read from (#313, #316).
 - **Shopify's English strings are the store's**: four texts reworded to what a store prints,
   and the six keys a store does not have (`shopify.sentence.*`, ...) print `Translation
   missing`, as there.

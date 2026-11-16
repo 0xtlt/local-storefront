@@ -11,7 +11,7 @@ use serde_json::Value as Json;
 
 use super::site;
 use crate::site::Site;
-use crate::theme::builtin_fr;
+use crate::theme::builtin_locales;
 use crate::theme::locales::{Operands, Translations, plural_category, system_translation};
 
 /// Replaces the `{{ name }}` placeholders of a translation with the arguments of `t`, as
@@ -109,22 +109,41 @@ pub fn translate(site: &Site, key: &str, named: &[(String, Value)]) -> Option<St
         return Some(text);
     }
     // Shopify's own keys use `%{name}` placeholders, and their plural forms are keys of their
-    // own. On a French page they are French, as a store gives them: a key Shopify has no French
-    // for is missing there.
-    let french = builtin_fr::applies(&site.request.locale);
-    let system = |key: &str| -> Option<&'static str> {
-        if !french {
+    // own. On a page in another language they are in that language, as a store gives them: a
+    // key Shopify has no translation for is missing there.
+    let table = builtin_locales::for_locale(&site.request.locale);
+    let system = |key: &str| -> Option<&str> {
+        let Some(table) = table else {
             return system_translation(key);
-        }
-        match builtin_fr::system_translation(key) {
-            builtin_fr::SystemText::French(text) => Some(text),
-            builtin_fr::SystemText::Missing => None,
-            builtin_fr::SystemText::Unknown => system_translation(key),
+        };
+        match table.system_translation(key) {
+            builtin_locales::SystemText::Translated(text) => Some(text),
+            builtin_locales::SystemText::Missing => None,
+            builtin_locales::SystemText::Unknown => system_translation(key),
         }
     };
     let plural = count(named).and_then(operands).map(|operands| {
-        let language = if french { "fr" } else { "en" };
-        format!("{key}.{}", plural_category(language, &operands))
+        let language = if table.is_some() {
+            site.request.locale.as_str()
+        } else {
+            "en"
+        };
+        // Shopify's own strings in Portuguese take `one` for 1 only: a store gives "0
+        // resultados encontrados" (2026-11-16), where CLDR has `one` for 0 too.
+        let portuguese = language
+            .split('-')
+            .next()
+            .is_some_and(|base| base.eq_ignore_ascii_case("pt"));
+        let category = if portuguese {
+            if operands.n == 1.0 && operands.v == 0 {
+                "one"
+            } else {
+                "other"
+            }
+        } else {
+            plural_category(language, &operands)
+        };
+        format!("{key}.{category}")
     });
     let text = system(key).or_else(|| system(plural.as_deref()?));
     text.map(|text| {
@@ -181,12 +200,11 @@ fn t(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
 /// The `strftime` pattern of a named date format in English.
 fn named_format(name: &str) -> Option<&'static str> {
     Some(match name {
-        // As shopify.dev's playground renders them on Shopify's demo store (2026-11-16), where
-        // `month_and_year` is "not a supported format".
+        // As a store renders them (2026-11-16), where `month_and_year` and `month_day_year` are
+        // "not a supported format" (a theme may define them in its locale files).
         "abbreviated_date" => "%b %-d, %Y",
         "basic" => "%-m/%-d/%Y",
         "date" => "%B %-d, %Y",
-        "month_day_year" => "%B %d, %Y",
         "date_at_time" => "%B %-d, %Y at %-I:%M %P",
         "default" => "%A, %B %-d, %Y at %-I:%M %P %z",
         "on_date" => "on %b %-d, %Y",
@@ -196,24 +214,25 @@ fn named_format(name: &str) -> Option<&'static str> {
     })
 }
 
-/// A pattern of `date: format: 'name'`, and whether it takes French month and day names.
+/// A pattern of `date: format: 'name'`, and the language whose names it takes.
 struct NamedPattern {
     pattern: String,
-    french_months: bool,
+    names: Option<&'static builtin_locales::Table>,
 }
 
 impl NamedPattern {
-    /// The pattern, with the month and day names of `time` put in when they are French.
+    /// The pattern, with the month, day and AM/PM names of `time` put in when they are not
+    /// English.
     fn for_time(&self, time: &chrono::DateTime<Tz>) -> String {
-        if self.french_months {
-            use chrono::Datelike;
-            builtin_fr::names(
+        use chrono::{Datelike, Timelike};
+        match self.names {
+            Some(table) => table.names(
                 &self.pattern,
                 time.month(),
                 time.weekday().num_days_from_monday(),
-            )
-        } else {
-            self.pattern.clone()
+                time.hour() >= 12,
+            ),
+            None => self.pattern.clone(),
         }
     }
 }
@@ -226,28 +245,24 @@ fn unsupported_format(name: &str) -> Error {
 }
 
 /// The pattern for `date: format: 'name'`: a custom format from the locale file's
-/// `date_formats`, or one of Shopify's named formats, in French on a French page for those
-/// read on a store.
+/// `date_formats`, or one of Shopify's named formats, in the page's language.
 fn date_pattern(site: &Site, name: &str) -> Option<NamedPattern> {
     if let Some(pattern) = translate(site, &format!("date_formats.{name}"), &[]) {
         return Some(NamedPattern {
             pattern,
-            french_months: false,
+            names: None,
         });
     }
-    let french = builtin_fr::applies(&site.request.locale)
-        .then(|| builtin_fr::named_format(name))
-        .flatten();
-    Some(match french {
-        Some(pattern) => NamedPattern {
-            pattern: pattern.to_string(),
-            french_months: true,
-        },
-        None => NamedPattern {
+    match builtin_locales::for_locale(&site.request.locale) {
+        Some(table) => Some(NamedPattern {
+            pattern: table.named_format(name)?.to_string(),
+            names: Some(table),
+        }),
+        None => Some(NamedPattern {
             pattern: named_format(name)?.to_string(),
-            french_months: false,
-        },
-    })
+            names: None,
+        }),
+    }
 }
 
 /// The time `date` and `time_tag` read: what Liquid reads, and a Unix timestamp with a fraction
@@ -276,7 +291,7 @@ fn date(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let pattern = match (args.named("format"), args.get(0)) {
         (None, Some(format)) => NamedPattern {
             pattern: format.to_str().into_owned(),
-            french_months: false,
+            names: None,
         },
         (name, _) => {
             let name = name.map_or(DEFAULT_FORMAT.into(), Value::to_str);

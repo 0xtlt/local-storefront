@@ -81,9 +81,8 @@ pub fn country_value(site: &SiteRef, country: &Country) -> Value {
             "continent",
             reference::country_continent(&country.iso_code).map_or(Value::Nil, |continent| {
                 // `Amérique du Nord` on a French page, as a store gives it (#316).
-                let french = crate::theme::builtin_fr::applies(&site.request.locale)
-                    .then(|| crate::theme::builtin_fr::continent(continent))
-                    .flatten();
+                let french = crate::theme::builtin_locales::for_locale(&site.request.locale)
+                    .and_then(|table| table.continent(continent));
                 Value::str(french.unwrap_or(continent))
             }),
         ),

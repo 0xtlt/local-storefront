@@ -10,8 +10,12 @@ renderer of shopify.dev's Liquid playground (2026-11-16): four texts were reword
 store's, and six keys the store does not have (`shopify.sentence.*`,
 `shopify.notices.cart.not_found`, ...) were removed.
 
-`shopify_system_translations.fr.json` is what `t` prints for the same keys on a French page
-(`/fr`) of that store, read the same way.
+`locales/*.json` hold Shopify's own strings in German, Spanish, French, Italian, Japanese,
+Korean, Dutch, Brazilian Portuguese and Simplified Chinese, read on a development store with
+each language published (2026-11-16) through a theme that prints them: `t` for every key of
+the English table, the named formats of `date` (with the month, day and AM/PM names they
+take), `country.continent`, the default policy titles and the labels of the filters Shopify
+makes. The French ones are the same as shopify.dev's playground gives on `/fr`.
 
 `placeholders/image.svg`, `placeholders/collection-2.svg` and `placeholders/lifestyle-2.svg` are
 the illustrations Shopify's `placeholder_svg_tag` filter renders for those names, taken from the

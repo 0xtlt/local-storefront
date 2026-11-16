@@ -6863,21 +6863,37 @@ fn a_french_page_has_shopifys_strings_as_a_french_store_gives_them() {
     );
     let named = "{% assign d = '2026-02-03T19:08:09Z' %}{{ d | date: format: 'date' }}|\
                  {{ d | date: format: 'default' }}|{{ d | date: format: 'short' }}|\
-                 {{ d | date: format: 'long' }}|{{ d | date: format: 'month_day_year' }}|\
-                 {{ d | date }}";
+                 {{ d | date: format: 'long' }}|{{ d | date }}";
     assert_eq!(
         render("fr", "/", named),
         "3 février 2026|mardi 3 février 2026 à 14:08 -0500|3 févr. 14:08|\
-         février 3, 2026 14:08|février 03, 2026|mardi 3 février 2026 à 14:08 -0500"
+         février 3, 2026 14:08|mardi 3 février 2026 à 14:08 -0500"
     );
     assert_eq!(
         render("en", "/", named),
         "February 3, 2026|Tuesday, February 3, 2026 at 2:08 pm -0500|3 Feb 14:08|\
-         February 3, 2026 14:08|February 03, 2026|Tuesday, February 3, 2026 at 2:08 pm -0500"
+         February 3, 2026 14:08|Tuesday, February 3, 2026 at 2:08 pm -0500"
     );
+    // Other languages, with their own names and patterns, as a store gives them.
+    let d = "{% assign d = '2026-02-03T19:08:09Z' %}{{ d | date: format: 'date' }}|\
+             {{ d | date: format: 'date_at_time' }}|{{ d | date: format: 'basic' }}";
+    for (locale, expected) in [
+        ("de", "3. Februar 2026|3. Februar 2026 um 14:08|3.2.2026"),
+        ("es", "3 de febrero de 2026|3 febrero 2026, 14:08|3/2/2026"),
+        (
+            "pt-BR",
+            "3 de fevereiro de 2026|3 de fevereiro de 2026 14:08|03/02/2026",
+        ),
+        ("ja", "2026年2月3日|2026年2月3日 14:08|2026/2/3"),
+        ("ko", "2026년 2월 3일|2026년 2월 3일 오후 2:08|2026. 2. 3."),
+        ("zh-CN", "2026年2月3日|2026年2月3日 14:08|2026/2/3"),
+    ] {
+        assert_eq!(render(locale, "/", d), expected, "{locale}");
+    }
     // A format Shopify does not have, when the theme does not define it either (this one's
-    // locale file defines `month_and_year`, which Shopify does not have).
-    let unsupported = "{{ 'now' | date: format: 'bogus' }}";
+    // locale file defines `month_and_year`, which Shopify does not have; nor has it
+    // `month_day_year`, in any language).
+    let unsupported = "{{ 'now' | date: format: 'month_day_year' }}";
     for locale in ["en", "fr"] {
         let site = |source: &str| {
             let mut request = request("/");
@@ -6896,7 +6912,7 @@ fn a_french_page_has_shopifys_strings_as_a_french_store_gives_them() {
         };
         assert_eq!(
             site(unsupported),
-            "Liquid error (line 1): The format option 'bogus' is not a supported format."
+            "Liquid error (line 1): The format option 'month_day_year' is not a supported format."
         );
     }
     assert_eq!(
