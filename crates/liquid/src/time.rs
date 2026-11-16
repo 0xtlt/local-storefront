@@ -341,12 +341,12 @@ fn extract_date(text: &str, today: NaiveDate) -> Option<NaiveDate> {
             if numbers.len() != 3 {
                 continue;
             }
-            let (year, month, day) = if parts[0].len() == 4 {
-                (numbers[0], numbers[1], numbers[2])
-            } else if parts[2].len() == 4 {
+            // A part of more than two digits is the year; with none, Ruby reads year, month and
+            // day in that order, with no century added: `1/2/26` is February 26 of year 1.
+            let (year, month, day) = if parts[2].len() > 2 && parts[0].len() <= 2 {
                 (numbers[2], numbers[1], numbers[0])
             } else {
-                continue;
+                (numbers[0], numbers[1], numbers[2])
             };
             return NaiveDate::from_ymd_opt(year as i32, month, day);
         }
@@ -542,7 +542,8 @@ fn format_directive(time: &DateTime<Tz>, conversion: char, spec: &Spec) -> Optio
         })
     };
     Some(match conversion {
-        'Y' => spec.number(i64::from(time.year()), 1, '0'),
+        // Ruby pads the year to four digits: `0001`.
+        'Y' => spec.number(i64::from(time.year()), 4, '0'),
         'C' => spec.number(i64::from(time.year().div_euclid(100)), 2, '0'),
         'y' => spec.number(i64::from(time.year().rem_euclid(100)), 2, '0'),
         'm' => spec.number(i64::from(time.month()), 2, '0'),
@@ -679,6 +680,14 @@ mod tests {
         assert_eq!(at("31/12/2026").to_rfc3339(), "2026-12-31T00:00:00+00:00");
         let now = Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap();
         assert_eq!(parse_time("12/31/2026", Tz::UTC, now), None);
+        // Issue #320: with no part of more than two digits, year, month and day, as a store
+        // gives `0001-02-26` for `1/2/26`.
+        assert_eq!(at("1/2/26").to_rfc3339(), "0001-02-26T00:00:00+00:00");
+        assert_eq!(
+            strftime(&at("1/2/26"), "%F|%Y|%-Y").unwrap(),
+            "0001-02-26|0001|1"
+        );
+        assert_eq!(parse_time("12/31/26", Tz::UTC, now), None);
     }
 
     #[test]

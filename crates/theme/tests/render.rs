@@ -229,6 +229,8 @@ fn liquid_core_reads_as_a_storefront_does() {
         .0,
         "2026-01-03|2026-12-31|12/31/2026|2026-02-28 19:00:00|2026-02-28 19:00:00"
     );
+    // #320: with no year of more than two digits, year, month and day, as a store reads it.
+    assert_eq!(render("/", "{{ '1/2/26' | date: '%F' }}").0, "0001-02-26");
     // 2. Nil is not paginateable, and the error names the expression.
     let (output, errors) = render(
         "/",
@@ -239,6 +241,16 @@ fn liquid_core_reads_as_a_storefront_does() {
         "[Liquid error (line 1): Array 'nothing_here.products' is not paginateable.]"
     );
     assert_eq!(errors.len(), 1);
+    // #320: nor is an array made in Liquid, while a list of resources is.
+    let (output, _) = render(
+        "/",
+        "{% assign arr = '1,2,3' | split: ',' %}[{% paginate arr by 2 %}{{ paginate.pages }}{% endpaginate %}]\
+         [{% paginate collections.all.products.first.variants by 2 %}{{ paginate.items }}{% endpaginate %}]",
+    );
+    assert_eq!(
+        output,
+        "[Liquid error (line 1): Array 'arr' is not paginateable.][1]"
+    );
     // 3. Past the last page, the previous page is the last one.
     assert_eq!(
         render(

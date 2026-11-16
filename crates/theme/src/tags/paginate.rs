@@ -81,8 +81,15 @@ impl Tag for Paginate {
             .unwrap_or(1);
         let total = match (list, &collection) {
             (Some(list), _) => list.total(),
-            (None, Value::Array(items)) => items.len(),
-            (None, Value::Nil) => {
+            // The arrays Shopify pages through are lists of resources (`product.variants`, a
+            // `collection_list` setting). An array of text or numbers is one made in Liquid
+            // (`split`) or a list metafield's value, which a store refuses (#320).
+            (None, Value::Array(items))
+                if items.iter().all(|item| matches!(item, Value::Object(_))) =>
+            {
+                items.len()
+            }
+            (None, Value::Nil | Value::Array(_)) => {
                 return Err(Error::argument(format!(
                     "Array '{}' is not paginateable.",
                     self.collection_markup
