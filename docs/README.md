@@ -57,3 +57,5 @@ One task each, from the first command to the details.
 ## Contributing
 
 [Architecture](architecture.md): how the code is organised, how to develop and how to release.
+
+[Writing an issue](issues.md): the standard for issues: title, repro, evidence, severity and labels.
