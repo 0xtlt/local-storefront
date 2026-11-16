@@ -6175,6 +6175,9 @@ fn the_storefront_cart_shows_a_line_the_cart_transform_expanded() {
         cart["total_price"],
         2000 + items[1]["final_line_price"].as_i64().unwrap()
     );
+    // #311: the cart page reads the same lines, with the components of the expanded one.
+    let page = text(&get(&state, "/cart", session));
+    assert!(page.contains("1 x Duo = $20.00 (2 components)\n"), "{page}");
 }
 
 #[test]

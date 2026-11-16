@@ -501,17 +501,18 @@ pub(super) fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target)
 
 fn page(visit: &Visit<'_>) -> Reply {
     let target = Target::of_query(&visit.incoming.query);
+    // The site of the visit, whose cart lines are as the cart transforms of the app make them:
+    // `item.item_components` reads what `/cart.js` reads (#311).
+    let site = visit.site();
     if target == Target::Page
-        && let Some(location) = lsf_theme::render::routes::redirect(&visit.site())
+        && let Some(location) = lsf_theme::render::routes::redirect(&site)
     {
         return Reply::moved(&location);
     }
-    let rendered = visit.state.app.renderer.render(
-        visit.store.clone(),
-        visit.request.clone(),
-        visit.session(),
-        &target,
-    );
+    let started = std::time::Instant::now();
+    let page = lsf_theme::render::routes::resolve(&site);
+    let mut rendered = visit.state.app.renderer.render_page(&site, page, &target);
+    rendered.timings.total = started.elapsed();
     // The outcome of a form submission is shown once.
     if target == Target::Page {
         visit.update_session(|session| session.form_result = None);
