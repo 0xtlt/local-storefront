@@ -1,0 +1,40 @@
+name: Other bug, feature or docs
+description: A crash, a misleading error, a missing feature, or a documentation error.
+title: "[low] "
+body:
+  - type: markdown
+    attributes:
+      value: Follow [the issue standard](https://github.com/0xtlt/local-storefront/blob/main/docs/issues.md). Title `[high|medium|low] …`.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options: ["bug", "enhancement", "documentation"]
+    validations:
+      required: true
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: What lsf does today, as text.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro
+      description: Files and command, written out in full. Leave empty for a feature with nothing to run.
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What should happen and why, with a source when there is one.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Release and OS
+      placeholder: "lsf 0.3.0-rc.7, macOS 15"
+    validations:
+      required: true

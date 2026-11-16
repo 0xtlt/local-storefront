@@ -1,0 +1,77 @@
+name: Divergence from Shopify
+description: lsf does not do what a Shopify store does for the same theme, app and data.
+title: "[low] `…` does X; Shopify does Y"
+labels: ["bug", "shopify-parity"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Follow [the issue standard](https://github.com/0xtlt/local-storefront/blob/main/docs/issues.md).
+        Title: `[high|medium|low] what lsf does, what Shopify does`. One divergence per issue.
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: "high: lsf passes what Shopify refuses, or a common flow breaks. medium: visible output differs in a common case. low: edge case, status, ordering. When in doubt, the lower one."
+      options: ["low", "medium", "high"]
+    validations:
+      required: true
+  - type: input
+    id: follow-up
+    attributes:
+      label: Follow-up to
+      description: For a leftover of an earlier issue, its number and what its fix settled.
+      placeholder: "Follow-up to #189. Its fix covers items 2 and 3 there; that holds on 0.3.0-rc.7."
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: What lsf outputs, exactly, as text. Then what a theme gets wrong because of it.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro
+      description: Every file the repro needs, each under its path, written out in full, then the command. Prefer `lsf render`.
+      value: |
+        `./data/store.json`:
+
+        ```json
+        { "shop": { "name": "Repro Shop", "currency": "USD" } }
+        ```
+
+        `./theme/layout/theme.liquid`: a layout with `{{ content_for_header }}` and `{{ content_for_layout }}`.
+
+        ```sh
+        lsf --theme ./theme --data ./data render /
+        ```
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What the store gives, with the source. A dated observation on a development store (with its setup when it matters), or a quoted and linked shopify.dev page.
+      placeholder: "A development store answered `422` with the same body (observed 2026-11-13)."
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Release and OS
+      placeholder: "lsf 0.3.0-rc.7, macOS 15"
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before filing
+      options:
+        - label: Reproduced on the latest release.
+          required: true
+        - label: Searched open and closed issues.
+          required: true
+        - label: Every repro file is written out and the command runs as pasted.
+          required: true
+        - label: An AI assistant helped write or check this issue.
