@@ -365,8 +365,15 @@ pub(crate) fn storefront_filters(
     };
 
     let mut filters = Vec::new();
+    // The labels of the filters Shopify makes, in the page's language (#313).
+    let table = crate::theme::builtin_locales::for_locale(&site.request.locale);
+    let label = |label: &'static str| -> &str {
+        table
+            .and_then(|table| table.filter_label(label))
+            .unwrap_or(label)
+    };
     filters.push(list_filter(
-        "Availability",
+        label("Availability"),
         "filter.v.availability",
         vec![
             (
@@ -402,7 +409,7 @@ pub(crate) fn storefront_filters(
     };
     filters.push(hash([
         ("param_name", Value::str("filter.v.price")),
-        ("label", Value::str("Price")),
+        ("label", Value::str(label("Price"))),
         ("type", Value::str("price_range")),
         ("operator", Value::str("AND")),
         ("presentation", Value::str("text")),
@@ -440,7 +447,7 @@ pub(crate) fn storefront_filters(
     types.sort();
     if types.len() > 1 {
         filters.push(list_filter(
-            "Product type",
+            label("Product type"),
             "filter.p.product_type",
             types
                 .into_iter()

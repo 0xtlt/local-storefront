@@ -1026,8 +1026,9 @@ A `rating` keeps its `value`, `scale_min` and `scale_max` as strings, as Shopify
 "rating": { "type": "rating", "value": { "scale_min": "1.0", "scale_max": "5.0", "value": "4.5" } }
 ```
 
-Its Liquid object is Shopify's, with strings too: `{{ m.value | json }}` gives
-`{"rating":"4.5","scale_max":"5.0","scale_min":"1.0"}`, and `{% for i in (1..m.value.scale_max) %}`
+Its Liquid object is Shopify's, with strings too: `m.value.rating`, `m.value.scale_max` and
+`m.value.scale_min` are `"4.5"`, `"5.0"` and `"1.0"` (`{{ m.value | json }}` is refused, as on a
+store, and so is the `json` of a measurement), and `{% for i in (1..m.value.scale_max) %}`
 runs 5 times, as Liquid turns the string `"5.0"` into 5 (it raises "invalid integer" on the
 number `5.0`). A number in the data is kept as it is written, as a string: `"scale_max": 5` is
 `"5"`.

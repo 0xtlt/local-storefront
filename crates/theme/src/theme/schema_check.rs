@@ -505,6 +505,29 @@ fn liquid() -> &'static lsf_liquid::Environment {
     ENVIRONMENT.get_or_init(|| crate::render::environment_with(&[]))
 }
 
+/// Why Shopify refuses a `visible_if` as Liquid, if it does. Its `{{ }}` holds a condition, as
+/// an `if` takes, that Shopify reads with its strict parser: `{{ settings.t == }}`, which the
+/// lax parser reads, is refused on upload.
+fn visible_if_error(condition: &str) -> Option<String> {
+    if let Err(error) = lsf_liquid::Template::parse(liquid(), condition) {
+        return Some(error.to_string());
+    }
+    let inner = condition
+        .trim()
+        .strip_prefix("{{")
+        .and_then(|rest| rest.strip_suffix("}}"))?
+        .trim_matches('-');
+    let audit = lsf_liquid::strict2::audit(liquid(), &format!("{{% if {inner} %}}{{% endif %}}"));
+    if let Some(error) = audit.error {
+        return Some(error.to_string());
+    }
+    audit
+        .findings
+        .into_iter()
+        .find(|finding| finding.issue.kind == lsf_liquid::strict2::IssueKind::Rejected)
+        .map(|finding| format!("Liquid syntax error: {}", finding.issue.message))
+}
+
 /// What Shopify refuses in one setting of a schema, beyond its required keys and the type of
 /// its `default`: each message says what is wrong.
 fn setting_rules(item: &Json, kind: &str) -> Vec<String> {
@@ -529,7 +552,7 @@ fn setting_rules(item: &Json, kind: &str) -> Vec<String> {
     if let Some(condition) = item.get("visible_if").and_then(Json::as_str) {
         if !condition.trim_start().starts_with("{{") {
             out.push("its `visible_if` does not start with `{{`".to_string());
-        } else if let Err(error) = lsf_liquid::Template::parse(liquid(), condition) {
+        } else if let Some(error) = visible_if_error(condition) {
             out.push(format!("its `visible_if` is not valid Liquid ({error})"));
         }
     }
@@ -1620,6 +1643,7 @@ mod tests {
             (r#"{"type": "video_url", "id": "v", "label": "V", "accept": ["tiktok"]}"#.into(), "\"tiktok\""),
             (r#"{"type": "checkbox", "id": "b", "label": "B", "visible_if": "section.settings.x"}"#.into(), "does not start with `{{`"),
             (r#"{"type": "checkbox", "id": "b", "label": "B", "visible_if": "{{ section.settings.x"}"#.into(), "is not valid Liquid"),
+            (r#"{"type": "checkbox", "id": "b", "label": "B", "visible_if": "{{ settings.t == }}"}"#.into(), "is not valid Liquid"),
         ];
         for (setting, expected) in &cases {
             let found = one_setting(setting);

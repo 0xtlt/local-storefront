@@ -727,7 +727,9 @@ pub fn compact(value: &Value) -> String {
 }
 
 /// An object of Shopify's Liquid that has properties and prints as a text of its own: a
-/// `measurement` prints `1.5 cm`, a `rating` `3.5`. Its JSON is its properties.
+/// `measurement` prints `1.5 cm`, a `rating` `3.5`. `| json` refuses it, as a store does: the
+/// JSON form of a rating in Shopify's reference is the stored value's, not the Liquid object's
+/// (observed on a development store, #315).
 struct PrintedDrop {
     kind: &'static str,
     text: String,
@@ -754,7 +756,7 @@ impl Object for PrintedDrop {
     }
 
     fn to_json(&self) -> Json {
-        self.fields.to_json()
+        json_not_allowed()
     }
 
     fn as_any(&self) -> &dyn Any {

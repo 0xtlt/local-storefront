@@ -11,6 +11,7 @@ use serde_json::Value as Json;
 
 use super::site;
 use crate::site::Site;
+use crate::theme::builtin_locales;
 use crate::theme::locales::{Operands, Translations, plural_category, system_translation};
 
 /// Replaces the `{{ name }}` placeholders of a translation with the arguments of `t`, as
@@ -108,11 +109,43 @@ pub fn translate(site: &Site, key: &str, named: &[(String, Value)]) -> Option<St
         return Some(text);
     }
     // Shopify's own keys use `%{name}` placeholders, and their plural forms are keys of their
-    // own, in English.
-    let plural = count(named)
-        .and_then(operands)
-        .map(|operands| format!("{key}.{}", plural_category("en", &operands)));
-    let text = system_translation(key).or_else(|| system_translation(plural.as_deref()?));
+    // own. On a page in another language they are in that language, as a store gives them: a
+    // key Shopify has no translation for is missing there.
+    let table = builtin_locales::for_locale(&site.request.locale);
+    let system = |key: &str| -> Option<&str> {
+        let Some(table) = table else {
+            return system_translation(key);
+        };
+        match table.system_translation(key) {
+            builtin_locales::SystemText::Translated(text) => Some(text),
+            builtin_locales::SystemText::Missing => None,
+            builtin_locales::SystemText::Unknown => system_translation(key),
+        }
+    };
+    let plural = count(named).and_then(operands).map(|operands| {
+        let language = if table.is_some() {
+            site.request.locale.as_str()
+        } else {
+            "en"
+        };
+        // Shopify's own strings in Portuguese take `one` for 1 only: a store gives "0
+        // resultados encontrados" (2026-11-16), where CLDR has `one` for 0 too.
+        let portuguese = language
+            .split('-')
+            .next()
+            .is_some_and(|base| base.eq_ignore_ascii_case("pt"));
+        let category = if portuguese {
+            if operands.n == 1.0 && operands.v == 0 {
+                "one"
+            } else {
+                "other"
+            }
+        } else {
+            plural_category(language, &operands)
+        };
+        format!("{key}.{category}")
+    });
+    let text = system(key).or_else(|| system(plural.as_deref()?));
     text.map(|text| {
         let mut text = text.to_string();
         for (name, value) in named {
@@ -167,24 +200,69 @@ fn t(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
 /// The `strftime` pattern of a named date format in English.
 fn named_format(name: &str) -> Option<&'static str> {
     Some(match name {
+        // As a store renders them (2026-11-16), where `month_and_year` and `month_day_year` are
+        // "not a supported format" (a theme may define them in its locale files).
         "abbreviated_date" => "%b %-d, %Y",
         "basic" => "%-m/%-d/%Y",
-        "date" | "month_day_year" => "%B %-d, %Y",
+        "date" => "%B %-d, %Y",
         "date_at_time" => "%B %-d, %Y at %-I:%M %P",
         "default" => "%A, %B %-d, %Y at %-I:%M %P %z",
         "on_date" => "on %b %-d, %Y",
         "short" => "%-d %b %H:%M",
-        "long" => "%B %d, %Y %H:%M",
-        "month_and_year" => "%B %Y",
+        "long" => "%B %-d, %Y %H:%M",
         _ => return None,
     })
 }
 
+/// A pattern of `date: format: 'name'`, and the language whose names it takes.
+struct NamedPattern {
+    pattern: String,
+    names: Option<&'static builtin_locales::Table>,
+}
+
+impl NamedPattern {
+    /// The pattern, with the month, day and AM/PM names of `time` put in when they are not
+    /// English.
+    fn for_time(&self, time: &chrono::DateTime<Tz>) -> String {
+        use chrono::{Datelike, Timelike};
+        match self.names {
+            Some(table) => table.names(
+                &self.pattern,
+                time.month(),
+                time.weekday().num_days_from_monday(),
+                time.hour() >= 12,
+            ),
+            None => self.pattern.clone(),
+        }
+    }
+}
+
+/// The error of a named format Shopify does not have.
+fn unsupported_format(name: &str) -> Error {
+    Error::argument(format!(
+        "The format option '{name}' is not a supported format."
+    ))
+}
+
 /// The pattern for `date: format: 'name'`: a custom format from the locale file's
-/// `date_formats`, or one of Shopify's named formats.
-pub(super) fn date_pattern(site: &Site, name: &str) -> Option<String> {
-    translate(site, &format!("date_formats.{name}"), &[])
-        .or_else(|| named_format(name).map(str::to_string))
+/// `date_formats`, or one of Shopify's named formats, in the page's language.
+fn date_pattern(site: &Site, name: &str) -> Option<NamedPattern> {
+    if let Some(pattern) = translate(site, &format!("date_formats.{name}"), &[]) {
+        return Some(NamedPattern {
+            pattern,
+            names: None,
+        });
+    }
+    match builtin_locales::for_locale(&site.request.locale) {
+        Some(table) => Some(NamedPattern {
+            pattern: table.named_format(name)?.to_string(),
+            names: Some(table),
+        }),
+        None => Some(NamedPattern {
+            pattern: named_format(name)?.to_string(),
+            names: None,
+        }),
+    }
 }
 
 /// The time `date` and `time_tag` read: what Liquid reads, and a Unix timestamp with a fraction
@@ -211,21 +289,20 @@ const DEFAULT_FORMAT: &str = "default";
 
 fn date(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let pattern = match (args.named("format"), args.get(0)) {
-        (None, Some(format)) => format.to_str().into_owned(),
+        (None, Some(format)) => NamedPattern {
+            pattern: format.to_str().into_owned(),
+            names: None,
+        },
         (name, _) => {
             let name = name.map_or(DEFAULT_FORMAT.into(), Value::to_str);
-            date_pattern(site(ctx)?, &name).ok_or_else(|| {
-                Error::argument(format!(
-                    "date format '{name}' is not defined in the locale file"
-                ))
-            })?
+            date_pattern(site(ctx)?, &name).ok_or_else(|| unsupported_format(&name))?
         }
     };
-    if pattern.is_empty() {
+    if pattern.pattern.is_empty() {
         return Ok(input.clone());
     }
     match storefront_time(input, ctx) {
-        Some(time) => strftime(&time, &pattern)
+        Some(time) => strftime(&time, &pattern.for_time(&time))
             .map(Value::from)
             .map_err(Error::argument),
         None => Ok(input.clone()),
@@ -240,7 +317,9 @@ fn time_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
         (None, Some(format)) => format.to_str().into_owned(),
         (name, _) => {
             let name = name.map_or(DEFAULT_FORMAT.into(), Value::to_str);
-            date_pattern(site(ctx)?, &name).unwrap_or_else(|| "%B %-d, %Y".to_string())
+            date_pattern(site(ctx)?, &name)
+                .ok_or_else(|| unsupported_format(&name))?
+                .for_time(&time)
         }
     };
     let text = strftime(&time, &pattern).map_err(Error::argument)?;
@@ -274,6 +353,16 @@ fn weight_with_unit(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<
 }
 
 fn unit_price_with_measurement(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
+    // Without a measurement, nothing; with something else, Shopify's error.
+    match args.at(0) {
+        Value::Nil => return Ok(Value::empty_string()),
+        Value::Object(_) | Value::Hash(_) => {}
+        _ => {
+            return Err(Error::argument(
+                "unit_price_measurement must be a unit_price_measurement or a hash",
+            ));
+        }
+    }
     // The price is either cents or an already formatted money string.
     let price = match input {
         Value::Str(text) => text.to_string(),
@@ -294,9 +383,14 @@ fn unit_price_with_measurement(input: &Value, args: &FilterArgs, ctx: &Context) 
     Ok(Value::from(format!("{price}/{prefix}{unit}")))
 }
 
+/// The singular for the number 1 only: `'1' | pluralize` is the plural on a store.
 fn pluralize(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> {
-    let count = lsf_liquid::number::to_number(input).to_f64();
-    Ok(if count == 1.0 { args.at(0) } else { args.at(1) })
+    let one = match input.to_liquid_value() {
+        Value::Int(count) => count == 1,
+        Value::Float(count) => count == 1.0,
+        _ => false,
+    };
+    Ok(if one { args.at(0) } else { args.at(1) })
 }
 
 pub(super) fn register(env: &mut Environment) {

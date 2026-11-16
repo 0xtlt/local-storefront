@@ -92,17 +92,10 @@ fn payment_type_img_url(input: &Value, _args: &FilterArgs, ctx: &Context) -> Res
     )))
 }
 
-fn is_external(url: &str) -> bool {
-    url.starts_with("http://") || url.starts_with("https://") || url.starts_with("//")
-}
-
+/// `link_to`: no `rel`, an external URL included, as shopify.dev's playground renders it
+/// (2026-11-16).
 fn link_to(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> {
     let url = args.at(0).to_str().into_owned();
-    let rel = if is_external(&url) {
-        " rel=\"nofollow\""
-    } else {
-        ""
-    };
     let text = input.to_str();
     Ok(Value::from(if args.named.is_empty() {
         let title = args
@@ -110,13 +103,13 @@ fn link_to(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> {
             .map(|title| title.to_str().into_owned())
             .unwrap_or_default();
         format!(
-            "<a href=\"{}\" title=\"{}\"{rel}>{text}</a>",
+            "<a href=\"{}\" title=\"{}\">{text}</a>",
             escape_html(&url),
             escape_html(&title)
         )
     } else {
         format!(
-            "<a{} href=\"{}\"{rel}>{text}</a>",
+            "<a{} href=\"{}\">{text}</a>",
             html_attributes(&args.named, &[]),
             escape_html(&url)
         )

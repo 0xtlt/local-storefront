@@ -7,6 +7,7 @@ use lsf_liquid::{BlockBody, Context, Error, Expr, Hash, Parser, Result, Tag, Tag
 
 use crate::drops::PaginatedList;
 use crate::drops::lists::Lookup;
+use crate::filters::shopify_text;
 use crate::render::state::RenderState;
 use crate::site::Request;
 
@@ -49,6 +50,36 @@ fn part(title: Value, url: Option<String>) -> Value {
     Value::hash(part)
 }
 
+/// The globals a store pages through by name.
+const PAGINATED_GLOBALS: [&str; 3] = ["collections", "pages", "blogs"];
+
+impl Paginate {
+    /// Whether the markup reaches its list through the object that owns it
+    /// (`collection.products`, `p.variants`), or names a paginated global (`collections`). A
+    /// variable that holds a list (`{% assign a = collection.products %}`) is an array to a
+    /// store, which refuses it: "Array 'a' is not paginateable." (shopify.dev's playground,
+    /// 2026-11-16).
+    fn reaches_a_listing(&self) -> bool {
+        let markup = self.collection_markup.trim();
+        markup.contains(['.', '[']) || PAGINATED_GLOBALS.contains(&markup)
+    }
+
+    /// Whether a store pages through an array its owner gives: `product.variants` and the
+    /// collections of a `collection_list` setting. `product.images`, `product.media`,
+    /// `product.tags` and a menu's `links` are refused, as is any array made in Liquid
+    /// (`where`, `sort`, `concat`, `split`).
+    fn pages_an_array(&self, items: &[Value]) -> bool {
+        let markup = self.collection_markup.trim();
+        let property = markup.rsplit('.').next().unwrap_or(markup);
+        property == "variants"
+            || (!items.is_empty()
+                && items.iter().all(|item| {
+                    item.downcast::<crate::drops::collection::CollectionDrop>()
+                        .is_some()
+                }))
+    }
+}
+
 impl Tag for Paginate {
     fn render(&self, ctx: &mut Context, out: &mut String) -> Result<()> {
         let collection = self.collection.evaluate(ctx)?;
@@ -80,15 +111,18 @@ impl Tag for Paginate {
             .filter(|page| *page >= 1)
             .unwrap_or(1);
         let total = match (list, &collection) {
-            (Some(list), _) => list.total(),
-            (None, Value::Array(items)) => items.len(),
-            (None, Value::Nil) => {
+            (Some(list), _) if self.reaches_a_listing() => list.total(),
+            (None, Value::Array(items))
+                if self.reaches_a_listing() && self.pages_an_array(items) =>
+            {
+                items.len()
+            }
+            _ => {
                 return Err(Error::argument(format!(
                     "Array '{}' is not paginateable.",
                     self.collection_markup
                 )));
             }
-            (None, other) => other.items().map_or(0, |items| items.len()),
         };
         let page_count = total.div_ceil(page_size).max(1);
         let offset = (current_page - 1) * page_size;
@@ -130,7 +164,10 @@ impl Tag for Paginate {
             paginate.insert(
                 "previous".to_string(),
                 part(
-                    Value::str("&laquo; Previous"),
+                    Value::from(format!(
+                        "&laquo; {}",
+                        shopify_text(&state.site, "shopify.pagination.previous", &[])
+                    )),
                     Some(paginate_url(request, previous)),
                 ),
             );
@@ -139,7 +176,10 @@ impl Tag for Paginate {
             paginate.insert(
                 "next".to_string(),
                 part(
-                    Value::str("Next &raquo;"),
+                    Value::from(format!(
+                        "{} &raquo;",
+                        shopify_text(&state.site, "shopify.pagination.next", &[])
+                    )),
                     Some(paginate_url(request, current_page + 1)),
                 ),
             );

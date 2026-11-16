@@ -3,6 +3,79 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+Ten differences from Shopify reported as follow-ups (#311 to #320), and what checking them on
+Shopify's own renderer found besides: every fix below was compared with what shopify.dev's
+Liquid playground renders on Shopify's demo store, in English and in French.
+
+### Breaking changes
+
+- **`lsf check` refuses a `visible_if` whose condition Shopify's strict parser refuses**
+  (`invalid_schema`): `{{ settings.t == }}` passed, and Shopify's upload refuses the section
+  (#312).
+- **`| json` of a `rating` or measurement metafield's `.value` prints
+  `{"error":"json not allowed for this object"}`**, as a store does. Read its properties
+  instead (#315).
+- **`paginate` takes what a store pages through, and refuses the rest**: a list reached
+  through its owner (`collection.products`, `c.products`, `product.variants`, `p.variants`,
+  `search.results`) or `collections`, `pages` and `blogs`. A variable that holds a list
+  (`{% assign a = collection.products %}{% paginate a %}`), an array made in Liquid (`where`,
+  `sort`, `concat`, `split`), `product.images`, `product.media`, `product.tags`,
+  `collection.all_tags`, a menu's `links`, `all_products`, a text and a number are refused:
+  `Array 'a' is not paginateable.` (#320).
+- **A named date format Shopify does not have is an error** in `date` and `time_tag`: `The
+  format option 'month_and_year' is not a supported format.` `month_and_year` printed a date
+  and `time_tag` fell back on `date`'s format.
+
+### Fixed
+
+- **`search.terms` is HTML-escaped, and is a safe string as Rails has them**: `escape`, `h`
+  and `escape_once` leave it as it is, `append` escapes what it appends, `truncate` (with its
+  ellipsis escaped), `slice`, `truncatewords` (when it cuts nothing) and `default` keep it
+  safe, and the other filters give a plain string (#318).
+- **The search page's title strips the HTML of the terms**, as Rails' `strip_tags` does:
+  a search for `<b>` has the title `Search`, `<b>x` is `x`.
+- **`search.types` is in alphabetical order**: `article,page,product` by default and for an
+  unknown `type`, `article,product` for `type=product,article` (#319).
+- **The cart page reads the lines as the cart transform makes them**: `item.item_components`
+  lists the components of a line the transform expanded (#311).
+- **`/cart/update.js` with an unknown variant answers `422`** (#319), and **`/cart/add.js`
+  refusing a sold-out item among others** gives the sold-out sentence as its `message` (#317).
+- **`'1/2/26' | date`** is year 1, February 26: `%Y` and `%G` pad the year to four digits
+  (`0001-02-26`) (#320).
+- **The named date formats are Shopify's**: `long` is `March 5, 2026 14:08`, and
+  `month_day_year`, like `month_and_year`, is not a format of Shopify's unless the theme
+  defines it.
+- **`metafield_tag` and `metafield_text` of a `date_time`** show the value's own hour (#314).
+- **A page in French, German, Spanish, Italian, Dutch, Brazilian Portuguese, Japanese,
+  Korean or Simplified Chinese has Shopify's own strings in its language**, as a store gives
+  them: the 263 keys of `shopify.*` (sort names, filters, tag links, pagination, the search
+  title, notices, errors), the named date formats with the language's month, day and AM/PM
+  names and patterns (`3. Februar 2026 um 14:08`, `2026년 2월 3일 오후 2:08`),
+  `country.continent`, the default policy titles, and the availability, price and product
+  type filter labels. Read on a development store with each language published; every date
+  pattern renders back the 199 dates it was read from (#313, #316).
+- **Shopify's English strings are the store's**: four texts reworded to what a store prints,
+  and the six keys a store does not have (`shopify.sentence.*`, ...) print `Translation
+  missing`, as there.
+- **Shopify's filters answer as on a store**, compared with shopify.dev's playground:
+  - color filters read CSS color names, lowercase only (`red`, `rebeccapurple`), and
+    `transparent`, and no 4-digit hex (`#f00c`), as a store does;
+  - `color_brightness` and `color_difference` count the channels as they are: `154.34`
+    and `398.242` for `hsl(100, 38%, 54%)`;
+  - `camelize` puts together the words of the handle: `Héllo Wörld!` is `HelloWorld`,
+    `snake_case` `SnakeCase`, `camelCase` `Camelcase`;
+  - `pluralize` gives the singular for the number 1 only (`'1'` takes the plural);
+  - `date` reads an hour with its meridian alone: `3pm`, `3 p.m.`, `12am`;
+  - `link_to` adds no `rel="nofollow"` to an external URL;
+  - `unit_price_with_measurement` prints nothing without a measurement and raises
+    Shopify's error with something else;
+  - `font_face`, `font_url` and `font_modify` raise `… can only be used with a font drop`
+    on something other than a font, and print nothing on `nil`.
+- **`paginate.previous.title` and `paginate.next.title`** follow the page's language
+  (`&laquo; Précédent`), and a theme's override of `shopify.pagination.*`.
+
 ## 0.3.0-rc.7 - 2026-11-14
 
 Seventh release candidate of 0.3.0. Approving a plan or a charge in the embedded admin keeps

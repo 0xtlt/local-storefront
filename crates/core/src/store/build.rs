@@ -282,7 +282,7 @@ impl Builder<'_> {
             ),
         };
         let color = color.filter(|color| {
-            let valid = crate::color::Color::parse(color).is_some();
+            let valid = crate::color::Color::parse_value(color).is_some();
             if !valid {
                 self.error(
                     "invalid_color",

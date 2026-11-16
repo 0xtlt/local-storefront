@@ -359,21 +359,25 @@ fn parse_types(value: Option<&str>, default: &[SearchType]) -> Vec<SearchType> {
         .collect()
 }
 
+/// The names of the searched types, in alphabetical order whatever the order of `type`, as a
+/// store gives them: `article,page,product` by default, `article,product` for
+/// `type=product,article` (shopify.dev's playground, 2026-11-16).
 fn type_names(types: &[SearchType]) -> Value {
-    strings(
-        &types
-            .iter()
-            .map(|kind| {
-                match kind {
-                    SearchType::Product => "product",
-                    SearchType::Article => "article",
-                    SearchType::Page => "page",
-                    SearchType::Collection => "collection",
-                }
-                .to_string()
-            })
-            .collect::<Vec<_>>(),
-    )
+    let mut names: Vec<String> = types
+        .iter()
+        .map(|kind| {
+            match kind {
+                SearchType::Product => "product",
+                SearchType::Article => "article",
+                SearchType::Page => "page",
+                SearchType::Collection => "collection",
+            }
+            .to_string()
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    strings(&names)
 }
 
 /// The `search` object of the search page.
@@ -431,7 +435,7 @@ pub fn search_value(site: &SiteRef) -> Value {
         results.sort_by_key(|result| unavailable(site, result));
     }
     hash([
-        ("terms", Value::from(&query)),
+        ("terms", SearchTerms::value(&query)),
         ("performed", Value::Bool(performed)),
         ("results_count", Value::from(results.len())),
         ("results", PaginatedList::value(results)),
@@ -489,7 +493,7 @@ pub fn predictive_search_value(site: &SiteRef) -> Value {
     }
     hash([
         ("performed", Value::Bool(!query.is_empty())),
-        ("terms", Value::from(&query)),
+        ("terms", SearchTerms::value(&query)),
         ("types", type_names(&types)),
         (
             "resources",
@@ -540,4 +544,54 @@ pub fn recommendations_value(site: &SiteRef) -> Value {
         ("products", Value::array(products)),
         ("intent", Value::from(intent)),
     ])
+}
+
+/// `search.terms` and `predictive_search.terms`: the query, HTML-escaped as Shopify gives it.
+/// It is a "safe" string to Shopify, as Rails has them: `escape` leaves it as it is,
+/// `append` escapes what it appends, `truncate` and `slice` keep it safe, and any other filter
+/// gives a plain string (see `filters::html`), as shopify.dev's playground renders it.
+pub struct SearchTerms(String);
+
+impl SearchTerms {
+    pub fn value(query: &str) -> Value {
+        Value::Object(std::sync::Arc::new(SearchTerms(
+            lsf_liquid::filters::escape_html(query),
+        )))
+    }
+
+    /// The escaped text.
+    pub fn text(&self) -> &str {
+        &self.0
+    }
+
+    /// A text that is already escaped, as a filter that keeps `search.terms` escaped gives it.
+    pub fn escaped(text: String) -> Value {
+        Value::Object(std::sync::Arc::new(SearchTerms(text)))
+    }
+}
+
+impl lsf_liquid::Object for SearchTerms {
+    fn type_name(&self) -> &str {
+        "string"
+    }
+
+    fn to_value(&self) -> Option<Value> {
+        Some(Value::str(&self.0))
+    }
+
+    fn size(&self) -> Option<usize> {
+        Some(self.0.chars().count())
+    }
+
+    fn render(&self) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed(&self.0)
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::Value::String(self.0.clone())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }

@@ -20,7 +20,8 @@ fn error(status: u16, description: impl Into<String>) -> Reply {
 
 /// An error of `/cart/change.js`, whose `message` is its `description`, not `Cart Error`: the
 /// Ajax Cart API reference shows it so for `change.js` (`"message": "no valid id or line
-/// parameter"`), and a store capping a line at its stock answers the same way.
+/// parameter"`), and a store capping a line at its stock, or refusing a sold-out item among
+/// others in `add.js`, answers the same way.
 fn change_error(status: u16, description: impl Into<String>) -> Reply {
     let description = description.into();
     Reply::json(
@@ -134,8 +135,14 @@ enum AddError {
     Capped(Reply),
 }
 
-/// Adds one item to `lines`, the cart being built. Returns the key of the line it ended up in.
-fn add_item(visit: &Visit<'_>, lines: &mut Vec<CartLine>, item: &Json) -> Result<String, AddError> {
+/// Adds one item to `lines`, the cart being built, `among_others` when the request adds several.
+/// Returns the key of the line it ended up in.
+fn add_item(
+    visit: &Visit<'_>,
+    lines: &mut Vec<CartLine>,
+    item: &Json,
+    among_others: bool,
+) -> Result<String, AddError> {
     let refused = |reply| Err(AddError::Refused(reply));
     let store = &visit.store;
     let Some(variant_id) = integer(item, "id").map(|id| id as u64) else {
@@ -154,13 +161,18 @@ fn add_item(visit: &Visit<'_>, lines: &mut Vec<CartLine>, item: &Json) -> Result
     }
     let quantity = quantity as u32;
     if !variant.available {
-        return refused(error(
-            422,
-            format!(
-                "The product '{}' is already sold out.",
-                line_title(product, variant)
-            ),
-        ));
+        let sold_out = format!(
+            "The product '{}' is already sold out.",
+            line_title(product, variant)
+        );
+        // Alone, the reference's `Cart Error`; among other items, a development store gives the
+        // sentence as the `message` too, in either order (observed 2026-11-13 and 2026-11-15,
+        // #317).
+        return refused(if among_others {
+            change_error(422, sold_out)
+        } else {
+            error(422, sold_out)
+        });
     }
     let selling_plan = match selling_plan(item) {
         PlanParam::Absent | PlanParam::Cleared => None,
@@ -298,7 +310,7 @@ pub fn add(visit: &Visit<'_>) -> Reply {
     let mut lines = visit.session().cart_lines;
     let mut keys = Vec::new();
     for item in &items {
-        let reply = match add_item(visit, &mut lines, item) {
+        let reply = match add_item(visit, &mut lines, item, items.len() > 1) {
             Ok(key) => {
                 keys.push(key);
                 continue;
@@ -551,11 +563,11 @@ fn updates_an_unknown_variant(visit: &Visit<'_>, params: &Json) -> bool {
 
 pub fn update(visit: &Visit<'_>) -> Reply {
     let params = visit.incoming.all_params();
-    // The cart does not change. The Ajax Cart API reference gives this error a `404`, for
-    // `update.js` (a store was seen to answer `422`, as for `add.js`).
+    // The cart does not change. A development store answers `422`, as `add.js` does, for a form
+    // body and a JSON body alike (observed 2026-11-13 and 2026-11-15, #319).
     // https://shopify.dev/docs/api/ajax/reference/cart#post-locale-cart-update-js
     if wants_json(visit) && updates_an_unknown_variant(visit, &params) {
-        return error(404, "Cannot find variant");
+        return error(422, "Cannot find variant");
     }
     apply_updates(visit, &params);
     cart_reply(visit, &params)

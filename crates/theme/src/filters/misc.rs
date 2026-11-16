@@ -43,21 +43,18 @@ fn handleize(input: &Value, _args: &FilterArgs, _ctx: &Context) -> Result<Value>
     Ok(Value::from(util::handleize(&input.to_str())))
 }
 
-/// `variable-name` → `VariableName`.
+/// The handle of the text, each word capitalized and put together, as Shopify does it:
+/// `Héllo Wörld!` is `HelloWorld`, `snake_case` is `SnakeCase`, `camelCaseHere` is
+/// `Camelcasehere` (shopify.dev's
+/// playground, 2026-11-16).
 fn camelize(input: &Value, _args: &FilterArgs, _ctx: &Context) -> Result<Value> {
-    let text = input.to_str();
-    let mut out = String::with_capacity(text.len());
-    let mut upper = true;
-    for c in text.chars() {
-        if c.is_alphanumeric() {
-            if upper {
-                out.extend(c.to_uppercase());
-                upper = false;
-            } else {
-                out.push(c);
-            }
-        } else {
-            upper = true;
+    let handle = util::handleize(&input.to_str());
+    let mut out = String::with_capacity(handle.len());
+    for word in handle.split(['-', '_']) {
+        let mut chars = word.chars();
+        if let Some(first) = chars.next() {
+            out.extend(first.to_uppercase());
+            out.push_str(chars.as_str());
         }
     }
     Ok(Value::from(out))

@@ -1,6 +1,7 @@
 //! A theme on disk: Liquid files, JSON templates, settings and locales, parsed on demand and
 //! cached until the files change.
 
+pub mod builtin_locales;
 pub mod liquid_settings;
 pub mod locales;
 pub mod menus;

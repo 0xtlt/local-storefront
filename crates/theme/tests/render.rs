@@ -229,6 +229,8 @@ fn liquid_core_reads_as_a_storefront_does() {
         .0,
         "2026-01-03|2026-12-31|12/31/2026|2026-02-28 19:00:00|2026-02-28 19:00:00"
     );
+    // #320: with no year of more than two digits, year, month and day, as a store reads it.
+    assert_eq!(render("/", "{{ '1/2/26' | date: '%F' }}").0, "0001-02-26");
     // 2. Nil is not paginateable, and the error names the expression.
     let (output, errors) = render(
         "/",
@@ -239,6 +241,16 @@ fn liquid_core_reads_as_a_storefront_does() {
         "[Liquid error (line 1): Array 'nothing_here.products' is not paginateable.]"
     );
     assert_eq!(errors.len(), 1);
+    // #320: nor is an array made in Liquid, while a list of resources is.
+    let (output, _) = render(
+        "/",
+        "{% assign arr = '1,2,3' | split: ',' %}[{% paginate arr by 2 %}{{ paginate.pages }}{% endpaginate %}]\
+         [{% paginate collections.all.products.first.variants by 2 %}{{ paginate.items }}{% endpaginate %}]",
+    );
+    assert_eq!(
+        output,
+        "[Liquid error (line 1): Array 'arr' is not paginateable.][1]"
+    );
     // 3. Past the last page, the previous page is the last one.
     assert_eq!(
         render(
@@ -755,7 +767,8 @@ fn t_has_no_default_prints_a_group_of_keys_and_reads_a_key_as_ruby_does() {
 fn shopify_strings_are_the_themes_when_it_overrides_them() {
     // Issue #112: a `shopify.*` key in a locale file overrides Shopify's own string
     // (https://shopify.dev/docs/storefronts/themes/architecture/locales/storefront-locale-files#override-shopify-provided-translations).
-    // Shopify's defaults are published in English only: without an override, they are English.
+    // Without an override, a French page has the French strings read on a store (#313), the
+    // others in English, as Shopify publishes them.
     let fixture = theme_of(
         "shopify-strings",
         &[],
@@ -784,7 +797,7 @@ fn shopify_strings_are_the_themes_when_it_overrides_them() {
                       {{ 'Snow' | link_to_remove_tag: 'Snow' }}";
     assert_eq!(
         render("fr", "/collections/all", collection),
-        "En vedette|Most relevant|En stock,Out of stock,|\
+        "En vedette|Le plus pertinent|En stock,En rupture de stock,|\
          <a href=\"/collections/all\" title=\"Supprimer la balise Snow\">Snow</a>"
     );
     assert_eq!(
@@ -1371,25 +1384,27 @@ fn search_excludes_terms_matches_title_words_and_ignores_unknown_types() {
              [{{ search.types | join: ',' }}]",
         )
     };
-    let all = "3:the-complete-snowboard blue-snowboard snowboard [product,article,page]";
+    let all = "3:the-complete-snowboard blue-snowboard snowboard [article,page,product]";
     assert_eq!(search("q=snowboard"), all);
     // 4. An excluded term removes the products it matches.
-    let not_blue = "2:the-complete-snowboard snowboard [product,article,page]";
+    let not_blue = "2:the-complete-snowboard snowboard [article,page,product]";
     assert_eq!(search("q=snowboard -blue"), not_blue);
     assert_eq!(search("q=snowboard NOT blue"), not_blue);
     assert_eq!(search("q=-blue snowboard"), not_blue);
     assert_eq!(
         search("q=snowboard -title:complete"),
-        "2:blue-snowboard snowboard [product,article,page]"
+        "2:blue-snowboard snowboard [article,page,product]"
     );
     // 5. `title:` finds a word of the title, in any case.
     assert_eq!(
         search("q=title:complete"),
-        "1:the-complete-snowboard [product,article,page]"
+        "1:the-complete-snowboard [article,page,product]"
     );
     assert_eq!(search("q=title:Snowboard"), all);
-    assert_eq!(search("q=title:snow"), "0:[product,article,page]");
+    assert_eq!(search("q=title:snow"), "0:[article,page,product]");
     // 6. A type the store does not know is ignored.
+    // #319: the types are named in alphabetical order, whatever the order of `type`, as
+    // shopify.dev's playground gives them on Shopify's demo store.
     assert_eq!(search("q=snowboard&type=bogus"), all);
     assert_eq!(
         search("q=snowboard&type=product,bogus"),
@@ -3721,12 +3736,10 @@ fn date_metafields_print_the_stored_string() {
         render("{{ d | metafield_tag }}"),
         r#"<time datetime="2026-03-05" class="metafield-date">March 5, 2026</time>"#
     );
-    assert!(
-        render("{{ t | metafield_tag }}").starts_with(
-            r#"<time datetime="2026-03-05T14:30:00+01:00" class="metafield-date_time">"#
-        ),
-        "{}",
-        render("{{ t | metafield_tag }}")
+    // #314: and the value's own hour, not the shop's, as a store shows it.
+    assert_eq!(
+        render("{{ t | metafield_tag }}|{{ t | metafield_text }}"),
+        r#"<time datetime="2026-03-05T14:30:00+01:00" class="metafield-date_time">Mar 5, 2026, 2:30 pm</time>|Mar 5, 2026, 2:30 pm"#
     );
 }
 
@@ -3791,9 +3804,10 @@ fn measurement_and_rating_metafields_print_as_a_store_prints_them() {
     assert_eq!(
         render(
             "{{ f.vol.value.type }}|{{ f.stars.value.rating }}|{{ f.stars.value.scale_min }}|\
-             {{ f.stars.value.scale_max }}|{{ f.stars.value | json }}"
+             {{ f.stars.value.scale_max }}|{{ f.stars.value | json }}|{{ f.len.value | json }}"
         ),
-        r#"volume|3.5|0.0|10.0|{"rating":"3.5","scale_max":"10.0","scale_min":"0.0"}"#
+        // #315: `| json` refuses both, as a development store did.
+        r#"volume|3.5|0.0|10.0|{"error":"json not allowed for this object"}|{"error":"json not allowed for this object"}"#
     );
     assert_eq!(
         render("{{ f.vol | metafield_tag }}"),
@@ -4311,13 +4325,16 @@ fn a_rating_has_strings_as_on_shopify() {
     // Numbers are kept as they are written, as strings.
     assert_eq!(stars("numbers"), "[5] [\"5\"] [*****]");
     // The rating object of Shopify's Liquid reference: `rating`, `scale_max`, `scale_min`.
+    // `| json` refuses it, as a development store does (#315).
+    let fields = "{% assign r = metaobjects.spec.tent.FIELD.value %}\
+                  {{ r.rating }}|{{ r.scale_max }}|{{ r.scale_min }}|{{ r | json }}";
     assert_eq!(
-        render("{{ metaobjects.spec.tent.stars.value | json }}"),
-        r#"{"rating":"4.5","scale_max":"5.0","scale_min":"1.0"}"#
+        render(&fields.replace("FIELD", "stars")),
+        r#"4.5|5.0|1.0|{"error":"json not allowed for this object"}"#
     );
     assert_eq!(
-        render("{{ metaobjects.spec.tent.numbers.value | json }}"),
-        r#"{"rating":"4.5","scale_max":"5","scale_min":"1"}"#
+        render(&fields.replace("FIELD", "numbers")),
+        r#"4.5|5|1|{"error":"json not allowed for this object"}"#
     );
     // The metafield itself is refused, as on Shopify.
     assert_eq!(
@@ -6799,4 +6816,334 @@ fn a_t_key_saved_as_a_setting_value_is_printed_as_it_is() {
         "{}",
         page.body
     );
+}
+
+#[test]
+fn search_terms_are_html_escaped_and_escape_leaves_them_as_they_are() {
+    // #318: a development store printed the same for both, with no `&amp;lt;`.
+    let fixture = fixture();
+    let mut request = request("/search");
+    request.query = vec![("q".to_string(), "<b>x</b>\"'&".to_string())];
+    let liquid = fixture.liquid_for(
+        request,
+        Session::initial(&fixture.store),
+        "raw:{{ search.terms }} escape:{{ search.terms | escape }} h:{{ search.terms | h }} \
+         size:{{ search.terms | size }} other:{{ '<i>' | escape }}",
+    );
+    let escaped = "&lt;b&gt;x&lt;/b&gt;&quot;&#39;&amp;";
+    assert_eq!(
+        liquid,
+        format!("raw:{escaped} escape:{escaped} h:{escaped} size:36 other:&lt;i&gt;")
+    );
+}
+
+#[test]
+fn a_french_page_has_shopifys_strings_as_a_french_store_gives_them() {
+    // #313 and #316: as shopify.dev's playground renders them on `/fr` of Shopify's demo
+    // store, with no override in the theme.
+    let fixture = fixture();
+    let render = |locale: &str, path: &str, source: &str| {
+        let mut request = request(path);
+        request.locale = locale.to_string();
+        fixture.liquid_for(request, Session::initial(&fixture.store), source)
+    };
+    let collection = "{% for o in collection.sort_options limit: 4 %}{{ o.name }};{% endfor %}|\
+                      {% for f in collection.filters limit: 2 %}{{ f.label }}:{% for v in f.values %}{{ v.label }},{% endfor %};{% endfor %}";
+    assert_eq!(
+        render("fr", "/collections/all", collection),
+        "En vedette;Le plus pertinent;Meilleures ventes;Alphabétique, de A à Z;|\
+         Disponibilité:En stock,En rupture de stock,;Prix:;"
+    );
+    let dates = "{% assign d = '2026-03-05T07:08:09Z' %}{{ d | date: format: 'abbreviated_date' }}|\
+                 {{ d | date: format: 'date_at_time' }}|{{ d | date: format: 'on_date' }}|\
+                 {{ d | date: format: 'basic' }}|{{ d | date: '%B' }}";
+    assert_eq!(
+        render("fr", "/", dates),
+        "5 mars 2026|5 mars 2026 à 02:08|le 5 mars 2026|05/03/2026|March"
+    );
+    let named = "{% assign d = '2026-02-03T19:08:09Z' %}{{ d | date: format: 'date' }}|\
+                 {{ d | date: format: 'default' }}|{{ d | date: format: 'short' }}|\
+                 {{ d | date: format: 'long' }}|{{ d | date }}";
+    assert_eq!(
+        render("fr", "/", named),
+        "3 février 2026|mardi 3 février 2026 à 14:08 -0500|3 févr. 14:08|\
+         février 3, 2026 14:08|mardi 3 février 2026 à 14:08 -0500"
+    );
+    assert_eq!(
+        render("en", "/", named),
+        "February 3, 2026|Tuesday, February 3, 2026 at 2:08 pm -0500|3 Feb 14:08|\
+         February 3, 2026 14:08|Tuesday, February 3, 2026 at 2:08 pm -0500"
+    );
+    // Other languages, with their own names and patterns, as a store gives them.
+    let d = "{% assign d = '2026-02-03T19:08:09Z' %}{{ d | date: format: 'date' }}|\
+             {{ d | date: format: 'date_at_time' }}|{{ d | date: format: 'basic' }}";
+    for (locale, expected) in [
+        ("de", "3. Februar 2026|3. Februar 2026 um 14:08|3.2.2026"),
+        ("es", "3 de febrero de 2026|3 febrero 2026, 14:08|3/2/2026"),
+        (
+            "pt-BR",
+            "3 de fevereiro de 2026|3 de fevereiro de 2026 14:08|03/02/2026",
+        ),
+        ("ja", "2026年2月3日|2026年2月3日 14:08|2026/2/3"),
+        ("ko", "2026년 2월 3일|2026년 2월 3일 오후 2:08|2026. 2. 3."),
+        ("zh-CN", "2026年2月3日|2026年2月3日 14:08|2026/2/3"),
+    ] {
+        assert_eq!(render(locale, "/", d), expected, "{locale}");
+    }
+    // A format Shopify does not have, when the theme does not define it either (this one's
+    // locale file defines `month_and_year`, which Shopify does not have; nor has it
+    // `month_day_year`, in any language).
+    let unsupported = "{{ 'now' | date: format: 'month_day_year' }}";
+    for locale in ["en", "fr"] {
+        let site = |source: &str| {
+            let mut request = request("/");
+            request.locale = locale.to_string();
+            let site = fixture.renderer.site(
+                fixture.store.clone(),
+                request,
+                Session::initial(&fixture.store),
+            );
+            let page = lsf_theme::render::routes::resolve(&site);
+            fixture
+                .renderer
+                .render_liquid(&site, page, source, &[])
+                .expect("parses")
+                .0
+        };
+        assert_eq!(
+            site(unsupported),
+            "Liquid error (line 1): The format option 'month_day_year' is not a supported format."
+        );
+    }
+    assert_eq!(
+        render(
+            "fr",
+            "/",
+            "{{ 'shopify.pagination.next' | t }}|{{ 'shopify.errors.discount_expired' | t }}|\
+             {{ 'shopify.sentence.words_connector' | t }}"
+        ),
+        "Suivant|Cette promotion n&#39;est plus valide|\
+         Translation missing: fr.shopify.sentence.words_connector"
+    );
+    assert_eq!(
+        render("en", "/", dates),
+        "Mar 5, 2026|March 5, 2026 at 2:08 am|on Mar 5, 2026|3/5/2026|March"
+    );
+    assert_eq!(
+        render("fr", "/search?q=beanie&type=product", "{{ page_title }}"),
+        // With the non-breaking spaces of French typography, as the store has them.
+        "Recherche\u{a0}: 1\u{a0}résultat trouvé pour «\u{a0}beanie\u{a0}»"
+    );
+    let localization = "{% for c in localization.available_countries %}{% if c.iso_code == 'US' %}\
+                        {{ c.continent }}{% endif %}{% endfor %}|{{ shop.privacy_policy.title }}";
+    let french = render("fr", "/", localization);
+    let english = render("en", "/", localization);
+    assert!(french.starts_with("Amérique du Nord|"), "{french}");
+    assert!(english.starts_with("North America|"), "{english}");
+    let pages = "{% paginate collections.all.products by 1 %}{{ paginate.previous.title }}|\
+                 {{ paginate.next.title }}{% endpaginate %}";
+    assert_eq!(
+        render("fr", "/collections/all?page=2", pages),
+        "&laquo; Précédent|Suivant &raquo;"
+    );
+    assert_eq!(
+        render("en", "/collections/all?page=2", pages),
+        "&laquo; Previous|Next &raquo;"
+    );
+}
+
+#[test]
+fn paginate_takes_what_a_store_pages_through() {
+    // shopify.dev's playground on Shopify's demo store: a list reached through its owner, or a
+    // paginated global; not a variable that holds one, nor an array of the object's own.
+    let fixture = fixture();
+    let render = |path: &str, source: &str| {
+        let site = fixture.renderer.site(
+            fixture.store.clone(),
+            request(path),
+            Session::initial(&fixture.store),
+        );
+        let page = lsf_theme::render::routes::resolve(&site);
+        fixture
+            .renderer
+            .render_liquid(&site, page, source, &[])
+            .expect("parses")
+            .0
+    };
+    let paginate = |expr: &str| format!("{{% paginate {expr} by 2 %}}ok{{% endpaginate %}}");
+    let refused =
+        |name: &str| format!("Liquid error (line 1): Array '{name}' is not paginateable.");
+    for (setup, expr) in [
+        ("", "collections"),
+        ("", "collections.all.products"),
+        ("{% assign c = collections.all %}", "c.products"),
+        ("", "collections.all.products.first.variants"),
+        (
+            "{% for p in collections.all.products limit: 1 %}",
+            "p.variants",
+        ),
+    ] {
+        let end = if setup.starts_with("{% for") {
+            "{% endfor %}"
+        } else {
+            ""
+        };
+        assert_eq!(
+            render("/", &format!("{setup}{}{end}", paginate(expr))),
+            "ok",
+            "{expr}"
+        );
+    }
+    for (setup, expr) in [
+        ("{% assign a = collections.all.products %}", "a"),
+        (
+            "{% assign a = collections.all.products.first.variants %}",
+            "a",
+        ),
+        (
+            "{% assign a = collections.all.products | where: 'available' %}",
+            "a",
+        ),
+        ("{% assign a = '1,2' | split: ',' %}", "a"),
+        ("", "collections.all.products.first.images"),
+        ("", "collections.all.products.first.tags"),
+        ("", "collections.all.all_tags"),
+        ("", "all_products"),
+        ("{% assign s = 'abc' %}", "s"),
+    ] {
+        assert_eq!(
+            render("/", &format!("{setup}{}", paginate(expr))),
+            refused(expr),
+            "{expr}"
+        );
+    }
+}
+
+#[test]
+fn search_terms_are_a_safe_string_as_on_shopify() {
+    // shopify.dev's playground, `/search?q=<b>`: the filters that keep a Rails safe string keep
+    // it escaped once; the others give a plain string, which `escape` escapes again.
+    let fixture = fixture();
+    let mut request = request("/search");
+    request.query = vec![("q".to_string(), "<b>".to_string())];
+    let terms = |filters: &str| {
+        fixture.liquid_for(
+            request.clone(),
+            Session::initial(&fixture.store),
+            &format!("{{{{ search.terms | {filters} | escape }}}}"),
+        )
+    };
+    for (filters, output) in [
+        ("append: '<'", "&lt;b&gt;&lt;"),
+        ("append: search.terms", "&lt;b&gt;&lt;b&gt;"),
+        ("prepend: '<'", "&lt;&amp;lt;b&amp;gt;"),
+        ("truncate: 6", "&lt..."),
+        ("truncate: 6, '<<'", "&lt;&lt;"),
+        ("slice: 0, 4", "&lt;"),
+        ("truncatewords: 1", "&lt;b&gt;"),
+        ("escape_once", "&lt;b&gt;"),
+        ("default: 'x'", "&lt;b&gt;"),
+        ("replace: 'b', '<'", "&amp;lt;&lt;&amp;gt;"),
+        ("strip", "&amp;lt;b&amp;gt;"),
+        ("upcase", "&amp;LT;B&amp;GT;"),
+        (
+            "highlight: 'b'",
+            "&amp;lt;&lt;strong class=&quot;highlight&quot;&gt;b&lt;/strong&gt;&amp;gt;",
+        ),
+    ] {
+        assert_eq!(terms(filters), output, "{filters}");
+    }
+}
+
+#[test]
+fn the_search_title_strips_the_html_of_the_terms() {
+    // shopify.dev's playground: Rails' `strip_tags` on the terms, then the title escaped.
+    let fixture = fixture();
+    let title = |q: &str| {
+        let mut request = request("/search");
+        request.query = vec![("q".to_string(), q.to_string())];
+        fixture.liquid_for(
+            request,
+            Session::initial(&fixture.store),
+            "{{ page_title }}",
+        )
+    };
+    assert_eq!(title("<b>"), "Search");
+    assert_eq!(title(" "), "Search");
+    assert!(
+        title("<b>x").ends_with("found for &quot;x&quot;"),
+        "{}",
+        title("<b>x")
+    );
+    assert!(
+        title("a < b").ends_with("for &quot;a &amp;lt; b&quot;"),
+        "{}",
+        title("a < b")
+    );
+    assert!(
+        title("a&b").ends_with("for &quot;a&amp;b&quot;"),
+        "{}",
+        title("a&b")
+    );
+}
+
+#[test]
+fn shopifys_filters_answer_as_on_a_store() {
+    // shopify.dev's playground on Shopify's demo store (2026-11-16).
+    let fixture = fixture();
+    let render = |source: &str| {
+        let site = fixture.renderer.site(
+            fixture.store.clone(),
+            request("/"),
+            Session::initial(&fixture.store),
+        );
+        let page = lsf_theme::render::routes::resolve(&site);
+        fixture
+            .renderer
+            .render_liquid(&site, page, source, &[])
+            .expect("parses")
+            .0
+    };
+    for (source, output) in [
+        // CSS names, lowercase only, and `transparent`; no 4-digit hex.
+        (
+            "{{ 'red' | color_to_rgb }}|{{ 'red' | color_lighten: 30 }}|{{ 'rebeccapurple' | color_to_hex }}",
+            "rgb(255, 0, 0)|#ff9999|#663399",
+        ),
+        (
+            "[{{ 'RED' | color_to_hex }}]|{{ 'transparent' | color_to_rgb }}|[{{ '#f00c' | color_to_rgb }}]",
+            "[]|rgba(0, 0, 0, 0.0)|[]",
+        ),
+        // From the channels as they are.
+        (
+            "{{ 'hsl(100, 38%, 54%)' | color_brightness }}|{{ 'hsl(100, 38%, 54%)' | color_difference: '#000' }}|{{ '#720955' | color_difference: '#FFF1FE' }}",
+            "154.34|398.242|542",
+        ),
+        (
+            "{{ '  Héllo Wörld! ' | camelize }}|{{ 'camelCaseHere' | camelize }}|{{ 'snake_case_here' | camelize }}|{{ 'a--b__c' | camelize }}",
+            "HelloWorld|Camelcasehere|SnakeCaseHere|ABC",
+        ),
+        (
+            "{{ 1 | pluralize: 'a', 'b' }}|{{ 1.0 | pluralize: 'a', 'b' }}|{{ '1' | pluralize: 'a', 'b' }}|{{ true | pluralize: 'a', 'b' }}",
+            "a|a|b|b",
+        ),
+        (
+            "{{ '5 Mar 2026 3pm' | date: '%H:%M' }}|{{ '2026-03-05 3 p.m.' | date: '%H:%M' }}|{{ '2026-03-05 12am' | date: '%H:%M' }}",
+            "15:00|15:00|00:00",
+        ),
+        (
+            "{{ 'x' | link_to: 'https://a.b', 'T' }}|{{ 'x' | link_to: 'https://a.b', class: 'c' }}",
+            "<a href=\"https://a.b\" title=\"T\">x</a>|<a class=\"c\" href=\"https://a.b\">x</a>",
+        ),
+        (
+            "[{{ 1999 | unit_price_with_measurement: nil }}]|[{{ 1999 | unit_price_with_measurement: 'x' }}]",
+            "[]|[Liquid error (line 1): unit_price_measurement must be a unit_price_measurement or a hash]",
+        ),
+        (
+            "[{{ nil | font_face }}]|[{{ 'x' | font_url }}]",
+            "[]|[Liquid error (line 1): font_url can only be used with a font drop]",
+        ),
+    ] {
+        assert_eq!(render(source), output, "{source}");
+    }
 }

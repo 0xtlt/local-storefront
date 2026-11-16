@@ -1,5 +1,6 @@
 //! `metafield_tag` and `metafield_text`.
 
+use chrono::TimeZone;
 use lsf_core::money::format_money;
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::time::strftime;
@@ -44,7 +45,13 @@ fn text_of(
             } else {
                 "%b %-d, %Y, %-l:%M %P"
             };
-            lsf_liquid::time::to_time(value, ctx)
+            // A `date_time` with an offset shows its own hour, not the shop's: a store prints
+            // `2:30 pm` for `2026-03-05T14:30:00+01:00` in a shop at UTC-5 (#314).
+            let own_hour = chrono::DateTime::parse_from_rfc3339(value.to_str().trim())
+                .ok()
+                .map(|time| lsf_liquid::time::Tz::UTC.from_utc_datetime(&time.naive_local()));
+            own_hour
+                .or_else(|| lsf_liquid::time::to_time(value, ctx))
                 .and_then(|time| strftime(&time, pattern).ok())
                 .unwrap_or_else(|| value.to_str().into_owned())
         }
