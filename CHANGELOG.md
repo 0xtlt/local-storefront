@@ -3,11 +3,14 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
-## Unreleased
+## 0.3.0-rc.8 - 2026-11-16
 
-Ten differences from Shopify reported as follow-ups (#311 to #320), and what checking them on
-Shopify's own renderer found besides: every fix below was compared with what shopify.dev's
-Liquid playground renders on Shopify's demo store, in English and in French.
+Eighth release candidate of 0.3.0. It fixes the ten differences from Shopify reported as
+follow-ups (#311 to #320), and what checking them against Shopify's own renderer found
+besides. Every fix was compared with what a store renders: shopify.dev's Liquid playground
+for English and French, and a development store for Shopify's own strings in ten languages
+(English, French, German, Spanish, Italian, Dutch, Brazilian Portuguese, Japanese, Korean and
+Simplified Chinese). Some themes need a change: see Breaking changes.
 
 ### Breaking changes
 
