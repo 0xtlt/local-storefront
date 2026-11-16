@@ -109,14 +109,18 @@ pub fn translate(site: &Site, key: &str, named: &[(String, Value)]) -> Option<St
         return Some(text);
     }
     // Shopify's own keys use `%{name}` placeholders, and their plural forms are keys of their
-    // own, in English.
-    // On a French page, the French strings read on a store, then the English ones.
+    // own. On a French page they are French, as a store gives them: a key Shopify has no French
+    // for is missing there.
     let french = builtin_fr::applies(&site.request.locale);
-    let system = |key: &str| {
-        french
-            .then(|| builtin_fr::system_translation(key))
-            .flatten()
-            .or_else(|| system_translation(key))
+    let system = |key: &str| -> Option<&'static str> {
+        if !french {
+            return system_translation(key);
+        }
+        match builtin_fr::system_translation(key) {
+            builtin_fr::SystemText::French(text) => Some(text),
+            builtin_fr::SystemText::Missing => None,
+            builtin_fr::SystemText::Unknown => system_translation(key),
+        }
     };
     let plural = count(named).and_then(operands).map(|operands| {
         let language = if french { "fr" } else { "en" };
@@ -177,34 +181,48 @@ fn t(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
 /// The `strftime` pattern of a named date format in English.
 fn named_format(name: &str) -> Option<&'static str> {
     Some(match name {
+        // As shopify.dev's playground renders them on Shopify's demo store (2026-11-16), where
+        // `month_and_year` is "not a supported format".
         "abbreviated_date" => "%b %-d, %Y",
         "basic" => "%-m/%-d/%Y",
-        "date" | "month_day_year" => "%B %-d, %Y",
+        "date" => "%B %-d, %Y",
+        "month_day_year" => "%B %d, %Y",
         "date_at_time" => "%B %-d, %Y at %-I:%M %P",
         "default" => "%A, %B %-d, %Y at %-I:%M %P %z",
         "on_date" => "on %b %-d, %Y",
         "short" => "%-d %b %H:%M",
-        "long" => "%B %d, %Y %H:%M",
-        "month_and_year" => "%B %Y",
+        "long" => "%B %-d, %Y %H:%M",
         _ => return None,
     })
 }
 
-/// A pattern of `date: format: 'name'`, and whether it takes French month names.
+/// A pattern of `date: format: 'name'`, and whether it takes French month and day names.
 struct NamedPattern {
     pattern: String,
     french_months: bool,
 }
 
 impl NamedPattern {
-    /// The pattern, with the month names of `time` put in when they are French.
+    /// The pattern, with the month and day names of `time` put in when they are French.
     fn for_time(&self, time: &chrono::DateTime<Tz>) -> String {
         if self.french_months {
-            builtin_fr::month_names(&self.pattern, chrono::Datelike::month(time))
+            use chrono::Datelike;
+            builtin_fr::names(
+                &self.pattern,
+                time.month(),
+                time.weekday().num_days_from_monday(),
+            )
         } else {
             self.pattern.clone()
         }
     }
+}
+
+/// The error of a named format Shopify does not have.
+fn unsupported_format(name: &str) -> Error {
+    Error::argument(format!(
+        "The format option '{name}' is not a supported format."
+    ))
 }
 
 /// The pattern for `date: format: 'name'`: a custom format from the locale file's
@@ -262,11 +280,7 @@ fn date(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
         },
         (name, _) => {
             let name = name.map_or(DEFAULT_FORMAT.into(), Value::to_str);
-            date_pattern(site(ctx)?, &name).ok_or_else(|| {
-                Error::argument(format!(
-                    "date format '{name}' is not defined in the locale file"
-                ))
-            })?
+            date_pattern(site(ctx)?, &name).ok_or_else(|| unsupported_format(&name))?
         }
     };
     if pattern.pattern.is_empty() {
@@ -288,10 +302,9 @@ fn time_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
         (None, Some(format)) => format.to_str().into_owned(),
         (name, _) => {
             let name = name.map_or(DEFAULT_FORMAT.into(), Value::to_str);
-            date_pattern(site(ctx)?, &name).map_or_else(
-                || "%B %-d, %Y".to_string(),
-                |pattern| pattern.for_time(&time),
-            )
+            date_pattern(site(ctx)?, &name)
+                .ok_or_else(|| unsupported_format(&name))?
+                .for_time(&time)
         }
     };
     let text = strftime(&time, &pattern).map_err(Error::argument)?;

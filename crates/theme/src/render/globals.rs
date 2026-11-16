@@ -54,11 +54,14 @@ impl Globals {
     /// `Search: 3 results found for &quot;shirt&quot;`, in the theme's words when it overrides
     /// them, HTML-escaped as a store prints it.
     fn page_title(&self) -> String {
+        // The terms without their HTML, as Rails' `strip_tags` gives them: a search for `<b>`
+        // has the title of a search without terms (shopify.dev's playground, 2026-11-16).
         let terms = self
             .site
             .request
             .param("q")
-            .filter(|terms| !terms.is_empty());
+            .map(strip_tags)
+            .filter(|terms| !terms.trim().is_empty());
         match (&self.page.resource, terms) {
             (Resource::Search, Some(terms)) => {
                 let count = self
@@ -69,7 +72,7 @@ impl Globals {
                     "shopify.page_titles.search_results",
                     &[
                         ("count".to_string(), count),
-                        ("terms".to_string(), Value::from(terms)),
+                        ("terms".to_string(), Value::from(terms.as_str())),
                     ],
                 ))
             }
@@ -314,4 +317,141 @@ pub fn meta_description(html: &str) -> String {
     let unescaped = collapsed.replace("&amp;", "&").replace("&nbsp;", " ");
     let truncated: String = unescaped.chars().take(320).collect();
     escape_html(&truncated).replace("&#39;", "'")
+}
+
+/// A text without its HTML, as Rails' `strip_tags` gives it, which Shopify runs on the terms of
+/// a search's title: a text without `<` is as it is; otherwise its tags, comments and the
+/// content of `script` and `style` go, a `<` that opens nothing stays, and the text comes out
+/// with `&`, `<` and `>` as entities (`a < b` is `a &lt; b`). Read on shopify.dev's playground
+/// (2026-11-16): `<b>x` is `x`, `a<b` is `a`, `x>y<z` is `x&gt;y`, `a<!--c-->b` is `ab`.
+pub fn strip_tags(text: &str) -> String {
+    if !text.contains('<') {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut plain = String::new();
+    let mut i = 0;
+    let find = |from: usize, needle: &str| -> Option<usize> {
+        let rest: String = chars[from..].iter().collect();
+        rest.find(needle)
+            .map(|at| from + rest[..at].chars().count())
+    };
+    while i < chars.len() {
+        let c = chars[i];
+        if c != '<' {
+            plain.push(c);
+            i += 1;
+            continue;
+        }
+        let next = chars.get(i + 1).copied();
+        let opens_tag = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphabetic());
+        if next.is_none() {
+            // A `<` that ends the text is dropped.
+            i += 1;
+        } else if chars[i + 1..].starts_with(&['!', '-', '-']) {
+            i = find(i + 4, "-->").map_or(chars.len(), |end| end + 3);
+        } else if matches!(next, Some('!' | '?'))
+            || opens_tag(next)
+            || (next == Some('/') && opens_tag(chars.get(i + 2).copied()))
+        {
+            let name: String = chars[i + 1..]
+                .iter()
+                .take_while(|c| c.is_ascii_alphanumeric())
+                .collect::<String>()
+                .to_ascii_lowercase();
+            let end = find(i, ">").map_or(chars.len(), |end| end + 1);
+            i = end;
+            // The content of `script` and `style` goes with them.
+            if matches!(name.as_str(), "script" | "style") {
+                let rest: String = chars[i..].iter().collect::<String>().to_ascii_lowercase();
+                i = match rest.find(&format!("</{name}")) {
+                    Some(at) => {
+                        let close = i + rest[..at].chars().count();
+                        find(close, ">").map_or(chars.len(), |end| end + 1)
+                    }
+                    None => chars.len(),
+                };
+            }
+        } else {
+            plain.push('<');
+            i += 1;
+        }
+    }
+    let decoded = decode_entities(&plain);
+    let mut out = String::with_capacity(decoded.len());
+    for c in decoded.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The text of HTML: its common entities (`&amp;`, `&lt;`, `&#39;`) as the characters.
+fn decode_entities(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let entity = rest[1..].find(';').map(|end| &rest[1..=end]);
+        let decoded = entity.and_then(|entity| match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "nbsp" => Some('\u{a0}'),
+            _ => {
+                let number = entity.strip_prefix('#')?;
+                let code = match number.strip_prefix(['x', 'X']) {
+                    Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                    None => number.parse().ok()?,
+                };
+                char::from_u32(code)
+            }
+        });
+        match (entity, decoded) {
+            (Some(entity), Some(c)) => {
+                out.push(c);
+                rest = &rest[entity.len() + 2..];
+            }
+            _ => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+#[cfg(test)]
+mod strip_tags_tests {
+    use super::strip_tags;
+
+    #[test]
+    fn strips_as_rails_does_on_shopify() {
+        for (text, stripped) in [
+            ("<b>", ""),
+            ("<b>x", "x"),
+            ("x<b>", "x"),
+            ("a<b", "a"),
+            ("<", ""),
+            (">", ">"),
+            ("&", "&"),
+            ("a < b", "a &lt; b"),
+            ("1<2", "1&lt;2"),
+            ("x>y<z", "x&gt;y"),
+            ("a<!--c-->b", "ab"),
+            ("<script>alert(1)</script>x", "x"),
+            ("a&amp;b", "a&amp;b"),
+            ("&lt;b&gt;", "&lt;b&gt;"),
+        ] {
+            assert_eq!(strip_tags(text), stripped, "{text}");
+        }
+    }
 }

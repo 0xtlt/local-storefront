@@ -359,33 +359,34 @@ fn parse_types(value: Option<&str>, default: &[SearchType]) -> Vec<SearchType> {
         .collect()
 }
 
+/// The names of the searched types, in alphabetical order whatever the order of `type`, as a
+/// store gives them: `article,page,product` by default, `article,product` for
+/// `type=product,article` (shopify.dev's playground, 2026-11-16).
 fn type_names(types: &[SearchType]) -> Value {
-    strings(
-        &types
-            .iter()
-            .map(|kind| {
-                match kind {
-                    SearchType::Product => "product",
-                    SearchType::Article => "article",
-                    SearchType::Page => "page",
-                    SearchType::Collection => "collection",
-                }
-                .to_string()
-            })
-            .collect::<Vec<_>>(),
-    )
+    let mut names: Vec<String> = types
+        .iter()
+        .map(|kind| {
+            match kind {
+                SearchType::Product => "product",
+                SearchType::Article => "article",
+                SearchType::Page => "page",
+                SearchType::Collection => "collection",
+            }
+            .to_string()
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    strings(&names)
 }
 
 /// The `search` object of the search page.
 pub fn search_value(site: &SiteRef) -> Value {
     let query = site.request.param("q").unwrap_or_default().to_string();
     let default = [SearchType::Product, SearchType::Article, SearchType::Page];
-    // A store ignores the types it does not know: with none it knows, it searches them all, and
-    // names them `article,page,product` (observed on a development store, #319).
+    // A store ignores the types it does not know: with none it knows, it searches them all.
     let types = match parse_types(site.request.param("type"), &default) {
-        types if types.is_empty() => {
-            vec![SearchType::Article, SearchType::Page, SearchType::Product]
-        }
+        types if types.is_empty() => default.to_vec(),
         types => types,
     };
     let performed = site.request.param("q").is_some();
@@ -546,9 +547,9 @@ pub fn recommendations_value(site: &SiteRef) -> Value {
 }
 
 /// `search.terms` and `predictive_search.terms`: the query, HTML-escaped as Shopify gives it.
-/// It is an escaped string to Shopify, so `escape` leaves it as it is (see
-/// `filters::html::escape`), and `{{ search.terms }}` prints the same as
-/// `{{ search.terms | escape }}`.
+/// It is a "safe" string to Shopify, as Rails has them: `escape` leaves it as it is,
+/// `append` escapes what it appends, `truncate` and `slice` keep it safe, and any other filter
+/// gives a plain string (see `filters::html`), as shopify.dev's playground renders it.
 pub struct SearchTerms(String);
 
 impl SearchTerms {
@@ -561,6 +562,11 @@ impl SearchTerms {
     /// The escaped text.
     pub fn text(&self) -> &str {
         &self.0
+    }
+
+    /// A text that is already escaped, as a filter that keeps `search.terms` escaped gives it.
+    pub fn escaped(text: String) -> Value {
+        Value::Object(std::sync::Arc::new(SearchTerms(text)))
     }
 }
 

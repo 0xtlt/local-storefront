@@ -607,7 +607,7 @@ fn format_directive(time: &DateTime<Tz>, conversion: char, spec: &Spec) -> Optio
         'a' => spec.text(&capitalize(&weekday_name[..3])),
         'u' => spec.number(i64::from(time.weekday().number_from_monday()), 1, '0'),
         'w' => spec.number(i64::from(time.weekday().num_days_from_sunday()), 1, '0'),
-        'G' => spec.number(i64::from(time.iso_week().year()), 1, '0'),
+        'G' => spec.number(i64::from(time.iso_week().year()), 4, '0'),
         'g' => spec.number(i64::from(time.iso_week().year().rem_euclid(100)), 2, '0'),
         'V' => spec.number(i64::from(time.iso_week().week()), 2, '0'),
         'U' => {

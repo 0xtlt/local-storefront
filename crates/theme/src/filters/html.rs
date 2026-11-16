@@ -466,30 +466,117 @@ fn highlight(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> 
     Ok(Value::from(out))
 }
 
-/// `escape` and `h`: as Liquid's, except on a string Shopify already escaped (`search.terms`),
-/// which it prints as it is instead of escaping it a second time.
+/// `escape`, `h` and `escape_once`: as Liquid's, except on a string Shopify already escaped
+/// (`search.terms`), which they leave as it is instead of escaping it a second time.
 fn escape(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
-    static STANDARD: std::sync::OnceLock<lsf_liquid::FilterFn> = std::sync::OnceLock::new();
-    if let Value::Object(object) = input
-        && let Some(terms) = object
+    match safe_text(input) {
+        Some(_) if args.positional.is_empty() && args.named.is_empty() => Ok(input.clone()),
+        _ => standard("escape")(input, args, ctx),
+    }
+}
+
+fn escape_once(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
+    match safe_text(input) {
+        Some(_) if args.positional.is_empty() && args.named.is_empty() => Ok(input.clone()),
+        _ => standard("escape_once")(input, args, ctx),
+    }
+}
+
+/// The escaped text of `search.terms`, when `value` is it or a safe string made from it.
+fn safe_text(value: &Value) -> Option<&str> {
+    match value {
+        Value::Object(object) => object
             .as_any()
             .downcast_ref::<crate::drops::search::SearchTerms>()
-        && args.positional.is_empty()
-        && args.named.is_empty()
-    {
-        return Ok(Value::str(terms.text()));
+            .map(crate::drops::search::SearchTerms::text),
+        _ => None,
     }
-    let standard = STANDARD.get_or_init(|| {
-        Environment::standard()
-            .filter("escape")
-            .expect("Liquid's escape filter")
-    });
-    standard(input, args, ctx)
+}
+
+/// Liquid's own filter `name`.
+fn standard(name: &str) -> lsf_liquid::FilterFn {
+    static STANDARD: std::sync::OnceLock<Environment> = std::sync::OnceLock::new();
+    STANDARD
+        .get_or_init(Environment::standard)
+        .filter(name)
+        .expect("a filter of Liquid")
+}
+
+/// `append`: on a safe string, what it appends is escaped unless it is safe too, and the result
+/// is safe (`{{ search.terms | append: '<' }}` is `&lt;b&gt;&lt;`).
+fn append(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
+    let appended = standard("append")(input, args, ctx)?;
+    let Some(text) = safe_text(input) else {
+        return Ok(appended);
+    };
+    let suffix = args.positional.first().cloned().unwrap_or_default();
+    let suffix = safe_text(&suffix).map_or_else(|| escape_html(&suffix.to_str()), str::to_string);
+    Ok(crate::drops::search::SearchTerms::escaped(format!(
+        "{text}{suffix}"
+    )))
+}
+
+/// `truncate`: a safe string stays safe, and the ellipsis it adds is escaped first, so that
+/// its escaped length counts: `{{ search.terms | truncate: 6, '<<' }}` is `&lt;&lt;`.
+fn truncate(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
+    let Some(text) = safe_text(input) else {
+        return standard("truncate")(input, args, ctx);
+    };
+    // The arguments as Liquid checks them.
+    standard("truncate")(&Value::str(text), args, ctx)?;
+    let length = match args.positional.first() {
+        Some(value) => lsf_liquid::number::to_integer(value)?,
+        None => 50,
+    };
+    let ellipsis = args.positional.get(1).map_or_else(
+        || "...".to_string(),
+        |value| safe_text(value).map_or_else(|| escape_html(&value.to_str()), str::to_string),
+    );
+    if text.chars().count() as i64 <= length {
+        return Ok(input.clone());
+    }
+    let keep = length
+        .saturating_sub(ellipsis.chars().count() as i64)
+        .max(0) as usize;
+    let kept: String = text.chars().take(keep).collect();
+    Ok(crate::drops::search::SearchTerms::escaped(format!(
+        "{kept}{ellipsis}"
+    )))
+}
+
+/// `truncatewords`: a safe string with no more words than it keeps is left as it is; a
+/// truncated one is a plain string, as on a store.
+fn truncatewords(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
+    let Some(text) = safe_text(input) else {
+        return standard("truncatewords")(input, args, ctx);
+    };
+    let truncated = standard("truncatewords")(&Value::str(text), args, ctx)?;
+    Ok(if truncated.to_str() == text {
+        input.clone()
+    } else {
+        truncated
+    })
+}
+
+/// `slice`: a piece of a safe string is safe.
+fn slice(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
+    let Some(text) = safe_text(input) else {
+        return standard("slice")(input, args, ctx);
+    };
+    Ok(match standard("slice")(&Value::str(text), args, ctx)? {
+        Value::Str(piece) => crate::drops::search::SearchTerms::escaped(piece.to_string()),
+        other => other,
+    })
 }
 
 pub(super) fn register(env: &mut Environment) {
     env.register_filter("escape", escape);
     env.register_filter("h", escape);
+    env.register_filter("append", append);
+    env.register_filter("truncate", truncate);
+    env.register_filter("truncatewords", truncatewords);
+    env.register_filter("slice", slice);
+    env.register_filter("escape_once", escape_once);
     env.register_filter("stylesheet_tag", stylesheet_tag);
     env.register_filter("script_tag", script_tag);
     env.register_filter("preload_tag", preload_tag);

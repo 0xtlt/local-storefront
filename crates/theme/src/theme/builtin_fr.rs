@@ -1,9 +1,15 @@
 //! Shopify's own storefront strings in French, for the pages of a French locale (`/fr/`).
 //!
 //! Shopify publishes these strings in English only (`data/shopify_system_translations.json`).
-//! The French ones here are those read on a development store with French published
-//! (2026-11-12 and 2026-11-13, issues #313 and #316); a string that was not read stays in
-//! English, rather than being guessed. A theme's own translation of a key still comes first.
+//! The French ones were read on Shopify's own demo store with French published, through the
+//! renderer of shopify.dev's Liquid playground (`POST https://shopify.dev/liquid/render` with
+//! `"path": "/fr"`), on 2026-11-16: `data/shopify_system_translations.fr.json` is what `t` gave
+//! for every key of the English table. A key Shopify has no French for would print
+//! `Translation missing: fr.<key>`, as it does there. A theme's own translation of a key still
+//! comes first.
+
+use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// Whether a page in `language` (`fr`, `fr-CA`) gets the French strings.
 pub fn applies(language: &str) -> bool {
@@ -13,23 +19,29 @@ pub fn applies(language: &str) -> bool {
         .is_some_and(|base| base.eq_ignore_ascii_case("fr"))
 }
 
-/// The French text of one of Shopify's keys (`shopify.collections.sorting.manual`), with its
-/// `%{name}` placeholders, when it was read on a store.
-pub fn system_translation(key: &str) -> Option<&'static str> {
-    Some(match key {
-        "shopify.collections.sorting.manual" => "En vedette",
-        "shopify.collections.sorting.most_relevant" => "Le plus pertinent",
-        "shopify.collections.sorting.best_selling" => "Meilleures ventes",
-        "shopify.filters.availability.value.in_stock" => "En stock",
-        "shopify.filters.availability.value.out_of_stock" => "En rupture de stock",
-        "shopify.page_titles.search_results.one" => {
-            "Recherche : %{count} résultat trouvé pour « %{terms} »"
-        }
-        "shopify.page_titles.search_results.other" => {
-            "Recherche : %{count} résultats trouvés pour « %{terms} »"
-        }
-        _ => return None,
-    })
+/// What a French page has for one of Shopify's keys (`shopify.collections.sorting.manual`).
+pub enum SystemText {
+    /// Its French text, with its `%{name}` placeholders.
+    French(&'static str),
+    /// Shopify has the key in English and not in French: `Translation missing`.
+    Missing,
+    /// Not one of Shopify's keys.
+    Unknown,
+}
+
+pub fn system_translation(key: &str) -> SystemText {
+    static TABLE: OnceLock<HashMap<String, String>> = OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "../../data/shopify_system_translations.fr.json"
+        ))
+        .unwrap_or_default()
+    });
+    match table.get(key) {
+        Some(text) => SystemText::French(text),
+        None if super::locales::system_translation(key).is_some() => SystemText::Missing,
+        None => SystemText::Unknown,
+    }
 }
 
 /// The label of a storefront filter Shopify makes (`Availability`, `Price`).
@@ -41,7 +53,9 @@ pub fn filter_label(label: &str) -> Option<&'static str> {
     })
 }
 
-/// A continent as `country.continent` gives it: `Amérique du Nord` for `North America`.
+/// A continent as `country.continent` gives it: `Amérique du Nord` for `North America`. The
+/// demo store lists countries of Asia, Europe, North America and Oceania; the others are the
+/// French names of the same CLDR regions.
 pub fn continent(name: &str) -> Option<&'static str> {
     Some(match name {
         "Africa" => "Afrique",
@@ -55,22 +69,31 @@ pub fn continent(name: &str) -> Option<&'static str> {
     })
 }
 
-/// The default title of a store policy, by handle.
+/// The default title of a store policy, by handle, with Shopify's typographic apostrophe.
+/// The demo store has no subscription policy: its title stays in English.
 pub fn policy_title(handle: &str) -> Option<&'static str> {
     Some(match handle {
         "privacy-policy" => "Politique de confidentialité",
+        "refund-policy" => "Politique de remboursement",
+        "shipping-policy" => "Politique d’expédition",
+        "terms-of-service" => "Conditions d’utilisation",
         _ => return None,
     })
 }
 
-/// The `strftime` pattern of a named date format, with `%B` and `%b` for the French month
-/// names [`month_names`] puts in.
+/// The `strftime` pattern of a named date format, with `%B`, `%b` and `%A` for the French
+/// names [`names`] puts in.
 pub fn named_format(name: &str) -> Option<&'static str> {
     Some(match name {
         "abbreviated_date" => "%-d %b %Y",
-        "date_at_time" => "%-d %B %Y à %H:%M",
-        "on_date" => "le %-d %b %Y",
         "basic" => "%d/%m/%Y",
+        "date" => "%-d %B %Y",
+        "date_at_time" => "%-d %B %Y à %H:%M",
+        "default" => "%A %-d %B %Y à %H:%M %z",
+        "on_date" => "le %-d %b %Y",
+        "short" => "%-d %b %H:%M",
+        "long" => "%B %-d, %Y %H:%M",
+        "month_day_year" => "%B %d, %Y",
         _ => return None,
     })
 }
@@ -95,19 +118,27 @@ const SHORT_MONTHS: [&str; 12] = [
     "déc.",
 ];
 
-/// `pattern` with the French name of `month` (1 to 12) in place of `%B` and `%b`.
-pub fn month_names(pattern: &str, month: u32) -> String {
-    let index = (month.clamp(1, 12) - 1) as usize;
+/// Monday first, as chrono numbers them.
+const WEEKDAYS: [&str; 7] = [
+    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+];
+
+/// `pattern` with the French name of `month` (1 to 12) in place of `%B` and `%b`, and of
+/// `weekday` (0 for Monday) in place of `%A`.
+pub fn names(pattern: &str, month: u32, weekday: u32) -> String {
+    let month = (month.clamp(1, 12) - 1) as usize;
+    let weekday = weekday.min(6) as usize;
     let mut out = String::with_capacity(pattern.len());
-    let mut chars = pattern.chars().peekable();
+    let mut chars = pattern.chars();
     while let Some(c) = chars.next() {
         if c != '%' {
             out.push(c);
             continue;
         }
         match chars.next() {
-            Some('B') => out.push_str(MONTHS[index]),
-            Some('b') => out.push_str(SHORT_MONTHS[index]),
+            Some('B') => out.push_str(MONTHS[month]),
+            Some('b') => out.push_str(SHORT_MONTHS[month]),
+            Some('A') => out.push_str(WEEKDAYS[weekday]),
             Some(other) => {
                 out.push('%');
                 out.push(other);
@@ -123,9 +154,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn months_are_put_in_and_other_directives_kept() {
-        assert_eq!(month_names("%-d %B %Y à %H:%M", 3), "%-d mars %Y à %H:%M");
-        assert_eq!(month_names("%b|%%|%B", 1), "janv.|%%|janvier");
+    fn names_are_put_in_and_other_directives_kept() {
+        assert_eq!(
+            names("%A %-d %B %Y à %H:%M", 3, 3),
+            "jeudi %-d mars %Y à %H:%M"
+        );
+        assert_eq!(names("%b|%%|%B", 1, 0), "janv.|%%|janvier");
         assert!(applies("fr") && applies("fr-CA") && !applies("en") && !applies("fy"));
+    }
+
+    #[test]
+    fn the_french_table_has_shopifys_strings() {
+        assert!(matches!(
+            system_translation("shopify.collections.sorting.manual"),
+            SystemText::French("En vedette")
+        ));
+        // A key the live store has in no language is missing from both tables.
+        assert!(matches!(
+            system_translation("shopify.sentence.words_connector"),
+            SystemText::Unknown
+        ));
+        assert!(matches!(system_translation("nope"), SystemText::Unknown));
     }
 }
