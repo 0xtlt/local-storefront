@@ -380,9 +380,12 @@ fn type_names(types: &[SearchType]) -> Value {
 pub fn search_value(site: &SiteRef) -> Value {
     let query = site.request.param("q").unwrap_or_default().to_string();
     let default = [SearchType::Product, SearchType::Article, SearchType::Page];
-    // A store ignores the types it does not know: with none it knows, it searches them all.
+    // A store ignores the types it does not know: with none it knows, it searches them all, and
+    // names them `article,page,product` (observed on a development store, #319).
     let types = match parse_types(site.request.param("type"), &default) {
-        types if types.is_empty() => default.to_vec(),
+        types if types.is_empty() => {
+            vec![SearchType::Article, SearchType::Page, SearchType::Product]
+        }
         types => types,
     };
     let performed = site.request.param("q").is_some();

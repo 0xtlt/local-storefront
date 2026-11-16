@@ -1390,7 +1390,11 @@ fn search_excludes_terms_matches_title_words_and_ignores_unknown_types() {
     assert_eq!(search("q=title:Snowboard"), all);
     assert_eq!(search("q=title:snow"), "0:[product,article,page]");
     // 6. A type the store does not know is ignored.
-    assert_eq!(search("q=snowboard&type=bogus"), all);
+    // #319: and names them all in the order a store does.
+    assert_eq!(
+        search("q=snowboard&type=bogus"),
+        "3:the-complete-snowboard blue-snowboard snowboard [article,page,product]"
+    );
     assert_eq!(
         search("q=snowboard&type=product,bogus"),
         "3:the-complete-snowboard blue-snowboard snowboard [product]"

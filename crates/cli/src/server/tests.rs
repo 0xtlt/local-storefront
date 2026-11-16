@@ -251,9 +251,10 @@ fn the_cart_api_reports_errors_like_shopify() {
         "errors",
     );
     assert_eq!(sold_out.status, 422);
+    // Alone, the reference's `Cart Error`.
     assert_eq!(
-        body_json(&sold_out)["description"],
-        "The product 'Scented Candle' is already sold out."
+        body_json(&sold_out),
+        json!({"status": 422, "message": "Cart Error", "description": "The product 'Scented Candle' is already sold out."})
     );
 
     // An unknown variant is a `422`, as the Ajax Cart API reference shows (#150).
@@ -299,9 +300,11 @@ fn cart_add_with_an_item_refused_adds_none_of_the_items() {
         session,
     );
     assert_eq!(sold_out.status, 422, "{}", text(&sold_out));
+    // #317: among other items, the sentence is the `message` too.
+    let sentence = "The product 'Scented Candle' is already sold out.";
     assert_eq!(
-        body_json(&sold_out)["description"],
-        "The product 'Scented Candle' is already sold out."
+        body_json(&sold_out),
+        json!({"status": 422, "message": sentence, "description": sentence})
     );
     assert_eq!(item_count(), 0);
 
@@ -1179,8 +1182,9 @@ fn recommendations_json_answers_shopifys_errors() {
 #[test]
 fn cart_update_with_an_unknown_variant_changes_nothing() {
     // #189, item 1: "If a variant ID is provided that either doesn't exist or isn't available in
-    // the online store channel", update.js answers "Cannot find variant", with a `404` in the
-    // reference. https://shopify.dev/docs/api/ajax/reference/cart#post-locale-cart-update-js
+    // the online store channel", update.js answers "Cannot find variant"
+    // (https://shopify.dev/docs/api/ajax/reference/cart#post-locale-cart-update-js), with the
+    // `422` a development store answers (#319).
     let state = server();
     let session = "update-unknown";
     let mug = variant_id(&state, "MUG-OAT");
@@ -1194,10 +1198,10 @@ fn cart_update_with_an_unknown_variant_changes_nothing() {
         json!({"updates": {"999": 1, mug.to_string(): 3}, "note": "kept out"}),
         session,
     );
-    assert_eq!(unknown.status, 404, "{}", text(&unknown));
+    assert_eq!(unknown.status, 422, "{}", text(&unknown));
     assert_eq!(
         body_json(&unknown),
-        json!({"status": 404, "message": "Cart Error", "description": "Cannot find variant"})
+        json!({"status": 422, "message": "Cart Error", "description": "Cannot find variant"})
     );
     let cart = body_json(&get(&state, "/cart.js", session));
     assert_eq!(cart["item_count"], 1);
