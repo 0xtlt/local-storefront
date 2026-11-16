@@ -111,7 +111,9 @@ fn problem(setting: &Setting<'_>, value: &Json) -> Option<(String, String)> {
         "color" => {
             let valid = value.as_str().is_some_and(|text| {
                 // A setting can name another: `{{ settings.accent }}`.
-                text.is_empty() || text.contains("{{") || crate::color::Color::parse(text).is_some()
+                text.is_empty()
+                    || text.contains("{{")
+                    || crate::color::Color::parse_value(text).is_some()
             });
             (!valid).then(|| {
                 (

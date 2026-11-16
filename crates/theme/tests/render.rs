@@ -7086,3 +7086,64 @@ fn the_search_title_strips_the_html_of_the_terms() {
         title("a&b")
     );
 }
+
+#[test]
+fn shopifys_filters_answer_as_on_a_store() {
+    // shopify.dev's playground on Shopify's demo store (2026-11-16).
+    let fixture = fixture();
+    let render = |source: &str| {
+        let site = fixture.renderer.site(
+            fixture.store.clone(),
+            request("/"),
+            Session::initial(&fixture.store),
+        );
+        let page = lsf_theme::render::routes::resolve(&site);
+        fixture
+            .renderer
+            .render_liquid(&site, page, source, &[])
+            .expect("parses")
+            .0
+    };
+    for (source, output) in [
+        // CSS names, lowercase only, and `transparent`; no 4-digit hex.
+        (
+            "{{ 'red' | color_to_rgb }}|{{ 'red' | color_lighten: 30 }}|{{ 'rebeccapurple' | color_to_hex }}",
+            "rgb(255, 0, 0)|#ff9999|#663399",
+        ),
+        (
+            "[{{ 'RED' | color_to_hex }}]|{{ 'transparent' | color_to_rgb }}|[{{ '#f00c' | color_to_rgb }}]",
+            "[]|rgba(0, 0, 0, 0.0)|[]",
+        ),
+        // From the channels as they are.
+        (
+            "{{ 'hsl(100, 38%, 54%)' | color_brightness }}|{{ 'hsl(100, 38%, 54%)' | color_difference: '#000' }}|{{ '#720955' | color_difference: '#FFF1FE' }}",
+            "154.34|398.242|542",
+        ),
+        (
+            "{{ '  Héllo Wörld! ' | camelize }}|{{ 'camelCaseHere' | camelize }}|{{ 'snake_case_here' | camelize }}|{{ 'a--b__c' | camelize }}",
+            "HelloWorld|Camelcasehere|SnakeCaseHere|ABC",
+        ),
+        (
+            "{{ 1 | pluralize: 'a', 'b' }}|{{ 1.0 | pluralize: 'a', 'b' }}|{{ '1' | pluralize: 'a', 'b' }}|{{ true | pluralize: 'a', 'b' }}",
+            "a|a|b|b",
+        ),
+        (
+            "{{ '5 Mar 2026 3pm' | date: '%H:%M' }}|{{ '2026-03-05 3 p.m.' | date: '%H:%M' }}|{{ '2026-03-05 12am' | date: '%H:%M' }}",
+            "15:00|15:00|00:00",
+        ),
+        (
+            "{{ 'x' | link_to: 'https://a.b', 'T' }}|{{ 'x' | link_to: 'https://a.b', class: 'c' }}",
+            "<a href=\"https://a.b\" title=\"T\">x</a>|<a class=\"c\" href=\"https://a.b\">x</a>",
+        ),
+        (
+            "[{{ 1999 | unit_price_with_measurement: nil }}]|[{{ 1999 | unit_price_with_measurement: 'x' }}]",
+            "[]|[Liquid error (line 1): unit_price_measurement must be a unit_price_measurement or a hash]",
+        ),
+        (
+            "[{{ nil | font_face }}]|[{{ 'x' | font_url }}]",
+            "[]|[Liquid error (line 1): font_url can only be used with a font drop]",
+        ),
+    ] {
+        assert_eq!(render(source), output, "{source}");
+    }
+}

@@ -353,6 +353,16 @@ fn weight_with_unit(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<
 }
 
 fn unit_price_with_measurement(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
+    // Without a measurement, nothing; with something else, Shopify's error.
+    match args.at(0) {
+        Value::Nil => return Ok(Value::empty_string()),
+        Value::Object(_) | Value::Hash(_) => {}
+        _ => {
+            return Err(Error::argument(
+                "unit_price_measurement must be a unit_price_measurement or a hash",
+            ));
+        }
+    }
     // The price is either cents or an already formatted money string.
     let price = match input {
         Value::Str(text) => text.to_string(),
@@ -373,9 +383,14 @@ fn unit_price_with_measurement(input: &Value, args: &FilterArgs, ctx: &Context) 
     Ok(Value::from(format!("{price}/{prefix}{unit}")))
 }
 
+/// The singular for the number 1 only: `'1' | pluralize` is the plural on a store.
 fn pluralize(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> {
-    let count = lsf_liquid::number::to_number(input).to_f64();
-    Ok(if count == 1.0 { args.at(0) } else { args.at(1) })
+    let one = match input.to_liquid_value() {
+        Value::Int(count) => count == 1,
+        Value::Float(count) => count == 1.0,
+        _ => false,
+    };
+    Ok(if one { args.at(0) } else { args.at(1) })
 }
 
 pub(super) fn register(env: &mut Environment) {

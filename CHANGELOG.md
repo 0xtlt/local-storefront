@@ -59,6 +59,20 @@ Liquid playground renders on Shopify's demo store, in English and in French.
 - **Shopify's English strings are the store's**: four texts reworded to what a store prints,
   and the six keys a store does not have (`shopify.sentence.*`, ...) print `Translation
   missing`, as there.
+- **Shopify's filters answer as on a store**, compared with shopify.dev's playground:
+  - color filters read CSS color names, lowercase only (`red`, `rebeccapurple`), and
+    `transparent`, and no 4-digit hex (`#f00c`), as a store does;
+  - `color_brightness` and `color_difference` count the channels as they are: `154.34`
+    and `398.242` for `hsl(100, 38%, 54%)`;
+  - `camelize` puts together the words of the handle: `Héllo Wörld!` is `HelloWorld`,
+    `snake_case` `SnakeCase`, `camelCase` `Camelcase`;
+  - `pluralize` gives the singular for the number 1 only (`'1'` takes the plural);
+  - `date` reads an hour with its meridian alone: `3pm`, `3 p.m.`, `12am`;
+  - `link_to` adds no `rel="nofollow"` to an external URL;
+  - `unit_price_with_measurement` prints nothing without a measurement and raises
+    Shopify's error with something else;
+  - `font_face`, `font_url` and `font_modify` raise `… can only be used with a font drop`
+    on something other than a font, and print nothing on `nil`.
 - **`paginate.previous.title` and `paginate.next.title`** follow the page's language
   (`&laquo; Précédent`), and a theme's override of `shopify.pagination.*`.
 

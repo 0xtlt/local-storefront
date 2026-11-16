@@ -197,15 +197,65 @@ pub fn parse_time(input: &str, tz: Tz, now: DateTime<Utc>) -> Option<DateTime<Tz
     }
 }
 
-/// Finds `h:mm[:ss[.fff]] [am|pm]`, removes it from `text` and returns it.
+/// The length of the `am`, `pm`, `a.m.` or `p.m.` `text` starts with, and whether it is
+/// after noon.
+fn meridian(text: &str) -> Option<(usize, bool)> {
+    ["a.m.", "p.m.", "am", "pm"]
+        .iter()
+        .find(|word| text.starts_with(*word))
+        .map(|word| (word.len(), word.starts_with('p')))
+}
+
+/// Finds an hour alone with its meridian (`3pm`, `3 p.m.`, `12am`), as Ruby reads it, removes
+/// it from `text` and returns it.
+fn extract_hour(text: &mut String) -> Option<NaiveTime> {
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while start < bytes.len() {
+        if !bytes[start].is_ascii_digit() || (start > 0 && bytes[start - 1].is_ascii_digit()) {
+            start += 1;
+            continue;
+        }
+        let digits = bytes[start..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        let after = &text[start + digits..];
+        let spaces = after.len() - after.trim_start().len();
+        if digits <= 2
+            && let Some((length, afternoon)) = meridian(after.trim_start())
+            && !after.trim_start()[length..].starts_with(|c: char| c.is_ascii_alphabetic())
+        {
+            let mut hour: u32 = text[start..start + digits].parse().ok()?;
+            if hour > 12 {
+                return None;
+            }
+            if afternoon && hour < 12 {
+                hour += 12;
+            } else if !afternoon && hour == 12 {
+                hour = 0;
+            }
+            let end = start + digits + spaces + length;
+            text.replace_range(start..end, " ");
+            return NaiveTime::from_hms_opt(hour, 0, 0);
+        }
+        start += digits;
+    }
+    None
+}
+
+/// Finds `h:mm[:ss[.fff]] [am|pm]`, or an hour with its meridian (`3pm`), removes it from
+/// `text` and returns it.
 fn extract_time(text: &mut String) -> Option<NaiveTime> {
     let bytes = text.as_bytes();
-    let colon = (1..bytes.len().saturating_sub(2)).find(|&i| {
+    let Some(colon) = (1..bytes.len().saturating_sub(2)).find(|&i| {
         bytes[i] == b':'
             && bytes[i - 1].is_ascii_digit()
             && bytes[i + 1].is_ascii_digit()
             && bytes[i + 2].is_ascii_digit()
-    })?;
+    }) else {
+        return extract_hour(text);
+    };
     let start = if colon >= 2 && bytes[colon - 2].is_ascii_digit() {
         colon - 2
     } else {
@@ -233,13 +283,13 @@ fn extract_time(text: &mut String) -> Option<NaiveTime> {
     }
     let after = text[end..].trim_start();
     let skipped = text.len() - end - after.len();
-    if after.starts_with("am") || after.starts_with("pm") {
-        if after.starts_with("pm") && hour < 12 {
+    if let Some((length, afternoon)) = meridian(after) {
+        if afternoon && hour < 12 {
             hour += 12;
-        } else if after.starts_with("am") && hour == 12 {
+        } else if !afternoon && hour == 12 {
             hour = 0;
         }
-        end += skipped + 2;
+        end += skipped + length;
     }
     // Drop the ISO `t` separator between the date and the time.
     let prefix_end = if start > 0 && bytes[start - 1] == b't' {
@@ -671,6 +721,21 @@ mod tests {
             "2024-01-15T10:00:00+00:00"
         );
         assert_eq!(at("10:30").to_rfc3339(), "2024-06-01T10:30:00+00:00");
+        // As a store reads them (shopify.dev's playground, 2026-11-16).
+        for (text, hour) in [
+            ("5 Mar 2026 3pm", "15:00"),
+            ("5 Mar 2026 3:30pm", "15:30"),
+            ("2026-03-05 3 PM", "15:00"),
+            ("2026-03-05 12am", "00:00"),
+            ("2026-03-05 12pm", "12:00"),
+            ("2026-03-05 3 p.m.", "15:00"),
+        ] {
+            assert_eq!(
+                at(text).format("%F %H:%M").to_string(),
+                format!("2026-03-05 {hour}"),
+                "{text}"
+            );
+        }
     }
 
     #[test]

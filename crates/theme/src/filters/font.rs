@@ -5,9 +5,20 @@ use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 use super::site;
 use crate::drops::font::{Font, FontDrop};
 
+/// The error of a font filter given something other than a font, as a store gives it; `nil`
+/// gives nothing.
+fn not_a_font(filter: &str, input: &Value, empty: Value) -> Result<Value> {
+    if input.is_nil() {
+        return Ok(empty);
+    }
+    Err(lsf_liquid::Error::argument(format!(
+        "{filter} can only be used with a font drop"
+    )))
+}
+
 fn font_face(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let Some(drop) = input.downcast::<FontDrop>() else {
-        return Ok(Value::empty_string());
+        return not_a_font("font_face", input, Value::empty_string());
     };
     let display = args
         .named("font_display")
@@ -17,7 +28,7 @@ fn font_face(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
 
 fn font_url(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let Some(drop) = input.downcast::<FontDrop>() else {
-        return Ok(Value::Nil);
+        return not_a_font("font_url", input, Value::Nil);
     };
     let format = args
         .get(0)
@@ -28,7 +39,7 @@ fn font_url(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
 
 fn font_modify(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let Some(drop) = input.downcast::<FontDrop>() else {
-        return Ok(Value::Nil);
+        return not_a_font("font_modify", input, Value::Nil);
     };
     let mut font: Font = drop.font.clone();
     let value = args.at(1).to_str().into_owned();

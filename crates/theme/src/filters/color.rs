@@ -170,10 +170,17 @@ fn color_difference(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<
     let (Some(color), Some(other)) = (parse(input), parse(&args.at(0))) else {
         return Ok(Value::Nil);
     };
-    let difference = (color.red.round() - other.red.round()).abs()
-        + (color.green.round() - other.green.round()).abs()
-        + (color.blue.round() - other.blue.round()).abs();
-    Ok(Value::Int(difference as i64))
+    // From the channels as they are: a whole number between hex colors, and three decimals
+    // for an `hsl()` color, as a store gives it (`398.242`).
+    let difference = (color.red - other.red).abs()
+        + (color.green - other.green).abs()
+        + (color.blue - other.blue).abs();
+    let difference = (difference * 1000.0).round() / 1000.0;
+    Ok(if difference.fract() == 0.0 {
+        Value::Int(difference as i64)
+    } else {
+        Value::Float(difference)
+    })
 }
 
 fn brightness_difference(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> {
