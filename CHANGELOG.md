@@ -3,6 +3,44 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+Ten differences from Shopify, reported as follow-ups to earlier fixes (#311 to #320), each
+checked against a development store.
+
+### Breaking changes
+
+- **`lsf check` refuses a `visible_if` whose condition Shopify's strict parser refuses**
+  (`invalid_schema`): `{{ settings.t == }}` passed, and Shopify's upload refuses the section.
+  A theme that checked clean with one now fails `check` (#312).
+- **`| json` of a `rating` or measurement metafield's `.value` prints
+  `{"error":"json not allowed for this object"}`**, as a store does. Read its properties
+  (`rating`, `scale_max`, `value`, `unit`) instead (#315).
+
+### Fixed
+
+- **`search.terms` is HTML-escaped**, and `| escape` leaves it as it is: `{{ search.terms }}`
+  and `{{ search.terms | escape }}` print the same, with no `&amp;lt;` (#318).
+- **The cart page reads the lines as the cart transform makes them**: `item.item_components`
+  lists the components of a line the transform expanded, as `/cart.js` does (#311).
+- **`/cart/update.js` with an unknown variant answers `422`**, not `404` (#319).
+- **`/cart/add.js` refusing a sold-out item among others** gives the sold-out sentence as its
+  `message` too; alone, it is still `Cart Error` (#317).
+- **`search.types` for a `type` the store does not know** is `article,page,product` (#319).
+- **`'1/2/26' | date`** reads year 1, February 26, and `%Y` pads the year to four digits:
+  `0001-02-26` (#320).
+- **`paginate` refuses an array of text or numbers** (one made with `split`, a list
+  metafield's value): `Array 'arr' is not paginateable.` Lists of resources still paginate
+  (#320).
+- **`metafield_tag` and `metafield_text` of a `date_time`** show the value's own hour, not the
+  shop's (#314).
+- **On a French page, Shopify's own strings read on a French store are in French**: the sort
+  names `En vedette`, `Le plus pertinent`, `Meilleures ventes`; `Disponibilité`, `En stock`,
+  `En rupture de stock`, `Prix`; the search title; the `abbreviated_date`, `date_at_time`,
+  `on_date` and `basic` date formats; `country.continent`; the privacy policy's default title.
+  Strings that were not read stay in English; a theme's override still comes first (#313,
+  #316).
+
 ## 0.3.0-rc.7 - 2026-11-14
 
 Seventh release candidate of 0.3.0. Approving a plan or a charge in the embedded admin keeps
