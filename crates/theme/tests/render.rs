@@ -3737,12 +3737,10 @@ fn date_metafields_print_the_stored_string() {
         render("{{ d | metafield_tag }}"),
         r#"<time datetime="2026-03-05" class="metafield-date">March 5, 2026</time>"#
     );
-    assert!(
-        render("{{ t | metafield_tag }}").starts_with(
-            r#"<time datetime="2026-03-05T14:30:00+01:00" class="metafield-date_time">"#
-        ),
-        "{}",
-        render("{{ t | metafield_tag }}")
+    // #314: and the value's own hour, not the shop's, as a store shows it.
+    assert_eq!(
+        render("{{ t | metafield_tag }}|{{ t | metafield_text }}"),
+        r#"<time datetime="2026-03-05T14:30:00+01:00" class="metafield-date_time">Mar 5, 2026, 2:30 pm</time>|Mar 5, 2026, 2:30 pm"#
     );
 }
 
