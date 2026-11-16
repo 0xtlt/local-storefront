@@ -431,7 +431,7 @@ pub fn search_value(site: &SiteRef) -> Value {
         results.sort_by_key(|result| unavailable(site, result));
     }
     hash([
-        ("terms", Value::from(&query)),
+        ("terms", SearchTerms::value(&query)),
         ("performed", Value::Bool(performed)),
         ("results_count", Value::from(results.len())),
         ("results", PaginatedList::value(results)),
@@ -489,7 +489,7 @@ pub fn predictive_search_value(site: &SiteRef) -> Value {
     }
     hash([
         ("performed", Value::Bool(!query.is_empty())),
-        ("terms", Value::from(&query)),
+        ("terms", SearchTerms::value(&query)),
         ("types", type_names(&types)),
         (
             "resources",
@@ -540,4 +540,49 @@ pub fn recommendations_value(site: &SiteRef) -> Value {
         ("products", Value::array(products)),
         ("intent", Value::from(intent)),
     ])
+}
+
+/// `search.terms` and `predictive_search.terms`: the query, HTML-escaped as Shopify gives it.
+/// It is an escaped string to Shopify, so `escape` leaves it as it is (see
+/// `filters::html::escape`), and `{{ search.terms }}` prints the same as
+/// `{{ search.terms | escape }}`.
+pub struct SearchTerms(String);
+
+impl SearchTerms {
+    pub fn value(query: &str) -> Value {
+        Value::Object(std::sync::Arc::new(SearchTerms(
+            lsf_liquid::filters::escape_html(query),
+        )))
+    }
+
+    /// The escaped text.
+    pub fn text(&self) -> &str {
+        &self.0
+    }
+}
+
+impl lsf_liquid::Object for SearchTerms {
+    fn type_name(&self) -> &str {
+        "string"
+    }
+
+    fn to_value(&self) -> Option<Value> {
+        Some(Value::str(&self.0))
+    }
+
+    fn size(&self) -> Option<usize> {
+        Some(self.0.chars().count())
+    }
+
+    fn render(&self) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed(&self.0)
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::Value::String(self.0.clone())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }

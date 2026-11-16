@@ -466,7 +466,30 @@ fn highlight(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> 
     Ok(Value::from(out))
 }
 
+/// `escape` and `h`: as Liquid's, except on a string Shopify already escaped (`search.terms`),
+/// which it prints as it is instead of escaping it a second time.
+fn escape(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
+    static STANDARD: std::sync::OnceLock<lsf_liquid::FilterFn> = std::sync::OnceLock::new();
+    if let Value::Object(object) = input
+        && let Some(terms) = object
+            .as_any()
+            .downcast_ref::<crate::drops::search::SearchTerms>()
+        && args.positional.is_empty()
+        && args.named.is_empty()
+    {
+        return Ok(Value::str(terms.text()));
+    }
+    let standard = STANDARD.get_or_init(|| {
+        Environment::standard()
+            .filter("escape")
+            .expect("Liquid's escape filter")
+    });
+    standard(input, args, ctx)
+}
+
 pub(super) fn register(env: &mut Environment) {
+    env.register_filter("escape", escape);
+    env.register_filter("h", escape);
     env.register_filter("stylesheet_tag", stylesheet_tag);
     env.register_filter("script_tag", script_tag);
     env.register_filter("preload_tag", preload_tag);

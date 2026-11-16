@@ -6800,3 +6800,22 @@ fn a_t_key_saved_as_a_setting_value_is_printed_as_it_is() {
         page.body
     );
 }
+
+#[test]
+fn search_terms_are_html_escaped_and_escape_leaves_them_as_they_are() {
+    // #318: a development store printed the same for both, with no `&amp;lt;`.
+    let fixture = fixture();
+    let mut request = request("/search");
+    request.query = vec![("q".to_string(), "<b>x</b>\"'&".to_string())];
+    let liquid = fixture.liquid_for(
+        request,
+        Session::initial(&fixture.store),
+        "raw:{{ search.terms }} escape:{{ search.terms | escape }} h:{{ search.terms | h }} \
+         size:{{ search.terms | size }} other:{{ '<i>' | escape }}",
+    );
+    let escaped = "&lt;b&gt;x&lt;/b&gt;&quot;&#39;&amp;";
+    assert_eq!(
+        liquid,
+        format!("raw:{escaped} escape:{escaped} h:{escaped} size:36 other:&lt;i&gt;")
+    );
+}
