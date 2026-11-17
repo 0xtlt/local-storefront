@@ -198,6 +198,7 @@ fn a_subscription_is_bought_billed_skipped_paused_changed_and_cancelled() {
             }],
             selected: Some("standard".into()),
             discount_allocations: Vec::new(),
+            location: None,
         }],
         cost: Cost {
             subtotal: 4080,

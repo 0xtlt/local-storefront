@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::ValueEnum;
-use lsf_app::checkout::pipeline::DELIVERY_GROUP_HANDLE;
+use lsf_app::checkout::pipeline::EVERY_DELIVERY_GROUP;
 use lsf_app::checkout::{
     Address, CheckoutConfig, CheckoutState, DeliveryKind, DiscountClass, DiscountConfig, Metafield,
     PaymentMethodConfig, PaymentPlacement, ShippingRate,
@@ -754,7 +754,7 @@ pub fn entered_by(scenario: &CheckoutScenario) -> CheckoutState {
         selected_delivery: entered
             .delivery
             .iter()
-            .map(|handle| (DELIVERY_GROUP_HANDLE.to_string(), handle.clone()))
+            .map(|handle| (EVERY_DELIVERY_GROUP.to_string(), handle.clone()))
             .collect(),
         selected_payment: entered.payment.clone(),
         discount_codes: entered.discount_codes.clone(),

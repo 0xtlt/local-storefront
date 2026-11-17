@@ -32,6 +32,25 @@ export function stateForExtensions(state) {
   return visible;
 }
 
+/** Where the page asks lsf for what `shopify.query` of an extension answers. */
+const storefrontUrl = (ext) => `/__lsf/extensions/${encodeURIComponent(ext.handle)}/storefront`;
+
+/**
+ * What `shopify.query(query, {variables})` of `ext` answers: lsf runs it against the store data
+ * (the Storefront API of the shop, on Shopify). The answer is `{data}` or `{errors}`; an
+ * extension without the `api_access` capability is refused, as on Shopify.
+ */
+export async function storefrontQuery(window, ext, query, variables) {
+  const response = await window.fetch(storefrontUrl(ext), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ query, variables: variables ?? {} }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error ?? `lsf did not answer the query (${response.status})`);
+  return body;
+}
+
 /** Where the page asks lsf for the session token of an extension. */
 const sessionTokenUrl = (ext) => `/__lsf/extensions/${encodeURIComponent(ext.handle)}/session-token`;
 
@@ -375,6 +394,12 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
       case 'sessionToken':
         sessionToken(window, instance.ext, instance.target).then(
           (token) => post(instance, { type: 'result', id: data.id, result: token }),
+          (error) => post(instance, { type: 'result', id: data.id, error: String(error?.message ?? error) }),
+        );
+        break;
+      case 'query':
+        storefrontQuery(window, instance.ext, data.query, data.variables).then(
+          (answer) => post(instance, { type: 'result', id: data.id, result: answer }),
           (error) => post(instance, { type: 'result', id: data.id, error: String(error?.message ?? error) }),
         );
         break;

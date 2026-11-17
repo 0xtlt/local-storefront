@@ -10,7 +10,7 @@
 //! Money is a decimal string (`"19.99"`, as Shopify writes decimals: `"10.0"` for ten),
 //! enums are their name (`"SHIPPING"`) and ids are GIDs.
 
-mod exec;
+pub(crate) mod exec;
 mod graph;
 #[cfg(test)]
 mod tests;

@@ -508,8 +508,22 @@
       delete: (key) => call('storage', { op: 'delete', key }).then(() => undefined),
     };
     api.sessionToken = { get: () => call('sessionToken', {}) };
-    api.query = () =>
-      Promise.reject(new Error('The Storefront API is not available in the local checkout: query() has no store to ask.'));
+    // The Storefront API, with the `api_access` capability: lsf answers from the store data
+    // (products and variants, their fields and metafields). An error rejects, its message naming
+    // what lsf does not answer, with the GraphQL errors in `errors`.
+    api.query = (query, options) => {
+      if (capabilities.indexOf('api_access') === -1) {
+        return Promise.reject(new Error('query() needs the api_access capability: add `api_access = true` to ' +
+          '[extensions.capabilities] of shopify.extension.toml, as Shopify requires.'));
+      }
+      return call('query', { query: String(query), variables: (options && options.variables) || {} }).then((answer) => {
+        const errors = (answer && answer.errors) || [];
+        if (errors.length === 0) return answer;
+        const error = new Error('Storefront API: ' + errors.map((entry) => entry.message).join('; '));
+        error.errors = errors;
+        throw error;
+      });
+    };
     api.analytics = {
       publish: (name, data) => {
         post({ type: 'analytics', name, data });

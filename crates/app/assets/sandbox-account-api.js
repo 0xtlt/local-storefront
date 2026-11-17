@@ -33,9 +33,6 @@
     const map = Sandbox.mappers;
     const ctx = getCtx() || {};
 
-    api.query = () =>
-      Promise.reject(new Error('The Storefront API is not available in the local customer account: query() has no store to ask.'));
-
     // --- Who is logged in
     api.authenticatedAccount = {};
     signalProperty(api.authenticatedAccount, 'customer', (s) =>

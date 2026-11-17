@@ -425,6 +425,7 @@ fn create_order(
         returns: Vec::new(),
         location: location.map(str::to_string),
         presentment,
+        shipments: Vec::new(),
     };
     let order = orders::insert_order(state, &draft);
     let now = state.timestamp();

@@ -104,6 +104,7 @@ fn place_order_with(api: &AdminApi, number: u64, metafields: &[Metafield]) -> Op
             }],
             selected: Some("standard".into()),
             discount_allocations: Vec::new(),
+            location: None,
         }],
         cost: Cost {
             subtotal: 4000,
@@ -624,6 +625,7 @@ fn a_checkout_order_keeps_its_discounts_and_its_gateway() {
                 class: DiscountClass::Shipping,
                 discount: 1,
             }],
+            location: None,
         }],
         cost: Cost {
             subtotal: 4000,
@@ -983,4 +985,174 @@ fn a_bundle_is_ordered_as_its_components_in_a_line_item_group() {
             "{created}"
         );
     }
+}
+
+/// #325: an order placed from a checkout of two delivery groups (the slate mug from the Ottawa
+/// flagship, the tote bag from the Montreal studio) has one fulfillment order per group, at its
+/// location, with its lines and its rate, and one shipping line per group, as Shopify splits the
+/// order of a split cart. Fulfilling each makes two shipments.
+#[test]
+fn a_split_checkout_places_one_fulfillment_order_per_delivery_group() {
+    let api = api();
+    let store = support::demo_store();
+    let mug = store.product_by_handle("ceramic-mug").unwrap();
+    let tote = store.product_by_handle("canvas-tote-bag").unwrap();
+    let line = |n: u32, product: &lsf_core::store::Product| {
+        let variant = &product.variants[if n == 1 { 1 } else { 0 }];
+        ResultLine {
+            id: format!("gid://shopify/CartLine/{n}"),
+            variant_id: variant.id,
+            product_id: product.id,
+            title: product.title.clone(),
+            variant_title: Some(variant.title.clone()),
+            quantity: 1,
+            unit_price: variant.price,
+            subtotal: variant.price,
+            total: variant.price,
+            requires_shipping: true,
+            ..ResultLine::default()
+        }
+    };
+    let option = |handle: &str, title: &str, cost| DeliveryOption {
+        handle: handle.into(),
+        title: title.into(),
+        description: None,
+        kind: Default::default(),
+        original_cost: cost,
+        cost,
+    };
+    let group = |n: usize, location: usize, selected: &str| DeliveryGroup {
+        handle: format!("group-{n}"),
+        line_ids: vec![format!("gid://shopify/CartLine/{n}")],
+        options: vec![
+            option(&format!("standard-{n}"), "Standard", 490),
+            option(&format!("express-{n}"), "Express", 1290),
+        ],
+        selected: Some(selected.into()),
+        discount_allocations: Vec::new(),
+        location: Some(store.locations[location].id),
+    };
+    let lines = vec![line(1, mug), line(2, tote)];
+    let subtotal: i64 = lines.iter().map(|line| line.total).sum();
+    let result = CheckoutResult {
+        lines,
+        delivery_groups: vec![group(1, 0, "express-1"), group(2, 1, "standard-2")],
+        cost: Cost {
+            subtotal,
+            discounts: 0,
+            shipping: 1290 + 490,
+            tax: 0,
+            total: subtotal + 1780,
+            due_now: subtotal + 1780,
+            due_later: 0,
+            checkout_charge_amount: subtotal,
+            currency_code: "USD".into(),
+        },
+        ..CheckoutResult::default()
+    };
+    let address = Address {
+        last_name: Some("Lovelace".into()),
+        address1: Some("1 Test Street".into()),
+        city: Some("Testville".into()),
+        country_code: Some("us".into()),
+        zip: Some("12345".into()),
+        ..Address::default()
+    };
+    let order = api
+        .record_order(&PlacedOrder {
+            id: None,
+            number: None,
+            processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: None,
+            company_location_id: None,
+            email: Some("ada@example.com"),
+            phone: None,
+            shipping_address: Some(&address),
+            note: None,
+            attributes: &[],
+            payment: Some("Credit card"),
+            metafields: &[],
+        })
+        .expect("the codes are fine")
+        .expect("the order is recorded")
+        .id;
+    let answer = graphql(
+        &api,
+        "query($id: ID!) { order(id: $id) {
+            totalShippingPriceSet { shopMoney { amount } }
+            shippingLines(first: 5) { nodes { title code originalPriceSet { shopMoney { amount } } } }
+            fulfillmentOrders(first: 5) { nodes {
+                id status
+                assignedLocation { name }
+                deliveryMethod { methodType presentedName }
+                lineItems(first: 5) { nodes { productTitle totalQuantity } }
+            } }
+        } }",
+        json!({"id": order}),
+    );
+    let order_data = &answer["data"]["order"];
+    assert_eq!(
+        order_data["totalShippingPriceSet"]["shopMoney"]["amount"],
+        json!("17.8"),
+        "{answer}"
+    );
+    assert_eq!(
+        order_data["shippingLines"]["nodes"],
+        json!([
+            {"title": "Express", "code": "express-1", "originalPriceSet": {"shopMoney": {"amount": "12.9"}}},
+            {"title": "Standard", "code": "standard-2", "originalPriceSet": {"shopMoney": {"amount": "4.9"}}},
+        ]),
+        "{answer}"
+    );
+    let fulfillment_orders = order_data["fulfillmentOrders"]["nodes"].as_array().unwrap();
+    let summary: Vec<Value> = fulfillment_orders
+        .iter()
+        .map(|fo| {
+            json!([
+                fo["status"],
+                fo["assignedLocation"]["name"],
+                fo["deliveryMethod"]["presentedName"],
+                fo["lineItems"]["nodes"],
+            ])
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            json!(["OPEN", "Ottawa flagship", "Express", [{"productTitle": "Ceramic Mug", "totalQuantity": 1}]]),
+            json!(["OPEN", "Montreal studio", "Standard", [{"productTitle": "Canvas Tote Bag", "totalQuantity": 1}]]),
+        ],
+        "{answer}"
+    );
+    // Each is fulfilled on its own: two shipments.
+    for fo in fulfillment_orders {
+        let shipped = graphql(
+            &api,
+            "mutation($fo: ID!) { fulfillmentCreate(fulfillment: {lineItemsByFulfillmentOrder: [{fulfillmentOrderId: $fo}]}) { fulfillment { id } userErrors { message } } }",
+            json!({"fo": fo["id"]}),
+        );
+        assert_eq!(
+            shipped["data"]["fulfillmentCreate"]["userErrors"],
+            json!([]),
+            "{shipped}"
+        );
+    }
+    let answer = graphql(
+        &api,
+        "query($id: ID!) { order(id: $id) { displayFulfillmentStatus fulfillments { id } } }",
+        json!({"id": order}),
+    );
+    assert_eq!(
+        answer["data"]["order"]["displayFulfillmentStatus"],
+        json!("FULFILLED"),
+        "{answer}"
+    );
+    assert_eq!(
+        answer["data"]["order"]["fulfillments"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
 }

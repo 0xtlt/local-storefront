@@ -3,6 +3,40 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Added
+
+- **`shopify.query` answers from the store data, for an extension with `api_access`**, as
+  Shopify's Storefront API answers it (#324). A checkout or customer account UI extension with
+  `api_access = true` in `[extensions.capabilities]` reads products and variants: `node`, `nodes`
+  and `product(id:, handle:)`, their scalar fields, a variant's `product`, `price`,
+  `compareAtPrice` and `selectedOptions`, and `metafield(namespace:, key:)` and
+  `metafields(identifiers:)` on both, from the metafields of the data. A product not on the
+  storefront is `null`. What lsf does not answer rejects with an error that names it (``unknown
+  field `variants` on type `Product` ``), and `quantityAvailable` is refused as Shopify refuses
+  it without the inventory scope. Without `api_access`, `query` keeps rejecting, as on Shopify,
+  and says which capability it needs. See
+  [Storefront API](docs/checkout.md#storefront-api).
+- **A cart whose lines ship from different locations is split into delivery groups**, as
+  Shopify splits it (#325). Where a line ships from is read from the `locations` of the store
+  data and the `store_availabilities` of its variant; the lines ship from as few locations as it
+  takes. Each group has its lines (`targetedCartLines`), its options, its
+  `selectedDeliveryOption` and a shipping method of its own on the page, the
+  `shipping-option-item.*` targets render for the options of each group, the Functions read
+  every group in `cart.deliveryGroups`, and the order placed has one fulfillment order per group,
+  at its location, with one shipping line each. Once a cart is split, each option has a handle
+  of its own (`standard-1`, `express-2`), as a delivery option handle names an option of one
+  group on Shopify; a checkout of one group is unchanged. See
+  [split shipments](docs/checkout.md#split-shipments).
+
+### Fixed
+
+- **`lsf check` takes a `label` over 70 characters in `config/settings_schema.json`**, as
+  Shopify's upload does (#326): a development store stored labels of 101 and 300 characters
+  whole there. The limit holds for the `{% schema %}` of a section or a theme block, where
+  Shopify refuses a 71-character label, and `lsf check` still reports it.
+
 ## 0.3.0-rc.8 - 2026-11-16
 
 Eighth release candidate of 0.3.0. It fixes the ten differences from Shopify reported as

@@ -293,6 +293,174 @@ fn delivery_customization_hides_renames_and_moves_options() {
     assert_eq!(result.cost.shipping, 490);
 }
 
+/// The demo store with the tote bag stocked in the Montreal studio only, as #325 sets it up (the
+/// slate mug is in the Ottawa flagship only), and the id of the slate mug.
+fn two_locations() -> (lsf_core::Store, u64) {
+    let mut store = store();
+    let montreal = store
+        .locations
+        .iter()
+        .position(|location| location.name == "Montreal studio")
+        .unwrap();
+    let ottawa = store
+        .locations
+        .iter()
+        .position(|location| location.name == "Ottawa flagship")
+        .unwrap();
+    let (product, variant) = store.variant_location(TOTE).unwrap();
+    store.products[product].variants[variant].store_availabilities =
+        vec![(ottawa, false), (montreal, true)];
+    let slate = store.product_by_handle("ceramic-mug").unwrap().variants[1].id;
+    (store, slate)
+}
+
+/// #325: a cart whose lines ship from different locations has one delivery group per location,
+/// each with its own lines, its own options (handles of their own, so that an operation that
+/// names one changes that group only) and its own choice; the Functions see every group.
+#[test]
+fn lines_that_ship_from_different_locations_split_into_delivery_groups() {
+    let app = app();
+    let (store, slate) = two_locations();
+    let session = session(&store, &[(slate, 1), (TOTE, 1)]);
+    let mut config = config();
+    config.function_metafields.insert(
+        "delivery-rules".to_string(),
+        settings(json!({"hide": ["express-2"]})),
+    );
+    let mut state = addressed();
+    state
+        .selected_delivery
+        .insert("group-1".into(), "express-1".into());
+    let selection = Selection::only(["delivery-rules"]);
+    let result = compute(&app, &selection, &store, &session, &state, &config);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let groups: Vec<_> = result
+        .delivery_groups
+        .iter()
+        .map(|group| {
+            (
+                group.handle.as_str(),
+                group.line_ids.clone(),
+                group
+                    .options
+                    .iter()
+                    .map(|option| option.handle.as_str())
+                    .collect::<Vec<_>>(),
+                group.selected.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        groups,
+        [
+            (
+                "group-1",
+                vec!["gid://shopify/CartLine/1".to_string()],
+                vec!["standard-1", "express-1"],
+                Some("express-1"),
+            ),
+            (
+                "group-2",
+                vec!["gid://shopify/CartLine/2".to_string()],
+                vec!["standard-2"],
+                Some("standard-2"),
+            ),
+        ]
+    );
+    let locations: Vec<_> = result
+        .delivery_groups
+        .iter()
+        .map(|group| group.location)
+        .collect();
+    assert_eq!(
+        locations,
+        [Some(store.locations[0].id), Some(store.locations[1].id)],
+        "the mug ships from Ottawa, the tote bag from Montreal"
+    );
+    // Each shipment costs its rate.
+    assert_eq!(result.cost.shipping, 1290 + 490);
+    // The delivery customization saw the two groups, as on Shopify.
+    let run = run_for(&result, "delivery-rules");
+    assert_eq!(
+        run.input["cart"]["deliveryGroups"],
+        json!([
+            {"deliveryOptions": [{"handle": "standard-1", "title": "Standard"}, {"handle": "express-1", "title": "Express"}]},
+            {"deliveryOptions": [{"handle": "standard-2", "title": "Standard"}, {"handle": "express-2", "title": "Express"}]},
+        ])
+    );
+
+    // A rate chosen for every group (a scenario's `entered.delivery`) names the rate.
+    let mut state = addressed();
+    state.selected_delivery.insert("*".into(), "express".into());
+    let result = compute(
+        &app,
+        &Selection::only(["volume-discount"]),
+        &store,
+        &session,
+        &state,
+        &config,
+    );
+    let selected: Vec<_> = result
+        .delivery_groups
+        .iter()
+        .map(|group| group.selected.as_deref())
+        .collect();
+    assert_eq!(selected, [Some("express-1"), Some("express-2")]);
+}
+
+/// #325: lines one location has in stock ship together, from as few locations as it takes, and
+/// a checkout of one group keeps the handles of the rates.
+#[test]
+fn lines_one_location_stocks_stay_in_one_delivery_group() {
+    let app = app();
+    let (store, slate) = two_locations();
+    // Everything the Ottawa flagship has: one group, as before.
+    let two = session(&store, &[(slate, 1), (TEE, 2)]);
+    let result = compute(
+        &app,
+        &Selection::only(["volume-discount"]),
+        &store,
+        &two,
+        &addressed(),
+        &config(),
+    );
+    assert_eq!(result.delivery_groups.len(), 1);
+    let group = &result.delivery_groups[0];
+    assert_eq!(group.handle, "group-1");
+    assert_eq!(group.line_ids.len(), 2);
+    assert_eq!(group.location, None);
+    let handles: Vec<_> = group
+        .options
+        .iter()
+        .map(|option| option.handle.as_str())
+        .collect();
+    assert_eq!(handles, ["standard", "express"]);
+    // The tee is stocked everywhere: Ottawa and Montreal have two of the lines each, and the
+    // first location of the data goes first. The tee ships with the mug from Ottawa, the tote
+    // bag alone from Montreal.
+    let three = session(&store, &[(slate, 1), (TEE, 1), (TOTE, 1)]);
+    let result = compute(
+        &app,
+        &Selection::only(["volume-discount"]),
+        &store,
+        &three,
+        &addressed(),
+        &config(),
+    );
+    let lines: Vec<_> = result
+        .delivery_groups
+        .iter()
+        .map(|group| group.line_ids.join(" "))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "gid://shopify/CartLine/1 gid://shopify/CartLine/2",
+            "gid://shopify/CartLine/3",
+        ]
+    );
+}
+
 #[test]
 fn a_function_runs_only_through_an_enabled_owner_when_the_checkout_follows_the_shop() {
     let app = app();

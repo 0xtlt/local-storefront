@@ -94,7 +94,31 @@ pub struct OrderDraft {
     /// The currency the order is presented in, when it is not the shop's: the amounts above
     /// are the shop's, converted to it at its rate ([`model::Presentment`]).
     pub presentment: Option<model::Presentment>,
+    /// The shipments of an order whose lines ship from several locations (a split checkout):
+    /// one fulfillment order and one shipping line each. Empty, or one, for an order with one
+    /// fulfillment order at [`Self::location`] and the shipping line of [`Self::shipping`].
+    pub shipments: Vec<ShipmentDraft>,
 }
+
+/// A shipment of an [`OrderDraft`]: a delivery group of the checkout.
+#[derive(Clone, Debug, Default)]
+pub struct ShipmentDraft {
+    /// The positions of its lines in [`OrderDraft::lines`].
+    pub lines: Vec<usize>,
+    /// The GID of the location it ships from.
+    pub location: Option<String>,
+    /// The rate chosen for it.
+    pub shipping: Option<ShippingDraft>,
+}
+
+/// `(key, lines, location, shipping)` of a fulfillment order [`insert_order`] makes: the key its
+/// ids derive from, the positions of its lines, the GID of its location and its rate.
+type PlannedFulfillmentOrder<'d> = (
+    String,
+    Vec<usize>,
+    Option<&'d str>,
+    Option<&'d ShippingDraft>,
+);
 
 /// A line of an [`OrderDraft`].
 #[derive(Clone, Debug, Default)]
@@ -341,6 +365,7 @@ pub fn seed(seed: &mut Seed) {
                     .collect(),
                 location: location.clone(),
                 presentment: None,
+                shipments: Vec::new(),
             };
             insert_order(&mut seed.state, &draft);
         }
@@ -473,17 +498,17 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
     };
     let fully_fulfilled = draft.fulfillment == FulfillmentState::Fulfilled;
 
-    // The fulfillment order: every order has one, at the location that fulfills it.
+    // The fulfillment order: every order has one, at the location that fulfills it; an order
+    // whose lines ship from several locations has one per shipment, as Shopify splits the order
+    // of a split cart.
     let location = draft
         .location
         .as_deref()
         .filter(|location| state.contains(location));
-    let assigned = location.map_or(json!({"name": "", "countryCode": "US"}), |location| {
-        model::assigned_location_value(state, location)
-    });
     let fulfillment_order = derived("FulfillmentOrder", "fulfillment_order", &order, "1");
     let fulfillment = derived("Fulfillment", "fulfillment", &order, "1");
     let has_fulfillment = fulfilled.iter().any(|quantity| *quantity > 0);
+    let split = draft.shipments.len() > 1 && !has_fulfillment;
     let mut order_lines = Vec::new();
     let mut fulfillment_lines = Vec::new();
     for (position, line) in draft.lines.iter().enumerate() {
@@ -538,15 +563,6 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
             fulfillment_lines.push((position, id));
         }
     }
-    let destination = draft.shipping_address.as_ref().map(|address| {
-        let id = derived(
-            "FulfillmentOrderDestination",
-            "fulfillment_order_destination",
-            &order,
-            "1",
-        );
-        lifecycle::destination(address, json!(id), json!(draft.email))
-    });
     let status = if draft.cancelled {
         "CANCELLED"
     } else if fully_fulfilled {
@@ -561,30 +577,83 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         None if draft.lines.iter().any(|line| line.requires_shipping) => "SHIPPING",
         None => "NONE",
     };
-    state.insert(value::object(json!({
-        "__typename": "FulfillmentOrder",
-        "id": fulfillment_order,
-        "order": order,
-        "orderId": order,
-        "orderName": draft.name,
-        "orderProcessedAt": created,
-        "status": status,
-        "requestStatus": "UNSUBMITTED",
-        "assignedLocation": assigned,
-        "destination": destination,
-        "deliveryMethod": {
-            "id": derived("DeliveryMethod", "delivery_method", &order, "1"),
-            "methodType": method,
-            "presentedName": draft.shipping.as_ref().map(|shipping| shipping.title.clone()),
-            "serviceCode": draft.shipping.as_ref().and_then(|shipping| shipping.handle.clone()),
-        },
-        "lineItems": order_lines,
-        "fulfillments": if has_fulfillment { vec![fulfillment.clone()] } else { Vec::new() },
-        "fulfillmentHolds": [],
-        "fulfillAt": created,
-        "createdAt": created,
-        "updatedAt": created,
-    })));
+    let shipments: Vec<PlannedFulfillmentOrder> = if split {
+        let mut shipments: Vec<_> = draft
+            .shipments
+            .iter()
+            .enumerate()
+            .map(|(index, shipment)| {
+                (
+                    (index + 1).to_string(),
+                    shipment.lines.clone(),
+                    shipment
+                        .location
+                        .as_deref()
+                        .filter(|location| state.contains(location))
+                        .or(location),
+                    shipment.shipping.as_ref(),
+                )
+            })
+            .collect();
+        // A line of no shipment (one that needs no shipping) is fulfilled with the first.
+        let placed: Vec<usize> = draft
+            .shipments
+            .iter()
+            .flat_map(|s| s.lines.clone())
+            .collect();
+        let rest = (0..draft.lines.len()).filter(|position| !placed.contains(position));
+        shipments[0].1.extend(rest);
+        shipments[0].1.sort_unstable();
+        shipments
+    } else {
+        vec![(
+            "1".to_string(),
+            (0..draft.lines.len()).collect(),
+            location,
+            draft.shipping.as_ref(),
+        )]
+    };
+    let mut fulfillment_orders = Vec::new();
+    for (key, positions, location, shipping) in &shipments {
+        let id = derived("FulfillmentOrder", "fulfillment_order", &order, key);
+        let assigned = location.map_or(json!({"name": "", "countryCode": "US"}), |location| {
+            model::assigned_location_value(state, location)
+        });
+        let destination = draft.shipping_address.as_ref().map(|address| {
+            let id = derived(
+                "FulfillmentOrderDestination",
+                "fulfillment_order_destination",
+                &order,
+                key,
+            );
+            lifecycle::destination(address, json!(id), json!(draft.email))
+        });
+        state.insert(value::object(json!({
+            "__typename": "FulfillmentOrder",
+            "id": id,
+            "order": order,
+            "orderId": order,
+            "orderName": draft.name,
+            "orderProcessedAt": created,
+            "status": status,
+            "requestStatus": "UNSUBMITTED",
+            "assignedLocation": assigned,
+            "destination": destination,
+            "deliveryMethod": {
+                "id": derived("DeliveryMethod", "delivery_method", &order, key),
+                "methodType": method,
+                "presentedName": shipping.map(|shipping| shipping.title.clone()),
+                "serviceCode": shipping.and_then(|shipping| shipping.handle.clone()),
+            },
+            "lineItems": positions.iter().map(|position| &order_lines[*position]).collect::<Vec<_>>(),
+            "fulfillments": if has_fulfillment { vec![fulfillment.clone()] } else { Vec::new() },
+            "fulfillmentHolds": [],
+            "fulfillAt": created,
+            "createdAt": created,
+            "updatedAt": created,
+        })));
+        fulfillment_orders.push(id);
+    }
 
     if has_fulfillment {
         state.insert(value::object(json!({
@@ -739,9 +808,9 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         returns.push(id);
     }
 
-    let shipping_line = draft.shipping.as_ref().map(|shipping| {
+    let shipping_line_of = |key: &str, shipping: &ShippingDraft| {
         json!({
-            "id": derived("ShippingLine", "shipping_line", &order, "1"),
+            "id": derived("ShippingLine", "shipping_line", &order, key),
             "title": shipping.title,
             "code": shipping.handle.clone().unwrap_or_else(|| shipping.title.clone()),
             "shippingRateHandle": shipping.handle,
@@ -755,7 +824,21 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
             "taxLines": [],
             "createdAt": created,
         })
-    });
+    };
+    let shipping_line = draft
+        .shipping
+        .as_ref()
+        .map(|shipping| shipping_line_of("1", shipping));
+    // One shipping line per shipment of a split order, each with the rate chosen for it.
+    let shipping_lines: Vec<Value> = if split {
+        shipments
+            .iter()
+            .filter_map(|(key, _, _, shipping)| Some(shipping_line_of(key, (*shipping)?)))
+            .collect()
+    } else {
+        shipping_line.iter().cloned().collect()
+    };
+    let shipping_line = shipping_lines.first().cloned().or(shipping_line);
     let tax_lines: Vec<Value> = (draft.tax > 0)
         .then(|| json!({"title": "Tax", "priceSet": bag(draft.tax)}))
         .into_iter()
@@ -808,7 +891,7 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
             _ => false,
         },
         "shippingLine": shipping_line,
-        "shippingLines": shipping_line.iter().collect::<Vec<_>>(),
+        "shippingLines": shipping_lines,
         "taxLines": tax_lines,
         "currentTaxLines": tax_lines,
     }));
@@ -853,7 +936,7 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         "returnStatus": return_status,
         "returns": returns,
         "fulfillments": if has_fulfillment { vec![fulfillment] } else { Vec::new() },
-        "fulfillmentOrders": [fulfillment_order],
+        "fulfillmentOrders": fulfillment_orders,
         "transactions": transactions,
         "refunds": [],
         "discountApplications": [],
@@ -1253,12 +1336,16 @@ pub fn record_placed_order(
     // allocations of each line of the order go with it.
     let mut lines = Vec::new();
     let mut line_allocations = Vec::new();
+    // The checkout line each line of the order comes from.
+    let mut sources: Vec<&str> = Vec::new();
     for line in &result.lines {
         if line.components.is_empty() {
             lines.push(placed_line(state, line, line.subtotal - line.total, None));
             line_allocations.push(line.discount_allocations.clone());
+            sources.push(&line.id);
             continue;
         }
+        sources.extend(line.components.iter().map(|_| line.id.as_str()));
         let group = insert_line_item_group(state, line);
         // The components are priced at their own prices; what the bundle costs less (its
         // discounts, a price adjustment of the merge) is shared among them in proportion, so
@@ -1325,6 +1412,34 @@ pub fn record_placed_order(
         .shipping_address
         .map(|address| super::checkouts::mailing_address(address, &format!("{id}/shipping")));
     let location = state.keys("Location").next().map(str::to_string);
+    // A checkout of several delivery groups (lines that ship from several locations) makes an
+    // order of as many shipments, each at the location of its group.
+    let shipments: Vec<ShipmentDraft> = if result.delivery_groups.len() > 1 {
+        result
+            .delivery_groups
+            .iter()
+            .map(|group| ShipmentDraft {
+                lines: (0..lines.len())
+                    .filter(|position| group.line_ids.iter().any(|id| id == sources[*position]))
+                    .collect(),
+                location: group.location.map(|location| gid("Location", location)),
+                shipping: group.selected.as_ref().and_then(|handle| {
+                    let option = group
+                        .options
+                        .iter()
+                        .find(|option| &option.handle == handle)?;
+                    Some(ShippingDraft {
+                        title: option.title.clone(),
+                        handle: Some(option.handle.clone()),
+                        original: option.original_cost,
+                        discounted: group.selected_cost(),
+                    })
+                }),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let draft = OrderDraft {
         id: id.clone(),
         name: format!("#{number}"),
@@ -1364,6 +1479,7 @@ pub fn record_placed_order(
         returns: Vec::new(),
         location,
         presentment: None,
+        shipments,
     };
     let order = insert_order(state, &draft);
     record_discounts(state, &order, result, &line_allocations);

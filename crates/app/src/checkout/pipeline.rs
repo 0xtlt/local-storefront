@@ -44,8 +44,53 @@ use crate::config::{
     App, FunctionExtension, FunctionTarget, INSTALL_AGAIN, NOT_INSTALLED, Selection, TargetKind,
 };
 
-/// The handle of the delivery group: one group holds every line that needs shipping.
+/// The handle of the first delivery group, the only one when every line that needs shipping
+/// ships from one location. The others are `group-2`, `group-3`, … ([`delivery_group_handle`]).
 pub const DELIVERY_GROUP_HANDLE: &str = "group-1";
+
+/// The key of [`CheckoutState::selected_delivery`] that chooses a rate in every delivery group
+/// that has no choice of its own: what a scenario's `entered.delivery` sets.
+pub const EVERY_DELIVERY_GROUP: &str = "*";
+
+/// The handle of the delivery group `number` (from 1): `group-1`, `group-2`, …
+pub fn delivery_group_handle(number: usize) -> String {
+    format!("group-{number}")
+}
+
+/// The number (from 1) of the delivery group a handle names, `None` for a handle that is not one
+/// of [`delivery_group_handle`].
+pub fn delivery_group_number(handle: &str) -> Option<usize> {
+    handle
+        .strip_prefix("group-")
+        .and_then(|number| number.parse().ok())
+        .filter(|number| *number > 0)
+}
+
+/// The handle of the option of a shipping rate in the delivery group `number`. With one group,
+/// the handle of the rate (`standard`); with several, each group has its own options, as on
+/// Shopify, where a delivery option handle names an option of one group: `standard-1`,
+/// `standard-2`, … so that an operation of a delivery customization or a shipping discount that
+/// names one changes that group only.
+pub fn delivery_option_handle(rate: &str, number: usize, split: bool) -> String {
+    if split {
+        format!("{rate}-{number}")
+    } else {
+        rate.to_string()
+    }
+}
+
+/// The option of `group` (the delivery group `number`) that `wanted` names: its handle, or, in a
+/// checkout of several groups, the handle of its rate.
+fn named_option(group: &DeliveryGroup, wanted: &str, number: usize, split: bool) -> Option<String> {
+    let rate = delivery_option_handle(wanted, number, split);
+    [wanted, rate.as_str()].into_iter().find_map(|handle| {
+        group
+            .options
+            .iter()
+            .find(|option| option.handle == handle)
+            .map(|option| option.handle.clone())
+    })
+}
 
 /// Builds the input of a Function: [`crate::checkout::input::build`], or another builder for tests.
 pub type InputBuilder<'a> =
@@ -57,7 +102,8 @@ pub type InputBuilder<'a> =
 /// instructions) do not stop the checkout: the failure is in the [`FunctionRun`] and in
 /// [`CheckoutResult::errors`], which block completing the order.
 ///
-/// What the input builder can rely on: the delivery group is [`DELIVERY_GROUP_HANDLE`], and
+/// What the input builder can rely on: the delivery groups are [`DELIVERY_GROUP_HANDLE`] and,
+/// when the lines ship from several locations, `group-2`, … ([`delivery_group_handle`]), and
 /// outputs name a delivery group or a payment method by its handle or by a gid that ends with
 /// it (`gid://shopify/CartDeliveryGroup/group-1`), so the `id` the builder gives them must do
 /// the same. Cart lines are named by the `id` of [`ResultLine`], product variants by their gid.
@@ -1544,55 +1590,159 @@ impl<'a> Pipeline<'a> {
 
     // ---- delivery ----
 
+    /// One delivery group per location the lines that need shipping ship from
+    /// ([`Self::shipments`]), each offered every shipping rate.
     fn build_delivery_groups(&mut self) {
-        let line_ids: Vec<String> = self
+        let shipped: Vec<&ResultLine> = self
             .lines
             .iter()
             .filter(|line| line.requires_shipping)
-            .map(|line| line.id.clone())
             .collect();
-        if line_ids.is_empty() || self.config.shipping_rates.is_empty() {
+        if shipped.is_empty() || self.config.shipping_rates.is_empty() {
             return;
         }
-        let options = self
-            .config
-            .shipping_rates
-            .iter()
-            .map(|rate| DeliveryOption {
-                handle: rate.handle.clone(),
-                title: rate.title.clone(),
-                description: rate.description.clone(),
-                kind: rate.kind,
-                original_cost: rate.price,
-                cost: rate.price,
+        let shipments = self.shipments(&shipped);
+        let split = shipments.len() > 1;
+        self.groups = shipments
+            .into_iter()
+            .enumerate()
+            .map(|(index, (location, line_ids))| {
+                let number = index + 1;
+                DeliveryGroup {
+                    handle: delivery_group_handle(number),
+                    line_ids,
+                    options: self
+                        .config
+                        .shipping_rates
+                        .iter()
+                        .map(|rate| DeliveryOption {
+                            handle: delivery_option_handle(&rate.handle, number, split),
+                            title: rate.title.clone(),
+                            description: rate.description.clone(),
+                            kind: rate.kind,
+                            original_cost: rate.price,
+                            cost: rate.price,
+                        })
+                        .collect(),
+                    selected: None,
+                    discount_allocations: Vec::new(),
+                    location: location
+                        .filter(|_| split)
+                        .map(|index| self.store.locations[index].id),
+                }
             })
             .collect();
-        self.groups = vec![DeliveryGroup {
-            handle: DELIVERY_GROUP_HANDLE.to_string(),
-            line_ids,
-            options,
-            selected: None,
-            discount_allocations: Vec::new(),
-        }];
         self.select_delivery();
+    }
+
+    /// Where the lines ship from, as Shopify splits a cart whose lines ship from different
+    /// locations: the lines each location of the store data has in stock
+    /// (`store_availabilities`, every location for a variant that lists none), from as few
+    /// locations as it takes. The location that has the most of the lines left goes first (the
+    /// first of the data on a tie), until every line has one. A line no location has in stock
+    /// (sold out, a bundle a cart transform made) ships with the first shipment. One shipment,
+    /// with no location, when the store has fewer than two locations or one has every line.
+    ///
+    /// The shipments are in the order of their first line in the cart, and their lines in the
+    /// order of the cart.
+    fn shipments(&self, lines: &[&ResultLine]) -> Vec<(Option<usize>, Vec<String>)> {
+        let locations = self.store.locations.len();
+        let stocked: Vec<Vec<usize>> = lines
+            .iter()
+            .map(|line| {
+                self.store
+                    .variant(line.variant_id)
+                    .map(|(_, variant)| {
+                        variant
+                            .store_availabilities
+                            .iter()
+                            .filter(|(_, in_stock)| *in_stock)
+                            .map(|(location, _)| *location)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
+        let mut from: Vec<Option<usize>> = vec![None; lines.len()];
+        if locations > 1 {
+            loop {
+                let left = |location: usize| {
+                    (0..lines.len())
+                        .filter(|&line| from[line].is_none() && stocked[line].contains(&location))
+                        .count()
+                };
+                let best = (0..locations)
+                    .map(|location| (location, left(location)))
+                    .filter(|(_, count)| *count > 0)
+                    .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)));
+                let Some((location, _)) = best else {
+                    break;
+                };
+                for line in 0..lines.len() {
+                    if from[line].is_none() && stocked[line].contains(&location) {
+                        from[line] = Some(location);
+                    }
+                }
+            }
+        }
+        let mut shipments: Vec<(Option<usize>, Vec<usize>)> = Vec::new();
+        for (line, location) in from.iter().enumerate() {
+            let Some(location) = location else { continue };
+            match shipments
+                .iter_mut()
+                .find(|(other, _)| *other == Some(*location))
+            {
+                Some((_, members)) => members.push(line),
+                None => shipments.push((Some(*location), vec![line])),
+            }
+        }
+        let nowhere: Vec<usize> = (0..lines.len())
+            .filter(|&line| from[line].is_none())
+            .collect();
+        match shipments.first_mut() {
+            Some((_, members)) => members.extend(nowhere),
+            None => shipments.push((None, nowhere)),
+        }
+        if shipments.len() == 1 {
+            shipments[0].0 = None;
+        }
+        for (_, members) in &mut shipments {
+            members.sort_unstable();
+        }
+        shipments.sort_by_key(|(_, members)| members[0]);
+        shipments
+            .into_iter()
+            .map(|(location, members)| {
+                (
+                    location,
+                    members
+                        .into_iter()
+                        .map(|line| lines[line].id.clone())
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     /// The buyer's choice if it is still offered, otherwise the first option. Before an address
     /// with a country, nothing is selected, as in Shopify: the shipping is in no total, and the
-    /// Functions read no `selectedDeliveryOption`.
+    /// Functions read no `selectedDeliveryOption`. A choice made for every group
+    /// ([`EVERY_DELIVERY_GROUP`], a scenario's) names a rate, and applies to a group that has no
+    /// choice of its own.
     fn select_delivery(&mut self) {
         let addressed = self.state.shipping_country().is_some();
-        for group in &mut self.groups {
+        let selected = &self.state.selected_delivery;
+        let split = self.groups.len() > 1;
+        for (index, group) in self.groups.iter_mut().enumerate() {
             if !addressed {
                 group.selected = None;
                 continue;
             }
-            let chosen = self
-                .state
-                .selected_delivery
-                .get(&group.handle)
-                .filter(|handle| group.options.iter().any(|option| &option.handle == *handle))
-                .cloned();
+            let number = index + 1;
+            let chosen = [group.handle.as_str(), EVERY_DELIVERY_GROUP]
+                .into_iter()
+                .filter_map(|key| selected.get(key))
+                .find_map(|wanted| named_option(group, wanted, number, split));
             group.selected =
                 chosen.or_else(|| group.options.first().map(|option| option.handle.clone()));
         }
@@ -3868,6 +4018,7 @@ mod tests {
             options: vec![option("standard", 490), option("express", 1290)],
             selected: Some("standard".into()),
             discount_allocations: vec![],
+            location: None,
         }];
         let candidate = product_candidate(json!({
             "targets": [{"deliveryGroup": {"id": "gid://shopify/CartDeliveryGroup/group-1"}}],

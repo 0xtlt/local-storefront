@@ -704,9 +704,9 @@ Shopify refuses on upload:
   source, a `text_alignment` default other than `left`, `center` and `right`, a `text` or
   `textarea` `default` or `placeholder` that is not a string, a `default` on an `article`,
   `blog`, `collection`, `page` or `product` setting, a `label` on a `header` or `paragraph`, a
-  `label` over 70 characters or an `info` over 500 (a `t:` key is not counted), an id with a
-  space, two options of a `select` or `radio` with one value, a `limit` of a list setting
-  outside 1 to 50, an `accept` of `video_url` other than `youtube` and `vimeo`, a `visible_if`
+  `label` over 70 characters (in `config/settings_schema.json`, Shopify stores a longer one
+  whole) or an `info` over 500 (a `t:` key is not counted), an id with a space, two options of
+  a `select` or `radio` with one value, a `limit` of a list setting outside 1 to 50, an `accept` of `video_url` other than `youtube` and `vimeo`, a `visible_if`
   that does not start with `{{` or does not parse;
 - the attributes of that `{% schema %}` that Shopify refuses (`invalid_schema`): a `name` of more
   than 25 characters (a `t:` key is not counted), an attribute the schema does not take (a theme
@@ -722,7 +722,8 @@ Shopify refuses on upload:
   `unknown_setting_type`, `duplicate_setting_id`): a file that is not a list, a group without a
   `name`, a `theme_info` without `theme_name`, `theme_author`, `theme_version` (a string) or
   `theme_documentation_url`, or with neither or both of `theme_support_email` and
-  `theme_support_url`, the settings a section schema refuses, two settings with one id in the
+  `theme_support_url`, the settings a section schema refuses (but a `label` over 70
+  characters), two settings with one id in the
   whole file, a `color_scheme_group` whose `role` lacks a role or names no definition, a
   `color_palette` of fewer than 2 or more than 20 colors or with a color that is not hex
   without alpha, more than 21 color schemes in `config/settings_data.json`; and a `current` of

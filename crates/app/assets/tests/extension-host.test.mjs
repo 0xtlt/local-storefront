@@ -22,6 +22,13 @@ function setup({ extensions, storage, state, server = false, onRequest } = {}) {
     // The bundles, from the server of the page, and the session tokens it signs.
     async fetch(url, init) {
       this.fetched.push(url);
+      if (url.endsWith('/storefront')) {
+        this.asked = init;
+        const { query } = JSON.parse(init.body);
+        return query.includes('image')
+          ? { ok: true, status: 200, json: async () => ({ errors: [{ message: 'unknown field `image` on type `ProductVariant`' }] }) }
+          : { ok: true, status: 200, json: async () => ({ data: { node: { sku: 'MUG-SLT' } } }) };
+      }
       if (url.endsWith('/session-token')) {
         this.asked = init;
         const handle = decodeURIComponent(url.split('/').at(-2));
@@ -397,6 +404,26 @@ test('asks lsf for the session token, which it signs, and hands it to the frame'
   assert.equal(window.asked.headers['content-type'], 'application/json');
   assert.equal(window.asked.body, JSON.stringify({ target: BLOCK }), 'the target, whose surface the token depends on');
   assert.deepEqual(frame.iframe.contentWindow.posted.at(-1), { lsf: true, type: 'result', id: 5, result: 'signed.for.gift-message' });
+});
+
+test('asks lsf what shopify.query answers, and hands the answer to the frame (#324)', async () => {
+  const { host, slot, connect, from, window } = setup();
+  host.attach(slot, BLOCK);
+  connect();
+  const frame = host.instances()[0];
+  const query = '{ node(id: "gid://shopify/ProductVariant/1") { ... on ProductVariant { sku } } }';
+  from(frame, { type: 'query', id: 7, query, variables: { a: 1 } });
+  await settle();
+  assert.equal(window.fetched.at(-1), '/__lsf/extensions/gift-message/storefront');
+  assert.equal(window.asked.method, 'POST');
+  assert.equal(window.asked.body, JSON.stringify({ query, variables: { a: 1 } }));
+  assert.deepEqual(frame.iframe.contentWindow.posted.at(-1), { lsf: true, type: 'result', id: 7, result: { data: { node: { sku: 'MUG-SLT' } } } });
+  // The GraphQL errors go to the frame as they are: the sandbox rejects with them.
+  from(frame, { type: 'query', id: 8, query: '{ node(id: "x") { image { url } } }' });
+  await settle();
+  assert.deepEqual(frame.iframe.contentWindow.posted.at(-1), {
+    lsf: true, type: 'result', id: 8, result: { errors: [{ message: 'unknown field `image` on type `ProductVariant`' }] },
+  });
 });
 
 test('says why there is no session token when lsf gives none', async () => {

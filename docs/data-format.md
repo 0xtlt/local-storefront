@@ -333,6 +333,9 @@ when it requires one.
   variant that lists `store_availabilities` is stocked by those locations only, each with its
   own stock:
   `"store_availabilities": { "Portland flagship": true, "Seattle warehouse": false }`.
+- The locations are also where the lines of the checkout of `--app` ship from: a cart whose
+  lines are in stock at different locations ships from as few of them as it takes, one delivery
+  group each ([split shipments](checkout.md#split-shipments)).
 
 In Liquid, `variant.store_availabilities` lists a `store_availability` per location, with its
 `location` (`name`, `address`, `latitude`, `longitude`, `metafields`). As on Shopify, only the

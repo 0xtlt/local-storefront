@@ -152,8 +152,24 @@ fn whole_steps(value: f64, step: f64) -> bool {
     (steps - steps.round()).abs() < 1e-6
 }
 
+/// Where a list of settings is: Shopify applies some rules to the `{% schema %}` of a section or
+/// a theme block only.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsIn {
+    /// The `{% schema %}` of a section or a theme block.
+    Schema,
+    /// `config/settings_schema.json`, the theme settings.
+    ThemeSettings,
+}
+
 /// The problems of a list of settings at `pointer` (`/settings`, `/blocks/0/settings`).
-fn check_settings(parsed: &Parsed, list: &Json, pointer: &str, out: &mut Vec<SchemaProblem>) {
+fn check_settings(
+    parsed: &Parsed,
+    list: &Json,
+    pointer: &str,
+    of: SettingsIn,
+    out: &mut Vec<SchemaProblem>,
+) {
     let Some(items) = list.as_array() else {
         out.push(SchemaProblem {
             code: "invalid_schema",
@@ -232,7 +248,7 @@ fn check_settings(parsed: &Parsed, list: &Json, pointer: &str, out: &mut Vec<Sch
             }
             seen.push(id);
         }
-        for message in setting_rules(item, kind) {
+        for message in setting_rules(item, kind, of) {
             problem(
                 "invalid_schema",
                 format!("{name}: {message}: Shopify refuses the file"),
@@ -371,7 +387,10 @@ fn check_settings(parsed: &Parsed, list: &Json, pointer: &str, out: &mut Vec<Sch
     }
 }
 
-/// The most characters of a setting's `label` and `info` (a `t:` key is not counted).
+/// The most characters of a setting's `label` and `info` (a `t:` key is not counted). The
+/// `label` limit is the one of a section or a theme block: Shopify stores a longer label of
+/// `config/settings_schema.json` whole (a development store took 101 and 300 characters, #326).
+/// The `info` limit was observed on a section only, and is applied to both.
 const LONGEST_LABEL: usize = 70;
 const LONGEST_INFO: usize = 500;
 
@@ -530,11 +549,15 @@ fn visible_if_error(condition: &str) -> Option<String> {
 
 /// What Shopify refuses in one setting of a schema, beyond its required keys and the type of
 /// its `default`: each message says what is wrong.
-fn setting_rules(item: &Json, kind: &str) -> Vec<String> {
+fn setting_rules(item: &Json, kind: &str, of: SettingsIn) -> Vec<String> {
     let mut out = Vec::new();
     let default = item.get("default").filter(|default| !default.is_null());
     let text_default = default.and_then(Json::as_str).and_then(literal);
-    for (key, most) in [("label", LONGEST_LABEL), ("info", LONGEST_INFO)] {
+    let limits = match of {
+        SettingsIn::Schema => &[("label", LONGEST_LABEL), ("info", LONGEST_INFO)][..],
+        SettingsIn::ThemeSettings => &[("info", LONGEST_INFO)][..],
+    };
+    for &(key, most) in limits {
         if let Some(text) = item.get(key).and_then(Json::as_str).and_then(literal)
             && text.chars().count() > most
         {
@@ -799,7 +822,7 @@ pub fn check(source: &str) -> Vec<SchemaProblem> {
         return out;
     }
     if let Some(settings) = parsed.json.get("settings") {
-        check_settings(&parsed, settings, "/settings", &mut out);
+        check_settings(&parsed, settings, "/settings", SettingsIn::Schema, &mut out);
     }
     if let Some(blocks) = parsed.json.get("blocks").and_then(Json::as_array) {
         for (index, entry) in blocks.iter().enumerate() {
@@ -814,7 +837,13 @@ pub fn check(source: &str) -> Vec<SchemaProblem> {
                 continue;
             }
             if let Some(settings) = entry.get("settings") {
-                check_settings(&parsed, settings, &format!("{at}/settings"), &mut out);
+                check_settings(
+                    &parsed,
+                    settings,
+                    &format!("{at}/settings"),
+                    SettingsIn::Schema,
+                    &mut out,
+                );
             }
         }
     }
@@ -923,7 +952,13 @@ pub fn check_settings_schema(source: &str, data: Option<&Json>) -> Vec<SchemaPro
         let Some(settings) = group.get("settings") else {
             continue;
         };
-        check_settings(&parsed, settings, &format!("{at}/settings"), &mut out);
+        check_settings(
+            &parsed,
+            settings,
+            &format!("{at}/settings"),
+            SettingsIn::ThemeSettings,
+            &mut out,
+        );
         for (position, setting) in settings.as_array().into_iter().flatten().enumerate() {
             let Some(id) = setting.get("id").and_then(Json::as_str) else {
                 continue;
@@ -1675,6 +1710,44 @@ mod tests {
         ] {
             assert_eq!(one_setting(setting), Vec::<String>::new(), "{setting}");
         }
+    }
+
+    /// #326: a development store refuses a section's or a theme block's label of 71 characters,
+    /// and stores whole one of 101 or 300 characters in `config/settings_schema.json`.
+    #[test]
+    fn the_label_limit_is_the_one_of_section_and_block_schemas_only() {
+        // The issue's section: 71 characters, one more than Shopify takes.
+        let section = r#"{% schema %}
+{ "name": "Long label", "settings": [ { "type": "text", "id": "t", "label": "This label is seventy-one characters long, one more than the 70 allowed" } ] }
+{% endschema %}"#;
+        let messages: Vec<String> = check(section)
+            .into_iter()
+            .map(|problem| problem.message)
+            .collect();
+        assert_eq!(
+            messages,
+            [
+                "setting \"t\": its `label` is 71 characters long, more than 70: Shopify refuses the file"
+            ]
+        );
+        // 70 is taken.
+        assert_eq!(
+            one_setting(&format!(
+                r#"{{"type": "text", "id": "t", "label": "{}"}}"#,
+                "L".repeat(70)
+            )),
+            Vec::<String>::new()
+        );
+        // The issue's `config/settings_schema.json`: 101 characters, and 300.
+        let links = r#"{ "name": "Links", "settings": [
+    { "type": "url", "id": "long_label_test", "label": "This is a deliberately long setting label used to check the length rule in lsf check, 101 chars long!" }
+  ] }"#;
+        assert_eq!(settings_schema(&[THEME_INFO_OK, links], None), []);
+        let longest = format!(
+            r#"{{ "name": "G", "settings": [{{ "type": "text", "id": "t", "label": "{}" }}] }}"#,
+            "L".repeat(300)
+        );
+        assert_eq!(settings_schema(&[THEME_INFO_OK, &longest], None), []);
     }
 
     const THEME_INFO_OK: &str = r#"{ "name": "theme_info", "theme_name": "Probe", "theme_version": "1.0.0", "theme_author": "me", "theme_documentation_url": "https://example.com", "theme_support_url": "https://example.com" }"#;

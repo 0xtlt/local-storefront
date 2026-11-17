@@ -1890,8 +1890,8 @@ pub struct ScenarioEnteredInput {
     /// The delivery address. Its country is the country of the checkout.
     #[serde(default)]
     pub shipping_address: Option<ScenarioAddressInput>,
-    /// The handle of the shipping rate chosen (`checkout.shipping_rates`). The first one
-    /// available is chosen when omitted.
+    /// The handle of the shipping rate chosen (`checkout.shipping_rates`), in every delivery
+    /// group. The first one available is chosen when omitted.
     #[serde(default)]
     pub delivery: Option<String>,
     /// The handle of the payment method chosen (`checkout.payment_methods`).

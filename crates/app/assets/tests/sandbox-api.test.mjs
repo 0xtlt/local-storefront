@@ -246,9 +246,54 @@ test('storage, session token and the Storefront API', async () => {
   const refused = shopify.sessionToken.get();
   receive({ type: 'result', id: 4, error: 'lsf did not give a session token (500)' });
   await assert.rejects(() => refused, /did not give a session token/);
-  await assert.rejects(() => shopify.query('{ shop { name } }'), /Storefront API is not available/);
+  // With `api_access`, the page asks lsf, which answers from the store data (#324).
+  const query = 'query ($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id sku } } }';
+  const answered = shopify.query(query, { variables: { ids: ['gid://shopify/ProductVariant/101'] } });
+  assert.deepEqual(posted.at(-1), { type: 'query', id: 5, query, variables: { ids: ['gid://shopify/ProductVariant/101'] } });
+  const data = { nodes: [{ id: 'gid://shopify/ProductVariant/101', sku: 'LIN-SH-M-SAND' }] };
+  receive({ type: 'result', id: 5, result: { data } });
+  assert.deepEqual(plain(await answered), { data });
+  // A field lsf does not answer rejects, with the GraphQL errors.
+  const unknown = shopify.query('{ node(id: "gid://shopify/ProductVariant/101") { ... on ProductVariant { image { url } } } }');
+  const message = 'unknown field `image` on type `ProductVariant` at `node.image` (line 1, column 71)';
+  receive({ type: 'result', id: 6, result: { errors: [{ message }] } });
+  await assert.rejects(unknown, (error) => {
+    assert.equal(error.message, `Storefront API: ${message}`);
+    assert.deepEqual(plain(error.errors), [{ message }]);
+    return true;
+  });
   assert.equal(await shopify.analytics.publish('event', { a: 1 }), true);
   assert.deepEqual(posted.at(-1), { type: 'analytics', name: 'event', data: { a: 1 } });
+});
+
+test('query() without the api_access capability rejects, as on Shopify', async () => {
+  const { shopify, posted } = runtime({ ext: { capabilities: { block_progress: true } } });
+  await assert.rejects(() => shopify.query('{ shop { name } }'), /query\(\) needs the api_access capability/);
+  assert.equal(posted.filter((message) => message.type === 'query').length, 0, 'nothing is asked of the page');
+});
+
+test('a split checkout has a delivery group per shipment, each with its lines, options and choice (#325)', () => {
+  const groups = [1, 2].map((n) => ({
+    handle: `group-${n}`,
+    lineIds: [`gid://shopify/CartLine/${n}`],
+    selected: n === 1 ? 'express-1' : 'standard-2',
+    options: ['standard', 'express'].map((rate) => ({
+      handle: `${rate}-${n}`, title: rate, kind: 'SHIPPING', cost: { amount: 5, currencyCode: 'EUR' }, originalCost: { amount: 5, currencyCode: 'EUR' },
+    })),
+  }));
+  const state = checkoutState({ shippingAddress: ADDRESS, deliveryGroups: groups });
+  const { shopify } = runtime({ state });
+  // What the probe of the issue prints: `OUT groups=2 lines=1+1`.
+  const value = shopify.deliveryGroups.value;
+  assert.equal('groups=' + value.length + ' lines=' + value.map((group) => group.targetedCartLines.length).join('+'), 'groups=2 lines=1+1');
+  assert.deepEqual(value.map((group) => group.selectedDeliveryOption.handle), ['express-1', 'standard-2']);
+  assert.deepEqual(value[1].deliveryOptions.map((option) => option.handle), ['standard-2', 'express-2']);
+  // An option item target of the second shipment sees its option.
+  const item = runtime({ target: 'purchase.checkout.shipping-option-item.render-after', ctx: { group: 'group-2', option: 'express-2' }, state }).shopify;
+  assert.equal(item.target.value.handle, 'express-2');
+  assert.equal(item.isTargetSelected.value, false);
+  const list = runtime({ target: 'purchase.checkout.shipping-option-list.render-after', state }).shopify;
+  assert.equal(list.target.value.deliveryGroups.length, 2);
 });
 
 test('targets add their own members', () => {
@@ -736,7 +781,8 @@ function account(target, { order = ORDER, ctx = {}, ext = {}, appMetafields } = 
 }
 
 test('a customer account target reads the account and has its own platform APIs', async () => {
-  const { shopify, posted } = account('customer-account.profile.block.render');
+  const created = account('customer-account.profile.block.render');
+  const { shopify, posted } = created;
   assert.deepEqual(plain(shopify.authenticatedAccount.customer.value), { id: 'gid://shopify/Customer/7' });
   assert.deepEqual(plain(shopify.authenticatedAccount.purchasingCompany.value), {
     company: { id: 'gid://shopify/Company/1' },
@@ -744,7 +790,12 @@ test('a customer account target reads the account and has its own platform APIs'
   });
   // None of the checkout's.
   for (const name of ['lines', 'buyerJourney', 'applyCartLinesChange', 'order', 'cost']) assert.equal(shopify[name], undefined, name);
-  await assert.rejects(shopify.query('{ shop { name } }'), /Storefront API is not available in the local customer account/);
+  // The Storefront API, as in the checkout: the page asks lsf.
+  const answered = shopify.query('{ product(handle: "tee") { title } }');
+  assert.deepEqual(posted.at(-1), { type: 'query', id: 1, query: '{ product(handle: "tee") { title } }', variables: {} });
+  created.receive({ type: 'result', id: 1, result: { data: { product: { title: 'Tee' } } } });
+  assert.deepEqual(plain(await answered), { data: { product: { title: 'Tee' } } });
+  posted.length = 0;
   const toast = await shopify.toast.show('Saved');
   toast.hide();
   shopify.navigation.navigate('shopify:customer-account/orders');

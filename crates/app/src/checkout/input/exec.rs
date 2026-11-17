@@ -13,16 +13,18 @@ use indexmap::IndexMap;
 use serde_json::{Map, Value as Json};
 
 /// What a field resolved to.
-pub(super) enum Resolved<N> {
+pub(crate) enum Resolved<N> {
     Null,
     /// A scalar, an enum, or a list of them.
     Leaf(Json),
     Object(N),
     List(Vec<N>),
+    /// A list whose items may be `null` (the Storefront API's `nodes`).
+    NullableList(Vec<Option<N>>),
 }
 
 /// The types and fields the queries run against.
-pub(super) trait Graph {
+pub(crate) trait Graph {
     type Node: Clone;
 
     fn root(&self) -> Self::Node;
@@ -48,12 +50,12 @@ pub(super) trait Graph {
 
 /// The arguments of a field, evaluated. A resolver takes the ones it knows.
 #[derive(Default)]
-pub(super) struct Args(IndexMap<String, Json>, Unset);
+pub(crate) struct Args(IndexMap<String, Json>, Unset);
 
 /// The arguments given a variable without a value, with the name of the variable: what a
 /// missing argument says.
 #[derive(Default)]
-pub(super) struct Unset(IndexMap<String, String>);
+pub(crate) struct Unset(IndexMap<String, String>);
 
 impl Args {
     /// The error of an argument the field requires and was not given.
@@ -66,11 +68,11 @@ impl Args {
         }
     }
 
-    pub(super) fn take(&mut self, name: &str) -> Option<Json> {
+    pub(crate) fn take(&mut self, name: &str) -> Option<Json> {
         self.0.shift_remove(name).filter(|value| !value.is_null())
     }
 
-    pub(super) fn string(&mut self, name: &str) -> Result<Option<String>, String> {
+    pub(crate) fn string(&mut self, name: &str) -> Result<Option<String>, String> {
         match self.take(name) {
             None => Ok(None),
             Some(Json::String(text)) => Ok(Some(text)),
@@ -78,7 +80,7 @@ impl Args {
         }
     }
 
-    pub(super) fn required_string(&mut self, name: &str) -> Result<String, String> {
+    pub(crate) fn required_string(&mut self, name: &str) -> Result<String, String> {
         match self.string(name)? {
             Some(text) => Ok(text),
             None => Err(self.missing(name)),
@@ -87,7 +89,7 @@ impl Args {
 
     /// A list of strings (or ids: numbers are read as their text). A single value counts as a
     /// list of one, as GraphQL coerces it.
-    pub(super) fn string_list(&mut self, name: &str) -> Result<Vec<String>, String> {
+    pub(crate) fn string_list(&mut self, name: &str) -> Result<Vec<String>, String> {
         let Some(value) = self.take(name) else {
             return Err(self.missing(name));
         };
@@ -112,7 +114,7 @@ impl Args {
 
 /// Runs the query of `document` against `graph`; `variables` are the values given for the
 /// operation's variables.
-pub(super) fn execute<'q, G: Graph>(
+pub(crate) fn execute<'q, G: Graph>(
     graph: &G,
     document: &'q Document<'q, String>,
     variables: &Map<String, Json>,
@@ -390,6 +392,23 @@ impl<'q, G: Graph> Executor<'q, '_, G> {
                 children
                     .iter()
                     .map(|child| self.object(child, &sub, path))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(Json::Array)
+            }
+            Resolved::NullableList(children) => {
+                if sub.is_empty() {
+                    return self.fail(
+                        path,
+                        first.position,
+                        format!("field `{name}` of `{type_name}` needs a selection of subfields"),
+                    );
+                }
+                children
+                    .iter()
+                    .map(|child| match child {
+                        Some(child) => self.object(child, &sub, path),
+                        None => Ok(Json::Null),
+                    })
                     .collect::<Result<Vec<_>, _>>()
                     .map(Json::Array)
             }

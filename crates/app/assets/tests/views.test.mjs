@@ -867,6 +867,31 @@ test('pickup options are a list of their own, with the targets of pickup locatio
   assert.equal(findAll(withSlots(state, []).tree, (node) => node.props['data-pickup'] === 'points').length, 0, 'not without an extension there');
 });
 
+/** Two shipments, as lsf splits a cart whose lines ship from two locations (#325). */
+const SPLIT = [1, 2].map((n) => ({
+  handle: `group-${n}`,
+  lineIds: [`gid://shopify/CartLine/${n}`],
+  selected: `standard-${n}`,
+  options: ['standard', 'express'].map((rate) => ({
+    handle: `${rate}-${n}`, title: rate, kind: 'SHIPPING', cost: { amount: 5 }, originalCost: { amount: 5 },
+  })),
+}));
+
+test('a split checkout has a shipping method to choose per shipment, with the targets of each option (#325)', () => {
+  const state = withCurrency(checkoutState({ shippingAddress: ADDRESS, deliveryGroups: SPLIT }));
+  const { tree, asked } = withSlots(state, []);
+  const groups = findAll(tree, (node) => node.props['data-group']);
+  assert.deepEqual(groups.map((node) => node.props['data-group']), ['group-1', 'group-2']);
+  assert.match(text(groups[0]), /Shipment 1 of 2/);
+  assert.match(text(groups[1]), /Shipment 2 of 2/);
+  const radios = findAll(tree, (node) => node.tag === 'input' && node.props.type === 'radio' && node.props.name.startsWith('delivery-'));
+  assert.deepEqual([...new Set(radios.map((node) => node.props.name))], ['delivery-group-1', 'delivery-group-2'], 'one choice per shipment');
+  const where = (target) => asked.filter(([name]) => name === target).map(([, instance]) => `${instance.group}:${instance.option}`);
+  assert.deepEqual(where('purchase.checkout.shipping-option-item.render-after'),
+    ['group-1:standard-1', 'group-1:express-1', 'group-2:standard-2', 'group-2:express-2']);
+  assert.deepEqual(where('purchase.checkout.shipping-option-item.details.render'), ['group-1:standard-1', 'group-2:standard-2'], 'the selected option of each');
+});
+
 test('a selected payment method holds the targets of payment apps, and its form opens as a dialog', () => {
   const card = withCurrency(checkoutState({ selectedPayment: 'card' }));
   const ACTION = 'purchase.checkout.payment-option-item.action-required.render';
