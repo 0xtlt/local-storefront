@@ -30,6 +30,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   group on Shopify; a checkout of one group is unchanged. See
   [split shipments](docs/checkout.md#split-shipments).
 
+### Fixed
+
+- **`lsf check` takes a `label` over 70 characters in `config/settings_schema.json`**, as
+  Shopify's upload does (#326): a development store stored labels of 101 and 300 characters
+  whole there. The limit holds for the `{% schema %}` of a section or a theme block, where
+  Shopify refuses a 71-character label, and `lsf check` still reports it.
+
 ## 0.3.0-rc.8 - 2026-11-16
 
 Eighth release candidate of 0.3.0. It fixes the ten differences from Shopify reported as
