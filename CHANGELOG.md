@@ -3,7 +3,12 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
-## Unreleased
+## 0.3.0-rc.9 - 2026-11-17
+
+Ninth release candidate of 0.3.0. Checkout UI extensions with `api_access` read the store data
+through `shopify.query` (#324), a cart that ships from several locations splits into delivery
+groups (#325), and `lsf check` takes a long label in `config/settings_schema.json` as Shopify
+does (#326).
 
 ### Added
 
