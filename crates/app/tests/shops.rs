@@ -132,6 +132,7 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             }],
             selected: Some("standard".into()),
             discount_allocations: Vec::new(),
+            location: None,
         }],
         cost: Cost {
             subtotal: 3600,

@@ -1241,6 +1241,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         returns: Vec::new(),
         location,
         presentment: None,
+        shipments: Vec::new(),
     };
     let order = super::insert_order(state, &draft);
     record_manual_discounts(state, &order, &record, &lines);

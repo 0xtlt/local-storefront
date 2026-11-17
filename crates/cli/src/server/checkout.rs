@@ -176,6 +176,9 @@ pub fn control(state: &ServerState, incoming: &Incoming, segments: &[&str]) -> O
         ("POST", ["extensions", handle, "session-token"]) => {
             Some(extension_session_token(state, incoming, handle))
         }
+        ("POST", ["extensions", handle, "storefront"]) => {
+            Some(extension_storefront(state, incoming, handle))
+        }
         ("GET", ["extensions", handle, file @ ..]) if !file.is_empty() => {
             Some(extension_file(state, handle, file))
         }
@@ -1488,16 +1491,18 @@ fn apply(
             let group = text_of(operation, "group").unwrap_or_else(|| DELIVERY_GROUP_HANDLE.into());
             let handle =
                 text_of(operation, "handle").ok_or("a `deliveryOption` needs a `handle`")?;
-            if group != DELIVERY_GROUP_HANDLE {
+            // `group-1`, and `group-2`, … when the lines ship from several locations.
+            let Some(number) = pipeline::delivery_group_number(&group) else {
                 return Err(format!(
-                    "there is no delivery group `{group}` (the group is `{DELIVERY_GROUP_HANDLE}`)"
+                    "there is no delivery group `{group}` (the groups are `{DELIVERY_GROUP_HANDLE}`, `group-2`, …)"
                 ));
-            }
-            if !config
-                .shipping_rates
-                .iter()
-                .any(|rate| rate.handle == handle)
-            {
+            };
+            // The handle of a rate, or of its option in a group of a split checkout.
+            let offered = |rate: &lsf_app::checkout::ShippingRate| {
+                rate.handle == handle
+                    || pipeline::delivery_option_handle(&rate.handle, number, true) == handle
+            };
+            if !config.shipping_rates.iter().any(offered) {
                 let known: Vec<&str> = config
                     .shipping_rates
                     .iter()
@@ -2311,6 +2316,46 @@ fn extension_session_token(state: &ServerState, incoming: &Incoming, handle: &st
         }),
     )
     .cached(cache::PRIVATE)
+}
+
+/// `POST /__lsf/extensions/<handle>/storefront`: what `shopify.query(query, {variables})` of a
+/// checkout or customer account UI extension answers, for the page to hand it to the extension.
+/// The body is `{"query": …, "variables": {…}}`; the answer is `{"data": …}` or `{"errors":
+/// […]}`, read from the store data of the caller's session
+/// ([`lsf_app::checkout::storefront`]). An extension without the `api_access` capability is
+/// refused (`403`), as Shopify refuses it: "Allows your extension to query the Storefront API".
+fn extension_storefront(state: &ServerState, incoming: &Incoming, handle: &str) -> Reply {
+    let options = options(state);
+    let app = match state.load_app(&options.app_dir) {
+        Ok(app) => app,
+        Err(problem) => return error(500, problem),
+    };
+    let selected = Selection::resolve(&app, &options.extensions)
+        .is_ok_and(|selection| selection.contains(handle));
+    let Some(extension) = app.ui_extension(handle).filter(|_| selected) else {
+        return error(404, format!("The app serves no UI extension {handle}."));
+    };
+    if extension.capabilities.get("api_access") != Some(&Json::Bool(true)) {
+        return error(403, api_access_refusal(handle));
+    }
+    let Some(query) = incoming.params.get("query").and_then(Json::as_str) else {
+        return error(
+            400,
+            "The body must be {\"query\": \"…\", \"variables\": {…}}.",
+        );
+    };
+    let (session_id, _) = state.session_id(incoming);
+    let (_, store) = state.snapshot(&session_id);
+    let answer =
+        lsf_app::checkout::storefront::query(&store, query, incoming.params.get("variables"));
+    Reply::json(200, &answer).cached(cache::PRIVATE)
+}
+
+/// Why `shopify.query` of an extension without `api_access` is refused.
+fn api_access_refusal(handle: &str) -> String {
+    format!(
+        "query() needs the api_access capability: add `api_access = true` to [extensions.capabilities] of the shopify.extension.toml of {handle}, as Shopify requires."
+    )
 }
 
 /// A file of the build of a checkout UI extension: `<extension>/dist/<file>`.

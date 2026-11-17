@@ -120,6 +120,7 @@ impl Fixture {
                 },
             ],
             selected: Some("standard".to_string()),
+            location: None,
         };
         Fixture {
             store,

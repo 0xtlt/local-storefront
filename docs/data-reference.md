@@ -1115,7 +1115,7 @@ What the buyer already typed and chose when a scenario opens.
 | `email` | string | The contact email. A logged-in customer has theirs already. |
 | `phone` | string |  |
 | `shipping_address` | [ScenarioAddress](#scenarioaddress) | The delivery address. Its country is the country of the checkout. |
-| `delivery` | string | The handle of the shipping rate chosen (`checkout.shipping_rates`). The first one available is chosen when omitted. |
+| `delivery` | string | The handle of the shipping rate chosen (`checkout.shipping_rates`), in every delivery group. The first one available is chosen when omitted. |
 | `payment` | string | The handle of the payment method chosen (`checkout.payment_methods`). |
 | `discount_codes` | array of string | The discount codes entered, in order. A code that no discount of `checkout.discounts` has is entered all the same, and refused as on Shopify. |
 

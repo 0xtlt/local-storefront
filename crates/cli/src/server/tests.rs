@@ -7111,6 +7111,110 @@ fn an_extension_gets_a_session_token_of_the_shop_signed_with_the_client_secret()
     );
 }
 
+/// #324: `shopify.query` of an extension with `api_access` reads the store data through
+/// `POST /__lsf/extensions/<handle>/storefront`, as Shopify's Storefront API answers it.
+#[test]
+fn an_extension_with_api_access_queries_the_storefront_api_of_the_store_data() {
+    let state = checkout_server(&[], false);
+    let store = state.loaded().store.clone();
+    let sku = |sku: &str| {
+        store
+            .products
+            .iter()
+            .flat_map(|product| &product.variants)
+            .find(|variant| variant.sku == sku)
+            .map(|variant| format!("gid://shopify/ProductVariant/{}", variant.id))
+            .unwrap()
+    };
+    let ids = [sku("MUG-SLT"), sku("TOTE-NAT")];
+    // The query of the issue.
+    let query = "query ($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id sku availableForSale } } }";
+    let reply = post(
+        &state,
+        "/__lsf/extensions/gift-message/storefront",
+        json!({ "query": query, "variables": { "ids": ids } }),
+        "sf-query",
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        body_json(&reply),
+        json!({"data": {"nodes": [
+            {"id": ids[0], "sku": "MUG-SLT", "availableForSale": true},
+            {"id": ids[1], "sku": "TOTE-NAT", "availableForSale": true},
+        ]}})
+    );
+    assert_eq!(header(&reply, "access-control-allow-origin"), None);
+    // A field lsf does not answer is an error that names it.
+    let reply = post(
+        &state,
+        "/__lsf/extensions/gift-message/storefront",
+        json!({ "query": "{ product(handle: \"ceramic-mug\") { title variants(first: 3) { nodes { id } } } }" }),
+        "sf-query",
+    );
+    assert_eq!(reply.status, 200);
+    let message = body_json(&reply)["errors"][0]["message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        message.contains("unknown field `variants` on type `Product`"),
+        "{message}"
+    );
+    // Only the extensions of the app, and with a query.
+    assert_eq!(
+        post(
+            &state,
+            "/__lsf/extensions/nope/storefront",
+            json!({ "query": "{ __typename }" }),
+            "sf-query"
+        )
+        .status,
+        404
+    );
+    assert_eq!(
+        post(
+            &state,
+            "/__lsf/extensions/gift-message/storefront",
+            json!({}),
+            "sf-query"
+        )
+        .status,
+        400
+    );
+}
+
+/// #324: without the `api_access` capability, the query is refused, as on Shopify.
+#[test]
+fn an_extension_without_api_access_cannot_query_the_storefront_api() {
+    let root = std::env::temp_dir().join(format!("lsf-no-api-access-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let toml = root.join("extensions/gift-message/shopify.extension.toml");
+    let declared = std::fs::read_to_string(&toml).unwrap();
+    std::fs::write(
+        &toml,
+        declared.replace("api_access = true", "api_access = false"),
+    )
+    .unwrap();
+    let state = checkout_server_of(root.clone(), &[], false);
+    let reply = post(
+        &state,
+        "/__lsf/extensions/gift-message/storefront",
+        json!({ "query": "{ __typename }" }),
+        "sf-refused",
+    );
+    assert_eq!(reply.status, 403, "{}", text(&reply));
+    assert!(
+        body_json(&reply)["error"]
+            .as_str()
+            .unwrap()
+            .contains("needs the api_access capability"),
+        "{}",
+        text(&reply)
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
 #[test]
 fn an_extension_session_token_is_signed_with_the_secret_lsf_has_without_one_given() {
     // The secret the Admin API signs with when none is given (lsf's own, unless the environment
@@ -7659,6 +7763,131 @@ fn a_scenario_opens_a_new_checkout_set_up_as_it_says() {
     let page = get(&state, &location, &id);
     assert_eq!(page.status, 200);
     assert!(text(&page).contains("<html lang=\"en\">"));
+}
+
+/// The scenario of #325: a mug stocked in Ottawa only and a tote bag stocked in Montreal only.
+const TWO_LOCATIONS: &str = r#"{
+  "title": "Two locations",
+  "description": "A mug stocked in Ottawa only and a tote bag stocked in Montreal only.",
+  "session": { "cart": { "items": [{ "variant": "MUG-SLT", "quantity": 1 }, { "variant": "TOTE-NAT", "quantity": 1 }] } },
+  "entered": {
+    "shipping_address": { "first_name": "Ada", "last_name": "Lovelace", "address1": "1 Test Street", "city": "Testville", "zip": "12345", "country_code": "US" }
+  },
+  "checkout": {
+    "shipping_rates": [
+      { "handle": "standard", "title": "Standard", "price": "4.90" },
+      { "handle": "express", "title": "Express", "price": "12.90" }
+    ]
+  },
+  "extensions": ["gift-message"]
+}"#;
+
+/// #325: the lines of a checkout ship from the locations that stock them, one delivery group
+/// each, with a shipping method to choose for each, and the order has a fulfillment order per
+/// group.
+#[test]
+fn a_cart_stocked_at_two_locations_ships_in_two_delivery_groups() {
+    let data = ScenarioData::new("two-locations", &[("two-locations.json", TWO_LOCATIONS)]);
+    let tote = data.0.join("products/canvas-tote-bag.json");
+    let product = std::fs::read_to_string(&tote).unwrap().replace(
+        r#"{ "sku": "TOTE-NAT", "inventory_quantity": 40, "weight": 320 }"#,
+        r#"{ "sku": "TOTE-NAT", "inventory_quantity": 40, "weight": 320, "store_availabilities": { "Ottawa flagship": false, "Montreal studio": true } }"#,
+    );
+    assert!(
+        product.contains("Montreal studio"),
+        "the demo tote bag changed"
+    );
+    std::fs::write(&tote, product).unwrap();
+    let state = checkout_server_with(
+        fixture_app(),
+        &[],
+        true,
+        Some(&data.0),
+        Some(Default::default()),
+    );
+
+    let reply = get(&state, "/checkout?scenario=two-locations", "viewer");
+    assert_eq!(reply.status, 302, "{}", text(&reply));
+    let id = session_cookie(&reply);
+    let path = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), &id));
+    let groups = json["deliveryGroups"].as_array().unwrap();
+    // What the probe of the issue prints: `OUT groups=2 lines=1+1`.
+    let lines: Vec<usize> = groups
+        .iter()
+        .map(|group| group["lineIds"].as_array().unwrap().len())
+        .collect();
+    assert_eq!(lines, [1, 1], "{json}");
+    assert_eq!(groups[0]["lineIds"], json!([json["lines"][0]["id"]]));
+    assert_eq!(groups[1]["lineIds"], json!([json["lines"][1]["id"]]));
+    let options = |group: &Json| -> Vec<String> {
+        group["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|option| option["handle"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(options(&groups[0]), ["standard-1", "express-1"]);
+    assert_eq!(options(&groups[1]), ["standard-2", "express-2"]);
+    assert_eq!(groups[0]["selected"], "standard-1");
+    assert_eq!(groups[1]["selected"], "standard-2");
+    assert_eq!(json["cost"]["shipping"]["amount"], 9.8);
+
+    // A shipping method for each shipment.
+    let reply = operations(
+        &state,
+        &path,
+        &id,
+        json!([
+            {"type": "deliveryOption", "group": "group-2", "handle": "express-2"},
+            {"type": "email", "value": "ada@example.com"},
+            {"type": "paymentMethod", "handle": "card"},
+        ]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["deliveryGroups"][0]["selected"], "standard-1");
+    assert_eq!(json["deliveryGroups"][1]["selected"], "express-2");
+    assert_eq!(json["cost"]["shipping"]["amount"], 17.8);
+    // A group that is not one of the checkout's is refused.
+    let refused = operations(
+        &state,
+        &path,
+        &id,
+        json!([{"type": "deliveryOption", "group": "shipping", "handle": "standard"}]),
+    );
+    assert_eq!(refused.status, 400, "{}", text(&refused));
+
+    // The order: one fulfillment order per group, at its location. The fixture app asks for no
+    // scope: the backend gets the ones it needs to read the order.
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "read_orders,read_merchant_managed_fulfillment_orders,read_locations"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), &id);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let order = body_json(&reply)["order"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let answer = admin_query(
+        &state,
+        &format!(
+            r#"{{ order(id: "{order}") {{ fulfillmentOrders(first: 5) {{ nodes {{ assignedLocation {{ name }} deliveryMethod {{ presentedName }} lineItems(first: 5) {{ nodes {{ sku }} }} }} }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        answer["data"]["order"]["fulfillmentOrders"]["nodes"],
+        json!([
+            {"assignedLocation": {"name": "Ottawa flagship"}, "deliveryMethod": {"presentedName": "Standard"}, "lineItems": {"nodes": [{"sku": "MUG-SLT"}]}},
+            {"assignedLocation": {"name": "Montreal studio"}, "deliveryMethod": {"presentedName": "Express"}, "lineItems": {"nodes": [{"sku": "TOTE-NAT"}]}},
+        ]),
+        "{answer}"
+    );
 }
 
 #[test]

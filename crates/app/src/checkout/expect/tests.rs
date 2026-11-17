@@ -71,6 +71,7 @@ fn checkout() -> CheckoutResult {
             ],
             selected: Some("pickup".into()),
             discount_allocations: vec![],
+            location: None,
         }],
         payment_methods: vec![
             method("card", "Card (secure)", PaymentPlacement::PaymentMethod),

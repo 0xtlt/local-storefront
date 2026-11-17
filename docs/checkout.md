@@ -975,7 +975,45 @@ The rest of what a Function reads comes from the other sections of the store dat
 - `paymentMethods { placements }` from `payment_methods[].placements` (the list of the checkout
   by default). A payment customization that hides a method for one placement only keeps the
   other, and a method left in no placement is removed.
-- `cart.deliverableLines` is the lines that ship: the ones the delivery group holds.
+- `cart.deliverableLines` is the lines that ship: the ones the delivery groups hold.
+
+### Split shipments
+
+A cart whose lines ship from different locations is split, as Shopify
+[splits a cart](https://shopify.dev/docs/apps/build/orders-fulfillment/split-carts) for
+"products shipping from different locations": one delivery group per location, each with its
+lines (`targetedCartLines`, `cart.deliveryGroups[].cartLines`), its options and its
+`selectedDeliveryOption`. The page asks for a shipping method per shipment ("Shipment 1 of 2"),
+each shipment costs the rate chosen for it, and the order placed has one fulfillment order per
+group, assigned to its location, with one shipping line each.
+
+Where a line ships from is read from the [locations](data-format.md#store-pickup) of the store
+data and the `store_availabilities` of its variant: the locations that have it in stock (every
+location, when the variant lists none and is available). The lines ship from as few locations as
+it takes: the location that has the most of them in stock goes first (on a tie, the first of
+`locations`), then the next one for the lines left. A line no location has in stock (sold out, a
+bundle a cart transform made) ships with the first shipment. A store with one location, or none,
+and a cart one location has entirely, keep one group: nothing changes for them.
+
+```json
+{ "sku": "TOTE-NAT", "store_availabilities": { "Ottawa flagship": false, "Montreal studio": true } }
+```
+
+With the slate mug of the demo store (Ottawa only), a cart of the mug and this tote bag has two
+groups: `group-1` with the mug from Ottawa, `group-2` with the tote bag from Montreal.
+
+- The groups are `group-1`, `group-2`, … in the order of their first line in the cart.
+- Every group is offered every rate of `shipping_rates`. On Shopify, a delivery option handle
+  names an option of one group; so here, once a cart is split, each option has a handle of its
+  own: the rate's handle and the number of the group, `standard-1`, `express-2`. A delivery
+  customization that hides `express-2` hides it in the second group only. A checkout of one group
+  keeps the handles of the rates (`standard`).
+- The `deliveryOption` [operation](#operations) takes the `group` and the option's handle
+  (`express-2`), or the rate's (`express`). A scenario's `entered.delivery` chooses that rate in
+  every group.
+- The other reasons Shopify splits a cart are not followed: shipping profiles (the store data has
+  none: every product ships with the same rates), and a subscription or a pre-order bought with
+  one-time purchases, which ship in one group with them.
 
 ## Deferred payments
 
@@ -1049,7 +1087,7 @@ them:
 1. cart transform (`cart.transform.run`)
 2. product and order discounts (`cart.lines.discounts.generate.run`, and the older
    `purchase.product-discount.run` and `purchase.order-discount.run`)
-3. the delivery groups, from `shipping_rates`
+3. the delivery groups: one per location the lines ship from ([split shipments](#split-shipments)), each with the `shipping_rates`
 4. delivery customization (`cart.delivery-options.transform.run`, `purchase.delivery-customization.run`)
 5. shipping discounts (`cart.delivery-options.discounts.generate.run`, `purchase.shipping-discount.run`)
 6. payment customization (`cart.payment-methods.transform.run`, `purchase.payment-customization.run`)
@@ -1261,9 +1299,9 @@ whether a fixed amount may exceed what is left: the rules above for those are th
 choices. It also says that only one shipping discount applies per order and that, when discounts
 cannot combine, "the best discount for the customer's cart is always applied". It does not say
 how the best shipping discount is measured, what happens to a tie, whether the rule holds for
-each delivery group of a split order (this checkout has one group), nor what to show about the
-others: measuring by the selected option, breaking ties as above and listing the others are
-this checkout's choices. Shopify's checkout applies a code whose product discount is 0 and shows
+each delivery group of a split order, nor what to show about the others: measuring by the
+selected options, breaking ties as above, applying one shipping discount per order whatever the
+number of groups and listing the others are this checkout's choices. Shopify's checkout applies a code whose product discount is 0 and shows
 it at 0; that an order or a shipping discount of 0 does the same, and that an automatic discount
 of 0 shows, are this checkout's choices: Shopify does not say what its checkout shows for them.
 
@@ -1470,6 +1508,50 @@ checked). There is no `sid`. A customer account extension's token has `iss` too,
 does not show it; a checkout extension's has none. The page asks lsf for the token
 (`POST /__lsf/extensions/<handle>/session-token`, [control API](control-api.md#apps-checkout-and-admin-api))
 and hands it to the extension: the secret never reaches the browser.
+
+### Storefront API
+
+`shopify.query(query, {variables})`, in a checkout or a customer account extension whose
+`shopify.extension.toml` has `api_access = true` in `[extensions.capabilities]`, is answered from
+the store data, as Shopify answers it from the shop's Storefront API
+([capabilities](https://shopify.dev/docs/apps/build/checkout/capabilities#api-access)). Without
+the capability, it rejects with an error that names it, as on Shopify.
+
+```js
+const { data } = await shopify.query(
+  `query ($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id sku availableForSale } } }`,
+  { variables: { ids: shopify.lines.value.map((line) => line.merchandise.id) } },
+);
+```
+
+What it answers:
+
+- `node(id:)`, `nodes(ids:)` (250 ids at most) and `product(id:)` or `product(handle:)`, for
+  products and product variants. A product that is not on the storefront (a draft, or not
+  published) is `null`, and so are its variants, as the Storefront API hides them.
+- The scalar fields of a `Product` (`id`, `handle`, `title`, `description`, `descriptionHtml`,
+  `vendor`, `productType`, `tags`, `availableForSale`, `isGiftCard`, `requiresSellingPlan`,
+  `createdAt`, `updatedAt`, `publishedAt`) and of a `ProductVariant` (`id`, `title`, `sku`,
+  `barcode`, `availableForSale`, `currentlyNotInStock`, `requiresShipping`, `taxable`,
+  `requiresComponents`, `weight`, `weightUnit`), with the variant's `product`, `price` and
+  `compareAtPrice` (`MoneyV2`, in the shop's currency) and `selectedOptions`.
+- `metafield(namespace:, key:)` and `metafields(identifiers: [{namespace, key}])` on both, from
+  the metafields of the store data (`$app` when the namespace is left out); a metafield the
+  object does not have is `null`. Every metafield of the data is readable, where Shopify answers
+  only those whose definition gives the storefront access.
+- Aliases, fragments, variables, `@skip` and `@include`, `__typename`.
+
+What it does not answer is an error, and `query` rejects with it, so that a test sees what is
+missing: an error's message names the field (``unknown field `variants` on type `Product` ``), an
+id of another type than a product or a variant (`` `gid://shopify/Collection/1` is a Collection ``)
+and a mutation. The rejected `Error` has the GraphQL errors in `errors`. On Shopify, a query with
+errors resolves with them in `errors` instead: lsf cannot tell a field Shopify lacks from one it
+does not answer, and rejects. `quantityAvailable` and `totalInventory` are refused as Shopify
+refuses them: the scopes `api_access` gives do not include `unauthenticated_read_product_inventory`.
+Connections (`variants`, `collections`, `media`), collections, metaobjects, the shop, `@inContext`
+and the global `fetch` to `shopify:storefront/api/…` are not answered. The page asks lsf
+(`POST /__lsf/extensions/<handle>/storefront`, [control API](control-api.md#apps-checkout-and-admin-api)),
+which reads the store data of the session.
 
 ### Network calls of a UI extension
 
@@ -1688,7 +1770,7 @@ customization runs on them.
 | `companyLocation` | `location`: a `gid://shopify/CompanyLocation/…`, its number or its name | Chooses the location the logged-in B2B customer buys for; the order ships there. |
 | `email`, `phone` | `value` | Sets the contact. An empty value clears it. |
 | `shippingAddress` | `address`: `firstName`, `lastName`, `company`, `address1`, `address2`, `city`, `countryCode`, `provinceCode`, `zip`, `phone` | Sets the address. A country of the store becomes the country of the session. A `countryCode` that is not a country (ISO 3166-1 alpha-2, or `XK`, `AC`, `TA` as Shopify takes them; not `ZZ`) is refused and changes nothing. The store data has no shipping zones: any real country is taken. |
-| `deliveryOption` | `group` (`group-1`), `handle` | Chooses a shipping rate. |
+| `deliveryOption` | `group` (`group-1`, or `group-2`, … of a [split cart](#split-shipments)), `handle` | Chooses a shipping rate for the group: the handle of its option (`express-2`) or of the rate (`express`). |
 | `paymentMethod` | `handle` | Chooses a payment method. No handle clears it. |
 | `discountCode` | `action` (`add` or `remove`), `code` | Enters or takes back a code. Each entered code is in the `discountCodes` of the state, `applicable` or not; a code of a discount of Shopify's own types that was refused has a `reason` ([how discounts stack](#how-discounts-stack)). |
 | `cartLines` | `change`: `addCartLine`, `removeCartLine` or `updateCartLine` of the UI extension API | Changes the cart of the session, the one the theme shows. |
@@ -1743,8 +1825,10 @@ The browser tests of a theme in CI: [testing](testing.md#in-ci).
 
 - Payments, gift cards, and payment method attributes. Choosing a payment method pays nothing,
   and the balance of a [deferred payment](#deferred-payments) is never collected.
-- One delivery group holds every line that ships. No pickup points (their list stays empty), no
-  split shipments, no prices by address: the rates are the same for every address.
+- No pickup points (their list stays empty), no prices by address: the rates are the same for
+  every address and every shipment. A cart is split by the locations its lines ship from only,
+  not by shipping profile nor for a subscription or a pre-order bought with one-time purchases
+  ([split shipments](#split-shipments)).
 - Fulfillment constraints, order routing, and the pickup point and local pickup generators (with
   their `.fetch` targets) are listed and not run.
 - Discounts have no `conditions` and no combinations: all of them stack, as described in
@@ -1755,8 +1839,10 @@ The browser tests of a theme in CI: [testing](testing.md#in-ci).
   and only with the Admin API (which makes them): not buy X get Y, not the automatic ones, not a
   `context` of markets nor `appliesOnSubscription`.
 - Tax is one rate on the discounted subtotal, with no tax lines.
-- No Storefront API: `query` in an extension rejects. No Customer Account API either: a customer
-  account extension reads the account through its `shopify` global only.
+- The Storefront API of `query` answers products and variants only
+  ([Storefront API](#storefront-api)), and the global `fetch` of an extension does not reach it.
+  No Customer Account API: a customer account extension reads the account through its `shopify`
+  global only.
 - `shopify.appMetafields` has no `shopUser` entries (the store data has no staff accounts).
 - The customer account shows; it changes nothing (no address to edit, no order to cancel or
   return), and its intents (`shopify.intents.invoke`) are closed at once.
@@ -1793,7 +1879,11 @@ store before a release:
   amounts the page shows. Shopify's rounding rules of converted prices and B2B catalogs are
   not applied ([markets](compatibility.md#known-differences)).
 - **B2B catalogs, pickup points, local pickup, fulfillment constraints and order routing**: not
-  run.
+  run. Where the lines of a [split cart](#split-shipments) ship from is lsf's rule (as few
+  locations as it takes, from the stock of the store data), not the store's order routing rules.
+- **The Storefront API** of `shopify.query`: lsf answers products and variants from the store
+  data, every metafield included; Shopify answers the metafields a definition exposes to the
+  storefront, in the buyer's context ([Storefront API](#storefront-api)).
 - **Network access**: the request JWT and Shopify's cache of responses
   ([network access](#network-access)).
 - **The settings of an extension** (`shopify.settings`): those of the store data or the

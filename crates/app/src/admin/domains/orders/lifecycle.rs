@@ -1400,6 +1400,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         returns: Vec::new(),
         location: location.clone(),
         presentment: None,
+        shipments: Vec::new(),
     };
     let order = super::insert_order(state, &draft);
     if let Some(applied) = &applied_code {

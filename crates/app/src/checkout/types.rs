@@ -133,8 +133,8 @@ pub struct Metafield {
 /// How the checkout is set up: what the store data says outside the app.
 #[derive(Clone, Debug, Default)]
 pub struct CheckoutConfig {
-    /// The delivery options offered to every address. One group holds every line that needs
-    /// shipping.
+    /// The delivery options offered to every address, in each delivery group: one group per
+    /// location the lines ship from ([`crate::checkout::pipeline`]).
     pub shipping_rates: Vec<ShippingRate>,
     pub payment_methods: Vec<PaymentMethodConfig>,
     /// Discounts backed by a discount Function of the app.
@@ -605,6 +605,11 @@ pub struct DeliveryGroup {
     /// What the shipping discounts took off the selected option.
     #[serde(skip)]
     pub discount_allocations: Vec<DiscountAllocation>,
+    /// The location of the store data the group ships from (its `id`), when the lines ship from
+    /// several: the fulfillment order of the group is assigned to it. `None` for a checkout
+    /// with one group.
+    #[serde(skip)]
+    pub location: Option<u64>,
 }
 
 impl DeliveryGroup {
