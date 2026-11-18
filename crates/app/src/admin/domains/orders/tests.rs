@@ -1298,6 +1298,53 @@ const DRAFT_FIELDS: &str = "id name status email note2 tags invoiceSentAt comple
     taxLines { title rate priceSet { shopMoney { amount } } } shippingLine { title custom }";
 
 #[test]
+fn a_duplicated_draft_has_its_lines_without_their_applied_discount() {
+    // Issue #334: on Shopify, the copy's line has `appliedDiscount: null`, at full price, with
+    // no user error; the original keeps its discount.
+    let mut shop = demo();
+    let (variant, _) = first_variant(&shop);
+    let price =
+        crate::admin::state::value::exact_cents(shop.get(&variant).unwrap().get("price")).unwrap();
+    let created = run(
+        &mut shop,
+        "mutation($variant: ID!) { draftOrderCreate(input: { lineItems: [{ variantId: $variant, quantity: 1,
+            appliedDiscount: { title: \"Offert\", value: 100, valueType: PERCENTAGE } }] }) { draftOrder { id } } }",
+        json!({"variant": variant}),
+    );
+    let id = created["data"]["draftOrderCreate"]["draftOrder"]["id"].clone();
+    let lines = "lineItems(first: 5) { nodes { appliedDiscount { title value valueType }
+        discountedTotalSet { shopMoney { amount } } totalDiscountSet { shopMoney { amount } } } }
+        subtotalPriceSet { shopMoney { amount } }";
+    let copy = run(
+        &mut shop,
+        &format!(
+            "mutation($id: ID!) {{ draftOrderDuplicate(id: $id) {{ draftOrder {{ id {lines} }} userErrors {{ field message }} }} }}"
+        ),
+        json!({"id": id}),
+    );
+    let payload = &copy["data"]["draftOrderDuplicate"];
+    assert_eq!(payload["userErrors"], json!([]));
+    let full = json!({"shopMoney": {"amount": crate::admin::state::value::decimal(price)}});
+    let draft = &payload["draftOrder"];
+    assert_ne!(draft["id"], id);
+    assert_eq!(
+        draft["lineItems"]["nodes"],
+        json!([{"appliedDiscount": null, "discountedTotalSet": full,
+                "totalDiscountSet": {"shopMoney": {"amount": "0.0"}}}])
+    );
+    assert_eq!(draft["subtotalPriceSet"], full);
+    let original = run(
+        &mut shop,
+        &format!("query($id: ID!) {{ draftOrder(id: $id) {{ {lines} }} }}"),
+        json!({"id": id}),
+    );
+    assert_eq!(
+        original["data"]["draftOrder"]["lineItems"]["nodes"][0]["appliedDiscount"],
+        json!({"title": "Offert", "value": 100.0, "valueType": "PERCENTAGE"})
+    );
+}
+
+#[test]
 fn draft_orders_are_created_calculated_updated_and_completed() {
     let mut shop = demo();
     shop.set_setting(super::TAX_RATE_SETTING, json!(2000));
@@ -1408,7 +1455,20 @@ fn draft_orders_are_created_calculated_updated_and_completed() {
         copy["data"]["draftOrderDuplicate"]["draftOrder"]["status"],
         json!("OPEN")
     );
+    // The gift wrap is back at full price on the copy (issue #334); the draft's own discount
+    // stays.
+    let copy_id = copy["data"]["draftOrderDuplicate"]["draftOrder"]["id"].clone();
+    let copied = run(
+        &mut shop,
+        "query($id: ID!) { draftOrder(id: $id) { appliedDiscount { title }
+            lineItems(first: 5) { nodes { title appliedDiscount { title } discountedTotalSet { shopMoney { amount } } } } } }",
+        json!({"id": copy_id}),
+    );
     assert_eq!(
+        copied["data"]["draftOrder"]["lineItems"]["nodes"][1],
+        json!({"title": "Gift wrap", "appliedDiscount": null, "discountedTotalSet": {"shopMoney": {"amount": "10.0"}}})
+    );
+    assert_ne!(
         copy["data"]["draftOrderDuplicate"]["draftOrder"]["totalPriceSet"],
         draft["totalPriceSet"]
     );

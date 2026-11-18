@@ -3,6 +3,28 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Fixed
+
+- **An error inside an `assign` is not reported, and the variable keeps its value**, as Shopify
+  does (#333). Horizon's `add-to-cart-button.liquid` assigns `… preview_image | image_url:
+  width: 100` on a product without media: lsf reported `invalid url input` once or twice on
+  every page that showed such a product, and the store renders those pages without an error.
+  Checked on a development store: `image_url` on nil, on an object that is not an image, on a
+  foreign URL, and `divided_by: 0`, are silent in an `assign`; the filters after the failing
+  one do not run. In output (`{{ }}`, `echo`, inside `capture`) the error is still printed.
+- **`draftOrderDuplicate` drops each line's `appliedDiscount`**, as Shopify does (#334). The
+  copy's lines are at full price; the draft's own discount is still copied.
+- **A scenario's code that is not applicable is refused**, as Shopify does (#335). A code of
+  `entered.discount_codes` that applies to nothing when the checkout opens is taken out, as one
+  typed into the page is, so it is no longer in an extension's `shopify.discountCodes`, which
+  lists applied codes only.
+- **`codeDiscountNodes` leaves the app code discounts out, and `discountNodes` ids are the
+  nodes' own**, as Shopify does (#336). A `DiscountCodeApp` is listed by `discountNodes` only, and
+  a `discountNodes` node's id is `DiscountCodeNode/<n>` or `DiscountAutomaticNode/<n>`, not
+  `DiscountNode/<n>`. `discountNode` still takes a `DiscountNode/<n>` id.
+
 ## 0.3.0-rc.10 - 2026-11-18
 
 Tenth release candidate of 0.3.0. An extension's modal covers the whole checkout (#329), and

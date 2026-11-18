@@ -509,6 +509,21 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
         checkout_account::switch_to(store, &mut session, &mut entered, customer, None);
         prepared = Some(Identity::of(store, &session));
     }
+    // Under the locale root of the scenario's language, otherwise of the request's.
+    let language = scenario
+        .language
+        .as_deref()
+        .and_then(|iso| store.language(iso))
+        .unwrap_or(request_language);
+    if !entered.discount_codes.is_empty() {
+        let presented = crate::checkout::presented_for_checkout(store, &session, &entered);
+        let mut priced = entered.clone();
+        let step = BuyerJourneyStep::Interaction;
+        if let Ok((_, _, result)) = price(state, &session, &presented, &mut priced, language, step)
+        {
+            refuse_inapplicable_codes(&mut entered, &result);
+        }
+    }
     let token = cart_token_of(&id);
     session.cart_token = token.clone();
     let look = scenario.look.map(|look| match look {
@@ -525,15 +540,29 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
         };
     });
 
-    // Under the locale root of the scenario's language, otherwise of the request's.
-    let language = scenario
-        .language
-        .as_deref()
-        .and_then(|iso| store.language(iso))
-        .unwrap_or(request_language);
     let mut location = checkout_path(root_of(language), &token);
     location.push_str(&carried_query(incoming, CARRIED));
     with_cookie(Reply::redirect(&location), &id, true)
+}
+
+/// Takes out of `checkout` the codes `result` says are not applicable: a code a scenario
+/// entered is refused as one the buyer types is (the page removes it: "Enter a valid discount
+/// code"), as Shopify refuses a code that is "valid, but not applicable", which is then not
+/// among the checkout's codes (issue #335). Whether any was.
+fn refuse_inapplicable_codes(checkout: &mut CheckoutState, result: &CheckoutResult) -> bool {
+    let refused: Vec<&str> = result
+        .discount_codes
+        .iter()
+        .filter(|status| !status.applicable)
+        .map(|status| status.code.as_str())
+        .collect();
+    let before = checkout.discount_codes.len();
+    checkout.discount_codes.retain(|code| {
+        !refused
+            .iter()
+            .any(|refused| refused.eq_ignore_ascii_case(code))
+    });
+    checkout.discount_codes.len() != before
 }
 
 /// The session and the checkout a scenario opens with, as the first read prepares them, and
@@ -576,17 +605,17 @@ pub(super) fn run_scenario(
         .and_then(|iso| store.language(iso))
         .unwrap_or_else(|| store.primary_language());
     let selection = options(state).selection(app, Some(scenario))?;
-    Ok(price_with(
-        state,
-        app,
-        &selection,
-        &session,
-        store,
-        &mut checkout,
-        language,
-        step,
-        runs,
-    ))
+    let run = |checkout: &mut CheckoutState| {
+        price_with(
+            state, app, &selection, &session, store, checkout, language, step, runs,
+        )
+    };
+    let result = run(&mut checkout);
+    // As the served checkout opens: without the codes it refused.
+    if refuse_inapplicable_codes(&mut checkout, &result) {
+        return Ok(run(&mut checkout));
+    }
+    Ok(result)
 }
 
 /// The look of the checkout: `?variant=` when the request has it, which the session then keeps,

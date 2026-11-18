@@ -1179,6 +1179,107 @@ fn image_url_raises_on_what_is_not_an_image() {
 }
 
 #[test]
+fn an_error_in_an_assign_is_not_reported_and_leaves_the_variable_unchanged() {
+    // Issue #333: on a product without media, Shopify renders Horizon's
+    // `add-to-cart-button.liquid` with no Liquid error and `data-product-variant-media=""`. A
+    // development store (2026-11-18) reports no error raised in an `assign`, of `image_url` or
+    // any other filter, and the variable keeps its value; `{{ }}`, `echo` and `capture` still
+    // print it (issue #124).
+    let overlay = serde_json::json!({"products": [{"title": "Plain", "price": 500}]});
+    let (store, diagnostics) =
+        load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render = |source: &str| {
+        let site = fixture.renderer.site(
+            fixture.store.clone(),
+            request("/products/plain"),
+            Session::initial(&fixture.store),
+        );
+        let page = lsf_theme::render::routes::resolve(&site);
+        let (output, errors) = fixture
+            .renderer
+            .render_liquid(&site, page, source, &[])
+            .expect("the template parses");
+        let errors: Vec<String> = errors.iter().map(|error| error.bare_message()).collect();
+        (output, errors)
+    };
+    // Horizon 4.2.0's `snippets/add-to-cart-button.liquid`, lines 15 and 17.
+    let (output, errors) = render(
+        "{%- liquid
+  assign variant_media = product.selected_or_first_available_variant.featured_media.preview_image | image_url: width: 100
+  assign product_media = product.featured_media.preview_image | image_url: width: 100
+-%}
+{{ product.title }}: variant=[{{ variant_media }}]
+product=[{{ product_media }}]",
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(output, "Plain: variant=[]\nproduct=[]");
+    // The store's answers, case by case: the filters after the one that raises do not run, the
+    // variable is nil, or keeps the value it had.
+    for (source, expected) in [
+        (
+            "{% assign x = nothing | image_url: width: 100 %}[{{ x }}]",
+            "[]",
+        ),
+        (
+            "{% assign x = nothing | image_url: width: 100 | append: 'x' %}\
+             {% if x == nil %}nil{% endif %}",
+            "nil",
+        ),
+        (
+            "{% assign x = nothing | image_url: width: 100 | default: 'fallback' %}[{{ x }}]",
+            "[]",
+        ),
+        (
+            "{% assign x = nothing | image_url: width: 100 | image_tag %}[{{ x }}]",
+            "[]",
+        ),
+        (
+            "{% assign x = 'https://example.com/a.jpg' | image_url: width: 100 %}[{{ x }}]",
+            "[]",
+        ),
+        (
+            "{% assign x = shop | image_url: width: 100 %}[{{ x }}]",
+            "[]",
+        ),
+        ("{% assign x = '' | image_url: width: 100 %}[{{ x }}]", "[]"),
+        (
+            "{% assign x = product.featured_image | image_url | image_tag %}[{{ x }}]",
+            "[]",
+        ),
+        (
+            "{% assign x = 'old' %}{% assign x = nothing | image_url: width: 100 %}[{{ x }}]",
+            "[old]",
+        ),
+        ("{% assign x = 1 | divided_by: 0 %}[{{ x }}]", "[]"),
+        ("{% assign x = 5 | modulo: 0 %}[{{ x }}]", "[]"),
+    ] {
+        let (output, errors) = render(source);
+        assert!(errors.is_empty(), "{source}: {errors:?}");
+        assert_eq!(output, expected, "{source}");
+    }
+    // What prints raises, as on the store: `{{ }}`, `echo`, and an output inside `capture`.
+    let invalid = "Liquid error (line 1): invalid url input";
+    for source in [
+        "{{ nothing | image_url: width: 100 }}",
+        "{{ 'https://example.com/a.jpg' | image_url: width: 100 }}",
+        "{% liquid echo nothing | image_url: width: 100 %}",
+        "{% capture url %}{{ nothing | image_url: width: 100 }}{% endcapture %}{{ url }}",
+    ] {
+        let (output, errors) = render(source);
+        assert_eq!(output, invalid, "{source}");
+        assert_eq!(errors, ["invalid url input"], "{source}");
+    }
+    let (output, errors) = render("{{ 1 | divided_by: 0 }}");
+    assert_eq!(output, "Liquid error (line 1): divided by 0");
+    assert_eq!(errors.len(), 1);
+}
+
+#[test]
 fn a_cart_line_of_a_product_without_an_image_has_a_featured_image_of_nulls() {
     // Issue #151: Shopify gives the line of a product without an image a `featured_image`
     // whose fields are null, in `/cart.js` and in Liquid `item | json`; `image` stays null.

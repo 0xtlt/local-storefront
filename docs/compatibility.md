@@ -65,6 +65,11 @@ Shopify.
 With `--preview liquid-july-26`: `block` and `partial`. Without it they are unknown tags, as
 on a live store.
 
+An error raised in the value of an `assign` (`{% assign url = nil | image_url: width: 100 %}`,
+`{% assign x = 1 | divided_by: 0 %}`) is not reported, and the variable keeps the value it had
+(nil if none), as on Shopify; the filters after the one that raised do not run. In output
+(`{{ }}`, `echo`, inside `capture` too) the error is printed.
+
 `{% render name %}`, where `name` holds a snippet's name rather than a block, prints Shopify's
 error in its place, `<!-- Syntax error in tag 'render' - Template name must be a quoted string -->`.
 

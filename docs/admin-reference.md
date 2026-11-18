@@ -326,7 +326,7 @@ specific webhooks").
   `draftOrderCalculate`, `draftOrderComplete` (an order, paid unless `paymentPending` or payment
   terms; each applied discount is a `ManualDiscountApplication` of the order, a line's
   `EXPLICIT` and `EACH`, the draft's `ALL` and `ACROSS`, with its `discountAllocations` on the
-  lines and in the `orders/create` payload), `draftOrderDuplicate`, `draftOrderInvoiceSend` (the invoice in the shop's outbox),
+  lines and in the `orders/create` payload), `draftOrderDuplicate` (its lines without their applied discount, at full price), `draftOrderInvoiceSend` (the invoice in the shop's outbox),
   `draftOrderInvoicePreview`, `draftOrderCreateFromOrder`,
   `draftOrderBulkAddTags`, `draftOrderBulkRemoveTags`, `draftOrderBulkDelete`; B2B drafts
   (`purchasingEntity.purchasingCompany`: the location's addresses and payment terms). Taxes are
@@ -1132,9 +1132,10 @@ follows its dates), `discountAutomaticBulkDelete`, `discountCodeBulkActivate`/`D
 `discountBulkTagsAdd`/`Remove` (5 tags at most each): the bulk ones take exactly one of `ids`,
 `search` and `savedSearchId` (a saved search of discounts, `PRICE_RULE`, or of redeem codes,
 `DISCOUNT_REDEEM_CODE`), and are done at once (their `job` is `done`); the queries
-`discountNodes` (ids `DiscountNode/<n>`),
-`discountNodesCount`, `discountNode`, `codeDiscountNodeByCode`, `discountCodesCount`,
-`automaticDiscountNodes`, `codeDiscountNodes`, with their sort keys and search filters (`status`,
+`discountNodes` (ids the nodes' own, `DiscountCodeNode/<n>` or `DiscountAutomaticNode/<n>`),
+`discountNodesCount`, `discountNode` (which also takes `DiscountNode/<n>`),
+`codeDiscountNodeByCode`, `discountCodesCount`, `automaticDiscountNodes`, `codeDiscountNodes`
+(without the app code discounts, as a store answers), with their sort keys and search filters (`status`,
 `type`, `method`, `title`, `code`, `tag`, the dates, …). Webhooks: `discounts/create`,
 `discounts/update`, `discounts/delete`, `discounts/redeemcode_added`,
 `discounts/redeemcode_removed`.

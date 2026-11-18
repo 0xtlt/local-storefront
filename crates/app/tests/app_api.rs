@@ -581,7 +581,7 @@ fn an_app_discount_created_by_the_backend_is_announced_and_listed() {
     );
     assert_eq!(
         listed["data"]["discountNodes"]["nodes"],
-        json!([{"id": node.replace("DiscountAutomaticNode", "DiscountNode"),
+        json!([{"id": node,
             "metafields": {"nodes": [{"key": "settings", "jsonValue": {"percent": 10}}]}}])
     );
     graphql(

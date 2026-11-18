@@ -8,9 +8,12 @@
 //!   `appDiscountType.functionId`, the title, the first code, the classes, the metafields), and
 //!   the local checkout runs them. The other types are records only: the checkout runs Functions.
 //! - **Queries**: `discountNodes` and `discountNodesCount` (each node as a `DiscountNode`, whose
-//!   id is `DiscountNode/<n>`, the number the automatic and code nodes share), `discountNode`
-//!   (by any of the three GIDs), `codeDiscountNodeByCode`, `discountCodesCount`, and the
-//!   deprecated `automaticDiscountNodes`/`codeDiscountNodes`, which the generic rules answer.
+//!   id is the node's own, `DiscountCodeNode/<n>` or `DiscountAutomaticNode/<n>`, as a
+//!   development store answers: issue #336), `discountNode` (by any of the three GIDs,
+//!   `DiscountNode/<n>` naming the node of that number), `codeDiscountNodeByCode`,
+//!   `discountCodesCount`, and the deprecated `automaticDiscountNodes`, which the generic rules
+//!   answer, and `codeDiscountNodes`, which leaves the `DiscountCodeApp`s out, as the store does
+//!   (issue #336; shopify.dev does not say so).
 //!   Their `sortKey`s (`TITLE`, `STARTS_AT`, `ENDS_AT`, `CREATED_AT`, `UPDATED_AT`) and search
 //!   filters (`status`, `type`, `discount_type`, `method`, `title`, `code`, `tag`, the dates,
 //!   `discount_class`, `combines_with`, `times_used`) read the discount inside the node.
@@ -108,6 +111,7 @@ pub fn register(registry: &mut Registry) {
         .query("discountNodes", discount_nodes)
         .query("discountNodesCount", discount_nodes_count)
         .query("discountNode", discount_node)
+        .query("codeDiscountNodes", code_discount_nodes)
         .query("codeDiscountNodeByCode", code_discount_node_by_code)
         .query("discountCodesCount", discount_codes_count)
         .default_text("DiscountRedeemCode", |_r, code| {
@@ -290,12 +294,11 @@ pub(super) fn node_of(state: &ShopState, id: &str, types: &[&str]) -> Option<Str
         .find(|key| state.contains(key))
 }
 
-/// The `DiscountNode` of a node record: the same discount under the id the legacy APIs read.
+/// The `DiscountNode` of a node record: the same discount, under the node's own id.
 fn as_discount_node(key: &str, record: &Record) -> Option<Record> {
-    let (_, number) = parse_gid(key)?;
     let mut node = Record::new();
     node.insert("__typename".into(), json!("DiscountNode"));
-    node.insert("id".into(), json!(gid("DiscountNode", number)));
+    node.insert("id".into(), json!(key));
     node.insert("discount".into(), Value::Object(inner(record)?.clone()));
     node.insert(
         "metafields".into(),
@@ -350,6 +353,29 @@ fn discount_node(
     Ok(Output::object_or_null(
         node.map(|node| Obj::inline("DiscountNode", node)),
     ))
+}
+
+/// `codeDiscountNodes`: the code discounts but the app ones, which a development store leaves
+/// out of it (and lists in `discountNodes`).
+fn code_discount_nodes(
+    r: &ShopResolver<'_>,
+    ctx: &FieldContext<'_>,
+    _object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    let state = r.state();
+    let items = r
+        .records_of("DiscountCodeNode")
+        .into_iter()
+        .filter(|item| {
+            let kind = item
+                .as_str()
+                .and_then(|key| state.get(key))
+                .and_then(inner)
+                .and_then(|discount| text(discount, "__typename"));
+            kind != Some("DiscountCodeApp")
+        })
+        .collect();
+    r.connection(ctx, items)
 }
 
 /// The code discount that has a code, ignoring case (Shopify's codes are not case-sensitive).

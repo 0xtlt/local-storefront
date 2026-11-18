@@ -161,6 +161,13 @@ test('a code whose discount takes 0 off reads as an applied code, with its alloc
   assert.equal(shopify.cost.totalAmount.value.amount, 73);
 });
 
+test('a code that is not applicable is not in discountCodes', () => {
+  // Issue #335: Shopify lists the codes applied to the checkout only.
+  const state = { ...checkoutState(), discountCodes: [{ code: 'SAVE10', applicable: false }, { code: 'GIFT', applicable: true }] };
+  const { shopify } = runtime({ state });
+  assert.deepEqual(plain(shopify.discountCodes.value), [{ code: 'GIFT' }]);
+});
+
 /** Metafields of the store data, as the server reads them for the declarations (`appMetafields`). */
 const gid = (kind, id) => `gid://shopify/${kind}/${id}`;
 const entry = (type, id, namespace, key, metafieldType, value) => ({ target: { type, id }, metafield: { namespace, key, type: metafieldType, value } });
