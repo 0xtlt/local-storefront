@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
+pub mod checksum;
+
 /// The theme of the shop the storefront serves, as `Shopify.theme`, the `theme` object and the
 /// asset URLs (`/cdn/shop/t/<id>/…`) name it: the shop's main theme. Without one, the theme
 /// directory: [`crate::urls::THEME_ID`], the name of its `config/settings_schema.json`, `main`.

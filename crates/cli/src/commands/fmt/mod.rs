@@ -7,6 +7,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+pub use config::glob_match;
 use config::{Configs, IgnoreFile};
 
 #[derive(clap::Args)]

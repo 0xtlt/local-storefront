@@ -4,7 +4,8 @@
 //! A file is an `OnlineStoreThemeFile`: its `filename` (`templates/index.json`), its `body` (the
 //! text of a UTF-8 file, `OnlineStoreThemeFileBodyText`, else its bytes in Base64,
 //! `OnlineStoreThemeFileBodyBase64`), `checksumMd5` (the hex MD5 of its bytes, as the REST Asset
-//! API's `checksum`), `size`, `contentType` (by extension: `text/x-liquid` for Liquid, as the
+//! API's `checksum`: a store answers it for a CRLF or an empty file too, where the checksum
+//! Shopify CLI computes, [`lsf_core::theme::checksum::checksum_md5`], differs), `size`, `contentType` (by extension: `text/x-liquid` for Liquid, as the
 //! Asset API answers), and dates: a file of the directory was created with the theme and
 //! updated when the file system says; a file the Admin API wrote, when it did.
 //!
@@ -15,7 +16,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use md5::{Digest, Md5};
+use lsf_core::theme::checksum::md5_hex;
 use serde_json::{Map, Value, json};
 
 use super::{FILES, is_local, root};
@@ -69,14 +70,6 @@ impl ThemeFile {
             "updatedAt": self.updated_at,
         })
     }
-}
-
-/// The hex MD5 digest of bytes.
-pub fn md5_hex(bytes: &[u8]) -> String {
-    Md5::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 /// The content type of a theme file, by its extension.

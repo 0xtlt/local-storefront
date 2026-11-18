@@ -55,8 +55,6 @@ hmac = "0.13"
 sha2 = "0.11"
 # The query strings and form bodies of the OAuth endpoints.
 form_urlencoded = "1"
-# `OnlineStoreThemeFile.checksumMd5`, the MD5 of the `md5` filter of lsf-theme.
-md-5 = "0.11"
 # The ZIP archive of a theme (`themeCreate`): its entries are deflated.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 

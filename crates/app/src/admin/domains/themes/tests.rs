@@ -105,7 +105,7 @@ fn the_local_theme_is_the_main_theme_and_its_files_are_the_directorys() {
     assert_eq!(files[2]["size"], json!(theme_liquid.len().to_string()));
     assert_eq!(
         files[2]["checksumMd5"],
-        json!(super::files::md5_hex(&theme_liquid))
+        json!(lsf_core::theme::checksum::md5_hex(&theme_liquid))
     );
     assert_eq!(files[2]["contentType"], "text/x-liquid");
     assert_eq!(
@@ -117,6 +117,39 @@ fn the_local_theme_is_the_main_theme_and_its_files_are_the_directorys() {
         json!([{"code": "NOT_FOUND", "filename": "templates/nope.json"}])
     );
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// What a store answers, checked on one (`theme push`, then `checksumMd5`): the MD5 of the
+/// bytes, CRLF kept, and the MD5 of nothing for an empty file.
+#[test]
+fn a_checksum_is_the_md5_of_the_bytes_crlf_and_empty_files_too() {
+    let (mut shop, _root) = shop_with_theme("checksums");
+    let answer = run(
+        &mut shop,
+        UPSERT,
+        json!({"id": "gid://shopify/OnlineStoreTheme/1", "files": [
+            {"filename": "snippets/crlf.liquid", "body": {"type": "TEXT", "value": "<p>one</p>\r\n<p>two</p>\r\n"}},
+            {"filename": "assets/crlf.css", "body": {"type": "TEXT", "value": "a {\r\n  color: red;\r\n}\r\n"}},
+            {"filename": "snippets/empty.liquid", "body": {"type": "TEXT", "value": ""}},
+        ]}),
+    );
+    let payload = &answer["data"]["themeFilesUpsert"];
+    assert_eq!(payload["userErrors"], json!([]), "{answer}");
+    let checksums: Vec<&str> = payload["upsertedThemeFiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["checksumMd5"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        checksums,
+        [
+            "131d95d9ade30da09f96c063598ca06a",
+            "03aa3b2f9df3d17f4851748584838815",
+            "d41d8cd98f00b204e9800998ecf8427e",
+        ],
+        "{answer}"
+    );
 }
 
 #[test]
