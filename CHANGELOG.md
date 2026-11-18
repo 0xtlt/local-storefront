@@ -3,7 +3,11 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
-## Unreleased
+## 0.3.0-rc.11 - 2026-11-18
+
+Eleventh release candidate of 0.3.0. `lsf theme digest` tells whether two copies of a theme hold
+the same files (#337). An error inside an `assign` is silent as on Shopify (#333), and three
+differences of the checkout and the Admin API are fixed (#334, #335, #336).
 
 ### Added
 
