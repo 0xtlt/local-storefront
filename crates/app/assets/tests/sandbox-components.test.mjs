@@ -709,18 +709,130 @@ test('an overlay opened before it is in the page opens when it joins it', () => 
   assert.equal(modal._root.querySelector('.backdrop').hidden, false);
 });
 
+/** The day buttons a date picker drew, by date. */
+const pickerDays = (picker) => new Map(picker._root.querySelector('.days').childNodes.filter((node) => node.localName === 'button').map((button) => [button.getAttribute('data-date'), button]));
+const clickDay = (picker, date) => pickerDays(picker).get(date).dispatchEvent(new FakeEvent('click', { bubbles: true }));
+
+test('a date picker reads allow and disallow as Shopify documents them: days, months, years, open ranges', () => {
+  const { dateRanges, weekdays, selectable, pickedDays, addMonths } = components().Sandbox.components.dates;
+  assert.deepEqual(plain(dateRanges('--2026-12-10, 2026-12-25')), [{ start: '', end: '2026-12-10' }, { start: '2026-12-25', end: '2026-12-25' }]);
+  assert.deepEqual(plain(dateRanges('2026-02,2027')), [{ start: '2026-02-01', end: '2026-02-28' }, { start: '2027-01-01', end: '2027-12-31' }]);
+  assert.deepEqual(plain(dateRanges('2024-- , 2026-01 -- 2026-03-15')), [{ start: '2024-01-01', end: '~' }, { start: '2026-01-01', end: '2026-03-15' }]);
+  assert.deepEqual(plain(dateRanges('--2024')), [{ start: '', end: '2024-12-31' }], 'an end left short is the last day');
+  assert.deepEqual(plain(dateRanges('2026-02-30, tomorrow, --, 2026-13')), [], 'what is not a day, month or year is skipped');
+  assert.deepEqual([...weekdays('Sunday, saturday, mon')].sort(), [0, 6], 'full day names only, as documented');
+
+  const rules = (r) => ({ allow: dateRanges(r.allow), disallow: dateRanges(r.disallow), allowDays: weekdays(r.allowDays), disallowDays: weekdays(r.disallowDays) });
+  const issue = rules({ disallow: '--2026-12-10,2026-12-25', disallowDays: 'sunday' });
+  assert.deepEqual(['2026-12-05', '2026-12-10', '2026-12-25', '2026-12-20', '2026-12-11', '2026-12-26'].map((date) => selectable(date, issue)), [false, false, false, false, true, true]);
+  // disallow subtracts from allow, disallowDays from allowDays, and the two intersect.
+  const both = rules({ allow: '2026-12', disallow: '2026-12-24--2026-12-26', allowDays: 'thursday, friday, saturday', disallowDays: 'saturday' });
+  assert.deepEqual(['2026-12-03', '2026-12-04', '2026-12-05', '2026-12-24', '2026-12-31', '2027-01-01'].map((date) => selectable(date, both)), [true, true, false, false, true, false]);
+  assert.equal(selectable('2026-12-20', rules({})), true, 'no rules: every day');
+
+  assert.deepEqual(plain(pickedDays('2026-12-15', 'single')), { days: ['2026-12-15'] });
+  assert.deepEqual(plain(pickedDays('2026-12-15,2026-12-31,nope', 'multiple')), { days: ['2026-12-15', '2026-12-31'] });
+  assert.deepEqual(plain(pickedDays('2026-12-15--2026-12-18', 'range')), { days: ['2026-12-15', '2026-12-18'], start: '2026-12-15', end: '2026-12-18' });
+  assert.deepEqual(plain(pickedDays('2026-12-32', 'single')), { days: [] }, 'an invalid value selects nothing');
+  assert.equal(addMonths('2026-12', 1), '2027-01');
+  assert.equal(addMonths('2026-01', -1), '2025-12');
+});
+
+test('a date picker is a month calendar whose refused days are greyed out and never picked', () => {
+  const { make } = components();
+  const picker = make('s-date-picker');
+  // The extension of the issue (#330).
+  for (const [name, value] of [['type', 'single'], ['value', '2026-12-15'], ['view', '2026-12'], ['disallow', '--2026-12-10,2026-12-25'], ['disallowDays', 'sunday']]) picker.setAttribute(name, value);
+  const changes = [];
+  picker.addEventListener('change', (event) => changes.push(event.currentTarget.value));
+  const days = pickerDays(picker);
+  assert.equal(days.size, 31, 'a button per day of December 2026');
+  assert.equal(picker._root.querySelector('.days').childNodes.length - days.size, 2, 'December 1, 2026 is a Tuesday: two blanks, weeks start on Sunday');
+  assert.equal(picker._root.querySelector('.weekdays').childNodes.length, 7);
+  const refused = [...days].filter(([, button]) => button.disabled).map(([date]) => Number(date.slice(8)));
+  assert.deepEqual(refused, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13, 20, 25, 27]);
+  assert.equal(days.get('2026-12-15').getAttribute('aria-selected'), 'true');
+  // A refused day: no change, even if the click gets through.
+  for (const date of ['2026-12-25', '2026-12-05', '2026-12-20']) clickDay(picker, date);
+  assert.deepEqual(changes, []);
+  assert.equal(picker.value, '2026-12-15');
+  clickDay(picker, '2026-12-16');
+  assert.deepEqual(changes, ['2026-12-16']);
+  assert.equal(pickerDays(picker).get('2026-12-16').getAttribute('aria-selected'), 'true');
+  // A rule set later refuses the day from then on.
+  picker.setAttribute('disallowDays', 'sunday, thursday');
+  assert.equal(pickerDays(picker).get('2026-12-17').disabled, true);
+  picker.disabled = true;
+  assert.equal([...pickerDays(picker).values()].every((button) => button.disabled), true, 'disabled: nothing to pick');
+  clickDay(picker, '2026-12-18');
+  assert.deepEqual(changes, ['2026-12-16']);
+});
+
+test('a date picker opens on view, then defaultView, and says when the buyer changes the month', () => {
+  const { make } = components();
+  const picker = make('s-date-picker');
+  picker.setAttribute('defaultView', '2027-10');
+  picker.setAttribute('defaultValue', '2027-10-03');
+  assert.equal(picker.view, '2027-10');
+  assert.equal(pickerDays(picker).size, 31);
+  assert.equal(pickerDays(picker).get('2027-10-03').getAttribute('aria-selected'), 'true');
+  const views = [];
+  picker.onviewchange = (event) => views.push(['property', event.currentTarget.view]);
+  picker.addEventListener('viewchange', (event) => views.push(['listener', event.currentTarget.view]));
+  picker._root.querySelector('.next').dispatchEvent(new FakeEvent('click'));
+  assert.deepEqual(views, [['property', '2027-11'], ['listener', '2027-11']]);
+  assert.equal(pickerDays(picker).size, 30, 'November');
+  picker._root.querySelector('.prev').dispatchEvent(new FakeEvent('click'));
+  picker._root.querySelector('.prev').dispatchEvent(new FakeEvent('click'));
+  assert.equal(picker.view, '2027-09');
+  // The extension sets view: the calendar goes there, and only when view changes.
+  picker.setAttribute('view', '2026-02');
+  assert.equal(pickerDays(picker).size, 28);
+  picker._root.querySelector('.next').dispatchEvent(new FakeEvent('click'));
+  picker.setAttribute('disallow', '2026-03-02');
+  assert.equal(picker.view, '2026-03', 'another attribute leaves the month the buyer went to');
+  assert.equal(views.length, 8, 'four changes by the buyer, none by the extension');
+});
+
+test('a date picker of type multiple toggles days, one of type range takes two', () => {
+  const { make } = components();
+  const multiple = make('s-date-picker');
+  multiple.setAttribute('type', 'multiple');
+  multiple.setAttribute('view', '2026-06');
+  multiple.setAttribute('disallowDays', 'saturday');
+  const values = [];
+  multiple.addEventListener('change', (event) => values.push(event.currentTarget.value));
+  for (const date of ['2026-06-10', '2026-06-03', '2026-06-06', '2026-06-10']) clickDay(multiple, date);
+  assert.deepEqual(values, ['2026-06-10', '2026-06-03,2026-06-10', '2026-06-03'], 'a Saturday is refused, a second click unpicks');
+
+  const range = make('s-date-picker');
+  range.setAttribute('type', 'range');
+  range.setAttribute('view', '2026-06');
+  range.setAttribute('disallow', '2026-06-01');
+  const ranges = [];
+  range.addEventListener('change', (event) => ranges.push(event.currentTarget.value));
+  clickDay(range, '2026-06-12');
+  assert.deepEqual(ranges, [], 'one end is not a range yet');
+  assert.equal(pickerDays(range).get('2026-06-12').getAttribute('aria-selected'), 'true');
+  clickDay(range, '2026-06-01');
+  clickDay(range, '2026-06-08');
+  assert.deepEqual(ranges, ['2026-06-08--2026-06-12'], 'either way round, never from a refused day');
+  assert.equal(pickerDays(range).get('2026-06-10').className, 'day in-range');
+  range.value = '2026-06-20--2026-06-22';
+  assert.equal(pickerDays(range).get('2026-06-21').className, 'day in-range');
+});
+
 test('a date picker starts from its defaultValue until someone picks', () => {
   const { make } = components();
   const picker = make('s-date-picker');
-  picker.defaultValue = '2026-01-02';
-  const control = picker._root.querySelector('.control');
-  assert.equal(picker.value, '2026-01-02');
-  control.value = '2026-03-04';
-  control.dispatchEvent(new FakeEvent('input'));
-  picker.defaultValue = '2026-05-06';
+  picker.view = '2026-03';
+  picker.defaultValue = '2026-03-02';
+  assert.equal(picker.value, '2026-03-02');
+  clickDay(picker, '2026-03-04');
+  picker.defaultValue = '2026-03-06';
   assert.equal(picker.value, '2026-03-04');
-  picker.disabled = true;
-  assert.equal(control.disabled, true);
+  picker.value = '';
+  assert.equal(picker.value, '', 'the property takes over');
 });
 
 test('a field keeps what the buyer typed when its other attributes change', () => {

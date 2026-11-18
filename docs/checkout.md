@@ -1396,6 +1396,17 @@ word, so the extension says why in its own UI. The Overview of the Functions dia
 block with its `reason`. React and remote-ui
 extensions (2025-07 and older) do not run: lsf runs 2026-10 and 2027-01 only.
 
+A modal or a sheet an extension opens covers the whole page wherever its target renders, as on
+Shopify: its frame goes to the browser's top layer, above every card, the order summary and the
+bars of the page. `s-date-picker` is a month calendar, weeks starting on Sunday: it opens on
+`view` (then `defaultView`, then this month) and fires `viewchange` when the buyer changes the
+month. The days `allow`, `disallow`, `allowDays` and `disallowDays` refuse are greyed out and
+never picked, in the formats of [Shopify's
+reference](https://shopify.dev/docs/api/checkout-ui-extensions/latest/web-components/forms/date-picker):
+days, months (`2026-12`), years (`2027`) and inclusive ranges `start--end`, open on either side
+(`--2026-12-10`), and lowercase English day names (`sunday`). `type="range"` takes two clicks
+and fires `change` once, with `start--end`.
+
 What an extension throws, while its bundle loads, when a target renders or in a listener, and
 the promises it rejects with nobody to catch them, show above its frame with their message and
 stack, and in the overview of the Functions dialog. The frame keeps an opaque origin. The page

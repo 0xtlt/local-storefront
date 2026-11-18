@@ -3,6 +3,23 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Fixed
+
+- **A modal or sheet an extension opens covers the whole checkout**, as Shopify does (#329). Its
+  frame goes to the browser's top layer: a selected shipping or payment option, the sticky order
+  summary or the fixed bar of the Shop skin no longer paints over it or clips it. Opened under a
+  shipping method, a modal was covered by the selected payment method and, in a split cart, by
+  the selected option of the next shipment.
+- **`s-date-picker` is a month calendar**, as Shopify's checkout draws it (#330), not a native
+  date field. It opens on `view` (then `defaultView`, then this month) and fires `viewchange`
+  (`onViewChange`) when the buyer changes the month. It honours `allow`, `disallow`, `allowDays`
+  and `disallowDays` in the formats Shopify documents (days, months `2026-12`, years `2027` and
+  ranges `start--end`, open on either side, `--2026-12-10`): a refused day is greyed out, can't
+  be picked, and `change` never fires with it. `type` is `single`, `multiple` (a comma-separated
+  list of days) or `range` (`2026-12-08--2026-12-11`, two clicks).
+
 ## 0.3.0-rc.9 - 2026-11-17
 
 Ninth release candidate of 0.3.0. Checkout UI extensions with `api_access` read the store data
