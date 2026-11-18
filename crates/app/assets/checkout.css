@@ -476,7 +476,10 @@ a:focus-visible { outline-offset: 3px; border-radius: 2px; }
 .lsf-slot { display: flex; flex-direction: column; gap: var(--lsf-space-m); }
 .lsf-ext { position: relative; }
 .lsf-ext-frame { display: block; width: 100%; height: 0; border: 0; background: transparent; color-scheme: light; }
-.lsf-ext-overlay { position: fixed; z-index: 1000; inset: 0; width: 100vw; height: 100vh !important; }
+/* An open overlay is in the top layer (a manual popover, see `extension-host.js`): above the whole
+ * page wherever its target renders. Its frame drops the margin, padding and scrollbars a popover
+ * gets from the browser. */
+.lsf-ext-overlay { position: fixed; z-index: 1000; inset: 0; width: 100vw; height: 100vh !important; max-width: none; max-height: none; margin: 0; padding: 0; overflow: hidden; }
 .lsf-ext-error {
   padding: var(--lsf-space-m) var(--lsf-space-base);
   border: 1px dashed var(--lsf-color-critical);
