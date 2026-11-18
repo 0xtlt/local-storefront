@@ -357,6 +357,22 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
     post(instance, { type: 'result', id: data.id, result: value });
   }
 
+  // An open overlay (a modal, a sheet) covers the whole page, as Shopify does: its frame goes to the
+  // top layer as a manual popover, so no stacking context or containing block around its target (a
+  // selected shipping or payment option, the sticky order summary, the fixed bar of the Shop skin)
+  // paints over it or clips it. The frame stays where it is in the page, so it doesn't reload.
+  function overlay(iframe, open) {
+    iframe.className = open ? 'lsf-ext-frame lsf-ext-overlay' : 'lsf-ext-frame';
+    if (typeof iframe.showPopover !== 'function' || open === iframe.hasAttribute('popover')) return;
+    if (open) {
+      iframe.setAttribute('popover', 'manual');
+      iframe.showPopover();
+    } else {
+      iframe.hidePopover();
+      iframe.removeAttribute('popover');
+    }
+  }
+
   function onMessage(event) {
     const data = event.data;
     if (!data || data.lsf !== true) return;
@@ -383,7 +399,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
         instance.iframe.style.height = `${Math.max(0, Math.ceil(data.height))}px`;
         break;
       case 'overlay':
-        instance.iframe.className = data.open ? 'lsf-ext-frame lsf-ext-overlay' : 'lsf-ext-frame';
+        overlay(instance.iframe, data.open === true);
         break;
       case 'change':
         change(instance, data);

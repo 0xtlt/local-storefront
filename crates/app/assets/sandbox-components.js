@@ -889,29 +889,280 @@
   fieldTag('s-text-area', 'text', { area: true });
   fieldTag('s-date-field', 'date');
   fieldTag('s-consent-phone-field', 'tel', { extra: ['policy', 'type'] });
+  // --- The date picker: a month calendar, as Shopify's checkout draws it ------------------
+
+  /** Shopify's names of the days, Sunday first (`Date#getUTCDay`). */
+  const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const pad = (n, width = 2) => String(n).padStart(width, '0');
+  const daysIn = (year, month) => new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const weekday = (date) => new Date(date + 'T00:00:00Z').getUTCDay();
+
+  /** `YYYY-MM-DD` when `text` is a real day, else null. */
+  function isoDay(text) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(text).trim());
+    if (!m) return null;
+    const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    return month >= 1 && month <= 12 && day >= 1 && day <= daysIn(year, month) ? m[0] : null;
+  }
+
+  /** `YYYY-MM` when `text` is a month, else null. */
+  function isoMonth(text) {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(text || '').trim());
+    return m && Number(m[2]) >= 1 && Number(m[2]) <= 12 ? m[0] : null;
+  }
+
+  /** The first (`end` false) or last day of `YYYY`, `YYYY-MM` or `YYYY-MM-DD`; null when it is
+   * none of them. */
+  function bound(text, end) {
+    const t = String(text).trim();
+    if (/^\d{4}$/.test(t)) return t + (end ? '-12-31' : '-01-01');
+    const month = isoMonth(t);
+    if (month) return month + '-' + (end ? pad(daysIn(Number(t.slice(0, 4)), Number(t.slice(5)))) : '01');
+    return isoDay(t);
+  }
+
+  /**
+   * `allow` / `disallow` → `[{start, end}]`, inclusive, `''` and `'~'` for an open start or end.
+   * A comma-separated list of days, months (`2026-12`), years (`2026`) and ranges `start--end`
+   * of any of them, either side of which may be left out (`--2026-12-10`, `2027--`), as Shopify
+   * documents it. What isn't one of them is skipped.
+   */
+  function dateRanges(list) {
+    const out = [];
+    for (const entry of String(list || '').split(',')) {
+      const text = entry.trim();
+      if (!text) continue;
+      const dash = text.indexOf('--');
+      if (dash < 0) {
+        const start = bound(text, false);
+        if (start) out.push({ start, end: bound(text, true) });
+        continue;
+      }
+      const [from, to] = [text.slice(0, dash).trim(), text.slice(dash + 2).trim()];
+      const start = from ? bound(from, false) : '';
+      const end = to ? bound(to, true) : '~';
+      if (start !== null && end !== null && (from || to)) out.push({ start, end });
+    }
+    return out;
+  }
+
+  /** `allowDays` / `disallowDays` (`"saturday, sunday"`) → the set of `getUTCDay` numbers. */
+  function weekdays(list) {
+    const out = new Set();
+    for (const name of String(list || '').split(',')) {
+      const index = DAY_NAMES.indexOf(name.trim().toLowerCase());
+      if (index >= 0) out.add(index);
+    }
+    return out;
+  }
+
+  /** Whether the buyer may pick `date` (`YYYY-MM-DD`): in `allow` (all days when it has none),
+   * not in `disallow`, on a day of `allowDays` (any when it has none) and not of `disallowDays`. */
+  function selectable(date, rules) {
+    const within = (ranges) => ranges.some((range) => range.start <= date && date <= range.end);
+    const day = weekday(date);
+    return (rules.allow.length === 0 || within(rules.allow)) && !within(rules.disallow) &&
+      (rules.allowDays.size === 0 || rules.allowDays.has(day)) && !rules.disallowDays.has(day);
+  }
+
+  function pickerRules(el) {
+    return {
+      allow: dateRanges(el.getAttribute('allow')),
+      disallow: dateRanges(el.getAttribute('disallow')),
+      allowDays: weekdays(el.getAttribute('allowdays')),
+      disallowDays: weekdays(el.getAttribute('disallowdays')),
+    };
+  }
+
+  /** The days a `value` selects, by `type`: `YYYY-MM-DD`, a comma-separated list of them
+   * (`multiple`), or `YYYY-MM-DD--YYYY-MM-DD` (`range`, inclusive). An invalid value selects
+   * nothing. `{days, start, end}`: `start` and `end` only for a range. */
+  function pickedDays(value, type) {
+    const text = String(value || '').trim();
+    if (type === 'multiple') return { days: text.split(',').map(isoDay).filter(Boolean) };
+    if (type === 'range') {
+      const [from, to, extra] = text.split('--');
+      const start = isoDay(from || '');
+      const end = to === undefined ? null : isoDay(to);
+      if (!start || (to !== undefined && to.trim() && !end) || extra !== undefined) return { days: [] };
+      return { days: end ? [start, end] : [start], start, end: end || null };
+    }
+    const day = isoDay(text);
+    return { days: day ? [day] : [] };
+  }
+
+  /** The month after (`step` 1) or before (`-1`) `YYYY-MM`. */
+  function addMonths(month, step) {
+    const index = Number(month.slice(0, 4)) * 12 + Number(month.slice(5)) - 1 + step;
+    return pad(Math.floor(index / 12), 4) + '-' + pad((index % 12) + 1);
+  }
+
+  function today() {
+    const now = new Date();
+    return now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+  }
+
+  function pickerLocale() {
+    const doc = global.document;
+    return (doc && doc.documentElement && doc.documentElement.lang) || undefined;
+  }
+
+  /** What the buyer clicking `date` makes of `value`, or null when it changes nothing. */
+  function pick(value, type, date, el) {
+    if (type === 'multiple') {
+      const days = pickedDays(value, type).days;
+      const next = days.includes(date) ? days.filter((day) => day !== date) : [...days, date].sort();
+      return next.join(',');
+    }
+    if (type === 'range') {
+      // The first click starts a range, the second ends it (either way round); the range is
+      // only a value once it has both ends.
+      const start = el._rangeStart;
+      if (!start) {
+        el._rangeStart = date;
+        return null;
+      }
+      el._rangeStart = null;
+      return start <= date ? start + '--' + date : date + '--' + start;
+    }
+    return value === date ? null : date;
+  }
+
+  const CHEVRON = (d) => '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + d + '"/></svg>';
+
   define('s-date-picker', {
-    props: ['value', 'defaultValue', 'disabled', 'name'],
-    shadow: '<input class="control" type="date">',
-    css: ':host{display:inline-block}.control{padding:var(--lsf-space-m);border:1px solid var(--lsf-color-border);border-radius:var(--lsf-radius-control);font:inherit}',
+    props: ['type', 'value', 'defaultValue', 'view', 'defaultView', 'allow', 'disallow', 'allowDays', 'disallowDays', 'disabled', 'name'],
+    shadow: '<div class="picker" part="picker"><div class="head"><h2 class="title" aria-live="polite"></h2>' +
+      '<button type="button" class="nav prev" aria-label="Previous month">' + CHEVRON('M12 4l-6 6 6 6') + '</button>' +
+      '<button type="button" class="nav next" aria-label="Next month">' + CHEVRON('M8 4l6 6-6 6') + '</button></div>' +
+      '<div class="weekdays" aria-hidden="true"></div><div class="days" role="grid"></div><input class="control" type="hidden"></div>',
+    css: ':host{display:block;max-inline-size:20rem}.head{display:flex;align-items:center;gap:var(--lsf-space-s);margin-bottom:var(--lsf-space-m)}' +
+      '.title{flex:1;margin:0;font-size:var(--lsf-size-m);font-weight:var(--lsf-font-weight-bold)}' +
+      '.nav{display:grid;place-items:center;width:2rem;height:2rem;padding:0;border:0;border-radius:var(--lsf-radius-control);background:none;cursor:pointer}' +
+      '.nav:hover{background:var(--lsf-color-bg-subdued)}.nav:disabled{opacity:var(--lsf-opacity-disabled);cursor:default}' +
+      '.weekdays,.days{display:grid;grid-template-columns:repeat(7,1fr);gap:2px 0;text-align:center}' +
+      '.weekdays span{padding:var(--lsf-space-xs) 0;font-size:var(--lsf-size-s);color:var(--lsf-color-text-subdued)}' +
+      '.day{aspect-ratio:1;min-width:2.25rem;padding:0;border:0;border-radius:50%;background:none;cursor:pointer;font-variant-numeric:tabular-nums}' +
+      '.day:hover:not(:disabled){background:var(--lsf-color-accent-tint-3)}.day[aria-current=date]{font-weight:var(--lsf-font-weight-bold);text-decoration:underline}' +
+      '.day.in-range{border-radius:0;background:var(--lsf-color-accent-tint-2)}' +
+      '.day[aria-selected=true],.day[aria-selected=true]:hover:not(:disabled){background:var(--lsf-color-accent);color:var(--lsf-color-on-accent)}' +
+      '.day:disabled{color:var(--lsf-color-text-subdued);opacity:var(--lsf-opacity-disabled);cursor:default}' +
+      '.day:focus-visible,.nav:focus-visible{outline:var(--lsf-ring-width) solid var(--lsf-color-focus-ring);outline-offset:1px}',
     init(el) {
-      const control = $(el, '.control');
-      control.addEventListener('change', () => fire(el, 'change', { composed: false }));
-      control.addEventListener('input', () => { el._typed = true; });
+      $(el, '.prev').addEventListener('click', () => showMonth(el, addMonths(el._view, -1)));
+      $(el, '.next').addEventListener('click', () => showMonth(el, addMonths(el._view, 1)));
+      $(el, '.days').addEventListener('click', (event) => {
+        const button = event.target && event.target.closest ? event.target.closest('.day') : null;
+        const date = button && button.getAttribute('data-date');
+        // A refused day can't be picked, even by a click the disabled button would not get.
+        if (!date || el.hasAttribute('disabled') || !selectable(date, pickerRules(el))) return;
+        const type = pickerType(el);
+        const next = pick(el.value, type, date, el);
+        if (next !== null) {
+          el._typed = true;
+          $(el, '.control').value = next;
+          fire(el, 'input', { composed: false });
+          fire(el, 'change', { composed: false });
+        }
+        drawMonth(el);
+      });
     },
     sync(el) {
       const control = $(el, '.control');
-      control.disabled = el.hasAttribute('disabled');
       if (el.hasAttribute('name')) control.name = el.getAttribute('name');
       initialValue(el, control);
+      // The month shown: `view` each time the extension sets it, else `defaultView`, else the
+      // month of today.
+      const view = isoMonth(el.getAttribute('view'));
+      if (view && view !== el._viewAttribute) el._view = view;
+      el._viewAttribute = view;
+      if (!el._view) el._view = isoMonth(el.getAttribute('defaultview')) || today().slice(0, 7);
+      drawMonth(el);
     },
     members: {
       value: {
         configurable: true,
-        get() { return $(this, '.control').value; },
-        set(v) { this._valueSet = true; $(this, '.control').value = v || ''; },
+        get() { return $(this, '.control').value || ''; },
+        set(v) { this._valueSet = true; this._rangeStart = null; $(this, '.control').value = v || ''; drawMonth(this); },
+      },
+      /** The month shown, `YYYY-MM`. */
+      view: {
+        configurable: true,
+        get() { return this._view || isoMonth(this.getAttribute('view')) || ''; },
+        set(v) { (this._written = this._written || new Set()).add('view'); if (v) this.setAttribute('view', v); else this.removeAttribute('view'); },
+      },
+      // There so Preact's `onViewChange` listens to `viewchange`, as it does for `onChange`.
+      onviewchange: {
+        configurable: true,
+        get() { return this._onViewChange || null; },
+        set(handler) {
+          if (this._onViewChange) this.removeEventListener('viewchange', this._onViewChange);
+          this._onViewChange = typeof handler === 'function' ? handler : null;
+          if (this._onViewChange) this.addEventListener('viewchange', this._onViewChange);
+        },
       },
     },
   });
+
+  function pickerType(el) {
+    const type = el.getAttribute('type');
+    return type === 'multiple' || type === 'range' ? type : 'single';
+  }
+
+  function showMonth(el, month) {
+    if (el.hasAttribute('disabled')) return;
+    el._view = month;
+    drawMonth(el);
+    fire(el, 'viewchange', { composed: false });
+  }
+
+  /** Draws the month of `el._view`: its title, the names of the days and a button per day,
+   * refused days disabled. */
+  function drawMonth(el) {
+    if (!el._view) return;
+    const doc = global.document;
+    const locale = pickerLocale();
+    const [year, month] = [Number(el._view.slice(0, 4)), Number(el._view.slice(5))];
+    const first = new Date(Date.UTC(year, month - 1, 1));
+    $(el, '.title').textContent = new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(first);
+    const disabled = el.hasAttribute('disabled');
+    $(el, '.prev').disabled = disabled;
+    $(el, '.next').disabled = disabled;
+
+    const weekdaysRow = $(el, '.weekdays');
+    if (!weekdaysRow.childNodes.length) {
+      const name = new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' });
+      for (let day = 0; day < 7; day++) {
+        const cell = doc.createElement('span');
+        cell.textContent = name.format(new Date(Date.UTC(2023, 0, 1 + day)));
+        weekdaysRow.appendChild(cell);
+      }
+    }
+
+    const type = pickerType(el);
+    const picked = pickedDays(el.value, type);
+    const rules = pickerRules(el);
+    const now = today();
+    const label = new Intl.DateTimeFormat(locale, { dateStyle: 'full', timeZone: 'UTC' });
+    const days = $(el, '.days');
+    days.replaceChildren();
+    for (let blank = 0; blank < first.getUTCDay(); blank++) days.appendChild(doc.createElement('span'));
+    for (let day = 1; day <= daysIn(year, month); day++) {
+      const date = el._view + '-' + pad(day);
+      const button = doc.createElement('button');
+      button.setAttribute('type', 'button');
+      button.className = 'day';
+      button.setAttribute('data-date', date);
+      button.textContent = String(day);
+      button.setAttribute('aria-label', label.format(new Date(date + 'T00:00:00Z')));
+      const selected = picked.days.includes(date) || el._rangeStart === date;
+      button.setAttribute('aria-selected', String(selected));
+      if (!selected && type === 'range' && picked.end && picked.start < date && date < picked.end) button.className = 'day in-range';
+      if (date === now) button.setAttribute('aria-current', 'date');
+      button.disabled = disabled || !selectable(date, rules);
+      days.appendChild(button);
+    }
+  }
 
   const CHECK_CSS = `:host{display:block}label{display:flex;align-items:flex-start;gap:var(--lsf-space-l);cursor:pointer}input{position:absolute;opacity:0;pointer-events:none}.box{flex:none;display:grid;place-items:center;width:18px;height:18px;margin-top:.5px;border-radius:var(--lsf-radius-checkbox);background:var(--lsf-color-bg);box-shadow:inset 0 0 0 1px var(--lsf-color-border);color:var(--lsf-color-on-accent);transition:background-color var(--lsf-duration-fast) var(--lsf-ease)}
     input:checked+.box{background:var(--lsf-color-accent);box-shadow:none}input:focus-visible+.box{outline:var(--lsf-ring-width) solid var(--lsf-color-focus-ring);outline-offset:-1px}.box svg{width:10px;height:10px;visibility:hidden}input:checked+.box svg{visibility:visible}
@@ -1207,6 +1458,6 @@
     doc.addEventListener('focusin', describe);
   }
 
-  Sandbox.components = { TAGS, spacing, boxStyle, border, direction, cssText, install, LIGHT_CSS };
+  Sandbox.components = { TAGS, spacing, boxStyle, border, direction, cssText, install, LIGHT_CSS, dates: { dateRanges, weekdays, selectable, pickedDays, addMonths } };
   if (global.document && global.document.head) install(global.document);
 })(typeof globalThis !== 'undefined' ? globalThis : this);

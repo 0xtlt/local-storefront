@@ -80,3 +80,12 @@ test('the badge of the Functions is short until the full one cannot reach the ch
   assert.match(shop, /bottom: calc\(var\(--lsf-badge-lift, 0px\) \+ var\(--lsf-space-m\)\)/, 'the measured bar lifts it');
   assert.doesNotMatch(css, /anchor-name|position-anchor|9\.5rem/, 'one way for every browser, no guessed offset');
 });
+
+test('an open overlay takes the whole window, without what the browser gives a popover', () => {
+  // The frame of an open overlay is a popover in the top layer: the page undoes the margin, padding
+  // and scrollbars of a popover so it covers the window edge to edge.
+  const rule = read('checkout.css').match(/\.lsf-ext-overlay \{([^}]*)\}/)?.[1] ?? '';
+  for (const declaration of ['position: fixed', 'inset: 0', 'margin: 0', 'padding: 0', 'max-width: none', 'max-height: none', 'overflow: hidden']) {
+    assert.ok(rule.includes(declaration), declaration);
+  }
+});

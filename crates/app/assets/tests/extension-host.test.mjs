@@ -283,6 +283,32 @@ test('partial address changes merge with the address of their turn, not of their
   }
 });
 
+test('an open overlay goes to the top layer, above every stacking context around its target', () => {
+  const { host, slot, connect, from } = setup();
+  host.attach(slot, BLOCK);
+  connect();
+  const [frame] = host.instances();
+  // The browser's top layer: what a selected option card or the sticky summary holds can't reach it.
+  const layer = [];
+  frame.iframe.showPopover = function () {
+    assert.equal(this.getAttribute('popover'), 'manual', 'a manual popover: no light dismiss, the extension closes it');
+    layer.push(this);
+  };
+  frame.iframe.hidePopover = function () {
+    layer.splice(layer.indexOf(this), 1);
+  };
+  from(frame, { type: 'overlay', open: true });
+  assert.deepEqual(layer, [frame.iframe]);
+  assert.match(frame.iframe.className, /lsf-ext-overlay/);
+  from(frame, { type: 'overlay', open: true });
+  assert.equal(layer.length, 1, 'opened once');
+  assert.equal(frame.iframe.parentNode, slot.firstChild, 'the frame stays in its slot, so it does not reload');
+  from(frame, { type: 'overlay', open: false });
+  assert.deepEqual(layer, []);
+  assert.equal(frame.iframe.hasAttribute('popover'), false, 'closed, the frame is back inline');
+  assert.doesNotMatch(frame.iframe.className, /lsf-ext-overlay/);
+});
+
 test('sizes the frame, grows it for an overlay and shows its errors', () => {
   const { host, slot, connect, from, log } = setup();
   host.attach(slot, BLOCK);
