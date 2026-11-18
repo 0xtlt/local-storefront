@@ -540,6 +540,10 @@ change, and `validate` checks them: run it in the app folder, no theme needed
 - The checkout keeps the settings and the extensions of its scenario for the whole session, an
   order included, and follows the file when it changes. The state has `scenario`
   (`{name, title}`) and the page names it in its header.
+- A code of `entered.discount_codes` that is not applicable when the checkout opens is refused,
+  as one the buyer types is: it is not among the checkout's codes (`discountCodes`, an
+  extension's `shopify.discountCodes`), as Shopify refuses a code that is "valid, but not
+  applicable". The home page and `app check` run the scenario without it too.
 - `lsf app function run --scenario <name>` runs the Functions for a scenario.
 - Only one scenario is open per browser: the session is the cookie's.
 

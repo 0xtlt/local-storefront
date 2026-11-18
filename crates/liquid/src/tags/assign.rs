@@ -1,7 +1,7 @@
 //! `assign`, `capture`, `increment`, `decrement` and `echo`.
 
 use crate::context::Context;
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 use crate::lax;
 use crate::lexer::{MarkupParser, TokenKind};
 use crate::parser::{Parser, TagToken};
@@ -51,8 +51,17 @@ struct Assign {
 
 impl Tag for Assign {
     fn render(&self, ctx: &mut Context, _out: &mut String) -> Result<()> {
-        let value = self.from.evaluate(ctx)?;
-        ctx.assign(self.to.clone(), value);
+        // Shopify reports no error raised in an `assign`'s value, and the variable keeps what
+        // it had: `{% assign x = nil | image_url: width: 100 %}`, `{% assign x = 1 |
+        // divided_by: 0 %}` (a development store, 2026-11-18; issue #333). A spent budget still
+        // stops the render, and an error of lsf's own still shows.
+        match self.from.evaluate(ctx) {
+            Ok(value) => ctx.assign(self.to.clone(), value),
+            Err(error) if matches!(error.kind, ErrorKind::ResourceLimit | ErrorKind::Internal) => {
+                return Err(error);
+            }
+            Err(_) => {}
+        }
         Ok(())
     }
 

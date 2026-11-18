@@ -7756,13 +7756,50 @@ fn a_scenario_opens_a_new_checkout_set_up_as_it_says() {
     assert_eq!(json["cost"]["shipping"]["amount"], 12.9);
     let subtotal = json["cost"]["subtotal"]["amount"].as_f64().unwrap();
     assert!((json["cost"]["tax"]["amount"].as_f64().unwrap() - subtotal * 0.2).abs() < 0.02);
-    // The discount code was entered, and no discount has it.
-    assert_eq!(json["discountCodes"][0]["code"], "WELCOME");
-    assert_eq!(json["discountCodes"][0]["applicable"], false);
+    // The discount code was entered, and no discount has it: it was refused (issue #335).
+    assert_eq!(json["discountCodes"], json!([]));
     // The page asks for nothing the scenario did not fill.
     let page = get(&state, &location, &id);
     assert_eq!(page.status, 200);
     assert!(text(&page).contains("<html lang=\"en\">"));
+}
+
+/// Issue #335: a code a scenario enters that is not applicable is refused, as a typed one is,
+/// and is not among the checkout's codes; one that applies stays.
+#[test]
+fn a_scenario_code_that_is_not_applicable_is_refused_as_a_typed_one() {
+    let discount = |code: &str, minimum: u32| {
+        json!({"function": "volume-discount", "title": code, "code": code,
+            "metafields": {"$app:config.settings": {"type": "json",
+                "value": {"minimumQuantity": minimum, "percentage": 20}}}})
+    };
+    let scenario = json!({
+        "session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}},
+        "entered": {"discount_codes": ["SAVE10", "WELCOME"]},
+        "checkout": {"discounts": [discount("SAVE10", 99), discount("WELCOME", 1)]}
+    })
+    .to_string();
+    let data = ScenarioData::new("refused-code", &[("discount-code.json", &scenario)]);
+    let state = data.server(&["volume-discount"], true);
+    let reply = get(&state, "/checkout?scenario=discount-code", "viewer");
+    let id = session_cookie(&reply);
+    let location = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{location}.json"), &id));
+    assert_eq!(
+        json["discountCodes"],
+        json!([{"code": "WELCOME", "applicable": true}])
+    );
+    assert_eq!(json["discounts"][0]["code"], "WELCOME");
+    // As typed into the page: SAVE10 is refused there too.
+    let path = location.clone();
+    let reply = operations(
+        &state,
+        &path,
+        &id,
+        json!([{"type": "discountCode", "action": "add", "code": "SAVE10"}]),
+    );
+    let typed = body_json(&reply);
+    assert_eq!(typed["discountCodes"][1]["applicable"], false);
 }
 
 /// The scenario of #325: a mug stocked in Ottawa only and a tote bag stocked in Montreal only.

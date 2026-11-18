@@ -570,7 +570,10 @@
       signalProperty(api, 'lines', (s) => s.lines.map(mapLine));
       signalProperty(api, 'attributes', (s) => s.attributes || []);
       signalProperty(api, 'note', (s) => s.note || undefined);
-      signalProperty(api, 'discountCodes', (s) => (s.discountCodes || []).map((entry) => ({ code: entry.code })));
+      // The codes applied: one that is not applicable is refused on Shopify, and never listed
+      // ("The discount codes currently applied to the checkout").
+      signalProperty(api, 'discountCodes', (s) =>
+        (s.discountCodes || []).filter((entry) => entry.applicable !== false).map((entry) => ({ code: entry.code })));
       signalProperty(api, 'discountAllocations', (s) =>
         (s.discounts || []).filter((entry) => entry.class === 'ORDER').map(allocation));
       signalProperty(api, 'appliedGiftCards', () => []);

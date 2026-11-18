@@ -536,7 +536,8 @@ fn an_app_discount_is_created_with_its_function_and_configuration_and_syncs() {
     );
     assert_eq!(
         read["data"]["discountNode"],
-        json!({"id": node.replace("DiscountAutomaticNode", "DiscountNode"),
+        // A `DiscountNode/<n>` id still finds it; its id is the node's own (issue #336).
+        json!({"id": node,
             "discount": {"__typename": "DiscountAutomaticApp", "title": "Spring sale"},
             "metafield": {"jsonValue": {"percent": 15}, "ownerType": "DISCOUNT"}})
     );
@@ -732,6 +733,106 @@ fn discounts_have_the_admins_summaries() {
     );
 }
 
+/// Issue #336, as a development store answers (2026-11-18): `codeDiscountNodes` leaves the
+/// `DiscountCodeApp` out, `discountNodes` lists it, and its ids are the nodes' own.
+#[test]
+fn code_discount_nodes_leave_app_discounts_out_and_discount_nodes_have_the_nodes_ids() {
+    let (_, mut shop) = rich();
+    let functions = run(
+        &mut shop,
+        "{ shopifyFunctions(first: 5) { nodes { id apiType } } }",
+        Value::Null,
+    );
+    let function = functions["data"]["shopifyFunctions"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|function| function["apiType"] == "discounts")
+        .unwrap_or_else(|| panic!("{functions}"))["id"]
+        .clone();
+    let created = run(
+        &mut shop,
+        r#"mutation($function: String!) { discountCodeAppCreate(codeAppDiscount: { title: "App code", code: "APPCODE", functionId: $function, startsAt: "2026-01-01T00:00:00Z", discountClasses: [PRODUCT] }) {
+            codeAppDiscount { discountId } userErrors { field message } } }"#,
+        json!({"function": function}),
+    );
+    let payload = data(&created, "discountCodeAppCreate");
+    assert_eq!(payload["userErrors"], json!([]));
+    let app_code = payload["codeAppDiscount"]["discountId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(app_code.starts_with("gid://shopify/DiscountCodeNode/"));
+    let basic = run(
+        &mut shop,
+        r#"mutation { discountCodeBasicCreate(basicCodeDiscount: { title: "Ten off", code: "TEN", startsAt: "2026-01-01T00:00:00Z",
+            customerGets: { value: { percentage: 0.1 }, items: { all: true } } }) { codeDiscountNode { id } userErrors { message } } }"#,
+        Value::Null,
+    );
+    let basic = data(&basic, "discountCodeBasicCreate")["codeDiscountNode"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{basic}"))
+        .to_string();
+    let lists = run(
+        &mut shop,
+        "{ codeDiscountNodes(first: 20) { nodes { id codeDiscount { __typename } } }
+           discountNodes(first: 20) { nodes { id discount { __typename } } } }",
+        Value::Null,
+    );
+    let nodes = |name: &str, field: &str| -> Vec<(String, String)> {
+        lists["data"][name]["nodes"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{lists}"))
+            .iter()
+            .map(|node| {
+                (
+                    node["id"].as_str().unwrap().to_string(),
+                    node[field]["__typename"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        nodes("codeDiscountNodes", "codeDiscount"),
+        [(basic, "DiscountCodeBasic".to_string())]
+    );
+    let all = nodes("discountNodes", "discount");
+    assert!(
+        all.contains(&(app_code.clone(), "DiscountCodeApp".to_string())),
+        "{all:?}"
+    );
+    for (id, kind) in &all {
+        let node = if kind.starts_with("DiscountCode") {
+            "DiscountCodeNode"
+        } else {
+            "DiscountAutomaticNode"
+        };
+        assert!(
+            id.starts_with(&format!("gid://shopify/{node}/")),
+            "{id} {kind}"
+        );
+    }
+    // That id is the one `discountNode`, `codeDiscountNode` and the mutations take.
+    let read = run(
+        &mut shop,
+        "query($id: ID!) { discountNode(id: $id) { id } codeDiscountNode(id: $id) { id } }",
+        json!({"id": app_code}),
+    );
+    assert_eq!(
+        read["data"],
+        json!({"discountNode": {"id": app_code}, "codeDiscountNode": {"id": app_code}})
+    );
+    let deactivated = run(
+        &mut shop,
+        "mutation($id: ID!) { discountCodeDeactivate(id: $id) { codeDiscountNode { id } userErrors { message } } }",
+        json!({"id": app_code}),
+    );
+    assert_eq!(
+        data(&deactivated, "discountCodeDeactivate"),
+        &json!({"codeDiscountNode": {"id": app_code}, "userErrors": []})
+    );
+}
+
 #[test]
 fn discount_nodes_list_search_and_sort_every_kind() {
     let (_, mut shop) = rich();
@@ -791,7 +892,7 @@ fn discount_nodes_list_search_and_sort_every_kind() {
     );
     assert_eq!(
         ids["data"],
-        json!({"discountNodes": {"nodes": [{"id": "gid://shopify/DiscountNode/1"}]}, "discountNodesCount": {"count": 2}})
+        json!({"discountNodes": {"nodes": [{"id": "gid://shopify/DiscountAutomaticNode/1"}]}, "discountNodesCount": {"count": 2}})
     );
 
     // Bulk: the code discounts the search finds are deleted at once.

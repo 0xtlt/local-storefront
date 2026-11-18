@@ -19,7 +19,8 @@
 //!   `order_transactions/create`, `orders/paid`, `draft_orders/update`.
 //! - `draftOrderInvoiceSend` records the invoice as sent (`INVOICE_SENT`, `invoiceSentAt`) and
 //!   puts the email in the shop's outbox (`crate::admin::outbox`): lsf sends nothing.
-//!   `draftOrderDuplicate` copies a draft as a new open one.
+//!   `draftOrderDuplicate` copies a draft as a new open one, its lines without their applied
+//!   discounts.
 //! - B2B drafts (`purchasingEntity.purchasingCompany`) are the contact's customer's, for the
 //!   company location, with its addresses and payment terms unless the input gives its own;
 //!   their order is the location's (`purchasingEntity`), pending until paid when it has payment
@@ -1476,11 +1477,24 @@ fn duplicate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
             json!({"value": discount.get("value"), "valueType": discount.get("valueType"), "title": discount.get("title"), "description": discount.get("description")}),
         );
     }
+    // Shopify's copy has its lines at full price: their `appliedDiscount` is not copied
+    // (issue #334).
+    let currency = text(&record, "currencyCode").unwrap_or("USD").to_string();
     let lines = lines
         .into_iter()
         .map(|mut line| {
             line.remove("id");
             line.remove("uuid");
+            line.insert("appliedDiscount".into(), Value::Null);
+            let total = line.get("originalTotalSet").cloned().unwrap_or(Value::Null);
+            let unit = line
+                .get("originalUnitPriceSet")
+                .cloned()
+                .unwrap_or(Value::Null);
+            line.insert("discountedTotalSet".into(), total);
+            line.insert("totalDiscountSet".into(), value::money_bag(0, &currency));
+            line.insert("discountedUnitPriceSet".into(), unit.clone());
+            line.insert("approximateDiscountedUnitPriceSet".into(), unit);
             line
         })
         .collect();
