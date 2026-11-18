@@ -5,6 +5,16 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 ## Unreleased
 
+### Added
+
+- **`lsf digest`** tells whether two copies of a theme hold the same files (#337). `digest file
+  <path>...` prints `<md5>  <path>` per file, the checksum Shopify CLI computes against a store's
+  `checksumMd5` (CRLF read as LF in a text file, `settings_data.json` minified without its first
+  comment). `digest theme` prints one digest of the theme, `sha256:<hex>  <n> files`, over the
+  files of its folders sorted by path, without the assets Shopify generates from a `.liquid` one;
+  `--include` and `--ignore` take globs, and `--list` prints the lines that were hashed. See
+  [CLI reference](docs/cli.md#digest).
+
 ### Fixed
 
 - **An error inside an `assign` is not reported, and the variable keeps its value**, as Shopify

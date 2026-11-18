@@ -22,6 +22,7 @@ a script can test.
 | `app webhook trigger` | `--format json` (`--json` is the same). |
 | `render <path>` | The HTML on stdout. On stderr, each Liquid error, then `status 200 · template product · 0 Liquid errors · 0 warnings`. |
 | `routes` | One path per line. |
+| `digest file`, `digest theme` | `<md5>  <path>` per file; `sha256:<hex>  <n> files` for a theme (`--list` prints its lines first). |
 | `fmt --check` | One file to format per line; the summary on stderr. |
 | `profile <path>` | Text. `--json` is a speedscope profile for a flame graph, not a report. |
 | `schema [kind]` | A JSON Schema. |

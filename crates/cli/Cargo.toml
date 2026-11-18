@@ -45,6 +45,8 @@ indexmap.workspace = true
 notify = "8"
 # A hash of the module a build of `--watch` published, kept in its record.
 blake3 = { version = "1", default-features = false }
+# The digest of a theme, `lsf digest theme`.
+sha2 = "0.11"
 
 # Stops a build of `--watch` and what it started.
 [target.'cfg(unix)'.dependencies]

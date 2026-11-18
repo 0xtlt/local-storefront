@@ -1,6 +1,7 @@
 pub mod app;
 pub mod app_init;
 pub mod check;
+pub mod digest;
 pub mod docs;
 pub mod fmt;
 pub mod function;
