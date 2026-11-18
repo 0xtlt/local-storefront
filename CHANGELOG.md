@@ -3,7 +3,10 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
-## Unreleased
+## 0.3.0-rc.10 - 2026-11-18
+
+Tenth release candidate of 0.3.0. An extension's modal covers the whole checkout (#329), and
+`s-date-picker` is a month calendar that honours the days an extension refuses (#330).
 
 ### Fixed
 
