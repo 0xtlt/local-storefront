@@ -93,9 +93,10 @@ enum Command {
     Check(commands::check::Args),
     /// Format the Liquid files of the theme, as Prettier does with Shopify's Liquid plugin.
     Fmt(commands::fmt::Args),
-    /// Print the checksum Shopify CLI computes for a theme file (`file`), or one digest of the
-    /// whole theme (`theme`), to tell whether two copies of a theme hold the same files.
-    Digest(commands::digest::Args),
+    /// The commands of the theme alone: `digest` prints one digest of the whole theme, `digest
+    /// file` the checksum Shopify CLI computes for each file, to tell whether two copies of a theme
+    /// hold the same files.
+    Theme(commands::theme::Args),
     /// Print the reference of the store data format.
     Docs(commands::docs::Args),
 }
@@ -133,7 +134,7 @@ fn end_quietly_on_a_closed_pipe(command: &Command) {
             | Command::Routes(_)
             | Command::Check(_)
             | Command::Fmt(_)
-            | Command::Digest(_)
+            | Command::Theme(_)
             | Command::Docs(_)
     );
     #[cfg(unix)]
@@ -182,7 +183,7 @@ fn main() -> ExitCode {
         }
         Command::Check(args) => commands::check::run(&cli.theme, previews, args),
         Command::Fmt(args) => commands::fmt::run(&cli.theme, args),
-        Command::Digest(args) => commands::digest::run(&cli.theme, args),
+        Command::Theme(args) => commands::theme::run(&cli.theme, args),
         Command::Docs(args) => commands::docs::run(args),
     };
     match result {

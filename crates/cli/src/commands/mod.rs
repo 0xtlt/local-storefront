@@ -1,7 +1,6 @@
 pub mod app;
 pub mod app_init;
 pub mod check;
-pub mod digest;
 pub mod docs;
 pub mod fmt;
 pub mod function;
@@ -11,6 +10,7 @@ pub mod render;
 pub mod routes;
 pub mod schema;
 pub mod serve;
+pub mod theme;
 pub mod validate;
 pub mod webhook;
 

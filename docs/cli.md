@@ -927,17 +927,51 @@ Formats Liquid files as Prettier does with Shopify's Liquid plugin. Guide:
 A file that cannot be read, written or formatted is reported, the others are formatted, and
 the command exits with `2`.
 
-## digest
+## theme
 
-`npx local-storefront digest file <path>...`
-`npx local-storefront digest theme [--include <glob>]... [--ignore <glob>]... [--list]`
+The commands of the theme alone, without the store data.
+
+| Command | What it does |
+|---|---|
+| [`theme digest`](#theme-digest) | Prints one digest of the theme, or with `file` the checksum of each file given. |
+
+### theme digest
+
+`npx local-storefront theme digest [--include <glob>]... [--ignore <glob>]... [--list]`
+`npx local-storefront theme digest file <path>...`
 
 Tells whether two copies of a theme hold the same files, without uploading either: a checkout
-against another, or a theme against `shopify theme pull`.
+against another, or a theme against `shopify theme pull`. `--theme` names the theme folder, as
+for every command: `npx local-storefront --theme ./t theme digest`.
 
-`digest file` prints a line per file, `<md5>  <path>`, the path relative to the theme folder
-with `/`. The MD5 is the checksum Shopify CLI computes to tell which files changed against a
-store (`asset-checksum.ts`):
+`theme digest` prints one digest of the theme, `sha256:<hex>  <n> files`: the SHA-256 of the
+lines `<md5>  <path>\n` of its files, sorted by path (bytewise), each line as `theme digest file`
+prints it. Its files are those of `assets/`, `blocks/`, `config/`, `layout/`, `locales/`,
+`sections/`, `snippets/` and `templates/`, without what Shopify CLI never pushes (`.DS_Store`,
+`.git`, `node_modules`, ...) and without `assets/x` when `assets/x.liquid` exists (Shopify
+generates it).
+
+| Option | What it does |
+|---|---|
+| `--include <glob>` | Keeps only the files whose path matches one of the globs. Repeat it. |
+| `--ignore <glob>` | Then leaves out the files whose path matches one of them. Repeat it. |
+| `--list` | Prints the lines that were hashed before the digest, to see what the globs kept. |
+
+The options are refused with `file`. A glob matches the path relative to the theme: `*` and `?`
+stay in a folder, `**` crosses folders, `{a,b}` and `[a-z]` work. A glob that matches nothing is
+not an error. Recipes:
+
+```bash
+# The code only, without the content the theme editor writes
+npx local-storefront theme digest --ignore 'templates/**/*.json' --ignore 'sections/*.json' \
+  --ignore 'config/settings_data.json' --ignore 'locales/*.json'
+# The sections and snippets only, with the files that were kept
+npx local-storefront theme digest --include 'sections/**' --include 'snippets/**' --list
+```
+
+`theme digest file` prints a line per file, `<md5>  <path>`, the path relative to the theme
+folder with `/`. The MD5 is the checksum Shopify CLI computes to tell which files changed
+against a store (`asset-checksum.ts`):
 
 - a text file (`.liquid`, `.json`, `.js`, `.mjs`, `.map`, `.css`, `.scss`, `.sass`, `.svg`,
   `.svgz`, `.md`, `.markdown`): CRLF becomes LF, then MD5;
@@ -947,7 +981,7 @@ store (`asset-checksum.ts`):
 - any other file: the MD5 of its bytes.
 
 ```text
-$ npx local-storefront digest file config/settings_data.json layout/theme.liquid
+$ npx local-storefront theme digest file config/settings_data.json layout/theme.liquid
 2da66b6b7998a4a9d2acfd94f222bfbc  config/settings_data.json
 85959b642ae6fb71f8c844b014bb8c13  layout/theme.liquid
 ```
@@ -956,29 +990,6 @@ A store answers the same MD5 (`checksumMd5`) for a binary file and for a text fi
 line ends. It keeps a file's bytes as they were pushed and answers their MD5: for a file with
 CRLF line ends, or an empty one, its answer differs. It rewrites a JSON template and
 `settings_data.json`, whose checksum is then that of its own version.
-
-`digest theme` prints one digest of the theme, `sha256:<hex>  <n> files`: the SHA-256 of the
-lines `<md5>  <path>\n` of its files, sorted by path (bytewise). Its files are those of
-`assets/`, `blocks/`, `config/`, `layout/`, `locales/`, `sections/`, `snippets/` and
-`templates/`, without what Shopify CLI never pushes (`.DS_Store`, `.git`, `node_modules`, ...)
-and without `assets/x` when `assets/x.liquid` exists (Shopify generates it).
-
-| Option | What it does |
-|---|---|
-| `--include <glob>` | Keeps only the files whose path matches one of the globs. Repeat it. |
-| `--ignore <glob>` | Then leaves out the files whose path matches one of them. Repeat it. |
-| `--list` | Prints the lines that were hashed before the digest, to see what the globs kept. |
-
-A glob matches the path relative to the theme: `*` and `?` stay in a folder, `**` crosses
-folders, `{a,b}` and `[a-z]` work. A glob that matches nothing is not an error. Recipes:
-
-```bash
-# The code only, without the content the theme editor writes
-npx local-storefront digest theme --ignore 'templates/**/*.json' --ignore 'sections/*.json' \
-  --ignore 'config/settings_data.json' --ignore 'locales/*.json'
-# The sections and snippets only, with the files that were kept
-npx local-storefront digest theme --include 'sections/**' --include 'snippets/**' --list
-```
 
 A path that does not exist, is not a file or is not in the theme folder stops the command with
 `2`, before it prints anything.

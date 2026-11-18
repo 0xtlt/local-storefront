@@ -1,8 +1,8 @@
-//! `lsf digest`: the checksum Shopify CLI computes for a theme file (`file`), and one digest of
-//! the whole theme (`theme`), to tell whether two copies of a theme hold the same files.
+//! `lsf theme digest`: one digest of the whole theme, and with `file`, the checksum Shopify CLI
+//! computes for each file given, to tell whether two copies of a theme hold the same files.
 //!
-//! A checksum is [`lsf_core::theme::checksum::checksum_md5`]. The digest of a theme is the SHA-256 of the lines `<md5>  <path>\n` of its files, sorted
-//! by path.
+//! A checksum is [`lsf_core::theme::checksum::checksum_md5`]. The digest of a theme is the
+//! SHA-256 of the lines `<md5>  <path>\n` of its files, sorted by path.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -13,39 +13,15 @@ use lsf_core::theme::THEME_DIRECTORIES;
 use lsf_core::theme::checksum::checksum_md5;
 use sha2::{Digest, Sha256};
 
-use super::fmt::glob_match;
+use crate::commands::fmt::glob_match;
 
+/// Without a subcommand, the digest of the theme; its options are refused with `file`.
 #[derive(clap::Args)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct Args {
     #[command(subcommand)]
-    command: Command,
-}
+    file: Option<Command>,
 
-#[derive(clap::Subcommand)]
-enum Command {
-    /// Print the checksum Shopify CLI computes for each file to compare it with a store's
-    /// `checksumMd5`, as `<md5>  <path>`, the path relative to the theme.
-    File(FileArgs),
-    /// Print one digest of the theme, `sha256:<hex>  <n> files`: the SHA-256 of the lines
-    /// `<md5>  <path>` of its files, sorted by path. Two themes with the same digest hold the
-    /// same files, as Shopify CLI compares them.
-    ///
-    /// The files are those of the theme's folders (assets, blocks, config, layout, locales,
-    /// sections, snippets, templates), without `assets/x` when `assets/x.liquid` exists (Shopify
-    /// generates it). Code only: `--ignore 'templates/**/*.json' --ignore 'sections/*.json'
-    /// --ignore 'config/settings_data.json' --ignore 'locales/*.json'`.
-    Theme(ThemeArgs),
-}
-
-#[derive(clap::Args)]
-struct FileArgs {
-    /// The files, in the theme.
-    #[arg(required = true)]
-    paths: Vec<PathBuf>,
-}
-
-#[derive(clap::Args)]
-struct ThemeArgs {
     /// Keeps only the files whose path matches one of these globs (`sections/*.liquid`; `**`
     /// crosses folders). Repeat it.
     #[arg(long = "include", value_name = "GLOB")]
@@ -58,6 +34,20 @@ struct ThemeArgs {
     /// Prints the lines that were hashed before the digest, to see what the globs kept.
     #[arg(long)]
     list: bool,
+}
+
+#[derive(clap::Subcommand)]
+enum Command {
+    /// Print the checksum Shopify CLI computes for each file to compare it with a store's
+    /// `checksumMd5`, as `<md5>  <path>`, the path relative to the theme.
+    File(FileArgs),
+}
+
+#[derive(clap::Args)]
+struct FileArgs {
+    /// The files, in the theme.
+    #[arg(required = true)]
+    paths: Vec<PathBuf>,
 }
 
 /// The names Shopify CLI never pushes (its `DEFAULT_IGNORE_PATTERNS`): left out of a theme's
@@ -80,8 +70,8 @@ const NEVER_PUSHED: [&str; 13] = [
 
 pub fn run(theme: &Path, args: Args) -> Result<ExitCode, String> {
     let root = theme_root(theme)?;
-    match args.command {
-        Command::File(args) => {
+    match args.file {
+        Some(Command::File(args)) => {
             let mut lines = String::new();
             for path in &args.paths {
                 let key = key_of(&root, path)?;
@@ -91,7 +81,7 @@ pub fn run(theme: &Path, args: Args) -> Result<ExitCode, String> {
             }
             print!("{lines}");
         }
-        Command::Theme(args) => {
+        None => {
             let files = theme_files(&root)?;
             let lines: String = kept(&files, &args.includes, &args.ignores)
                 .map(|(key, bytes)| line(key, bytes))

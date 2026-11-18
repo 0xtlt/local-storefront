@@ -1,4 +1,4 @@
-//! `lsf digest`: the checksum of theme files and the digest of a theme, in a theme of the
+//! `lsf theme digest`: the digest of a theme and the checksum of its files (`file`), in a theme of the
 //! test's own. The checksums are those Shopify CLI computes (`asset-checksum.ts`).
 
 use std::path::{Path, PathBuf};
@@ -82,6 +82,7 @@ fn a_file_has_the_checksum_of_shopify_cli_and_its_path_in_the_theme() {
     let output = lsf(
         &theme.0,
         &[
+            "theme",
             "digest",
             "file",
             "snippets/crlf.liquid",
@@ -103,6 +104,7 @@ fn a_file_has_the_checksum_of_shopify_cli_and_its_path_in_the_theme() {
         &[
             "--theme",
             name,
+            "theme",
             "digest",
             "file",
             &format!("{name}/snippets/crlf.liquid"),
@@ -127,7 +129,10 @@ fn a_file_outside_the_theme_or_missing_is_an_error() {
         ),
         ("snippets", "snippets is not a file"),
     ] {
-        let output = lsf(&theme.0, &["digest", "file", "snippets/crlf.liquid", path]);
+        let output = lsf(
+            &theme.0,
+            &["theme", "digest", "file", "snippets/crlf.liquid", path],
+        );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(2), "{path}: {stderr}");
         assert!(stderr.starts_with("error: "), "{stderr}");
@@ -135,14 +140,14 @@ fn a_file_outside_the_theme_or_missing_is_an_error() {
         assert!(output.stdout.is_empty(), "nothing printed before the error");
     }
     let _ = std::fs::remove_file(outside);
-    let output = lsf(&theme.0, &["--theme", "none", "digest", "theme"]);
+    let output = lsf(&theme.0, &["--theme", "none", "theme", "digest"]);
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("does not exist"));
 }
 
-/// The lines `digest theme --list` prints for the test's theme, without the digest.
+/// The lines `theme digest --list` prints for the test's theme, without the digest.
 fn theme_lines(theme: &Theme, globs: &[&str]) -> (Vec<String>, String) {
-    let mut args = vec!["digest", "theme", "--list"];
+    let mut args = vec!["theme", "digest", "--list"];
     args.extend(globs);
     let text = stdout(&lsf(&theme.0, &args));
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
@@ -187,15 +192,15 @@ fn a_theme_has_one_digest_of_its_files_sorted_by_path() {
         .map(|byte| format!("{byte:02x}"))
         .collect();
     assert_eq!(summary, format!("sha256:{hex}  8 files"));
-    let alone = stdout(&lsf(&theme.0, &["digest", "theme"]));
+    let alone = stdout(&lsf(&theme.0, &["theme", "digest"]));
     assert_eq!(alone, format!("{summary}\n"));
-    assert_eq!(stdout(&lsf(&theme.0, &["digest", "theme"])), alone);
+    assert_eq!(stdout(&lsf(&theme.0, &["theme", "digest"])), alone);
 
     // A change of line ends in a text file is no change; in a binary file, it is one.
     theme.write("snippets/crlf.liquid", b"a\nb\n");
-    assert_eq!(stdout(&lsf(&theme.0, &["digest", "theme"])), alone);
+    assert_eq!(stdout(&lsf(&theme.0, &["theme", "digest"])), alone);
     theme.write("assets/crlf.png", b"a\nb\n");
-    assert_ne!(stdout(&lsf(&theme.0, &["digest", "theme"])), alone);
+    assert_ne!(stdout(&lsf(&theme.0, &["theme", "digest"])), alone);
 }
 
 #[test]
@@ -244,4 +249,28 @@ fn includes_keep_files_and_ignores_then_leave_them_out() {
         summary,
         "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  0 files"
     );
+}
+
+#[test]
+fn the_options_of_the_digest_are_refused_with_file_and_lsf_digest_is_gone() {
+    let theme = Theme::new("spelling");
+    let output = lsf(
+        &theme.0,
+        &["theme", "digest", "--list", "file", "snippets/crlf.liquid"],
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let output = lsf(
+        &theme.0,
+        &["theme", "digest", "file", "--list", "snippets/crlf.liquid"],
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(lsf(&theme.0, &["digest", "theme"]).status.code(), Some(2));
+    assert_eq!(lsf(&theme.0, &["theme"]).status.code(), Some(2));
+    // `--theme` is the global option, before or after the command.
+    let parent = theme.0.parent().unwrap();
+    let name = theme.0.file_name().unwrap().to_str().unwrap();
+    let before = stdout(&lsf(parent, &["--theme", name, "theme", "digest"]));
+    let after = stdout(&lsf(parent, &["theme", "digest", "--theme", name]));
+    assert_eq!(before, after);
+    assert_eq!(before, stdout(&lsf(&theme.0, &["theme", "digest"])));
 }

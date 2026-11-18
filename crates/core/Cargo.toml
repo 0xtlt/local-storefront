@@ -21,5 +21,5 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 unicode-general-category = "1.1"
 # The accents a name is sorted without, by its canonical decomposition (`É` is `E` and a mark).
 icu_normalizer = { version = "2", default-features = false, features = ["compiled_data"] }
-# The checksum of a theme file `lsf digest` prints, and the `checksumMd5` of the Admin API.
+# The checksum of a theme file `lsf theme digest` prints, and the `checksumMd5` of the Admin API.
 md-5 = "0.11"
