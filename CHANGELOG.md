@@ -3,6 +3,22 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## 0.3.0 - 2026-11-20
+
+lsf now serves a local GraphQL Admin API (version 2026-10) and delivers an app's webhooks to its
+backend: the backend of a Shopify app runs and is tested offline, against the store data, with
+the same data every run. The embedded app opens in a local admin, and the theme renders the
+app's theme app extensions. The checkout of an app applies the code discounts its backend makes,
+splits a cart that ships from several locations into delivery groups, and its UI extensions read
+the store data through `shopify.query`. `lsf theme digest` tells whether two copies of a theme
+hold the same files. Hundreds of differences from Shopify are fixed, each checked against what a
+store does. Some themes, theme tests, store data and backends written for 0.2.0 need a change.
+
+0.3.0 is 0.3.0-rc.11 with no other change. What changed since 0.2.0, and the breaking changes of
+each step, are in the
+[changelog](https://github.com/0xtlt/local-storefront/blob/v0.3.0/CHANGELOG.md), in the sections of
+the release candidates, from 0.3.0-rc.1 to 0.3.0-rc.11.
+
 ## 0.3.0-rc.11 - 2026-11-18
 
 Eleventh release candidate of 0.3.0. `lsf theme digest` tells whether two copies of a theme hold
