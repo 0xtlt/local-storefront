@@ -773,6 +773,7 @@ fn customers_changed(state: &ShopState, start: usize) -> Vec<String> {
             || topic.starts_with("refunds/")
             || topic.starts_with("company_contacts/")
             || topic.starts_with("checkouts/")
+            || topic.starts_with("subscription_contracts/")
         {
             record
                 .and_then(|record| record.get("customer"))

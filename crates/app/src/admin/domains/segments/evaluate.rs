@@ -25,8 +25,9 @@
 //!   and month compared with the condition's, whatever the year.
 //! - Not known to lsf, so `IS NULL` (or never matched): `predicted_spend_tier` and `rfm_group`
 //!   (Shopify's models), `shopify_email.*` (lsf sends no email), `storefront_event.*` (the
-//!   storefront records no views). `product_subscription_status` reads the customer's
-//!   `productSubscriberStatus` when a record sets it, `NEVER_SUBSCRIBED` otherwise.
+//!   storefront records no views). `product_subscription_status` derives from the customer's
+//!   subscription contracts (falling back to `productSubscriberStatus` on the record if set, else
+//!   `NEVER_SUBSCRIBED`).
 //!
 //! Dates are whole days in the shop's time zone, as the reference says: `last_order_date =
 //! 2020-05-30` is that day from midnight to midnight, `> 2020-05-30` from the next midnight, `-7d`
@@ -360,8 +361,17 @@ pub fn facts(state: &ShopState, customer: &Record, created: &HashSet<String>) ->
             .then(|| state.app_gid().and_then(parse_gid).map(|(_, id)| id))
             .flatten(),
         abandoned_checkout: crate::admin::domains::checkouts::last_abandonment(state, &id),
-        product_subscription: text(customer.get("productSubscriberStatus"))
-            .unwrap_or_else(|| "NEVER_SUBSCRIBED".into()),
+        product_subscription: match crate::admin::domains::customers::product_subscriber_status(
+            state, customer,
+        )
+        .as_str()
+        {
+            // Segment queries use `SUBSCRIBED` / `CANCELED` where `CustomerProductSubscriberStatus`
+            // uses `ACTIVE` / `CANCELLED`.
+            "ACTIVE" => "SUBSCRIBED".into(),
+            "CANCELLED" => "CANCELED".into(),
+            other => other.into(),
+        },
         orders,
         credits,
         metafields,

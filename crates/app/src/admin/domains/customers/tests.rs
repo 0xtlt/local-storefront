@@ -1066,3 +1066,280 @@ fn what_the_backend_creates_syncs_to_the_store() {
         .collect();
     assert_eq!(locations, ["Northwind Seattle"]);
 }
+
+#[test]
+fn new_and_seeded_customer_and_company_lifetime_durations() {
+    use chrono::{Duration, TimeZone, Utc};
+
+    use crate::admin::state::Clock;
+
+    let (_, mut shop) = demo();
+    let created_at = Utc.with_ymd_and_hms(2026, 10, 31, 12, 0, 0).unwrap();
+    shop.set_clock(Clock::Frozen(created_at));
+
+    // Exact issue #352 repro: brand-new customer has NEVER_SUBSCRIBED and a non-empty duration,
+    // and neither field is reported as defaulted.
+    let created = run(
+        &mut shop,
+        "mutation { customerCreate(input: { email: \"probe-sub@example.com\" }) {
+            customer { id productSubscriberStatus lifetimeDuration } userErrors { message } } }",
+        Value::Null,
+    );
+    assert!(
+        created["extensions"]["lsf"].get("defaulted").is_none(),
+        "{created:#}"
+    );
+    let probe = &data(&created, "customerCreate")["customer"];
+    assert_eq!(probe["productSubscriberStatus"], json!("NEVER_SUBSCRIBED"));
+    assert_eq!(probe["lifetimeDuration"], json!("less than a day"));
+    let probe_id = probe["id"].as_str().unwrap().to_string();
+
+    // Seeded customer (older than 2 years at 2026-10-31).
+    let jane = customer(&shop, "jane.doe@example.com");
+    let read_customer = |shop: &mut ShopState, id: &str| {
+        let answer = run(
+            shop,
+            "query($id: ID!) { customer(id: $id) { productSubscriberStatus lifetimeDuration } }",
+            json!({"id": id}),
+        );
+        assert!(
+            answer["extensions"]["lsf"].get("defaulted").is_none(),
+            "{answer:#}"
+        );
+        data(&answer, "customer").clone()
+    };
+    let jane_read = read_customer(&mut shop, &jane);
+    assert_eq!(
+        jane_read["productSubscriberStatus"],
+        json!("NEVER_SUBSCRIBED")
+    );
+    assert_ne!(jane_read["lifetimeDuration"], json!(""));
+    assert_ne!(jane_read["lifetimeDuration"], json!("less than a day"));
+
+    // Advancing the clock updates lifetimeDuration dynamically across days, months, and years.
+    for (offset, expected) in [
+        (Duration::minutes(1), "less than a day"),
+        (Duration::days(1), "1 day"),
+        (Duration::days(5), "5 days"),
+        (Duration::days(35), "about 1 month"),
+        (Duration::days(65), "2 months"),
+        (Duration::days(400), "about 1 year"),
+        (Duration::days(800), "about 2 years"),
+    ] {
+        shop.set_clock(Clock::Frozen(created_at + offset));
+        assert_eq!(
+            read_customer(&mut shop, &probe_id)["lifetimeDuration"],
+            json!(expected),
+            "offset {offset:?}"
+        );
+    }
+
+    // Company and CompanyContact also compute lifetimeDuration (Company from customerSince).
+    shop.set_clock(Clock::Frozen(created_at));
+    let company_created = run(
+        &mut shop,
+        "mutation { companyCreate(input: {
+            company: { name: \"Acme Corp\" },
+            companyContact: { email: \"acme@example.com\", firstName: \"Ada\" }
+        }) { company { id lifetimeDuration mainContact { id lifetimeDuration } } userErrors { message } } }",
+        Value::Null,
+    );
+    let company = &data(&company_created, "companyCreate")["company"];
+    let company_id = company["id"].as_str().unwrap().to_string();
+    assert_eq!(company["lifetimeDuration"], json!("less than a day"));
+    assert_eq!(
+        company["mainContact"]["lifetimeDuration"],
+        json!("less than a day")
+    );
+
+    // Updating customerSince updates Company.lifetimeDuration, while the contact keeps createdAt.
+    let updated_company = run(
+        &mut shop,
+        "mutation($id: ID!) { companyUpdate(companyId: $id, input: { customerSince: \"2026-08-01T12:00:00Z\" }) {
+            company { lifetimeDuration mainContact { lifetimeDuration } } userErrors { message } } }",
+        json!({"id": company_id}),
+    );
+    let company = &data(&updated_company, "companyUpdate")["company"];
+    assert_eq!(company["lifetimeDuration"], json!("3 months"));
+    assert_eq!(
+        company["mainContact"]["lifetimeDuration"],
+        json!("less than a day")
+    );
+
+    // Explicit fixture overrides on a record are still respected.
+    shop.get_mut(&probe_id)
+        .unwrap()
+        .insert("lifetimeDuration".into(), json!("custom lifetime"));
+    shop.get_mut(&probe_id)
+        .unwrap()
+        .insert("productSubscriberStatus".into(), json!("PAUSED"));
+    assert_eq!(
+        read_customer(&mut shop, &probe_id),
+        json!({
+            "productSubscriberStatus": "PAUSED",
+            "lifetimeDuration": "custom lifetime",
+        })
+    );
+}
+
+#[test]
+fn product_subscriber_status_reflects_subscription_contracts_and_segments() {
+    use chrono::{Duration, TimeZone, Utc};
+
+    use crate::admin::state::Clock;
+
+    let (_, mut shop) = demo();
+    let t0 = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
+    shop.set_clock(Clock::Frozen(t0));
+
+    let jane = customer(&shop, "jane.doe@example.com");
+    let product = shop
+        .keys("Product")
+        .find(|key| shop.get(key).unwrap()["handle"] == json!("merino-crew-socks"))
+        .unwrap()
+        .to_string();
+    let variant = crate::admin::domains::catalog::gids(shop.get(&product).unwrap().get("variants"))
+        [0]
+    .clone();
+    let plan = shop
+        .keys("SellingPlan")
+        .find(|key| shop.get(key).unwrap()["name"] == json!("Deliver every month, 10% off"))
+        .unwrap()
+        .to_string();
+
+    let status_of = |shop: &mut ShopState, id: &str| {
+        let answer = run(
+            shop,
+            "query($id: ID!) { customer(id: $id) { productSubscriberStatus } }",
+            json!({"id": id}),
+        );
+        data(&answer, "customer")["productSubscriberStatus"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let segment_has = |shop: &mut ShopState, query: &str, id: &str| {
+        let answer = run(
+            shop,
+            "query($query: String!) { customerSegmentMembers(first: 10, query: $query) {
+                edges { node { id } } } }",
+            json!({"query": query}),
+        );
+        let member_id = id.replace("/Customer/", "/CustomerSegmentMember/");
+        data(&answer, "customerSegmentMembers")["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edge| edge["node"]["id"] == json!(member_id))
+    };
+    let create_contract = |shop: &mut ShopState| {
+        let answer = run(
+            shop,
+            "mutation($input: SubscriptionContractAtomicCreateInput!) {
+                subscriptionContractAtomicCreate(input: $input) {
+                    contract { id status } userErrors { field message code } } }",
+            json!({"input": {
+                "customerId": jane,
+                "currencyCode": "USD",
+                "nextBillingDate": "2026-02-15T12:00:00Z",
+                "contract": {
+                    "status": "ACTIVE",
+                    "billingPolicy": {"interval": "MONTH", "intervalCount": 1},
+                    "deliveryPolicy": {"interval": "MONTH", "intervalCount": 1},
+                    "deliveryPrice": "5.00",
+                    "deliveryMethod": {"shipping": {
+                        "address": {"firstName": "Jane", "lastName": "Doe", "address1": "12 Maple Street", "city": "Portland", "provinceCode": "OR", "countryCode": "US", "zip": "97201"},
+                        "shippingOption": {"title": "Standard", "code": "standard"},
+                    }},
+                },
+                "lines": [{
+                    "line": {"productVariantId": variant, "quantity": 1, "currentPrice": "10.00", "sellingPlanId": plan},
+                    "discounts": [],
+                }],
+            }}),
+        );
+        let created = data(&answer, "subscriptionContractAtomicCreate");
+        assert_eq!(created["userErrors"], json!([]), "{created:#}");
+        created["contract"]["id"].as_str().unwrap().to_string()
+    };
+    let transition = |shop: &mut ShopState, mutation: &str, id: &str| {
+        let answer = run(
+            shop,
+            &format!(
+                "mutation($id: ID!) {{ {mutation}(subscriptionContractId: $id) {{
+                    contract {{ status }} userErrors {{ field message code }} }} }}"
+            ),
+            json!({"id": id}),
+        );
+        assert_eq!(
+            data(&answer, mutation)["userErrors"],
+            json!([]),
+            "{answer:#}"
+        );
+    };
+
+    // No contracts yet -> NEVER_SUBSCRIBED (both Customer field and segment filter).
+    assert_eq!(status_of(&mut shop, &jane), "NEVER_SUBSCRIBED");
+    assert!(segment_has(
+        &mut shop,
+        "product_subscription_status = 'NEVER_SUBSCRIBED'",
+        &jane
+    ));
+
+    // Contract 1 created ACTIVE -> ACTIVE (segment query calls it SUBSCRIBED).
+    let c1 = create_contract(&mut shop);
+    assert_eq!(status_of(&mut shop, &jane), "ACTIVE");
+    assert!(segment_has(
+        &mut shop,
+        "product_subscription_status = 'SUBSCRIBED'",
+        &jane
+    ));
+
+    // Pause Contract 1 -> PAUSED.
+    shop.set_clock(Clock::Frozen(t0 + Duration::days(1)));
+    transition(&mut shop, "subscriptionContractPause", &c1);
+    assert_eq!(status_of(&mut shop, &jane), "PAUSED");
+    assert!(segment_has(
+        &mut shop,
+        "product_subscription_status = 'PAUSED'",
+        &jane
+    ));
+
+    // Create Contract 2 (ACTIVE) while Contract 1 is PAUSED -> ACTIVE takes precedence over PAUSED.
+    shop.set_clock(Clock::Frozen(t0 + Duration::days(2)));
+    let c2 = create_contract(&mut shop);
+    assert_eq!(status_of(&mut shop, &jane), "ACTIVE");
+
+    // Cancel Contract 2 while Contract 1 is PAUSED -> PAUSED takes precedence over CANCELLED.
+    shop.set_clock(Clock::Frozen(t0 + Duration::days(3)));
+    transition(&mut shop, "subscriptionContractCancel", &c2);
+    assert_eq!(status_of(&mut shop, &jane), "PAUSED");
+
+    // Fail Contract 1 -> no active or paused; Contract 1 updated most recently (day 4 > day 3) -> FAILED.
+    shop.set_clock(Clock::Frozen(t0 + Duration::days(4)));
+    transition(&mut shop, "subscriptionContractFail", &c1);
+    assert_eq!(status_of(&mut shop, &jane), "FAILED");
+
+    // Re-activate Contract 1 -> ACTIVE again.
+    shop.set_clock(Clock::Frozen(t0 + Duration::days(5)));
+    transition(&mut shop, "subscriptionContractActivate", &c1);
+    assert_eq!(status_of(&mut shop, &jane), "ACTIVE");
+
+    // Expire Contract 1 -> EXPIRED (most recently updated terminated contract).
+    shop.set_clock(Clock::Frozen(t0 + Duration::days(6)));
+    transition(&mut shop, "subscriptionContractExpire", &c1);
+    assert_eq!(status_of(&mut shop, &jane), "EXPIRED");
+
+    // Create Contract 3 and cancel it -> CANCELLED is now the latest contract (segment: CANCELED).
+    shop.set_clock(Clock::Frozen(t0 + Duration::days(7)));
+    let c3 = create_contract(&mut shop);
+    assert_eq!(status_of(&mut shop, &jane), "ACTIVE");
+    shop.set_clock(Clock::Frozen(t0 + Duration::days(8)));
+    transition(&mut shop, "subscriptionContractCancel", &c3);
+    assert_eq!(status_of(&mut shop, &jane), "CANCELLED");
+    assert!(segment_has(
+        &mut shop,
+        "product_subscription_status = 'CANCELED'",
+        &jane
+    ));
+}

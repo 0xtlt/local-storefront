@@ -23,6 +23,8 @@ mod queries;
 #[cfg(test)]
 mod tests;
 
+pub use queries::product_subscriber_status;
+
 use lsf_core::store::{Address, Company, CompanyLocation, Customer};
 use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
