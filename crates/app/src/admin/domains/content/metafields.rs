@@ -40,7 +40,9 @@
 //! `products/update` (community reports since 2023: product metafields fire it; variant
 //! metafields do since 2025). Shopify has no webhook topic for the metafields of other owners:
 //! their change is the event `metafields/update` (or `metafields/delete`), which no subscription
-//! can name, so that the server knows the shop changed.
+//! can name, so that the server knows the shop changed. Changing an owner's metafields moves
+//! the owner's `updatedAt` (and a variant's product's too), so `updated_at:>` queries pick up
+//! metafield-only writes.
 
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -566,10 +568,11 @@ pub fn remove(state: &mut ShopState, metafield: &str) -> Option<Record> {
     Some(record)
 }
 
-/// The event of a change to the metafields of an owner: `products/update` for a product or a
-/// variant (its product, touched), else `metafields/<action>` on the metafield, which no
-/// webhook topic names.
+/// The event of a change to the metafields of an owner: touches the owner (and its product for
+/// a variant), then emits `products/update` for a product or a variant, else
+/// `metafields/<action>` on the metafield, which no webhook topic names.
 pub fn emit_change(state: &mut ShopState, owner: &str, metafield: &str, action: &str) {
+    state.touch(owner);
     let product = match state.type_of(owner) {
         Some("Product") => Some(owner.to_string()),
         Some("ProductVariant") => state
@@ -581,13 +584,29 @@ pub fn emit_change(state: &mut ShopState, owner: &str, metafield: &str, action: 
     };
     match product {
         Some(product) => {
-            state.touch(owner);
-            state.touch(&product);
+            if product != owner {
+                state.touch(&product);
+            }
             state.emit("products/update", &product);
         }
         None => {
             state.emit(&format!("metafields/{action}"), metafield);
         }
+    }
+}
+
+/// Removes a metafield and records the change on its owner: touches the owner (and its product
+/// for a variant), emitting `products/update` for a product or a variant, else
+/// `metafields/delete` before removal so the event keeps the metafield's snapshot.
+pub fn delete(state: &mut ShopState, owner: &str, metafield: &str) {
+    let is_product = matches!(state.type_of(owner), Some("Product" | "ProductVariant"));
+    if !is_product {
+        state.touch(owner);
+        state.emit("metafields/delete", metafield);
+    }
+    remove(state, metafield);
+    if is_product {
+        emit_change(state, owner, metafield, "delete");
     }
 }
 
@@ -1007,14 +1026,7 @@ fn metafields_delete(
             continue;
         };
         if state.contains(id) {
-            let is_product = matches!(state.type_of(owner), Some("Product" | "ProductVariant"));
-            if !is_product {
-                state.emit("metafields/delete", id);
-            }
-            remove(state, id);
-            if is_product {
-                emit_change(state, owner, id, "delete");
-            }
+            delete(state, owner, id);
         }
         deleted.push(json!({"ownerId": owner, "namespace": namespace, "key": key}));
     }
