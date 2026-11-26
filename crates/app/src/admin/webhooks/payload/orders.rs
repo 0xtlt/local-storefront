@@ -6,10 +6,10 @@ use sha2::{Digest, Sha256};
 
 use super::customers::{embedded, order_address};
 use super::{
-    Lookup, amount_set, attributes, bag_amount, bag_currency, boolean, decimal_text, field, first,
-    grams, id, integer, item_weight, items, lower, lower_or, merge, money_amount, money_set,
-    numeric, object, price, price_or_zero, records, ref_gid, ref_id, resolve, strings, tags, text,
-    text_or, time, zero_set,
+    Lookup, attributes, bag_amount, bag_currency, boolean, decimal_text, field, first, grams, id,
+    integer, item_weight, items, lower, lower_or, merge, money_amount, money_set, numeric, object,
+    price, price_or_zero, records, ref_gid, ref_id, resolve, strings, tags, text, text_or, time,
+    zero_set,
 };
 
 /// `orders/create`, `/updated`, `/paid`, `/cancelled`, `/fulfilled`, `/partially_fulfilled`: an
@@ -22,6 +22,10 @@ pub(super) fn order(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
     let currency = match text(record, "currencyCode") {
         Value::Null => bag_currency(first(record, &["totalPriceSet", "currentTotalPriceSet"])),
         currency => currency,
+    };
+    let presentment_currency = match text(record, "presentmentCurrencyCode") {
+        Value::Null => currency.clone(),
+        code => code,
     };
     // A `current…Set` and the original one are the same until the order is edited or refunded:
     // each stands in for the other.
@@ -42,12 +46,19 @@ pub(super) fn order(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
         &["currentShippingPriceSet", "totalShippingPriceSet"],
     );
     let line_items_price = match field(record, "totalLineItemsPriceSet") {
-        Value::Null => sum_set(line_items.iter().map(line_original_total), &currency),
+        Value::Null => sum_set(
+            line_items.iter().map(line_original_total),
+            &currency,
+            &presentment_currency,
+        ),
         set => money_set(set),
     };
     let or_zero = |set: Value| {
         if set.is_null() {
-            zero_set(&currency)
+            json!({
+                "shop_money": {"amount": "0.00", "currency_code": currency},
+                "presentment_money": {"amount": "0.00", "currency_code": presentment_currency},
+            })
         } else {
             set
         }
@@ -122,10 +133,7 @@ pub(super) fn order(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
             "payment_gateway_names": payment_gateway_names(record, lookup),
             "phone": text(record, "phone"),
             "po_number": text(record, "poNumber"),
-            "presentment_currency": match text(record, "presentmentCurrencyCode") {
-                Value::Null => currency.clone(),
-                code => code,
-            },
+            "presentment_currency": presentment_currency,
             "processed_at": time(first(record, &["processedAt", "createdAt"])),
             "reference": Value::Null,
             "referring_site": Value::Null,
@@ -385,24 +393,34 @@ fn set_or_money_amount(value: &Value) -> Value {
 }
 
 /// What a line item costs before discounts: `originalTotalSet`, else its unit price times its
-/// quantity. In hundredths, with its currency.
-fn line_original_total(line: &Map<String, Value>) -> Option<(i128, Value)> {
-    if let Some(total) = field(line, "originalTotalSet").get("shopMoney") {
-        return Some((
-            cents(total.get("amount")?)?,
-            bag_currency(field(line, "originalTotalSet")),
-        ));
+/// quantity. In hundredths, with its currencies, for shop and presentment money.
+fn line_original_total(line: &Map<String, Value>) -> Option<(i128, Value, i128, Value)> {
+    let extract = |set: &Value, qty: i128| -> Option<(i128, Value, i128, Value)> {
+        if let Some(shop) = set.get("shopMoney") {
+            let shop_cents = cents(shop.get("amount")?)? * qty;
+            let shop_code = shop.get("currencyCode").cloned().unwrap_or(Value::Null);
+            let pres = set.get("presentmentMoney").unwrap_or(shop);
+            let pres_cents = cents(pres.get("amount")?)? * qty;
+            let pres_code = pres
+                .get("currencyCode")
+                .cloned()
+                .unwrap_or_else(|| shop_code.clone());
+            return Some((shop_cents, shop_code, pres_cents, pres_code));
+        }
+        let amount = match set {
+            Value::Object(object) => object.get("amount"),
+            other => Some(other),
+        }?;
+        let amount = cents(amount)? * qty;
+        let code = bag_currency(set);
+        Some((amount, code.clone(), amount, code))
+    };
+    if field(line, "originalTotalSet").get("shopMoney").is_some() {
+        return extract(field(line, "originalTotalSet"), 1);
     }
     let unit = first(line, &["originalUnitPriceSet", "originalUnitPrice"]);
-    let amount = match unit {
-        Value::Object(object) if object.contains_key("shopMoney") => {
-            unit.pointer("/shopMoney/amount")
-        }
-        Value::Object(_) => unit.get("amount"),
-        other => Some(other),
-    }?;
-    let quantity = field(line, "quantity").as_i64().unwrap_or(1);
-    Some((cents(amount)? * i128::from(quantity), bag_currency(unit)))
+    let quantity = i128::from(field(line, "quantity").as_i64().unwrap_or(1));
+    extract(unit, quantity)
 }
 
 /// A decimal amount in hundredths, rounded half away from zero.
@@ -431,20 +449,34 @@ fn cents(amount: &Value) -> Option<i128> {
     Some(if negative { -hundredths } else { hundredths })
 }
 
-/// A sum of amounts in hundredths as a REST `MoneyBag`, in the currency of the first.
-fn sum_set(amounts: impl Iterator<Item = Option<(i128, Value)>>, currency: &Value) -> Value {
-    let mut total = 0i128;
-    let mut code = Value::Null;
-    for (amount, currency) in amounts.flatten() {
-        total += amount;
-        if code.is_null() {
-            code = currency;
+/// A sum of shop and presentment amounts in hundredths as a REST `MoneyBag`.
+fn sum_set(
+    amounts: impl Iterator<Item = Option<(i128, Value, i128, Value)>>,
+    currency: &Value,
+    presentment_currency: &Value,
+) -> Value {
+    let (mut shop_total, mut pres_total) = (0i128, 0i128);
+    let (mut shop_code, mut pres_code) = (Value::Null, Value::Null);
+    for (s_amt, s_cur, p_amt, p_cur) in amounts.flatten() {
+        shop_total += s_amt;
+        pres_total += p_amt;
+        if shop_code.is_null() {
+            shop_code = s_cur;
+        }
+        if pres_code.is_null() {
+            pres_code = p_cur;
         }
     }
-    if code.is_null() {
-        code = currency.clone();
+    if shop_code.is_null() {
+        shop_code = currency.clone();
     }
-    amount_set(&json!(decimal(total)), &code)
+    if pres_code.is_null() {
+        pres_code = presentment_currency.clone();
+    }
+    json!({
+        "shop_money": {"amount": decimal(shop_total), "currency_code": shop_code},
+        "presentment_money": {"amount": decimal(pres_total), "currency_code": pres_code},
+    })
 }
 
 /// Cents as a decimal amount: `-150` is `-1.50`.
@@ -1368,12 +1400,22 @@ mod tests {
         assert_eq!(decimal(-5), "-0.05");
         assert_eq!(decimal(1999), "19.99");
         let total = sum_set(
-            [Some((1999, json!("EUR"))), None, Some((1, json!("EUR")))].into_iter(),
+            [
+                Some((1999, json!("USD"), 1849, json!("EUR"))),
+                None,
+                Some((1, json!("USD"), 1, json!("EUR"))),
+            ]
+            .into_iter(),
+            &Value::Null,
             &Value::Null,
         );
         assert_eq!(
             total["shop_money"],
-            json!({"amount": "20.00", "currency_code": "EUR"})
+            json!({"amount": "20.00", "currency_code": "USD"})
+        );
+        assert_eq!(
+            total["presentment_money"],
+            json!({"amount": "18.50", "currency_code": "EUR"})
         );
     }
 

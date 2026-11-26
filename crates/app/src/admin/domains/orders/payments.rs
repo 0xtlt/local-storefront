@@ -100,14 +100,26 @@ pub fn register(registry: &mut Registry) {
         })
         .field("Order", "refundDiscrepancySet", |r, ctx, object| {
             let state = r.state();
-            let cents = r
-                .map_of(object)
-                .map_or(0, |order| model::refund_discrepancy(state, order));
-            r.convert(ctx, &value::money_bag(cents, &state.currency()), false)
+            let currency = state.currency();
+            let bag = match r.map_of(object) {
+                Some(order) => {
+                    let (cents, pres) = model::refund_discrepancy_pair(state, order);
+                    match model::Presentment::of(order) {
+                        Some(p) => value::money_bag_in(cents, &currency, pres, &p.currency),
+                        None => value::money_bag(cents, &currency),
+                    }
+                }
+                None => value::money_bag(0, &currency),
+            };
+            r.convert(ctx, &bag, false)
         })
         // Cash rounding is for cash paid at a point of sale: none on a local shop.
-        .field("Order", "totalCashRoundingAdjustment", |r, ctx, _object| {
-            let zero = value::money_bag(0, &r.state().currency());
+        .field("Order", "totalCashRoundingAdjustment", |r, ctx, object| {
+            let currency = r.state().currency();
+            let zero = match r.map_of(object).and_then(model::Presentment::of) {
+                Some(p) => value::money_bag_in(0, &currency, 0, &p.currency),
+                None => value::money_bag(0, &currency),
+            };
             r.convert(ctx, &json!({"paymentSet": zero, "refundSet": zero}), false)
         })
         .field("OrderTransaction", "paymentId", |r, _ctx, object| {
@@ -143,14 +155,20 @@ pub fn register(registry: &mut Registry) {
                 return Ok(Output::Null);
             };
             let id = text(transaction, "id").unwrap_or_default();
-            let held = if text(transaction, "kind") == Some("AUTHORIZATION") {
-                text(transaction, "order")
-                    .and_then(|order| state.get(order))
-                    .map_or(0, |order| model::capturable_amount(state, order, id))
+            let order = text(transaction, "order").and_then(|order| state.get(order));
+            let (held, held_p) = if text(transaction, "kind") == Some("AUTHORIZATION") {
+                order.map_or((0, 0), |order| {
+                    model::capturable_amount_pair(state, order, id)
+                })
             } else {
-                0
+                (0, 0)
             };
-            r.convert(ctx, &value::money_bag(held, &state.currency()), false)
+            let currency = state.currency();
+            let bag = match order.and_then(model::Presentment::of) {
+                Some(p) => value::money_bag_in(held, &currency, held_p, &p.currency),
+                None => value::money_bag(held, &currency),
+            };
+            r.convert(ctx, &bag, false)
         })
         .field(
             "OrderTransaction",

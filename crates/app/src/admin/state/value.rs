@@ -121,6 +121,19 @@ pub fn money_bag(cents: i64, currency: &str) -> Value {
     })
 }
 
+/// A `MoneyBag` with explicit shop and presentment amounts and currencies.
+pub fn money_bag_in(
+    shop_cents: i64,
+    shop_currency: &str,
+    presentment_cents: i64,
+    presentment_currency: &str,
+) -> Value {
+    json!({
+        "shopMoney": money_v2(shop_cents, shop_currency),
+        "presentmentMoney": money_v2(presentment_cents, presentment_currency),
+    })
+}
+
 /// A `DateTime`: RFC 3339 in UTC, to the second, with `Z`.
 pub fn date_time(date: DateTime<Utc>) -> String {
     date.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)

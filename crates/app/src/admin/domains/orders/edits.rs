@@ -1035,6 +1035,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                     weight,
                     grams: 0,
                     attributes: Vec::new(),
+                    ..LineDraft::default()
                 };
                 let id = state.new_gid("LineItem");
                 let mut item =

@@ -336,6 +336,7 @@ fn create_order(
                 attributes: crate::admin::domains::orders::model::attribute_pairs(
                     line.get("customAttributes"),
                 ),
+                ..LineDraft::default()
             }
         })
         .collect();
@@ -356,6 +357,7 @@ fn create_order(
             .map(str::to_string),
         original: delivery,
         discounted: delivery - delivery_discounts,
+        ..ShippingDraft::default()
     });
     let address = model::delivery_address(billed).cloned().map(|mut address| {
         address["id"] = json!(format!(
@@ -426,6 +428,7 @@ fn create_order(
         location: location.map(str::to_string),
         presentment,
         shipments: Vec::new(),
+        ..OrderDraft::default()
     };
     let order = orders::insert_order(state, &draft);
     let now = state.timestamp();

@@ -81,12 +81,13 @@ fn rounded_ratio(numerator: i128, denominator: i128) -> i64 {
 }
 
 /// Rewrites the `presentmentMoney` of every `MoneyBag` of an order presented in another
-/// currency ([`Presentment`]) from its `shopMoney`: on the order and on the records it holds
-/// (its line items, transactions, refunds and their lines, fulfillments, fulfillment orders,
-/// returns, …, followed from the order two records deep). [`refresh_order`] runs it, so that
-/// every flow of the family, which builds its amounts in the shop's currency, leaves the order
-/// in its presentment currency. Writes only what differs; nothing for an order in the shop's
-/// currency.
+/// currency ([`Presentment`]) from its `shopMoney`, when `presentmentMoney` is not already in
+/// the order's presentment currency: on the order and on the records it holds (its line items,
+/// transactions, refunds and their lines, fulfillments, fulfillment orders, returns, …, followed
+/// from the order two records deep). [`refresh_order`] runs it, so that every flow of the family
+/// that builds its amounts in the shop's currency leaves the order in its presentment currency,
+/// while explicit `presentmentMoney` amounts (such as those imported by `orderCreate`) are kept.
+/// Writes only what differs; nothing for an order in the shop's currency.
 pub fn apply_presentment(state: &mut ShopState, order: &str) {
     let Some(presentment) = state.get(order).and_then(Presentment::of) else {
         return;
@@ -94,17 +95,19 @@ pub fn apply_presentment(state: &mut ShopState, order: &str) {
     fn present(value: &mut Value, presentment: &Presentment) -> bool {
         match value {
             Value::Object(map) => {
-                if let (Some(shop), true) =
-                    (map.get("shopMoney"), map.contains_key("presentmentMoney"))
+                if let (Some(shop), Some(existing)) =
+                    (map.get("shopMoney"), map.get("presentmentMoney"))
                 {
+                    if existing.get("currencyCode").and_then(Value::as_str)
+                        == Some(presentment.currency.as_str())
+                    {
+                        return false;
+                    }
                     let cents = cents(shop.get("amount"));
                     let converted =
                         value::money_v2(presentment.from_shop(cents), &presentment.currency);
-                    if map.get("presentmentMoney") != Some(&converted) {
-                        map.insert("presentmentMoney".into(), converted);
-                        return true;
-                    }
-                    return false;
+                    map.insert("presentmentMoney".into(), converted);
+                    return true;
                 }
                 let mut changed = false;
                 for value in map.values_mut() {
@@ -220,6 +223,29 @@ pub fn money_input(value: Option<&Value>) -> Option<(i64, Option<String>)> {
 /// The cents of a field of a record.
 pub fn field_cents(record: &Record, field: &str) -> i64 {
     cents(record.get(field))
+}
+
+/// The presentment cents of a `MoneyBag` field of a record: its `presentmentMoney` when it is
+/// already in `presentment.currency`, else its `shopMoney` converted via `presentment`. Falls
+/// back to [`field_cents`] when `presentment` is `None`.
+pub fn field_presentment_cents(
+    record: &Record,
+    field: &str,
+    presentment: Option<&Presentment>,
+) -> i64 {
+    let Some(presentment) = presentment else {
+        return field_cents(record, field);
+    };
+    if let Some(money) = record
+        .get(field)
+        .and_then(|bag| bag.get("presentmentMoney"))
+        .filter(|money| {
+            money.get("currencyCode").and_then(Value::as_str) == Some(presentment.currency.as_str())
+        })
+    {
+        return cents(Some(money));
+    }
+    presentment.from_shop(field_cents(record, field))
 }
 
 /// An integer field of a record, 0 when it has none.
@@ -404,23 +430,28 @@ struct Refunded {
     /// Units, by line item.
     quantities: HashMap<String, i64>,
     subtotal: i64,
+    subtotal_presentment: i64,
     tax: i64,
+    tax_presentment: i64,
     shipping: i64,
+    shipping_presentment: i64,
     /// Whether a refund put units back in stock.
     restocked: bool,
     /// What refunds gave back beyond the value of what they took back: a refund of money alone.
     /// Shopify records it as an order adjustment (`REFUND_DISCREPANCY`), which takes it off the
     /// current total.
     discrepancy: i64,
+    discrepancy_presentment: i64,
 }
 
-fn refunded(state: &ShopState, order: &Record) -> Refunded {
+fn refunded(state: &ShopState, order: &Record, presentment: Option<&Presentment>) -> Refunded {
     let mut refunded = Refunded::default();
     for refund in gids(order.get("refunds"))
         .iter()
         .filter_map(|refund| state.get(refund))
     {
         let mut value = 0;
+        let mut value_p = 0;
         for line in array(refund, "refundLineItems") {
             let Some(line) = line.as_object() else {
                 continue;
@@ -428,19 +459,35 @@ fn refunded(state: &ShopState, order: &Record) -> Refunded {
             if let Some(item) = text(line, "lineItem") {
                 *refunded.quantities.entry(item.to_string()).or_default() += int(line, "quantity");
             }
-            refunded.subtotal += field_cents(line, "subtotalSet");
-            refunded.tax += field_cents(line, "totalTaxSet");
-            value += field_cents(line, "subtotalSet") + field_cents(line, "totalTaxSet");
+            let sub = field_cents(line, "subtotalSet");
+            let tax = field_cents(line, "totalTaxSet");
+            let sub_p = field_presentment_cents(line, "subtotalSet", presentment);
+            let tax_p = field_presentment_cents(line, "totalTaxSet", presentment);
+            refunded.subtotal += sub;
+            refunded.subtotal_presentment += sub_p;
+            refunded.tax += tax;
+            refunded.tax_presentment += tax_p;
+            value += sub + tax;
+            value_p += sub_p + tax_p;
             refunded.restocked |= line.get("restocked").and_then(Value::as_bool) == Some(true);
         }
         for line in array(refund, "refundShippingLines") {
             if let Some(line) = line.as_object() {
-                refunded.shipping += field_cents(line, "subtotalAmountSet");
-                refunded.tax += field_cents(line, "taxAmountSet");
-                value += field_cents(line, "subtotalAmountSet") + field_cents(line, "taxAmountSet");
+                let ship = field_cents(line, "subtotalAmountSet");
+                let tax = field_cents(line, "taxAmountSet");
+                let ship_p = field_presentment_cents(line, "subtotalAmountSet", presentment);
+                let tax_p = field_presentment_cents(line, "taxAmountSet", presentment);
+                refunded.shipping += ship;
+                refunded.shipping_presentment += ship_p;
+                refunded.tax += tax;
+                refunded.tax_presentment += tax_p;
+                value += ship + tax;
+                value_p += ship_p + tax_p;
             }
         }
         refunded.discrepancy += (field_cents(refund, "totalRefundedSet") - value).max(0);
+        refunded.discrepancy_presentment +=
+            (field_presentment_cents(refund, "totalRefundedSet", presentment) - value_p).max(0);
     }
     refunded
 }
@@ -448,39 +495,78 @@ fn refunded(state: &ShopState, order: &Record) -> Refunded {
 /// What the refunds of an order gave back beyond the value of what they took back: Shopify's
 /// `REFUND_DISCREPANCY` adjustment, `Order.refundDiscrepancySet`.
 pub fn refund_discrepancy(state: &ShopState, order: &Record) -> i64 {
-    refunded(state, order).discrepancy
+    refunded(state, order, None).discrepancy
 }
 
-/// What the transactions of an order moved: `(received, refunded, capturable, voided)`.
-/// Received is what sales and captures took; capturable what authorizations hold that was
-/// neither captured nor voided.
-fn money_moved(state: &ShopState, order: &Record) -> (i64, i64, i64, bool) {
+/// Shop and presentment [`refund_discrepancy`] for an order.
+pub fn refund_discrepancy_pair(state: &ShopState, order: &Record) -> (i64, i64) {
+    let presentment = Presentment::of(order);
+    let r = refunded(state, order, presentment.as_ref());
+    (r.discrepancy, r.discrepancy_presentment)
+}
+
+/// What the transactions of an order moved, in shop and presentment cents.
+struct MoneyMoved {
+    received: i64,
+    received_presentment: i64,
+    refunded: i64,
+    refunded_presentment: i64,
+    capturable: i64,
+    capturable_presentment: i64,
+    voided: bool,
+}
+
+/// What the transactions of an order moved: received is what sales and captures took; capturable
+/// what authorizations hold that was neither captured nor voided.
+fn money_moved(state: &ShopState, order: &Record, presentment: Option<&Presentment>) -> MoneyMoved {
     let transactions: Vec<&Record> = gids(order.get("transactions"))
         .iter()
         .filter_map(|transaction| state.get(transaction))
         .filter(|transaction| text(transaction, "status") == Some("SUCCESS"))
         .collect();
-    let (mut received, mut refunded, mut voided) = (0, 0, false);
+    let mut moved = MoneyMoved {
+        received: 0,
+        received_presentment: 0,
+        refunded: 0,
+        refunded_presentment: 0,
+        capturable: 0,
+        capturable_presentment: 0,
+        voided: false,
+    };
     for transaction in &transactions {
         let amount = field_cents(transaction, "amountSet");
+        let amount_p = field_presentment_cents(transaction, "amountSet", presentment);
         match text(transaction, "kind") {
-            Some("SALE" | "CAPTURE") => received += amount,
-            Some("REFUND") => refunded += amount,
-            Some("VOID") => voided = true,
+            Some("SALE" | "CAPTURE") => {
+                moved.received += amount;
+                moved.received_presentment += amount_p;
+            }
+            Some("REFUND") => {
+                moved.refunded += amount;
+                moved.refunded_presentment += amount_p;
+            }
+            Some("VOID") => moved.voided = true,
             _ => {}
         }
     }
-    let capturable = transactions
+    for authorization in transactions
         .iter()
         .filter(|transaction| text(transaction, "kind") == Some("AUTHORIZATION"))
-        .map(|authorization| capturable_of(&transactions, authorization))
-        .sum();
-    (received, refunded, capturable, voided)
+    {
+        let (cap, cap_p) = capturable_of(&transactions, authorization, presentment);
+        moved.capturable += cap;
+        moved.capturable_presentment += cap_p;
+    }
+    moved
 }
 
 /// What an authorization still holds: its amount less its captures, nothing once voided or
-/// captured for the last time.
-fn capturable_of(transactions: &[&Record], authorization: &Record) -> i64 {
+/// captured for the last time, in `(shop, presentment)` cents.
+fn capturable_of(
+    transactions: &[&Record],
+    authorization: &Record,
+    presentment: Option<&Presentment>,
+) -> (i64, i64) {
     let id = text(authorization, "id");
     let children: Vec<&&Record> = transactions
         .iter()
@@ -497,26 +583,44 @@ fn capturable_of(transactions: &[&Record], authorization: &Record) -> i64 {
                 .iter()
                 .any(|child| text(child, "kind") == Some("CAPTURE"))
     {
-        return 0;
+        return (0, 0);
     }
     let captured: i64 = children
         .iter()
         .filter(|child| text(child, "kind") == Some("CAPTURE"))
         .map(|child| field_cents(child, "amountSet"))
         .sum();
-    (field_cents(authorization, "amountSet") - captured).max(0)
+    let captured_p: i64 = children
+        .iter()
+        .filter(|child| text(child, "kind") == Some("CAPTURE"))
+        .map(|child| field_presentment_cents(child, "amountSet", presentment))
+        .sum();
+    (
+        (field_cents(authorization, "amountSet") - captured).max(0),
+        (field_presentment_cents(authorization, "amountSet", presentment) - captured_p).max(0),
+    )
 }
 
 /// What an authorization of an order still holds, by its GID: what `orderCapture` may take.
 pub fn capturable_amount(state: &ShopState, order: &Record, authorization: &str) -> i64 {
+    capturable_amount_pair(state, order, authorization).0
+}
+
+/// What an authorization of an order still holds, in `(shop, presentment)` cents.
+pub fn capturable_amount_pair(
+    state: &ShopState,
+    order: &Record,
+    authorization: &str,
+) -> (i64, i64) {
+    let presentment = Presentment::of(order);
     let transactions: Vec<&Record> = gids(order.get("transactions"))
         .iter()
         .filter_map(|transaction| state.get(transaction))
         .filter(|transaction| text(transaction, "status") == Some("SUCCESS"))
         .collect();
-    state
-        .get(authorization)
-        .map_or(0, |record| capturable_of(&transactions, record))
+    state.get(authorization).map_or((0, 0), |record| {
+        capturable_of(&transactions, record, presentment.as_ref())
+    })
 }
 
 /// Recomputes what an order derives from its line items, refunds, fulfillments, fulfillment
@@ -527,8 +631,12 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
         return;
     };
     let currency = state.currency();
-    let bag = |cents: i64| value::money_bag(cents, &currency);
-    let refunded = refunded(state, &record);
+    let presentment = Presentment::of(&record);
+    let bag = |shop: i64, pres: i64| match &presentment {
+        Some(p) => value::money_bag_in(shop, &currency, pres, &p.currency),
+        None => value::money_bag(shop, &currency),
+    };
+    let refunded = refunded(state, &record, presentment.as_ref());
     let financial = text(&record, "displayFinancialStatus").unwrap_or("PENDING");
     let captured = CAPTURED.contains(&financial);
     let cancelled = is_cancelled(&record);
@@ -559,9 +667,10 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
 
     let lines = gids(record.get("lineItems"));
     let (mut lines_total, mut line_discounts) = (0, 0);
+    let (mut lines_total_p, mut line_discounts_p) = (0, 0);
     let (mut quantity, mut current_quantity, mut unfulfilled_total, mut fulfilled_total) =
         (0, 0, 0, 0);
-    let mut current_line_discounts = 0;
+    let (mut current_line_discounts, mut current_line_discounts_p) = (0, 0);
     for line in &lines {
         let fulfilled = fulfilled_quantity(state, order, line);
         let Some(item) = state.get_mut(line) else {
@@ -571,8 +680,12 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
         let current = (ordered - refunded.quantities.get(line).copied().unwrap_or(0)).max(0);
         let unfulfilled = remaining.get(line).copied().unwrap_or(0).min(current);
         let original = field_cents(item, "originalTotalSet");
+        let original_p = field_presentment_cents(item, "originalTotalSet", presentment.as_ref());
         let discounted = field_cents(item, "discountedTotalSet");
+        let discounted_p =
+            field_presentment_cents(item, "discountedTotalSet", presentment.as_ref());
         let discount = field_cents(item, "totalDiscountSet");
+        let discount_p = field_presentment_cents(item, "totalDiscountSet", presentment.as_ref());
         let share = |total: i64, units: i64| {
             if ordered == 0 {
                 0
@@ -588,15 +701,21 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
         );
         item.insert(
             "unfulfilledOriginalTotalSet".into(),
-            bag(share(original, unfulfilled)),
+            bag(share(original, unfulfilled), share(original_p, unfulfilled)),
         );
         item.insert(
             "unfulfilledDiscountedTotalSet".into(),
-            bag(share(discounted, unfulfilled)),
+            bag(
+                share(discounted, unfulfilled),
+                share(discounted_p, unfulfilled),
+            ),
         );
         lines_total += discounted;
+        lines_total_p += discounted_p;
         line_discounts += discount;
+        line_discounts_p += discount_p;
         current_line_discounts += share(discount, current);
+        current_line_discounts_p += share(discount_p, current);
         quantity += ordered;
         current_quantity += current;
         unfulfilled_total += unfulfilled;
@@ -604,23 +723,48 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
     }
 
     let cart_discount = field_cents(&record, "cartDiscountAmountSet");
+    let cart_discount_p =
+        field_presentment_cents(&record, "cartDiscountAmountSet", presentment.as_ref());
     let subtotal = lines_total - cart_discount;
+    let subtotal_p = lines_total_p - cart_discount_p;
     let shipping = field_cents(&record, "totalShippingPriceSet");
-    let shipping_original: i64 = array(&record, "shippingLines")
+    let shipping_p =
+        field_presentment_cents(&record, "totalShippingPriceSet", presentment.as_ref());
+    let active_shipping: Vec<Record> = array(&record, "shippingLines")
+        .into_iter()
+        .filter_map(|line| match line {
+            Value::Object(map) if map.get("isRemoved").and_then(Value::as_bool) != Some(true) => {
+                Some(map)
+            }
+            _ => None,
+        })
+        .collect();
+    let shipping_original: i64 = active_shipping
         .iter()
-        .filter_map(Value::as_object)
-        .filter(|line| line.get("isRemoved").and_then(Value::as_bool) != Some(true))
         .map(|line| field_cents(line, "originalPriceSet"))
         .sum();
+    let shipping_original_p: i64 = active_shipping
+        .iter()
+        .map(|line| field_presentment_cents(line, "originalPriceSet", presentment.as_ref()))
+        .sum();
     let shipping_discount = (shipping_original - shipping).max(0);
+    let shipping_discount_p = (shipping_original_p - shipping_p).max(0);
     let tax = field_cents(&record, "totalTaxSet");
+    let tax_p = field_presentment_cents(&record, "totalTaxSet", presentment.as_ref());
     let total = subtotal + shipping + tax;
+    let total_p = subtotal_p + shipping_p + tax_p;
     let current_subtotal = subtotal - refunded.subtotal;
+    let current_subtotal_p = subtotal_p - refunded.subtotal_presentment;
     let current_shipping = shipping - refunded.shipping;
+    let current_shipping_p = shipping_p - refunded.shipping_presentment;
     let current_tax = tax - refunded.tax;
+    let current_tax_p = tax_p - refunded.tax_presentment;
     let current_total = current_subtotal + current_shipping + current_tax - refunded.discrepancy;
-    let (received, refunded_money, capturable, _) = money_moved(state, &record);
-    let net = received - refunded_money;
+    let current_total_p =
+        current_subtotal_p + current_shipping_p + current_tax_p - refunded.discrepancy_presentment;
+    let moved = money_moved(state, &record, presentment.as_ref());
+    let net = moved.received - moved.refunded;
+    let net_p = moved.received_presentment - moved.refunded_presentment;
     let weight = int(&record, "totalWeight");
     let current_weight = if quantity == 0 {
         0
@@ -675,25 +819,31 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
     let fields = json!({
         "subtotalLineItemsQuantity": quantity,
         "currentSubtotalLineItemsQuantity": current_quantity,
-        "subtotalPriceSet": bag(subtotal),
-        "currentSubtotalPriceSet": bag(current_subtotal),
-        "currentShippingPriceSet": bag(current_shipping),
-        "currentTotalTaxSet": bag(current_tax),
-        "totalDiscountsSet": bag(line_discounts + cart_discount + shipping_discount),
-        "currentTotalDiscountsSet": bag(current_line_discounts + cart_discount + shipping_discount),
-        "totalPriceSet": bag(total),
-        "currentTotalPriceSet": bag(current_total),
-        "totalReceivedSet": bag(received),
-        "netPaymentSet": bag(net),
-        "totalRefundedSet": bag(refunded_money),
-        "totalRefundedShippingSet": bag(refunded.shipping),
-        "totalOutstandingSet": bag(current_total - net),
-        "totalCapturableSet": bag(capturable),
+        "subtotalPriceSet": bag(subtotal, subtotal_p),
+        "currentSubtotalPriceSet": bag(current_subtotal, current_subtotal_p),
+        "currentShippingPriceSet": bag(current_shipping, current_shipping_p),
+        "currentTotalTaxSet": bag(current_tax, current_tax_p),
+        "totalDiscountsSet": bag(
+            line_discounts + cart_discount + shipping_discount,
+            line_discounts_p + cart_discount_p + shipping_discount_p,
+        ),
+        "currentTotalDiscountsSet": bag(
+            current_line_discounts + cart_discount + shipping_discount,
+            current_line_discounts_p + cart_discount_p + shipping_discount_p,
+        ),
+        "totalPriceSet": bag(total, total_p),
+        "currentTotalPriceSet": bag(current_total, current_total_p),
+        "totalReceivedSet": bag(moved.received, moved.received_presentment),
+        "netPaymentSet": bag(net, net_p),
+        "totalRefundedSet": bag(moved.refunded, moved.refunded_presentment),
+        "totalRefundedShippingSet": bag(refunded.shipping, refunded.shipping_presentment),
+        "totalOutstandingSet": bag(current_total - net, current_total_p - net_p),
+        "totalCapturableSet": bag(moved.capturable, moved.capturable_presentment),
         "currentTotalWeight": current_weight.to_string(),
         "displayFulfillmentStatus": display_fulfillment,
-        "fullyPaid": captured && received >= total,
+        "fullyPaid": captured && moved.received >= total,
         "unpaid": matches!(financial, "PENDING" | "AUTHORIZED" | "EXPIRED" | "VOIDED"),
-        "capturable": capturable > 0 && !cancelled,
+        "capturable": moved.capturable > 0 && !cancelled,
         "canMarkAsPaid": matches!(financial, "PENDING" | "PARTIALLY_PAID") && !cancelled,
         "refundable": captured && financial != "REFUNDED",
         "restockable": !cancelled,
@@ -735,20 +885,20 @@ pub fn settle_financial_status(state: &mut ShopState, order: &str) {
     let Some(record) = state.get(order) else {
         return;
     };
-    let (received, refunded, capturable, voided) = money_moved(state, record);
+    let moved = money_moved(state, record, None);
     let total = field_cents(record, "currentTotalPriceSet");
     let current = text(record, "displayFinancialStatus").unwrap_or("PENDING");
-    let status = if refunded > 0 && refunded >= received {
+    let status = if moved.refunded > 0 && moved.refunded >= moved.received {
         "REFUNDED"
-    } else if refunded > 0 {
+    } else if moved.refunded > 0 {
         "PARTIALLY_REFUNDED"
-    } else if received > 0 && received >= total {
+    } else if moved.received > 0 && moved.received >= total {
         "PAID"
-    } else if received > 0 {
+    } else if moved.received > 0 {
         "PARTIALLY_PAID"
-    } else if capturable > 0 {
+    } else if moved.capturable > 0 {
         "AUTHORIZED"
-    } else if voided {
+    } else if moved.voided {
         "VOIDED"
     } else if total <= 0 {
         "PAID"
@@ -792,7 +942,29 @@ pub fn add_transaction_with_status(
     transaction: &NewTransaction,
     status: &str,
 ) -> String {
+    add_transaction_with_presentment(state, order, transaction, status, None)
+}
+
+/// [`add_transaction_with_status`] with an optional explicit amount in the order's presentment
+/// currency (for `orderCreate`'s `transactions[].amountSet.presentmentMoney`).
+pub fn add_transaction_with_presentment(
+    state: &mut ShopState,
+    order: &str,
+    transaction: &NewTransaction,
+    status: &str,
+    presentment_amount: Option<i64>,
+) -> String {
     let currency = state.currency();
+    let presentment = state.get(order).and_then(Presentment::of);
+    let amount_set = match presentment {
+        Some(p) => value::money_bag_in(
+            transaction.amount,
+            &currency,
+            presentment_amount.unwrap_or_else(|| p.from_shop(transaction.amount)),
+            &p.currency,
+        ),
+        None => value::money_bag(transaction.amount, &currency),
+    };
     let now = state.timestamp();
     let id = state.new_gid("OrderTransaction");
     let gateway = transaction.gateway.unwrap_or("manual");
@@ -801,7 +973,7 @@ pub fn add_transaction_with_status(
         "id": id,
         "kind": transaction.kind,
         "status": status,
-        "amountSet": value::money_bag(transaction.amount, &currency),
+        "amountSet": amount_set,
         "gateway": gateway,
         "formattedGateway": formatted_gateway(gateway),
         "order": order,

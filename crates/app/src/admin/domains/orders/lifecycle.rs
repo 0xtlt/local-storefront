@@ -816,6 +816,10 @@ fn delete_order(state: &mut ShopState, order: &str) {
 ///   components' units (`model::stock_parts`).
 /// - Order-level `taxLines`, one `discountCode`, the first shipping line (others are said in
 ///   the notes) make the amounts; line-level tax lines add to the order's tax.
+/// - `presentmentCurrency` sets `presentmentCurrencyCode` (defaulting to the shop's currency)
+///   and honors explicit `presentmentMoney` on line items, shipping lines, tax lines, fixed
+///   discount codes and transactions; omitted `presentmentMoney` amounts convert from
+///   `shopMoney` at the order's inferred rate, else a market's manual rate, else 1.0.
 fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = model::input_of(ctx.arg("order"));
     let options = model::input_of(ctx.arg("options"));
@@ -831,6 +835,25 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
              `currency` {currency} was ignored"
         ));
     }
+    let requested_presentment = input
+        .get("presentmentCurrency")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let presentment_currency = requested_presentment
+        .as_deref()
+        .filter(|code| *code != shop_currency);
+    let effective_presentment = presentment_currency.unwrap_or(&shop_currency);
+    let mut explicit_shop: i128 = 0;
+    let mut explicit_presentment: i128 = 0;
+    let mut record_ratio = |shop: i64, pres: Option<i64>| {
+        if let Some(pres) = pres
+            && shop > 0
+            && pres > 0
+        {
+            explicit_shop += i128::from(shop);
+            explicit_presentment += i128::from(pres);
+        }
+    };
     let state = mutation.state();
     let behaviour = options
         .get("inventoryBehaviour")
@@ -879,10 +902,10 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .code("INVALID")]);
     }
     let mut lines = Vec::new();
-    let mut line_tax: i64 = 0;
+    let mut line_tax_specs: Vec<(usize, Vec<TaxLineSpec>)> = Vec::new();
     for (index, item) in items.iter().enumerate() {
-        let index = index.to_string();
-        let path = ["order", "lineItems", index.as_str()];
+        let index_str = index.to_string();
+        let path = ["order", "lineItems", index_str.as_str()];
         let get = |name: &str| item.get(name).and_then(Value::as_str);
         let quantity = item.get("quantity").and_then(Value::as_i64).unwrap_or(0);
         if quantity <= 0 {
@@ -899,8 +922,15 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             .get("priceSet")
             .and_then(|set| set.get("shopMoney"))
             .map(|money| model::cents(Some(money)));
+        let presentment_price = parse_presentment_money(
+            item.get("priceSet"),
+            &[&path[..], &["priceSet"]].concat(),
+            effective_presentment,
+            &mut errors,
+        );
         let mut line = LineDraft {
             quantity: quantity as u32,
+            presentment_unit_price: presentment_currency.and(presentment_price),
             requires_shipping: item.get("requiresShipping").and_then(Value::as_bool) == Some(true),
             taxable: item.get("taxable").and_then(Value::as_bool) != Some(false),
             gift_card: item.get("giftCard").and_then(Value::as_bool) == Some(true),
@@ -1036,20 +1066,34 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             );
             continue;
         };
-        match tax_lines_cents(item.get("taxLines"), total).and_then(|tax| line_tax.checked_add(tax))
-        {
-            Some(tax) => line_tax = tax,
-            None => {
+        if let Some(pres_unit) = line.presentment_unit_price {
+            let Some(pres_total) = pres_unit
+                .checked_mul(quantity)
+                .filter(|total| value::money_in_bounds(*total))
+            else {
                 errors.push(
                     UserError::new(
-                        &[&path[..], &["taxLines"]].concat(),
-                        value::money_too_large("Tax"),
+                        &[&path[..], &["quantity"]].concat(),
+                        value::money_too_large("Total price"),
                     )
                     .code("INVALID"),
                 );
                 continue;
+            };
+            record_ratio(total, Some(pres_total));
+        }
+        let specs = parse_tax_lines(
+            item.get("taxLines"),
+            &[&path[..], &["taxLines"]].concat(),
+            effective_presentment,
+            &mut errors,
+        );
+        for spec in &specs {
+            if let TaxLineSpec::Money { shop, presentment } = spec {
+                record_ratio(*shop, *presentment);
             }
         }
+        line_tax_specs.push((index, specs));
         lines.push(line);
     }
 
@@ -1163,6 +1207,88 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             );
         }
     }
+    // Validate shipping lines, order tax lines, fixed discount code and transactions for
+    // presentment currency consistency and record any explicit shop/presentment ratios.
+    let shipping_lines = array(&input, "shippingLines");
+    let mut shipping_presentment_price: Option<i64> = None;
+    let mut shipping_tax_specs: Vec<TaxLineSpec> = Vec::new();
+    for (index, line) in shipping_lines.iter().enumerate() {
+        let index_str = index.to_string();
+        let path = ["order", "shippingLines", index_str.as_str()];
+        let shop_price = model::cents(line.get("priceSet").and_then(|set| set.get("shopMoney")));
+        let pres_price = parse_presentment_money(
+            line.get("priceSet"),
+            &[&path[..], &["priceSet"]].concat(),
+            effective_presentment,
+            &mut errors,
+        );
+        let specs = parse_tax_lines(
+            line.get("taxLines"),
+            &[&path[..], &["taxLines"]].concat(),
+            effective_presentment,
+            &mut errors,
+        );
+        if index == 0 {
+            record_ratio(shop_price, pres_price);
+            for spec in &specs {
+                if let TaxLineSpec::Money { shop, presentment } = spec {
+                    record_ratio(*shop, *presentment);
+                }
+            }
+            shipping_presentment_price = presentment_currency.and(pres_price);
+            shipping_tax_specs = specs;
+        }
+    }
+    let order_tax_specs = parse_tax_lines(
+        input.get("taxLines"),
+        &["order", "taxLines"],
+        effective_presentment,
+        &mut errors,
+    );
+    for spec in &order_tax_specs {
+        if let TaxLineSpec::Money { shop, presentment } = spec {
+            record_ratio(*shop, *presentment);
+        }
+    }
+    let discount = model::input_of(input.get("discountCode"));
+    let fixed_discount_presentment = discount
+        .get("itemFixedDiscountCode")
+        .and_then(Value::as_object)
+        .and_then(|code| {
+            let shop = model::cents(code.get("amountSet").and_then(|set| set.get("shopMoney")));
+            let pres = parse_presentment_money(
+                code.get("amountSet"),
+                &[
+                    "order",
+                    "discountCode",
+                    "itemFixedDiscountCode",
+                    "amountSet",
+                ],
+                effective_presentment,
+                &mut errors,
+            );
+            record_ratio(shop, pres);
+            presentment_currency.and(pres)
+        });
+    let transactions = array(&input, "transactions");
+    let mut transaction_presentment_amounts: Vec<Option<i64>> =
+        Vec::with_capacity(transactions.len());
+    for (index, transaction) in transactions.iter().enumerate() {
+        let index_str = index.to_string();
+        let shop = model::cents(
+            transaction
+                .get("amountSet")
+                .and_then(|set| set.get("shopMoney")),
+        );
+        let pres = parse_presentment_money(
+            transaction.get("amountSet"),
+            &["order", "transactions", index_str.as_str(), "amountSet"],
+            effective_presentment,
+            &mut errors,
+        );
+        record_ratio(shop, pres);
+        transaction_presentment_amounts.push(presentment_currency.and(pres));
+    }
     if !errors.is_empty() {
         return failed(&errors);
     }
@@ -1174,7 +1300,6 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     }
     for (field, what) in [
         ("metafields", "`metafields`"),
-        ("presentmentCurrency", "`presentmentCurrency`"),
         ("companyLocationId", "B2B orders (`companyLocationId`)"),
     ] {
         if input.get(field).is_some_and(|value| !value.is_null()) {
@@ -1192,15 +1317,84 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         mutation.note("orderCreate: lsf sends no email: the receipts were not sent");
     }
 
+    // The presentment currency, when different from the shop's. Its rate comes from any
+    // explicit shop/presentment pairs on the input, else a market's manual rate, else 1.0.
+    let presentment = presentment_currency.map(|currency| {
+        let rate_bps = if explicit_shop > 0 && explicit_presentment > 0 {
+            let ratio = (explicit_presentment * 10_000 + explicit_shop / 2) / explicit_shop;
+            i64::try_from(ratio).unwrap_or(10_000).max(1)
+        } else {
+            crate::admin::domains::markets::rate_bps(mutation.state(), currency).unwrap_or(10_000)
+        };
+        model::Presentment {
+            currency: currency.to_string(),
+            rate_bps,
+        }
+    });
+    let resolve_pres = |shop: i64, explicit: Option<i64>| match (&presentment, explicit) {
+        (Some(_), Some(cents)) => cents,
+        (Some(p), None) => p.from_shop(shop),
+        (None, _) => shop,
+    };
+
+    // Line-level taxes, using each line's shop and presentment totals as base.
+    let (mut line_tax, mut line_tax_p): (i64, i64) = (0, 0);
+    for (line, (index, specs)) in lines.iter().zip(&line_tax_specs) {
+        let qty = i64::from(line.quantity);
+        let shop_total = line.unit_price * qty;
+        let pres_unit = resolve_pres(line.unit_price, line.presentment_unit_price);
+        let Some(pres_total) = pres_unit
+            .checked_mul(qty)
+            .filter(|total| value::money_in_bounds(*total))
+        else {
+            let index_str = index.to_string();
+            return failed(&[UserError::new(
+                &["order", "lineItems", index_str.as_str(), "quantity"],
+                value::money_too_large("Total price"),
+            )
+            .code("INVALID")]);
+        };
+        let Some((s_tax, p_tax)) =
+            resolve_tax_lines(specs, shop_total, pres_total, presentment.as_ref()).and_then(
+                |(s, p)| {
+                    Some((
+                        line_tax
+                            .checked_add(s)
+                            .filter(|tax| value::money_in_bounds(*tax))?,
+                        line_tax_p
+                            .checked_add(p)
+                            .filter(|tax| value::money_in_bounds(*tax))?,
+                    ))
+                },
+            )
+        else {
+            let index_str = index.to_string();
+            return failed(&[UserError::new(
+                &["order", "lineItems", index_str.as_str(), "taxLines"],
+                value::money_too_large("Tax"),
+            )
+            .code("INVALID")]);
+        };
+        line_tax = s_tax;
+        line_tax_p = p_tax;
+    }
+
     // The shipping, the discount, the tax.
-    let shipping_lines = array(&input, "shippingLines");
     if shipping_lines.len() > 1 {
         mutation.note("orderCreate: lsf keeps the first shipping line only");
     }
-    let mut shipping_tax = Some(0);
+    let mut shipping_tax = Some((0i64, 0i64));
     let mut shipping = shipping_lines.first().map(|line| {
         let price = model::cents(line.get("priceSet").and_then(|set| set.get("shopMoney")));
-        shipping_tax = tax_lines_cents(line.get("taxLines"), price);
+        let pres_price = presentment
+            .as_ref()
+            .map(|_| resolve_pres(price, shipping_presentment_price));
+        shipping_tax = resolve_tax_lines(
+            &shipping_tax_specs,
+            price,
+            pres_price.unwrap_or(price),
+            presentment.as_ref(),
+        );
         ShippingDraft {
             title: line
                 .get("title")
@@ -1210,6 +1404,8 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             handle: line.get("code").and_then(Value::as_str).map(str::to_string),
             original: price,
             discounted: price,
+            presentment_original: pres_price,
+            presentment_discounted: pres_price,
         }
     });
     // Each line's total is bounded; their sum, the shipping and the tax must be too.
@@ -1217,9 +1413,18 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .iter()
         .map(|line| i128::from(line.unit_price) * i128::from(line.quantity))
         .sum::<i128>();
-    let order_tax = tax_lines_cents(
-        input.get("taxLines"),
+    let subtotal_p = lines
+        .iter()
+        .map(|line| {
+            i128::from(resolve_pres(line.unit_price, line.presentment_unit_price))
+                * i128::from(line.quantity)
+        })
+        .sum::<i128>();
+    let order_tax = resolve_tax_lines(
+        &order_tax_specs,
         i64::try_from(subtotal).unwrap_or(i64::MAX),
+        i64::try_from(subtotal_p).unwrap_or(i64::MAX),
+        presentment.as_ref(),
     );
     let total = [
         Some(subtotal),
@@ -1228,9 +1433,23 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                 .as_ref()
                 .map_or(0, |shipping| i128::from(shipping.original)),
         ),
-        shipping_tax.map(i128::from),
-        order_tax.map(i128::from),
+        shipping_tax.map(|(s, _)| i128::from(s)),
+        order_tax.map(|(s, _)| i128::from(s)),
         Some(i128::from(line_tax)),
+    ]
+    .into_iter()
+    .try_fold(0i128, |sum, part| Some(sum + part?));
+    let total_p = [
+        Some(subtotal_p),
+        Some(shipping.as_ref().map_or(0, |shipping| {
+            i128::from(resolve_pres(
+                shipping.original,
+                shipping.presentment_original,
+            ))
+        })),
+        shipping_tax.map(|(_, p)| i128::from(p)),
+        order_tax.map(|(_, p)| i128::from(p)),
+        Some(i128::from(line_tax_p)),
     ]
     .into_iter()
     .try_fold(0i128, |sum, part| Some(sum + part?));
@@ -1239,7 +1458,12 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             .and_then(|amount| i64::try_from(amount).ok())
             .filter(|amount| value::money_in_bounds(*amount))
     };
-    let (Some(_), Some(subtotal)) = (bounded(total), bounded(Some(subtotal))) else {
+    let (Some(_), Some(subtotal), Some(_), Some(subtotal_p)) = (
+        bounded(total),
+        bounded(Some(subtotal)),
+        bounded(total_p),
+        bounded(Some(subtotal_p)),
+    ) else {
         // lsf's wording, as every message of the bound.
         return failed(&[UserError::new(
             &["order", "lineItems"],
@@ -1247,9 +1471,9 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         )
         .code("INVALID")]);
     };
-    let discount = model::input_of(input.get("discountCode"));
     let mut discount_codes = Vec::new();
     let mut order_discount = 0;
+    let mut order_discount_p = None;
     let mut applied_code = None;
     let code_of = |code: &serde_json::Map<String, Value>| {
         code.get("code")
@@ -1269,6 +1493,12 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         for line in &mut lines {
             let total = line.unit_price * i64::from(line.quantity);
             line.discount = ((total as f64) * percentage / 100.0).round() as i64;
+            if presentment.is_some() {
+                let pres_total = resolve_pres(line.unit_price, line.presentment_unit_price)
+                    * i64::from(line.quantity);
+                line.presentment_discount =
+                    Some(((pres_total as f64) * percentage / 100.0).round() as i64);
+            }
         }
         discount_codes.extend(code.get("code").and_then(Value::as_str).map(str::to_string));
         applied_code = Some(CodeApplied::Percentage {
@@ -1281,32 +1511,49 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     {
         let amount = model::cents(code.get("amountSet").and_then(|set| set.get("shopMoney")));
         order_discount = amount.min(subtotal).max(0);
+        let pres_applied = presentment.as_ref().map(|_| {
+            resolve_pres(amount, fixed_discount_presentment)
+                .min(subtotal_p)
+                .max(0)
+        });
+        order_discount_p = pres_applied;
         discount_codes.extend(code.get("code").and_then(Value::as_str).map(str::to_string));
         applied_code = Some(CodeApplied::Fixed {
             code: code_of(code),
             amount: amount.max(0),
             applied: order_discount,
+            presentment_applied: pres_applied,
         });
     } else if let Some(code) = discount
         .get("freeShippingDiscountCode")
         .and_then(Value::as_object)
     {
         let mut taken = 0;
+        let mut taken_p = presentment.as_ref().map(|_| 0i64);
         if let Some(shipping) = &mut shipping {
             taken = shipping.discounted;
             shipping.discounted = 0;
+            if presentment.is_some() {
+                taken_p = Some(resolve_pres(taken, shipping.presentment_discounted));
+                shipping.presentment_discounted = Some(0);
+            }
         }
         discount_codes.extend(code.get("code").and_then(Value::as_str).map(str::to_string));
         applied_code = Some(CodeApplied::FreeShipping {
             code: code_of(code),
             taken,
+            presentment_taken: taken_p,
         });
     }
     // Bounded above: the order's total holds them.
-    let tax = order_tax.unwrap_or(0) + shipping_tax.unwrap_or(0) + line_tax;
+    let (order_tax_s, order_tax_p) = order_tax.unwrap_or((0, 0));
+    let (shipping_tax_s, shipping_tax_p) = shipping_tax.unwrap_or((0, 0));
+    let tax = order_tax_s + shipping_tax_s + line_tax;
+    let presentment_tax = presentment
+        .as_ref()
+        .map(|_| order_tax_p + shipping_tax_p + line_tax_p);
 
     // The money.
-    let transactions = array(&input, "transactions");
     let financial = input
         .get("financialStatus")
         .and_then(Value::as_str)
@@ -1366,7 +1613,9 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         billing_address: address("billingAddress", "billing"),
         shipping,
         tax,
+        presentment_tax,
         order_discount,
+        presentment_order_discount: order_discount_p,
         discount_codes,
         note: input
             .get("note")
@@ -1399,12 +1648,12 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             .map(str::to_string),
         returns: Vec::new(),
         location: location.clone(),
-        presentment: None,
+        presentment: presentment.clone(),
         shipments: Vec::new(),
     };
     let order = super::insert_order(state, &draft);
     if let Some(applied) = &applied_code {
-        record_discount_code(state, &order, applied, &draft.lines);
+        record_discount_code(state, &order, applied, &draft.lines, presentment.as_ref());
     }
     let test = input.get("test").and_then(Value::as_bool) == Some(true);
     let now_text = value::date_time(now);
@@ -1463,7 +1712,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         state.emit("order_transactions/create", &transaction);
         super::payments::emit_tender(state, &transaction);
     }
-    for transaction in &transactions {
+    for (transaction, pres_amount) in transactions.iter().zip(transaction_presentment_amounts) {
         let amount = model::cents(
             transaction
                 .get("amountSet")
@@ -1478,7 +1727,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             .and_then(Value::as_str)
             .unwrap_or("SUCCESS");
         let gateway = transaction.get("gateway").and_then(Value::as_str);
-        let created = model::add_transaction_with_status(
+        let created = model::add_transaction_with_presentment(
             state,
             &order,
             &NewTransaction {
@@ -1490,6 +1739,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                 test: transaction.get("test").and_then(Value::as_bool) == Some(true) || test,
             },
             status,
+            pres_amount,
         );
         if let Some(record) = state.get_mut(&created) {
             for (from, to) in [
@@ -1543,9 +1793,14 @@ enum CodeApplied {
         code: String,
         amount: i64,
         applied: i64,
+        presentment_applied: Option<i64>,
     },
     /// `freeShippingDiscountCode`: the shipping, `taken` its price.
-    FreeShipping { code: String, taken: i64 },
+    FreeShipping {
+        code: String,
+        taken: i64,
+        presentment_taken: Option<i64>,
+    },
 }
 
 /// Records the discount code of an `orderCreate` as Shopify records one: a
@@ -1561,8 +1816,18 @@ fn record_discount_code(
     order: &str,
     applied: &CodeApplied,
     lines: &[super::LineDraft],
+    presentment: Option<&model::Presentment>,
 ) {
     let currency = state.currency();
+    let pres = |shop: i64, explicit: Option<i64>| match (presentment, explicit) {
+        (Some(_), Some(cents)) => cents,
+        (Some(p), None) => p.from_shop(shop),
+        (None, _) => shop,
+    };
+    let bag = |shop: i64, pres_cents: i64| match presentment {
+        Some(p) => value::money_bag_in(shop, &currency, pres_cents, &p.currency),
+        None => value::money_bag(shop, &currency),
+    };
     let (code, allocation_method, target_type, value) = match applied {
         CodeApplied::Percentage { code, percentage } => (
             code,
@@ -1591,88 +1856,213 @@ fn record_discount_code(
         "targetType": target_type,
         "value": value,
     });
-    let allocation = |cents: i64| {
+    let allocation = |cents: i64, pres_cents: i64| {
         json!([{
-            "allocatedAmountSet": value::money_bag(cents, &currency),
+            "allocatedAmountSet": bag(cents, pres_cents),
             "discountApplication": application,
         }])
     };
-    let amounts: Vec<i64> = match applied {
-        CodeApplied::Percentage { .. } => lines.iter().map(|line| line.discount).collect(),
-        CodeApplied::Fixed { applied, .. } => {
-            let totals: Vec<i64> = lines
+    let spread = |total_discount: i64, totals: &[i64]| -> Vec<i64> {
+        let whole: i64 = totals.iter().sum();
+        let mut shares: Vec<i64> = totals
+            .iter()
+            .map(|total| model::share(total_discount, *total, whole))
+            .collect();
+        let given: i64 = shares.iter().sum();
+        if let Some(last) = shares.last_mut() {
+            *last += total_discount - given;
+        }
+        shares
+    };
+    let amounts: Vec<(i64, i64)> = match applied {
+        CodeApplied::Percentage { .. } => lines
+            .iter()
+            .map(|line| {
+                (
+                    line.discount,
+                    pres(line.discount, line.presentment_discount),
+                )
+            })
+            .collect(),
+        CodeApplied::Fixed {
+            applied,
+            presentment_applied,
+            ..
+        } => {
+            let shop_totals: Vec<i64> = lines
                 .iter()
                 .map(|line| line.unit_price * i64::from(line.quantity))
                 .collect();
-            let whole: i64 = totals.iter().sum();
-            let mut shares: Vec<i64> = totals
+            let pres_totals: Vec<i64> = lines
                 .iter()
-                .map(|total| model::share(*applied, *total, whole))
+                .map(|line| {
+                    pres(line.unit_price, line.presentment_unit_price) * i64::from(line.quantity)
+                })
                 .collect();
-            let given: i64 = shares.iter().sum();
-            if let Some(last) = shares.last_mut() {
-                *last += applied - given;
-            }
-            shares
+            let shop_shares = spread(*applied, &shop_totals);
+            let pres_shares = spread(pres(*applied, *presentment_applied), &pres_totals);
+            shop_shares.into_iter().zip(pres_shares).collect()
         }
         CodeApplied::FreeShipping { .. } => Vec::new(),
     };
-    for (item, cents) in super::line_items(state, order).iter().zip(amounts) {
-        if cents > 0
+    for (item, (cents, pres_cents)) in super::line_items(state, order).iter().zip(amounts) {
+        if (cents > 0 || pres_cents > 0)
             && let Some(record) = state.get_mut(item)
         {
-            record.insert("discountAllocations".into(), allocation(cents));
+            record.insert("discountAllocations".into(), allocation(cents, pres_cents));
         }
     }
     let Some(record) = state.get_mut(order) else {
         return;
     };
-    if let CodeApplied::FreeShipping { taken, .. } = applied
-        && *taken > 0
+    if let CodeApplied::FreeShipping {
+        taken,
+        presentment_taken,
+        ..
+    } = applied
     {
-        for key in ["shippingLine", "shippingLines"] {
-            match record.get_mut(key) {
-                Some(Value::Object(line)) => {
-                    line.insert("discountAllocations".into(), allocation(*taken));
-                }
-                Some(Value::Array(lines)) => {
-                    for line in lines.iter_mut().filter_map(Value::as_object_mut) {
-                        line.insert("discountAllocations".into(), allocation(*taken));
+        let pres_taken = pres(*taken, *presentment_taken);
+        if *taken > 0 || pres_taken > 0 {
+            for key in ["shippingLine", "shippingLines"] {
+                match record.get_mut(key) {
+                    Some(Value::Object(line)) => {
+                        line.insert("discountAllocations".into(), allocation(*taken, pres_taken));
                     }
+                    Some(Value::Array(lines)) => {
+                        for line in lines.iter_mut().filter_map(Value::as_object_mut) {
+                            line.insert(
+                                "discountAllocations".into(),
+                                allocation(*taken, pres_taken),
+                            );
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
     }
     record.insert("discountApplications".into(), json!([application]));
 }
 
-/// The tax of `taxLines` (`OrderCreateTaxLineInput`): their `priceSet`, else their `rate` of
-/// `base`. `None` when it is past the bound of an amount (`value::MAX_MONEY_CENTS`): a rate can be
-/// any `Decimal`.
-fn tax_lines_cents(lines: Option<&Value>, base: i64) -> Option<i64> {
-    let mut tax: i64 = 0;
-    for line in lines.and_then(Value::as_array).into_iter().flatten() {
-        let cents = match line.get("priceSet").and_then(|set| set.get("shopMoney")) {
-            Some(money) => model::cents(Some(money)),
-            None => {
-                let rate = line
-                    .get("rate")
-                    .and_then(|rate| match rate {
-                        Value::String(text) => text.parse::<f64>().ok(),
-                        other => other.as_f64(),
-                    })
-                    .unwrap_or(0.0);
-                let cents = ((base as f64) * rate).round();
-                if !cents.is_finite() || cents.abs() >= value::MAX_MONEY_CENTS as f64 {
-                    return None;
-                }
-                cents as i64
+/// Parses and validates `presentmentMoney` from a `MoneyBagInput`. Records an `INVALID` user
+/// error when its `currencyCode` does not match `expected_currency`.
+fn parse_presentment_money(
+    bag: Option<&Value>,
+    path: &[&str],
+    expected_currency: &str,
+    errors: &mut Vec<UserError>,
+) -> Option<i64> {
+    let money = bag?
+        .get("presentmentMoney")
+        .filter(|money| !money.is_null())?;
+    if let Some(code) = money.get("currencyCode").and_then(Value::as_str)
+        && code != expected_currency
+    {
+        // lsf's wording.
+        errors.push(
+            UserError::new(
+                &[path, &["presentmentMoney", "currencyCode"]].concat(),
+                format!(
+                    "Presentment currency {code} does not match order presentment currency \
+                     {expected_currency}"
+                ),
+            )
+            .code("INVALID"),
+        );
+        return None;
+    }
+    Some(model::cents(Some(money)))
+}
+
+/// A parsed `OrderCreateTaxLineInput`: either an explicit `priceSet` or a `rate` of its base.
+enum TaxLineSpec {
+    Money { shop: i64, presentment: Option<i64> },
+    Rate(f64),
+}
+
+fn parse_tax_lines(
+    lines: Option<&Value>,
+    path: &[&str],
+    expected_currency: &str,
+    errors: &mut Vec<UserError>,
+) -> Vec<TaxLineSpec> {
+    let mut specs = Vec::new();
+    for (index, line) in lines
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let index_str = index.to_string();
+        if let Some(shop_money) = line.get("priceSet").and_then(|set| set.get("shopMoney")) {
+            let shop = model::cents(Some(shop_money));
+            let presentment = parse_presentment_money(
+                line.get("priceSet"),
+                &[path, &[index_str.as_str(), "priceSet"]].concat(),
+                expected_currency,
+                errors,
+            );
+            specs.push(TaxLineSpec::Money { shop, presentment });
+        } else {
+            let rate = line
+                .get("rate")
+                .and_then(|rate| match rate {
+                    Value::String(text) => text.parse::<f64>().ok(),
+                    other => other.as_f64(),
+                })
+                .unwrap_or(0.0);
+            specs.push(TaxLineSpec::Rate(rate));
+        }
+    }
+    specs
+}
+
+/// The `(shop, presentment)` tax of parsed `OrderCreateTaxLineInput`s: their `priceSet`, else
+/// their `rate` of `shop_base` / `pres_base`. `None` when past the bound of an amount
+/// (`value::MAX_MONEY_CENTS`): a rate can be any `Decimal`.
+fn resolve_tax_lines(
+    specs: &[TaxLineSpec],
+    shop_base: i64,
+    pres_base: i64,
+    presentment: Option<&model::Presentment>,
+) -> Option<(i64, i64)> {
+    let rate_cents = |base: i64, rate: f64| -> Option<i64> {
+        let cents = ((base as f64) * rate).round();
+        if !cents.is_finite() || cents.abs() >= value::MAX_MONEY_CENTS as f64 {
+            return None;
+        }
+        Some(cents as i64)
+    };
+    let (mut shop_tax, mut pres_tax) = (0i64, 0i64);
+    for spec in specs {
+        let (s, p) = match spec {
+            TaxLineSpec::Money {
+                shop,
+                presentment: explicit,
+            } => {
+                let p = match (presentment, *explicit) {
+                    (Some(_), Some(cents)) => cents,
+                    (Some(p), None) => p.from_shop(*shop),
+                    (None, _) => *shop,
+                };
+                (*shop, p)
+            }
+            TaxLineSpec::Rate(rate) => {
+                let s = rate_cents(shop_base, *rate)?;
+                let p = if presentment.is_some() {
+                    rate_cents(pres_base, *rate)?
+                } else {
+                    s
+                };
+                (s, p)
             }
         };
-        tax = tax
-            .checked_add(cents)
+        shop_tax = shop_tax
+            .checked_add(s)
+            .filter(|tax| value::money_in_bounds(*tax))?;
+        pres_tax = pres_tax
+            .checked_add(p)
             .filter(|tax| value::money_in_bounds(*tax))?;
     }
-    Some(tax)
+    Some((shop_tax, pres_tax))
 }

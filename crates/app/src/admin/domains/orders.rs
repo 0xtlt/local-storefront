@@ -71,8 +71,12 @@ pub struct OrderDraft {
     pub shipping: Option<ShippingDraft>,
     /// The tax of the order, in cents.
     pub tax: i64,
+    /// Optional explicit tax in the presentment currency, in cents (`orderCreate`).
+    pub presentment_tax: Option<i64>,
     /// What the discounts of the order (not those of its lines) took off, in cents.
     pub order_discount: i64,
+    /// Optional explicit order-level discount in the presentment currency, in cents (`orderCreate`).
+    pub presentment_order_discount: Option<i64>,
     pub discount_codes: Vec<String>,
     pub note: Option<String>,
     pub attributes: Vec<(String, String)>,
@@ -135,8 +139,12 @@ pub struct LineDraft {
     pub quantity: u32,
     /// The price of one unit, before discounts, in cents.
     pub unit_price: i64,
+    /// Optional explicit unit price in the presentment currency, in cents (`orderCreate`).
+    pub presentment_unit_price: Option<i64>,
     /// What the discounts took off the line in all, in cents.
     pub discount: i64,
+    /// Optional explicit line discount in the presentment currency, in cents (`orderCreate`).
+    pub presentment_discount: Option<i64>,
     pub requires_shipping: bool,
     pub taxable: bool,
     pub gift_card: bool,
@@ -159,6 +167,9 @@ pub struct ShippingDraft {
     /// Before and after the shipping discounts, in cents.
     pub original: i64,
     pub discounted: i64,
+    /// Optional explicit amounts in the presentment currency, in cents (`orderCreate`).
+    pub presentment_original: Option<i64>,
+    pub presentment_discounted: Option<i64>,
 }
 
 /// The financial status of an order, as the store data and Shopify's `OrderDisplayFinancialStatus`
@@ -325,6 +336,7 @@ pub fn seed(seed: &mut Seed) {
                         handle: rate.map(|rate| rate.handle.clone()),
                         original: order.shipping_price,
                         discounted: order.shipping_price,
+                        ..ShippingDraft::default()
                     }
                 });
             let draft = OrderDraft {
@@ -366,6 +378,7 @@ pub fn seed(seed: &mut Seed) {
                 location: location.clone(),
                 presentment: None,
                 shipments: Vec::new(),
+                ..OrderDraft::default()
             };
             insert_order(&mut seed.state, &draft);
         }
@@ -405,6 +418,7 @@ fn line_draft(seed: &Seed, product: &Product, variant: &Variant, quantity: u32) 
         })),
         grams: variant.weight,
         attributes: Vec::new(),
+        ..LineDraft::default()
     }
 }
 
@@ -433,7 +447,16 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         .and_then(|shop| shop.get("taxesIncluded"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let bag = |cents: i64| value::money_bag(cents, &currency);
+    let presentment = draft.presentment.as_ref();
+    let pres = |shop: i64, explicit: Option<i64>| match (presentment, explicit) {
+        (Some(_), Some(cents)) => cents,
+        (Some(p), None) => p.from_shop(shop),
+        (None, _) => shop,
+    };
+    let bag = |shop: i64, presentment_cents: i64| match presentment {
+        Some(p) => value::money_bag_in(shop, &currency, presentment_cents, &p.currency),
+        None => value::money_bag(shop, &currency),
+    };
     let order = draft.id.clone();
     let created = date_time(draft.created_at);
     let fulfilled = fulfilled_quantities(draft);
@@ -447,25 +470,33 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
     // The line items.
     let mut line_items = Vec::new();
     let mut subtotal = 0;
+    let mut subtotal_p = 0;
     let mut line_discounts = 0;
+    let mut line_discounts_p = 0;
     let mut quantity = 0;
     let mut grams: u64 = 0;
     let order_number = gid_number(&order);
     for (position, line) in draft.lines.iter().enumerate() {
         let id = line_item_gid(order_number, position);
+        let unit_p = pres(line.unit_price, line.presentment_unit_price);
+        let discount_p = pres(line.discount, line.presentment_discount);
         let discounted = line.unit_price * i64::from(line.quantity) - line.discount;
+        let discounted_p = unit_p * i64::from(line.quantity) - discount_p;
         let unfulfilled = line.quantity - fulfilled[position];
         subtotal += discounted;
+        subtotal_p += discounted_p;
         line_discounts += line.discount;
+        line_discounts_p += discount_p;
         quantity += line.quantity;
         grams = line
             .grams
             .saturating_mul(u64::from(line.quantity))
             .saturating_add(grams);
-        state.insert(line_item_record(
+        state.insert(line_item_record_with_presentment(
             &id,
             line,
             &currency,
+            presentment,
             unfulfilled,
             draft.financial.captured(),
             &created,
@@ -476,25 +507,43 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         .shipping
         .as_ref()
         .map_or(0, |shipping| shipping.original);
+    let shipping_original_p = draft.shipping.as_ref().map_or(0, |shipping| {
+        pres(shipping.original, shipping.presentment_original)
+    });
     let shipping_discounted = draft
         .shipping
         .as_ref()
         .map_or(0, |shipping| shipping.discounted);
+    let shipping_discounted_p = draft.shipping.as_ref().map_or(0, |shipping| {
+        pres(shipping.discounted, shipping.presentment_discounted)
+    });
+    let order_discount_p = pres(draft.order_discount, draft.presentment_order_discount);
+    let tax_p = pres(draft.tax, draft.presentment_tax);
     let subtotal = subtotal - draft.order_discount;
+    let subtotal_p = subtotal_p - order_discount_p;
     // The tax is on top, as the storefront's `order.total_price` and the checkout count it.
     let total = subtotal + shipping_discounted + draft.tax;
+    let total_p = subtotal_p + shipping_discounted_p + tax_p;
     let discounts = line_discounts + draft.order_discount + shipping_original - shipping_discounted;
-    let paid = match draft.financial {
+    let discounts_p =
+        line_discounts_p + order_discount_p + shipping_original_p - shipping_discounted_p;
+    let (paid, paid_p) = match draft.financial {
         FinancialStatus::Paid | FinancialStatus::PartiallyRefunded | FinancialStatus::Refunded => {
-            draft.paid.unwrap_or(total)
+            match draft.paid {
+                Some(paid) => (paid, pres(paid, None)),
+                None => (total, total_p),
+            }
         }
-        FinancialStatus::PartiallyPaid => draft.paid.unwrap_or(0),
-        _ => 0,
+        FinancialStatus::PartiallyPaid => match draft.paid {
+            Some(paid) => (paid, pres(paid, None)),
+            None => (0, 0),
+        },
+        _ => (0, 0),
     };
-    let refunded = if draft.financial == FinancialStatus::Refunded {
-        paid
+    let (refunded, refunded_p) = if draft.financial == FinancialStatus::Refunded {
+        (paid, paid_p)
     } else {
-        0
+        (0, 0)
     };
     let fully_fulfilled = draft.fulfillment == FulfillmentState::Fulfilled;
 
@@ -545,9 +594,18 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
                 &position.to_string(),
             );
             let share = line.unit_price * i64::from(fulfilled[position]);
+            let unit_p = pres(line.unit_price, line.presentment_unit_price);
+            let discount_p = pres(line.discount, line.presentment_discount);
+            let share_p = unit_p * i64::from(fulfilled[position]);
             let discounted = share
                 - model::share(
                     line.discount,
+                    i64::from(fulfilled[position]),
+                    i64::from(line.quantity.max(1)),
+                );
+            let discounted_p = share_p
+                - model::share(
+                    discount_p,
                     i64::from(fulfilled[position]),
                     i64::from(line.quantity.max(1)),
                 );
@@ -556,8 +614,8 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
                 "id": id,
                 "lineItem": line_item,
                 "quantity": fulfilled[position],
-                "originalTotalSet": bag(share),
-                "discountedTotalSet": bag(discounted),
+                "originalTotalSet": bag(share, share_p),
+                "discountedTotalSet": bag(discounted, discounted_p),
                 "createdAt": created,
             })));
             fulfillment_lines.push((position, id));
@@ -678,40 +736,41 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
 
     // The transactions of the money the order took (or that is waiting to be captured).
     let mut transactions = Vec::new();
-    let mut transaction = |state: &mut ShopState, kind: &str, amount: i64, parent: Option<&str>| {
-        let id = derived(
-            "OrderTransaction",
-            "order_transaction",
-            &order,
-            &(transactions.len() + 1).to_string(),
-        );
-        state.insert(value::object(json!({
-            "__typename": "OrderTransaction",
-            "id": id,
-            "kind": kind,
-            "status": "SUCCESS",
-            "amountSet": bag(amount),
-            "gateway": draft.gateway,
-            "formattedGateway": draft.gateway,
-            "order": order,
-            "parentTransaction": parent,
-            "test": false,
-            "manuallyCapturable": kind == "AUTHORIZATION",
-            "createdAt": created,
-            "processedAt": created,
-            "fees": [],
-        })));
-        transactions.push(id.clone());
-        id
-    };
+    let mut transaction =
+        |state: &mut ShopState, kind: &str, amount: i64, amount_p: i64, parent: Option<&str>| {
+            let id = derived(
+                "OrderTransaction",
+                "order_transaction",
+                &order,
+                &(transactions.len() + 1).to_string(),
+            );
+            state.insert(value::object(json!({
+                "__typename": "OrderTransaction",
+                "id": id,
+                "kind": kind,
+                "status": "SUCCESS",
+                "amountSet": bag(amount, amount_p),
+                "gateway": draft.gateway,
+                "formattedGateway": draft.gateway,
+                "order": order,
+                "parentTransaction": parent,
+                "test": false,
+                "manuallyCapturable": kind == "AUTHORIZATION",
+                "createdAt": created,
+                "processedAt": created,
+                "fees": [],
+            })));
+            transactions.push(id.clone());
+            id
+        };
     match draft.financial {
         FinancialStatus::Authorized => {
-            transaction(state, "AUTHORIZATION", total, None);
+            transaction(state, "AUTHORIZATION", total, total_p, None);
         }
         status if status.captured() && paid > 0 => {
-            let sale = transaction(state, "SALE", paid, None);
+            let sale = transaction(state, "SALE", paid, paid_p, None);
             if status == FinancialStatus::Refunded {
-                transaction(state, "REFUND", refunded, Some(&sale));
+                transaction(state, "REFUND", refunded, refunded_p, Some(&sale));
             }
         }
         _ => {}
@@ -809,6 +868,8 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
     }
 
     let shipping_line_of = |key: &str, shipping: &ShippingDraft| {
+        let orig_p = pres(shipping.original, shipping.presentment_original);
+        let disc_p = pres(shipping.discounted, shipping.presentment_discounted);
         json!({
             "id": derived("ShippingLine", "shipping_line", &order, key),
             "title": shipping.title,
@@ -817,9 +878,9 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
             "source": "shopify",
             "custom": false,
             "isRemoved": false,
-            "originalPriceSet": bag(shipping.original),
-            "discountedPriceSet": bag(shipping.discounted),
-            "currentDiscountedPriceSet": bag(shipping.discounted),
+            "originalPriceSet": bag(shipping.original, orig_p),
+            "discountedPriceSet": bag(shipping.discounted, disc_p),
+            "currentDiscountedPriceSet": bag(shipping.discounted, disc_p),
             "discountAllocations": [],
             "taxLines": [],
             "createdAt": created,
@@ -839,8 +900,8 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         shipping_line.iter().cloned().collect()
     };
     let shipping_line = shipping_lines.first().cloned().or(shipping_line);
-    let tax_lines: Vec<Value> = (draft.tax > 0)
-        .then(|| json!({"title": "Tax", "priceSet": bag(draft.tax)}))
+    let tax_lines: Vec<Value> = (draft.tax > 0 || tax_p > 0)
+        .then(|| json!({"title": "Tax", "priceSet": bag(draft.tax, tax_p)}))
         .into_iter()
         .collect();
     let display_fulfillment = match draft.fulfillment {
@@ -899,26 +960,32 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
     record.extend(value::object(json!({
         "subtotalLineItemsQuantity": quantity,
         "currentSubtotalLineItemsQuantity": quantity,
-        "subtotalPriceSet": bag(subtotal),
-        "currentSubtotalPriceSet": bag(subtotal),
-        "totalShippingPriceSet": bag(shipping_discounted),
-        "currentShippingPriceSet": bag(shipping_discounted),
-        "totalTaxSet": bag(draft.tax),
-        "currentTotalTaxSet": bag(draft.tax),
-        "totalDiscountsSet": bag(discounts),
-        "currentTotalDiscountsSet": bag(discounts),
-        "cartDiscountAmountSet": bag(draft.order_discount),
-        "currentCartDiscountAmountSet": bag(draft.order_discount),
-        "totalPriceSet": bag(total),
-        "currentTotalPriceSet": bag(total),
-        "originalTotalPriceSet": bag(total),
-        "totalReceivedSet": bag(paid),
-        "netPaymentSet": bag(paid - refunded),
-        "totalRefundedSet": bag(refunded),
-        "totalRefundedShippingSet": bag(0),
-        "totalOutstandingSet": bag(if financial.captured() { (total - paid).max(0) } else { total }),
-        "totalCapturableSet": bag(if financial == FinancialStatus::Authorized { total } else { 0 }),
-        "totalTipReceivedSet": bag(0),
+        "subtotalPriceSet": bag(subtotal, subtotal_p),
+        "currentSubtotalPriceSet": bag(subtotal, subtotal_p),
+        "totalShippingPriceSet": bag(shipping_discounted, shipping_discounted_p),
+        "currentShippingPriceSet": bag(shipping_discounted, shipping_discounted_p),
+        "totalTaxSet": bag(draft.tax, tax_p),
+        "currentTotalTaxSet": bag(draft.tax, tax_p),
+        "totalDiscountsSet": bag(discounts, discounts_p),
+        "currentTotalDiscountsSet": bag(discounts, discounts_p),
+        "cartDiscountAmountSet": bag(draft.order_discount, order_discount_p),
+        "currentCartDiscountAmountSet": bag(draft.order_discount, order_discount_p),
+        "totalPriceSet": bag(total, total_p),
+        "currentTotalPriceSet": bag(total, total_p),
+        "originalTotalPriceSet": bag(total, total_p),
+        "totalReceivedSet": bag(paid, paid_p),
+        "netPaymentSet": bag(paid - refunded, paid_p - refunded_p),
+        "totalRefundedSet": bag(refunded, refunded_p),
+        "totalRefundedShippingSet": bag(0, 0),
+        "totalOutstandingSet": bag(
+            if financial.captured() { (total - paid).max(0) } else { total },
+            if financial.captured() { (total_p - paid_p).max(0) } else { total_p },
+        ),
+        "totalCapturableSet": bag(
+            if financial == FinancialStatus::Authorized { total } else { 0 },
+            if financial == FinancialStatus::Authorized { total_p } else { 0 },
+        ),
+        "totalTipReceivedSet": bag(0, 0),
         "totalWeight": grams.to_string(),
         "currentTotalWeight": grams.to_string(),
     })));
@@ -966,13 +1033,42 @@ pub fn line_item_record(
     captured: bool,
     created: &str,
 ) -> crate::admin::state::Record {
-    let bag = |cents: i64| value::money_bag(cents, currency);
+    line_item_record_with_presentment(id, line, currency, None, unfulfilled, captured, created)
+}
+
+fn line_item_record_with_presentment(
+    id: &str,
+    line: &LineDraft,
+    currency: &str,
+    presentment: Option<&model::Presentment>,
+    unfulfilled: u32,
+    captured: bool,
+    created: &str,
+) -> crate::admin::state::Record {
+    let pres = |shop: i64, explicit: Option<i64>| match (presentment, explicit) {
+        (Some(_), Some(cents)) => cents,
+        (Some(p), None) => p.from_shop(shop),
+        (None, _) => shop,
+    };
+    let bag = |shop: i64, presentment_cents: i64| match presentment {
+        Some(p) => value::money_bag_in(shop, currency, presentment_cents, &p.currency),
+        None => value::money_bag(shop, currency),
+    };
+    let unit_p = pres(line.unit_price, line.presentment_unit_price);
+    let discount_p = pres(line.discount, line.presentment_discount);
     let original = line.unit_price * i64::from(line.quantity);
+    let original_p = unit_p * i64::from(line.quantity);
     let discounted = original - line.discount;
+    let discounted_p = original_p - discount_p;
     let unit_after = if line.quantity == 0 {
         line.unit_price
     } else {
         discounted / i64::from(line.quantity)
+    };
+    let unit_after_p = if line.quantity == 0 {
+        unit_p
+    } else {
+        discounted_p / i64::from(line.quantity)
     };
     let unfulfilled_share = |total: i64| {
         if line.quantity == 0 {
@@ -1003,14 +1099,14 @@ pub fn line_item_record(
         "unfulfilledQuantity": unfulfilled,
         "nonFulfillableQuantity": 0,
         "refundableQuantity": if captured { line.quantity } else { 0 },
-        "originalUnitPriceSet": bag(line.unit_price),
-        "discountedUnitPriceSet": bag(unit_after),
-        "discountedUnitPriceAfterAllDiscountsSet": bag(unit_after),
-        "originalTotalSet": bag(original),
-        "discountedTotalSet": bag(discounted),
-        "totalDiscountSet": bag(line.discount),
-        "unfulfilledOriginalTotalSet": bag(unfulfilled_share(original)),
-        "unfulfilledDiscountedTotalSet": bag(unfulfilled_share(discounted)),
+        "originalUnitPriceSet": bag(line.unit_price, unit_p),
+        "discountedUnitPriceSet": bag(unit_after, unit_after_p),
+        "discountedUnitPriceAfterAllDiscountsSet": bag(unit_after, unit_after_p),
+        "originalTotalSet": bag(original, original_p),
+        "discountedTotalSet": bag(discounted, discounted_p),
+        "totalDiscountSet": bag(line.discount, discount_p),
+        "unfulfilledOriginalTotalSet": bag(unfulfilled_share(original), unfulfilled_share(original_p)),
+        "unfulfilledDiscountedTotalSet": bag(unfulfilled_share(discounted), unfulfilled_share(discounted_p)),
         "requiresShipping": line.requires_shipping,
         "taxable": line.taxable,
         "isGiftCard": line.gift_card,
@@ -1084,6 +1180,7 @@ fn placed_line(
             .map(|attribute| (attribute.key.clone(), attribute.value.clone()))
             .collect(),
         group,
+        ..LineDraft::default()
     }
 }
 
@@ -1402,6 +1499,7 @@ pub fn record_placed_order(
             .iter()
             .map(crate::checkout::DeliveryGroup::selected_cost)
             .sum(),
+        ..ShippingDraft::default()
     });
     let line_discounts: i64 = result
         .lines
@@ -1433,6 +1531,7 @@ pub fn record_placed_order(
                         handle: Some(option.handle.clone()),
                         original: option.original_cost,
                         discounted: group.selected_cost(),
+                        ..ShippingDraft::default()
                     })
                 }),
             })
@@ -1480,6 +1579,7 @@ pub fn record_placed_order(
         location,
         presentment: None,
         shipments,
+        ..OrderDraft::default()
     };
     let order = insert_order(state, &draft);
     record_discounts(state, &order, result, &line_allocations);

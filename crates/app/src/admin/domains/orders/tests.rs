@@ -2898,3 +2898,556 @@ fn order_numbers_follow_a_rollback_a_deletion_and_a_reset() {
     assert_eq!(model::next_order_number(other), seeded);
     assert!(other.index_in_step());
 }
+
+/// Issue #354: `orderCreate` honors `presentmentCurrency` and explicit `priceSet.presentmentMoney`
+/// on line items, shipping lines, tax lines, discount codes and transactions, in both GraphQL and
+/// `orders/create` webhooks, without emitting an ignored-field note.
+#[test]
+fn order_create_honors_presentment_currency_and_presentment_money() {
+    let mut shop = demo();
+    assert_eq!(shop.currency(), "USD");
+
+    // Exact repro from issue #354: USD shop, EUR presentment, 110.40 USD / 102.00 EUR.
+    let mutation = r#"mutation($o: OrderCreateOrderInput!) {
+        orderCreate(order: $o) {
+            order {
+                id
+                currencyCode
+                presentmentCurrencyCode
+                subtotalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+                currentSubtotalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+                totalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+                currentTotalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+                originalTotalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+                totalOutstandingSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+                lineItems(first: 5) {
+                    nodes {
+                        title
+                        originalUnitPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+                        originalTotalSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+                        discountedTotalSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+                    }
+                }
+            }
+            userErrors { field message code }
+        }
+    }"#;
+    let answer = run(
+        &mut shop,
+        mutation,
+        json!({
+            "o": {
+                "currency": "USD",
+                "presentmentCurrency": "EUR",
+                "lineItems": [{
+                    "title": "Tee",
+                    "quantity": 1,
+                    "priceSet": {
+                        "shopMoney": {"amount": "110.40", "currencyCode": "USD"},
+                        "presentmentMoney": {"amount": "102.00", "currencyCode": "EUR"},
+                    },
+                }],
+            }
+        }),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+    // No ignored-field note for `presentmentCurrency`.
+    assert!(
+        answer.pointer("/extensions/lsf/notes").is_none(),
+        "unexpected notes: {answer}"
+    );
+    let created = &answer["data"]["orderCreate"]["order"];
+    let order_id = created["id"].as_str().unwrap().to_string();
+    let expected_bag = json!({
+        "shopMoney": {"amount": "110.4", "currencyCode": "USD"},
+        "presentmentMoney": {"amount": "102.0", "currencyCode": "EUR"},
+    });
+    assert_eq!(created["currencyCode"], json!("USD"));
+    assert_eq!(created["presentmentCurrencyCode"], json!("EUR"));
+    assert_eq!(created["totalPriceSet"], expected_bag);
+    assert_eq!(created["currentTotalPriceSet"], expected_bag);
+    assert_eq!(created["originalTotalPriceSet"], expected_bag);
+    assert_eq!(created["subtotalPriceSet"], expected_bag);
+    assert_eq!(created["currentSubtotalPriceSet"], expected_bag);
+    assert_eq!(created["totalOutstandingSet"], expected_bag);
+    assert_eq!(
+        created["lineItems"]["nodes"][0]["originalUnitPriceSet"],
+        expected_bag
+    );
+    assert_eq!(
+        created["lineItems"]["nodes"][0]["originalTotalSet"],
+        expected_bag
+    );
+    assert_eq!(
+        created["lineItems"]["nodes"][0]["discountedTotalSet"],
+        expected_bag
+    );
+
+    // `orders/create` webhook reflects both `presentment_currency` and `presentment_money`.
+    let webhook = payload_of(&shop, "orders/create", &order_id);
+    assert_eq!(webhook["currency"], json!("USD"));
+    assert_eq!(webhook["presentment_currency"], json!("EUR"));
+    let expected_rest_bag = json!({
+        "shop_money": {"amount": "110.40", "currency_code": "USD"},
+        "presentment_money": {"amount": "102.00", "currency_code": "EUR"},
+    });
+    assert_eq!(webhook["total_price_set"], expected_rest_bag);
+    assert_eq!(webhook["subtotal_price_set"], expected_rest_bag);
+    assert_eq!(webhook["total_line_items_price_set"], expected_rest_bag);
+    assert_eq!(webhook["line_items"][0]["price_set"], expected_rest_bag);
+}
+
+/// Multi-line, shipping, tax (explicit and rate-based) and transactions preserve exact
+/// `presentmentMoney` values even when items have different effective exchange ratios, and
+/// follow-up mutations (marking paid, refunding) stay in the presentment currency.
+#[test]
+fn order_create_presentment_covers_shipping_taxes_transactions_and_follow_ups() {
+    let mut shop = demo();
+    let bag = |shop_amt: &str, eur_amt: &str| {
+        json!({
+            "shopMoney": {"amount": shop_amt, "currencyCode": "USD"},
+            "presentmentMoney": {"amount": eur_amt, "currencyCode": "EUR"},
+        })
+    };
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {
+                "currency": "USD",
+                "presentmentCurrency": "EUR",
+                "lineItems": [
+                    {
+                        "title": "Mug",
+                        "quantity": 2,
+                        "priceSet": bag("10.00", "9.15"),
+                        "taxLines": [{"title": "VAT", "rate": "0.1", "priceSet": bag("2.00", "1.80")}],
+                    },
+                    {
+                        "title": "Poster",
+                        "quantity": 1,
+                        "priceSet": bag("15.00", "13.00"),
+                    },
+                ],
+                "shippingLines": [{
+                    "title": "Express",
+                    "priceSet": bag("10.00", "8.50"),
+                    "taxLines": [{"title": "Ship VAT", "rate": "0.1"}],
+                }],
+                "taxLines": [{"title": "Order Tax", "rate": "0.05", "priceSet": bag("1.50", "1.35")}],
+                "transactions": [{
+                    "kind": "SALE",
+                    "status": "SUCCESS",
+                    "gateway": "bogus",
+                    "amountSet": bag("25.00", "22.00"),
+                }],
+            }
+        }),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+    let id = answer["data"]["orderCreate"]["order"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let query = r#"query($id: ID!) {
+        order(id: $id) {
+            currencyCode
+            presentmentCurrencyCode
+            displayFinancialStatus
+            subtotalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            totalShippingPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            totalTaxSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            totalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            totalReceivedSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            totalOutstandingSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            lineItems(first: 5) { nodes { id originalTotalSet { shopMoney { amount } presentmentMoney { amount currencyCode } } } }
+            shippingLine { originalPriceSet { shopMoney { amount } presentmentMoney { amount currencyCode } } }
+            transactions { kind amountSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } } }
+        }
+    }"#;
+    let read = &run(&mut shop, query, json!({"id": id}))["data"]["order"];
+    assert_eq!(read["currencyCode"], json!("USD"));
+    assert_eq!(read["presentmentCurrencyCode"], json!("EUR"));
+    assert_eq!(read["displayFinancialStatus"], json!("PARTIALLY_PAID"));
+    // Subtotal: 2*10.00 + 15.00 = 35.00 USD | 2*9.15 + 13.00 = 31.30 EUR
+    assert_eq!(
+        read["subtotalPriceSet"],
+        json!({"shopMoney": {"amount": "35.0", "currencyCode": "USD"}, "presentmentMoney": {"amount": "31.3", "currencyCode": "EUR"}})
+    );
+    // Shipping: 10.00 USD | 8.50 EUR
+    assert_eq!(
+        read["totalShippingPriceSet"],
+        json!({"shopMoney": {"amount": "10.0", "currencyCode": "USD"}, "presentmentMoney": {"amount": "8.5", "currencyCode": "EUR"}})
+    );
+    // Tax: line (2.00 / 1.80) + ship rate 10% (1.00 / 0.85) + order (1.50 / 1.35) = 4.50 USD | 4.00 EUR
+    assert_eq!(
+        read["totalTaxSet"],
+        json!({"shopMoney": {"amount": "4.5", "currencyCode": "USD"}, "presentmentMoney": {"amount": "4.0", "currencyCode": "EUR"}})
+    );
+    // Total: 35.00 + 10.00 + 4.50 = 49.50 USD | 31.30 + 8.50 + 4.00 = 43.80 EUR
+    assert_eq!(
+        read["totalPriceSet"],
+        json!({"shopMoney": {"amount": "49.5", "currencyCode": "USD"}, "presentmentMoney": {"amount": "43.8", "currencyCode": "EUR"}})
+    );
+    // Received: 25.00 USD | 22.00 EUR; Outstanding: 24.50 USD | 21.80 EUR
+    assert_eq!(
+        read["totalReceivedSet"],
+        json!({"shopMoney": {"amount": "25.0", "currencyCode": "USD"}, "presentmentMoney": {"amount": "22.0", "currencyCode": "EUR"}})
+    );
+    assert_eq!(
+        read["totalOutstandingSet"],
+        json!({"shopMoney": {"amount": "24.5", "currencyCode": "USD"}, "presentmentMoney": {"amount": "21.8", "currencyCode": "EUR"}})
+    );
+    assert_eq!(
+        read["transactions"][0]["amountSet"],
+        json!({"shopMoney": {"amount": "25.0", "currencyCode": "USD"}, "presentmentMoney": {"amount": "22.0", "currencyCode": "EUR"}})
+    );
+
+    // Refunding one unit keeps `presentmentCurrencyCode: "EUR"` and formats the refund in EUR.
+    let line_id = read["lineItems"]["nodes"][0]["id"].as_str().unwrap();
+    let refunded = run(
+        &mut shop,
+        r#"mutation($input: RefundInput!) {
+            refundCreate(input: $input) {
+                refund { refundLineItems(first: 1) { nodes { subtotalSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } } } } }
+                userErrors { field message }
+            }
+        }"#,
+        json!({"input": {"orderId": id, "refundLineItems": [{"lineItemId": line_id, "quantity": 1, "restockType": "NO_RESTOCK"}]}}),
+    );
+    assert_eq!(
+        refunded["data"]["refundCreate"]["userErrors"],
+        json!([]),
+        "{refunded}"
+    );
+    assert_eq!(
+        refunded["data"]["refundCreate"]["refund"]["refundLineItems"]["nodes"][0]["subtotalSet"]["presentmentMoney"]
+            ["currencyCode"],
+        json!("EUR")
+    );
+}
+
+/// Discount codes (`itemPercentageDiscountCode`, `itemFixedDiscountCode`,
+/// `freeShippingDiscountCode`) compute both shop and presentment discounts and allocations.
+#[test]
+fn order_create_presentment_applies_discount_codes() {
+    let mut shop = demo();
+    let bag = |shop_amt: &str, eur_amt: &str| {
+        json!({
+            "shopMoney": {"amount": shop_amt, "currencyCode": "USD"},
+            "presentmentMoney": {"amount": eur_amt, "currencyCode": "EUR"},
+        })
+    };
+    let query = r#"query($id: ID!) {
+        order(id: $id) {
+            presentmentCurrencyCode
+            totalDiscountsSet { shopMoney { amount } presentmentMoney { amount currencyCode } }
+            totalPriceSet { shopMoney { amount } presentmentMoney { amount currencyCode } }
+            lineItems(first: 5) {
+                nodes {
+                    discountAllocations {
+                        allocatedAmountSet { shopMoney { amount } presentmentMoney { amount currencyCode } }
+                    }
+                }
+            }
+            shippingLine {
+                discountedPriceSet { shopMoney { amount } presentmentMoney { amount currencyCode } }
+                discountAllocations {
+                    allocatedAmountSet { shopMoney { amount } presentmentMoney { amount currencyCode } }
+                }
+            }
+        }
+    }"#;
+    let create = |shop: &mut ShopState, code: Value| -> Value {
+        let answer = run(
+            shop,
+            ORDER_CREATE,
+            json!({
+                "order": {
+                    "currency": "USD",
+                    "presentmentCurrency": "EUR",
+                    "lineItems": [
+                        {"title": "A", "quantity": 1, "priceSet": bag("30.00", "27.00")},
+                        {"title": "B", "quantity": 2, "priceSet": bag("10.00", "9.00")},
+                    ],
+                    "shippingLines": [{"title": "Express", "priceSet": bag("10.00", "8.50")}],
+                    "discountCode": code,
+                }
+            }),
+        );
+        assert_eq!(
+            answer["data"]["orderCreate"]["userErrors"],
+            json!([]),
+            "{answer}"
+        );
+        let id = answer["data"]["orderCreate"]["order"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        run(shop, query, json!({"id": id}))["data"]["order"].clone()
+    };
+
+    // 10% off each line: 5.00 USD / 4.50 EUR (2.70 + 1.80).
+    let pct = create(
+        &mut shop,
+        json!({"itemPercentageDiscountCode": {"code": "TEN", "percentage": 10}}),
+    );
+    assert_eq!(
+        pct["totalDiscountsSet"],
+        json!({"shopMoney": {"amount": "5.0"}, "presentmentMoney": {"amount": "4.5", "currencyCode": "EUR"}})
+    );
+    assert_eq!(
+        pct["lineItems"]["nodes"][0]["discountAllocations"][0]["allocatedAmountSet"]["presentmentMoney"],
+        json!({"amount": "2.7", "currencyCode": "EUR"})
+    );
+    assert_eq!(
+        pct["lineItems"]["nodes"][1]["discountAllocations"][0]["allocatedAmountSet"]["presentmentMoney"],
+        json!({"amount": "1.8", "currencyCode": "EUR"})
+    );
+    // Total: (50 - 5 + 10) = 55.0 USD | (45 - 4.5 + 8.5) = 49.0 EUR.
+    assert_eq!(
+        pct["totalPriceSet"],
+        json!({"shopMoney": {"amount": "55.0"}, "presentmentMoney": {"amount": "49.0", "currencyCode": "EUR"}})
+    );
+
+    // Fixed discount: 5.00 USD / 4.00 EUR across lines (27 and 18 -> 2.40 + 1.60 EUR).
+    let fixed = create(
+        &mut shop,
+        json!({"itemFixedDiscountCode": {"code": "FIXED", "amountSet": bag("5.00", "4.00")}}),
+    );
+    assert_eq!(
+        fixed["totalDiscountsSet"],
+        json!({"shopMoney": {"amount": "5.0"}, "presentmentMoney": {"amount": "4.0", "currencyCode": "EUR"}})
+    );
+    assert_eq!(
+        fixed["lineItems"]["nodes"][0]["discountAllocations"][0]["allocatedAmountSet"]["presentmentMoney"],
+        json!({"amount": "2.4", "currencyCode": "EUR"})
+    );
+    assert_eq!(
+        fixed["lineItems"]["nodes"][1]["discountAllocations"][0]["allocatedAmountSet"]["presentmentMoney"],
+        json!({"amount": "1.6", "currencyCode": "EUR"})
+    );
+    assert_eq!(
+        fixed["totalPriceSet"],
+        json!({"shopMoney": {"amount": "55.0"}, "presentmentMoney": {"amount": "49.5", "currencyCode": "EUR"}})
+    );
+
+    // Free shipping: 10.00 USD / 8.50 EUR taken off shipping.
+    let free_ship = create(
+        &mut shop,
+        json!({"freeShippingDiscountCode": {"code": "FREESHIP"}}),
+    );
+    assert_eq!(
+        free_ship["totalDiscountsSet"],
+        json!({"shopMoney": {"amount": "10.0"}, "presentmentMoney": {"amount": "8.5", "currencyCode": "EUR"}})
+    );
+    assert_eq!(
+        free_ship["shippingLine"]["discountedPriceSet"]["presentmentMoney"],
+        json!({"amount": "0.0", "currencyCode": "EUR"})
+    );
+    assert_eq!(
+        free_ship["shippingLine"]["discountAllocations"][0]["allocatedAmountSet"]["presentmentMoney"],
+        json!({"amount": "8.5", "currencyCode": "EUR"})
+    );
+    assert_eq!(
+        free_ship["totalPriceSet"],
+        json!({"shopMoney": {"amount": "50.0"}, "presentmentMoney": {"amount": "45.0", "currencyCode": "EUR"}})
+    );
+}
+
+/// Fallbacks and validation for `presentmentCurrency` / `presentmentMoney`:
+/// - Omitted `presentmentCurrency` defaults `presentmentCurrencyCode` to shop currency.
+/// - Omitted `presentmentMoney` on an item converts via inferred rate, else market manual rate,
+///   else 1.0.
+/// - Mismatched `presentmentMoney.currencyCode` returns an `INVALID` user error.
+#[test]
+fn order_create_presentment_fallbacks_and_validation() {
+    let mut shop = demo();
+    let (variant, _) = first_variant(&shop);
+    let query = r#"query($id: ID!) {
+        order(id: $id) {
+            currencyCode
+            presentmentCurrencyCode
+            totalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+        }
+    }"#;
+
+    // 1. Omitted `presentmentCurrency` defaults to shop currency (`USD`).
+    let default_ans = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({"order": {"lineItems": [{"title": "Tee", "quantity": 1, "priceSet": {"shopMoney": {"amount": "20.00", "currencyCode": "USD"}}}]}}),
+    );
+    assert_eq!(default_ans["data"]["orderCreate"]["userErrors"], json!([]));
+    let default_id = default_ans["data"]["orderCreate"]["order"]["id"]
+        .as_str()
+        .unwrap();
+    let default_order = &run(&mut shop, query, json!({"id": default_id}))["data"]["order"];
+    assert_eq!(default_order["currencyCode"], json!("USD"));
+    assert_eq!(default_order["presentmentCurrencyCode"], json!("USD"));
+    assert_eq!(
+        default_order["totalPriceSet"],
+        json!({"shopMoney": {"amount": "20.0", "currencyCode": "USD"}, "presentmentMoney": {"amount": "20.0", "currencyCode": "USD"}})
+    );
+
+    // 2. `presentmentCurrency` set with omitted `presentmentMoney` uses the market's manual rate.
+    shop.insert(crate::admin::state::value::object(json!({
+        "__typename": "Market",
+        "name": "Canada",
+        "currencySettings": {
+            "baseCurrency": {"currencyCode": "CAD", "manualRate": "1.25"},
+            "localCurrencies": false,
+        },
+    })));
+    let market_ans = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {
+                "currency": "USD",
+                "presentmentCurrency": "CAD",
+                "lineItems": [{"title": "Hat", "quantity": 1, "priceSet": {"shopMoney": {"amount": "20.00", "currencyCode": "USD"}}}],
+            }
+        }),
+    );
+    assert_eq!(market_ans["data"]["orderCreate"]["userErrors"], json!([]));
+    let market_id = market_ans["data"]["orderCreate"]["order"]["id"]
+        .as_str()
+        .unwrap();
+    let market_order = &run(&mut shop, query, json!({"id": market_id}))["data"]["order"];
+    assert_eq!(market_order["presentmentCurrencyCode"], json!("CAD"));
+    assert_eq!(
+        market_order["totalPriceSet"],
+        json!({"shopMoney": {"amount": "20.0", "currencyCode": "USD"}, "presentmentMoney": {"amount": "25.0", "currencyCode": "CAD"}})
+    );
+
+    // 3. `presentmentCurrency` set with mixed explicit/omitted items converts the omitted item
+    //    at the rate inferred from the explicit item.
+    let mixed_ans = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {
+                "currency": "USD",
+                "presentmentCurrency": "EUR",
+                "lineItems": [
+                    {
+                        "title": "Explicit",
+                        "quantity": 1,
+                        "priceSet": {
+                            "shopMoney": {"amount": "100.00", "currencyCode": "USD"},
+                            "presentmentMoney": {"amount": "90.00", "currencyCode": "EUR"},
+                        },
+                    },
+                    {
+                        "title": "ShopOnly",
+                        "quantity": 1,
+                        "priceSet": {"shopMoney": {"amount": "20.00", "currencyCode": "USD"}},
+                    },
+                ],
+            }
+        }),
+    );
+    assert_eq!(mixed_ans["data"]["orderCreate"]["userErrors"], json!([]));
+    let mixed_id = mixed_ans["data"]["orderCreate"]["order"]["id"]
+        .as_str()
+        .unwrap();
+    let mixed_order = &run(&mut shop, query, json!({"id": mixed_id}))["data"]["order"];
+    assert_eq!(
+        mixed_order["totalPriceSet"],
+        json!({"shopMoney": {"amount": "120.0", "currencyCode": "USD"}, "presentmentMoney": {"amount": "108.0", "currencyCode": "EUR"}})
+    );
+
+    // 4. `presentmentCurrency` with no explicit `presentmentMoney` and no market rate defaults to 1.0.
+    let fallback_ans = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {
+                "presentmentCurrency": "GBP",
+                "lineItems": [{"variantId": variant, "quantity": 1}],
+            }
+        }),
+    );
+    assert_eq!(fallback_ans["data"]["orderCreate"]["userErrors"], json!([]));
+    let fallback_id = fallback_ans["data"]["orderCreate"]["order"]["id"]
+        .as_str()
+        .unwrap();
+    let fallback_order = &run(&mut shop, query, json!({"id": fallback_id}))["data"]["order"];
+    assert_eq!(fallback_order["presentmentCurrencyCode"], json!("GBP"));
+    assert_eq!(
+        fallback_order["totalPriceSet"]["presentmentMoney"]["currencyCode"],
+        json!("GBP")
+    );
+    assert_eq!(
+        fallback_order["totalPriceSet"]["presentmentMoney"]["amount"],
+        fallback_order["totalPriceSet"]["shopMoney"]["amount"]
+    );
+
+    // 5. Currency mismatch between `presentmentCurrency` and `presentmentMoney.currencyCode`.
+    let mismatch = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {
+                "presentmentCurrency": "EUR",
+                "lineItems": [{
+                    "title": "Tee",
+                    "quantity": 1,
+                    "priceSet": {
+                        "shopMoney": {"amount": "10.00", "currencyCode": "USD"},
+                        "presentmentMoney": {"amount": "8.00", "currencyCode": "GBP"},
+                    },
+                }],
+            }
+        }),
+    );
+    assert_eq!(mismatch["data"]["orderCreate"]["order"], Value::Null);
+    assert_eq!(
+        mismatch["data"]["orderCreate"]["userErrors"][0]["field"],
+        json!([
+            "order",
+            "lineItems",
+            "0",
+            "priceSet",
+            "presentmentMoney",
+            "currencyCode"
+        ])
+    );
+    assert_eq!(
+        mismatch["data"]["orderCreate"]["userErrors"][0]["code"],
+        json!("INVALID")
+    );
+
+    // 6. Foreign `presentmentMoney` without `presentmentCurrency` on a USD shop is rejected.
+    let missing_header = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {
+                "lineItems": [{
+                    "title": "Tee",
+                    "quantity": 1,
+                    "priceSet": {
+                        "shopMoney": {"amount": "10.00", "currencyCode": "USD"},
+                        "presentmentMoney": {"amount": "9.00", "currencyCode": "EUR"},
+                    },
+                }],
+            }
+        }),
+    );
+    assert_eq!(missing_header["data"]["orderCreate"]["order"], Value::Null);
+    assert_eq!(
+        missing_header["data"]["orderCreate"]["userErrors"][0]["code"],
+        json!("INVALID")
+    );
+}
