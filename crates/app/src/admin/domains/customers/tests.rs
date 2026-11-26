@@ -311,6 +311,184 @@ fn customer_set_creates_updates_and_upserts() {
 }
 
 #[test]
+fn case_only_email_update_keeps_stored_email_and_updated_at() {
+    let (_, mut shop) = demo();
+    let t0 = chrono::DateTime::parse_from_rfc3339("2026-11-23T10:27:06Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    shop.set_clock(crate::admin::state::Clock::Frozen(t0));
+
+    let created = run(
+        &mut shop,
+        "mutation { customerCreate(input: { email: \"probe.customer@example.com\" }) {
+            customer { id email displayName defaultEmailAddress { emailAddress } updatedAt }
+            userErrors { field message }
+        } }",
+        Value::Null,
+    );
+    let created_customer = &data(&created, "customerCreate")["customer"];
+    let id = created_customer["id"].as_str().unwrap().to_string();
+    let created_at = created_customer["updatedAt"].as_str().unwrap().to_string();
+    assert_eq!(
+        created_customer["email"],
+        json!("probe.customer@example.com")
+    );
+    assert_eq!(created_at, "2026-11-23T10:27:06Z");
+    shop.take_events();
+
+    // Advance the clock and send the same email in upper case: stored email and updatedAt stay.
+    let t1 = t0 + chrono::Duration::seconds(3);
+    shop.set_clock(crate::admin::state::Clock::Frozen(t1));
+    let case_only = run(
+        &mut shop,
+        "mutation($input: CustomerInput!) { customerUpdate(input: $input) {
+            customer { email displayName defaultEmailAddress { emailAddress } updatedAt }
+            userErrors { field message }
+        } }",
+        json!({"input": {"id": id, "email": "PROBE.CUSTOMER@EXAMPLE.COM"}}),
+    );
+    assert_eq!(data(&case_only, "customerUpdate")["userErrors"], json!([]));
+    let after_case_only = &data(&case_only, "customerUpdate")["customer"];
+    assert_eq!(
+        after_case_only["email"],
+        json!("probe.customer@example.com")
+    );
+    assert_eq!(
+        after_case_only["displayName"],
+        json!("probe.customer@example.com")
+    );
+    assert_eq!(
+        after_case_only["defaultEmailAddress"]["emailAddress"],
+        json!("probe.customer@example.com")
+    );
+    assert_eq!(after_case_only["updatedAt"], json!(created_at));
+    assert!(shop.events().is_empty());
+
+    // Polling `updated_at:>` after creation does not report the customer.
+    let polled = run(
+        &mut shop,
+        "query { customers(first: 20, query: \"updated_at:>2026-11-23T10:27:06Z\") { nodes { id } } }",
+        Value::Null,
+    );
+    assert_eq!(polled["data"]["customers"]["nodes"], json!([]));
+
+    // Case-only email with surrounding spaces also leaves email and updatedAt unchanged.
+    let t2 = t1 + chrono::Duration::seconds(3);
+    shop.set_clock(crate::admin::state::Clock::Frozen(t2));
+    let padded = run(
+        &mut shop,
+        "mutation($input: CustomerInput!) { customerUpdate(input: $input) {
+            customer { email updatedAt } userErrors { field message }
+        } }",
+        json!({"input": {"id": id, "email": "  Probe.Customer@Example.COM  "}}),
+    );
+    assert_eq!(data(&padded, "customerUpdate")["userErrors"], json!([]));
+    assert_eq!(
+        data(&padded, "customerUpdate")["customer"],
+        json!({"email": "probe.customer@example.com", "updatedAt": created_at})
+    );
+    assert!(shop.events().is_empty());
+
+    // Case-only email combined with another real change keeps the email casing, updates the other
+    // field, and bumps updatedAt.
+    let t3 = t2 + chrono::Duration::seconds(3);
+    shop.set_clock(crate::admin::state::Clock::Frozen(t3));
+    let with_name = run(
+        &mut shop,
+        "mutation($input: CustomerInput!) { customerUpdate(input: $input) {
+            customer { email firstName displayName updatedAt } userErrors { field message }
+        } }",
+        json!({"input": {"id": id, "email": "PROBE.CUSTOMER@EXAMPLE.COM", "firstName": "Probe"}}),
+    );
+    assert_eq!(data(&with_name, "customerUpdate")["userErrors"], json!([]));
+    assert_eq!(
+        data(&with_name, "customerUpdate")["customer"],
+        json!({
+            "email": "probe.customer@example.com",
+            "firstName": "Probe",
+            "displayName": "Probe",
+            "updatedAt": "2026-11-23T10:27:15Z",
+        })
+    );
+    assert_eq!(topics(&mut shop), ["customers/update"]);
+
+    // A genuinely different email updates the stored email and moves updatedAt.
+    let t4 = t3 + chrono::Duration::seconds(3);
+    shop.set_clock(crate::admin::state::Clock::Frozen(t4));
+    let real_change = run(
+        &mut shop,
+        "mutation($input: CustomerInput!) { customerUpdate(input: $input) {
+            customer { email defaultEmailAddress { emailAddress } updatedAt }
+            userErrors { field message }
+        } }",
+        json!({"input": {"id": id, "email": "New.Probe@Example.com"}}),
+    );
+    assert_eq!(
+        data(&real_change, "customerUpdate")["userErrors"],
+        json!([])
+    );
+    assert_eq!(
+        data(&real_change, "customerUpdate")["customer"],
+        json!({
+            "email": "New.Probe@Example.com",
+            "defaultEmailAddress": {"emailAddress": "New.Probe@Example.com"},
+            "updatedAt": "2026-11-23T10:27:18Z",
+        })
+    );
+    assert_eq!(topics(&mut shop), ["customers/update"]);
+
+    // Case-only change against a mixed-case stored email (via customerSet as well) preserves it.
+    let t5 = t4 + chrono::Duration::seconds(3);
+    shop.set_clock(crate::admin::state::Clock::Frozen(t5));
+    let set_case_only = run(
+        &mut shop,
+        "mutation($identifier: CustomerSetIdentifiers, $input: CustomerSetInput!) {
+            customerSet(identifier: $identifier, input: $input) {
+                customer { email updatedAt } userErrors { field message code }
+            }
+        }",
+        json!({
+            "identifier": {"email": "new.probe@example.com"},
+            "input": {"email": "NEW.PROBE@EXAMPLE.COM"},
+        }),
+    );
+    assert_eq!(data(&set_case_only, "customerSet")["userErrors"], json!([]));
+    assert_eq!(
+        data(&set_case_only, "customerSet")["customer"],
+        json!({
+            "email": "New.Probe@Example.com",
+            "updatedAt": "2026-11-23T10:27:18Z",
+        })
+    );
+    assert!(shop.events().is_empty());
+
+    // customerSet with case-only email plus another real change preserves the email casing and
+    // updates updatedAt.
+    let set_with_note = run(
+        &mut shop,
+        "mutation($identifier: CustomerSetIdentifiers, $input: CustomerSetInput!) {
+            customerSet(identifier: $identifier, input: $input) {
+                customer { email note updatedAt } userErrors { field message code }
+            }
+        }",
+        json!({
+            "identifier": {"email": "  new.probe@example.com  "},
+            "input": {"email": "NEW.PROBE@EXAMPLE.COM", "note": "kept casing"},
+        }),
+    );
+    assert_eq!(data(&set_with_note, "customerSet")["userErrors"], json!([]));
+    assert_eq!(
+        data(&set_with_note, "customerSet")["customer"],
+        json!({
+            "email": "New.Probe@Example.com",
+            "note": "kept casing",
+            "updatedAt": "2026-11-23T10:27:21Z",
+        })
+    );
+    assert_eq!(topics(&mut shop), ["customers/update"]);
+}
+
+#[test]
 fn the_address_book_of_a_customer() {
     let (_, mut shop) = demo();
     let noah = customer(&shop, "new.customer@example.com");

@@ -10,7 +10,8 @@
 //! - **Email and phone** are unique among the customers: "Email has already been taken" (the
 //!   Storefront API's `TAKEN` answer and the REST reference's `{"phone": ["has already been
 //!   taken"]}`, as Rails writes them whole), and must be valid: "Email is invalid", "Phone is
-//!   invalid" (Rails' wording; Shopify's is not published). An email is compared ignoring case.
+//!   invalid" (Rails' wording; Shopify's is not published). An email is compared ignoring case;
+//!   a case-only update keeps the stored casing and leaves `updatedAt` unchanged.
 //!   A phone is kept as given without its separators (`+1 (613) 555-0123` is `+16135550123`):
 //!   Shopify writes it in E.164 with the shop country's calling code, which lsf cannot add
 //!   *(chosen)*; it must have 7 to 15 digits.
@@ -142,12 +143,25 @@ fn check(
     errors: &mut Vec<UserError>,
 ) -> Checked {
     let record = existing.and_then(|existing| state.get(existing));
-    let email = given_text(input, "email");
-    if let Some(Some(email)) = &email {
-        if !is_email(email) {
+    let current = |field: &str| {
+        record
+            .and_then(|record| record.get(field))
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    };
+    let mut email = given_text(input, "email");
+    if let Some(Some(given)) = &email {
+        if !is_email(given) {
             errors.push(coded(&["email"], "Email is invalid", "INVALID"));
-        } else if holder(state, "email", email, existing).is_some() {
+        } else if holder(state, "email", given, existing).is_some() {
             errors.push(coded(&["email"], "Email has already been taken", "TAKEN"));
+        } else if current("email")
+            .as_deref()
+            .is_some_and(|stored| stored.eq_ignore_ascii_case(given))
+        {
+            // A case-only change keeps the stored email casing and does not count as a change.
+            email = None;
         }
     }
     let phone = given_text(input, "phone").map(|phone| match phone {
@@ -166,13 +180,6 @@ fn check(
         None => None,
     });
     // What the customer will have: what is given, else what it has.
-    let current = |field: &str| {
-        record
-            .and_then(|record| record.get(field))
-            .and_then(Value::as_str)
-            .filter(|text| !text.is_empty())
-            .map(str::to_string)
-    };
     let will_have = |given: &Option<Option<String>>, field: &str| match given {
         Some(value) => value.clone(),
         None => current(field),
@@ -338,13 +345,21 @@ fn update(state: &mut ShopState, customer: &str, input: &Map<String, Value>, che
     let Some(before) = state.get(customer).cloned() else {
         return;
     };
-    if let Some(record) = state.get_mut(customer) {
-        apply(record, input, checked);
+    let mut updated = before.clone();
+    apply(&mut updated, input, checked);
+    if updated != before
+        && let Some(record) = state.get_mut(customer)
+    {
+        *record = updated;
     }
     if let Some(addresses) = input.get("addresses").and_then(Value::as_array) {
         replace_addresses(state, customer, addresses);
     }
-    metafields::apply(state, customer, "CUSTOMER", input.get("metafields"));
+    let metafields_changed =
+        metafields::apply(state, customer, "CUSTOMER", input.get("metafields"));
+    if !metafields_changed && state.get(customer) == Some(&before) {
+        return;
+    }
     state.touch(customer);
     state.emit("customers/update", customer);
     let after = state.get(customer).cloned().unwrap_or_default();
@@ -495,7 +510,7 @@ fn customer_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         let wanted = if key == "phone" {
             normalized_phone(&wanted).unwrap_or(wanted)
         } else {
-            wanted
+            wanted.trim().to_string()
         };
         if let Some(given) = given_text(&input, key).flatten()
             && !same(key, &given, &wanted)
