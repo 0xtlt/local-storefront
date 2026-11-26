@@ -3,6 +3,42 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## 0.3.1 - 2026-11-26
+
+Store data in `shopify-local/` can now declare full metafield and metaobject definitions in JSON
+(#343), and `lsf` selects among an app's `shopify.app.<name>.toml` configuration files with
+`--config` (`-c`) or Shopify CLI's saved choice (#342).
+
+### Added
+
+- **Full metafield and metaobject definitions in `shopify-local/` JSON files** (#343). Declare
+  `metafield_definitions` and full `metaobject_definitions` in root data files or one per file
+  (or as an array) in `metafield_definitions/` and `metaobject_definitions/`, while remaining
+  backward-compatible with `metaobject_definitions.<type>.url_handle`. Definitions support
+  Shopify's 2026-10 fields (`owner_type`, `namespace`, `key`, `name`, `description`, `type`,
+  `validations` with portable metaobject type names, `pinned`/`pinned_position`, `access`,
+  `capabilities`, `standard_template`, `display_name_key`, and `field_definitions`). `lsf validate`
+  checks both the definitions and the store's metafield values and metaobject entries against them;
+  `lsf schema` and `lsf init` emit JSON Schemas for `metafield-definition` and
+  `metaobject-definition`; and the local Admin API boots with all declared definitions loaded,
+  resolving portable metaobject references to local definition GIDs. See
+  [Metafield and metaobject definitions](docs/data-format.md#metafield-and-metaobject-definitions)
+  and [Data reference](docs/data-reference.md).
+- **`--config` (`-c`) and `shopify app config use` selection for app configurations** (#342).
+  `app dev`, `serve --app`, and the other app commands accept `--config <name-or-path>` (`-c`, or
+  `LSF_APP_CONFIG`) to pick a `shopify.app.<name>.toml` file (by short name, filename, or path).
+  Without `--config`, `lsf` reads the configuration last selected with `shopify app config use`
+  before falling back to `shopify.app.toml` and then sorted `shopify.app.<name>.toml` files. The
+  startup banner, webhook logs, watcher, `validate`, and Admin API diagnostics now name the
+  configuration file actually read instead of always printing `shopify.app.toml`. See
+  [CLI reference](docs/cli.md).
+
+### Fixed
+
+- **Two-element shorthand metafield arrays are no longer misparsed as typed tuples** (#343). A
+  two-item array value such as `["cotton", "summer"]` now stays a list value rather than being
+  treated as `[type, value]`.
+
 ## 0.3.0 - 2026-11-20
 
 lsf now serves a local GraphQL Admin API (version 2026-10) and delivers an app's webhooks to its
