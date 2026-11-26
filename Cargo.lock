@@ -2395,6 +2395,7 @@ dependencies = [
  "indexmap 2.14.2",
  "jsonschema",
  "md-5",
+ "regex",
  "schemars",
  "serde",
  "serde_json",

@@ -25,6 +25,10 @@ pub enum FileKind {
     Blog,
     Customer,
     Menu,
+    /// One metafield definition (or an array of them) in `metafield_definitions/`.
+    MetafieldDefinition,
+    /// One metaobject definition (or an array of them) in `metaobject_definitions/`.
+    MetaobjectDefinition,
     /// The state of one browser session (`PUT /__lsf/session`).
     Session,
     /// A named setup of the local checkout (`checkouts/<name>.json`).
@@ -32,7 +36,7 @@ pub enum FileKind {
 }
 
 impl FileKind {
-    pub const ALL: [FileKind; 9] = [
+    pub const ALL: [FileKind; 11] = [
         FileKind::Store,
         FileKind::Product,
         FileKind::Collection,
@@ -40,6 +44,8 @@ impl FileKind {
         FileKind::Blog,
         FileKind::Customer,
         FileKind::Menu,
+        FileKind::MetafieldDefinition,
+        FileKind::MetaobjectDefinition,
         FileKind::Session,
         FileKind::CheckoutScenario,
     ];
@@ -54,6 +60,8 @@ impl FileKind {
             FileKind::Blog => "blog",
             FileKind::Customer => "customer",
             FileKind::Menu => "menu",
+            FileKind::MetafieldDefinition => "metafield-definition",
+            FileKind::MetaobjectDefinition => "metaobject-definition",
             FileKind::Session => "session",
             FileKind::CheckoutScenario => "checkout-scenario",
         }
@@ -68,6 +76,8 @@ impl FileKind {
             FileKind::Blog => Some("blogs"),
             FileKind::Customer => Some("customers"),
             FileKind::Menu => Some("menus"),
+            FileKind::MetafieldDefinition => Some("metafield_definitions"),
+            FileKind::MetaobjectDefinition => Some("metaobject_definitions"),
             FileKind::CheckoutScenario => Some("checkouts"),
             FileKind::Store | FileKind::Session => None,
         }
@@ -95,6 +105,8 @@ pub fn schema(kind: FileKind) -> Json {
         FileKind::Blog => schema_json::<model::BlogInput>(),
         FileKind::Customer => schema_json::<model::CustomerInput>(),
         FileKind::Menu => schema_json::<model::MenuInput>(),
+        FileKind::MetafieldDefinition => schema_json::<model::MetafieldDefinitionInput>(),
+        FileKind::MetaobjectDefinition => schema_json::<model::MetaobjectDefinitionInput>(),
         FileKind::Session => schema_json::<model::SessionInput>(),
         FileKind::CheckoutScenario => schema_json::<model::CheckoutScenarioInput>(),
     }

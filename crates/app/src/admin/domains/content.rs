@@ -15,7 +15,9 @@ mod tests;
 pub(crate) mod translations;
 pub mod types;
 
-pub use metafield_definitions::{remove_app_owned, restore_app_owned, seed_declared_definitions};
+pub use metafield_definitions::{
+    remove_app_owned, restore_app_owned, seed_declared_definitions, seed_store_definitions,
+};
 pub use metaobjects::{
     Removed as RemovedMetaobjectDefinitions,
     remove_app_owned as remove_app_owned_metaobject_definitions,
@@ -25,8 +27,8 @@ pub use online_store::refresh_blog;
 
 use chrono::Offset;
 use lsf_core::store::{
-    Article, Blog, CheckoutMetafield, Link, LinkTarget, Metafield, Metafields, Metaobject, Page,
-    Policy, reference,
+    Article, Blog, CheckoutMetafield, Link, LinkTarget, Metafield, MetafieldValidation, Metafields,
+    Metaobject, MetaobjectDefinition, Page, Policy, reference, same_metaobject_type,
 };
 use lsf_core::util::{handleize, stable_id};
 use serde_json::{Value, json};
@@ -498,64 +500,252 @@ fn menu_item(seed: &Seed, link: &Link, path: &str) -> Value {
     })
 }
 
+/// Resolves a portable metaobject type reference (`"look"`, `"$app:author"`, or an existing
+/// `gid://shopify/MetaobjectDefinition/...`) to the local shop's `MetaobjectDefinition` GID.
+pub(super) fn resolve_metaobject_definition_ref(seed: &Seed, reference: &str) -> String {
+    let trimmed = reference.trim();
+    if trimmed.starts_with("gid://shopify/MetaobjectDefinition/") {
+        return trimmed.to_string();
+    }
+    let data_kind = seed
+        .store
+        .metaobject_definitions
+        .keys()
+        .find(|known| same_metaobject_type(known, trimmed))
+        .cloned()
+        .or_else(|| {
+            seed.store
+                .metaobjects
+                .iter()
+                .find(|entry| entry.is_of(trimmed))
+                .map(|entry| entry.kind.clone())
+        })
+        .unwrap_or_else(|| data_type(seed.app_id, trimmed));
+    metaobject_definition_gid(&data_kind)
+}
+
+/// Converts resolved store-data validations into Admin API `MetafieldDefinitionValidation` JSON
+/// objects, resolving portable metaobject type references to the local shop's definition GIDs.
+pub(super) fn resolve_store_validations(
+    seed: &Seed,
+    validations: &[MetafieldValidation],
+) -> Vec<Value> {
+    validations
+        .iter()
+        .map(|validation| {
+            let value = match validation.name.as_str() {
+                "metaobject_definition_id" => {
+                    resolve_metaobject_definition_ref(seed, &validation.value)
+                }
+                "metaobject_definition_ids" => {
+                    match serde_json::from_str::<Vec<String>>(&validation.value) {
+                        Ok(refs) => Value::Array(
+                            refs.iter()
+                                .map(|r| Value::String(resolve_metaobject_definition_ref(seed, r)))
+                                .collect(),
+                        )
+                        .to_string(),
+                        Err(_) => validation.value.clone(),
+                    }
+                }
+                _ => validation.value.clone(),
+            };
+            json!({
+                "name": validation.name,
+                "type": validation.value_type,
+                "value": value,
+            })
+        })
+        .collect()
+}
+
 fn seed_metaobjects(seed: &mut Seed) {
     let store = seed.store;
     let created = Seed::epoch_string();
-    // The types in the order their first entry comes, with the fields their entries have.
-    let mut kinds: Vec<(&str, Vec<(&str, &str)>)> = Vec::new();
+    // Collect all metaobject types: declared definitions first (preserving declaration order),
+    // then any additional types inferred from entries.
+    let mut all_kinds: Vec<String> = store.metaobject_definitions.keys().cloned().collect();
     for entry in &store.metaobjects {
-        let at = match kinds.iter().position(|(kind, _)| *kind == entry.kind) {
-            Some(at) => at,
-            None => {
-                kinds.push((&entry.kind, Vec::new()));
-                kinds.len() - 1
-            }
-        };
-        for (key, field) in &entry.fields {
-            if !kinds[at].1.iter().any(|(known, _)| known == key) {
-                kinds[at].1.push((key, &field.kind));
-            }
+        if !all_kinds
+            .iter()
+            .any(|known| same_metaobject_type(known, &entry.kind))
+        {
+            all_kinds.push(entry.kind.clone());
         }
     }
-    for (kind, fields) in &kinds {
-        let display = display_key(fields.iter().map(|(key, _)| *key));
+
+    for kind in &all_kinds {
+        let declared: Option<&MetaobjectDefinition> = store.metaobject_definitions.get(kind);
         let entries: Vec<&Metaobject> = store
             .metaobjects
             .iter()
-            .filter(|entry| entry.kind == *kind)
+            .filter(|entry| entry.is_of(kind))
             .collect();
-        let field_definitions: Vec<Value> = fields
-            .iter()
-            .map(|(key, field_kind)| field_definition(key, field_kind))
-            .collect();
+
+        // Inferred field list from entries (used when `field_definitions` is not declared).
+        let mut inferred_fields: Vec<(&str, &str)> = Vec::new();
+        for entry in &entries {
+            for (key, field) in &entry.fields {
+                if !inferred_fields.iter().any(|(known, _)| known == key) {
+                    inferred_fields.push((key, &field.kind));
+                }
+            }
+        }
+
+        let has_declared_fields = declared.is_some_and(|def| def.field_definitions.is_some());
+        let field_definitions: Vec<Value> =
+            match declared.and_then(|d| d.field_definitions.as_ref()) {
+                Some(fields) => fields
+                    .iter()
+                    .map(|field| {
+                        json!({
+                            "key": field.key,
+                            "name": field.name,
+                            "description": field.description,
+                            "required": field.required,
+                            "type": definition_type(&field.kind),
+                            "validations": resolve_store_validations(seed, &field.validations),
+                            "capabilities": {
+                                "adminFilterable": {
+                                    "eligible": true,
+                                    "enabled": field.admin_filterable,
+                                }
+                            },
+                        })
+                    })
+                    .collect(),
+                None => inferred_fields
+                    .iter()
+                    .map(|(key, field_kind)| field_definition(key, field_kind))
+                    .collect(),
+            };
+
+        let display: Option<String> = match declared {
+            Some(def) if def.display_name_key.is_some() => def.display_name_key.clone(),
+            Some(def) if def.field_definitions.is_some() => None,
+            _ => display_key(inferred_fields.iter().map(|(key, _)| *key)).map(str::to_string),
+        };
+
+        let is_minimal = declared.is_none_or(MetaobjectDefinition::is_minimal_url_handle_only);
+        let publishable_enabled = declared
+            .and_then(|def| def.capabilities.publishable)
+            .unwrap_or(is_minimal);
+        let translatable_enabled = declared
+            .and_then(|def| def.capabilities.translatable)
+            .unwrap_or_else(|| entries.iter().any(|entry| !entry.translations.is_empty()));
+
+        let online_store = match declared.and_then(|def| def.capabilities.online_store.as_ref()) {
+            Some(os) if os.enabled => {
+                let handle = os
+                    .url_handle
+                    .as_deref()
+                    .or_else(|| declared.and_then(|d| d.url_handle.as_deref()))
+                    .unwrap_or(kind);
+                json!({
+                    "enabled": true,
+                    "data": {
+                        "urlHandle": handle,
+                        "canCreateRedirects": os.create_redirects,
+                    }
+                })
+            }
+            Some(_) => json!({"enabled": false, "data": null}),
+            None if is_minimal || declared.is_some_and(|d| d.url_handle.is_some()) => json!({
+                "enabled": true,
+                "data": {
+                    "urlHandle": store.metaobject_url_handle(kind),
+                    "canCreateRedirects": false,
+                }
+            }),
+            None => json!({"enabled": false, "data": null}),
+        };
+        let online_store_enabled = online_store["enabled"].as_bool().unwrap_or(false);
+
+        let renderable = match declared.and_then(|def| def.capabilities.renderable.as_ref()) {
+            Some(r) if r.enabled => json!({
+                "enabled": true,
+                "data": {
+                    "metaTitleKey": r.meta_title_key,
+                    "metaDescriptionKey": r.meta_description_key,
+                }
+            }),
+            _ => json!({"enabled": false, "data": null}),
+        };
+
+        let stored_kind = admin_namespace(seed.app_id, kind);
+        let app_owned = stored_kind.starts_with("app--");
+        let access = json!({
+            "admin": declared
+                .and_then(|d| d.access.admin)
+                .map(|a| a.as_str())
+                .unwrap_or(if app_owned { "MERCHANT_READ_WRITE" } else { "PUBLIC_READ_WRITE" }),
+            "storefront": declared
+                .and_then(|d| d.access.storefront)
+                .map(|a| a.as_str())
+                .unwrap_or("NONE"),
+            "customerAccount": declared
+                .and_then(|d| d.access.customer_account)
+                .map(|a| a.as_str())
+                .unwrap_or("NONE"),
+        });
+
+        let name = declared
+            .and_then(|d| d.name.clone())
+            .unwrap_or_else(|| value::humanize(kind.strip_prefix("$app:").unwrap_or(kind)));
+        let description = declared.and_then(|d| d.description.clone());
+
+        let standard_template = if declared.is_some_and(|d| d.standard_template) {
+            super::store_admin::standard::metaobject_template_value_for(kind).unwrap_or_else(|| {
+                json!({
+                    "type": stored_kind,
+                    "name": name,
+                    "description": description,
+                    "displayNameKey": display,
+                    "access": access,
+                    "enabledCapabilities": [],
+                    "fieldDefinitions": field_definitions,
+                })
+            })
+        } else {
+            Value::Null
+        };
+
         let mut ids = Vec::new();
         for entry in &entries {
-            ids.push(seed_metaobject(seed, entry, display, &created));
+            ids.push(seed_metaobject(
+                seed,
+                entry,
+                kind,
+                &field_definitions,
+                has_declared_fields,
+                display.as_deref(),
+                publishable_enabled,
+                online_store_enabled,
+                &created,
+            ));
         }
-        // A type the data translates has the translatable capability.
-        let translatable = entries.iter().any(|entry| !entry.translations.is_empty());
-        // An app's own type, `$app:author` in the store data, is `app--<id>--author` in the
-        // Admin API; its ids are made of the store data's spelling, as lsf-core makes them.
-        let name = kind.strip_prefix("$app:").unwrap_or(kind);
+
+        let app = gid("App", seed.app_id);
         seed.insert(json!({
             "__typename": "MetaobjectDefinition",
             "id": metaobject_definition_gid(kind),
-            "type": admin_namespace(seed.app_id, kind),
-            "name": value::humanize(name),
-            "description": null,
+            "type": stored_kind,
+            "name": name,
+            "description": description,
             "displayNameKey": display,
             "fieldDefinitions": field_definitions,
             "hasThumbnailField": false,
             "metaobjects": ids,
             "metaobjectsCount": entries.len(),
             "capabilities": {
-                "publishable": {"enabled": true},
-                "translatable": {"enabled": translatable},
-                "onlineStore": {"enabled": true, "data": {
-                    "urlHandle": store.metaobject_url_handle(kind),
-                    "canCreateRedirects": false,
-                }},
+                "publishable": {"enabled": publishable_enabled},
+                "translatable": {"enabled": translatable_enabled},
+                "renderable": renderable,
+                "onlineStore": online_store,
             },
+            "access": access,
+            "createdByApp": app,
+            "standardTemplate": standard_template,
             "createdAt": created,
             "updatedAt": created,
         }));
@@ -579,6 +769,9 @@ fn field_definition(key: &str, kind: &str) -> Value {
         "required": false,
         "type": definition_type(kind),
         "validations": [],
+        "capabilities": {
+            "adminFilterable": {"eligible": true, "enabled": false}
+        },
     })
 }
 
@@ -587,30 +780,75 @@ fn definition_type(kind: &str) -> Value {
     types::definition_type(kind)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn seed_metaobject(
     seed: &mut Seed,
     entry: &Metaobject,
+    definition_kind: &str,
+    field_definitions: &[Value],
+    has_declared_fields: bool,
     display: Option<&str>,
+    publishable_enabled: bool,
+    online_store_enabled: bool,
     created: &str,
 ) -> String {
     let id = metaobject_gid(&entry.kind, &entry.handle);
     let mut fields = Vec::new();
-    for (key, field) in &entry.fields {
-        let converted = convert(seed, &field.kind, &field.value);
-        let mut value = json!({
-            "key": key,
-            "type": field.kind,
-            "value": converted.value,
-            "jsonValue": converted.json,
-            "definition": field_definition(key, &field.kind),
-        });
-        if let Some(reference) = converted.reference {
-            value["reference"] = json!(reference);
+    if has_declared_fields {
+        for field_def in field_definitions {
+            let key = field_def
+                .get("key")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if let Some(field) = entry.fields.get(key) {
+                let converted = convert(seed, &field.kind, &field.value);
+                let mut value = json!({
+                    "key": key,
+                    "type": field.kind,
+                    "value": converted.value,
+                    "jsonValue": converted.json,
+                    "definition": field_def,
+                });
+                if let Some(reference) = converted.reference {
+                    value["reference"] = json!(reference);
+                }
+                if let Some(references) = converted.references {
+                    value["references"] = json!(references);
+                }
+                fields.push(value);
+            } else {
+                fields.push(json!({
+                    "key": key,
+                    "type": field_def.pointer("/type/name").cloned().unwrap_or(Value::Null),
+                    "value": null,
+                    "jsonValue": null,
+                    "definition": field_def,
+                }));
+            }
         }
-        if let Some(references) = converted.references {
-            value["references"] = json!(references);
+    } else {
+        for (key, field) in &entry.fields {
+            let converted = convert(seed, &field.kind, &field.value);
+            let field_def = field_definitions
+                .iter()
+                .find(|def| def.get("key").and_then(Value::as_str) == Some(key.as_str()))
+                .cloned()
+                .unwrap_or_else(|| field_definition(key, &field.kind));
+            let mut value = json!({
+                "key": key,
+                "type": field.kind,
+                "value": converted.value,
+                "jsonValue": converted.json,
+                "definition": field_def,
+            });
+            if let Some(reference) = converted.reference {
+                value["reference"] = json!(reference);
+            }
+            if let Some(references) = converted.references {
+                value["references"] = json!(references);
+            }
+            fields.push(value);
         }
-        fields.push(value);
     }
     let display_name = display
         .and_then(|key| entry.fields.get(key))
@@ -627,18 +865,25 @@ fn seed_metaobject(
             }
         }
     }
+    let mut capabilities = serde_json::Map::new();
+    if publishable_enabled {
+        capabilities.insert("publishable".into(), json!({"status": "ACTIVE"}));
+    }
+    if online_store_enabled {
+        capabilities.insert(
+            "onlineStore".into(),
+            json!({"templateSuffix": entry.template_suffix}),
+        );
+    }
     let key = seed.insert(json!({
         "__typename": "Metaobject",
         "id": id,
         "type": admin_namespace(seed.app_id, &entry.kind),
         "handle": entry.handle,
         "displayName": display_name,
-        "definition": metaobject_definition_gid(&entry.kind),
+        "definition": metaobject_definition_gid(definition_kind),
         "fields": fields,
-        "capabilities": {
-            "publishable": {"status": "ACTIVE"},
-            "onlineStore": {"templateSuffix": entry.template_suffix},
-        },
+        "capabilities": Value::Object(capabilities),
         "createdAt": created,
         "updatedAt": created,
     }));
@@ -1215,26 +1460,37 @@ pub fn attach_definition(state: &mut ShopState, metafield: &str) -> Option<Strin
             "metafieldsCount": 0,
         })));
     }
-    let definition: &mut Record = state.get_mut(&id)?;
-    let same_type = definition
-        .get("type")
-        .and_then(|kind| kind.get("name"))
-        .and_then(Value::as_str)
-        == Some(kind.as_str());
-    if let Some(Value::Array(metafields)) = definition.get_mut("metafields")
-        && !metafields
-            .iter()
-            .any(|known| known.as_str() == Some(metafield))
-    {
-        metafields.push(json!(metafield));
-        let count = metafields.len();
-        definition.insert("metafieldsCount".to_string(), json!(count));
-    }
-    if !same_type {
-        definition.insert("validationStatus".to_string(), json!("SOME_INVALID"));
-    }
+    let mut added = false;
+    let has_validations = {
+        let definition: &mut Record = state.get_mut(&id)?;
+        let same_type = definition
+            .get("type")
+            .and_then(|kind| kind.get("name"))
+            .and_then(Value::as_str)
+            == Some(kind.as_str());
+        if let Some(Value::Array(metafields)) = definition.get_mut("metafields")
+            && !metafields
+                .iter()
+                .any(|known| known.as_str() == Some(metafield))
+        {
+            metafields.push(json!(metafield));
+            let count = metafields.len();
+            definition.insert("metafieldsCount".to_string(), json!(count));
+            added = true;
+        }
+        if !same_type {
+            definition.insert("validationStatus".to_string(), json!("SOME_INVALID"));
+        }
+        definition
+            .get("validations")
+            .and_then(Value::as_array)
+            .is_some_and(|v| !v.is_empty())
+    };
     if let Some(record) = state.get_mut(metafield) {
         record.insert("definition".to_string(), json!(id));
+    }
+    if added && has_validations {
+        metafields::refresh_definition(state, &id);
     }
     Some(id)
 }

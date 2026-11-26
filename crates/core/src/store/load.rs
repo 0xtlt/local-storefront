@@ -6,11 +6,12 @@
 //! shopify-local/
 //!   *.json            any number of files, each holding any of: shop, products, collections,
 //!                     pages, blogs, menus, customers, companies, gift_cards, redirects,
-//!                     locations, selling_plan_groups, swatches, metaobjects,
-//!                     metaobject_definitions, localization, files, session, checkout, now,
-//!                     theme_settings, app. They are merged.
+//!                     locations, selling_plan_groups, swatches, metafield_definitions,
+//!                     metaobjects, metaobject_definitions, localization, files, session,
+//!                     checkout, now, theme_settings, app. They are merged.
 //!   products/*.json   one product per file (or an array); the file name is the default handle
 //!   collections/*.json, pages/*.json, blogs/*.json, customers/*.json, menus/*.json
+//!   metafield_definitions/*.json, metaobject_definitions/*.json
 //!   checkouts/*.json  checkout scenarios, one per file
 //!   files/            images and other files, served under /cdn/shop/files/
 //!   schema/           JSON Schemas written by `lsf init` for editor support (ignored here)
@@ -420,6 +421,56 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
                     );
                 }
             }
+            FileKind::MetafieldDefinition => {
+                merged
+                    .metafield_definitions
+                    .extend(entities::<model::MetafieldDefinitionInput>(
+                        FileKind::MetafieldDefinition,
+                        name,
+                        &json,
+                        diagnostics,
+                    ));
+            }
+            FileKind::MetaobjectDefinition => {
+                let single = json.is_object();
+                for definition in entities::<model::MetaobjectDefinitionInput>(
+                    FileKind::MetaobjectDefinition,
+                    name,
+                    &json,
+                    diagnostics,
+                ) {
+                    let kind = match definition.value.kind.clone() {
+                        Some(kind) => kind,
+                        None if single => file_stem(name),
+                        None => {
+                            diagnostics
+                                .error(
+                                    "missing_field",
+                                    name,
+                                    &definition.origin.pointer,
+                                    "missing required field \"type\"",
+                                )
+                                .hint(
+                                    "add \"type\" to each metaobject definition in an array file",
+                                );
+                            continue;
+                        }
+                    };
+                    if let Some(previous) = merged.metaobject_definitions.get(&kind) {
+                        diagnostics.error(
+                            "duplicate_metaobject_definition",
+                            name,
+                            &definition.origin.pointer,
+                            format!(
+                                "metaobject definition \"{kind}\" is already defined in {}",
+                                previous.origin.file
+                            ),
+                        );
+                        continue;
+                    }
+                    merged.metaobject_definitions.insert(kind, definition);
+                }
+            }
             FileKind::Session => {}
             FileKind::CheckoutScenario => {
                 let mut problems = Diagnostics::new();
@@ -474,7 +525,7 @@ fn salvage_store(
     json: &Json,
     problems: &[crate::diagnostics::Diagnostic],
 ) -> Option<(model::StoreInput, Skipped)> {
-    const LISTS: [&str; 10] = [
+    const LISTS: [&str; 11] = [
         "products",
         "collections",
         "pages",
@@ -485,6 +536,7 @@ fn salvage_store(
         "redirects",
         "locations",
         "selling_plan_groups",
+        "metafield_definitions",
     ];
     let mut salvaged = json.clone();
     let mut skipped = Skipped::default();
@@ -756,12 +808,33 @@ fn merge_store_file(
             )),
         });
     }
+    for (index, value) in input.metafield_definitions.into_iter().enumerate() {
+        merged.metafield_definitions.push(Sourced {
+            value,
+            origin: origin(format!(
+                "/metafield_definitions/{}",
+                skipped.original("metafield_definitions", index)
+            )),
+        });
+    }
     for (name, value) in input.swatches {
         let origin = origin(format!("/swatches/{name}"));
         merged.swatches.insert(name, Sourced { value, origin });
     }
     for (kind, value) in input.metaobject_definitions {
         let origin = origin(format!("/metaobject_definitions/{kind}"));
+        if let Some(previous) = merged.metaobject_definitions.get(&kind) {
+            diagnostics.error(
+                "duplicate_metaobject_definition",
+                file,
+                &origin.pointer,
+                format!(
+                    "metaobject definition \"{kind}\" is already defined in {}",
+                    previous.origin.file
+                ),
+            );
+            continue;
+        }
         merged
             .metaobject_definitions
             .insert(kind, Sourced { value, origin });
@@ -1090,6 +1163,12 @@ fn apply_overlay(
         name,
         "selling_plan_groups",
     );
+    upsert(
+        &mut merged.metafield_definitions,
+        input.metafield_definitions,
+        name,
+        "metafield_definitions",
+    );
     for (name, value) in input.swatches {
         let origin = origin(format!("/swatches/{name}"));
         merged.swatches.insert(name, Sourced { value, origin });
@@ -1241,6 +1320,14 @@ upserted!(model::LocationInput, "location", |location| Cow::Owned(
 ));
 upserted!(model::SellingPlanGroupInput, |group| Cow::Owned(
     group.name.to_lowercase()
+));
+upserted!(model::MetafieldDefinitionInput, |definition| Cow::Owned(
+    format!(
+        "{}/{}.{}",
+        definition.owner_type.as_str(),
+        definition.namespace.as_deref().unwrap_or("$app"),
+        definition.key
+    )
 ));
 
 /// Upserts the entities of an overlay's `field` into `list`, one after the other. An entity

@@ -23,8 +23,9 @@ data directory is one of these, and they are merged, so you can split the data a
 | `companies` | array of [Company](#company) | Companies that buy from the store (B2B). Customers join one with their `company`. |
 | `gift_cards` | array of [GiftCard](#giftcard) | Issued gift cards, each with its own page. |
 | `redirects` | array of [Redirect](#redirect) | URL redirects: an old path of the store that leads to a page of it, as Online Store > Navigation > URL redirects and the Admin API's `urlRedirectCreate` make them. |
+| `metafield_definitions` | array of [MetafieldDefinition](#metafielddefinition) | Metafield definitions. They can also live one per file (or as an array) in `metafield_definitions/`. |
 | `metaobjects` | map of array of [Metaobject](#metaobject) | Metaobject entries by type. |
-| `metaobject_definitions` | map of [MetaobjectDefinition](#metaobjectdefinition) | The definitions of metaobject types, by type: what a type sets for all its entries. |
+| `metaobject_definitions` | map of [MetaobjectDefinition](#metaobjectdefinition) | The definitions of metaobject types, by type. They can also live one per file (or as an array) in `metaobject_definitions/`. |
 | `localization` | [Localization](#localization) | The countries and languages of the store. At most one data file may define it. |
 | `swatches` | map of [Swatch](#swatch) | The swatches of product option values, by the name of the value: `{"White": "#ffffff", "Floral": {"image": "swatches/floral.jpg"}}`. Every option value with one of these names gets the swatch, on products and in collection filters. |
 | `locations` | array of [Location](#location) | The places the store stocks products at, for store pickup. |
@@ -719,6 +720,109 @@ A URL redirect: a visit to `path` that finds nothing is sent to `target` with a 
 | `path` | string | **Required.** The old path, `/old-tee.html`, matched whatever its case. A `/` is added in front of a path without one, as the Admin API adds it. |
 | `target` | string | **Required.** Where it leads: a path of the store (`/products/tee`) or a URL. |
 
+## MetafieldDefinition
+
+A metafield definition (`MetafieldDefinition`), declared in `metafield_definitions` of a data
+file or one per file (or an array) in `metafield_definitions/`.
+
+| Field | Type | Description |
+|---|---|---|
+| `$schema` | string | Lets editors validate and autocomplete the file, e.g. `"../schema/metafield-definition.schema.json"`. |
+| `owner_type` | [MetafieldOwnerType](#metafieldownertype) | **Required.** The Shopify resource type this definition applies to, e.g. `PRODUCT`, `PRODUCTVARIANT`, `COLLECTION`, `CUSTOMER`, `ORDER`, `SHOP`. |
+| `namespace` | string | Namespace (3–255 characters of letters, digits, `-`, `_`, or `$app` / `$app:<name>`). Defaults to `"$app"` when omitted, matching the Admin API. |
+| `key` | string | **Required.** Key (2–64 characters of letters, digits, `-`, `_`). |
+| `name` | string | Human-readable name shown in the Shopify admin. Defaults to a humanized form of `key`. |
+| `description` | string | Description of the definition (at most 255 characters). |
+| `type` | string | **Required.** Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`, `number_integer`, `metaobject_reference`, `list.product_reference`. |
+| `validations` | array of [MetafieldValidation](#metafieldvalidation) | Validation rules for values of this metafield (`min`, `max`, `regex`, `choices`, `scale_min`, `scale_max`, `list.min`, `list.max`, `metaobject_definition_id`, ...). |
+| `pinned` | boolean | Whether the definition is pinned in the Shopify admin. Pinned definitions get sequential `pinnedPosition` values starting from 1 per `owner_type` (at most 20). |
+| `pinned_position` | integer | Explicit 1-based pinned position (1–20). Setting this pins the definition at that position. |
+| `access` | [MetafieldAccess](#metafieldaccess) | Access controls (`admin`, `storefront`, `customer_account`). |
+| `capabilities` | [MetafieldCapabilities](#metafieldcapabilities) | Definition capabilities (`admin_filterable`, `analytics_queryable`, `cart_to_order_copyable`, `smart_collection_condition`, `unique_values`). |
+| `standard_template` | boolean | Marks the definition as a Shopify standard metafield definition (e.g. `descriptors.care_guide`, `reviews.rating`). Allows reserved `shopify` / `shopify--*` namespaces and populates `standardTemplate` in the Admin API. |
+
+## MetafieldOwnerType
+
+The Shopify resource type a metafield definition belongs to (`MetafieldOwnerType`).
+
+One of: `"API_PERMISSION"`, `"ARTICLE"`, `"BLOG"`, `"CARTTRANSFORM"`, `"COLLECTION"`, `"COMPANY"`, `"COMPANY_LOCATION"`, `"CUSTOMER"`, `"DELIVERY_CUSTOMIZATION"`, `"DISCOUNT"`, `"DRAFTORDER"`, `"FULFILLMENT_CONSTRAINT_RULE"`, `"GIFT_CARD_TRANSACTION"`, `"LOCATION"`, `"MARKET"`, `"ORDER"`, `"ORDER_ROUTING_LOCATION_RULE"`, `"PAGE"`, `"PAYMENT_CUSTOMIZATION"`, `"PRODUCT"`, `"PRODUCTVARIANT"`, `"SELLING_PLAN"`, `"SHOP"`, `"TRANSFER"`, `"VALIDATION"`.
+
+## MetafieldValidation
+
+A validation rule on a metafield definition or metaobject field definition
+(`MetafieldDefinitionValidationInput`).
+
+For `metaobject_definition_id` / `metaobject_definition_ids` (or the portable aliases
+`metaobject_definition_type` / `metaobject_definition_types`), write portable metaobject type
+names (e.g. `"look"`, `"$app:author"`, or `["look", "designer"]`) instead of shop-specific
+GIDs; lsf validates them against the store's metaobject definitions and resolves them to the
+local shop's definition GIDs in the Admin API.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | **Required.** Validation rule name: `min`, `max`, `regex`, `choices`, `max_precision`, `scale_min`, `scale_max`, `schema`, `allowed_domains`, `file_type_options`, `list.min`, `list.max`, `metaobject_definition_id` (or `metaobject_definition_type`), `metaobject_definition_ids` (or `metaobject_definition_types`), `product_taxonomy_attribute_handle`. |
+| `value` | any JSON value | **Required.** Rule value as a string (Shopify's format, e.g. `"500"`, `"[\"gold\",\"silver\"]"`, `"look"`), or as a JSON number, array or object. |
+
+## MetafieldAccess
+
+Access controls of a metafield definition (`MetafieldAccess`).
+
+| Field | Type | Description |
+|---|---|---|
+| `admin` | [DefinitionAdminAccess](#definitionadminaccess) | Admin API access. Only allowed on app-owned namespaces (`$app` or `$app:<name>`). |
+| `storefront` | [DefinitionStorefrontAccess](#definitionstorefrontaccess) | Storefront API access (`NONE` or `PUBLIC_READ`). |
+| `customer_account` | [MetafieldCustomerAccountAccess](#metafieldcustomeraccountaccess) | Customer Account API access (`NONE`, `READ`, or `READ_WRITE`). |
+
+## DefinitionAdminAccess
+
+Admin API access level for a metafield or metaobject definition (`MetafieldAdminAccess` /
+`MetaobjectAdminAccess`).
+
+One of: `"MERCHANT_READ"`, `"MERCHANT_READ_WRITE"`, `"PRIVATE"`, `"PUBLIC_READ"`, `"PUBLIC_READ_WRITE"`.
+
+## DefinitionStorefrontAccess
+
+Storefront API access level for a metafield or metaobject definition
+(`MetafieldStorefrontAccess` / `MetaobjectStorefrontAccess`).
+
+One of: `"NONE"`, `"PUBLIC_READ"`.
+
+## MetafieldCustomerAccountAccess
+
+Customer Account API access level for a metafield definition
+(`MetafieldCustomerAccountAccess`).
+
+One of: `"NONE"`, `"READ"`, `"READ_WRITE"`.
+
+## MetafieldCapabilities
+
+Capabilities of a metafield definition (`MetafieldCapabilities`).
+
+| Field | Type | Description |
+|---|---|---|
+| `admin_filterable` | [CapabilityFlag](#capabilityflag) | Allows filtering by this metafield in the Shopify admin (`adminFilterable`). |
+| `analytics_queryable` | [CapabilityFlag](#capabilityflag) | Allows querying this metafield in ShopifyQL analytics (`analyticsQueryable`). |
+| `cart_to_order_copyable` | [CapabilityFlag](#capabilityflag) | Copies matching cart metafields to orders (`cartToOrderCopyable`). Only valid for `ORDER` definitions. |
+| `smart_collection_condition` | [CapabilityFlag](#capabilityflag) | Allows using this metafield in automated collection conditions (`smartCollectionCondition`). |
+| `unique_values` | [CapabilityFlag](#capabilityflag) | Enforces unique values across owners (`uniqueValues`). |
+
+## CapabilityFlag
+
+Enables or disables a capability: a boolean (`true` / `false`) or `{"enabled": true}`.
+
+One of:
+
+- boolean
+- [CapabilityEnabled](#capabilityenabled)
+
+## CapabilityEnabled
+
+A capability toggle written as an object, matching Shopify's GraphQL input shape.
+
+| Field | Type | Description |
+|---|---|---|
+| `enabled` | boolean | **Required.** |
+
 ## Metaobject
 
 A metaobject entry (`metaobjects.<type>.<handle>`).
@@ -732,11 +836,130 @@ A metaobject entry (`metaobjects.<type>.<handle>`).
 
 ## MetaobjectDefinition
 
-The definition of a metaobject type (`metaobject_definitions.<type>`).
+The definition of a metaobject type (`metaobject_definitions.<type>`, or one per file in
+`metaobject_definitions/`).
 
 | Field | Type | Description |
 |---|---|---|
+| `$schema` | string | Lets editors validate and autocomplete the file, e.g. `"../schema/metaobject-definition.schema.json"`. |
+| `type` | string | The metaobject type (e.g. `"look"` or `"$app:author"`). Optional inside the `metaobject_definitions` map (where the map key is the type) and in a single-object `metaobject_definitions/<type>.json` file (where the file name is the default type); required in an array file. |
+| `name` | string | Human-readable name shown in the Shopify admin. Defaults to a humanized form of the type. |
+| `description` | string | Description of the metaobject type (at most 255 characters). |
+| `display_name_key` | string | Key of the field used as the display name for entries (`displayNameKey`). |
 | `url_handle` | string | The handle of the type's web pages, Shopify's `capabilities.onlineStore.data.urlHandle`: the entries are served at `/pages/<url_handle>/<handle>`. Defaults to the type. |
+| `access` | [MetaobjectAccess](#metaobjectaccess) | Access controls (`admin`, `storefront`, `customer_account`). |
+| `capabilities` | [MetaobjectCapabilities](#metaobjectcapabilities) | Capabilities (`publishable`, `translatable`, `online_store`, `renderable`). |
+| `standard_template` | boolean | Marks the definition as a Shopify standard metaobject definition (e.g. `product_review`), populating `standardTemplate` in the Admin API. |
+| `field_definitions` | array of [MetaobjectFieldDefinition](#metaobjectfielddefinition) | The fields of entries of this metaobject type (`fieldDefinitions`). When omitted, fields are inferred from the entries in `metaobjects`. |
+
+## MetaobjectAccess
+
+Access controls of a metaobject definition (`MetaobjectAccess`).
+
+| Field | Type | Description |
+|---|---|---|
+| `admin` | [DefinitionAdminAccess](#definitionadminaccess) | Admin API access. Only allowed on app-owned types (`$app:<type>`). |
+| `storefront` | [DefinitionStorefrontAccess](#definitionstorefrontaccess) | Storefront API access (`NONE` or `PUBLIC_READ`). |
+| `customer_account` | [MetaobjectCustomerAccountAccess](#metaobjectcustomeraccountaccess) | Customer Account API access (`NONE` or `READ`). |
+
+## MetaobjectCustomerAccountAccess
+
+Customer Account API access level for a metaobject definition
+(`MetaobjectCustomerAccountAccess`).
+
+One of: `"NONE"`, `"READ"`.
+
+## MetaobjectCapabilities
+
+Capabilities of a metaobject definition (`MetaobjectCapabilities`).
+
+| Field | Type | Description |
+|---|---|---|
+| `publishable` | [CapabilityFlag](#capabilityflag) | Enables draft/active publish status on entries (`publishable`). |
+| `translatable` | [CapabilityFlag](#capabilityflag) | Enables translating entries (`translatable`). |
+| `online_store` | [OnlineStoreCapability](#onlinestorecapability) | Exposes entries as Online Store web pages (`onlineStore`). |
+| `renderable` | [RenderableCapability](#renderablecapability) | Enables SEO title and description metadata keys (`renderable`). |
+
+## OnlineStoreCapability
+
+Online Store capability on a metaobject definition: a boolean, or an object with `url_handle`
+and optional `enabled` / `create_redirects` / `data`.
+
+One of:
+
+- boolean
+- [OnlineStoreCapabilityDetail](#onlinestorecapabilitydetail)
+
+## OnlineStoreCapabilityDetail
+
+Detailed Online Store capability configuration for a metaobject definition.
+
+| Field | Type | Description |
+|---|---|---|
+| `enabled` | boolean | Whether Online Store web pages are enabled. Defaults to `true` when this object is given. |
+| `url_handle` | string | URL handle for the type's web pages (`/pages/<url_handle>/<handle>`). |
+| `create_redirects` | boolean | Whether handle changes create redirects (`canCreateRedirects`). |
+| `data` | [OnlineStoreCapabilityData](#onlinestorecapabilitydata) | Nested `data` object (`{"url_handle": ..., "create_redirects": ...}`), matching Shopify's GraphQL input shape. |
+
+## OnlineStoreCapabilityData
+
+Online Store capability data (`capabilities.onlineStore.data`).
+
+| Field | Type | Description |
+|---|---|---|
+| `url_handle` | string | URL handle for the type's web pages (`/pages/<url_handle>/<handle>`). |
+| `create_redirects` | boolean | Whether handle changes create redirects (`createRedirects` / `canCreateRedirects`). |
+
+## RenderableCapability
+
+Renderable capability on a metaobject definition: a boolean, or an object with SEO key fields.
+
+One of:
+
+- boolean
+- [RenderableCapabilityDetail](#renderablecapabilitydetail)
+
+## RenderableCapabilityDetail
+
+Detailed Renderable capability configuration for a metaobject definition.
+
+| Field | Type | Description |
+|---|---|---|
+| `enabled` | boolean | Whether the renderable capability is enabled. Defaults to `true` when this object is given. |
+| `meta_title_key` | string | Key of the field holding the SEO meta title (`metaTitleKey`). |
+| `meta_description_key` | string | Key of the field holding the SEO meta description (`metaDescriptionKey`). |
+| `data` | [RenderableCapabilityData](#renderablecapabilitydata) | Nested `data` object (`{"meta_title_key": ..., "meta_description_key": ...}`), matching Shopify's GraphQL input shape. |
+
+## RenderableCapabilityData
+
+Renderable capability data (`capabilities.renderable.data`).
+
+| Field | Type | Description |
+|---|---|---|
+| `meta_title_key` | string | Key of the field holding the SEO meta title (`metaTitleKey`). |
+| `meta_description_key` | string | Key of the field holding the SEO meta description (`metaDescriptionKey`). |
+
+## MetaobjectFieldDefinition
+
+A field definition of a metaobject type (`MetaobjectFieldDefinition`).
+
+| Field | Type | Description |
+|---|---|---|
+| `key` | string | **Required.** Field key (1–64 characters of letters, digits, `-`, `_`). |
+| `name` | string | Human-readable name. Defaults to a humanized form of `key`. |
+| `description` | string | Description of the field (at most 255 characters). |
+| `type` | string | **Required.** Shopify metafield type, e.g. `single_line_text_field`, `list.product_reference`, `metaobject_reference`. |
+| `required` | boolean | Whether entries of this metaobject type must provide a value for this field. Defaults to `false`. |
+| `validations` | array of [MetafieldValidation](#metafieldvalidation) | Validation rules for values of this field (`min`, `max`, `regex`, `choices`, `metaobject_definition_id`, ...). |
+| `capabilities` | [MetaobjectFieldCapabilities](#metaobjectfieldcapabilities) | Field capabilities (`admin_filterable`). |
+
+## MetaobjectFieldCapabilities
+
+Capabilities of a metaobject field definition (`MetaobjectFieldDefinitionCapabilities`).
+
+| Field | Type | Description |
+|---|---|---|
+| `admin_filterable` | [CapabilityFlag](#capabilityflag) | Allows filtering metaobject entries by this field in the admin (`adminFilterable`). |
 
 ## Localization
 

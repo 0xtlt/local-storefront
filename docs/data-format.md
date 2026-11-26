@@ -48,19 +48,21 @@ used; `npx local-storefront init` writes that demo store to disk as a starting p
 
 ```text
 shopify-local/
-  store.json            data files: any name, any number, merged together
+  store.json                data files: any name, any number, merged together
   menus.json
-  products/             one product per file; the file name is the default handle
+  products/                 one product per file; the file name is the default handle
     blue-shirt.json
-  collections/          same for collections,
-  pages/                pages,
-  blogs/                blogs (with their articles),
-  customers/            customers,
-  menus/                and menus (the file name is the menu handle)
-  checkouts/            checkout scenarios, one named setup of the local checkout per file
-  files/                images, videos, fonts: served under /cdn/shop/files/
-  schema/               JSON Schemas for editors, written by `init` (not read back)
-  README.md             this document
+  collections/              same for collections,
+  pages/                    pages,
+  blogs/                    blogs (with their articles),
+  customers/                customers,
+  menus/                    menus (the file name is the menu handle),
+  metafield_definitions/    metafield definitions,
+  metaobject_definitions/   and metaobject definitions (the file name is the default type)
+  checkouts/                checkout scenarios, one named setup of the local checkout per file
+  files/                    images, videos, fonts: served under /cdn/shop/files/
+  schema/                   JSON Schemas for editors, written by `init` (not read back)
+  README.md                 this document
 ```
 
 **Starting from your own data.** The files of the demo store name each other:
@@ -80,14 +82,14 @@ and `tags`, or these collections stay empty.
 
 Every `*.json` file at the root is a **data file**: an object with any of the keys `shop`,
 `products`, `collections`, `pages`, `blogs`, `menus`, `customers`, `companies`, `gift_cards`,
-`selling_plan_groups`, `locations`, `swatches`, `metaobjects`, `localization`, `files`,
-`session`, `checkout`, `now`, `theme_settings` and `app`. Root files are merged, so the data can be
-split however is convenient. Lists add up; `shop`, `localization`, `session`, `checkout` and
-`now` may be defined in one file only.
+`selling_plan_groups`, `locations`, `swatches`, `metafield_definitions`, `metaobject_definitions`,
+`metaobjects`, `localization`, `files`, `session`, `checkout`, `now`, `theme_settings` and `app`.
+Root files are merged, so the data can be split however is convenient. Lists add up; `shop`,
+`localization`, `session`, `checkout` and `now` may be defined in one file only.
 
-A file in `products/`, `collections/`, `pages/`, `blogs/` or `customers/` holds one entity, or
-an array of them. Files are read in alphabetical order, which is the order products matched by
-the rules of an automated collection are listed in.
+A file in `products/`, `collections/`, `pages/`, `blogs/`, `customers/`, `metafield_definitions/`
+or `metaobject_definitions/` holds one entity, or an array of them. Files are read in alphabetical
+order, which is the order products matched by the rules of an automated collection are listed in.
 
 JSON files may contain `//` and `/* */` comments.
 
@@ -100,7 +102,8 @@ Point `$schema` at the schema of the file's kind to get completion and inline er
 ```
 
 `npx local-storefront schema <kind>` prints a schema (`store`, `product`, `collection`, `page`,
-`blog`, `customer`, `menu`, `session`, `checkout-scenario`), `npx local-storefront schema --out <dir>` writes them
+`blog`, `customer`, `menu`, `metafield-definition`, `metaobject-definition`, `session`,
+`checkout-scenario`), `npx local-storefront schema --out <dir>` writes them
 all, and a running server serves them at `/__lsf/schema/<kind>`.
 
 ## Conventions
@@ -1099,6 +1102,63 @@ namespaces are (`$app:config`). Shopify writes them in full, `app--<app id>--aut
 theme's Liquid uses: `metaobjects['app--1234--author']` and `metaobjects['$app:author']` both
 find them, whatever the id, since the store data does not know it.
 
+### Metafield and metaobject definitions
+
+Metafield and metaobject definitions can be declared directly in root data files
+(`metafield_definitions` and `metaobject_definitions`) or as one JSON file per definition (or an
+array of them) in `metafield_definitions/` and `metaobject_definitions/`:
+
+```json
+{
+  "metafield_definitions": [
+    {
+      "owner_type": "PRODUCT",
+      "namespace": "custom",
+      "key": "care_guide",
+      "name": "Care guide",
+      "type": "multi_line_text_field",
+      "validations": [{ "name": "max", "value": "500" }],
+      "pinned": true,
+      "access": { "storefront": "PUBLIC_READ" }
+    }
+  ],
+  "metaobject_definitions": {
+    "look": {
+      "name": "Look",
+      "url_handle": "looks",
+      "display_name_key": "title",
+      "access": { "storefront": "PUBLIC_READ" },
+      "capabilities": { "publishable": true, "translatable": false },
+      "field_definitions": [
+        { "key": "title", "name": "Title", "type": "single_line_text_field", "required": true },
+        { "key": "products", "name": "Products", "type": "list.product_reference" }
+      ]
+    }
+  }
+}
+```
+
+In `metaobject_definitions/<type>.json`, a single object defaults its `type` to the file name stem
+(keeping underscores such as `product_review`); an array file sets `type` on each object.
+
+- **Validations and portable metaobject references.** Definition `validations` take Shopify's
+  `{ "name": "...", "value": "..." }` pairs (`min`, `max`, `regex`, `choices`, `schema`, `list.min`,
+  `list.max`, `min_precision`, `max_precision`, `file_type_options`, `metaobject_definition_id`,
+  `metaobject_definition_ids`). Because fixture data does not hard-code store-specific GIDs,
+  `metaobject_definition_id` / `metaobject_definition_ids` (or the portable aliases
+  `metaobject_definition_type` / `metaobject_definition_types`) accept metaobject type names
+  (`"look"`, `"$app:author"`, or `["look", "$app:author"]`), which the local Admin API resolves to
+  the local shop's `MetaobjectDefinition` GIDs.
+- **Validation of store data.** `validate` checks the definitions themselves (types, owner types,
+  validations, access, capabilities, pinning limits, duplicates) and checks every matching metafield
+  value and metaobject entry against them: shorthand values adopt the definition's type, explicit
+  types must match, validations must pass, required metaobject fields must be present, unknown
+  fields are rejected when `field_definitions` is declared, and translations are rejected when
+  `capabilities.translatable` is `false`.
+- **Admin API seeding.** The local Admin API boots with all declared metafield and metaobject
+  definitions already loaded (including definitions that have no entries or metafields yet), ready
+  to query and enforced on mutations alongside inferred definitions and `shopify.app.toml`.
+
 ### Translations of metaobjects
 
 An entry's `translations` give its fields in the store's other languages, by language, then
@@ -1260,6 +1320,10 @@ extensions:
 | `invalid_throttle` | The `throttle` of a session sent to `PUT /__lsf/session` is not one `--throttle` takes. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
 | `invalid_metafield`, `unknown_metafield_type` | A typed metafield (or field of a metaobject, or a translation of one) whose value its type refuses, or whose type Shopify does not have. The hint shows how the type is written. |
+| `invalid_definition`, `reserved_namespace`, `duplicate_metafield_definition`, `duplicate_metaobject_definition`, `duplicate_field_definition` | A metafield or metaobject definition has an invalid name/type/key, uses Shopify's reserved `shopify` namespace without `standard_template`, or is declared twice. |
+| `duplicate_validation`, `invalid_validation`, `missing_validation`, `unknown_metaobject_definition` | A definition's validation rule is repeated, malformed, missing (such as `metaobject_definition_id` on a `metaobject_reference`), or names a metaobject type the store does not have. |
+| `admin_access_not_allowed`, `invalid_capability`, `conflicting_capability`, `pinned_limit_reached`, `duplicate_pinned_position` | A definition sets an access level, capability, or pin position that Shopify rejects for its namespace or owner type. |
+| `metafield_type_mismatch`, `mismatched_type`, `validation_failed`, `missing_required_field`, `unknown_metaobject_field`, `untranslatable_metaobject` | A metafield value or metaobject entry violates its declared definition (wrong type, failed validation, missing required field, undeclared field, or translations on a non-translatable metaobject). |
 | `untranslatable_field` | A metaobject's `translations` translate a field of a type Shopify does not translate (a number, a boolean, a product reference...). The hint lists the types it translates. |
 | `unknown_setting`, `invalid_setting` | A `theme_settings` id that `config/settings_schema.json` does not have, or a value its setting does not take. The hint suggests the closest id or option. |
 | `unchecked_theme_settings` (warning) | The data has `theme_settings` and there is no theme to check them against. |

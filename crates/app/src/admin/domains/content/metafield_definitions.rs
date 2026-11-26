@@ -78,6 +78,117 @@ pub fn register(registry: &mut Registry) {
 /// The most definitions pinned per owner type.
 const PINNED_LIMIT: usize = 20;
 
+/// The metafield definitions declared in `shopify-local/` (`metafield_definitions` in root data
+/// files or `metafield_definitions/*.json`). Seeded before `shopify.app.toml` and before inferred
+/// definitions so declared validations, access controls, capabilities, pinning, and portable
+/// metaobject type references are active immediately when the Admin API boots.
+pub fn seed_store_definitions(seed: &mut Seed) {
+    let definitions = seed.store.metafield_definitions.clone();
+    for declared in &definitions {
+        let owner_type = declared.owner_type.as_str();
+        let namespace = super::admin_namespace(seed.app_id, &declared.namespace);
+        if find_definition(&seed.state, owner_type, &namespace, &declared.key).is_some()
+            || !types::is_type(&declared.kind)
+        {
+            continue;
+        }
+        let validations = super::resolve_store_validations(seed, &declared.validations);
+        let id = super::metafield_definition_gid(owner_type, &namespace, &declared.key);
+        let app_owned = namespace.starts_with("app--");
+        let access = json!({
+            "admin": declared
+                .access
+                .admin
+                .map(|a| a.as_str())
+                .unwrap_or(if app_owned { "MERCHANT_READ_WRITE" } else { "PUBLIC_READ_WRITE" }),
+            "storefront": declared
+                .access
+                .storefront
+                .map(|a| a.as_str())
+                .unwrap_or("NONE"),
+            "customerAccount": declared
+                .access
+                .customer_account
+                .map(|a| a.as_str())
+                .unwrap_or("NONE"),
+        });
+        let capabilities = capabilities_of(
+            Some(&json!({
+                "adminFilterable": {"enabled": declared.capabilities.admin_filterable},
+                "analyticsQueryable": {"enabled": declared.capabilities.analytics_queryable},
+                "cartToOrderCopyable": {"enabled": declared.capabilities.cart_to_order_copyable},
+                "smartCollectionCondition": {"enabled": declared.capabilities.smart_collection_condition},
+                "uniqueValues": {"enabled": declared.capabilities.unique_values},
+            })),
+            None,
+            owner_type,
+        );
+        let standard_template = if declared.standard_template {
+            let gid = crate::admin::domains::store_admin::standard::metafield_template_gid(
+                &namespace,
+                &declared.key,
+                owner_type,
+            )
+            .unwrap_or_else(|| {
+                let template_id = crate::admin::state::gid(
+                    "StandardMetafieldDefinitionTemplate",
+                    lsf_core::util::stable_id(
+                        "standard_metafield_template",
+                        &format!("{owner_type}/{namespace}.{}", declared.key),
+                    ),
+                );
+                if !seed.state.contains(&template_id) {
+                    seed.state.insert(value::object(json!({
+                        "__typename": "StandardMetafieldDefinitionTemplate",
+                        "id": template_id,
+                        "name": declared.name,
+                        "description": declared.description,
+                        "namespace": namespace,
+                        "key": declared.key,
+                        "ownerTypes": [owner_type],
+                        "type": types::definition_type(&declared.kind),
+                        "validations": validations,
+                        "visibleToStorefrontApi": declared
+                            .access
+                            .storefront
+                            .is_some_and(|s| s == lsf_core::store::DefinitionStorefrontAccess::PublicRead),
+                    })));
+                }
+                template_id
+            });
+            json!(gid)
+        } else {
+            Value::Null
+        };
+
+        let state = &mut seed.state;
+        state.insert(value::object(json!({
+            "__typename": "MetafieldDefinition",
+            "id": id,
+            "namespace": namespace,
+            "key": declared.key,
+            "name": declared.name,
+            "description": declared.description,
+            "ownerType": owner_type,
+            "type": types::definition_type(&declared.kind),
+            "validations": validations,
+            "validationStatus": "ALL_VALID",
+            "pinnedPosition": declared.pinned_position,
+            "useAsCollectionCondition": declared.capabilities.smart_collection_condition,
+            "access": access,
+            "capabilities": capabilities,
+            "constraints": null,
+            "standardTemplate": standard_template,
+            "metafields": [],
+            "metafieldsCount": 0,
+        })));
+        for metafield in metafields_of(state, owner_type, &namespace, &declared.key) {
+            metafields::link_definition(state, &metafield);
+        }
+        metafields::refresh_definition(state, &id);
+    }
+}
+
 /// The definitions `shopify.app.toml` declares (`[order.metafields.<namespace>.<key>]`): Shopify
 /// creates them in every shop of the app, so the seed does. `app` is the app's reserved
 /// namespace; `type`, `name`, `description` and `capabilities.cart_to_order_copyable` are read,
