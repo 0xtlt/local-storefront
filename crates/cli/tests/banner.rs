@@ -76,6 +76,7 @@ impl Server {
             .args(mode)
             .current_dir(std::env::temp_dir())
             .env_remove("LSF_APP")
+            .env_remove("LSF_APP_CONFIG")
             .env_remove("LSF_APP_URL")
             .env_remove("LSF_CLIENT_SECRET")
             .env_remove("SHOPIFY_API_SECRET")
@@ -1016,4 +1017,252 @@ fn the_plans_file_is_read_again_before_a_control_request_when_it_changed() {
     }
     drop(server);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn multi_config_app(name: &str) -> App {
+    let path = std::env::temp_dir().join(format!("lsf-banner-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    let make = |client_id: &str, app_name: &str, topics: &str| {
+        format!(
+            r#"client_id = "{client_id}"
+name = "{app_name}"
+application_url = "http://localhost:3999"
+embedded = true
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = [{topics}]
+  uri = "/webhooks"
+
+[access_scopes]
+scopes = "read_orders"
+"#
+        )
+    };
+    std::fs::write(
+        path.join("shopify.app.toml"),
+        make(
+            "repro-prod",
+            "Repro Prod",
+            "\"orders/create\", \"orders/updated\"",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        path.join("shopify.app.dev.toml"),
+        make("repro-dev", "Repro Dev", "\"orders/create\""),
+    )
+    .unwrap();
+    App(path)
+}
+
+#[test]
+fn app_dev_and_serve_pick_the_config_given_with_config_flag_and_name_the_file() {
+    let app = multi_config_app("config-flag");
+    let dir = app.0.to_str().unwrap();
+    let theme = theme();
+
+    // Without `--config`: reads `shopify.app.toml` (2 subscriptions).
+    let server = Server::start(&["app", "dev", "--app", dir], &[]);
+    let text = server.before_ready.join("\n");
+    assert!(
+        text.contains("webhooks: 2 subscriptions of shopify.app.toml → http://localhost:3999"),
+        "{text}"
+    );
+    assert!(!text.contains("config:"), "{text}");
+    let status: serde_json::Value = serde_json::from_str(&server.get("/__lsf/admin")).unwrap();
+    assert_eq!(status["app"]["clientId"], "repro-prod");
+    drop(server);
+
+    // `--config dev`, `-c dev`, and `--config shopify.app.dev.toml` all pick `shopify.app.dev.toml`.
+    for flag in [
+        &["--config", "dev"][..],
+        &["-c", "dev"][..],
+        &["--config", "shopify.app.dev.toml"][..],
+    ] {
+        let args = [&["app", "dev", "--app", dir][..], flag].concat();
+        let server = Server::start(&args, &[]);
+        let text = server.before_ready.join("\n");
+        assert!(
+            text.contains("config: shopify.app.dev.toml"),
+            "{flag:?}:\n{text}"
+        );
+        assert!(
+            text.contains(
+                "webhooks: 1 subscription of shopify.app.dev.toml → http://localhost:3999"
+            ),
+            "{flag:?}:\n{text}"
+        );
+        let status: serde_json::Value = serde_json::from_str(&server.get("/__lsf/admin")).unwrap();
+        assert_eq!(status["app"]["clientId"], "repro-dev", "{flag:?}");
+        drop(server);
+    }
+
+    // `serve --app --config dev` picks `shopify.app.dev.toml` too.
+    let server = Server::start(
+        &["--theme", &theme, "serve", "--app", dir, "--config", "dev"],
+        &[],
+    );
+    let text = server.before_ready.join("\n");
+    assert!(text.contains("config: shopify.app.dev.toml"), "{text}");
+    assert!(
+        text.contains("webhooks: 1 subscription of shopify.app.dev.toml → http://localhost:3999"),
+        "{text}"
+    );
+    let status: serde_json::Value = serde_json::from_str(&server.get("/__lsf/admin")).unwrap();
+    assert_eq!(status["app"]["clientId"], "repro-dev");
+    drop(server);
+
+    // Nonexistent `--config` exits with 2 and lists available config files.
+    let output = Command::new(env!("CARGO_BIN_EXE_lsf"))
+        .args([
+            "app", "dev", "--app", dir, "--config", "staging", "--port", "0",
+        ])
+        .env_remove("LSF_APP_CONFIG")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot find shopify.app.staging.toml")
+            && stderr.contains("available: shopify.app.toml, shopify.app.dev.toml"),
+        "{stderr}"
+    );
+
+    // `serve --config dev` without `--app` fails clearly.
+    let output = Command::new(env!("CARGO_BIN_EXE_lsf"))
+        .args(["--theme", &theme, "serve", "--config", "dev", "--port", "0"])
+        .env_remove("LSF_APP")
+        .env_remove("LSF_APP_CONFIG")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--config needs the app"), "{stderr}");
+}
+
+#[test]
+fn fallback_to_named_config_prints_the_actual_file_read() {
+    let app = multi_config_app("config-fallback");
+    std::fs::rename(
+        app.0.join("shopify.app.toml"),
+        app.0.join("shopify.app.prod.toml"),
+    )
+    .unwrap();
+    let dir = app.0.to_str().unwrap();
+
+    // Without `shopify.app.toml`, falls back to `shopify.app.dev.toml` and names it (not
+    // `shopify.app.toml`).
+    let server = Server::start(&["app", "dev", "--app", dir], &[]);
+    let text = server.before_ready.join("\n");
+    assert!(text.contains("config: shopify.app.dev.toml"), "{text}");
+    assert!(
+        text.contains("webhooks: 1 subscription of shopify.app.dev.toml → http://localhost:3999"),
+        "{text}"
+    );
+    assert!(!text.contains("of shopify.app.toml"), "{text}");
+    drop(server);
+
+    // Running `app dev` from inside an app folder that has only `shopify.app.<name>.toml` finds it.
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lsf"));
+    command
+        .args([
+            "app",
+            "dev",
+            "--config",
+            "prod",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "0",
+            "--static",
+            "--quiet",
+        ])
+        .current_dir(&app.0)
+        .env_remove("LSF_APP")
+        .env_remove("LSF_APP_CONFIG")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let mut lines = Vec::new();
+    for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        let ready = line.starts_with("ready:");
+        lines.push(line);
+        if ready {
+            break;
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let text = lines.join("\n");
+    assert!(text.contains("config: shopify.app.prod.toml"), "{text}");
+    assert!(
+        text.contains("webhooks: 2 subscriptions of shopify.app.prod.toml → http://localhost:3999"),
+        "{text}"
+    );
+}
+
+#[test]
+fn app_dev_uses_config_selected_with_shopify_app_config_use() {
+    let app = multi_config_app("config-use-e2e");
+    let dir = app.0.to_str().unwrap();
+    let fake_home =
+        std::env::temp_dir().join(format!("lsf-banner-shopify-home-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&fake_home);
+    #[cfg(target_os = "macos")]
+    let (env_var, store_path) = (
+        "HOME",
+        fake_home
+            .join("Library")
+            .join("Preferences")
+            .join("shopify-cli-app-nodejs")
+            .join("config.json"),
+    );
+    #[cfg(windows)]
+    let (env_var, store_path) = (
+        "APPDATA",
+        fake_home
+            .join("shopify-cli-app-nodejs")
+            .join("Config")
+            .join("config.json"),
+    );
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let (env_var, store_path) = (
+        "XDG_CONFIG_HOME",
+        fake_home.join("shopify-cli-app-nodejs").join("config.json"),
+    );
+    std::fs::create_dir_all(store_path.parent().unwrap()).unwrap();
+    let canonical = lsf_core::util::canonicalize(&app.0).unwrap_or_else(|_| app.0.clone());
+    let key = canonical.to_string_lossy().replace('\\', "/");
+    std::fs::write(
+        &store_path,
+        serde_json::json!({
+            key.clone(): {
+                "directory": key,
+                "configFile": "shopify.app.dev.toml"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let server = Server::start(
+        &["app", "dev", "--app", dir],
+        &[(env_var, fake_home.to_str().unwrap())],
+    );
+    let text = server.before_ready.join("\n");
+    assert!(text.contains("config: shopify.app.dev.toml"), "{text}");
+    assert!(
+        text.contains("webhooks: 1 subscription of shopify.app.dev.toml → http://localhost:3999"),
+        "{text}"
+    );
+    let status: serde_json::Value = serde_json::from_str(&server.get("/__lsf/admin")).unwrap();
+    assert_eq!(status["app"]["clientId"], "repro-dev");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&fake_home);
 }

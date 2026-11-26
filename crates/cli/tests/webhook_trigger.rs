@@ -92,6 +92,7 @@ fn lsf(directory: &Path, args: &[&str]) -> Output {
         .args(args)
         .current_dir(directory)
         .env_remove("LSF_APP")
+        .env_remove("LSF_APP_CONFIG")
         .env_remove("LSF_APP_URL")
         .env_remove("LSF_CLIENT_SECRET")
         .env_remove("SHOPIFY_API_SECRET")
@@ -359,6 +360,7 @@ fn installed_with_npm_a_refused_delivery_names_the_command_to_give_the_secret_to
         ])
         .current_dir(std::env::temp_dir())
         .env_remove("LSF_APP")
+        .env_remove("LSF_APP_CONFIG")
         .env_remove("LSF_APP_URL")
         .env_remove("LSF_CLIENT_SECRET")
         .env_remove("SHOPIFY_API_SECRET")
@@ -608,4 +610,84 @@ api_version = "2026-10"
             ("/direct", Some(hooks_host.as_str())),
         ]
     );
+}
+
+#[test]
+fn webhook_trigger_uses_the_config_selected_with_config_flag_and_names_it() {
+    let (url, received) = backend(200);
+    let app = App::new(
+        "config-flag",
+        r#"
+client_id = "prod"
+application_url = "https://prod.example.test"
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "/prod-hook"
+"#,
+    );
+    std::fs::write(
+        app.0.join("shopify.app.dev.toml"),
+        r#"
+client_id = "dev"
+application_url = "https://dev.example.test"
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "/dev-hook"
+"#,
+    )
+    .unwrap();
+
+    // `-c dev` delivers to `/dev-hook` with subscription id `shopify.app.dev.toml#1`.
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "orders/create",
+            "-c",
+            "dev",
+            "--app-url",
+            &url,
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let out = text(&output);
+    assert!(out.contains("shopify.app.dev.toml#1"), "{out}");
+    let paths: Vec<String> = received
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(path, _, _)| path.clone())
+        .collect();
+    assert_eq!(paths, ["/dev-hook"]);
+
+    // Unsubscribed topic names `shopify.app.dev.toml`, not `shopify.app.toml`.
+    let missing = lsf(
+        &app.0,
+        &[
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "products/update",
+            "--config",
+            "dev",
+            "--app-url",
+            &url,
+        ],
+    );
+    assert_eq!(missing.status.code(), Some(2));
+    let err = text(&missing);
+    assert!(err.contains("shopify.app.dev.toml"), "{err}");
+    assert!(!err.contains("shopify.app.toml"), "{err}");
 }

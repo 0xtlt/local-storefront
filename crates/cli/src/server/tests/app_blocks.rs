@@ -28,7 +28,7 @@ fn server_of(app_dir: &Path, revalidate: Revalidate) -> ServerState {
         &[],
     )
     .expect("fixture theme");
-    crate::theme_extensions::attach(&app.theme, app_dir, revalidate);
+    crate::theme_extensions::attach(&app.theme, app_dir, None, revalidate);
     let (state, diagnostics) = ServerState::new(
         app,
         ServeOptions {
@@ -410,7 +410,7 @@ fn the_tools_say_what_is_wrong_with_the_app_blocks_of_the_theme() {
     // `lsf check --app`: the block the app does not have, with a suggestion, and the blocks of
     // another app.
     let findings =
-        crate::theme_extensions::check_lines(theme, Some(&fixture().join("app"))).unwrap();
+        crate::theme_extensions::check_lines(theme, Some(&fixture().join("app")), None).unwrap();
     let messages: Vec<String> = findings
         .iter()
         .map(|finding| format!("{}: {}", finding.file, finding.message))
@@ -431,7 +431,7 @@ fn the_tools_say_what_is_wrong_with_the_app_blocks_of_the_theme() {
         "{messages:?}"
     );
     // Without `--app`: a note, not silence.
-    let without = crate::theme_extensions::check_lines(theme, None).unwrap();
+    let without = crate::theme_extensions::check_lines(theme, None, None).unwrap();
     assert_eq!(without.len(), 1);
     assert!(
         without[0]

@@ -51,6 +51,13 @@ pub struct AppArgs {
     #[arg(long, env = "LSF_APP", value_name = "DIR")]
     pub app: Option<PathBuf>,
 
+    /// The app configuration file to use, as `shopify app dev --config` (`-c`) does: a shorthand
+    /// name (`dev` for `shopify.app.dev.toml`), a file name (`shopify.app.dev.toml`), or a path.
+    /// Without it, uses the configuration selected with `shopify app config use`, else
+    /// `shopify.app.toml`.
+    #[arg(long, short = 'c', env = "LSF_APP_CONFIG", value_name = "CONFIG")]
+    pub config: Option<String>,
+
     /// Use only this extension of the app (a Function or a checkout UI extension), by its
     /// handle. Repeat it for several. Without it, every extension of the app is used.
     #[arg(long = "extension", value_name = "HANDLE")]
@@ -68,6 +75,8 @@ pub struct AppArgs {
 #[derive(Clone, Debug)]
 pub struct CheckoutOptions {
     pub app_dir: PathBuf,
+    /// `--config` (`-c`): the app configuration file to read, when given.
+    pub config: Option<String>,
     /// The extensions named with `--extension`, checked to exist. All when empty.
     pub extensions: Vec<String>,
     /// The look a checkout takes unless the URL says another.
@@ -105,13 +114,13 @@ impl CheckoutOptions {
 /// Problems of the app itself are in `App::diagnostics`, read after the build: a module it wrote
 /// is not missing. What stops the command is returned.
 pub fn open(args: &AppArgs, app_dir: &Path) -> Result<(App, Selection), String> {
-    let app = config::load(app_dir)?;
+    let app = config::load_with_config(app_dir, args.config.as_deref())?;
     let selection = Selection::resolve(&app, &args.extensions)?;
     if !args.build {
         return Ok((app, selection));
     }
     build(&app, &selection)?;
-    let app = config::load(app_dir)?;
+    let app = config::load_with_config(app_dir, args.config.as_deref())?;
     let selection = Selection::resolve(&app, &args.extensions)?;
     Ok((app, selection))
 }
@@ -197,7 +206,12 @@ pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
 /// Builds the Functions of `selection` whose module is older than their files, as
 /// `shopify app function run` builds a Function before it runs it, and answers the app as it
 /// is then. One lsf cannot build (no build command) runs its old module, with a warning.
-pub fn freshen(app_dir: &Path, app: App, selection: &Selection) -> Result<App, String> {
+pub fn freshen(
+    app_dir: &Path,
+    config_name: Option<&str>,
+    app: App,
+    selection: &Selection,
+) -> Result<App, String> {
     let mut stale = Vec::new();
     for function in selection.functions(&app) {
         let Some(file) = crate::freshness::stale(&app.root, function) else {
@@ -222,7 +236,7 @@ pub fn freshen(app_dir: &Path, app: App, selection: &Selection) -> Result<App, S
         return Ok(app);
     }
     build_functions(&app, &Selection::only(stale))?;
-    config::load(app_dir)
+    config::load_with_config(app_dir, config_name)
 }
 
 /// The Functions of `selection` whose module is older than their files: each handle, with the
@@ -439,10 +453,11 @@ pub fn discount_example(function: &config::FunctionExtension) -> String {
     )
 }
 
-/// The app `dir` is in: the closest folder, from `dir` up, that has a `shopify.app.toml`.
+/// The app `dir` is in: the closest folder, from `dir` up, that has a `shopify.app.toml` or
+/// `shopify.app.<name>.toml`.
 pub fn app_around(dir: &Path) -> Option<PathBuf> {
     dir.ancestors()
-        .find(|dir| dir.join("shopify.app.toml").is_file())
+        .find(|dir| config::has_app_config(dir))
         .map(Path::to_path_buf)
 }
 
@@ -476,12 +491,13 @@ pub fn as_typed(command: &str) -> String {
 /// all), with `build`, and says what it wrote.
 pub fn run_build(
     app: Option<&Path>,
+    config_name: Option<&str>,
     handles: &[String],
     command: &str,
     build: fn(&App, &Selection) -> Result<(), String>,
 ) -> Result<std::process::ExitCode, String> {
     let app_dir = app_of(app, command)?;
-    let shopify_app = config::load(&app_dir)?;
+    let shopify_app = config::load_with_config(&app_dir, config_name)?;
     // `lsf app build` checks the theme app extensions as Shopify does: there is nothing to build.
     let themes = command == "lsf app build";
     let (theme_handles, handles): (Vec<String>, Vec<String>) = handles
@@ -494,7 +510,7 @@ pub fn run_build(
         Selection::resolve(&shopify_app, &handles)?
     };
     build(&shopify_app, &selection)?;
-    let shopify_app = config::load(&app_dir)?;
+    let shopify_app = config::load_with_config(&app_dir, config_name)?;
     let mut built = 0;
     for function in selection.functions(&shopify_app) {
         if function.built() {
@@ -1096,6 +1112,7 @@ type = "function"
         };
         let args = |build| AppArgs {
             app: Some(root.clone()),
+            config: None,
             extensions: Vec::new(),
             build,
         };

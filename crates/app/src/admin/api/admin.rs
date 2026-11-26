@@ -217,7 +217,11 @@ fn app_config_seen(app: Option<&App>) -> AppConfigSeen {
     let Some(app) = app else {
         return (None, None);
     };
-    let stamp = scopes::app_config_file(&app.root).and_then(|file| file_stamp(&file));
+    let stamp = app
+        .config_file
+        .clone()
+        .or_else(|| scopes::app_config_file(&app.root))
+        .and_then(|file| file_stamp(&file));
     let mut declared = app.config.scopes.clone();
     declared.sort();
     (stamp, Some(declared))
@@ -282,6 +286,7 @@ impl AdminApi {
                 redirect_urls: None,
                 application_url: None,
                 app_url: app_url.clone(),
+                config_file: None,
             },
         };
         let webhooks = match &app {
@@ -561,22 +566,25 @@ impl AdminApi {
     /// was installed with at start, what to do about it ([`scopes::scopes_changed`]), once per
     /// set of scopes. `None` otherwise, and without an app.
     pub fn app_scopes_changed(&self) -> Option<String> {
-        let root = self.app.as_ref()?.root.clone();
-        let file = scopes::app_config_file(&root)?;
+        let app = self.app.as_ref()?;
+        let file = app
+            .config_file
+            .clone()
+            .or_else(|| scopes::app_config_file(&app.root))?;
         let stamp = file_stamp(&file);
         let mut seen = lock(&self.app_config_seen);
         if seen.0 == stamp {
             return None;
         }
         seen.0 = stamp;
-        let (_, declared) = scopes::declared_scopes(&root)?;
+        let declared = scopes::declared_scopes_in(&file)?;
         let mut sorted = declared.clone();
         sorted.sort();
         if seen.1.as_ref() == Some(&sorted) {
             return None;
         }
         seen.1 = Some(sorted);
-        scopes::scopes_changed(&self.scopes, &declared)
+        scopes::scopes_changed_in(app.config_file_name(), &self.scopes, &declared)
     }
 
     /// The file of `--pricing-plans`, when the plans come from one.

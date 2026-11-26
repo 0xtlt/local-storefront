@@ -319,26 +319,32 @@ fn app_page(
                 ("path".to_string(), app_path.clone()),
             ],
         );
+        let config_file = api
+            .app()
+            .map_or("shopify.app.toml", crate::config::App::config_file_name);
         return notice_page(
             api,
             Some(viewer),
             200,
             "This app is not embedded",
             &[format!(
-                "shopify.app.toml says embedded = false: the admin opens {} in a tab of its own, not in a frame. Open it at {launch}.",
+                "{config_file} says embedded = false: the admin opens {} in a tab of its own, not in a frame. Open it at {launch}.",
                 app_name(api)
             )],
         );
     }
     let Some(frame) = api.launch_url(&viewer.shop, &app_path, viewer.user, &viewer.locale) else {
+        let config_file = api
+            .app()
+            .map_or("shopify.app.toml", crate::config::App::config_file_name);
         return notice_page(
             api,
             Some(viewer),
             503,
             "The app has no URL",
-            &[
-                "Give lsf the URL its backend listens on (--app-url http://localhost:3000), or set application_url in shopify.app.toml: the admin opens the app there.".to_string(),
-            ],
+            &[format!(
+                "Give lsf the URL its backend listens on (--app-url http://localhost:3000), or set application_url in {config_file}: the admin opens the app there."
+            )],
         );
     };
     // On the proxy the server puts in front of the backend, when there is one.

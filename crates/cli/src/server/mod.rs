@@ -337,7 +337,11 @@ impl ServerState {
         });
         let app_proxy = options.admin.as_ref().and_then(|settings| {
             let app_dir = admin_app_dir(settings)?;
-            app_proxy::AppProxy::of_app(&app_dir, settings.app_url.as_deref())
+            app_proxy::AppProxy::of_app(
+                &app_dir,
+                settings.app_config.as_deref(),
+                settings.app_url.as_deref(),
+            )
         });
         let admin_changes = admin.as_ref().map_or(0, |admin| admin.api.store_changes());
         let polaris = polaris::Polaris::new(options.polaris);
@@ -371,7 +375,12 @@ impl ServerState {
     /// their last module that built, never what a build is writing; with `--no-functions`, it
     /// has none.
     pub(crate) fn load_app(&self, dir: &Path) -> Result<lsf_app::config::App, String> {
-        let mut app = lsf_app::config::load(dir)?;
+        let config = self
+            .options
+            .checkout
+            .as_ref()
+            .and_then(|options| options.config.as_deref());
+        let mut app = lsf_app::config::load_with_config(dir, config)?;
         self.builds.apply(&mut app);
         if self
             .options

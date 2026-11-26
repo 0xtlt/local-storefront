@@ -76,6 +76,12 @@ pub struct Args {
     /// the current folder is in, if any.
     #[arg(long, env = "LSF_APP")]
     app: Option<std::path::PathBuf>,
+
+    /// The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a
+    /// path). Without it, uses the configuration selected with `shopify app config use`, else
+    /// `shopify.app.toml`.
+    #[arg(long, short = 'c', value_name = "CONFIG")]
+    config: Option<String>,
 }
 
 /// What the store data lacks of the menus the theme names. A main menu or a footer menu is
@@ -196,9 +202,20 @@ pub fn run(
         menu_diagnostics(&app.theme.menu_references(), &store, &mut diagnostics);
     }
     let shopify_app = match &app_dir {
-        Some(dir) => Some(lsf_app::config::load(dir)?),
-        None => None,
+        Some(dir) => Some(lsf_app::config::load_with_config(
+            dir,
+            args.config.as_deref(),
+        )?),
+        None => {
+            if args.config.is_some() {
+                return Err("--config needs the app: `--app DIR` (or LSF_APP)".to_string());
+            }
+            None
+        }
     };
+    let app_config_file = shopify_app
+        .as_ref()
+        .map_or("shopify.app.toml", lsf_app::config::App::config_file_name);
     // The settings of the UI extensions, against what the extensions declare.
     for problem in shopify_app
         .iter()
@@ -243,7 +260,7 @@ pub fn run(
                         },
                         "code": "app",
                         "file": diagnostic.extension.as_ref().map_or_else(
-                            || "shopify.app.toml".to_string(),
+                            || app_config_file.to_string(),
                             |handle| format!("extensions/{handle}"),
                         ),
                         "path": "",
@@ -285,7 +302,7 @@ pub fn run(
                     crate::output::annotation_path(
                         dir,
                         &diagnostic.extension.as_ref().map_or_else(
-                            || "shopify.app.toml".to_string(),
+                            || app_config_file.to_string(),
                             |handle| format!("extensions/{handle}"),
                         ),
                     )

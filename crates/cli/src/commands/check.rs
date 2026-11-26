@@ -46,6 +46,12 @@ pub struct Args {
     /// are.
     #[arg(long, value_name = "DIR")]
     app: Option<PathBuf>,
+
+    /// With `--app`: the app configuration file to use (`dev` for `shopify.app.dev.toml`, a file
+    /// name, or a path). Without it, uses the configuration selected with `shopify app config
+    /// use`, else `shopify.app.toml`.
+    #[arg(long, short = 'c', value_name = "CONFIG")]
+    config: Option<String>,
 }
 
 /// What `lsf check` writes into a file.
@@ -1203,7 +1209,9 @@ fn check_theme(
     }
     // The app blocks the templates name: against the theme app extensions of `--app`.
     // With `--app`, an app block that renders nothing is an error: the check is asked for.
-    for finding in crate::theme_extensions::check_lines(&theme, args.app.as_deref())? {
+    for finding in
+        crate::theme_extensions::check_lines(&theme, args.app.as_deref(), args.config.as_deref())?
+    {
         let severity = match finding.level {
             lsf_theme::app_extensions::references::Level::Warning if args.app.is_some() => {
                 tally.problems += 1;
@@ -1261,6 +1269,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: Some(fixture.join("app")),
+            config: None,
         };
         let (files, tally) = check_theme(&fixture.join("theme"), &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -1315,6 +1324,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: None,
+            config: None,
         };
         let (files, tally) = check_theme(&root, &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -1429,6 +1439,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: None,
+            config: None,
         };
         let (files, tally) = check_theme(&root, &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -1529,6 +1540,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: None,
+            config: None,
         };
         let (files, tally) = check_theme(&root, &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -1595,6 +1607,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: None,
+            config: None,
         };
         let (files, tally) = check_theme(&root, &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -1672,6 +1685,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: None,
+            config: None,
         };
         let (files, tally) = check_theme(&root, &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -1722,6 +1736,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: None,
+            config: None,
         };
         let (files, tally) = check_theme(&root, &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -1785,6 +1800,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: None,
+            config: None,
         };
         let (files, tally) = check_theme(&root, &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -1862,6 +1878,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: None,
+            config: None,
         };
         let (files, tally) = check_theme(&root, &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -1936,6 +1953,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: None,
+            config: None,
         };
         let (files, tally) = check_theme(&root, &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -2025,6 +2043,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: None,
+            config: None,
         };
         let (files, tally) = check_theme(&root, &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -2113,6 +2132,7 @@ mod tests {
                 fix: false,
                 format: Format::Json,
                 app,
+                config: None,
             };
             let (files, tally) = check_theme(&fixture.join("theme"), &[], &args).unwrap();
             json_report(files, &tally)
@@ -2191,6 +2211,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: None,
+            config: None,
         };
         let (files, tally) = check_theme(&root, &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -2275,6 +2296,7 @@ mod tests {
             fix: false,
             format: Format::Json,
             app: None,
+            config: None,
         };
         let (files, tally) = check_theme(&root, &[], &args).unwrap();
         let report = json_report(files, &tally);
@@ -2354,6 +2376,7 @@ mod tests {
                 fix,
                 format: Format::Json,
                 app: None,
+                config: None,
             };
             let (files, tally) = check_theme(&root, &[], &args).unwrap();
             json_report(files, &tally)
@@ -2442,6 +2465,7 @@ mod tests {
                     fix,
                     format: Format::Text,
                     app: None,
+                    config: None,
                 },
             )
             .unwrap()

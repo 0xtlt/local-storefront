@@ -59,6 +59,12 @@ pub struct CheckArgs {
     #[arg(long, env = "LSF_APP", value_name = "DIR")]
     app: Option<std::path::PathBuf>,
 
+    /// The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a
+    /// path). Without it, uses the configuration selected with `shopify app config use`, else
+    /// `shopify.app.toml`.
+    #[arg(long, short = 'c', env = "LSF_APP_CONFIG", value_name = "CONFIG")]
+    config: Option<String>,
+
     /// Only these extensions, by handle (repeat it), as `lsf app dev --extension`.
     #[arg(long = "extension", value_name = "HANDLE")]
     extensions: Vec<String>,
@@ -88,6 +94,12 @@ pub struct BuildArgs {
     /// current folder is in.
     #[arg(long, env = "LSF_APP", value_name = "DIR")]
     app: Option<std::path::PathBuf>,
+
+    /// The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a
+    /// path). Without it, uses the configuration selected with `shopify app config use`, else
+    /// `shopify.app.toml`.
+    #[arg(long, short = 'c', env = "LSF_APP_CONFIG", value_name = "CONFIG")]
+    config: Option<String>,
 }
 
 pub fn run(
@@ -102,6 +114,7 @@ pub fn run(
         Subcommand::Init(init) => app_init::run(theme, data, init),
         Subcommand::Build(args) => crate::checkout::run_build(
             args.app.as_deref(),
+            args.config.as_deref(),
             &args.handles,
             "lsf app build",
             crate::checkout::build,
@@ -272,7 +285,7 @@ fn check(
     // The theme app extensions named are checked as `lsf app build` checks them; the others are
     // the Functions and UI extensions the scenarios run.
     let (themes, extensions): (Vec<String>, Vec<String>) = {
-        let app = lsf_app::config::load(&app_dir)?;
+        let app = lsf_app::config::load_with_config(&app_dir, args.config.as_deref())?;
         args.extensions
             .iter()
             .cloned()
@@ -281,7 +294,7 @@ fn check(
     // `--extension` names theme app extensions only: they are checked, and nothing else is
     // (an empty selection of the others would mean all of them).
     if !args.extensions.is_empty() && extensions.is_empty() {
-        let app = lsf_app::config::load(&app_dir)?;
+        let app = lsf_app::config::load_with_config(&app_dir, args.config.as_deref())?;
         return Ok(theme_extensions_only(
             &crate::theme_extensions::diagnostics(&app, &themes),
             args.format,
@@ -290,6 +303,7 @@ fn check(
     let (shopify_app, selection) = crate::checkout::open(
         &crate::checkout::AppArgs {
             app: Some(app_dir.clone()),
+            config: args.config.clone(),
             extensions: extensions.clone(),
             build: args.build,
         },
@@ -323,6 +337,7 @@ fn check(
             customer: None,
             checkout: Some(crate::checkout::CheckoutOptions {
                 app_dir,
+                config: args.config.clone(),
                 extensions: extensions.clone(),
                 variant: crate::checkout::Variant::Standard,
                 standalone: true,

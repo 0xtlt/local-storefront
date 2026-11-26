@@ -22,19 +22,21 @@ use crate::config::version::{ApiVersion, TargetSpec, successor, target_spec};
 #[derive(Clone, Debug, Default)]
 pub struct App {
     pub root: PathBuf,
-    /// `name` of `shopify.app.toml`.
+    /// The app configuration file that was read (`shopify.app.toml`, `shopify.app.dev.toml`, …).
+    pub config_file: Option<PathBuf>,
+    /// `name` of the app configuration file.
     pub name: Option<String>,
-    /// `client_id` of `shopify.app.toml`, else `SHOPIFY_API_KEY` ([`ClientIdSource`]).
+    /// `client_id` of the app configuration file, else `SHOPIFY_API_KEY` ([`ClientIdSource`]).
     pub client_id: Option<String>,
     /// Where `client_id` came from.
     pub client_id_source: ClientIdSource,
-    /// What `shopify.app.toml` gets wrong for the backend and the embedded app: also in
+    /// What the app configuration file gets wrong for the backend and the embedded app: also in
     /// `diagnostics`, and shown as banners in lsf's admin, with [`template_warnings`], which
     /// the admin reads again at each load ([`App::admin_warnings_now`]).
     pub admin_warnings: Vec<String>,
     pub handle: Option<String>,
-    /// What else `shopify.app.toml` says that the backend of the app depends on: its URL, its
-    /// access scopes, its webhook subscriptions. Read by the Admin API ([`crate::admin`]).
+    /// What else the app configuration file says that the backend of the app depends on: its URL,
+    /// its access scopes, its webhook subscriptions. Read by the Admin API ([`crate::admin`]).
     pub config: AppConfig,
     pub functions: Vec<FunctionExtension>,
     pub ui_extensions: Vec<UiExtension>,
@@ -49,11 +51,11 @@ pub struct App {
 /// Where the client id of the app came from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ClientIdSource {
-    /// `client_id` of `shopify.app.toml`.
+    /// `client_id` of the app configuration file.
     #[default]
     File,
-    /// `SHOPIFY_API_KEY` of the environment, `shopify.app.toml` having none (`client_id = ""`,
-    /// as the app templates ship it).
+    /// `SHOPIFY_API_KEY` of the environment, the app configuration file having none
+    /// (`client_id = ""`, as the app templates ship it).
     Environment,
     /// `SHOPIFY_API_KEY` of the app's `.env`.
     DotEnv,
@@ -63,18 +65,18 @@ pub enum ClientIdSource {
 
 impl ClientIdSource {
     /// Where the client id came from, as the start lines say it: `None` for the file.
-    pub fn describe(self) -> Option<&'static str> {
+    pub fn describe(self, config_file: &str) -> Option<String> {
         match self {
             ClientIdSource::File => None,
-            ClientIdSource::Environment => Some(
-                "from SHOPIFY_API_KEY of the environment (shopify.app.toml has client_id = \"\")",
-            ),
-            ClientIdSource::DotEnv => Some(
-                "from SHOPIFY_API_KEY of the app's .env (shopify.app.toml has client_id = \"\")",
-            ),
-            ClientIdSource::None => Some(
-                "lsf's own: shopify.app.toml has client_id = \"\" and there is no SHOPIFY_API_KEY; set one of them to the backend's SHOPIFY_API_KEY",
-            ),
+            ClientIdSource::Environment => Some(format!(
+                "from SHOPIFY_API_KEY of the environment ({config_file} has client_id = \"\")"
+            )),
+            ClientIdSource::DotEnv => Some(format!(
+                "from SHOPIFY_API_KEY of the app's .env ({config_file} has client_id = \"\")"
+            )),
+            ClientIdSource::None => Some(format!(
+                "lsf's own: {config_file} has client_id = \"\" and there is no SHOPIFY_API_KEY; set one of them to the backend's SHOPIFY_API_KEY"
+            )),
         }
     }
 }
@@ -85,13 +87,28 @@ pub const EVENT_TOPICS: &[&str] = &["Product"];
 /// What the client id is when `shopify.app.toml` has none: the message of the warning, with
 /// the handle the admin opens the app at.
 pub fn no_client_id(handle: &str) -> String {
+    no_client_id_in("shopify.app.toml", handle)
+}
+
+/// What the client id is when `config_file` has none: the message of the warning, with
+/// the handle the admin opens the app at.
+pub fn no_client_id_in(config_file: &str, handle: &str) -> String {
     format!(
-        "shopify.app.toml has no client_id (client_id = \"\", as the app template ships it), and neither the environment nor the app's .env has SHOPIFY_API_KEY: lsf uses its own client id, {id}, and the admin opens the app at /admin/apps/{handle}. The backend's session tokens are refused unless its SHOPIFY_API_KEY is that value. Set client_id (shopify app config link writes it), or SHOPIFY_API_KEY in the app's .env to the backend's.",
+        "{config_file} has no client_id (client_id = \"\", as the app template ships it), and neither the environment nor the app's .env has SHOPIFY_API_KEY: lsf uses its own client id, {id}, and the admin opens the app at /admin/apps/{handle}. The backend's session tokens are refused unless its SHOPIFY_API_KEY is that value. Set client_id (shopify app config link writes it), or SHOPIFY_API_KEY in the app's .env to the backend's.",
         id = crate::admin::domains::app::LOCAL_CLIENT_ID
     )
 }
 
 impl App {
+    /// The file name of the app configuration file that was read (`shopify.app.toml`,
+    /// `shopify.app.dev.toml`, …), or `"shopify.app.toml"` when none was read.
+    pub fn config_file_name(&self) -> &str {
+        self.config_file
+            .as_deref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("shopify.app.toml")
+    }
     /// The handle lsf's admin names the app by (`/admin/apps/<handle>`): `handle` of
     /// `shopify.app.toml`, else its `name` in lower case with dashes (as Shopify makes a handle
     /// of a name), else the client id.
@@ -176,9 +193,12 @@ impl App {
     }
 }
 
-/// The parts of `shopify.app.toml` the Admin API and the webhooks of [`crate::admin`] read.
+/// The parts of `shopify.app*.toml` the Admin API and the webhooks of [`crate::admin`] read.
 #[derive(Clone, Debug, Default)]
 pub struct AppConfig {
+    /// The file name this configuration was read from (`shopify.app.toml`, `shopify.app.dev.toml`),
+    /// or `None` when constructed directly (displayed as `shopify.app.toml`).
+    pub file_name: Option<String>,
     /// `application_url`: where Shopify loads the app, and the base of the relative webhook
     /// `uri`s.
     pub application_url: Option<String>,
@@ -204,6 +224,14 @@ pub struct AppConfig {
     /// the order of the file: what copies a cart metafield onto the order placed from the cart.
     /// The definitions of the other owner types are not read.
     pub order_metafields: Vec<DeclaredMetafieldDefinition>,
+}
+
+impl AppConfig {
+    /// The file name this configuration was read from (`shopify.app.toml`, `shopify.app.dev.toml`),
+    /// or `"shopify.app.toml"` when none was set.
+    pub fn file_name(&self) -> &str {
+        self.file_name.as_deref().unwrap_or("shopify.app.toml")
+    }
 }
 
 /// A metafield definition `shopify.app.toml` declares: `[order.metafields.app.gift_message]`.
@@ -839,16 +867,29 @@ impl Selection {
 /// Loads the app in `dir`. Fails only when `dir` is not a directory; everything else that is
 /// wrong with the app is reported in [`App::diagnostics`].
 pub fn load(dir: &Path) -> Result<App, String> {
+    load_with_config(dir, None)
+}
+
+/// Loads the app in `dir`, reading `config` when given (as `shopify app dev --config` does:
+/// a shorthand name like `dev` for `shopify.app.dev.toml`, a file name, or a path). Without
+/// `config`, reads the file selected with `shopify app config use`, else `shopify.app.toml`,
+/// else the first `shopify.app.<name>.toml`.
+///
+/// Fails when `dir` is not a directory or when an explicit `config` does not exist; everything
+/// else that is wrong with the app is reported in [`App::diagnostics`].
+pub fn load_with_config(dir: &Path, config: Option<&str>) -> Result<App, String> {
     if !dir.is_dir() {
         return Err(format!("{} is not a directory", dir.display()));
     }
     let root = lsf_core::util::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let config_file = resolve_config_file(dir, &root, config)?;
     let mut app = App {
         root: root.clone(),
+        config_file: config_file.clone(),
         ..App::default()
     };
 
-    load_app_config(&mut app);
+    load_app_config(&mut app, config_file.as_deref());
 
     let extensions_dir = root.join("extensions");
     let mut files = Vec::new();
@@ -871,6 +912,322 @@ pub fn load(dir: &Path) -> Result<App, String> {
     app.check_handles();
     app.check_template();
     Ok(app)
+}
+
+/// Whether `name` is a Shopify app configuration file name (`shopify.app.toml` or
+/// `shopify.app.<name>.toml`).
+pub fn is_app_config_file_name(name: &str) -> bool {
+    name == "shopify.app.toml"
+        || (name.starts_with("shopify.app.")
+            && name.ends_with(".toml")
+            && name.len() > "shopify.app..toml".len())
+}
+
+/// Whether `dir` contains a Shopify app configuration file (`shopify.app.toml` or
+/// `shopify.app.<name>.toml`).
+pub fn has_app_config(dir: &Path) -> bool {
+    if dir.join("shopify.app.toml").is_file() {
+        return true;
+    }
+    std::fs::read_dir(dir).ok().is_some_and(|entries| {
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_app_config_file_name)
+                && path.is_file()
+        })
+    })
+}
+
+/// Every Shopify app configuration file in `root`: `shopify.app.toml` first when present, then
+/// `shopify.app.<name>.toml` sorted by name.
+pub fn available_config_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let main = root.join("shopify.app.toml");
+    if main.is_file() {
+        files.push(main);
+    }
+    if let Ok(entries) = std::fs::read_dir(root) {
+        let mut others: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name != "shopify.app.toml" && is_app_config_file_name(name))
+                    && path.is_file()
+            })
+            .collect();
+        others.sort();
+        files.extend(others);
+    }
+    files
+}
+
+/// Resolves the app configuration file for `dir` (whose canonical path is `root`).
+///
+/// With `Some(requested)`, resolves `--config` strictly and returns `Err` when the file is
+/// missing. With `None`, checks Shopify CLI's cached selection (`shopify app config use`),
+/// then `shopify.app.toml`, then the first `shopify.app.<name>.toml`.
+pub fn resolve_config_file(
+    dir: &Path,
+    root: &Path,
+    config: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    resolve_config_file_with_store(
+        dir,
+        root,
+        config,
+        shopify_cli_config_store_path().as_deref(),
+    )
+}
+
+fn resolve_config_file_with_store(
+    dir: &Path,
+    root: &Path,
+    config: Option<&str>,
+    store_file: Option<&Path>,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(requested) = config {
+        return resolve_requested_config(root, requested).map(Some);
+    }
+    if let Some(cached) = store_file.and_then(|store| cached_config_in_file(store, dir, root))
+        && is_single_file_name(&cached)
+    {
+        let candidate = root.join(&cached);
+        if candidate.is_file() {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(available_config_files(root).into_iter().next())
+}
+
+fn resolve_requested_config(root: &Path, requested: &str) -> Result<PathBuf, String> {
+    let requested = requested.trim();
+    if requested.is_empty() {
+        return Err("--config cannot be empty".to_string());
+    }
+    let path = Path::new(requested);
+    if path.is_absolute() {
+        return if path.is_file() {
+            Ok(lsf_core::util::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+        } else {
+            Err(missing_config_error(requested, root))
+        };
+    }
+    if requested.contains('/') || (cfg!(windows) && requested.contains('\\')) {
+        let in_root = root.join(path);
+        if in_root.is_file() {
+            return Ok(lsf_core::util::canonicalize(&in_root).unwrap_or(in_root));
+        }
+        if path.is_file() {
+            return Ok(lsf_core::util::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()));
+        }
+        return Err(missing_config_error(requested, root));
+    }
+    if is_app_config_file_name(requested) || requested.ends_with(".toml") {
+        let candidate = root.join(requested);
+        return if candidate.is_file() {
+            Ok(candidate)
+        } else {
+            Err(missing_config_error(requested, root))
+        };
+    }
+    // Shorthand name (`dev` -> `shopify.app.dev.toml`), with Shopify CLI's slugification fallback
+    // (`My Staging` -> `shopify.app.my-staging.toml`), and `default` -> `shopify.app.toml`.
+    let exact = format!("shopify.app.{requested}.toml");
+    let exact_path = root.join(&exact);
+    if exact_path.is_file() {
+        return Ok(exact_path);
+    }
+    let slug = slugify_config_name(requested);
+    if !slug.is_empty() && slug != requested {
+        let slug_path = root.join(format!("shopify.app.{slug}.toml"));
+        if slug_path.is_file() {
+            return Ok(slug_path);
+        }
+    }
+    if requested.eq_ignore_ascii_case("default") {
+        let default_path = root.join("shopify.app.toml");
+        if default_path.is_file() {
+            return Ok(default_path);
+        }
+        return Err(missing_config_error("shopify.app.toml", root));
+    }
+    let expected = if slug.is_empty() {
+        exact
+    } else {
+        format!("shopify.app.{slug}.toml")
+    };
+    Err(missing_config_error(&expected, root))
+}
+
+fn missing_config_error(expected: &str, root: &Path) -> String {
+    let available: Vec<String> = available_config_files(root)
+        .into_iter()
+        .filter_map(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+        })
+        .collect();
+    if available.is_empty() {
+        format!("cannot find {expected} in {}", root.display())
+    } else {
+        format!(
+            "cannot find {expected} in {} (available: {})",
+            root.display(),
+            available.join(", ")
+        )
+    }
+}
+
+/// Shopify CLI's `slugify` for `--config <name>`: lowercase, hyphenated, non-word characters dropped.
+fn slugify_config_name(text: &str) -> String {
+    let mut slug = String::new();
+    for c in text.trim().chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        } else if (c.is_whitespace() || c == '_' || c == '-')
+            && !slug.is_empty()
+            && !slug.ends_with('-')
+        {
+            slug.push('-');
+        }
+    }
+    slug.trim_end_matches('-').to_string()
+}
+
+fn is_single_file_name(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none()
+}
+
+/// Where Shopify CLI (`shopify app config use`) persists the active configuration file for each
+/// app directory: `LocalStorage({projectName: 'shopify-cli-app'})`, using `env-paths` (`-nodejs`).
+fn shopify_cli_config_store_path() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME").filter(|value| !value.is_empty())?;
+        Some(
+            PathBuf::from(home)
+                .join("Library")
+                .join("Preferences")
+                .join("shopify-cli-app-nodejs")
+                .join("config.json"),
+        )
+    }
+    #[cfg(windows)]
+    {
+        let base = std::env::var_os("APPDATA")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("USERPROFILE")
+                    .filter(|value| !value.is_empty())
+                    .map(|home| PathBuf::from(home).join("AppData").join("Roaming"))
+            })?;
+        Some(
+            base.join("shopify-cli-app-nodejs")
+                .join("Config")
+                .join("config.json"),
+        )
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .filter(|value| !value.is_empty())
+                    .map(|home| PathBuf::from(home).join(".config"))
+            })?;
+        Some(base.join("shopify-cli-app-nodejs").join("config.json"))
+    }
+}
+
+fn normalize_dir_key(path: &str) -> String {
+    let mut normalized = path.replace('\\', "/");
+    while normalized.len() > 1 && normalized.ends_with('/') {
+        if normalized.len() == 3 && normalized.as_bytes()[1] == b':' {
+            break;
+        }
+        normalized.pop();
+    }
+    if cfg!(windows) {
+        normalized.to_ascii_lowercase()
+    } else {
+        normalized
+    }
+}
+
+fn dir_matches(candidate: &str, targets: &[String], canonical_root: &Path) -> bool {
+    let normalized = normalize_dir_key(candidate);
+    if targets.iter().any(|target| target == &normalized) {
+        return true;
+    }
+    lsf_core::util::canonicalize(Path::new(candidate))
+        .ok()
+        .is_some_and(|path| path == canonical_root)
+}
+
+/// Reads the `configFile` stored by `shopify app config use` for `dir`/`root` from `store_file`.
+/// Handles both flat keys and nested objects created when `conf` splits directory paths on `.`.
+fn cached_config_in_file(store_file: &Path, dir: &Path, root: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(store_file).ok()?;
+    let text = raw.strip_prefix('\u{FEFF}').unwrap_or(&raw);
+    let json: Value = serde_json::from_str(text).ok()?;
+    let map = json.as_object()?;
+    let mut targets = vec![normalize_dir_key(&root.to_string_lossy())];
+    let dir_key = normalize_dir_key(&dir.to_string_lossy());
+    if !targets.contains(&dir_key) {
+        targets.push(dir_key);
+    }
+    if let Ok(abs) = std::path::absolute(dir) {
+        let abs_key = normalize_dir_key(&abs.to_string_lossy());
+        if !targets.contains(&abs_key) {
+            targets.push(abs_key);
+        }
+    }
+    find_cached_config(map, None, &targets, root)
+}
+
+fn find_cached_config(
+    object: &serde_json::Map<String, Value>,
+    prefix: Option<&str>,
+    targets: &[String],
+    canonical_root: &Path,
+) -> Option<String> {
+    if let Some(file) = object
+        .get("configFile")
+        .and_then(Value::as_str)
+        .filter(|file| !file.trim().is_empty())
+    {
+        let matched_key = prefix.is_some_and(|key| dir_matches(key, targets, canonical_root));
+        let matched_dir = object
+            .get("directory")
+            .and_then(Value::as_str)
+            .is_some_and(|directory| dir_matches(directory, targets, canonical_root));
+        if matched_key || matched_dir {
+            return Some(file.to_string());
+        }
+    }
+    for (key, value) in object {
+        let Some(child) = value.as_object() else {
+            continue;
+        };
+        let next = match prefix {
+            Some(prefix) => format!("{prefix}.{key}"),
+            None => key.clone(),
+        };
+        if let Some(found) = find_cached_config(child, Some(&next), targets, canonical_root) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 /// What the React Router template (`app/shopify.server.ts`) lacks to run against lsf: the
@@ -998,31 +1355,17 @@ impl App {
     }
 }
 
-/// `shopify.app.toml`, or the first `shopify.app.*.toml` (Shopify CLI configuration files for
-/// another environment).
-fn load_app_config(app: &mut App) {
-    let mut candidates = vec![app.root.join("shopify.app.toml")];
-    if let Ok(entries) = std::fs::read_dir(&app.root) {
-        let mut others: Vec<PathBuf> = entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with("shopify.app.") && name.ends_with(".toml"))
-            })
-            .collect();
-        others.sort();
-        candidates.extend(others);
-    }
-    let Some(file) = candidates.into_iter().find(|path| path.is_file()) else {
+/// Reads the resolved app configuration file (`shopify.app.toml` or `shopify.app.<name>.toml`).
+fn load_app_config(app: &mut App, file: Option<&Path>) {
+    let Some(file) = file else {
         app.warn(
             None,
             "no shopify.app.toml: is this the root of the app?".to_string(),
         );
         return;
     };
-    let table = match read_toml(&file) {
+    let file_name = app.config_file_name().to_string();
+    let table = match read_toml(file) {
         Ok(table) => table,
         Err(message) => {
             app.error(None, message);
@@ -1051,7 +1394,7 @@ fn load_app_config(app: &mut App) {
                         let handle = app.admin_handle().unwrap_or_else(|| {
                             crate::admin::domains::app::LOCAL_CLIENT_ID.to_string()
                         });
-                        app.warn_admin(no_client_id(&handle));
+                        app.warn_admin(no_client_id_in(&file_name, &handle));
                         (None, ClientIdSource::None)
                     } else {
                         (None, ClientIdSource::File)
@@ -1063,18 +1406,18 @@ fn load_app_config(app: &mut App) {
             if let Some(key) = dotenv_key.filter(|key| key != id) {
                 app.warn_admin(
                     format!(
-                        "client_id of shopify.app.toml is {id}, and SHOPIFY_API_KEY of the app's .env is {key}: the session tokens lsf mints are for {id}, which a backend whose apiKey is {key} refuses. Make them the same."
+                        "client_id of {file_name} is {id}, and SHOPIFY_API_KEY of the app's .env is {key}: the session tokens lsf mints are for {id}, which a backend whose apiKey is {key} refuses. Make them the same."
                     ),
                 );
             }
         }
     }
-    app.config = app_config(&table);
-    app.config.order_metafields = declared_definitions(app, &table, "order");
+    app.config = app_config(&table, Some(file_name.clone()));
+    app.config.order_metafields = declared_definitions(app, &table, "order", &file_name);
     for event in app.config.event_subscriptions.clone() {
         if !EVENT_TOPICS.contains(&event.topic.as_str()) {
             app.warn_admin(format!(
-                "shopify.app.toml: [[events.subscription]] {}: lsf delivers the Events of topic {} only, not of {}: nothing is sent for it",
+                "{file_name}: [[events.subscription]] {}: lsf delivers the Events of topic {} only, not of {}: nothing is sent for it",
                 event.handle,
                 EVENT_TOPICS.join(", "),
                 event.topic
@@ -1083,12 +1426,13 @@ fn load_app_config(app: &mut App) {
     }
 }
 
-/// The metafield definitions `shopify.app.toml` declares for an owner type
+/// The metafield definitions `file_name` declares for an owner type
 /// (`[<owner>.metafields.<namespace>.<key>]`). One without a `type` is left out, with a warning.
 fn declared_definitions(
     app: &mut App,
     table: &toml::Table,
     owner: &str,
+    file_name: &str,
 ) -> Vec<DeclaredMetafieldDefinition> {
     let mut definitions = Vec::new();
     let namespaces = table
@@ -1105,7 +1449,7 @@ fn declared_definitions(
                 app.warn(
                     None,
                     format!(
-                        "shopify.app.toml: `[{owner}.metafields.{namespace}.{key}]` has no `type`: \
+                        "{file_name}: `[{owner}.metafields.{namespace}.{key}]` has no `type`: \
                          the definition is left out"
                     ),
                 );
@@ -1151,7 +1495,7 @@ fn strings(value: Option<&toml::Value>) -> Vec<String> {
     }
 }
 
-fn app_config(table: &toml::Table) -> AppConfig {
+fn app_config(table: &toml::Table, file_name: Option<String>) -> AppConfig {
     let section = |name: &str| table.get(name).and_then(|value| value.as_table());
     let text_in = |table: Option<&toml::Table>, key: &str| {
         table
@@ -1205,6 +1549,7 @@ fn app_config(table: &toml::Table) -> AppConfig {
         })
         .unwrap_or_default();
     AppConfig {
+        file_name,
         events_api_version: text_in(events, "api_version"),
         event_subscriptions,
         application_url: text_in(Some(table), "application_url"),
@@ -2814,5 +3159,239 @@ handle = "reader"
     #[test]
     fn a_missing_directory_is_an_error() {
         assert!(load(Path::new("/definitely/not/here")).is_err());
+    }
+
+    #[test]
+    fn config_flag_picks_the_named_file_over_shopify_app_toml() {
+        let root = temp_app("config-flag");
+        write(
+            &root,
+            "shopify.app.toml",
+            "client_id = \"prod-id\"\nname = \"Prod App\"\n",
+        );
+        write(
+            &root,
+            "shopify.app.dev.toml",
+            "client_id = \"dev-id\"\nname = \"Dev App\"\n",
+        );
+        write(
+            &root,
+            "shopify.app.my-staging.toml",
+            "client_id = \"stage-id\"\nname = \"Stage App\"\n",
+        );
+
+        // Without `--config`, `shopify.app.toml` wins over `shopify.app.<name>.toml`.
+        let default_app = load_with_config(&root, None).unwrap();
+        assert_eq!(default_app.client_id.as_deref(), Some("prod-id"));
+        assert_eq!(default_app.config_file_name(), "shopify.app.toml");
+        assert_eq!(default_app.config.file_name(), "shopify.app.toml");
+
+        // Shorthand name (`dev`), full filename (`shopify.app.dev.toml`), relative and absolute paths.
+        for form in [
+            "dev".to_string(),
+            "shopify.app.dev.toml".to_string(),
+            "./shopify.app.dev.toml".to_string(),
+            root.join("shopify.app.dev.toml").display().to_string(),
+        ] {
+            let dev = load_with_config(&root, Some(&form)).unwrap();
+            assert_eq!(dev.client_id.as_deref(), Some("dev-id"), "{form}");
+            assert_eq!(dev.name.as_deref(), Some("Dev App"), "{form}");
+            assert_eq!(dev.config_file_name(), "shopify.app.dev.toml", "{form}");
+            assert_eq!(dev.config.file_name(), "shopify.app.dev.toml", "{form}");
+        }
+
+        // Shopify CLI slugification (`My Staging` -> `shopify.app.my-staging.toml`).
+        let stage = load_with_config(&root, Some("My Staging")).unwrap();
+        assert_eq!(stage.client_id.as_deref(), Some("stage-id"));
+        assert_eq!(stage.config_file_name(), "shopify.app.my-staging.toml");
+
+        // `default` resolves `shopify.app.toml` when no `shopify.app.default.toml` exists.
+        let as_default = load_with_config(&root, Some("default")).unwrap();
+        assert_eq!(as_default.client_id.as_deref(), Some("prod-id"));
+        assert_eq!(as_default.config_file_name(), "shopify.app.toml");
+
+        // Missing config errors cleanly and lists available configs.
+        let err = load_with_config(&root, Some("nope")).unwrap_err();
+        assert!(err.contains("shopify.app.nope.toml"), "{err}");
+        assert!(
+            err.contains(
+                "available: shopify.app.toml, shopify.app.dev.toml, shopify.app.my-staging.toml"
+            ),
+            "{err}"
+        );
+        assert!(load_with_config(&root, Some("  ")).is_err());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn default_config_follows_shopify_cli_app_config_use_and_falls_back_gracefully() {
+        let root = temp_app("config-use");
+        let canonical = lsf_core::util::canonicalize(&root).unwrap_or_else(|_| root.clone());
+        let store = root.join(".test-shopify-cli-config.json");
+        write(
+            &root,
+            "shopify.app.toml",
+            "client_id = \"prod-id\"\nname = \"Prod\"\n",
+        );
+        write(
+            &root,
+            "shopify.app.dev.toml",
+            "client_id = \"dev-id\"\nname = \"Dev\"\n",
+        );
+        write(
+            &root,
+            "shopify.app.staging.toml",
+            "client_id = \"staging-id\"\nname = \"Staging\"\n",
+        );
+
+        // Flat entry (standard `shopify app config use`).
+        let key = canonical.to_string_lossy().replace('\\', "/");
+        std::fs::write(
+            &store,
+            serde_json::json!({
+                key.clone(): {
+                    "directory": key,
+                    "configFile": "shopify.app.staging.toml"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let chosen = resolve_config_file_with_store(&root, &canonical, None, Some(&store))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            chosen.file_name().and_then(|n| n.to_str()),
+            Some("shopify.app.staging.toml")
+        );
+
+        // Explicit `--config` overrides the cached `shopify app config use` choice.
+        let explicit = resolve_config_file_with_store(&root, &canonical, Some("dev"), Some(&store))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            explicit.file_name().and_then(|n| n.to_str()),
+            Some("shopify.app.dev.toml")
+        );
+
+        // Nested dot-split entry (as `conf` 11.x writes for directory paths containing `.`) + BOM.
+        let dot_dir = temp_app("config.use.dotted");
+        let dot_canonical =
+            lsf_core::util::canonicalize(&dot_dir).unwrap_or_else(|_| dot_dir.clone());
+        write(&dot_dir, "shopify.app.toml", "name = \"Prod\"\n");
+        write(&dot_dir, "shopify.app.dev.toml", "name = \"Dev\"\n");
+        let dot_key = dot_canonical.to_string_lossy().replace('\\', "/");
+        let parts: Vec<&str> = dot_key.split('.').collect();
+        let mut nested = serde_json::json!({
+            "directory": dot_key,
+            "configFile": "shopify.app.dev.toml"
+        });
+        for part in parts.iter().rev() {
+            let mut obj = serde_json::Map::new();
+            obj.insert((*part).to_string(), nested);
+            nested = Value::Object(obj);
+        }
+        std::fs::write(&store, format!("\u{FEFF}{nested}")).unwrap();
+        let chosen = resolve_config_file_with_store(&dot_dir, &dot_canonical, None, Some(&store))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            chosen.file_name().and_then(|n| n.to_str()),
+            Some("shopify.app.dev.toml")
+        );
+
+        // Stale cache (deleted file) falls back to `shopify.app.toml`.
+        std::fs::remove_file(dot_dir.join("shopify.app.dev.toml")).unwrap();
+        let fallback = resolve_config_file_with_store(&dot_dir, &dot_canonical, None, Some(&store))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fallback.file_name().and_then(|n| n.to_str()),
+            Some("shopify.app.toml")
+        );
+
+        // Without `shopify.app.toml`, falls back to sorted `shopify.app.<name>.toml`.
+        std::fs::remove_file(dot_dir.join("shopify.app.toml")).unwrap();
+        write(&dot_dir, "shopify.app.zeta.toml", "name = \"Zeta\"\n");
+        write(&dot_dir, "shopify.app.alpha.toml", "name = \"Alpha\"\n");
+        assert!(has_app_config(&dot_dir));
+        let alpha = resolve_config_file_with_store(&dot_dir, &dot_canonical, None, Some(&store))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            alpha.file_name().and_then(|n| n.to_str()),
+            Some("shopify.app.alpha.toml")
+        );
+
+        // Path traversal in cached `configFile` is ignored safely.
+        std::fs::write(
+            &store,
+            serde_json::json!({
+                key.clone(): {
+                    "directory": key,
+                    "configFile": "../outside.toml"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let safe = resolve_config_file_with_store(&root, &canonical, None, Some(&store))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            safe.file_name().and_then(|n| n.to_str()),
+            Some("shopify.app.toml")
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&dot_dir);
+    }
+
+    #[test]
+    fn warnings_from_a_named_config_name_that_file() {
+        let root = temp_app("named-warnings");
+        write(
+            &root,
+            "shopify.app.dev.toml",
+            r#"
+client_id = "dev-client"
+name = "Dev"
+
+[order.metafields.app.note]
+name = "Missing type"
+
+[events]
+api_version = "2026-10"
+
+  [[events.subscription]]
+  handle = "orders"
+  topic = "Order"
+  actions = ["create"]
+  uri = "/events"
+"#,
+        );
+        write(&root, ".env", "SHOPIFY_API_KEY=other-key\n");
+        let app = load_with_config(&root, Some("dev")).unwrap();
+        let messages: Vec<&str> = app.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.starts_with("client_id of shopify.app.dev.toml is dev-client")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.starts_with("shopify.app.dev.toml: [[events.subscription]] orders:")),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|m| {
+                m.starts_with("shopify.app.dev.toml: `[order.metafields.app.note]` has no `type`")
+            }),
+            "{messages:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

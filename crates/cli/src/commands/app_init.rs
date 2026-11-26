@@ -23,6 +23,12 @@ pub struct InitArgs {
     #[arg(long, env = "LSF_APP", value_name = "DIR")]
     app: Option<PathBuf>,
 
+    /// The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a
+    /// path). Without it, uses the configuration selected with `shopify app config use`, else
+    /// `shopify.app.toml`.
+    #[arg(long, short = 'c', env = "LSF_APP_CONFIG", value_name = "CONFIG")]
+    config: Option<String>,
+
     /// Overwrite the scenarios that already exist.
     #[arg(long)]
     force: bool,
@@ -34,6 +40,7 @@ impl InitArgs {
     pub fn for_app(app: PathBuf) -> InitArgs {
         InitArgs {
             app: Some(app),
+            config: None,
             force: false,
         }
     }
@@ -786,7 +793,7 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
     });
     let shopify_app = match &app_dir {
         Some(dir) => {
-            let app = lsf_app::config::load(dir)?;
+            let app = lsf_app::config::load_with_config(dir, args.config.as_deref())?;
             Some(app)
         }
         None => None,
@@ -1092,7 +1099,15 @@ mod tests {
     }
 
     fn init_in(root: &Path, app: Option<PathBuf>, force: bool) -> Result<ExitCode, String> {
-        run(root, Some(&root.join("data")), InitArgs { app, force })
+        run(
+            root,
+            Some(&root.join("data")),
+            InitArgs {
+                app,
+                config: None,
+                force,
+            },
+        )
     }
 
     fn names_in(root: &Path) -> Vec<String> {

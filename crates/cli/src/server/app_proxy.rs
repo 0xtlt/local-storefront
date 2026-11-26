@@ -119,6 +119,8 @@ pub struct AppProxy {
     /// `/<prefix>/<subpath>`: the storefront path that is proxied, and the `path_prefix` the
     /// backend is given. Shopify lets a merchant change both; lsf serves the app's.
     path_prefix: String,
+    /// The file name of the app configuration (`shopify.app.toml`, `shopify.app.dev.toml`).
+    config_file: String,
     /// `url` of `[app_proxy]`, as written.
     url: String,
     /// Where the requests go: `url` resolved as the `uri` of a webhook (a path joins the app
@@ -134,8 +136,12 @@ pub struct AppProxy {
 impl AppProxy {
     /// The app proxy of the app in `app_dir`, `None` when it has no `[app_proxy]` (or cannot be
     /// read: the checkout says why).
-    pub fn of_app(app_dir: &Path, app_url: Option<&str>) -> Option<AppProxy> {
-        let app = lsf_app::config::load(app_dir).ok()?;
+    pub fn of_app(
+        app_dir: &Path,
+        app_config: Option<&str>,
+        app_url: Option<&str>,
+    ) -> Option<AppProxy> {
+        let app = lsf_app::config::load_with_config(app_dir, app_config).ok()?;
         AppProxy::new(&app.config, app_url)
     }
 
@@ -174,6 +180,7 @@ impl AppProxy {
         };
         Some(AppProxy {
             path_prefix: proxy.path(),
+            config_file: config.file_name().to_string(),
             url: proxy.url.clone(),
             target: resolve_uri(&proxy.url, &urls),
             problem,
@@ -566,10 +573,15 @@ fn unreachable_page(state: &ServerState, status: u16, url: &str, reason: &str) -
         eprintln!("    app proxy: {reason}");
     }
     let escape = lsf_liquid::filters::escape_html;
+    let config_file = state
+        .app_proxy
+        .as_ref()
+        .map_or("shopify.app.toml", |proxy| proxy.config_file.as_str());
     let body = format!(
-        "<!doctype html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>The app proxy got no answer</title></head>\n<body>\n<h1>The app proxy got no answer</h1>\n<p>lsf forwards this page to the backend of the app, at <code>{url}</code>, and {reason}.</p>\n<p>Start the backend there, or tell lsf where it listens with <code>--app-url</code> (<code>LSF_APP_URL</code>): the <code>url</code> of <code>[app_proxy]</code> in <code>shopify.app.toml</code> moves there when it is on the origin of <code>application_url</code>, and joins it when it is a path.</p>\n</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>The app proxy got no answer</title></head>\n<body>\n<h1>The app proxy got no answer</h1>\n<p>lsf forwards this page to the backend of the app, at <code>{url}</code>, and {reason}.</p>\n<p>Start the backend there, or tell lsf where it listens with <code>--app-url</code> (<code>LSF_APP_URL</code>): the <code>url</code> of <code>[app_proxy]</code> in <code>{config_file}</code> moves there when it is on the origin of <code>application_url</code>, and joins it when it is a path.</p>\n</body>\n</html>\n",
         url = escape(url),
         reason = escape(reason),
+        config_file = escape(config_file),
     );
     Reply::html(status, body)
         .header("x-lsf-reason", header_text(reason))
@@ -646,6 +658,7 @@ mod tests {
                 customer: None,
                 checkout: Some(crate::checkout::CheckoutOptions {
                     app_dir,
+                    config: None,
                     extensions: Vec::new(),
                     variant: crate::checkout::Variant::Standard,
                     standalone,

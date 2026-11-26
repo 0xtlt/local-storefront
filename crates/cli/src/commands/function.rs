@@ -74,6 +74,12 @@ struct BuildArgs {
     /// current folder is in.
     #[arg(long, env = "LSF_APP", value_name = "DIR")]
     app: Option<std::path::PathBuf>,
+
+    /// The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a
+    /// path). Without it, uses the configuration selected with `shopify app config use`, else
+    /// `shopify.app.toml`.
+    #[arg(long, short = 'c', env = "LSF_APP_CONFIG", value_name = "CONFIG")]
+    config: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -86,6 +92,12 @@ struct RunArgs {
     /// current folder is in.
     #[arg(long, env = "LSF_APP", value_name = "DIR")]
     app: Option<std::path::PathBuf>,
+
+    /// The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a
+    /// path). Without it, uses the configuration selected with `shopify app config use`, else
+    /// `shopify.app.toml`.
+    #[arg(long, short = 'c', env = "LSF_APP_CONFIG", value_name = "CONFIG")]
+    config: Option<String>,
 
     /// Build the extensions first, as `lsf app build` does: each Function (its
     /// `[extensions.build] command`, or lsf's own build of a JavaScript one), then each UI
@@ -149,6 +161,7 @@ struct RunArgs {
 fn build(args: &BuildArgs) -> Result<ExitCode, String> {
     checkout::run_build(
         args.app.as_deref(),
+        args.config.as_deref(),
         &args.handles,
         "lsf app function build",
         checkout::build_functions,
@@ -159,7 +172,7 @@ fn build(args: &BuildArgs) -> Result<ExitCode, String> {
 /// current folder, or all of them.
 fn typegen(args: &BuildArgs) -> Result<ExitCode, String> {
     let app_dir = checkout::app_of(args.app.as_deref(), "lsf app function typegen")?;
-    let app = lsf_app::config::load(&app_dir)?;
+    let app = lsf_app::config::load_with_config(&app_dir, args.config.as_deref())?;
     let current = std::env::current_dir().map_err(|error| error.to_string())?;
     let functions: Vec<&lsf_app::config::FunctionExtension> = if !args.handles.is_empty() {
         args.handles
@@ -379,6 +392,7 @@ fn run_on_input(args: &RunArgs, input: &str) -> Result<ExitCode, String> {
         checkout::open(
             &checkout::AppArgs {
                 app: Some(app_dir.clone()),
+                config: args.config.clone(),
                 extensions,
                 build,
             },
@@ -399,7 +413,7 @@ fn run_on_input(args: &RunArgs, input: &str) -> Result<ExitCode, String> {
     let shopify_app = if args.build {
         shopify_app
     } else {
-        checkout::freshen(app_dir, shopify_app, &selection)?
+        checkout::freshen(app_dir, args.config.as_deref(), shopify_app, &selection)?
     };
     let function = schema::function_of(
         &shopify_app,
@@ -963,6 +977,7 @@ fn compute(
     let app_dir = &checkout::app_of(args.app.as_deref(), "lsf app function run")?;
     let app_args = checkout::AppArgs {
         app: Some(app_dir.clone()),
+        config: args.config.clone(),
         extensions: args.handles.clone(),
         build: args.build,
     };
@@ -1028,7 +1043,7 @@ fn compute(
     let shopify_app = if args.build {
         shopify_app
     } else {
-        checkout::freshen(app_dir, shopify_app, &selection)?
+        checkout::freshen(app_dir, args.config.as_deref(), shopify_app, &selection)?
     };
 
     let mut session = Session::initial(&store);
@@ -1489,6 +1504,7 @@ mod tests {
                 command: Subcommand::Run(RunArgs {
                     handles: vec!["quantity-limit".to_string()],
                     app: Some(app.clone()),
+                    config: None,
                     build: false,
                     session: None,
                     scenario: None,
@@ -1529,6 +1545,7 @@ mod tests {
         let args = RunArgs {
             handles: vec!["percent-off".to_string()],
             app: None,
+            config: None,
             build: false,
             session: None,
             scenario: None,
@@ -1569,6 +1586,7 @@ mod tests {
             let args = RunArgs {
                 handles: vec!["quantity-limit".to_string()],
                 app: Some(app.clone()),
+                config: None,
                 build: false,
                 session: None,
                 scenario: None,
@@ -1668,6 +1686,7 @@ mod tests {
             command: Subcommand::Run(RunArgs {
                 handles: vec![handle.to_string()],
                 app: Some(app),
+                config: None,
                 build: false,
                 session: None,
                 scenario: None,
@@ -1793,6 +1812,7 @@ mod tests {
         RunArgs {
             handles: handles.iter().map(|handle| handle.to_string()).collect(),
             app: Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tests/fixtures/app")),
+            config: None,
             build: false,
             session: None,
             scenario: scenario.map(str::to_string),

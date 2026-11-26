@@ -839,6 +839,7 @@ fn a_scenario_added_while_watching_keeps_what_the_backend_changed() {
             customer: None,
             checkout: Some(crate::checkout::CheckoutOptions {
                 app_dir: fixture_app(),
+                config: None,
                 extensions: Vec::new(),
                 variant: crate::checkout::Variant::Standard,
                 standalone: false,

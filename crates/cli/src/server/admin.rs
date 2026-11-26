@@ -39,6 +39,8 @@ pub struct AdminSettings {
     /// The app of `--app`, whose client id, scopes and webhooks the Admin API has. `None` takes
     /// the app of the checkout, else none (a local client id, every scope).
     pub app_dir: Option<std::path::PathBuf>,
+    /// `--config` (`-c`, `LSF_APP_CONFIG`): the app configuration file to read, when given.
+    pub app_config: Option<String>,
     /// `--pricing-plans <file>` (`LSF_PRICING_PLANS`): the plans of the app's managed pricing,
     /// read from the file.
     pub pricing: Option<(
@@ -69,7 +71,9 @@ impl Admin {
         theme: &Path,
         quiet: bool,
     ) -> Admin {
-        let app = app_dir.and_then(|dir| lsf_app::config::load(dir).ok());
+        let app = app_dir.and_then(|dir| {
+            lsf_app::config::load_with_config(dir, settings.app_config.as_deref()).ok()
+        });
         let (secret, secret_source) =
             lsf_app::admin::auth::client_secret(settings.client_secret.as_deref(), app_dir);
         let secret_file = app_dir.map(|dir| dir.join(".env"));
@@ -152,7 +156,7 @@ impl Admin {
             self.api.token(&shop)
         ));
         if let Some(app) = self.api.app()
-            && let Some(source) = app.client_id_source.describe()
+            && let Some(source) = app.client_id_source.describe(app.config_file_name())
         {
             lines.push(format!(
                 "        client id: {}   ({source})",
@@ -226,13 +230,19 @@ impl Admin {
             .app()
             .and_then(|app| app.admin_handle())
             .unwrap_or_else(|| self.api.client_id().to_string());
+        let config_file = self
+            .api
+            .app()
+            .map_or("shopify.app.toml", lsf_app::config::App::config_file_name);
         Some(format!(
             "pricing: {} ({source}): {origin}/admin/charges/{key}/pricing_plans   (managed pricing: the Billing API creates no charge{})",
             crate::output::count(pricing.plans.len(), "plan", "plans"),
             if no_handle {
-                "; shopify.app.toml has no handle, which Shopify's page needs in place of the client id"
+                format!(
+                    "; {config_file} has no handle, which Shopify's page needs in place of the client id"
+                )
             } else {
-                ""
+                String::new()
             },
         ))
     }
