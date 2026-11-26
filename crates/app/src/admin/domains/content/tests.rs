@@ -1875,3 +1875,177 @@ fn a_metaobject_lists_what_references_it() {
         "{answer}"
     );
 }
+
+/// `metafieldsSet` and `metafieldsDelete` on a customer move its `updatedAt` so
+/// `customers(query: "updated_at:>...")` picks up metafield-only changes (issue #347).
+#[test]
+fn metafield_changes_on_a_customer_move_its_updated_at() {
+    use crate::admin::state::Clock;
+
+    let mut shop = rich();
+    let t1 = shop.now();
+    let created = run(
+        &mut shop,
+        r#"mutation { customerCreate(input: { email: "probe.customer@example.com" }) {
+            customer { id updatedAt } userErrors { message } } }"#,
+        json!({}),
+    );
+    let customer = &created["data"]["customerCreate"]["customer"];
+    let id = customer["id"].as_str().unwrap().to_string();
+    let updated_t1 = customer["updatedAt"].as_str().unwrap().to_string();
+    assert_eq!(updated_t1, shop.timestamp());
+
+    let read_updated_at = |shop: &mut ShopState| {
+        run(
+            shop,
+            "query($id: ID!) { customer(id: $id) { updatedAt } }",
+            json!({"id": id}),
+        )["data"]["customer"]["updatedAt"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let polled_ids = |shop: &mut ShopState, since: &str| -> Vec<String> {
+        run(
+            shop,
+            "query($q: String!) { customers(first: 20, query: $q) { nodes { id } } }",
+            json!({"q": format!("updated_at:>'{since}'")}),
+        )["data"]["customers"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|node| node["id"].as_str().map(str::to_string))
+            .collect()
+    };
+
+    assert!(!polled_ids(&mut shop, &updated_t1).contains(&id));
+    shop.take_events();
+
+    // Setting a new metafield a second later moves `updatedAt`.
+    let t2 = t1 + chrono::Duration::seconds(1);
+    shop.set_clock(Clock::Frozen(t2));
+    let updated_t2 = shop.timestamp();
+    let set = run(
+        &mut shop,
+        SET,
+        json!({"metafields": [
+            {"ownerId": id, "namespace": "crm", "key": "handle", "type": "single_line_text_field", "value": "abc"}
+        ]}),
+    );
+    assert_eq!(
+        set["data"]["metafieldsSet"]["userErrors"],
+        json!([]),
+        "{set}"
+    );
+    assert_eq!(read_updated_at(&mut shop), updated_t2);
+    assert!(polled_ids(&mut shop, &updated_t1).contains(&id));
+    assert_eq!(topics(&mut shop), ["metafields/create"]);
+
+    // Updating the metafield moves `updatedAt` again.
+    let t3 = t2 + chrono::Duration::seconds(1);
+    shop.set_clock(Clock::Frozen(t3));
+    let updated_t3 = shop.timestamp();
+    let updated = run(
+        &mut shop,
+        SET,
+        json!({"metafields": [
+            {"ownerId": id, "namespace": "crm", "key": "handle", "type": "single_line_text_field", "value": "def"}
+        ]}),
+    );
+    assert_eq!(
+        updated["data"]["metafieldsSet"]["userErrors"],
+        json!([]),
+        "{updated}"
+    );
+    assert_eq!(read_updated_at(&mut shop), updated_t3);
+    assert!(polled_ids(&mut shop, &updated_t2).contains(&id));
+    assert_eq!(topics(&mut shop), ["metafields/update"]);
+
+    // A rejected `metafieldsSet` leaves `updatedAt` unchanged.
+    let t4 = t3 + chrono::Duration::seconds(1);
+    shop.set_clock(Clock::Frozen(t4));
+    let updated_t4 = shop.timestamp();
+    let failed = run(
+        &mut shop,
+        SET,
+        json!({"metafields": [
+            {"ownerId": id, "namespace": "crm", "key": "bad", "type": "number_integer", "value": "nope"}
+        ]}),
+    );
+    assert!(
+        !failed["data"]["metafieldsSet"]["userErrors"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(read_updated_at(&mut shop), updated_t3);
+    assert!(topics(&mut shop).is_empty());
+
+    // Deleting a missing metafield leaves `updatedAt` unchanged; deleting an existing one moves it.
+    let delete_query = "mutation($metafields: [MetafieldIdentifierInput!]!) {
+        metafieldsDelete(metafields: $metafields) {
+            deletedMetafields { ownerId namespace key } userErrors { field message } } }";
+    let missing = run(
+        &mut shop,
+        delete_query,
+        json!({"metafields": [{"ownerId": id, "namespace": "crm", "key": "missing"}]}),
+    );
+    assert_eq!(
+        missing["data"]["metafieldsDelete"]["deletedMetafields"],
+        json!([null])
+    );
+    assert_eq!(read_updated_at(&mut shop), updated_t3);
+    assert!(topics(&mut shop).is_empty());
+
+    let deleted = run(
+        &mut shop,
+        delete_query,
+        json!({"metafields": [{"ownerId": id, "namespace": "crm", "key": "handle"}]}),
+    );
+    assert_eq!(
+        deleted["data"]["metafieldsDelete"]["deletedMetafields"],
+        json!([{"ownerId": id, "namespace": "crm", "key": "handle"}])
+    );
+    assert_eq!(read_updated_at(&mut shop), updated_t4);
+    assert!(polled_ids(&mut shop, &updated_t3).contains(&id));
+    assert_eq!(topics(&mut shop), ["metafields/delete"]);
+
+    // Deleting a definition with `deleteAllAssociatedMetafields: true` also touches the owner.
+    let t5 = t4 + chrono::Duration::seconds(1);
+    shop.set_clock(Clock::Frozen(t5));
+    let def = run(
+        &mut shop,
+        CREATE_DEFINITION,
+        json!({"definition": {
+            "name": "Handle", "namespace": "crm", "key": "tag_handle",
+            "ownerType": "CUSTOMER", "type": "single_line_text_field",
+        }}),
+    );
+    let def_id = def["data"]["metafieldDefinitionCreate"]["createdDefinition"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let set_def = run(
+        &mut shop,
+        SET,
+        json!({"metafields": [{"ownerId": id, "namespace": "crm", "key": "tag_handle", "value": "vip"}]}),
+    );
+    assert_eq!(set_def["data"]["metafieldsSet"]["userErrors"], json!([]));
+    let updated_t5 = shop.timestamp();
+    assert_eq!(read_updated_at(&mut shop), updated_t5);
+
+    let t6 = t5 + chrono::Duration::seconds(1);
+    shop.set_clock(Clock::Frozen(t6));
+    let updated_t6 = shop.timestamp();
+    let def_deleted = run(
+        &mut shop,
+        "mutation($id: ID!) { metafieldDefinitionDelete(id: $id, deleteAllAssociatedMetafields: true) { deletedDefinitionId userErrors { message } } }",
+        json!({"id": def_id}),
+    );
+    assert_eq!(
+        def_deleted["data"]["metafieldDefinitionDelete"]["userErrors"],
+        json!([])
+    );
+    assert_eq!(read_updated_at(&mut shop), updated_t6);
+    assert!(polled_ids(&mut shop, &updated_t5).contains(&id));
+}

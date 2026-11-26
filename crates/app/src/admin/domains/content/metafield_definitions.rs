@@ -1092,15 +1092,7 @@ fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                 .get(metafield)
                 .map(|record| text(record, "owner").to_string());
             if let Some(owner) = owner {
-                let is_product =
-                    matches!(state.type_of(&owner), Some("Product" | "ProductVariant"));
-                if !is_product {
-                    state.emit("metafields/delete", metafield);
-                }
-                metafields::remove(state, metafield);
-                if is_product {
-                    metafields::emit_change(state, &owner, metafield, "delete");
-                }
+                metafields::delete(state, &owner, metafield);
             }
         } else if let Some(record) = state.get_mut(metafield) {
             record.insert("definition".into(), Value::Null);

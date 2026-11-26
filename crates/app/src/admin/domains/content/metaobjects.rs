@@ -1077,9 +1077,11 @@ fn definition_delete(
             let owner = state
                 .get(&metafield)
                 .map(|record| text(record, "owner").to_string());
-            super::metafields::remove(state, &metafield);
-            if let Some(owner) = owner {
-                super::metafields::emit_change(state, &owner, &metafield, "delete");
+            match owner {
+                Some(owner) => super::metafields::delete(state, &owner, &metafield),
+                None => {
+                    super::metafields::remove(state, &metafield);
+                }
             }
         }
     }
