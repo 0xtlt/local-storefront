@@ -616,6 +616,81 @@ fn customers_are_searched_and_sorted_by_their_documented_filters() {
     );
 }
 
+#[test]
+fn customer_search_field_names_are_case_sensitive() {
+    let (_, mut shop) = demo();
+    let created = run(
+        &mut shop,
+        r#"mutation { customerCreate(input: { email: "probe.customer@example.com" }) { customer { id } userErrors { message } } }"#,
+        Value::Null,
+    );
+    assert_eq!(
+        data(&created, "customerCreate")["userErrors"],
+        json!([]),
+        "{created}"
+    );
+    let all = run(
+        &mut shop,
+        "{ customers(first: 50) { nodes { email } } }",
+        Value::Null,
+    );
+    let all_emails: Vec<&str> = all["data"]["customers"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["email"].as_str().unwrap())
+        .collect();
+    assert!(all_emails.len() > 1);
+    assert!(all_emails.contains(&"probe.customer@example.com"));
+
+    // Wrong-case `Email:` is treated as an unknown field: ignored (returns every customer)
+    // and reported in `extensions.search` with its original casing.
+    let wrong_case = run(
+        &mut shop,
+        "query($q: String) { customers(first: 50, query: $q) { nodes { email } } }",
+        json!({"q": "Email:probe.customer@example.com"}),
+    );
+    let wrong_case_emails: Vec<&str> = wrong_case["data"]["customers"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["email"].as_str().unwrap())
+        .collect();
+    assert_eq!(wrong_case_emails, all_emails);
+    assert_eq!(
+        wrong_case["extensions"]["search"],
+        json!([{
+            "path": ["customers"],
+            "query": "Email:probe.customer@example.com",
+            "parsed": {"field": "Email", "match_all": "probe.customer@example.com"},
+            "warnings": [{"field": "Email", "message": "Invalid search field for this query."}],
+        }])
+    );
+
+    // Lowercase `email:` filters normally with no warnings, while values remain case-insensitive.
+    for query in [
+        "email:probe.customer@example.com",
+        "email:PROBE.CUSTOMER@EXAMPLE.COM",
+    ] {
+        let matched = run(
+            &mut shop,
+            "query($q: String) { customers(first: 50, query: $q) { nodes { email } } }",
+            json!({"q": query}),
+        );
+        let emails: Vec<&str> = matched["data"]["customers"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| node["email"].as_str().unwrap())
+            .collect();
+        assert_eq!(emails, ["probe.customer@example.com"], "{query}: {matched}");
+        assert!(
+            matched["extensions"].get("search").is_none(),
+            "{query}: {matched}"
+        );
+    }
+}
+
 const COMPANY_FIELDS: &str = "id name externalId note
     mainContact { id isMainContact customer { email firstName } }
     contacts(first: 5) { nodes { id title roleAssignments(first: 5) { nodes { role { name } companyLocation { name } } } } }

@@ -249,6 +249,33 @@ fn search_sort_and_counts() {
             "warnings": [{"field": "colour", "message": "Invalid search field for this query."}],
         }])
     );
+    // Field names are case-sensitive: wrong-case fields (including `_not` forms) are unknown.
+    let all_products = run(&mut shop, "{ products(first: 50) { nodes { title } } }");
+    let all_titles = titles(&all_products["data"]["products"]);
+    assert!(all_titles.len() > 1);
+    let wrong_case = run(
+        &mut shop,
+        "{ products(first: 50, query: \"Tag:sale\") { nodes { title } } }",
+    );
+    assert_eq!(titles(&wrong_case["data"]["products"]), all_titles);
+    assert_eq!(
+        wrong_case["extensions"]["search"],
+        json!([{
+            "path": ["products"],
+            "query": "Tag:sale",
+            "parsed": {"field": "Tag", "match_all": "sale"},
+            "warnings": [{"field": "Tag", "message": "Invalid search field for this query."}],
+        }])
+    );
+    let wrong_case_not = run(
+        &mut shop,
+        "{ products(first: 50, query: \"Tag_not:sale\") { nodes { title } } }",
+    );
+    assert_eq!(titles(&wrong_case_not["data"]["products"]), all_titles);
+    assert_eq!(
+        wrong_case_not["extensions"]["search"][0]["warnings"],
+        json!([{"field": "Tag_not", "message": "Invalid search field for this query."}])
+    );
     let limited = run(&mut shop, "{ productsCount(limit: 2) { count precision } }");
     assert_eq!(
         limited["data"]["productsCount"],
