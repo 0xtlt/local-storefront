@@ -43,7 +43,7 @@ pub fn register(registry: &mut Registry) {
 }
 
 /// The `CatalogType` of a publication's catalog (`NONE` without one).
-fn catalog_type_of(state: &ShopState, publication: &str) -> &'static str {
+pub fn catalog_type_of(state: &ShopState, publication: &str) -> &'static str {
     let catalog = state
         .get(publication)
         .and_then(|record| record.get("catalog"))
@@ -173,7 +173,8 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     Ok(payload(json!({"publication": publication}), &[]))
 }
 
-/// The publishables of a list of an input: products and collections, or the errors at `at`.
+/// The publishables of a list of an input: products, collections, and product variants, or the
+/// errors at `at`.
 fn publishables(
     state: &ShopState,
     ids: &[String],
@@ -184,7 +185,7 @@ fn publishables(
     for (index, id) in ids.iter().enumerate() {
         let index = index.to_string();
         match state.type_of(id) {
-            Some("Product" | "Collection") => found.push(id.clone()),
+            Some("Product" | "Collection" | "ProductVariant") => found.push(id.clone()),
             Some(_) => errors.push(coded(
                 &["input", at, &index],
                 // The code's description in the schema.

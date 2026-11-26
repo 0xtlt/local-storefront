@@ -1603,6 +1603,250 @@ fn products_and_collections_are_published_and_unpublished() {
 }
 
 #[test]
+fn product_variants_are_publishable() {
+    let mut shop = demo();
+    let online_store = super::online_store_publication_gid();
+    // Pick a seeded published product with multiple variants.
+    let beanie = product(&shop, "wool-beanie");
+    let beanie_variants = variants(&shop, &beanie);
+    assert!(beanie_variants.len() >= 2);
+    let v1 = beanie_variants[0].clone();
+    let v2 = beanie_variants[1].clone();
+
+    // Seeded published product's variants start published via inheritance.
+    let initial = run_with(
+        &mut shop,
+        r#"query($id: ID!, $publication: ID!) {
+            productVariant(id: $id) {
+                id
+                publishedOnPublication(publicationId: $publication)
+                publicationCount
+                resourcePublicationsCount { count }
+                availablePublicationsCount { count }
+                resourcePublications(first: 5) { nodes { isPublished publication { id name } publishable { __typename ... on ProductVariant { id } } } }
+                resourcePublicationsV2(first: 5) { nodes { isPublished publication { id name } publishable { __typename ... on ProductVariant { id } } } }
+                unpublishedPublications(first: 5) { nodes { id } }
+            }
+        }"#,
+        json!({"id": v1, "publication": online_store}),
+    );
+    let node = &initial["data"]["productVariant"];
+    assert_eq!(node["publishedOnPublication"], json!(true));
+    assert_eq!(node["publicationCount"], json!(1));
+    assert_eq!(node["resourcePublicationsCount"]["count"], json!(1));
+    assert_eq!(node["availablePublicationsCount"]["count"], json!(1));
+    assert_eq!(
+        node["resourcePublications"]["nodes"],
+        json!([{
+            "isPublished": true,
+            "publication": {"id": online_store, "name": "Online Store"},
+            "publishable": {"__typename": "ProductVariant", "id": v1},
+        }])
+    );
+    assert_eq!(
+        node["resourcePublicationsV2"]["nodes"],
+        json!([{
+            "isPublished": true,
+            "publication": {"id": online_store, "name": "Online Store"},
+            "publishable": {"__typename": "ProductVariant", "id": v1},
+        }])
+    );
+    assert_eq!(node["unpublishedPublications"]["nodes"], json!([]));
+
+    // Publishing an already-published variant is a no-op with no userErrors.
+    shop.take_events();
+    let noop = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $publication: ID!) {
+            publishablePublish(id: $id, input: [{publicationId: $publication}]) {
+                publishable { __typename ... on ProductVariant { id publishedOnPublication(publicationId: $publication) } }
+                userErrors { field message }
+            }
+        }"#,
+        json!({"id": v1, "publication": online_store}),
+    );
+    assert_eq!(
+        ok(&noop, "publishablePublish")["publishable"],
+        json!({"__typename": "ProductVariant", "id": v1, "publishedOnPublication": true})
+    );
+    assert!(shop.take_events().is_empty());
+
+    // Unpublishing one variant leaves its sibling and parent product published,
+    // emits `products/update` for the parent product, and updates all Publishable fields.
+    let unpublished = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $publication: ID!) {
+            publishableUnpublish(id: $id, input: [{publicationId: $publication}]) {
+                publishable {
+                    __typename
+                    ... on ProductVariant {
+                        id
+                        publishedOnPublication(publicationId: $publication)
+                        publicationCount
+                        resourcePublicationsCount { count }
+                        availablePublicationsCount { count }
+                        resourcePublications(first: 5) { nodes { isPublished } }
+                        allResourcePublications: resourcePublications(first: 5, onlyPublished: false) { nodes { isPublished publication { id } } }
+                        resourcePublicationsV2(first: 5) { nodes { isPublished } }
+                        unpublishedPublications(first: 5) { nodes { id } }
+                    }
+                }
+                userErrors { field message }
+            }
+        }"#,
+        json!({"id": v1, "publication": online_store}),
+    );
+    let publishable = &ok(&unpublished, "publishableUnpublish")["publishable"];
+    assert_eq!(publishable["__typename"], json!("ProductVariant"));
+    assert_eq!(publishable["id"], json!(v1));
+    assert_eq!(publishable["publishedOnPublication"], json!(false));
+    assert_eq!(publishable["publicationCount"], json!(0));
+    assert_eq!(publishable["resourcePublicationsCount"]["count"], json!(0));
+    assert_eq!(publishable["availablePublicationsCount"]["count"], json!(1));
+    assert_eq!(publishable["resourcePublications"]["nodes"], json!([]));
+    assert_eq!(
+        publishable["allResourcePublications"]["nodes"],
+        json!([{"isPublished": false, "publication": {"id": online_store}}])
+    );
+    assert_eq!(publishable["resourcePublicationsV2"]["nodes"], json!([]));
+    assert_eq!(
+        publishable["unpublishedPublications"]["nodes"],
+        json!([{"id": online_store}])
+    );
+    let events = shop.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].topic, "products/update");
+    assert_eq!(events[0].gid, beanie);
+
+    // Sibling variant and parent product stay published; `published_status` reflects the change.
+    let check = run_with(
+        &mut shop,
+        r#"query($product: ID!, $sibling: ID!, $publication: ID!) {
+            product(id: $product) { publishedOnPublication(publicationId: $publication) }
+            productVariant(id: $sibling) { publishedOnPublication(publicationId: $publication) }
+            onlyAll: productVariant(id: $sibling) { resourcePublications(first: 5, onlyPublished: false) { nodes { isPublished } } }
+            hidden: productVariants(first: 10, query: "published_status:unpublished") { nodes { id } }
+        }"#,
+        json!({"product": beanie, "sibling": v2, "publication": online_store}),
+    );
+    assert_eq!(
+        check["data"]["product"]["publishedOnPublication"],
+        json!(true)
+    );
+    assert_eq!(
+        check["data"]["productVariant"]["publishedOnPublication"],
+        json!(true)
+    );
+    assert_eq!(check["data"]["hidden"]["nodes"], json!([{"id": v1}]));
+
+    // Re-publishing the variant makes it published again.
+    let republished = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $publication: ID!) {
+            publishablePublish(id: $id, input: [{publicationId: $publication}]) {
+                publishable {
+                    __typename
+                    ... on ProductVariant {
+                        id
+                        publishedOnPublication(publicationId: $publication)
+                        resourcePublicationsV2(first: 5) { nodes { isPublished publication { id } } }
+                        unpublishedPublications(first: 5) { nodes { id } }
+                    }
+                }
+                userErrors { field message }
+            }
+        }"#,
+        json!({"id": v1, "publication": online_store}),
+    );
+    let publishable = &ok(&republished, "publishablePublish")["publishable"];
+    assert_eq!(publishable["__typename"], json!("ProductVariant"));
+    assert_eq!(publishable["publishedOnPublication"], json!(true));
+    assert_eq!(
+        publishable["resourcePublicationsV2"]["nodes"],
+        json!([{"isPublished": true, "publication": {"id": online_store}}])
+    );
+    assert_eq!(publishable["unpublishedPublications"]["nodes"], json!([]));
+    assert_eq!(topics(&mut shop), ["products/update"]);
+
+    // An unpublished product's variant starts unpublished and can be published/unpublished independently.
+    let created = run(
+        &mut shop,
+        r#"mutation { productCreate(product: {title: "Draft cap"}) { product { id variants(first: 1) { nodes { id } } } } }"#,
+    );
+    let cap = created["data"]["productCreate"]["product"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let cap_variant = created["data"]["productCreate"]["product"]["variants"]["nodes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    shop.take_events();
+    let before = run_with(
+        &mut shop,
+        r#"query($id: ID!, $publication: ID!) { productVariant(id: $id) { publishedOnPublication(publicationId: $publication) } }"#,
+        json!({"id": cap_variant, "publication": online_store}),
+    );
+    assert_eq!(
+        before["data"]["productVariant"]["publishedOnPublication"],
+        json!(false)
+    );
+    let pub_variant = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $publication: ID!) {
+            publishablePublish(id: $id, input: [{publicationId: $publication}]) {
+                publishable { __typename ... on ProductVariant { id publishedOnPublication(publicationId: $publication) } }
+                userErrors { field message }
+            }
+        }"#,
+        json!({"id": cap_variant, "publication": online_store}),
+    );
+    assert_eq!(
+        ok(&pub_variant, "publishablePublish")["publishable"],
+        json!({"__typename": "ProductVariant", "id": cap_variant, "publishedOnPublication": true})
+    );
+    assert_eq!(topics(&mut shop), ["products/update"]);
+
+    // Publishing and then unpublishing the parent product overrides and clears variant state.
+    ok(
+        &run_with(
+            &mut shop,
+            r#"mutation($id: ID!, $publication: ID!) { publishablePublish(id: $id, input: [{publicationId: $publication}]) { userErrors { message } } }"#,
+            json!({"id": cap, "publication": online_store}),
+        ),
+        "publishablePublish",
+    );
+    ok(
+        &run_with(
+            &mut shop,
+            r#"mutation($id: ID!, $publication: ID!) { publishableUnpublish(id: $id, input: [{publicationId: $publication}]) { userErrors { message } } }"#,
+            json!({"id": cap, "publication": online_store}),
+        ),
+        "publishableUnpublish",
+    );
+    let after_parent_unpub = run_with(
+        &mut shop,
+        r#"query($id: ID!, $publication: ID!) { productVariant(id: $id) { publishedOnPublication(publicationId: $publication) } }"#,
+        json!({"id": cap_variant, "publication": online_store}),
+    );
+    assert_eq!(
+        after_parent_unpub["data"]["productVariant"]["publishedOnPublication"],
+        json!(false)
+    );
+
+    // An unknown variant GID is still refused with "Resource does not exist".
+    let unknown = run_with(
+        &mut shop,
+        r#"mutation($publication: ID!) { publishablePublish(id: "gid://shopify/ProductVariant/999999", input: [{publicationId: $publication}]) { publishable { __typename } userErrors { field message } } }"#,
+        json!({"publication": online_store}),
+    );
+    assert_eq!(
+        unknown["data"]["publishablePublish"],
+        json!({"publishable": null, "userErrors": [{"field": ["id"], "message": "Resource does not exist"}]})
+    );
+}
+
+#[test]
 fn selling_plan_groups_are_created_updated_and_linked() {
     let mut shop = demo();
     let beanie = product(&shop, "wool-beanie");

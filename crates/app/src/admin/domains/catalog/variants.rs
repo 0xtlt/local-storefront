@@ -605,6 +605,7 @@ pub fn set_choices(state: &mut ShopState, variant: &str, choices: &[Choice]) {
 pub fn remove_variant(state: &mut ShopState, product: &str, variant: &str) {
     let removed = [variant.to_string()];
     super::bundles::removing_variants(state, &removed);
+    super::publications::removing_variants(state, &removed);
     crate::admin::domains::markets::removing_variants(state, &removed);
     if let Some(item) = item_of(state, variant) {
         let levels = state

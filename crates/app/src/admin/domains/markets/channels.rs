@@ -153,31 +153,9 @@ fn app_publications(state: &ShopState) -> Vec<String> {
         .collect()
 }
 
-/// The list of a publication that holds publishables of a record's type.
-fn list_of(state: &ShopState, publishable: &str) -> &'static str {
-    if state.type_of(publishable) == Some("Collection") {
-        "collections"
-    } else {
-        "products"
-    }
-}
-
-/// Whether a publication lists a publishable (a variant: its product).
+/// Whether a publication lists a publishable (a product, collection, or product variant).
 fn lists(state: &ShopState, publication: &str, publishable: &str) -> bool {
-    let publishable = if state.type_of(publishable) == Some("ProductVariant") {
-        state
-            .get(publishable)
-            .and_then(|record| record.get("product"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-    } else {
-        publishable
-    };
-    state.get(publication).is_some_and(|record| {
-        gids(record.get(list_of(state, publishable)))
-            .iter()
-            .any(|known| known == publishable)
-    })
+    catalog::is_published(state, publication, publishable)
 }
 
 /// The items of a channel's publication's list.
@@ -992,7 +970,7 @@ fn current_channel(
     let state = mutation.state();
     let publishable = ctx
         .arg_str("id")
-        .filter(|id| matches!(state.type_of(id), Some("Product" | "Collection")))
+        .filter(|id| catalog::is_publishable(state, id))
         .map(str::to_string);
     let Some(publishable) = publishable else {
         let error = UserError::new(&["id"], "Resource does not exist");
