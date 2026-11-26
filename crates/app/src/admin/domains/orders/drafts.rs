@@ -1172,6 +1172,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
                 .cloned(),
             grams: 0,
             attributes: model::attribute_pairs(line.get("customAttributes")),
+            ..LineDraft::default()
         })
         .collect();
     let line_subtotal = field_cents(&record, "lineItemsSubtotalPrice");
@@ -1193,6 +1194,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
                     .map(str::to_string),
                 original: price,
                 discounted: price,
+                ..ShippingDraft::default()
             }
         });
     let included = record.get("taxesIncluded").and_then(Value::as_bool) == Some(true);
@@ -1243,6 +1245,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         location,
         presentment: None,
         shipments: Vec::new(),
+        ..OrderDraft::default()
     };
     let order = super::insert_order(state, &draft);
     record_manual_discounts(state, &order, &record, &lines);

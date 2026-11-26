@@ -306,6 +306,7 @@ pub fn process_exchanges(state: &mut ShopState, order: &str, items: &[(String, i
                 .cloned(),
             grams: 0,
             attributes: Vec::new(),
+            ..LineDraft::default()
         };
         let line = state.new_gid("LineItem");
         let mut line_record =
