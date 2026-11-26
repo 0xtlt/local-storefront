@@ -3,6 +3,45 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## 0.3.2 - 2026-11-26
+
+Six Admin API parity improvements with Shopify 2026-10: `ProductVariant` is `Publishable` (#353),
+`orderCreate` honors `presentmentCurrency` and `presentmentMoney` (#354), and four customer and
+search behaviors match a Shopify store (#347, #348, #351, #352).
+
+### Added
+
+- **`ProductVariant` implements `Publishable`** (#353). `publishablePublish`,
+  `publishableUnpublish`, `publishablePublishToCurrentChannel`,
+  `publishableUnpublishToCurrentChannel`, and `publicationUpdate` accept `ProductVariant` IDs, and
+  `ProductVariant` resolves `publishedOnPublication`, `resourcePublications`,
+  `resourcePublicationsV2`, `resourcePublicationsCount`, `publicationCount`,
+  `availablePublicationsCount`, and `unpublishedPublications`. Variants inherit their parent
+  product's publication state by default and track per-publication overrides.
+- **`orderCreate` honors `presentmentCurrency` and `presentmentMoney`** (#354). Orders created
+  with a `presentmentCurrency` report it in `presentmentCurrencyCode` and preserve explicit
+  `presentmentMoney` amounts on line items, shipping lines, taxes, fixed discount codes,
+  transactions, totals, and the `orders/create` webhook payload, validating currency mismatches.
+
+### Fixed
+
+- **`metafieldsSet` and `metafieldsDelete` move the owner's `updatedAt`** (#347). Setting or
+  deleting a metafield on a `Customer` (or any other owner with `updatedAt`, including cascading
+  deletes from `metafieldDefinitionDelete` and `metaobjectDefinitionDelete`) advances `updatedAt`
+  so `updated_at:>` polling sees metafield-only changes.
+- **A case-only `email` change on `customerUpdate` keeps the stored email and `updatedAt`** (#348).
+  Updating a customer with their own email in a different case no longer rewrites the casing,
+  bumps `updatedAt`, or emits a spurious `customers/update` event when no other field changed.
+- **Admin API search field names are case-sensitive** (#351). An unknown-cased field such as
+  `Email:` is ignored in filtering and reported in `extensions.search` warnings with its original
+  casing, matching Shopify's search syntax.
+- **`Customer.productSubscriberStatus` defaults to `NEVER_SUBSCRIBED` and `lifetimeDuration` is
+  computed** (#352). `productSubscriberStatus` derives from the customer's `SubscriptionContract`
+  records (`ACTIVE` > `PAUSED` > last contract's `CANCELLED`/`EXPIRED`/`FAILED`, else
+  `NEVER_SUBSCRIBED`) and aligns with segment evaluation; `lifetimeDuration` formats elapsed time
+  since `createdAt` (e.g. `"less than a day"`, `"2 months"`) on `Customer`, `Company`, and
+  `CompanyContact`.
+
 ## 0.3.1 - 2026-11-26
 
 Store data in `shopify-local/` can now declare full metafield and metaobject definitions in JSON
