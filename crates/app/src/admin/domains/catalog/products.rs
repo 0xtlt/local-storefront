@@ -876,8 +876,9 @@ pub fn delete_product(state: &mut ShopState, product: &str) {
     }
     let mut metafields = gids(record.get("metafields"));
     let variants = gids(record.get("variants"));
-    // The bundles they were components of no longer list them, nor the price lists.
+    // The bundles they were components of no longer list them, nor the price lists or publications.
     super::bundles::removing_variants(state, &variants);
+    super::publications::removing_variants(state, &variants);
     crate::admin::domains::markets::removing_variants(state, &variants);
     for variant in &variants {
         if let Some(variant_record) = state.get(variant).cloned() {

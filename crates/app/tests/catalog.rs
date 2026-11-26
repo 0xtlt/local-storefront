@@ -191,6 +191,160 @@ fn a_backend_syncs_a_product_and_its_stock_and_gets_the_webhooks() {
     assert_eq!(payload["published"], json!(true));
 }
 
+#[test]
+fn publishable_publish_and_unpublish_accept_product_variants() {
+    // Reproduces issue #353 against `/admin/api/2026-10/graphql.json` on the demo store.
+    let api = demo_api();
+    let token = api.token(&api.default_shop());
+
+    let listed = graphql_request(
+        &api,
+        &token,
+        "{ publications(first: 1) { nodes { id } } productVariants(first: 1) { nodes { id product { id } } } }",
+        Value::Null,
+    );
+    assert!(listed.get("errors").is_none(), "{listed}");
+    let publication = listed["data"]["publications"]["nodes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let variant = listed["data"]["productVariants"]["nodes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let product = listed["data"]["productVariants"]["nodes"][0]["product"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let publish_mutation = r#"mutation($id: ID!, $p: ID!) {
+        publishablePublish(id: $id, input: [{ publicationId: $p }]) {
+            publishable {
+                __typename
+                ... on Product { id publishedOnPublication(publicationId: $p) }
+                ... on ProductVariant {
+                    id
+                    publishedOnPublication(publicationId: $p)
+                    resourcePublicationsV2(first: 5) {
+                        nodes {
+                            isPublished
+                            publication { id }
+                            publishable { __typename ... on ProductVariant { id } }
+                        }
+                    }
+                }
+            }
+            userErrors { field message }
+        }
+    }"#;
+
+    // Product id succeeds.
+    let prod_resp = graphql_request(
+        &api,
+        &token,
+        publish_mutation,
+        json!({"id": product, "p": publication}),
+    );
+    assert!(prod_resp.get("errors").is_none(), "{prod_resp}");
+    assert_eq!(
+        prod_resp["data"]["publishablePublish"]["userErrors"],
+        json!([])
+    );
+    assert_eq!(
+        prod_resp["data"]["publishablePublish"]["publishable"]["__typename"],
+        json!("Product")
+    );
+
+    // Variant id also succeeds with `__typename: "ProductVariant"` and no userErrors.
+    let var_resp = graphql_request(
+        &api,
+        &token,
+        publish_mutation,
+        json!({"id": variant, "p": publication}),
+    );
+    assert!(var_resp.get("errors").is_none(), "{var_resp}");
+    assert_eq!(
+        var_resp["data"]["publishablePublish"]["userErrors"],
+        json!([])
+    );
+    assert_eq!(
+        var_resp["data"]["publishablePublish"]["publishable"],
+        json!({
+            "__typename": "ProductVariant",
+            "id": variant,
+            "publishedOnPublication": true,
+            "resourcePublicationsV2": {
+                "nodes": [{
+                    "isPublished": true,
+                    "publication": {"id": publication},
+                    "publishable": {"__typename": "ProductVariant", "id": variant},
+                }]
+            }
+        })
+    );
+
+    // `publishableUnpublish` on the variant unpublishes it.
+    let unpub_resp = graphql_request(
+        &api,
+        &token,
+        r#"mutation($id: ID!, $p: ID!) {
+            publishableUnpublish(id: $id, input: [{ publicationId: $p }]) {
+                publishable {
+                    __typename
+                    ... on ProductVariant {
+                        id
+                        publishedOnPublication(publicationId: $p)
+                        resourcePublicationsV2(first: 5) { nodes { isPublished } }
+                        unpublishedPublications(first: 5) { nodes { id } }
+                    }
+                }
+                userErrors { field message }
+            }
+        }"#,
+        json!({"id": variant, "p": publication}),
+    );
+    assert!(unpub_resp.get("errors").is_none(), "{unpub_resp}");
+    assert_eq!(
+        unpub_resp["data"]["publishableUnpublish"]["userErrors"],
+        json!([])
+    );
+    assert_eq!(
+        unpub_resp["data"]["publishableUnpublish"]["publishable"],
+        json!({
+            "__typename": "ProductVariant",
+            "id": variant,
+            "publishedOnPublication": false,
+            "resourcePublicationsV2": {"nodes": []},
+            "unpublishedPublications": {"nodes": [{"id": publication}]},
+        })
+    );
+
+    // Re-publishing the variant restores `publishedOnPublication: true` and `resourcePublicationsV2`.
+    let repub_resp = graphql_request(
+        &api,
+        &token,
+        publish_mutation,
+        json!({"id": variant, "p": publication}),
+    );
+    assert!(repub_resp.get("errors").is_none(), "{repub_resp}");
+    assert_eq!(
+        repub_resp["data"]["publishablePublish"]["userErrors"],
+        json!([])
+    );
+    assert_eq!(
+        repub_resp["data"]["publishablePublish"]["publishable"]["publishedOnPublication"],
+        json!(true)
+    );
+    assert_eq!(
+        repub_resp["data"]["publishablePublish"]["publishable"]["resourcePublicationsV2"]["nodes"],
+        json!([{
+            "isPublished": true,
+            "publication": {"id": publication},
+            "publishable": {"__typename": "ProductVariant", "id": variant},
+        }])
+    );
+}
+
 // --- On the state ---
 
 fn run(shop: &mut ShopState, query: &str, variables: Value) -> Value {
@@ -323,6 +477,22 @@ fn exercise(shop: &mut ShopState) -> String {
             shop,
             "mutation($id: ID!, $publication: ID!) { publishablePublish(id: $id, input: [{publicationId: $publication}]) { userErrors { message } } }",
             json!({"id": product, "publication": publication}),
+        ),
+        "publishablePublish",
+    );
+    ok(
+        &run(
+            shop,
+            "mutation($id: ID!, $publication: ID!) { publishableUnpublish(id: $id, input: [{publicationId: $publication}]) { userErrors { message } } }",
+            json!({"id": variant, "publication": publication}),
+        ),
+        "publishableUnpublish",
+    );
+    ok(
+        &run(
+            shop,
+            "mutation($id: ID!, $publication: ID!) { publishablePublish(id: $id, input: [{publicationId: $publication}]) { userErrors { message } } }",
+            json!({"id": variant, "publication": publication}),
         ),
         "publishablePublish",
     );

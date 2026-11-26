@@ -257,12 +257,11 @@ pub fn register(registry: &mut Registry) {
                     .collect(),
             )
         })
-        .search_field("ProductVariant", "published_status", |r, _item, variant| {
-            Some(
-                product_of(r, variant)
-                    .map(published_status)
-                    .unwrap_or_default(),
-            )
+        .search_field("ProductVariant", "published_status", |r, item, _variant| {
+            let key = item.as_str().unwrap_or_default();
+            let published =
+                super::is_published(r.state(), &super::online_store_publication_gid(), key);
+            Some(status_keywords(published))
         })
         .default_text("ProductVariant", |r, variant| {
             let mut texts: Vec<String> = ["title", "displayName", "sku", "barcode"]

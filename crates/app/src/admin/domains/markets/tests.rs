@@ -2165,3 +2165,124 @@ fn what_the_mutations_make_answers_without_defaults() {
         answer["extensions"]
     );
 }
+
+#[test]
+fn product_variant_publishes_on_channels_and_market_publications() {
+    let mut shop = demo();
+    let ch = channel(&mut shop);
+    let (_, variant) = first_variant(&shop);
+    shop.take_events();
+
+    // `publishablePublishToCurrentChannel` / `publishableUnpublishToCurrentChannel` accept ProductVariant.
+    let publish = r#"mutation($id: ID!, $channel: ID!) {
+        publishablePublishToCurrentChannel(id: $id) {
+            publishable {
+                __typename
+                ... on ProductVariant {
+                    id
+                    publishedOnChannel(channelId: $channel)
+                    publishedOnCurrentChannel
+                    publishedOnCurrentPublication
+                    unpublishedChannels(first: 5) { nodes { id } }
+                }
+            }
+            userErrors { field message }
+        }
+    }"#;
+    let answer = run(&mut shop, publish, json!({"id": variant, "channel": ch}));
+    assert_eq!(
+        ok(&answer, "publishablePublishToCurrentChannel")["publishable"],
+        json!({
+            "__typename": "ProductVariant",
+            "id": variant,
+            "publishedOnChannel": true,
+            "publishedOnCurrentChannel": true,
+            "publishedOnCurrentPublication": true,
+            "unpublishedChannels": {"nodes": []},
+        })
+    );
+    assert_eq!(topics(&mut shop), ["products/update"]);
+
+    let unpublish = r#"mutation($id: ID!, $channel: ID!) {
+        publishableUnpublishToCurrentChannel(id: $id) {
+            publishable {
+                __typename
+                ... on ProductVariant {
+                    id
+                    publishedOnChannel(channelId: $channel)
+                    publishedOnCurrentChannel
+                    publishedOnCurrentPublication
+                    unpublishedChannels(first: 5) { nodes { id } }
+                }
+            }
+            userErrors { field message }
+        }
+    }"#;
+    let answer = run(&mut shop, unpublish, json!({"id": variant, "channel": ch}));
+    assert_eq!(
+        ok(&answer, "publishableUnpublishToCurrentChannel")["publishable"],
+        json!({
+            "__typename": "ProductVariant",
+            "id": variant,
+            "publishedOnChannel": false,
+            "publishedOnCurrentChannel": false,
+            "publishedOnCurrentPublication": false,
+            "unpublishedChannels": {"nodes": [{"id": ch}]},
+        })
+    );
+
+    // `publicationUpdate` and `resourcePublicationsV2(catalogType:)` work for ProductVariant.
+    let europe = shop.keys("Market").next().unwrap().to_string();
+    let catalog = ok(
+        &run(
+            &mut shop,
+            CATALOG_CREATE,
+            json!({"input": {"title": "Europe", "status": "ACTIVE", "context": {"marketIds": [europe]}}}),
+        ),
+        "catalogCreate",
+    )["catalog"]["id"]
+        .clone();
+    let market_pub = ok(
+        &run(
+            &mut shop,
+            "mutation($input: PublicationCreateInput!) { publicationCreate(input: $input) { publication { id } userErrors { message } } }",
+            json!({"input": {"catalogId": catalog}}),
+        ),
+        "publicationCreate",
+    )["publication"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    ok(
+        &run(
+            &mut shop,
+            "mutation($id: ID!, $input: PublicationUpdateInput!) { publicationUpdate(id: $id, input: $input) { publication { id } userErrors { field message code } } }",
+            json!({"id": market_pub, "input": {"publishablesToAdd": [variant]}}),
+        ),
+        "publicationUpdate",
+    );
+    let check = run(
+        &mut shop,
+        r#"query($id: ID!, $pub: ID!) {
+            productVariant(id: $id) {
+                publishedOnPublication(publicationId: $pub)
+                marketPubs: resourcePublicationsV2(first: 5, catalogType: MARKET) { nodes { publication { id } isPublished } }
+                appPubs: resourcePublicationsV2(first: 5, catalogType: APP) { nodes { publication { name } isPublished } }
+            }
+        }"#,
+        json!({"id": variant, "pub": market_pub}),
+    );
+    assert_eq!(
+        check["data"]["productVariant"]["publishedOnPublication"],
+        json!(true)
+    );
+    assert_eq!(
+        check["data"]["productVariant"]["marketPubs"]["nodes"],
+        json!([{"publication": {"id": market_pub}, "isPublished": true}])
+    );
+    assert_eq!(
+        check["data"]["productVariant"]["appPubs"]["nodes"],
+        json!([{"publication": {"name": "Online Store"}, "isPublished": true}])
+    );
+}
