@@ -9,6 +9,7 @@
 //! generic search reads from the record. `last_abandoned_order_date` reads the customer's last
 //! abandoned checkout of the local checkout (`domains::checkouts`).
 
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::addresses::addresses;
@@ -17,7 +18,7 @@ use crate::admin::graphql::Output;
 use crate::admin::resolve::sort::SortValue;
 use crate::admin::resolve::{Registry, ShopResolver};
 use crate::admin::search::SearchValue;
-use crate::admin::state::{Record, parse_gid};
+use crate::admin::state::{Record, ShopState, parse_gid, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -167,7 +168,124 @@ pub fn register(registry: &mut Registry) {
         // Deprecated for `contactsCount`.
         .field("Company", "contactCount", |r, _ctx, object| {
             Ok(Output::value(r.items_of(object, "contacts").len()))
+        })
+        .field("Customer", "productSubscriberStatus", |r, _ctx, object| {
+            let status = r.map_of(object).map_or_else(
+                || "NEVER_SUBSCRIBED".to_string(),
+                |customer| product_subscriber_status(r.state(), customer),
+            );
+            Ok(Output::value(status))
+        })
+        .field("Customer", "lifetimeDuration", |r, _ctx, object| {
+            Ok(Output::value(lifetime_duration_of(
+                r.state(),
+                r.map_of(object),
+                &["createdAt"],
+            )))
+        })
+        .field("Company", "lifetimeDuration", |r, _ctx, object| {
+            Ok(Output::value(lifetime_duration_of(
+                r.state(),
+                r.map_of(object),
+                &["customerSince", "createdAt"],
+            )))
+        })
+        .field("CompanyContact", "lifetimeDuration", |r, _ctx, object| {
+            Ok(Output::value(lifetime_duration_of(
+                r.state(),
+                r.map_of(object),
+                &["createdAt"],
+            )))
         });
+}
+
+/// The product subscription status of a customer (`Customer.productSubscriberStatus`), derived
+/// from their `SubscriptionContract` records per Shopify's `CustomerProductSubscriberStatus`:
+///
+/// - `ACTIVE` if the customer has at least one active contract;
+/// - `PAUSED` if the customer has at least one paused contract (and none active);
+/// - otherwise the status of their last contract (`CANCELLED`, `EXPIRED`, `FAILED`);
+/// - otherwise any explicit `productSubscriberStatus` on the record, else `NEVER_SUBSCRIBED`.
+pub fn product_subscriber_status(state: &ShopState, customer: &Record) -> String {
+    let mut has_paused = false;
+    let mut last_key = None;
+    let mut last_status = None;
+    if let Some(id) = value::non_empty_str_field(customer, "id") {
+        for contract in state.all("SubscriptionContract") {
+            if value::str_field(contract, "customer") != Some(id) {
+                continue;
+            }
+            let Some(status) = value::str_field(contract, "status") else {
+                continue;
+            };
+            if status == "ACTIVE" {
+                return "ACTIVE".to_string();
+            }
+            if status == "PAUSED" {
+                has_paused = true;
+                continue;
+            }
+            let key = (
+                value::date_time_of(contract.get("updatedAt")),
+                value::date_time_of(contract.get("createdAt")),
+            );
+            if last_key.is_none_or(|prev| key >= prev) {
+                last_key = Some(key);
+                last_status = Some(status);
+            }
+        }
+    }
+    if has_paused {
+        return "PAUSED".to_string();
+    }
+    if let Some(status) = last_status {
+        return match status {
+            "CANCELLED" => "CANCELLED",
+            "EXPIRED" => "EXPIRED",
+            "FAILED" => "FAILED",
+            _ => "NEVER_SUBSCRIBED",
+        }
+        .to_string();
+    }
+    value::non_empty_str_field(customer, "productSubscriberStatus")
+        .unwrap_or("NEVER_SUBSCRIBED")
+        .to_string()
+}
+
+/// Human-readable lifetime duration since `since` relative to `now`, following Shopify's
+/// `lifetimeDuration` convention (`"less than a day"`, `"1 day"`, `"N days"`, `"about 1 month"`,
+/// `"N months"`, `"about 1 year"`, `"about N years"`).
+pub fn lifetime_duration(since: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let days = now.signed_duration_since(since).num_days();
+    match days {
+        ..=0 => "less than a day".to_string(),
+        1 => "1 day".to_string(),
+        2..=29 => format!("{days} days"),
+        30..=59 => "about 1 month".to_string(),
+        60..=364 => format!("{} months", (days / 30).min(11)),
+        365..=729 => "about 1 year".to_string(),
+        _ => format!("about {} years", days / 365),
+    }
+}
+
+/// Computes `lifetimeDuration` for a record (`Customer`, `Company`, `CompanyContact`), honoring
+/// an explicit non-empty `lifetimeDuration` on the record if present, else deriving it from the
+/// first valid `DateTime` field in `fields` against `state.now()`.
+fn lifetime_duration_of(state: &ShopState, record: Option<&Record>, fields: &[&str]) -> String {
+    if let Some(explicit) =
+        record.and_then(|record| value::non_empty_str_field(record, "lifetimeDuration"))
+    {
+        return explicit.to_string();
+    }
+    let since = record.and_then(|record| {
+        fields
+            .iter()
+            .find_map(|field| value::date_time_of(record.get(*field)))
+    });
+    match since {
+        Some(since) => lifetime_duration(since, state.now()),
+        None => "less than a day".to_string(),
+    }
 }
 
 /// Dates written in RFC 3339, as search values.
@@ -216,4 +334,71 @@ fn company_id(r: &ShopResolver<'_>, item: &Value) -> SortValue {
 fn contact_customer<'r>(r: &'r ShopResolver<'_>, item: &Value) -> Option<&'r Record> {
     let customer = r.item_map(item)?.get("customer")?.as_str()?.to_string();
     r.state().get(&customer)
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, TimeZone, Utc};
+
+    use super::lifetime_duration;
+
+    #[test]
+    fn formats_lifetime_duration_across_ranges() {
+        let base = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        assert_eq!(lifetime_duration(base, base), "less than a day");
+        assert_eq!(
+            lifetime_duration(base, base - Duration::hours(3)),
+            "less than a day"
+        );
+        assert_eq!(
+            lifetime_duration(base, base + Duration::minutes(1)),
+            "less than a day"
+        );
+        assert_eq!(
+            lifetime_duration(base, base + Duration::hours(23) + Duration::minutes(59)),
+            "less than a day"
+        );
+        assert_eq!(lifetime_duration(base, base + Duration::days(1)), "1 day");
+        assert_eq!(lifetime_duration(base, base + Duration::days(2)), "2 days");
+        assert_eq!(
+            lifetime_duration(base, base + Duration::days(29)),
+            "29 days"
+        );
+        assert_eq!(
+            lifetime_duration(base, base + Duration::days(30)),
+            "about 1 month"
+        );
+        assert_eq!(
+            lifetime_duration(base, base + Duration::days(59)),
+            "about 1 month"
+        );
+        assert_eq!(
+            lifetime_duration(base, base + Duration::days(60)),
+            "2 months"
+        );
+        assert_eq!(
+            lifetime_duration(base, base + Duration::days(90)),
+            "3 months"
+        );
+        assert_eq!(
+            lifetime_duration(base, base + Duration::days(364)),
+            "11 months"
+        );
+        assert_eq!(
+            lifetime_duration(base, base + Duration::days(365)),
+            "about 1 year"
+        );
+        assert_eq!(
+            lifetime_duration(base, base + Duration::days(729)),
+            "about 1 year"
+        );
+        assert_eq!(
+            lifetime_duration(base, base + Duration::days(730)),
+            "about 2 years"
+        );
+        assert_eq!(
+            lifetime_duration(base, base + Duration::days(12 * 365)),
+            "about 12 years"
+        );
+    }
 }
