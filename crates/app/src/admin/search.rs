@@ -189,16 +189,15 @@ impl Query {
         })
     }
 
-    /// The fields the query names, lowercase, in order, each once.
+    /// The fields the query names, as written, in order, each once.
     pub fn fields(&self) -> Vec<String> {
         let mut fields = Vec::new();
         if let Some(root) = &self.root {
             visit_terms(root, &mut |term| {
-                if let Some(field) = &term.field {
-                    let field = field.to_ascii_lowercase();
-                    if !fields.contains(&field) {
-                        fields.push(field);
-                    }
+                if let Some(field) = &term.field
+                    && !fields.contains(field)
+                {
+                    fields.push(field.clone());
                 }
             });
         }
@@ -310,9 +309,9 @@ impl Documented {
     }
 
     /// Whether `filter` (`title`, `metafields.custom.on_sale`) is one `field` of `type_name`
-    /// documents; a `{placeholder}` of a documented name stands for one segment.
+    /// documents; a `{placeholder}` of a documented name stands for one segment. Field names are
+    /// case-sensitive, as in Shopify's search syntax.
     pub fn is_documented(&self, type_name: &str, field: &str, filter: &str) -> bool {
-        let filter = filter.to_ascii_lowercase();
         self.filters(type_name, field).is_some_and(|filters| {
             filters.iter().any(|(name, _)| {
                 let pattern: Vec<&str> = name.split('.').collect();
@@ -449,9 +448,9 @@ impl SearchValue {
 /// A record a search runs on: the domains implement it for each type of record, from the
 /// filters each connection documents (`title`, `tag`, `status`, `vendor`, `sku`, `email`, …).
 pub trait Searchable {
-    /// The values of `field` (lowercase). `None` when the type has no such field, which makes
-    /// Shopify ignore the term; `Some(vec![])` when the record has no value (`field:*` is
-    /// false).
+    /// The values of `field` (case-sensitive, matching Shopify's documented field names). `None`
+    /// when the type has no such field, which makes Shopify ignore the term; `Some(vec![])` when
+    /// the record has no value (`field:*` is false).
     fn values(&self, field: &str) -> Option<Vec<SearchValue>>;
 
     /// The text a term without a field is searched in: the title, the handle, the tags, …
@@ -461,13 +460,10 @@ pub trait Searchable {
 /// The result of a node: `None` when it is ignored (an unknown field).
 fn evaluate(node: &Node, record: &dyn Searchable, options: &Options) -> Option<bool> {
     match node {
-        Node::Term(term) => match term.field.as_deref().map(str::to_ascii_lowercase) {
-            None => Some(matches_default(term, &record.default_text())),
-            Some(field) if field == "default" => {
-                Some(matches_default(term, &record.default_text()))
-            }
+        Node::Term(term) => match term.field.as_deref() {
+            None | Some("default") => Some(matches_default(term, &record.default_text())),
             Some(field) => record
-                .values(&field)
+                .values(field)
                 .map(|values| matches_values(term, &values, options)),
         },
         Node::Not(inner) => evaluate(inner, record, options).map(|result| !result),
@@ -1075,15 +1071,50 @@ mod tests {
     }
 
     #[test]
+    fn field_names_are_case_sensitive() {
+        let pear = product("Pear", &[], "Orchard", 12.0, "2024-06-01T00:00:00Z");
+        // Lowercase matches normally, including case-insensitive values.
+        assert!(finds("title:PEAR", &pear));
+        assert!(!finds("title:apple", &pear));
+        assert!(finds("default:PEAR", &pear));
+        assert!(!finds("default:apple", &pear));
+        // Wrong-case field names are unknown and ignored (matching everything).
+        assert!(finds("Title:apple", &pear));
+        assert!(finds("TITLE:apple", &pear));
+        assert!(finds("Default:apple", &pear));
+        assert!(finds("Title:apple AND title:pear", &pear));
+        assert!(!finds("Title:pear AND title:apple", &pear));
+        // Original casing is preserved in `fields()` and `invalid_fields()` warnings.
+        let query = Query::parse("Email:probe@example.com AND email:other@example.com Default:x");
+        assert_eq!(query.fields(), ["Email", "email", "Default"]);
+        let warnings = query.invalid_fields(|field| field == "email");
+        assert_eq!(
+            warnings.iter().map(Warning::to_json).collect::<Vec<_>>(),
+            [
+                json!({"field": "Email", "message": "Invalid search field for this query."}),
+                json!({"field": "Default", "message": "Invalid search field for this query."}),
+            ]
+        );
+    }
+
+    #[test]
     fn knows_the_filters_each_connection_documents() {
         let products = documented_filters("QueryRoot", "products").unwrap();
         assert!(products.contains(&("created_at".to_string(), "time".to_string())));
         assert!(products.contains(&("inventory_total".to_string(), "integer".to_string())));
         assert!(is_documented_filter("QueryRoot", "products", "tag"));
+        assert!(!is_documented_filter("QueryRoot", "products", "Tag"));
+        assert!(is_documented_filter("QueryRoot", "customers", "email"));
+        assert!(!is_documented_filter("QueryRoot", "customers", "Email"));
         assert!(is_documented_filter(
             "QueryRoot",
             "products",
             "metafields.custom.on_sale"
+        ));
+        assert!(!is_documented_filter(
+            "QueryRoot",
+            "products",
+            "Metafields.custom.on_sale"
         ));
         assert!(!is_documented_filter(
             "QueryRoot",

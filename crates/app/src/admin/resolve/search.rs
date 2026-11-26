@@ -146,9 +146,9 @@ fn matching(
 }
 
 /// The type a connection documents for a filter (`time` for `created_at`), a `{placeholder}` of
-/// a documented name standing for one segment (`metafields.custom.color`).
+/// a documented name standing for one segment (`metafields.custom.color`). Field names are
+/// case-sensitive, as in Shopify's search syntax.
 fn documented_type<'d>(documented: &'d [(String, String)], filter: &str) -> Option<&'d str> {
-    let filter = filter.to_ascii_lowercase();
     let parts: Vec<&str> = filter.split('.').collect();
     documented.iter().find_map(|(name, kind)| {
         let pattern: Vec<&str> = name.split('.').collect();
@@ -168,13 +168,9 @@ fn negations(node: Node, documented: &[(String, String)]) -> Node {
             let base = term
                 .field
                 .as_deref()
-                .and_then(|field| {
-                    field
-                        .to_ascii_lowercase()
-                        .strip_suffix("_not")
-                        .map(str::to_string)
-                })
-                .filter(|base| documented_type(documented, base).is_some());
+                .and_then(|field| field.strip_suffix("_not"))
+                .filter(|base| documented_type(documented, base).is_some())
+                .map(str::to_string);
             match base {
                 Some(base) => Node::Not(Box::new(Node::Term(Term {
                     field: Some(base),
@@ -268,7 +264,6 @@ fn generic(
     field: &str,
     kind: &str,
 ) -> Option<Vec<SearchValue>> {
-    let field = field.to_ascii_lowercase();
     let schema = resolver.schema();
     let has_field = |name: &str| {
         record.contains_key(name)
@@ -332,7 +327,7 @@ fn generic(
                 .collect(),
         );
     }
-    let name = camel_case(&field);
+    let name = camel_case(field);
     let candidates: Vec<String> = match kind {
         "boolean" => {
             let mut pascal = name.clone();
@@ -360,7 +355,7 @@ fn generic(
             number(value).map(SearchValue::Number).into_iter().collect()
         }
         _ => {
-            let text = TEXT_FILTERS.contains(&field.as_str());
+            let text = TEXT_FILTERS.contains(&field);
             strings(value)
                 .into_iter()
                 .map(|value| {
@@ -414,10 +409,18 @@ mod tests {
     fn reads_documented_types_with_placeholders() {
         let documented = documented();
         assert_eq!(documented_type(&documented, "created_at"), Some("time"));
-        assert_eq!(documented_type(&documented, "Created_At"), Some("time"));
+        assert_eq!(documented_type(&documented, "Created_At"), None);
         assert_eq!(
             documented_type(&documented, "metafields.custom.color"),
             Some("mixed")
+        );
+        assert_eq!(
+            documented_type(&documented, "metafields.Custom.Color"),
+            Some("mixed")
+        );
+        assert_eq!(
+            documented_type(&documented, "Metafields.custom.color"),
+            None
         );
         assert_eq!(documented_type(&documented, "metafields.custom"), None);
         assert_eq!(documented_type(&documented, "vendor"), None);
@@ -431,8 +434,12 @@ mod tests {
             rewritten,
             Node::Not(Box::new(Node::Term(term(Some("tag"), "sale"))))
         );
-        // An undocumented base is left alone.
+        // An undocumented base or wrong-case field name is left alone.
         let left = negations(Node::Term(term(Some("vendor_not"), "x")), &documented);
         assert_eq!(left, Node::Term(term(Some("vendor_not"), "x")));
+        let upper_base = negations(Node::Term(term(Some("Tag_not"), "sale")), &documented);
+        assert_eq!(upper_base, Node::Term(term(Some("Tag_not"), "sale")));
+        let upper_suffix = negations(Node::Term(term(Some("tag_NOT"), "sale")), &documented);
+        assert_eq!(upper_suffix, Node::Term(term(Some("tag_NOT"), "sale")));
     }
 }

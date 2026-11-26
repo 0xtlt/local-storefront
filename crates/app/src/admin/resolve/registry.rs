@@ -116,7 +116,7 @@ impl Registry {
     /// every connection of them that documents it.
     pub fn search_field(&mut self, node_type: &str, filter: &str, read: SearchFn) -> &mut Registry {
         self.search_fields
-            .insert((node_type.to_string(), filter.to_ascii_lowercase()), read);
+            .insert((node_type.to_string(), filter.to_string()), read);
         self
     }
 
@@ -144,7 +144,7 @@ impl Registry {
 
     pub fn search_fn(&self, node_type: &str, filter: &str) -> Option<SearchFn> {
         self.search_fields
-            .get(&(node_type.to_string(), filter.to_ascii_lowercase()))
+            .get(&(node_type.to_string(), filter.to_string()))
             .copied()
     }
 
