@@ -384,6 +384,12 @@ fn parts_of(args: &Args, given: &Given, has_app: bool, standalone: bool) -> Resu
             ..Parts::default()
         },
     };
+    if !has_app && given.source("config").is_some() && !given.in_env("config") {
+        return Err(format!(
+            "{} needs the app: `--app DIR` (or LSF_APP)",
+            named(given, "config")
+        ));
+    }
     for (id, part) in NEEDS {
         // A variable of the environment is said and set aside, by `ignored_variables`: one
         // exported for `app dev` must not stop a `serve` of the theme alone.
@@ -410,18 +416,27 @@ fn left_out(only: bool, given: &Given) -> String {
 
 /// The options set by a variable of the environment for a part that is not served: each is
 /// ignored, and said, where the same option on the command line is an error.
-fn ignored_variables(args: &Args, given: &Given, parts: Parts) -> Vec<String> {
-    NEEDS
-        .iter()
-        .filter(|(id, part)| !parts.has(*part) && given.in_env(id))
-        .map(|(id, part)| {
-            format!(
-                "note: {} is set, but the {part} part is not served, {}: ignored",
-                named(given, id),
-                left_out(!args.only.is_empty(), given)
-            )
-        })
-        .collect()
+fn ignored_variables(args: &Args, given: &Given, parts: Parts, has_app: bool) -> Vec<String> {
+    let mut notes = Vec::new();
+    if !has_app && given.in_env("config") {
+        notes.push(format!(
+            "note: {} is set, but there is no app (`--app DIR` or LSF_APP): ignored",
+            named(given, "config")
+        ));
+    }
+    notes.extend(
+        NEEDS
+            .iter()
+            .filter(|(id, part)| !parts.has(*part) && given.in_env(id))
+            .map(|(id, part)| {
+                format!(
+                    "note: {} is set, but the {part} part is not served, {}: ignored",
+                    named(given, id),
+                    left_out(!args.only.is_empty(), given)
+                )
+            }),
+    );
+    notes
 }
 
 /// Serves the parts of lsf `--only` names (see [`parts_of`]): the theme, the checkout of the app
@@ -444,11 +459,25 @@ pub fn run(
     };
     let app_dir = args.app.app.clone().or(found);
     let parts = parts_of(&args, given, app_dir.is_some(), standalone)?;
-    for line in ignored_variables(&args, given, parts) {
+    for line in ignored_variables(&args, given, parts, app_dir.is_some()) {
         eprintln!("{line}");
     }
     // What the `app:` line says of the app, when it serves a part.
     let mut summary = None;
+    // The app configuration file name when it is not `shopify.app.toml`.
+    let mut config_banner: Option<String> = None;
+    let mut record_config = |app: &lsf_app::config::App| {
+        if let Some(path) = &app.config_file {
+            if path.parent() == Some(app.root.as_path()) {
+                let name = app.config_file_name();
+                if name != "shopify.app.toml" {
+                    config_banner = Some(name.to_string());
+                }
+            } else {
+                config_banner = Some(path.display().to_string());
+            }
+        }
+    };
     // How many of its Functions run: the scenarios are for them.
     let mut functions = 0;
     let mut checkout = None;
@@ -461,6 +490,7 @@ pub fn run(
                 ..args.app.clone()
             };
             let (mut app, mut selection) = checkout::open(&opening, dir)?;
+            record_config(&app);
             if args.no_functions {
                 selection = without_functions(&mut app, selection, &args.app.extensions)?;
                 if args.app.build {
@@ -495,6 +525,7 @@ pub fn run(
             ));
             checkout = Some(CheckoutOptions {
                 app_dir: dir.clone(),
+                config: args.app.config.clone(),
                 extensions: args.app.extensions.clone(),
                 variant: args.variant,
                 standalone: !parts.theme,
@@ -502,7 +533,8 @@ pub fn run(
             });
         } else {
             // The Admin API alone: what is wrong with the app itself, not with its extensions.
-            let mut app = lsf_app::config::load(dir)?;
+            let mut app = lsf_app::config::load_with_config(dir, args.app.config.as_deref())?;
+            record_config(&app);
             app.diagnostics
                 .retain(|diagnostic| diagnostic.message != lsf_app::config::NO_EXTENSIONS);
             checkout::print_app_diagnostics(
@@ -516,6 +548,10 @@ pub fn run(
                 false,
             ));
         }
+    } else if let Some(dir) = app_dir.as_ref() {
+        // `--only theme` with `--app`: validate `--config` up front too.
+        let app = lsf_app::config::load_with_config(dir, args.app.config.as_deref())?;
+        record_config(&app);
     }
     let revalidate = if args.static_files {
         Revalidate::Never
@@ -529,6 +565,7 @@ pub fn run(
     let admin = if parts.admin {
         Some(AdminSettings {
             app_dir: app_dir.clone(),
+            app_config: args.app.config.clone(),
             client_secret: args.client_secret.clone(),
             app_url: args.app_url.clone(),
             throttle: ThrottleSetting::parse(&args.admin_throttle)
@@ -568,7 +605,12 @@ pub fn run(
         crate::app::note_classic_accounts(&app.theme);
         // The app blocks and app embed blocks of its theme app extensions render in the theme.
         if let Some(dir) = &app_dir {
-            crate::theme_extensions::attach(&app.theme, dir, revalidate);
+            crate::theme_extensions::attach(
+                &app.theme,
+                dir,
+                args.app.config.as_deref(),
+                revalidate,
+            );
             if let Some(line) = crate::theme_extensions::summary(&app.theme.app_extensions()) {
                 match summary.as_mut() {
                     Some(summary) => summary.push_str(&format!(", {line}")),
@@ -637,6 +679,7 @@ pub fn run(
         (Some(dir), true) => {
             let changed = state.clone();
             let mut options = watch::Options::new(args.app.extensions.clone(), args.app.build);
+            options.config = args.app.config.clone();
             options.data = data_dir;
             options.record = watch::record_dir(dir);
             Some(Watcher::start(
@@ -670,6 +713,9 @@ pub fn run(
         }
         if let (Some(dir), Some(summary)) = (&app_dir, &summary) {
             eprintln!("app:    {} ({summary})", dir.display());
+        }
+        if let Some(config) = &config_banner {
+            eprintln!("config: {config}");
         }
         eprintln!("data:   {source}");
         if args.port.is_none() && local.port() != DEFAULT_PORT {
@@ -962,6 +1008,21 @@ mod tests {
         // An option given its default is not given.
         assert!(parts(&["--app", "a", "--only", "checkout"], false).is_ok());
         assert!(parts(&["--app", "a", "--only", "admin"], false).is_ok());
+        // `--config` / `-c` needs `--app` on `serve`, and works with any `--only` part when an
+        // app is given, or on `app dev`.
+        assert_eq!(
+            parts(&["--config", "dev"], false),
+            Err("--config needs the app: `--app DIR` (or LSF_APP)".to_string())
+        );
+        assert_eq!(
+            parts(&["-c", "dev"], false),
+            Err("--config needs the app: `--app DIR` (or LSF_APP)".to_string())
+        );
+        assert!(parts(&["--app", "a", "--config", "dev"], false).is_ok());
+        assert!(parts(&["--app", "a", "-c", "dev", "--only", "theme"], false).is_ok());
+        assert!(parts(&["--app", "a", "-c", "dev", "--only", "admin"], false).is_ok());
+        assert!(parts(&["--config", "dev"], true).is_ok());
+        assert!(parts(&["-c", "dev"], true).is_ok());
     }
 
     #[test]

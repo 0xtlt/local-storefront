@@ -4471,6 +4471,7 @@ fn checkout_server_with(
                 customer: None,
                 checkout: Some(crate::checkout::CheckoutOptions {
                     app_dir,
+                    config: None,
                     extensions: extensions.iter().map(|handle| handle.to_string()).collect(),
                     variant: crate::checkout::Variant::Standard,
                     standalone,

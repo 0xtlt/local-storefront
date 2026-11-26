@@ -78,7 +78,9 @@ pub struct Settings {
 pub struct Webhooks {
     urls: AppUrls,
     client_secret: String,
-    /// The subscriptions of `shopify.app.toml`: every shop has them.
+    /// The file name of the app configuration (`shopify.app.toml`, `shopify.app.dev.toml`).
+    config_file: String,
+    /// The subscriptions of the app configuration file: every shop has them.
     app_subscriptions: Vec<Subscription>,
     /// Those created through the Admin API, per shop.
     registry: Mutex<Registry>,
@@ -107,12 +109,13 @@ pub struct Trigger<'a> {
 }
 
 impl Webhooks {
-    /// The webhooks of an app: the subscriptions of its `shopify.app.toml`, none created yet
+    /// The webhooks of an app: the subscriptions of its app configuration file, none created yet
     /// through the Admin API. Starts the workers that deliver them.
     pub fn new(app_subscriptions: Vec<Subscription>, settings: Settings) -> Webhooks {
         Webhooks {
             urls: settings.urls,
             client_secret: settings.client_secret,
+            config_file: "shopify.app.toml".to_string(),
             app_subscriptions,
             registry: Mutex::new(Registry::new()),
             filter: None,
@@ -130,7 +133,7 @@ impl Webhooks {
         client_secret: String,
         delivery: DeliveryOptions,
     ) -> Webhooks {
-        Webhooks::new(
+        let mut webhooks = Webhooks::new(
             subscriptions::from_app_config(config, Utc::now()),
             Settings {
                 urls: AppUrls {
@@ -140,7 +143,9 @@ impl Webhooks {
                 client_secret,
                 delivery,
             },
-        )
+        );
+        webhooks.config_file = config.file_name().to_string();
+        webhooks
     }
 
     /// Evaluates the filters of the subscriptions with `filter`.
@@ -232,8 +237,9 @@ impl Webhooks {
             Some(base) => base.to_string(),
         };
         format!(
-            "{count} subscription{} of shopify.app.toml → {target}",
-            if count == 1 { "" } else { "s" }
+            "{count} subscription{} of {} → {target}",
+            if count == 1 { "" } else { "s" },
+            self.config_file
         )
     }
 

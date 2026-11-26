@@ -82,6 +82,13 @@ pub struct TriggerArgs {
     #[arg(long, alias = "path", env = "LSF_APP", value_name = "DIR")]
     app: Option<PathBuf>,
 
+    /// The app configuration file to use, as `shopify app dev --config` (`-c`) does: a shorthand
+    /// name (`dev` for `shopify.app.dev.toml`), a file name (`shopify.app.dev.toml`), or a path.
+    /// Without it, uses the configuration selected with `shopify app config use`, else
+    /// `shopify.app.toml`.
+    #[arg(long, short = 'c', env = "LSF_APP_CONFIG", value_name = "CONFIG")]
+    config: Option<String>,
+
     /// Where the backend of the app listens: relative `uri`s are joined to it, and absolute ones
     /// on the origin of `application_url` are moved to it. Without it, `application_url`.
     #[arg(long, env = "LSF_APP_URL", value_name = "URL", value_parser = super::app_url)]
@@ -178,7 +185,18 @@ fn trigger(
             Err(error) => return Err(format!("{error}; or give `--address URL`")),
         },
     };
-    let app = app_dir.as_deref().map(lsf_app::config::load).transpose()?;
+    let app = match app_dir.as_deref() {
+        Some(dir) => Some(lsf_app::config::load_with_config(
+            dir,
+            args.config.as_deref(),
+        )?),
+        None => {
+            if args.config.is_some() {
+                return Err("--config needs the app: `--app DIR` (or LSF_APP)".to_string());
+            }
+            None
+        }
+    };
     let config = app
         .as_ref()
         .map(|app| app.config.clone())
@@ -249,7 +267,7 @@ fn trigger(
         return Err(format!(
             "no subscription to `{topic}` in {}: give `--address URL`, or subscribe to it in \
              [[webhooks.subscriptions]]{events}",
-            config_name(app_dir.as_deref())
+            config_name(app_dir.as_deref(), app.as_ref())
         ));
     }
     let filter = DeliveryFilter {
@@ -326,8 +344,15 @@ fn method_name(method: DeliveryMethod) -> &'static str {
     }
 }
 
-fn config_name(app: Option<&Path>) -> String {
-    app.map_or_else(
+fn config_name(app_dir: Option<&Path>, app: Option<&lsf_app::config::App>) -> String {
+    if let Some(app) = app {
+        let name = app.config_file_name();
+        return app_dir.map_or_else(
+            || name.to_string(),
+            |dir| dir.join(name).display().to_string(),
+        );
+    }
+    app_dir.map_or_else(
         || "shopify.app.toml".to_string(),
         |dir| dir.join("shopify.app.toml").display().to_string(),
     )

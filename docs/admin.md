@@ -43,7 +43,9 @@ ready:  http://127.0.0.1:9292/   (extensions and checkout scenarios; …)
 ```
 
 With `--app`, the client id, the scopes and the webhooks are those of the app's
-`shopify.app.toml`, and the start lines of the Admin API come before `ready:`. Without
+configuration file: `--config <name>` (`-c`, `LSF_APP_CONFIG`) selects `shopify.app.<name>.toml`,
+and without it lsf uses the configuration last selected with `shopify app config use`, else
+`shopify.app.toml`. The banner and messages name the file read, and the start lines of the Admin API come before `ready:`. Without
 `--app-url`, the `webhooks:` line says when they lead off this machine:
 `→ https://my-app.trycloudflare.com, not this machine: not sent (give --app-url http://localhost:<port>)`.
 The parts lsf reads:
@@ -89,6 +91,7 @@ api_version = "2026-10"
 
 | Option | Environment variable | What it does |
 |---|---|---|
+| `--config <config>`, `-c` | `LSF_APP_CONFIG` | Which app configuration file to read (`dev` for `shopify.app.dev.toml`, a file name, or a path). Without it, uses the configuration selected with `shopify app config use`, else `shopify.app.toml`. |
 | `--app-url <url>` | `LSF_APP_URL` | Where the backend listens. Webhooks with a relative `uri` go there, and an absolute `uri` on the origin of `application_url` (often the tunnel of a `shopify app dev` that is not running) is moved there. Without it, `application_url`, where lsf sends only when it is on this machine ([where webhooks go](#webhooks)). |
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The client secret. |
 | `--admin-throttle <plan>` | `LSF_ADMIN_THROTTLE` | The cost bucket: `store` (default), `standard`, `advanced`, `plus`, `enterprise`, `legacy`, `off`. |

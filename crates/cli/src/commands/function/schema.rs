@@ -30,6 +30,12 @@ pub struct SchemaArgs {
     #[arg(long, env = "LSF_APP", value_name = "DIR")]
     app: Option<PathBuf>,
 
+    /// The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a
+    /// path). Without it, uses the configuration selected with `shopify app config use`, else
+    /// `shopify.app.toml`.
+    #[arg(long, short = 'c', env = "LSF_APP_CONFIG", value_name = "CONFIG")]
+    config: Option<String>,
+
     /// Print the schema instead of writing it to the Function's `schema.graphql`.
     #[arg(long)]
     stdout: bool,
@@ -48,7 +54,7 @@ pub fn run(args: &SchemaArgs) -> Result<ExitCode, String> {
         })?,
         (None, None) => checkout::app_of(None, "lsf app function schema")?,
     };
-    let app = lsf_app::config::load(&app_dir)?;
+    let app = lsf_app::config::load_with_config(&app_dir, args.config.as_deref())?;
     let function = function_of(
         &app,
         args.handle.as_deref(),

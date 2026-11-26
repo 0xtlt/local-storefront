@@ -269,6 +269,31 @@ mod tests {
             ])
             .is_ok()
         );
+        assert!(parse(&["app", "dev", "--app", "../my-app", "--config", "dev"]).is_ok());
+        assert!(parse(&["app", "dev", "--app", "../my-app", "-c", "dev"]).is_ok());
+        assert!(parse(&["serve", "--app", "../my-app", "--config", "dev"]).is_ok());
+        assert!(parse(&["serve", "--app", "../my-app", "-c", "dev"]).is_ok());
+        assert!(parse(&["app", "init", "--app", "../my-app", "-c", "dev"]).is_ok());
+        assert!(parse(&["app", "build", "--app", "../my-app", "-c", "dev"]).is_ok());
+        assert!(parse(&["app", "check", "--app", "../my-app", "-c", "dev"]).is_ok());
+        assert!(parse(&["app", "function", "run", "-c", "dev"]).is_ok());
+        assert!(parse(&["app", "function", "build", "-c", "dev"]).is_ok());
+        assert!(parse(&["app", "function", "typegen", "-c", "dev"]).is_ok());
+        assert!(parse(&["app", "function", "schema", "-c", "dev"]).is_ok());
+        assert!(
+            parse(&[
+                "app",
+                "webhook",
+                "trigger",
+                "--topic",
+                "orders/create",
+                "-c",
+                "dev"
+            ])
+            .is_ok()
+        );
+        assert!(parse(&["validate", "--app", "../my-app", "-c", "dev"]).is_ok());
+        assert!(parse(&["check", "--app", "../my-app", "-c", "dev"]).is_ok());
         assert!(parse(&["app", "webhook", "trigger"]).is_err());
         // `app` alone does nothing, and the options of `dev` are its own.
         assert!(parse(&["app"]).is_err());

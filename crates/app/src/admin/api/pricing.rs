@@ -60,8 +60,11 @@ pub(super) fn page(
         // Shopify names the app by its handle here; a client id fails (community reports:
         // https://community.shopify.dev/t/unable-to-access-managed-pricing-pricing-plans-url-always-redirects-to-apps-page-and-no-billing-handle-generated/26732).
         // Accepting it would let an app pass locally with a link that breaks on Shopify.
+        let config_file = api
+            .app()
+            .map_or("shopify.app.toml", crate::config::App::config_file_name);
         let reason = format!(
-            "Shopify's plan page names the app by its handle, not its client id: the plans of {} are at {}. Build the link with `handle` of shopify.app.toml.",
+            "Shopify's plan page names the app by its handle, not its client id: the plans of {} are at {}. Build the link with `handle` of {config_file}.",
             app_name(api),
             page_path(api)
         );

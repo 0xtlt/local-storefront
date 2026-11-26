@@ -57,8 +57,8 @@ pub fn of(app: &App, env: Arc<Environment>, revalidate: Revalidate) -> AppExtens
 }
 
 /// Gives the theme the theme app extensions of the app in `dir`.
-pub fn attach(theme: &Theme, dir: &Path, revalidate: Revalidate) {
-    if let Ok(app) = lsf_app::config::load(dir) {
+pub fn attach(theme: &Theme, dir: &Path, config: Option<&str>, revalidate: Revalidate) {
+    if let Ok(app) = lsf_app::config::load_with_config(dir, config) {
         theme.set_app_extensions(of(&app, theme.environment().clone(), revalidate));
     }
 }
@@ -256,8 +256,15 @@ pub fn validate_app(app: &App, handles: &[String]) -> (usize, bool) {
 /// What `lsf check --app` adds: the app blocks the theme names that the app does not have.
 /// Without `--app`, how many app blocks the
 /// theme names, which are not checked.
-pub fn check_lines(theme: &Theme, app_dir: Option<&Path>) -> Result<Vec<Finding>, String> {
+pub fn check_lines(
+    theme: &Theme,
+    app_dir: Option<&Path>,
+    config: Option<&str>,
+) -> Result<Vec<Finding>, String> {
     let Some(dir) = app_dir else {
+        if config.is_some() {
+            return Err("--config needs `--app DIR`".to_string());
+        }
         let found: Vec<_> = references::references(theme)
             .into_iter()
             .filter(|reference| !reference.disabled)
@@ -284,7 +291,8 @@ pub fn check_lines(theme: &Theme, app_dir: Option<&Path>) -> Result<Vec<Finding>
             ),
         }]);
     };
-    let app = lsf_app::config::load(dir).map_err(|problem| format!("--app: {problem}"))?;
+    let app = lsf_app::config::load_with_config(dir, config)
+        .map_err(|problem| format!("--app: {problem}"))?;
     let apps = of(&app, theme.environment().clone(), Revalidate::Never);
     // `check` reads no store data: whether `app.embeds` turns an embed on is not known.
     Ok(references::check(theme, &apps, &[])

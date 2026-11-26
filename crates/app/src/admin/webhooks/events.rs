@@ -328,8 +328,8 @@ impl Webhooks {
                 body: text,
             }),
             notes: vec![format!(
-                "an Event of [[events.subscription]] {} of shopify.app.toml ({} {})",
-                event.subscription.handle, event.subscription.topic, event.action
+                "an Event of [[events.subscription]] {} of {} ({} {})",
+                event.subscription.handle, self.config_file, event.subscription.topic, event.action
             )],
         };
         if let Some(reason) = event.filtered_out {

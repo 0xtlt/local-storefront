@@ -160,6 +160,7 @@ fn run_on(data: &Path, scenario: &str, step: Step) -> CheckoutResult {
     let args = RunArgs {
         handles: vec![],
         app: Some(dir.clone()),
+        config: None,
         build: false,
         session: None,
         scenario: Some(scenario.to_string()),

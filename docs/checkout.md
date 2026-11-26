@@ -38,7 +38,8 @@ commands of an app take the app the current folder is in. The store data is `--d
 (`<app>/shopify-local`), else the built-in demo store. One that `lsf init` creates while the
 server runs is read at its next reload.
 
-The app is a directory with `shopify.app.toml` and `extensions/*/shopify.extension.toml`. API
+The app is a directory with `shopify.app.toml` (or `shopify.app.<name>.toml`, selected with
+`--config` / `-c` or `shopify app config use`) and `extensions/*/shopify.extension.toml`. API
 versions 2026-10 and 2027-01 are supported. Functions run from their built Wasm module and
 extensions from their built bundle (`dist/function.wasm`, `dist/<handle>.js`). lsf builds them
 as `shopify app build` does, without Node and without Shopify's CLI
@@ -54,7 +55,7 @@ npx local-storefront app dev --app ../my-app --build
 
 | Shopify CLI | lsf | What lsf does not do |
 |---|---|---|
-| `shopify app dev` | `lsf app dev --watch`: the checkout, the customer account and the Admin API, built again at each save ([watch mode](#watch-mode)) | No development store, tunnel or Partner account. The app's web server is yours to start: give its URL with `--app-url`. |
+| `shopify app dev` | `lsf app dev --watch` (with `--config` / `-c` for `shopify.app.<name>.toml`): the checkout, the customer account and the Admin API, built again at each save ([watch mode](#watch-mode)) | No development store, tunnel or Partner account. The app's web server is yours to start: give its URL with `--app-url`. |
 | `shopify app build` | `lsf app build` | `wasm-opt` is not run on a Rust Function ([Rust Functions](#rust-functions)). |
 | `shopify app function build` | `lsf app function build` | `@shopify/shopify_function` 1.x ([JavaScript Functions](#javascript-and-typescript-functions)). |
 | `shopify app function run` | `lsf app function run --input <file>` (or `-`, or a folder of fixtures), `--export <name>`, `--format json`; with `--scenario`, on an input lsf builds from the store data ([run a Function](#run-a-function-without-a-server)). As Shopify's, it builds the Function first when its files changed after its module was built. | |

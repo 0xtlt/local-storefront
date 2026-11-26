@@ -1589,3 +1589,20 @@ fn the_metafields_a_subscription_names_are_in_its_payload() {
     );
     assert_eq!(metafields[1]["namespace"], "app--42--reviews");
 }
+
+#[test]
+fn summary_and_subscription_ids_name_the_config_file_read() {
+    let config = AppConfig {
+        file_name: Some("shopify.app.dev.toml".to_string()),
+        application_url: Some("http://localhost:3999".to_string()),
+        webhooks_api_version: Some(API_VERSION.to_string()),
+        webhook_subscriptions: vec![subscription(&["orders/create"], "/webhooks")],
+        ..Default::default()
+    };
+    let webhooks = Webhooks::for_app(&config, None, SECRET.to_string(), options());
+    assert_eq!(
+        webhooks.summary(),
+        "1 subscription of shopify.app.dev.toml → http://localhost:3999"
+    );
+    assert_eq!(webhooks.app_subscriptions()[0].id, "shopify.app.dev.toml#1");
+}

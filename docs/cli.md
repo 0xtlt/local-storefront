@@ -63,6 +63,7 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--no-minify` | | Serves styles and scripts as written. Without it, they are minified with a source map, as on Shopify. |
 | `--no-compression` | | Sends responses uncompressed. Without it, they are compressed (Brotli or gzip) for clients that accept it, as on Shopify. |
 | `--app <dir>` | `LSF_APP` | A Shopify app. `/checkout` then runs its Functions and shows its checkout UI extensions, `/account` shows its customer account UI extensions, its backend gets the [Admin API](admin.md), and the theme renders the app blocks and app embed blocks of its [theme app extensions](storefront.md#theme-app-extensions). See [checkout](checkout.md). |
+| `--config <config>`, `-c` | `LSF_APP_CONFIG` | With `--app`: the app configuration file to use, as `shopify app dev --config` (`-c`) does: a shorthand name (`dev` for `shopify.app.dev.toml`), a file name (`shopify.app.dev.toml`), or a path. Without it, uses the configuration last selected with `shopify app config use`, else `shopify.app.toml`, else the first `shopify.app.<name>.toml`. |
 | `--only <parts>` | `LSF_ONLY` | Runs only these parts: `theme`, `checkout`, `admin`, comma-separated or repeated. Without it, the theme, and all three with `--app`. `checkout` and `admin` need `--app`. See [what runs](#what-runs). |
 | `--extension <handle>` | | With `--app`: uses only this extension of the app. Repeat it for several. Without it, every extension is used. |
 | `--build` | | With `--app`: builds the extensions first, as `app build` does: the Functions, then the UI extensions that name their sources. |
@@ -91,10 +92,11 @@ line that starts with `ready:  http://127.0.0.1:<port>/`. With `--port 0`, read 
 that line. Without `--quiet`, each request gets a line (`200 GET / 39.1ms`), with the reason of
 a 404 above it.
 
-With `--app`, the lines of the app come before `ready:`: how many checkout scenarios the data
+With `--app`, the lines of the app come before `ready:`: `config:` when a configuration file other
+than `shopify.app.toml` is used, how many checkout scenarios the data
 has (when the checkout runs a Function), then, with the admin part, the [Admin API](admin.md)
 of the store and its token, the client secret it signs with and where that secret comes from,
-the webhooks of the app, its proxy, the embedded app in lsf's admin (`embedded:`), with
+the webhooks of the app (naming the configuration file read), its proxy, the embedded app in lsf's admin (`embedded:`), with
 `--pricing-plans` the plans and the Partner API (`pricing:`, `partner:`), and with
 `--polaris offline` where Polaris is served (`polaris:`). After `ready:`, with the theme and the
 checkout, the address of the home page of the checkout, then `watch:` with `--watch`:
@@ -203,7 +205,10 @@ puts them back to the store data without reading the files.
 
 The commands of a Shopify app, named as Shopify's CLI names them (`shopify app dev`,
 `shopify app build`, `shopify app function run`). In the app's folder, `--app` can be left out,
-and the store data defaults to the app's `shopify-local/`. Guide: [checkout](checkout.md).
+and the store data defaults to the app's `shopify-local/`. When an app has several configuration
+files (`shopify.app.<name>.toml`), `--config <name>` (`-c`, `LSF_APP_CONFIG`) selects one; without
+it, lsf uses the configuration last selected with `shopify app config use`, else `shopify.app.toml`.
+Guide: [checkout](checkout.md).
 
 | Command | What it does |
 |---|---|
@@ -255,6 +260,7 @@ npx local-storefront app init --app ../my-app
 | Option | Environment variable | What it does |
 |---|---|---|
 | `--app <dir>` | `LSF_APP` | The app the scenarios are made for. Defaults to the app the current folder is in. |
+| `--config <config>`, `-c` | `LSF_APP_CONFIG` | The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a path). |
 | `--force` | | Overwrites the scenarios that exist. |
 
 ### app build
@@ -279,6 +285,7 @@ Shopify's strict parser. Each one says `checked: <handle>: ...`; an error exits 
 |---|---|---|
 | `[handle]...` | | The extensions to build or check. Every extension of the app when none is given. |
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
+| `--config <config>`, `-c` | `LSF_APP_CONFIG` | The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a path). |
 
 ### app check
 
@@ -376,6 +383,7 @@ checked 8 of 8 scenarios in 0.1 s: every Function ran, the `expect` of 2 scenari
 | Option | Environment variable | What it does |
 |---|---|---|
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
+| `--config <config>`, `-c` | `LSF_APP_CONFIG` | The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a path). |
 | `--extension <handle>` | | Only these extensions. Repeat it for several. |
 | `--build` | | Builds the extensions first, as `app build` does. |
 | `--format text` | | Default. One line per problem, then a summary. |
@@ -404,6 +412,7 @@ npx local-storefront app function run volume-discount --app ../my-app --session 
 |---|---|---|
 | `[handle]...` | | The Functions to run, whether or not the shop has an owner of them (a payment customization, …): one the checkout of the store data would leave out is said first (`Named: …`, `forced` in JSON). It reads the store data on disk, not a running lsf. Without them, what the checkout runs: the Functions with an enabled owner, those of a discount, or those the scenario names; the others are listed as not run, with why. |
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in; the store data to its `shopify-local/` when the current folder has none. |
+| `--config <config>`, `-c` | `LSF_APP_CONFIG` | The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a path). |
 | `--build` | | Builds the extensions first, as `app build` does: the Functions, then the UI extensions that name their sources. |
 | `--scenario <name>` | | A [checkout scenario](data-format.md#checkout-scenarios) of the store data (`checkouts/<name>.json`): its cart, buyer, language, `checkout` settings and the extensions it names. `--session`, `--checkout` and `--locale` go on top of it. The cart is priced as the served checkout of the scenario prices it: in the currency of the buyer's country, at its market's `rate` (`presentmentCurrencyRate`). |
 | `--session <file or JSON>` | | The session to run for, as `PUT /__lsf/session` takes it: its `data` goes on top of the store data for this run (a discount for a discount Function, settings in `checkout.functions`). Defaults to the `session` of the store data. |
@@ -520,6 +529,7 @@ give lsf the backend's secret (--client-secret, or --app for the SHOPIFY_API_SEC
 | `--delivery-method <method>` | | `http`, `google-pub-sub` or `event-bridge`; without it, what the address says. lsf delivers over HTTP only: the other two are refused. |
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret of the signature. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else lsf's local secret, `lsf-local-client-secret`. |
 | `--app <dir>`, `--path <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in; may be left out with `--address`. |
+| `--config <config>`, `-c` | `LSF_APP_CONFIG` | The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a path). Without it, uses the configuration selected with `shopify app config use`, else `shopify.app.toml`. |
 | `--app-url <url>` | `LSF_APP_URL` | Where the backend of the app listens. Without it, `application_url`, when it is on this machine. |
 | `--format text` | | Default. The request it sent, the answer, the state. |
 | `--format json` | | Prints the deliveries as JSON: `{ok, deliveries: [...]}`, each as [`GET /__lsf/webhooks`](control-api.md#webhook-deliveries) lists it (`topic`, `url`, `request`, `attempts`, `state`, `reason`, …). `--json` and `-j`, from before `--format`, still work. |
@@ -639,6 +649,7 @@ a block needs a {% schema %}`), and exits with `1` on an error of it.
 | Option | What it does |
 |---|---|
 | `--app <dir>` | The app to check too (`LSF_APP`). Defaults to the app the current folder is in. |
+| `--config <config>`, `-c` | The app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a path). |
 | `--format text` | Default. One block per problem, for a person. |
 | `--format json` | One JSON document, for a tool: `errors`, `warnings` and `diagnostics` are those of the data and of the app together (an app's has the code `app` and its extension as `file`), `app` has the app's own when there is one. |
 | `--format github` | One [GitHub Actions annotation](#github-annotations) per problem, on stdout: the file of the store data, and the line of the value. |
@@ -768,6 +779,7 @@ Only names written as literals are checked. It reads `layout/`, `templates/`, `s
 |---|---|
 | `--fix` | Rewrites what the strict parser rejects. A file is written only if it has not changed since it was read. Run twice, the second run writes nothing. |
 | `--app <dir>` | Checks the app blocks and app embed blocks the theme names against the [theme app extensions](storefront.md#theme-app-extensions) of this app. A block that renders nothing is a problem, and the check exits with `1`: a block the app does not have (with the name it probably meant), an app embed block in a section, a block its `enabled_on` or `disabled_on` keeps out of the template or section group. A block of another app is a note. Without it, a note says how many the theme names, not checked. |
+| `--config <config>`, `-c` | With `--app`: the app configuration file to use (`dev` for `shopify.app.dev.toml`, a file name, or a path). |
 | `--format text` | Default. One block per problem, for a person. |
 | `--format json` | One JSON document, for a tool. |
 | `--format github` | One [GitHub Actions annotation](#github-annotations) per problem, on stdout. |

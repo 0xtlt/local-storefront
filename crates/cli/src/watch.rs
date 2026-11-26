@@ -329,6 +329,8 @@ pub fn check_module(bytes: &[u8]) -> Result<(), String> {
 /// How the watcher looks at the files and runs the builds.
 #[derive(Clone, Debug)]
 pub struct Options {
+    /// `--config` (`-c`, `LSF_APP_CONFIG`): the app configuration file to read, when given.
+    pub config: Option<String>,
     /// The extensions `--extension` selects: only those are built. All when empty.
     pub extensions: Vec<String>,
     /// Build every selected Function when the watcher starts (`--watch --build`). Without it,
@@ -366,6 +368,7 @@ pub struct Options {
 impl Options {
     pub fn new(extensions: Vec<String>, build_first: bool) -> Options {
         Options {
+            config: None,
             extensions,
             build_first,
             data: None,
@@ -519,6 +522,7 @@ impl Watcher {
             shared_content: None,
             typegen: BTreeMap::new(),
             sources: BTreeMap::new(),
+            config_file_name: "shopify.app.toml".to_string(),
         };
         let first = coordinator.prepare();
         let thread = std::thread::Builder::new()
@@ -1716,6 +1720,8 @@ struct Coordinator {
     /// ([`crate::freshness`]), for `lsf app check` and `lsf app function run` to know the
     /// module is up to date.
     sources: BTreeMap<String, crate::freshness::Sources>,
+    /// The active app configuration file name (`shopify.app.toml`, `shopify.app.dev.toml`).
+    config_file_name: String,
 }
 
 impl Coordinator {
@@ -1781,7 +1787,7 @@ impl Coordinator {
         // The checkout UI extensions lsf bundles: those whose bundle is missing or older than
         // their files (all with `--build`), at once.
         let ui: Vec<String> = self.ui_handles().into_iter().collect();
-        if let Ok(app) = config::load(&self.root) {
+        if let Ok(app) = config::load_with_config(&self.root, self.options.config.as_deref()) {
             for handle in ui {
                 let stale = app
                     .ui_extension(&handle)
@@ -1875,8 +1881,11 @@ impl Coordinator {
     /// Functions it builds now run their published module; with `adopt`, one that was built
     /// before it is watched is published as it is, when its module is whole.
     fn reload_app(&mut self, adopt: bool) -> bool {
-        let rules = match config::load(&self.root) {
-            Ok(app) => rules_of(&app, &self.selection),
+        let rules = match config::load_with_config(&self.root, self.options.config.as_deref()) {
+            Ok(app) => {
+                self.config_file_name = app.config_file_name().to_string();
+                rules_of(&app, &self.selection)
+            }
             // The app cannot be read: the pages say why. Its folders are watched as they were.
             Err(_) => return false,
         };
@@ -1933,7 +1942,7 @@ impl Coordinator {
         // Each Function once, whatever asked for it.
         let mut to_build = BTreeSet::new();
         if changes.config {
-            (self.log)("↻ shopify.app.toml changed");
+            (self.log)(&format!("↻ {} changed", self.config_file_name));
             reload = true;
         }
         if let Some(first) = changes.shared.first()
@@ -1998,13 +2007,14 @@ impl Coordinator {
     fn build_ui(&mut self, handle: &str) {
         let started = Instant::now();
         let mut bundle = None;
-        let built = config::load(&self.root).and_then(|app| {
-            let extension = app
-                .ui_extension(handle)
-                .ok_or_else(|| format!("{handle} is not an extension of the app"))?;
-            bundle = Some(extension.bundle.clone());
-            lsf_app::checkout::javascript::build_extension(extension, &self.root)
-        });
+        let built =
+            config::load_with_config(&self.root, self.options.config.as_deref()).and_then(|app| {
+                let extension = app
+                    .ui_extension(handle)
+                    .ok_or_else(|| format!("{handle} is not an extension of the app"))?;
+                bundle = Some(extension.bundle.clone());
+                lsf_app::checkout::javascript::build_extension(extension, &self.root)
+            });
         match built {
             Ok(_) => {
                 (self.log)(&format!(

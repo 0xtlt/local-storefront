@@ -212,10 +212,12 @@ impl Webhooks {
         });
         (!covered).then(|| {
             format!(
-                "no subscription to `{topic}` for {}, in shopify.app.toml or through the Admin \
+                "no subscription to `{topic}` for {}, in {} or through the Admin \
                  API: nothing of it is sent, so the wait could only time out. Subscribe to it \
-                 (`[[webhooks.subscriptions]]` of shopify.app.toml, or `webhookSubscriptionCreate`)",
-                filter.shop.as_deref().unwrap_or("any shop")
+                 (`[[webhooks.subscriptions]]` of {}, or `webhookSubscriptionCreate`)",
+                filter.shop.as_deref().unwrap_or("any shop"),
+                self.config_file,
+                self.config_file
             )
         })
     }
@@ -259,8 +261,9 @@ impl Webhooks {
             return HttpResponse::error(
                 404,
                 format!(
-                    "no subscription to `{topic}` for {shop}, in shopify.app.toml or through the \
-                     Admin API: subscribe to it, or give an `address`"
+                    "no subscription to `{topic}` for {shop}, in {} or through the \
+                     Admin API: subscribe to it, or give an `address`",
+                    self.config_file
                 ),
             );
         }

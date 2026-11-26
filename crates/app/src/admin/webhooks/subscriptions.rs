@@ -237,7 +237,7 @@ pub fn from_app_config(config: &AppConfig, at: DateTime<Utc>) -> Vec<Subscriptio
     for (index, entry) in config.webhook_subscriptions.iter().enumerate() {
         for topic in entry.topics.iter().chain(&entry.compliance_topics) {
             subscriptions.push(Subscription {
-                id: format!("shopify.app.toml#{}", index + 1),
+                id: format!("{}#{}", config.file_name(), index + 1),
                 source: Source::AppConfig { entry: index + 1 },
                 // `ORDERS_CREATE` is read as `orders/create`; an unknown topic is kept as written,
                 // so that its deliveries say why they are not sent.

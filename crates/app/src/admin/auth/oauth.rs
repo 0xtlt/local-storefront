@@ -81,7 +81,7 @@ pub const DEFAULT_USER: u64 = 1;
 /// What the OAuth endpoints know of the app.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppAuth {
-    /// `client_id` of `shopify.app.toml`, or lsf's own without an app.
+    /// `client_id` of the app configuration file, or lsf's own without an app.
     pub client_id: String,
     /// What OAuth, session tokens and webhooks are signed with ([`super::client_secret`]).
     pub client_secret: String,
@@ -95,10 +95,12 @@ pub struct AppAuth {
     /// `--app-url`: where the backend listens locally, which replaces the origin of
     /// `application_url` (see [`AppAuth::redirect_allowed`] and [`AppAuth::app_url`]).
     pub app_url: Option<String>,
+    /// The file name of the app configuration (`shopify.app.toml`, `shopify.app.dev.toml`).
+    pub config_file: Option<String>,
 }
 
 impl AppAuth {
-    /// The app of `shopify.app.toml`.
+    /// The app of `config`.
     pub fn from_app(
         config: &crate::config::AppConfig,
         client_id: &str,
@@ -112,7 +114,13 @@ impl AppAuth {
             redirect_urls: Some(config.redirect_urls.clone()),
             application_url: config.application_url.clone(),
             app_url: app_url.map(str::to_string),
+            config_file: config.file_name.clone(),
         }
+    }
+
+    /// The file name of the app configuration, or `"shopify.app.toml"` by default.
+    pub fn config_file_name(&self) -> &str {
+        self.config_file.as_deref().unwrap_or("shopify.app.toml")
     }
 
     /// Whether `redirect_uri` is allowed: equal to one of `[auth] redirect_urls`, as Shopify
@@ -229,7 +237,7 @@ pub fn authorize(request: &HttpRequest, cx: &Context, tokens: &mut Tokens) -> Ht
             "invalid_request",
             "The redirect_uri is not whitelisted",
             &if allowed.is_empty() {
-                "shopify.app.toml has no [auth] redirect_urls.".to_string()
+                format!("{} has no [auth] redirect_urls.", cx.app.config_file_name())
             } else {
                 format!("Allowed: {}.", allowed.join(", "))
             },
@@ -704,7 +712,10 @@ pub fn launch(request: &HttpRequest, cx: &Context, tokens: &mut Tokens) -> HttpR
         Some(url) => HttpResponse::redirect(&url),
         None => HttpResponse::error(
             400,
-            "the app has no URL: give --app-url, or application_url in shopify.app.toml",
+            format!(
+                "the app has no URL: give --app-url, or application_url in {}",
+                cx.app.config_file_name()
+            ),
         ),
     }
 }
@@ -898,6 +909,7 @@ mod tests {
             ]),
             application_url: Some("https://example.trycloudflare.com".to_string()),
             app_url: Some("http://localhost:3000".to_string()),
+            config_file: None,
         }
     }
 

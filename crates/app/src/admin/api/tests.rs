@@ -594,3 +594,54 @@ fn scopes_changed_in_the_app_config_are_said() {
     assert_eq!(api.scopes(), ["read_products"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn scopes_changed_watches_the_selected_config_file_and_names_it() {
+    let dir = std::env::temp_dir().join(format!("lsf-scopes-named-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = |scopes: &str| {
+        format!(
+            "client_id = \"0123456789abcdef0123456789abcdef\"\nhandle = \"scopes-named\"\n\n[access_scopes]\nscopes = \"{scopes}\"\n"
+        )
+    };
+    std::fs::write(dir.join("shopify.app.toml"), config("read_products")).unwrap();
+    std::fs::write(dir.join("shopify.app.dev.toml"), config("read_orders")).unwrap();
+    let app = crate::config::load_with_config(&dir, Some("dev")).expect("the dev config loads");
+    let (store, _) = lsf_core::store::load::load(
+        &lsf_core::store::load::DataSource::Demo,
+        &Default::default(),
+    );
+    let api = super::AdminApi::new(
+        &store,
+        super::AdminOptions {
+            app: Some(app),
+            client_secret: "test-secret".to_string(),
+            throttle: ThrottleSetting::Off,
+            ..Default::default()
+        },
+    );
+    // Changing shopify.app.toml does not trigger a warning when running with --config dev.
+    std::fs::write(
+        dir.join("shopify.app.toml"),
+        config("read_products,write_products"),
+    )
+    .unwrap();
+    assert_eq!(api.app_scopes_changed(), None);
+    // Changing shopify.app.dev.toml triggers a warning naming shopify.app.dev.toml.
+    std::fs::write(
+        dir.join("shopify.app.dev.toml"),
+        config("read_orders,write_orders"),
+    )
+    .unwrap();
+    let warning = api.app_scopes_changed().expect("a warning");
+    assert!(
+        warning.starts_with("shopify.app.dev.toml changed its scopes"),
+        "{warning}"
+    );
+    assert!(
+        warning.contains("added `write_orders`, removed none"),
+        "{warning}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
