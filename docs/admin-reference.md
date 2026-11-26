@@ -855,8 +855,11 @@ effects, only `cartToOrderCopyable` of an ORDER definition is simulated (on anot
 it is not `eligible`, and enabling it is `INVALID_CAPABILITY`, as Shopify allows it on order
 definitions only): it copies a cart
 metafield onto the order placed from the cart ([admin](admin.md#what-the-storefront-and-the-checkout-see)).
-The order definitions `shopify.app.toml` declares (`[order.metafields.app.<key>]`) are
-definitions of the shop from the start; those of other owner types are not read. Unlike
+The order definitions `shopify.app.toml` declares (`[order.metafields.app.<key>]`) and any
+`metafield_definitions` declared in `shopify-local/` (in root data files or
+`metafield_definitions/*.json`) are definitions of the shop from the start, with portable
+metaobject type names in validations resolved to the local shop's `MetaobjectDefinition` GIDs;
+other owner types in `shopify.app.toml` are not read. Unlike
 Shopify's, which are read-only through the Admin API, the mutations may change them.
 Uninstalling the app deletes the definitions of its reserved namespaces, declared or created,
 and keeps their metafields; a reinstall creates them again under new ids, with those metafields,
@@ -869,6 +872,9 @@ entries), `metaobjectCreate`, `metaobjectUpdate`, `metaobjectUpsert`, `metaobjec
 and `query` (`fields.<key>:value`), `metaobjectByHandle`, `metaobjectDefinitionByType`,
 `Metaobject.field(key:)` and `values`, and `Metaobject.referencedBy`: the metafields and the
 metaobject fields that reference the entry (`namespace` is the metaobject's type for a field).
+Definitions declared in `shopify-local/` (`metaobject_definitions` in root data files or
+`metaobject_definitions/*.json`) are seeded on boot with their fields, validations, access and
+capabilities, even when they have no entries yet.
 
 - `$app:author` is the app's type (`app--<app id>--author` in the answers, as on Shopify). Its
   entries reach the storefront: the theme reads them as `metaobjects['app--<app id>--author']`

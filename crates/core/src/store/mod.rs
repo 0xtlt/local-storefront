@@ -6,6 +6,7 @@ mod collate;
 mod countries;
 mod country_names;
 mod date;
+pub mod definitions;
 pub mod demo;
 pub mod docs;
 pub mod load;
@@ -25,7 +26,16 @@ use chrono_tz::Tz;
 use indexmap::IndexMap;
 use serde_json::Value as Json;
 
-pub use model::{InventoryPolicy, MediaType, ProductStatus, SortOrder, VideoHost};
+pub use definitions::{
+    MetafieldAccess, MetafieldCapabilities, MetafieldDefinition, MetafieldValidation,
+    MetaobjectAccess, MetaobjectCapabilities, MetaobjectDefinition, MetaobjectFieldDefinition,
+    OnlineStoreCapability, RenderableCapability,
+};
+pub use model::{
+    DefinitionAdminAccess, DefinitionStorefrontAccess, InventoryPolicy, MediaType,
+    MetafieldCustomerAccountAccess, MetafieldOwnerType, MetaobjectCustomerAccountAccess,
+    ProductStatus, SortOrder, VideoHost,
+};
 
 #[derive(Clone, Debug)]
 pub struct Image {
@@ -1233,7 +1243,11 @@ pub struct Store {
     pub redirects: Vec<Redirect>,
     pub locations: Vec<Location>,
     pub selling_plan_groups: Vec<SellingPlanGroup>,
+    /// Metafield definitions declared in the store data (`metafield_definitions`).
+    pub metafield_definitions: Vec<MetafieldDefinition>,
     pub metaobjects: Vec<Metaobject>,
+    /// Metaobject definitions declared in the store data (`metaobject_definitions`), by type.
+    pub metaobject_definitions: IndexMap<String, MetaobjectDefinition>,
     /// The handle of the web pages of each metaobject type whose definition sets one
     /// (`metaobject_definitions.<type>.url_handle`): [`Store::metaobject_url_handle`].
     pub metaobject_url_handles: HashMap<String, String>,

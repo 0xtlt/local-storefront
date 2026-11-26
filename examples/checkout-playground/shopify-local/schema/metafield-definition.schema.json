@@ -1,0 +1,311 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MetafieldDefinitionInput",
+  "description": "A metafield definition (`MetafieldDefinition`), declared in `metafield_definitions` of a data\nfile or one per file (or an array) in `metafield_definitions/`.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Lets editors validate and autocomplete the file, e.g.\n`\"../schema/metafield-definition.schema.json\"`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "owner_type": {
+      "description": "The Shopify resource type this definition applies to, e.g. `PRODUCT`, `PRODUCTVARIANT`,\n`COLLECTION`, `CUSTOMER`, `ORDER`, `SHOP`.",
+      "$ref": "#/$defs/MetafieldOwnerType"
+    },
+    "namespace": {
+      "description": "Namespace (3–255 characters of letters, digits, `-`, `_`, or `$app` / `$app:<name>`).\nDefaults to `\"$app\"` when omitted, matching the Admin API.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "key": {
+      "description": "Key (2–64 characters of letters, digits, `-`, `_`).",
+      "type": "string"
+    },
+    "name": {
+      "description": "Human-readable name shown in the Shopify admin. Defaults to a humanized form of `key`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "description": {
+      "description": "Description of the definition (at most 255 characters).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "type": {
+      "description": "Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`,\n`number_integer`, `metaobject_reference`, `list.product_reference`.",
+      "type": "string"
+    },
+    "validations": {
+      "description": "Validation rules for values of this metafield (`min`, `max`, `regex`, `choices`,\n`scale_min`, `scale_max`, `list.min`, `list.max`, `metaobject_definition_id`, ...).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/MetafieldValidationInput"
+      }
+    },
+    "pinned": {
+      "description": "Whether the definition is pinned in the Shopify admin. Pinned definitions get sequential\n`pinnedPosition` values starting from 1 per `owner_type` (at most 20).",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "pinned_position": {
+      "description": "Explicit 1-based pinned position (1–20). Setting this pins the definition at that position.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "minimum": 0
+    },
+    "access": {
+      "description": "Access controls (`admin`, `storefront`, `customer_account`).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MetafieldAccessInput"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "capabilities": {
+      "description": "Definition capabilities (`admin_filterable`, `analytics_queryable`,\n`cart_to_order_copyable`, `smart_collection_condition`, `unique_values`).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MetafieldCapabilitiesInput"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "standard_template": {
+      "description": "Marks the definition as a Shopify standard metafield definition (e.g.\n`descriptors.care_guide`, `reviews.rating`). Allows reserved `shopify` / `shopify--*`\nnamespaces and populates `standardTemplate` in the Admin API.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "owner_type",
+    "key",
+    "type"
+  ],
+  "$defs": {
+    "MetafieldOwnerType": {
+      "description": "The Shopify resource type a metafield definition belongs to (`MetafieldOwnerType`).",
+      "type": "string",
+      "enum": [
+        "API_PERMISSION",
+        "ARTICLE",
+        "BLOG",
+        "CARTTRANSFORM",
+        "COLLECTION",
+        "COMPANY",
+        "COMPANY_LOCATION",
+        "CUSTOMER",
+        "DELIVERY_CUSTOMIZATION",
+        "DISCOUNT",
+        "DRAFTORDER",
+        "FULFILLMENT_CONSTRAINT_RULE",
+        "GIFT_CARD_TRANSACTION",
+        "LOCATION",
+        "MARKET",
+        "ORDER",
+        "ORDER_ROUTING_LOCATION_RULE",
+        "PAGE",
+        "PAYMENT_CUSTOMIZATION",
+        "PRODUCT",
+        "PRODUCTVARIANT",
+        "SELLING_PLAN",
+        "SHOP",
+        "TRANSFER",
+        "VALIDATION"
+      ]
+    },
+    "MetafieldValidationInput": {
+      "description": "A validation rule on a metafield definition or metaobject field definition\n(`MetafieldDefinitionValidationInput`).\n\nFor `metaobject_definition_id` / `metaobject_definition_ids` (or the portable aliases\n`metaobject_definition_type` / `metaobject_definition_types`), write portable metaobject type\nnames (e.g. `\"look\"`, `\"$app:author\"`, or `[\"look\", \"designer\"]`) instead of shop-specific\nGIDs; lsf validates them against the store's metaobject definitions and resolves them to the\nlocal shop's definition GIDs in the Admin API.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Validation rule name: `min`, `max`, `regex`, `choices`, `max_precision`, `scale_min`,\n`scale_max`, `schema`, `allowed_domains`, `file_type_options`, `list.min`, `list.max`,\n`metaobject_definition_id` (or `metaobject_definition_type`), `metaobject_definition_ids`\n(or `metaobject_definition_types`), `product_taxonomy_attribute_handle`.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Rule value as a string (Shopify's format, e.g. `\"500\"`, `\"[\\\"gold\\\",\\\"silver\\\"]\"`,\n`\"look\"`), or as a JSON number, array or object."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "MetafieldAccessInput": {
+      "description": "Access controls of a metafield definition (`MetafieldAccess`).",
+      "type": "object",
+      "properties": {
+        "admin": {
+          "description": "Admin API access. Only allowed on app-owned namespaces (`$app` or `$app:<name>`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DefinitionAdminAccess"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "storefront": {
+          "description": "Storefront API access (`NONE` or `PUBLIC_READ`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DefinitionStorefrontAccess"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "customer_account": {
+          "description": "Customer Account API access (`NONE`, `READ`, or `READ_WRITE`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MetafieldCustomerAccountAccess"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "DefinitionAdminAccess": {
+      "description": "Admin API access level for a metafield or metaobject definition (`MetafieldAdminAccess` /\n`MetaobjectAdminAccess`).",
+      "type": "string",
+      "enum": [
+        "MERCHANT_READ",
+        "MERCHANT_READ_WRITE",
+        "PRIVATE",
+        "PUBLIC_READ",
+        "PUBLIC_READ_WRITE"
+      ]
+    },
+    "DefinitionStorefrontAccess": {
+      "description": "Storefront API access level for a metafield or metaobject definition\n(`MetafieldStorefrontAccess` / `MetaobjectStorefrontAccess`).",
+      "type": "string",
+      "enum": [
+        "NONE",
+        "PUBLIC_READ"
+      ]
+    },
+    "MetafieldCustomerAccountAccess": {
+      "description": "Customer Account API access level for a metafield definition\n(`MetafieldCustomerAccountAccess`).",
+      "type": "string",
+      "enum": [
+        "NONE",
+        "READ",
+        "READ_WRITE"
+      ]
+    },
+    "MetafieldCapabilitiesInput": {
+      "description": "Capabilities of a metafield definition (`MetafieldCapabilities`).",
+      "type": "object",
+      "properties": {
+        "admin_filterable": {
+          "description": "Allows filtering by this metafield in the Shopify admin (`adminFilterable`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CapabilityFlag"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "analytics_queryable": {
+          "description": "Allows querying this metafield in ShopifyQL analytics (`analyticsQueryable`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CapabilityFlag"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cart_to_order_copyable": {
+          "description": "Copies matching cart metafields to orders (`cartToOrderCopyable`). Only valid for `ORDER`\ndefinitions.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CapabilityFlag"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "smart_collection_condition": {
+          "description": "Allows using this metafield in automated collection conditions\n(`smartCollectionCondition`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CapabilityFlag"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unique_values": {
+          "description": "Enforces unique values across owners (`uniqueValues`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CapabilityFlag"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityFlag": {
+      "description": "Enables or disables a capability: a boolean (`true` / `false`) or `{\"enabled\": true}`.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/CapabilityEnabled"
+        }
+      ]
+    },
+    "CapabilityEnabled": {
+      "description": "A capability toggle written as an object, matching Shopify's GraphQL input shape.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "enabled"
+      ]
+    }
+  }
+}

@@ -64,7 +64,7 @@ pub const MEASUREMENTS: [&str; 32] = [
 ];
 
 /// The other types of Shopify, which can also be lists (`list.<type>`).
-const TYPES: [&str; 27] = [
+const TYPES: [&str; 28] = [
     "article_reference",
     "boolean",
     "collection_reference",
@@ -84,6 +84,7 @@ const TYPES: [&str; 27] = [
     "multi_line_text_field",
     "number_decimal",
     "number_integer",
+    "order_reference",
     "page_reference",
     "product_reference",
     "product_taxonomy_value_reference",
@@ -96,6 +97,17 @@ const TYPES: [&str; 27] = [
 
 /// The types that have no list: one value only.
 const SINGLE_ONLY: [&str; 5] = ["boolean", "json", "language", "money", "rich_text_field"];
+
+/// Types that Shopify metafield/metaobject definitions do not allow as `list.<type>`.
+const DEFINITION_SINGLE_ONLY: [&str; 7] = [
+    "boolean",
+    "id",
+    "json",
+    "language",
+    "money",
+    "multi_line_text_field",
+    "rich_text_field",
+];
 
 /// The deprecated types, which the Admin API still creates and Liquid still renders: they
 /// "return the metafield value directly" (https://shopify.dev/docs/api/liquid/objects/metafield).
@@ -188,6 +200,34 @@ pub fn is_known(kind: &str) -> bool {
         }
         None => TYPES.contains(&kind) || is_measurement(kind) || DEPRECATED.contains(&kind),
     }
+}
+
+/// Whether `kind` is a valid Shopify metafield or metaobject field definition type (2026-10).
+/// Deprecated types (`string`, `integer`, `json_string`) and unsupported list types (`list.id`,
+/// `list.multi_line_text_field`, `list.boolean`, ...) are rejected.
+pub fn is_definition_type(kind: &str) -> bool {
+    match kind.strip_prefix("list.") {
+        Some(item) => {
+            (TYPES.contains(&item) || is_measurement(item))
+                && !DEFINITION_SINGLE_ONLY.contains(&item)
+        }
+        None => TYPES.contains(&kind) || is_measurement(kind),
+    }
+}
+
+/// Every valid definition type name, lists included, for "did you mean" hints.
+pub fn all_definition_types() -> Vec<String> {
+    let mut all: Vec<String> = TYPES
+        .iter()
+        .chain(MEASUREMENTS.iter())
+        .map(|kind| (*kind).to_string())
+        .collect();
+    for kind in TYPES.iter().chain(MEASUREMENTS.iter()) {
+        if !DEFINITION_SINGLE_ONLY.contains(kind) {
+            all.push(format!("list.{kind}"));
+        }
+    }
+    all
 }
 
 /// The types whose values Shopify translates: the "Translatable" column of

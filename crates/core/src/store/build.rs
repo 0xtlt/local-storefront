@@ -63,6 +63,7 @@ pub struct MergedInput {
     pub swatches: IndexMap<String, Sourced<model::SwatchInput>>,
     pub locations: Vec<Sourced<model::LocationInput>>,
     pub selling_plan_groups: Vec<Sourced<model::SellingPlanGroupInput>>,
+    pub metafield_definitions: Vec<Sourced<model::MetafieldDefinitionInput>>,
     pub metaobjects: Vec<(String, Sourced<model::MetaobjectInput>)>,
     pub metaobject_definitions: IndexMap<String, Sourced<model::MetaobjectDefinitionInput>>,
     pub localization: Option<Sourced<model::LocalizationInput>>,
@@ -128,6 +129,13 @@ struct Builder<'a> {
     /// The references of typed metafields, resolved once the store is built: where the
     /// metafield is, and what it names.
     references: Vec<(Origin, super::metafield_types::Reference)>,
+    /// Declared metafield definitions, used to validate and infer types for metafields.
+    metafield_definitions: Vec<MetafieldDefinition>,
+    /// Declared metaobject definitions, used to validate metaobject entries.
+    metaobject_definitions: IndexMap<String, MetaobjectDefinition>,
+    /// Deferred `metaobject_definition_id(s)` checks on resolved metaobject references:
+    /// `(origin, kind, value, validations)`.
+    metaobject_ref_checks: Vec<(Origin, String, Json, Vec<MetafieldValidation>)>,
 }
 
 impl Builder<'_> {
@@ -207,9 +215,34 @@ impl Builder<'_> {
         }
     }
 
-    /// The metafields of an entity, `origin` being where they are written (its `metafields`).
-    /// A typed value that its type refuses is an error.
-    fn metafields(&mut self, input: &model::Metafields, origin: &Origin) -> Metafields {
+    /// Finds a declared metafield definition for `owner_type`, `namespace`, and `key`.
+    fn find_metafield_definition(
+        &self,
+        owner_type: MetafieldOwnerType,
+        namespace: &str,
+        key: &str,
+    ) -> Option<&MetafieldDefinition> {
+        self.metafield_definitions.iter().find(|def| {
+            def.owner_type == owner_type && def.namespace == namespace && def.key == key
+        })
+    }
+
+    /// Finds a declared metaobject definition matching `kind` (using `same_metaobject_type`).
+    fn find_metaobject_definition(&self, kind: &str) -> Option<&MetaobjectDefinition> {
+        self.metaobject_definitions
+            .iter()
+            .find(|(def_kind, _)| same_metaobject_type(def_kind, kind))
+            .map(|(_, def)| def)
+    }
+
+    /// The metafields of an entity of `owner_type`, `origin` being where they are written (its
+    /// `metafields`). Checked against their type and any matching declared metafield definition.
+    fn metafields(
+        &mut self,
+        owner_type: MetafieldOwnerType,
+        input: &model::Metafields,
+        origin: &Origin,
+    ) -> Metafields {
         input
             .iter()
             .map(|(namespace, fields)| {
@@ -218,13 +251,133 @@ impl Builder<'_> {
                     fields
                         .iter()
                         .map(|(key, field)| {
-                            self.check_metafield(field, &origin.child(namespace).child(key));
-                            (key.clone(), metafield(field))
+                            let def = self
+                                .find_metafield_definition(owner_type, namespace, key)
+                                .map(|d| (d.kind.clone(), d.validations.clone()));
+                            let built = self.build_metafield(
+                                field,
+                                def.as_ref().map(|(k, v)| (k.as_str(), v.as_slice())),
+                                &origin.child(namespace).child(key),
+                            );
+                            (key.clone(), built)
                         })
                         .collect(),
                 )
             })
             .collect()
+    }
+
+    /// Validates and builds one metafield (or metaobject field) against its type and optional
+    /// declared definition `(defined_kind, validations)`.
+    fn build_metafield(
+        &mut self,
+        field: &MetafieldInput,
+        definition: Option<(&str, &[MetafieldValidation])>,
+        origin: &Origin,
+    ) -> Metafield {
+        // Admin API overlay values were already validated against the live Admin API definitions.
+        let definition = definition.filter(|_| origin.file != super::load::ADMIN_OVERLAY_FILE);
+        match (field, definition) {
+            (MetafieldInput::Typed(typed), Some((def_kind, validations))) => {
+                let (problems, references) =
+                    super::metafield_types::check(&typed.kind, &typed.value, &self.currency);
+                let base_ok = problems.is_empty();
+                for problem in problems {
+                    let at = Origin::new(
+                        origin.file.clone(),
+                        format!("{}{}", origin.pointer, problem.pointer),
+                    );
+                    self.error(problem.code, &at, problem.message)
+                        .hint(problem.hint);
+                }
+                for reference in references {
+                    self.references.push((origin.clone(), reference));
+                }
+                if typed.kind != def_kind {
+                    self.error(
+                        "metafield_type_mismatch",
+                        &origin.child("type"),
+                        format!(
+                            "type \"{}\" does not match the definition's type \"{def_kind}\"",
+                            typed.kind
+                        ),
+                    )
+                    .hint(format!("change \"type\" to \"{def_kind}\""));
+                } else if base_ok {
+                    let value_origin = origin.child("value");
+                    super::definitions::check_value_validations(
+                        def_kind,
+                        &typed.value,
+                        validations,
+                        &value_origin,
+                        &mut self.diagnostics,
+                    );
+                    self.queue_metaobject_ref_check(
+                        &value_origin,
+                        def_kind,
+                        &typed.value,
+                        validations,
+                    );
+                }
+                metafield(field)
+            }
+            (MetafieldInput::Value(raw), Some((def_kind, validations))) => {
+                // Shorthand value adopts the declared definition's type.
+                let below = |pointer: &str| {
+                    let pointer = pointer.strip_prefix("/value").unwrap_or(pointer);
+                    Origin::new(origin.file.clone(), format!("{}{pointer}", origin.pointer))
+                };
+                let (problems, references) =
+                    super::metafield_types::check(def_kind, raw, &self.currency);
+                let base_ok = problems.is_empty();
+                for problem in problems {
+                    let at = below(&problem.pointer);
+                    self.error(problem.code, &at, problem.message)
+                        .hint(problem.hint);
+                }
+                for mut reference in references {
+                    let at = below(&reference.pointer);
+                    reference.pointer.clear();
+                    self.references.push((at, reference));
+                }
+                if base_ok {
+                    super::definitions::check_value_validations(
+                        def_kind,
+                        raw,
+                        validations,
+                        origin,
+                        &mut self.diagnostics,
+                    );
+                    self.queue_metaobject_ref_check(origin, def_kind, raw, validations);
+                }
+                Metafield {
+                    kind: def_kind.to_string(),
+                    value: super::metafield_types::normalize(def_kind, raw),
+                }
+            }
+            (field, None) => {
+                self.check_metafield(field, origin);
+                metafield(field)
+            }
+        }
+    }
+
+    fn queue_metaobject_ref_check(
+        &mut self,
+        origin: &Origin,
+        kind: &str,
+        value: &Json,
+        validations: &[MetafieldValidation],
+    ) {
+        let base = kind.strip_prefix("list.").unwrap_or(kind);
+        if matches!(base, "metaobject_reference" | "mixed_reference") && !validations.is_empty() {
+            self.metaobject_ref_checks.push((
+                origin.clone(),
+                kind.to_string(),
+                value.clone(),
+                validations.to_vec(),
+            ));
+        }
     }
 
     /// Checks a typed metafield (or field of a metaobject) against its type, and keeps its
@@ -460,7 +613,33 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
             .collect(),
         unlisted: HashSet::new(),
         references: Vec::new(),
+        metafield_definitions: Vec::new(),
+        metaobject_definitions: IndexMap::new(),
+        metaobject_ref_checks: Vec::new(),
     };
+
+    // Collect every metaobject type known to the store (declared definitions + entries) so
+    // `metaobject_definition_id(s)` validations can reference any of them in any order.
+    let mut known_metaobject_types: Vec<String> =
+        input.metaobject_definitions.keys().cloned().collect();
+    for (kind, _) in &input.metaobjects {
+        if !known_metaobject_types
+            .iter()
+            .any(|known| same_metaobject_type(known, kind))
+        {
+            known_metaobject_types.push(kind.clone());
+        }
+    }
+    builder.metaobject_definitions = super::definitions::build_metaobject_definitions(
+        &input.metaobject_definitions,
+        &known_metaobject_types,
+        &mut builder.diagnostics,
+    );
+    builder.metafield_definitions = super::definitions::build_metafield_definitions(
+        &input.metafield_definitions,
+        &known_metaobject_types,
+        &mut builder.diagnostics,
+    );
 
     if let Some(timezone) = &shop_input.timezone {
         match timezone.parse::<Tz>() {
@@ -530,13 +709,13 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         redirects: Vec::new(),
         locations,
         selling_plan_groups: Vec::new(),
+        metafield_definitions: builder.metafield_definitions.clone(),
         metaobjects: Vec::new(),
-        metaobject_url_handles: input
+        metaobject_definitions: builder.metaobject_definitions.clone(),
+        metaobject_url_handles: builder
             .metaobject_definitions
             .iter()
-            .filter_map(|(kind, definition)| {
-                Some((kind.clone(), definition.value.url_handle.clone()?))
-            })
+            .filter_map(|(kind, definition)| Some((kind.clone(), definition.url_handle.clone()?)))
             .collect(),
         countries: Vec::new(),
         markets: Vec::new(),
@@ -584,15 +763,99 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
     build_redirects(&mut builder, &mut store, &input.redirects);
     build_localization(&mut builder, &mut store, input.localization.as_ref());
     for (kind, entry) in &input.metaobjects {
-        let fields: IndexMap<String, Metafield> = entry
-            .value
-            .fields
-            .iter()
-            .map(|(key, field)| {
-                builder.check_metafield(field, &entry.origin.child("fields").child(key));
-                (key.clone(), metafield(field))
-            })
-            .collect();
+        let definition = (entry.origin.file != super::load::ADMIN_OVERLAY_FILE)
+            .then(|| builder.find_metaobject_definition(kind).cloned())
+            .flatten();
+        let fields_origin = entry.origin.child("fields");
+        let fields: IndexMap<String, Metafield> = if let Some(field_defs) = definition
+            .as_ref()
+            .and_then(|d| d.field_definitions.as_ref())
+        {
+            let mut built_fields = IndexMap::new();
+            for (key, field) in &entry.value.fields {
+                let field_origin = fields_origin.child(key);
+                match field_defs.iter().find(|def| def.key == *key) {
+                    Some(def) => {
+                        let built = builder.build_metafield(
+                            field,
+                            Some((&def.kind, &def.validations)),
+                            &field_origin,
+                        );
+                        built_fields.insert(key.clone(), built);
+                    }
+                    None => {
+                        let allowed: Vec<&str> =
+                            field_defs.iter().map(|def| def.key.as_str()).collect();
+                        let diag = builder.error(
+                            "unknown_metaobject_field",
+                            &field_origin,
+                            format!("metaobject \"{kind}\" has no field named \"{key}\""),
+                        );
+                        if let Some(close) = closest_match(key, allowed.iter().copied()) {
+                            diag.hint(format!("did you mean \"{close}\"?"));
+                        } else if !allowed.is_empty() {
+                            diag.hint(format!("defined fields: {}", allowed.join(", ")));
+                        }
+                        builder.check_metafield(field, &field_origin);
+                        built_fields.insert(key.clone(), metafield(field));
+                    }
+                }
+            }
+            for def in field_defs {
+                if !def.required {
+                    continue;
+                }
+                let missing = match entry.value.fields.get(&def.key) {
+                    None => true,
+                    Some(MetafieldInput::Value(Json::Null)) => true,
+                    Some(MetafieldInput::Value(Json::String(s))) if s.is_empty() => true,
+                    Some(MetafieldInput::Typed(t)) if t.value.is_null() => true,
+                    Some(MetafieldInput::Typed(t))
+                        if t.value.as_str().is_some_and(str::is_empty) =>
+                    {
+                        true
+                    }
+                    _ => false,
+                };
+                if missing {
+                    builder
+                        .error(
+                            "missing_required_field",
+                            &fields_origin,
+                            format!(
+                                "metaobject \"{kind}/{}\" is missing required field \"{}\"",
+                                entry.value.handle, def.key
+                            ),
+                        )
+                        .hint(format!("add \"{}\" ({}) to \"fields\"", def.key, def.kind));
+                }
+            }
+            built_fields
+        } else {
+            entry
+                .value
+                .fields
+                .iter()
+                .map(|(key, field)| {
+                    builder.check_metafield(field, &fields_origin.child(key));
+                    (key.clone(), metafield(field))
+                })
+                .collect()
+        };
+        if definition
+            .as_ref()
+            .and_then(|d| d.capabilities.translatable)
+            == Some(false)
+            && !entry.value.translations.is_empty()
+        {
+            builder
+                .error(
+                    "untranslatable_metaobject",
+                    &entry.origin.child("translations"),
+                    format!("metaobject type \"{kind}\" has translations disabled"),
+                )
+                .hint("remove \"translations\" or set \"capabilities.translatable\": true on the metaobject definition");
+        }
         let translations = build_metaobject_translations(
             &mut builder,
             &store.languages,
@@ -621,6 +884,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
     }
     store.app = AppInstallation {
         metafields: builder.metafields(
+            MetafieldOwnerType::ApiPermission,
             &input.app.metafields,
             &Origin::new("(data)", "/app/metafields"),
         ),
@@ -646,6 +910,16 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
     store.files = std::mem::take(&mut builder.files);
     store.index();
     resolve_references(&mut builder, &store);
+    for (origin, kind, value, validations) in std::mem::take(&mut builder.metaobject_ref_checks) {
+        super::definitions::check_metaobject_reference_validations(
+            &kind,
+            &value,
+            &validations,
+            &store,
+            &origin,
+            &mut builder.diagnostics,
+        );
+    }
     explain_left_out(&mut builder.diagnostics, &input.left_out);
     (store, builder.diagnostics)
 }
@@ -929,7 +1203,11 @@ fn build_shop(builder: &mut Builder<'_>, input: &model::ShopInput, origin: &Orig
             .clone()
             .unwrap_or_else(|| DEFAULT_PASSWORD.to_string()),
         brand,
-        metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
+        metafields: builder.metafields(
+            MetafieldOwnerType::Shop,
+            &input.metafields,
+            &origin.child("metafields"),
+        ),
         name,
     }
 }
@@ -972,7 +1250,11 @@ fn build_locations(
                     physical_storefront: input.physical_storefront.unwrap_or(true),
                     latitude: input.latitude,
                     longitude: input.longitude,
-                    metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
+                    metafields: builder.metafields(
+                        MetafieldOwnerType::Location,
+                        &input.metafields,
+                        &origin.child("metafields"),
+                    ),
                 }
             },
         )
@@ -1334,8 +1616,11 @@ fn build_products(
                     &variant_origin.child("store_availabilities"),
                 ),
                 components: Vec::new(),
-                metafields: builder
-                    .metafields(&variant.metafields, &variant_origin.child("metafields")),
+                metafields: builder.metafields(
+                    MetafieldOwnerType::Productvariant,
+                    &variant.metafields,
+                    &variant_origin.child("metafields"),
+                ),
             });
         }
 
@@ -1433,7 +1718,11 @@ fn build_products(
             created_at,
             published_at,
             updated_at,
-            metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
+            metafields: builder.metafields(
+                MetafieldOwnerType::Product,
+                &input.metafields,
+                &origin.child("metafields"),
+            ),
             collections: Vec::new(),
             recommendations: Vec::new(),
             selling_plan_groups: Vec::new(),
@@ -1685,7 +1974,11 @@ fn build_collections(
             template_suffix: input.template_suffix.clone(),
             published_at,
             updated_at,
-            metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
+            metafields: builder.metafields(
+                MetafieldOwnerType::Collection,
+                &input.metafields,
+                &origin.child("metafields"),
+            ),
             handle,
         });
     }
@@ -2224,7 +2517,11 @@ fn build_pages(builder: &mut Builder<'_>, store: &mut Store, inputs: &[Sourced<m
             template_suffix: input.template_suffix.clone(),
             published_at,
             updated_at,
-            metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
+            metafields: builder.metafields(
+                MetafieldOwnerType::Page,
+                &input.metafields,
+                &origin.child("metafields"),
+            ),
             handle,
         });
     }
@@ -2320,8 +2617,11 @@ fn build_blogs(builder: &mut Builder<'_>, store: &mut Store, inputs: &[Sourced<m
                     created_at,
                     published_at,
                     updated_at,
-                    metafields: builder
-                        .metafields(&article.metafields, &article_origin.child("metafields")),
+                    metafields: builder.metafields(
+                        MetafieldOwnerType::Article,
+                        &article.metafields,
+                        &article_origin.child("metafields"),
+                    ),
                     handle: article_handle,
                 }
             })
@@ -2335,7 +2635,11 @@ fn build_blogs(builder: &mut Builder<'_>, store: &mut Store, inputs: &[Sourced<m
             comments_enabled: input.comments_enabled,
             moderated: input.moderated,
             template_suffix: input.template_suffix.clone(),
-            metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
+            metafields: builder.metafields(
+                MetafieldOwnerType::Blog,
+                &input.metafields,
+                &origin.child("metafields"),
+            ),
             handle,
         });
     }
@@ -2837,8 +3141,11 @@ fn build_companies(
                         .as_ref()
                         .map(|a| address(a, &format!("{location_id}/shipping"))),
                     tax_registration_id: location.tax_registration_id.clone(),
-                    metafields: builder
-                        .metafields(&location.metafields, &location_origin.child("metafields")),
+                    metafields: builder.metafields(
+                        MetafieldOwnerType::CompanyLocation,
+                        &location.metafields,
+                        &location_origin.child("metafields"),
+                    ),
                 }
             })
             .collect();
@@ -2849,7 +3156,11 @@ fn build_companies(
             locations,
             created_at,
             updated_at,
-            metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
+            metafields: builder.metafields(
+                MetafieldOwnerType::Company,
+                &input.metafields,
+                &origin.child("metafields"),
+            ),
         });
     }
 }
@@ -3127,7 +3438,11 @@ fn build_customers(
                 .map(|(position, a)| address(a, &format!("{id}/address/{position}")))
                 .collect(),
             orders,
-            metafields: builder.metafields(&input.metafields, &origin.child("metafields")),
+            metafields: builder.metafields(
+                MetafieldOwnerType::Customer,
+                &input.metafields,
+                &origin.child("metafields"),
+            ),
             company,
             company_locations,
             company_contact,
@@ -3484,7 +3799,11 @@ fn build_localization(
             countries,
             // Resolved below, once the languages are known.
             languages: Vec::new(),
-            metafields: builder.metafields(&market.metafields, &market_origin.child("metafields")),
+            metafields: builder.metafields(
+                MetafieldOwnerType::Market,
+                &market.metafields,
+                &market_origin.child("metafields"),
+            ),
             subfolder_suffix,
             currency,
             rate,
@@ -4050,6 +4369,7 @@ fn override_checkout(
             classes: discount.classes.clone(),
             metafields: checkout_metafields(
                 builder,
+                Some(MetafieldOwnerType::Discount),
                 &discount.metafields,
                 &discount_origin.child("metafields"),
             ),
@@ -4063,6 +4383,7 @@ fn override_checkout(
     for (handle, function) in &input.functions {
         let metafields = checkout_metafields(
             builder,
+            None,
             &function.metafields,
             &origin.child("functions").child(handle).child("metafields"),
         );
@@ -4466,6 +4787,7 @@ fn check_expect(
 /// The metafields of a checkout setting, written `"namespace.key"`.
 fn checkout_metafields(
     builder: &mut Builder<'_>,
+    owner_type: Option<MetafieldOwnerType>,
     input: &IndexMap<String, MetafieldInput>,
     origin: &Origin,
 ) -> Vec<CheckoutMetafield> {
@@ -4505,7 +4827,14 @@ fn checkout_metafields(
                 ));
             continue;
         };
-        let Metafield { kind, value } = metafield(field);
+        let def = owner_type
+            .and_then(|ot| builder.find_metafield_definition(ot, namespace, key))
+            .map(|d| (d.kind.clone(), d.validations.clone()));
+        let Metafield { kind, value } = builder.build_metafield(
+            field,
+            def.as_ref().map(|(k, v)| (k.as_str(), v.as_slice())),
+            &origin.child(name),
+        );
         metafields.push(CheckoutMetafield {
             namespace: namespace.to_string(),
             key: key.to_string(),

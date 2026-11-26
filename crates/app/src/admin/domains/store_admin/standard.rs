@@ -275,6 +275,28 @@ fn template_gid(id: u64) -> String {
     gid("StandardMetafieldDefinitionTemplate", id)
 }
 
+/// The GID of a built-in standard metafield definition template matching `(namespace, key,
+/// owner_type)`, if one exists.
+pub fn metafield_template_gid(namespace: &str, key: &str, owner_type: &str) -> Option<String> {
+    METAFIELD_TEMPLATES
+        .iter()
+        .find(|template| {
+            template.namespace == namespace
+                && template.key == key
+                && template.owner_types.contains(&owner_type)
+        })
+        .map(|template| template_gid(template.id))
+}
+
+/// The inline `StandardMetaobjectDefinitionTemplate` value for a built-in standard metaobject
+/// type, if one exists.
+pub fn metaobject_template_value_for(kind: &str) -> Option<Value> {
+    METAOBJECT_TEMPLATES
+        .iter()
+        .find(|template| template.kind == kind)
+        .map(metaobject_template_value)
+}
+
 /// The validations of a template as `MetafieldDefinitionValidation`s: `{name, type, value}`,
 /// the type the definition type gives the validation.
 fn validations_of(template: &MetafieldTemplate) -> Vec<Value> {

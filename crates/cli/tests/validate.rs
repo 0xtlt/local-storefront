@@ -221,3 +221,78 @@ fn the_menus_a_theme_names_that_the_data_lacks_are_warned_of() {
         "{said}"
     );
 }
+
+#[test]
+fn validates_declarative_metafield_and_metaobject_definitions_and_exposes_schemas() {
+    let folder = Folder::new("definitions");
+    folder.write(
+        "shopify-local/store.json",
+        r#"{
+  "shop": { "name": "Repro Shop", "currency": "USD" },
+  "metafield_definitions": [
+    {
+      "owner_type": "PRODUCT",
+      "namespace": "custom",
+      "key": "care_guide",
+      "name": "Care guide",
+      "type": "multi_line_text_field",
+      "validations": [{ "name": "max", "value": "500" }],
+      "pinned": true,
+      "access": { "storefront": "PUBLIC_READ" }
+    }
+  ],
+  "metaobject_definitions": {
+    "look": {
+      "name": "Look",
+      "url_handle": "looks",
+      "display_name_key": "title",
+      "access": { "storefront": "PUBLIC_READ" },
+      "capabilities": { "publishable": true, "translatable": false },
+      "field_definitions": [
+        { "key": "title", "name": "Title", "type": "single_line_text_field", "required": true },
+        { "key": "products", "name": "Products", "type": "list.product_reference" }
+      ]
+    }
+  }
+}"#,
+    );
+    let output = validate(&folder.0, &[]);
+    assert!(output.status.success(), "{}", text(&output));
+
+    // Add a per-file definition and an invalid product value to verify end-to-end validation.
+    folder.write(
+        "shopify-local/metafield_definitions/tier.json",
+        r#"{
+  "owner_type": "PRODUCT",
+  "namespace": "custom",
+  "key": "tier",
+  "type": "single_line_text_field",
+  "validations": [{ "name": "choices", "value": ["gold", "silver"] }]
+}"#,
+    );
+    folder.write(
+        "shopify-local/products/shirt.json",
+        r#"{
+  "title": "Shirt",
+  "price": "20.00",
+  "metafields": { "custom": { "tier": "bronze" } }
+}"#,
+    );
+    let output = validate(&folder.0, &["--format", "json"]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["diagnostics"][0]["code"], "validation_failed");
+    assert_eq!(report["diagnostics"][0]["file"], "products/shirt.json");
+
+    // `lsf schema` exposes metafield-definition and metaobject-definition schemas.
+    for kind in ["metafield-definition", "metaobject-definition"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_lsf"))
+            .args(["schema", kind])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", text(&out));
+        let schema: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(schema["type"], "object");
+    }
+}

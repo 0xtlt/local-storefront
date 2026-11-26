@@ -1035,7 +1035,7 @@ Prints the JSON Schema of the store data.
 
 | Option | What it does |
 |---|---|
-| `[kind]` | `store` (default, a root data file), `product`, `collection`, `page`, `blog`, `customer`, `menu`, `session` or `checkout-scenario` (a file of `checkouts/`). |
+| `[kind]` | `store` (default, a root data file), `product`, `collection`, `page`, `blog`, `customer`, `menu`, `metafield-definition`, `metaobject-definition`, `session` or `checkout-scenario` (a file of `checkouts/`). |
 | `--out <dir>` | Writes every schema into the folder as `<kind>.schema.json`. |
 
 ## routes

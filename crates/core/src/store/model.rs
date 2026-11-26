@@ -206,11 +206,33 @@ pub struct MediaSource {
 /// A metafield value. Write the value directly and its type is inferred (string →
 /// `single_line_text_field`, integer → `number_integer`, decimal → `number_decimal`, boolean →
 /// `boolean`, anything else → `json`), or spell out `{"type": ..., "value": ...}`.
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum MetafieldInput {
     Typed(TypedMetafield),
     Value(Json),
+}
+
+// Custom Deserialize so a two-element JSON array like `["cotton", "summer"]` is never misparsed
+// as a tuple-form `TypedMetafield` by serde's default untagged struct visitor.
+impl<'de> Deserialize<'de> for MetafieldInput {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = Json::deserialize(deserializer)?;
+        if let Json::Object(mut map) = raw {
+            if map.len() == 2
+                && map.get("type").is_some_and(Json::is_string)
+                && map.contains_key("value")
+            {
+                let Some(Json::String(kind)) = map.remove("type") else {
+                    unreachable!();
+                };
+                let value = map.remove("value").unwrap_or(Json::Null);
+                return Ok(Self::Typed(TypedMetafield { kind, value }));
+            }
+            return Ok(Self::Value(Json::Object(map)));
+        }
+        Ok(Self::Value(raw))
+    }
 }
 
 /// A metafield with an explicit type.
@@ -1483,14 +1505,481 @@ pub struct MetaobjectInput {
     pub template_suffix: Option<String>,
 }
 
-/// The definition of a metaobject type (`metaobject_definitions.<type>`).
+/// The Shopify resource type a metafield definition belongs to (`MetafieldOwnerType`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MetafieldOwnerType {
+    ApiPermission,
+    Article,
+    Blog,
+    #[serde(rename = "CARTTRANSFORM")]
+    Carttransform,
+    Collection,
+    Company,
+    CompanyLocation,
+    Customer,
+    DeliveryCustomization,
+    Discount,
+    #[serde(rename = "DRAFTORDER")]
+    Draftorder,
+    FulfillmentConstraintRule,
+    GiftCardTransaction,
+    Location,
+    Market,
+    Order,
+    OrderRoutingLocationRule,
+    Page,
+    PaymentCustomization,
+    Product,
+    #[serde(rename = "PRODUCTVARIANT")]
+    Productvariant,
+    SellingPlan,
+    Shop,
+    Transfer,
+    Validation,
+}
+
+impl MetafieldOwnerType {
+    /// The Shopify GraphQL enum name (`PRODUCT`, `PRODUCTVARIANT`, `ORDER`, ...).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MetafieldOwnerType::ApiPermission => "API_PERMISSION",
+            MetafieldOwnerType::Article => "ARTICLE",
+            MetafieldOwnerType::Blog => "BLOG",
+            MetafieldOwnerType::Carttransform => "CARTTRANSFORM",
+            MetafieldOwnerType::Collection => "COLLECTION",
+            MetafieldOwnerType::Company => "COMPANY",
+            MetafieldOwnerType::CompanyLocation => "COMPANY_LOCATION",
+            MetafieldOwnerType::Customer => "CUSTOMER",
+            MetafieldOwnerType::DeliveryCustomization => "DELIVERY_CUSTOMIZATION",
+            MetafieldOwnerType::Discount => "DISCOUNT",
+            MetafieldOwnerType::Draftorder => "DRAFTORDER",
+            MetafieldOwnerType::FulfillmentConstraintRule => "FULFILLMENT_CONSTRAINT_RULE",
+            MetafieldOwnerType::GiftCardTransaction => "GIFT_CARD_TRANSACTION",
+            MetafieldOwnerType::Location => "LOCATION",
+            MetafieldOwnerType::Market => "MARKET",
+            MetafieldOwnerType::Order => "ORDER",
+            MetafieldOwnerType::OrderRoutingLocationRule => "ORDER_ROUTING_LOCATION_RULE",
+            MetafieldOwnerType::Page => "PAGE",
+            MetafieldOwnerType::PaymentCustomization => "PAYMENT_CUSTOMIZATION",
+            MetafieldOwnerType::Product => "PRODUCT",
+            MetafieldOwnerType::Productvariant => "PRODUCTVARIANT",
+            MetafieldOwnerType::SellingPlan => "SELLING_PLAN",
+            MetafieldOwnerType::Shop => "SHOP",
+            MetafieldOwnerType::Transfer => "TRANSFER",
+            MetafieldOwnerType::Validation => "VALIDATION",
+        }
+    }
+}
+
+/// Admin API access level for a metafield or metaobject definition (`MetafieldAdminAccess` /
+/// `MetaobjectAdminAccess`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DefinitionAdminAccess {
+    MerchantRead,
+    MerchantReadWrite,
+    Private,
+    PublicRead,
+    PublicReadWrite,
+}
+
+impl DefinitionAdminAccess {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DefinitionAdminAccess::MerchantRead => "MERCHANT_READ",
+            DefinitionAdminAccess::MerchantReadWrite => "MERCHANT_READ_WRITE",
+            DefinitionAdminAccess::Private => "PRIVATE",
+            DefinitionAdminAccess::PublicRead => "PUBLIC_READ",
+            DefinitionAdminAccess::PublicReadWrite => "PUBLIC_READ_WRITE",
+        }
+    }
+}
+
+/// Storefront API access level for a metafield or metaobject definition
+/// (`MetafieldStorefrontAccess` / `MetaobjectStorefrontAccess`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DefinitionStorefrontAccess {
+    None,
+    PublicRead,
+}
+
+impl DefinitionStorefrontAccess {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DefinitionStorefrontAccess::None => "NONE",
+            DefinitionStorefrontAccess::PublicRead => "PUBLIC_READ",
+        }
+    }
+}
+
+/// Customer Account API access level for a metafield definition
+/// (`MetafieldCustomerAccountAccess`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MetafieldCustomerAccountAccess {
+    None,
+    Read,
+    ReadWrite,
+}
+
+impl MetafieldCustomerAccountAccess {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MetafieldCustomerAccountAccess::None => "NONE",
+            MetafieldCustomerAccountAccess::Read => "READ",
+            MetafieldCustomerAccountAccess::ReadWrite => "READ_WRITE",
+        }
+    }
+}
+
+/// Customer Account API access level for a metaobject definition
+/// (`MetaobjectCustomerAccountAccess`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MetaobjectCustomerAccountAccess {
+    None,
+    Read,
+}
+
+impl MetaobjectCustomerAccountAccess {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MetaobjectCustomerAccountAccess::None => "NONE",
+            MetaobjectCustomerAccountAccess::Read => "READ",
+        }
+    }
+}
+
+/// Access controls of a metafield definition (`MetafieldAccess`).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MetafieldAccessInput {
+    /// Admin API access. Only allowed on app-owned namespaces (`$app` or `$app:<name>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin: Option<DefinitionAdminAccess>,
+    /// Storefront API access (`NONE` or `PUBLIC_READ`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storefront: Option<DefinitionStorefrontAccess>,
+    /// Customer Account API access (`NONE`, `READ`, or `READ_WRITE`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub customer_account: Option<MetafieldCustomerAccountAccess>,
+}
+
+/// Access controls of a metaobject definition (`MetaobjectAccess`).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MetaobjectAccessInput {
+    /// Admin API access. Only allowed on app-owned types (`$app:<type>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin: Option<DefinitionAdminAccess>,
+    /// Storefront API access (`NONE` or `PUBLIC_READ`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storefront: Option<DefinitionStorefrontAccess>,
+    /// Customer Account API access (`NONE` or `READ`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub customer_account: Option<MetaobjectCustomerAccountAccess>,
+}
+
+/// Enables or disables a capability: a boolean (`true` / `false`) or `{"enabled": true}`.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum CapabilityFlag {
+    Bool(bool),
+    Object(CapabilityEnabled),
+}
+
+impl CapabilityFlag {
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            CapabilityFlag::Bool(enabled) => *enabled,
+            CapabilityFlag::Object(object) => object.enabled,
+        }
+    }
+}
+
+/// A capability toggle written as an object, matching Shopify's GraphQL input shape.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityEnabled {
+    pub enabled: bool,
+}
+
+/// Capabilities of a metafield definition (`MetafieldCapabilities`).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MetafieldCapabilitiesInput {
+    /// Allows filtering by this metafield in the Shopify admin (`adminFilterable`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_filterable: Option<CapabilityFlag>,
+    /// Allows querying this metafield in ShopifyQL analytics (`analyticsQueryable`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analytics_queryable: Option<CapabilityFlag>,
+    /// Copies matching cart metafields to orders (`cartToOrderCopyable`). Only valid for `ORDER`
+    /// definitions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cart_to_order_copyable: Option<CapabilityFlag>,
+    /// Allows using this metafield in automated collection conditions
+    /// (`smartCollectionCondition`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smart_collection_condition: Option<CapabilityFlag>,
+    /// Enforces unique values across owners (`uniqueValues`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unique_values: Option<CapabilityFlag>,
+}
+
+/// A validation rule on a metafield definition or metaobject field definition
+/// (`MetafieldDefinitionValidationInput`).
+///
+/// For `metaobject_definition_id` / `metaobject_definition_ids` (or the portable aliases
+/// `metaobject_definition_type` / `metaobject_definition_types`), write portable metaobject type
+/// names (e.g. `"look"`, `"$app:author"`, or `["look", "designer"]`) instead of shop-specific
+/// GIDs; lsf validates them against the store's metaobject definitions and resolves them to the
+/// local shop's definition GIDs in the Admin API.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MetafieldValidationInput {
+    /// Validation rule name: `min`, `max`, `regex`, `choices`, `max_precision`, `scale_min`,
+    /// `scale_max`, `schema`, `allowed_domains`, `file_type_options`, `list.min`, `list.max`,
+    /// `metaobject_definition_id` (or `metaobject_definition_type`), `metaobject_definition_ids`
+    /// (or `metaobject_definition_types`), `product_taxonomy_attribute_handle`.
+    pub name: String,
+    /// Rule value as a string (Shopify's format, e.g. `"500"`, `"[\"gold\",\"silver\"]"`,
+    /// `"look"`), or as a JSON number, array or object.
+    pub value: Json,
+}
+
+/// A metafield definition (`MetafieldDefinition`), declared in `metafield_definitions` of a data
+/// file or one per file (or an array) in `metafield_definitions/`.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MetafieldDefinitionInput {
+    /// Lets editors validate and autocomplete the file, e.g.
+    /// `"../schema/metafield-definition.schema.json"`.
+    #[serde(default, rename = "$schema", skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    /// The Shopify resource type this definition applies to, e.g. `PRODUCT`, `PRODUCTVARIANT`,
+    /// `COLLECTION`, `CUSTOMER`, `ORDER`, `SHOP`.
+    pub owner_type: MetafieldOwnerType,
+    /// Namespace (3–255 characters of letters, digits, `-`, `_`, or `$app` / `$app:<name>`).
+    /// Defaults to `"$app"` when omitted, matching the Admin API.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    /// Key (2–64 characters of letters, digits, `-`, `_`).
+    pub key: String,
+    /// Human-readable name shown in the Shopify admin. Defaults to a humanized form of `key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Description of the definition (at most 255 characters).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`,
+    /// `number_integer`, `metaobject_reference`, `list.product_reference`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Validation rules for values of this metafield (`min`, `max`, `regex`, `choices`,
+    /// `scale_min`, `scale_max`, `list.min`, `list.max`, `metaobject_definition_id`, ...).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validations: Vec<MetafieldValidationInput>,
+    /// Whether the definition is pinned in the Shopify admin. Pinned definitions get sequential
+    /// `pinnedPosition` values starting from 1 per `owner_type` (at most 20).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
+    /// Explicit 1-based pinned position (1–20). Setting this pins the definition at that position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_position: Option<u32>,
+    /// Access controls (`admin`, `storefront`, `customer_account`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<MetafieldAccessInput>,
+    /// Definition capabilities (`admin_filterable`, `analytics_queryable`,
+    /// `cart_to_order_copyable`, `smart_collection_condition`, `unique_values`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<MetafieldCapabilitiesInput>,
+    /// Marks the definition as a Shopify standard metafield definition (e.g.
+    /// `descriptors.care_guide`, `reviews.rating`). Allows reserved `shopify` / `shopify--*`
+    /// namespaces and populates `standardTemplate` in the Admin API.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standard_template: Option<bool>,
+}
+
+/// Capabilities of a metaobject field definition (`MetaobjectFieldDefinitionCapabilities`).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MetaobjectFieldCapabilitiesInput {
+    /// Allows filtering metaobject entries by this field in the admin (`adminFilterable`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_filterable: Option<CapabilityFlag>,
+}
+
+/// A field definition of a metaobject type (`MetaobjectFieldDefinition`).
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MetaobjectFieldDefinitionInput {
+    /// Field key (1–64 characters of letters, digits, `-`, `_`).
+    pub key: String,
+    /// Human-readable name. Defaults to a humanized form of `key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Description of the field (at most 255 characters).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Shopify metafield type, e.g. `single_line_text_field`, `list.product_reference`,
+    /// `metaobject_reference`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Whether entries of this metaobject type must provide a value for this field.
+    /// Defaults to `false`.
+    #[serde(default)]
+    pub required: bool,
+    /// Validation rules for values of this field (`min`, `max`, `regex`, `choices`,
+    /// `metaobject_definition_id`, ...).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validations: Vec<MetafieldValidationInput>,
+    /// Field capabilities (`admin_filterable`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<MetaobjectFieldCapabilitiesInput>,
+}
+
+/// Online Store capability data (`capabilities.onlineStore.data`).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OnlineStoreCapabilityDataInput {
+    /// URL handle for the type's web pages (`/pages/<url_handle>/<handle>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_handle: Option<String>,
+    /// Whether handle changes create redirects (`createRedirects` / `canCreateRedirects`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub create_redirects: Option<bool>,
+}
+
+/// Online Store capability on a metaobject definition: a boolean, or an object with `url_handle`
+/// and optional `enabled` / `create_redirects` / `data`.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum OnlineStoreCapabilityInput {
+    Bool(bool),
+    Detailed(OnlineStoreCapabilityDetail),
+}
+
+/// Detailed Online Store capability configuration for a metaobject definition.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OnlineStoreCapabilityDetail {
+    /// Whether Online Store web pages are enabled. Defaults to `true` when this object is given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// URL handle for the type's web pages (`/pages/<url_handle>/<handle>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_handle: Option<String>,
+    /// Whether handle changes create redirects (`canCreateRedirects`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub create_redirects: Option<bool>,
+    /// Nested `data` object (`{"url_handle": ..., "create_redirects": ...}`), matching Shopify's
+    /// GraphQL input shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<OnlineStoreCapabilityDataInput>,
+}
+
+/// Renderable capability data (`capabilities.renderable.data`).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RenderableCapabilityDataInput {
+    /// Key of the field holding the SEO meta title (`metaTitleKey`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta_title_key: Option<String>,
+    /// Key of the field holding the SEO meta description (`metaDescriptionKey`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta_description_key: Option<String>,
+}
+
+/// Renderable capability on a metaobject definition: a boolean, or an object with SEO key fields.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum RenderableCapabilityInput {
+    Bool(bool),
+    Detailed(RenderableCapabilityDetail),
+}
+
+/// Detailed Renderable capability configuration for a metaobject definition.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RenderableCapabilityDetail {
+    /// Whether the renderable capability is enabled. Defaults to `true` when this object is given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Key of the field holding the SEO meta title (`metaTitleKey`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta_title_key: Option<String>,
+    /// Key of the field holding the SEO meta description (`metaDescriptionKey`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta_description_key: Option<String>,
+    /// Nested `data` object (`{"meta_title_key": ..., "meta_description_key": ...}`), matching
+    /// Shopify's GraphQL input shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<RenderableCapabilityDataInput>,
+}
+
+/// Capabilities of a metaobject definition (`MetaobjectCapabilities`).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MetaobjectCapabilitiesInput {
+    /// Enables draft/active publish status on entries (`publishable`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publishable: Option<CapabilityFlag>,
+    /// Enables translating entries (`translatable`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translatable: Option<CapabilityFlag>,
+    /// Exposes entries as Online Store web pages (`onlineStore`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub online_store: Option<OnlineStoreCapabilityInput>,
+    /// Enables SEO title and description metadata keys (`renderable`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renderable: Option<RenderableCapabilityInput>,
+}
+
+/// The definition of a metaobject type (`metaobject_definitions.<type>`, or one per file in
+/// `metaobject_definitions/`).
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MetaobjectDefinitionInput {
+    /// Lets editors validate and autocomplete the file, e.g.
+    /// `"../schema/metaobject-definition.schema.json"`.
+    #[serde(default, rename = "$schema", skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    /// The metaobject type (e.g. `"look"` or `"$app:author"`). Optional inside the
+    /// `metaobject_definitions` map (where the map key is the type) and in a single-object
+    /// `metaobject_definitions/<type>.json` file (where the file name is the default type);
+    /// required in an array file.
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Human-readable name shown in the Shopify admin. Defaults to a humanized form of the type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Description of the metaobject type (at most 255 characters).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Key of the field used as the display name for entries (`displayNameKey`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name_key: Option<String>,
     /// The handle of the type's web pages, Shopify's `capabilities.onlineStore.data.urlHandle`:
     /// the entries are served at `/pages/<url_handle>/<handle>`. Defaults to the type.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url_handle: Option<String>,
+    /// Access controls (`admin`, `storefront`, `customer_account`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<MetaobjectAccessInput>,
+    /// Capabilities (`publishable`, `translatable`, `online_store`, `renderable`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<MetaobjectCapabilitiesInput>,
+    /// Marks the definition as a Shopify standard metaobject definition (e.g. `product_review`),
+    /// populating `standardTemplate` in the Admin API.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standard_template: Option<bool>,
+    /// The fields of entries of this metaobject type (`fieldDefinitions`). When omitted, fields
+    /// are inferred from the entries in `metaobjects`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_definitions: Option<Vec<MetaobjectFieldDefinitionInput>>,
 }
 
 /// A reference to a variant: its numeric id, its SKU, or a product handle (meaning that
@@ -2206,10 +2695,15 @@ pub struct StoreInput {
     /// Navigation > URL redirects and the Admin API's `urlRedirectCreate` make them.
     #[serde(default)]
     pub redirects: Vec<RedirectInput>,
+    /// Metafield definitions. They can also live one per file (or as an array) in
+    /// `metafield_definitions/`.
+    #[serde(default)]
+    pub metafield_definitions: Vec<MetafieldDefinitionInput>,
     /// Metaobject entries by type.
     #[serde(default)]
     pub metaobjects: IndexMap<String, Vec<MetaobjectInput>>,
-    /// The definitions of metaobject types, by type: what a type sets for all its entries.
+    /// The definitions of metaobject types, by type. They can also live one per file (or as an
+    /// array) in `metaobject_definitions/`.
     #[serde(default)]
     pub metaobject_definitions: IndexMap<String, MetaobjectDefinitionInput>,
     /// The countries and languages of the store. At most one data file may define it.
